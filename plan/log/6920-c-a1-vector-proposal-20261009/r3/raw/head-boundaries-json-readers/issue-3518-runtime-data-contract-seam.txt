@@ -1,0 +1,560 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 canonical runtime data-contract seam > checks historical 'src/runtime/contracts/async-provider-…' receipt after checked extension reconstruction 1304ms
+ ✓ tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 canonical runtime data-contract seam > checks historical 'src/runtime/contracts/provider-policy…' receipt after checked extension reconstruction 1059ms
+ ✓ tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 canonical runtime data-contract seam > checks historical 'src/ir/runtime/contracts/intrinsics.ts' receipt after checked extension reconstruction 3021ms
+ × tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 canonical runtime data-contract seam > checks historical 'src/ir/runtime/contracts/manifest.ts' receipt after checked extension reconstruction 42998ms
+   → Test timed out in 35000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ✓ tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 canonical runtime data-contract seam > checks historical 'src/ir/runtime/contracts/prepared.ts' receipt after checked extension reconstruction 1129ms
+ ✓ tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 canonical runtime data-contract seam > checks historical retained 'src/ir/async-runtime-providers.ts' receipt after checked extension reconstruction 1939ms
+ × tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 canonical runtime data-contract seam > checks historical retained 'src/ir/runtime-manifest.ts' receipt after checked extension reconstruction 40772ms
+   → Test timed out in 35000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ✓ tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 canonical runtime data-contract seam > checks historical retained 'src/ir/intrinsics.ts' receipt after checked extension reconstruction 2796ms
+ ✓ tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 canonical runtime data-contract seam > checks historical retained 'src/ir/async-plan.ts' receipt after checked extension reconstruction 1800ms
+ × tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 canonical runtime data-contract seam > checks historical retained 'src/ir/intrinsic-support.ts' receipt after checked extension reconstruction 43748ms
+   → Test timed out in 35000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ✓ tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 canonical runtime data-contract seam > keeps the complete moved/retained denominators and the one currentness authority 1798ms
+ ✓ tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 canonical runtime data-contract seam > forwards each 'src/runtime/contracts/async-provider-…' name only from its exact defining owner 18ms
+ ✓ tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 canonical runtime data-contract seam > forwards each 'src/runtime/contracts/provider-policy…' name only from its exact defining owner 318ms
+ ✓ tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 canonical runtime data-contract seam > forwards each 'src/ir/runtime/contracts/intrinsics.ts' name only from its exact defining owner 7ms
+ ✓ tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 canonical runtime data-contract seam > forwards each 'src/ir/runtime/contracts/manifest.ts' name only from its exact defining owner 705ms
+ ✓ tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 canonical runtime data-contract seam > forwards each 'src/ir/runtime/contracts/prepared.ts' name only from its exact defining owner 1ms
+ ✓ tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'ASYNC_HOST_CAPABILITY_IDS' object 1ms
+ ✓ tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'ASYNC_CALLBACK_EXCEPTION_POLICY' object 0ms
+ ✓ tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'ASYNC_RUNTIME_PROVIDER_IDS' object 0ms
+ ✓ tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'NUMBER_BOUNDARY_POLICY_DISABLED' object 0ms
+ ✓ tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'BOOLEAN_BOUNDARY_POLICY_DISABLED' object 0ms
+ ✓ tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'EXTERN_IS_UNDEFINED_POLICY_DISABLED' object 0ms
+ ✓ tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'GENERATOR_NUMBER_BOX_POLICY_DISABLED' object 0ms
+ ✓ tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'STRING_COMPARE_POLICY_DISABLED' object 0ms
+ ✓ tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'STRING_EQ_POLICY_DISABLED' object 0ms
+ ✓ tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'STRING_LEN_POLICY_DISABLED' object 0ms
+ ✓ tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'STRING_CONCAT_POLICY_DISABLED' object 0ms
+ ✓ tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'STRING_CHAR_CODE_AT_POLICY_DISABLED' object 0ms
+ ✓ tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'STRING_CONCAT_MANY_POLICY_DISABLED' object 1ms
+ ✓ tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'STRING_CONST_POLICY_DISABLED' object 1ms
+ ✓ tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'HOST_CALLBACK_WRAP_POLICY_DISABLED' object 0ms
+ ✓ tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'FUNCTION_PROTOTYPE_CALL_POLICY_DISABL…' object 0ms
+ ✓ tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'PURE_MATH_RUNTIME_FEATURES' object 0ms
+ ✓ tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'NUMERIC_COERCION_RUNTIME_FEATURES' object 0ms
+ ✓ tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'NUMBER_BOUNDARY_RUNTIME_FEATURES' object 0ms
+ ✓ tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'BOOLEAN_BOUNDARY_RUNTIME_FEATURES' object 0ms
+ ✓ tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'EXTERN_BOUNDARY_RUNTIME_FEATURES' object 0ms
+ ✓ tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'INTRINSIC_RUNTIME_FEATURES' object 0ms
+ ✓ tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'PURE_MATH_HOST_CAPABILITIES' object 0ms
+ ✓ tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'RUNTIME_BACKEND_REQUIREMENTS' object 0ms
+ ✓ tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'PURE_MATH_RUNTIME_PROVIDER_IDS' object 0ms
+ ✓ tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'NUMERIC_COERCION_RUNTIME_PROVIDER_IDS' object 0ms
+ ✓ tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'NUMBER_BOUNDARY_RUNTIME_PROVIDER_IDS' object 0ms
+ ✓ tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'BOOLEAN_BOUNDARY_RUNTIME_PROVIDER_IDS' object 0ms
+ ✓ tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'EXTERN_BOUNDARY_RUNTIME_PROVIDER_IDS' object 0ms
+ ✓ tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'GENERATOR_NUMBER_BOX_RUNTIME_FEATURES' object 0ms
+ ✓ tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'GENERATOR_NUMBER_BOX_RUNTIME_PROVIDER…' object 0ms
+ ✓ tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'STRING_COMPARE_RUNTIME_FEATURES' object 0ms
+ ✓ tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'STRING_COMPARE_RUNTIME_PROVIDER_IDS' object 0ms
+ ✓ tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'STRING_EQ_RUNTIME_FEATURES' object 0ms
+ ✓ tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'STRING_EQ_RUNTIME_PROVIDER_IDS' object 0ms
+ ✓ tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'STRING_LEN_RUNTIME_FEATURES' object 0ms
+ ✓ tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'STRING_LEN_RUNTIME_PROVIDER_IDS' object 0ms
+ ✓ tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'STRING_CONCAT_RUNTIME_FEATURES' object 0ms
+ ✓ tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'STRING_CONCAT_RUNTIME_PROVIDER_IDS' object 0ms
+ ✓ tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'STRING_CHAR_CODE_AT_RUNTIME_FEATURES' object 0ms
+ ✓ tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'STRING_CHAR_CODE_AT_RUNTIME_PROVIDER_…' object 0ms
+ ✓ tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'STRING_CONCAT_MANY_RUNTIME_FEATURES' object 0ms
+ ✓ tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'STRING_CONCAT_MANY_RUNTIME_PROVIDER_I…' object 0ms
+ ✓ tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'STRING_CONCAT_MANY_NATIVE_ARITY' object 0ms
+ ✓ tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'STRING_CONST_RUNTIME_FEATURES' object 0ms
+ ✓ tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'STRING_CONST_RUNTIME_PROVIDER_IDS' object 1ms
+ ✓ tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'HOST_CALLBACK_WRAP_RUNTIME_FEATURES' object 7ms
+ ✓ tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'HOST_CALLBACK_WRAP_RUNTIME_PROVIDER_I…' object 1ms
+ ✓ tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'FUNCTION_PROTOTYPE_CALL_RUNTIME_FEATU…' object 0ms
+ ✓ tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'FUNCTION_PROTOTYPE_CALL_RUNTIME_PROVI…' object 0ms
+ ✓ tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'REFERENCE_ERROR_RUNTIME_FEATURES' object 0ms
+ ✓ tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'REFERENCE_ERROR_RUNTIME_PROVIDER_IDS' object 0ms
+ ✓ tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 canonical runtime data-contract seam > reuses the canonical callback policy and exact capability/provider catalogs 2ms
+ ✓ tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 canonical runtime data-contract seam > keeps both barrels explicit and contract-only 8ms
+ ✓ tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 canonical runtime data-contract seam > preserves standalone authentication, exact provider order and seal identity 11ms
+ ✓ tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 canonical runtime data-contract seam > rejects a copied manifest or semantic plan instead of granting shape-based authority 5ms
+ ✓ tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 canonical runtime data-contract seam > rejects copied/reordered providers and mutable layouts while retaining logical-type identity when sealed 3ms
+ ✓ tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 canonical runtime data-contract seam > retains failed-authentication rollback without publishing a second authority 2ms
+ ✓ tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 compiled runtime data joins > resolves all 81 public old/new types, canonical joins and eleven negative controls 2261ms
+ × tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 runtime policy fixture capture > canonical3c6 independently proves full raw and semantic predecessor equal to original API 9ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 runtime policy fixture capture > canonical3c6 refuses boxed string before missing receipt witness 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 runtime policy fixture capture > canonical3c6 refuses stale predecessor 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 runtime policy fixture capture > canonical3c6 refuses valid JSON retained row mutation 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 runtime policy fixture capture > canonical3c6 refuses raw whitespace mutation 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 runtime policy fixture capture > canonical3c6 refuses original domain span omission 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 runtime policy fixture capture > canonical3c6 refuses original domain span duplication 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 runtime policy fixture capture > canonical3c6 refuses original domain span valid reorder 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 runtime policy fixture capture > canonical3c6 freshly refuses missing physical tests/helpers/ir-runtime-program-policy-canonical-3c6.json after success 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 runtime policy fixture capture > canonical3c6 freshly refuses mutation physical tests/helpers/ir-runtime-program-policy-canonical-3c6.json after success 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 runtime policy fixture capture > canonical3c6 freshly refuses missing physical tests/helpers/ir-runtime-program-policy-evolution.ts after success 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 runtime policy fixture capture > canonical3c6 freshly refuses mutation physical tests/helpers/ir-runtime-program-policy-evolution.ts after success 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 runtime policy fixture capture > currentMain independently proves full raw and semantic predecessor equal to original API 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 runtime policy fixture capture > currentMain refuses boxed string before missing receipt witness 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 runtime policy fixture capture > currentMain refuses stale predecessor 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 runtime policy fixture capture > currentMain refuses valid JSON retained row mutation 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 runtime policy fixture capture > currentMain refuses raw whitespace mutation 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 runtime policy fixture capture > currentMain refuses original domain span omission 7ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 runtime policy fixture capture > currentMain refuses original domain span duplication 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 runtime policy fixture capture > currentMain refuses original domain span valid reorder 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 runtime policy fixture capture > currentMain freshly refuses missing physical tests/helpers/ir-runtime-program-policy-main-inventory-20261002.json after success 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 runtime policy fixture capture > currentMain freshly refuses mutation physical tests/helpers/ir-runtime-program-policy-main-inventory-20261002.json after success 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 runtime policy fixture capture > currentMain freshly refuses missing physical tests/helpers/ir-runtime-program-policy-evolution.ts after success 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 runtime policy fixture capture > currentMain freshly refuses mutation physical tests/helpers/ir-runtime-program-policy-evolution.ts after success 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > generator independently proves fixed full profiles, local inverse and original full API 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > generator refuses boxed string before missing receipt witness 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > generator refuses stale predecessor 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > generator refuses valid JSON retained row mutation 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > generator refuses raw whitespace mutation 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > generator refuses fixed raw span omission 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > generator refuses fixed raw span duplication 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > generator refuses fixed raw span valid reorder 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > generator freshly refuses missing physical tests/helpers/ir-runtime-program-policy-generator-eager-refusal.json after success 13ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > generator freshly refuses mutation physical tests/helpers/ir-runtime-program-policy-generator-eager-refusal.json after success 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > generator freshly refuses missing physical tests/helpers/ir-runtime-program-policy-evolution.ts after success 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > generator freshly refuses mutation physical tests/helpers/ir-runtime-program-policy-evolution.ts after success 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > host independently proves fixed full profiles, local inverse and original full API 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > host refuses boxed string before missing receipt witness 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > host refuses stale predecessor 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > host refuses valid JSON retained row mutation 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > host refuses raw whitespace mutation 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > host refuses fixed raw span omission 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > host refuses fixed raw span duplication 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > host refuses fixed raw span valid reorder 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > host freshly refuses missing physical tests/helpers/ir-runtime-program-policy-host-carrier.json after success 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > host freshly refuses mutation physical tests/helpers/ir-runtime-program-policy-host-carrier.json after success 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > host freshly refuses missing physical tests/helpers/ir-runtime-program-policy-evolution.ts after success 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > host freshly refuses mutation physical tests/helpers/ir-runtime-program-policy-evolution.ts after success 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > dynamic independently proves fixed full profiles, local inverse and original full API 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > dynamic refuses boxed string before missing receipt witness 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > dynamic refuses stale predecessor 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > dynamic refuses valid JSON retained row mutation 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > dynamic refuses raw whitespace mutation 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > dynamic refuses fixed raw span omission 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > dynamic refuses fixed raw span duplication 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > dynamic refuses fixed raw span valid reorder 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > dynamic freshly refuses missing physical tests/helpers/ir-runtime-program-policy-dynamic-code.json after success 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > dynamic freshly refuses mutation physical tests/helpers/ir-runtime-program-policy-dynamic-code.json after success 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > dynamic freshly refuses missing physical tests/helpers/ir-runtime-program-policy-evolution.ts after success 6ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > dynamic freshly refuses mutation physical tests/helpers/ir-runtime-program-policy-evolution.ts after success 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > C2a independently proves fixed full profiles, local inverse and original full API 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > C2a refuses boxed string before missing receipt witness 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > C2a refuses stale predecessor 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > C2a refuses valid JSON retained row mutation 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > C2a refuses raw whitespace mutation 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > C2a refuses fixed raw span omission 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > C2a refuses fixed raw span duplication 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > C2a refuses fixed raw span valid reorder 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > C2a freshly refuses missing physical tests/helpers/ir-runtime-program-policy-runtime-preparation.json after success 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > C2a freshly refuses mutation physical tests/helpers/ir-runtime-program-policy-runtime-preparation.json after success 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > C2a freshly refuses missing physical tests/helpers/ir-runtime-program-policy-evolution.ts after success 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > C2a freshly refuses mutation physical tests/helpers/ir-runtime-program-policy-evolution.ts after success 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 75 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 canonical runtime data-contract seam > checks historical 'src/ir/runtime/contracts/manifest.ts' receipt after checked extension reconstruction
+Error: Test timed out in 35000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ tests/issue-3518-runtime-data-contract-seam.test.ts:434:24
+    432| 
+    433| describe("#3518 canonical runtime data-contract seam", () => {
+    434|   it.each(movedReceipts)("checks historical $path receipt after checke…
+       |                        ^
+    435|     const reconstructed =
+    436|       receipt.path === "src/ir/runtime/contracts/intrinsics.ts" ||
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/75]⎯
+
+ FAIL  tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 canonical runtime data-contract seam > checks historical retained 'src/ir/runtime-manifest.ts' receipt after checked extension reconstruction
+ FAIL  tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 canonical runtime data-contract seam > checks historical retained 'src/ir/intrinsic-support.ts' receipt after checked extension reconstruction
+Error: Test timed out in 35000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ tests/issue-3518-runtime-data-contract-seam.test.ts:463:27
+    461|   });
+    462| 
+    463|   it.each(retainedReceipts)(
+       |                           ^
+    464|     "checks historical retained $path receipt after checked extension …
+    465|     (receipt) => {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/75]⎯
+
+ FAIL  tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 runtime policy fixture capture > canonical3c6 independently proves full raw and semantic predecessor equal to original API
+ FAIL  tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 runtime policy fixture capture > currentMain independently proves full raw and semantic predecessor equal to original API
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ fixtureCaptureInput tests/issue-3518-runtime-data-contract-seam.test.ts:2676:25
+ ❯ tests/issue-3518-runtime-data-contract-seam.test.ts:2739:19
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/75]⎯
+
+ FAIL  tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 runtime policy fixture capture > canonical3c6 refuses boxed string before missing receipt witness
+ FAIL  tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 runtime policy fixture capture > currentMain refuses boxed string before missing receipt witness
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ fixtureCaptureInput tests/issue-3518-runtime-data-contract-seam.test.ts:2676:25
+ ❯ tests/issue-3518-runtime-data-contract-seam.test.ts:2773:21
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/75]⎯
+
+ FAIL  tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 runtime policy fixture capture > canonical3c6 refuses stale predecessor
+ FAIL  tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 runtime policy fixture capture > currentMain refuses stale predecessor
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ fixtureCaptureInput tests/issue-3518-runtime-data-contract-seam.test.ts:2676:25
+ ❯ tests/issue-3518-runtime-data-contract-seam.test.ts:2780:21
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/75]⎯
+
+ FAIL  tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 runtime policy fixture capture > canonical3c6 refuses valid JSON retained row mutation
+ FAIL  tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 runtime policy fixture capture > currentMain refuses valid JSON retained row mutation
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ fixtureCaptureInput tests/issue-3518-runtime-data-contract-seam.test.ts:2676:25
+ ❯ tests/issue-3518-runtime-data-contract-seam.test.ts:2785:21
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/75]⎯
+
+ FAIL  tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 runtime policy fixture capture > canonical3c6 refuses raw whitespace mutation
+ FAIL  tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 runtime policy fixture capture > currentMain refuses raw whitespace mutation
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ fixtureCaptureInput tests/issue-3518-runtime-data-contract-seam.test.ts:2676:25
+ ❯ tests/issue-3518-runtime-data-contract-seam.test.ts:2793:21
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/75]⎯
+
+ FAIL  tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 runtime policy fixture capture > canonical3c6 refuses original domain span omission
+ FAIL  tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 runtime policy fixture capture > canonical3c6 refuses original domain span duplication
+ FAIL  tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 runtime policy fixture capture > canonical3c6 refuses original domain span valid reorder
+ FAIL  tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 runtime policy fixture capture > currentMain refuses original domain span omission
+ FAIL  tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 runtime policy fixture capture > currentMain refuses original domain span duplication
+ FAIL  tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 runtime policy fixture capture > currentMain refuses original domain span valid reorder
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ fixtureCaptureInput tests/issue-3518-runtime-data-contract-seam.test.ts:2676:25
+ ❯ tests/issue-3518-runtime-data-contract-seam.test.ts:2798:23
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/75]⎯
+
+ FAIL  tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 runtime policy fixture capture > canonical3c6 freshly refuses missing physical tests/helpers/ir-runtime-program-policy-canonical-3c6.json after success
+ FAIL  tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 runtime policy fixture capture > canonical3c6 freshly refuses mutation physical tests/helpers/ir-runtime-program-policy-canonical-3c6.json after success
+ FAIL  tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 runtime policy fixture capture > canonical3c6 freshly refuses missing physical tests/helpers/ir-runtime-program-policy-evolution.ts after success
+ FAIL  tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 runtime policy fixture capture > canonical3c6 freshly refuses mutation physical tests/helpers/ir-runtime-program-policy-evolution.ts after success
+ FAIL  tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 runtime policy fixture capture > currentMain freshly refuses missing physical tests/helpers/ir-runtime-program-policy-main-inventory-20261002.json after success
+ FAIL  tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 runtime policy fixture capture > currentMain freshly refuses mutation physical tests/helpers/ir-runtime-program-policy-main-inventory-20261002.json after success
+ FAIL  tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 runtime policy fixture capture > currentMain freshly refuses missing physical tests/helpers/ir-runtime-program-policy-evolution.ts after success
+ FAIL  tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 runtime policy fixture capture > currentMain freshly refuses mutation physical tests/helpers/ir-runtime-program-policy-evolution.ts after success
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ fixtureCaptureInput tests/issue-3518-runtime-data-contract-seam.test.ts:2676:25
+ ❯ tests/issue-3518-runtime-data-contract-seam.test.ts:2805:25
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/75]⎯
+
+ FAIL  tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > generator independently proves fixed full profiles, local inverse and original full API
+ FAIL  tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > host independently proves fixed full profiles, local inverse and original full API
+ FAIL  tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > dynamic independently proves fixed full profiles, local inverse and original full API
+ FAIL  tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > C2a independently proves fixed full profiles, local inverse and original full API
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ fourStageCaptureInput tests/issue-3518-runtime-data-contract-seam.test.ts:3404:29
+ ❯ tests/issue-3518-runtime-data-contract-seam.test.ts:3483:21
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/75]⎯
+
+ FAIL  tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > generator refuses boxed string before missing receipt witness
+ FAIL  tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > host refuses boxed string before missing receipt witness
+ FAIL  tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > dynamic refuses boxed string before missing receipt witness
+ FAIL  tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > C2a refuses boxed string before missing receipt witness
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ fourStageCaptureInput tests/issue-3518-runtime-data-contract-seam.test.ts:3404:29
+ ❯ tests/issue-3518-runtime-data-contract-seam.test.ts:3551:21
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[11/75]⎯
+
+ FAIL  tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > generator refuses stale predecessor
+ FAIL  tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > host refuses stale predecessor
+ FAIL  tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > dynamic refuses stale predecessor
+ FAIL  tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > C2a refuses stale predecessor
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ fourStageCaptureInput tests/issue-3518-runtime-data-contract-seam.test.ts:3404:29
+ ❯ tests/issue-3518-runtime-data-contract-seam.test.ts:3558:21
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[12/75]⎯
+
+ FAIL  tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > generator refuses valid JSON retained row mutation
+ FAIL  tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > host refuses valid JSON retained row mutation
+ FAIL  tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > dynamic refuses valid JSON retained row mutation
+ FAIL  tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > C2a refuses valid JSON retained row mutation
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ fourStageCaptureInput tests/issue-3518-runtime-data-contract-seam.test.ts:3404:29
+ ❯ tests/issue-3518-runtime-data-contract-seam.test.ts:3563:21
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[13/75]⎯
+
+ FAIL  tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > generator refuses raw whitespace mutation
+ FAIL  tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > host refuses raw whitespace mutation
+ FAIL  tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > dynamic refuses raw whitespace mutation
+ FAIL  tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > C2a refuses raw whitespace mutation
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ fourStageCaptureInput tests/issue-3518-runtime-data-contract-seam.test.ts:3404:29
+ ❯ tests/issue-3518-runtime-data-contract-seam.test.ts:3571:21
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[14/75]⎯
+
+ FAIL  tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > generator refuses fixed raw span omission
+ FAIL  tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > generator refuses fixed raw span duplication
+ FAIL  tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > generator refuses fixed raw span valid reorder
+ FAIL  tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > host refuses fixed raw span omission
+ FAIL  tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > host refuses fixed raw span duplication
+ FAIL  tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > host refuses fixed raw span valid reorder
+ FAIL  tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > dynamic refuses fixed raw span omission
+ FAIL  tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > dynamic refuses fixed raw span duplication
+ FAIL  tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > dynamic refuses fixed raw span valid reorder
+ FAIL  tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > C2a refuses fixed raw span omission
+ FAIL  tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > C2a refuses fixed raw span duplication
+ FAIL  tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > C2a refuses fixed raw span valid reorder
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ fourStageCaptureInput tests/issue-3518-runtime-data-contract-seam.test.ts:3404:29
+ ❯ tests/issue-3518-runtime-data-contract-seam.test.ts:3576:23
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[15/75]⎯
+
+ FAIL  tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > generator freshly refuses missing physical tests/helpers/ir-runtime-program-policy-generator-eager-refusal.json after success
+ FAIL  tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > generator freshly refuses mutation physical tests/helpers/ir-runtime-program-policy-generator-eager-refusal.json after success
+ FAIL  tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > generator freshly refuses missing physical tests/helpers/ir-runtime-program-policy-evolution.ts after success
+ FAIL  tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > generator freshly refuses mutation physical tests/helpers/ir-runtime-program-policy-evolution.ts after success
+ FAIL  tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > host freshly refuses missing physical tests/helpers/ir-runtime-program-policy-host-carrier.json after success
+ FAIL  tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > host freshly refuses mutation physical tests/helpers/ir-runtime-program-policy-host-carrier.json after success
+ FAIL  tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > host freshly refuses missing physical tests/helpers/ir-runtime-program-policy-evolution.ts after success
+ FAIL  tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > host freshly refuses mutation physical tests/helpers/ir-runtime-program-policy-evolution.ts after success
+ FAIL  tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > dynamic freshly refuses missing physical tests/helpers/ir-runtime-program-policy-dynamic-code.json after success
+ FAIL  tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > dynamic freshly refuses mutation physical tests/helpers/ir-runtime-program-policy-dynamic-code.json after success
+ FAIL  tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > dynamic freshly refuses missing physical tests/helpers/ir-runtime-program-policy-evolution.ts after success
+ FAIL  tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > dynamic freshly refuses mutation physical tests/helpers/ir-runtime-program-policy-evolution.ts after success
+ FAIL  tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > C2a freshly refuses missing physical tests/helpers/ir-runtime-program-policy-runtime-preparation.json after success
+ FAIL  tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > C2a freshly refuses mutation physical tests/helpers/ir-runtime-program-policy-runtime-preparation.json after success
+ FAIL  tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > C2a freshly refuses missing physical tests/helpers/ir-runtime-program-policy-evolution.ts after success
+ FAIL  tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 four-stage runtime policy fixture capture > C2a freshly refuses mutation physical tests/helpers/ir-runtime-program-policy-evolution.ts after success
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ fourStageCaptureInput tests/issue-3518-runtime-data-contract-seam.test.ts:3404:29
+ ❯ tests/issue-3518-runtime-data-contract-seam.test.ts:3583:25
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[16/75]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  75 failed | 72 passed (147)
+   Start at  22:25:03
+   Duration  148.41s (transform 1.10s, setup 0ms, collect 1.99s, tests 145.94s, environment 0ms, prepare 72ms)
+

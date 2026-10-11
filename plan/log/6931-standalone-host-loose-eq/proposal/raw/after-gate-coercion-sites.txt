@@ -1,0 +1,1 @@
+coercion-sites gate: OK (no net vocabulary growth across 2 changed codegen file(s); base: merge-base(origin)).

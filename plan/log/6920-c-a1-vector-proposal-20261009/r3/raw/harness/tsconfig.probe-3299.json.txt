@@ -1,0 +1,6 @@
+{
+  "extends": "../tsconfig.ts7.json",
+  "compilerOptions": { "noEmit": true, "rootDir": ".." },
+  "include": ["../tests/issue-3299.test.ts", "../tests/issue-3518-lowering-cycle.test.ts", "../tests/issue-6920-vector-representation.test.ts", "../src/**/*.ts"],
+  "exclude": []
+}

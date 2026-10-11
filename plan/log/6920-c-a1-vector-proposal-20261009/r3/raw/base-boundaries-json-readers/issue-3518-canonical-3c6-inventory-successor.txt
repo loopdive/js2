@@ -1,0 +1,881 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > binds the exact fixed receipt and inventory-only authority domain 234ms
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > derives genuine1782 raw/semantic predecessors and replays all26 additions 18ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > preserves all retained rows/layers/history/edges and C2a ownership 5ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing row src/codegen/object-model/native-names.ts 8ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses duplicate row src/codegen/object-model/native-names.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses changed six ownership fields src/codegen/object-model/native-names.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses row schema/order changes src/codegen/object-model/native-names.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses neighbor and reordered membership src/codegen/object-model/native-names.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ ✓ tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses receipt coordinates and neighbors src/codegen/object-model/native-names.ts 8ms
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing row src/codegen/object-model/ports.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses duplicate row src/codegen/object-model/ports.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses changed six ownership fields src/codegen/object-model/ports.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses row schema/order changes src/codegen/object-model/ports.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses neighbor and reordered membership src/codegen/object-model/ports.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ ✓ tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses receipt coordinates and neighbors src/codegen/object-model/ports.ts 7ms
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing row src/codegen/array/array-ctor-this.ts 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses duplicate row src/codegen/array/array-ctor-this.ts 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses changed six ownership fields src/codegen/array/array-ctor-this.ts 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses row schema/order changes src/codegen/array/array-ctor-this.ts 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses neighbor and reordered membership src/codegen/array/array-ctor-this.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ ✓ tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses receipt coordinates and neighbors src/codegen/array/array-ctor-this.ts 11ms
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing row src/codegen/array/array-copywithin-native.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses duplicate row src/codegen/array/array-copywithin-native.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses changed six ownership fields src/codegen/array/array-copywithin-native.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses row schema/order changes src/codegen/array/array-copywithin-native.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses neighbor and reordered membership src/codegen/array/array-copywithin-native.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ ✓ tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses receipt coordinates and neighbors src/codegen/array/array-copywithin-native.ts 6ms
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing row src/codegen/array/array-length-holes.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses duplicate row src/codegen/array/array-length-holes.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses changed six ownership fields src/codegen/array/array-length-holes.ts 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses row schema/order changes src/codegen/array/array-length-holes.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses neighbor and reordered membership src/codegen/array/array-length-holes.ts 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ ✓ tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses receipt coordinates and neighbors src/codegen/array/array-length-holes.ts 5ms
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing row src/codegen/array/array-like-exotic-arms.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses duplicate row src/codegen/array/array-like-exotic-arms.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses changed six ownership fields src/codegen/array/array-like-exotic-arms.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses row schema/order changes src/codegen/array/array-like-exotic-arms.ts 6ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses neighbor and reordered membership src/codegen/array/array-like-exotic-arms.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ ✓ tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses receipt coordinates and neighbors src/codegen/array/array-like-exotic-arms.ts 4ms
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing row src/codegen/array/array-set-length-coercion.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses duplicate row src/codegen/array/array-set-length-coercion.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses changed six ownership fields src/codegen/array/array-set-length-coercion.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses row schema/order changes src/codegen/array/array-set-length-coercion.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses neighbor and reordered membership src/codegen/array/array-set-length-coercion.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ ✓ tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses receipt coordinates and neighbors src/codegen/array/array-set-length-coercion.ts 7ms
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing row src/codegen/array/array-unscopables.ts 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses duplicate row src/codegen/array/array-unscopables.ts 5ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses changed six ownership fields src/codegen/array/array-unscopables.ts 8ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses row schema/order changes src/codegen/array/array-unscopables.ts 5ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses neighbor and reordered membership src/codegen/array/array-unscopables.ts 5ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ ✓ tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses receipt coordinates and neighbors src/codegen/array/array-unscopables.ts 13ms
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing row src/codegen/expressions/bool-to-locale-string.ts 5ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses duplicate row src/codegen/expressions/bool-to-locale-string.ts 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses changed six ownership fields src/codegen/expressions/bool-to-locale-string.ts 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses row schema/order changes src/codegen/expressions/bool-to-locale-string.ts 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses neighbor and reordered membership src/codegen/expressions/bool-to-locale-string.ts 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ ✓ tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses receipt coordinates and neighbors src/codegen/expressions/bool-to-locale-string.ts 8ms
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing row src/codegen/object-model/define-rejection-channel.ts 5ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses duplicate row src/codegen/object-model/define-rejection-channel.ts 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses changed six ownership fields src/codegen/object-model/define-rejection-channel.ts 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses row schema/order changes src/codegen/object-model/define-rejection-channel.ts 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses neighbor and reordered membership src/codegen/object-model/define-rejection-channel.ts 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ ✓ tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses receipt coordinates and neighbors src/codegen/object-model/define-rejection-channel.ts 8ms
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing row src/codegen/expressions/eval-param-scope-hoist.ts 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses duplicate row src/codegen/expressions/eval-param-scope-hoist.ts 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses changed six ownership fields src/codegen/expressions/eval-param-scope-hoist.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses row schema/order changes src/codegen/expressions/eval-param-scope-hoist.ts 8ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses neighbor and reordered membership src/codegen/expressions/eval-param-scope-hoist.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ ✓ tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses receipt coordinates and neighbors src/codegen/expressions/eval-param-scope-hoist.ts 4ms
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing row src/codegen/helpers/core-delegates.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses duplicate row src/codegen/helpers/core-delegates.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses changed six ownership fields src/codegen/helpers/core-delegates.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses row schema/order changes src/codegen/helpers/core-delegates.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses neighbor and reordered membership src/codegen/helpers/core-delegates.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ ✓ tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses receipt coordinates and neighbors src/codegen/helpers/core-delegates.ts 4ms
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing row src/codegen/helpers/reserved-helper-funcs.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses duplicate row src/codegen/helpers/reserved-helper-funcs.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses changed six ownership fields src/codegen/helpers/reserved-helper-funcs.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses row schema/order changes src/codegen/helpers/reserved-helper-funcs.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses neighbor and reordered membership src/codegen/helpers/reserved-helper-funcs.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ ✓ tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses receipt coordinates and neighbors src/codegen/helpers/reserved-helper-funcs.ts 7ms
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing row src/codegen/expressions/tagged-template-standalone.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses duplicate row src/codegen/expressions/tagged-template-standalone.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses changed six ownership fields src/codegen/expressions/tagged-template-standalone.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses row schema/order changes src/codegen/expressions/tagged-template-standalone.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses neighbor and reordered membership src/codegen/expressions/tagged-template-standalone.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ ✓ tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses receipt coordinates and neighbors src/codegen/expressions/tagged-template-standalone.ts 4ms
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing row src/codegen/expressions/eval-spread-args.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses duplicate row src/codegen/expressions/eval-spread-args.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses changed six ownership fields src/codegen/expressions/eval-spread-args.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses row schema/order changes src/codegen/expressions/eval-spread-args.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses neighbor and reordered membership src/codegen/expressions/eval-spread-args.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ ✓ tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses receipt coordinates and neighbors src/codegen/expressions/eval-spread-args.ts 6ms
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing row src/codegen/expressions/with-call-binding.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses duplicate row src/codegen/expressions/with-call-binding.ts 7ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses changed six ownership fields src/codegen/expressions/with-call-binding.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses row schema/order changes src/codegen/expressions/with-call-binding.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses neighbor and reordered membership src/codegen/expressions/with-call-binding.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ ✓ tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses receipt coordinates and neighbors src/codegen/expressions/with-call-binding.ts 4ms
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing row src/codegen/expressions/new-target-value.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses duplicate row src/codegen/expressions/new-target-value.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses changed six ownership fields src/codegen/expressions/new-target-value.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses row schema/order changes src/codegen/expressions/new-target-value.ts 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses neighbor and reordered membership src/codegen/expressions/new-target-value.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ ✓ tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses receipt coordinates and neighbors src/codegen/expressions/new-target-value.ts 4ms
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing row src/codegen/object-model/object-assign-primitive-operands.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses duplicate row src/codegen/object-model/object-assign-primitive-operands.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses changed six ownership fields src/codegen/object-model/object-assign-primitive-operands.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses row schema/order changes src/codegen/object-model/object-assign-primitive-operands.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses neighbor and reordered membership src/codegen/object-model/object-assign-primitive-operands.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ ✓ tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses receipt coordinates and neighbors src/codegen/object-model/object-assign-primitive-operands.ts 4ms
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing row src/codegen/object-model/object-literal-reflective-escape.ts 7ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses duplicate row src/codegen/object-model/object-literal-reflective-escape.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses changed six ownership fields src/codegen/object-model/object-literal-reflective-escape.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses row schema/order changes src/codegen/object-model/object-literal-reflective-escape.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses neighbor and reordered membership src/codegen/object-model/object-literal-reflective-escape.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ ✓ tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses receipt coordinates and neighbors src/codegen/object-model/object-literal-reflective-escape.ts 4ms
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing row src/codegen/object-model/object-own-key-order.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses duplicate row src/codegen/object-model/object-own-key-order.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses changed six ownership fields src/codegen/object-model/object-own-key-order.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses row schema/order changes src/codegen/object-model/object-own-key-order.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses neighbor and reordered membership src/codegen/object-model/object-own-key-order.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ ✓ tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses receipt coordinates and neighbors src/codegen/object-model/object-own-key-order.ts 4ms
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing row src/codegen/object-model/object-proto-to-locale-string.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses duplicate row src/codegen/object-model/object-proto-to-locale-string.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses changed six ownership fields src/codegen/object-model/object-proto-to-locale-string.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses row schema/order changes src/codegen/object-model/object-proto-to-locale-string.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses neighbor and reordered membership src/codegen/object-model/object-proto-to-locale-string.ts 6ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ ✓ tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses receipt coordinates and neighbors src/codegen/object-model/object-proto-to-locale-string.ts 5ms
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing row src/codegen/object-model/proxy-own-keys-surfaces.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses duplicate row src/codegen/object-model/proxy-own-keys-surfaces.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses changed six ownership fields src/codegen/object-model/proxy-own-keys-surfaces.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses row schema/order changes src/codegen/object-model/proxy-own-keys-surfaces.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses neighbor and reordered membership src/codegen/object-model/proxy-own-keys-surfaces.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ ✓ tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses receipt coordinates and neighbors src/codegen/object-model/proxy-own-keys-surfaces.ts 3ms
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing row src/codegen/object-model/proxy-trap-read.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses duplicate row src/codegen/object-model/proxy-trap-read.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses changed six ownership fields src/codegen/object-model/proxy-trap-read.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses row schema/order changes src/codegen/object-model/proxy-trap-read.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses neighbor and reordered membership src/codegen/object-model/proxy-trap-read.ts 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ ✓ tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses receipt coordinates and neighbors src/codegen/object-model/proxy-trap-read.ts 4ms
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing row src/codegen/closures/proxy-trap-closure-return.ts 5ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses duplicate row src/codegen/closures/proxy-trap-closure-return.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses changed six ownership fields src/codegen/closures/proxy-trap-closure-return.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses row schema/order changes src/codegen/closures/proxy-trap-closure-return.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses neighbor and reordered membership src/codegen/closures/proxy-trap-closure-return.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ ✓ tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses receipt coordinates and neighbors src/codegen/closures/proxy-trap-closure-return.ts 4ms
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing row src/codegen/registry/expression-helper-delegates.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses duplicate row src/codegen/registry/expression-helper-delegates.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses changed six ownership fields src/codegen/registry/expression-helper-delegates.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses row schema/order changes src/codegen/registry/expression-helper-delegates.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses neighbor and reordered membership src/codegen/registry/expression-helper-delegates.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ ✓ tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses receipt coordinates and neighbors src/codegen/registry/expression-helper-delegates.ts 4ms
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing row src/codegen/array/vec-elem-fidelity.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses duplicate row src/codegen/array/vec-elem-fidelity.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses changed six ownership fields src/codegen/array/vec-elem-fidelity.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses row schema/order changes src/codegen/array/vec-elem-fidelity.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses neighbor and reordered membership src/codegen/array/vec-elem-fidelity.ts 5ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ ✓ tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses receipt coordinates and neighbors src/codegen/array/vec-elem-fidelity.ts 4ms
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing/duplicate/reordered raw insertion group 0 8ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ ✓ tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses receipt span coordinate/text confusion 0 6ms
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing/duplicate/reordered raw insertion group 1 7ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ ✓ tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses receipt span coordinate/text confusion 1 4ms
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing/duplicate/reordered raw insertion group 2 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ ✓ tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses receipt span coordinate/text confusion 2 4ms
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing/duplicate/reordered raw insertion group 3 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ ✓ tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses receipt span coordinate/text confusion 3 6ms
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing/duplicate/reordered raw insertion group 4 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ ✓ tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses receipt span coordinate/text confusion 4 5ms
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing/duplicate/reordered raw insertion group 5 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ ✓ tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses receipt span coordinate/text confusion 5 3ms
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing/duplicate/reordered raw insertion group 6 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ ✓ tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses receipt span coordinate/text confusion 6 3ms
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing/duplicate/reordered raw insertion group 7 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ ✓ tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses receipt span coordinate/text confusion 7 4ms
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing/duplicate/reordered raw insertion group 8 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ ✓ tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses receipt span coordinate/text confusion 8 7ms
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing/duplicate/reordered raw insertion group 9 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ ✓ tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses receipt span coordinate/text confusion 9 4ms
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing/duplicate/reordered raw insertion group 10 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ ✓ tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses receipt span coordinate/text confusion 10 4ms
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing/duplicate/reordered raw insertion group 11 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ ✓ tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses receipt span coordinate/text confusion 11 4ms
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing/duplicate/reordered raw insertion group 12 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ ✓ tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses receipt span coordinate/text confusion 12 4ms
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing/duplicate/reordered raw insertion group 13 5ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ ✓ tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses receipt span coordinate/text confusion 13 4ms
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing/duplicate/reordered raw insertion group 14 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ ✓ tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses receipt span coordinate/text confusion 14 4ms
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing/duplicate/reordered raw insertion group 15 6ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ ✓ tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses receipt span coordinate/text confusion 15 4ms
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing/duplicate/reordered raw insertion group 16 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ ✓ tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses receipt span coordinate/text confusion 16 3ms
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing/duplicate/reordered raw insertion group 17 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ ✓ tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses receipt span coordinate/text confusion 17 4ms
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing/duplicate/reordered raw insertion group 18 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ ✓ tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses receipt span coordinate/text confusion 18 4ms
+ ✓ tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses receipt field/domain mutation schema 1ms
+ ✓ tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses receipt field/domain mutation kind 1ms
+ ✓ tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses receipt field/domain mutation provenance 1ms
+ ✓ tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses receipt field/domain mutation before 1ms
+ ✓ tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses receipt field/domain mutation current 1ms
+ ✓ tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses receipt field/domain mutation helperPrefix 2ms
+ ✓ tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses receipt field/domain mutation predecessorReceipt 1ms
+ ✓ tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses receipt field/domain mutation rowChanges 0ms
+ ✓ tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses receipt field/domain mutation raw 1ms
+ ✓ tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses unknown receipt fields and reordered addition/groups 4ms
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses unrelated retained rows and top-level field changes 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses stale1782 and double-projected domains 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > freshly rereads accepted caller mutations without caching or normalization 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > freshly refuses mutation physical tests/helpers/ir-runtime-program-policy-canonical-3c6.json through receipt after success 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > freshly refuses mutation physical tests/helpers/ir-runtime-program-policy-canonical-3c6.json through semantic after success 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > freshly refuses mutation physical tests/helpers/ir-runtime-program-policy-canonical-3c6.json through raw after success 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > freshly refuses missing physical tests/helpers/ir-runtime-program-policy-canonical-3c6.json through receipt after success 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > freshly refuses missing physical tests/helpers/ir-runtime-program-policy-canonical-3c6.json through semantic after success 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > freshly refuses missing physical tests/helpers/ir-runtime-program-policy-canonical-3c6.json through raw after success 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > freshly refuses mutation physical tests/helpers/ir-runtime-program-policy-evolution.ts through receipt after success 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > freshly refuses mutation physical tests/helpers/ir-runtime-program-policy-evolution.ts through semantic after success 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > freshly refuses mutation physical tests/helpers/ir-runtime-program-policy-evolution.ts through raw after success 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > freshly refuses missing physical tests/helpers/ir-runtime-program-policy-evolution.ts through receipt after success 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > freshly refuses missing physical tests/helpers/ir-runtime-program-policy-evolution.ts through semantic after success 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > freshly refuses missing physical tests/helpers/ir-runtime-program-policy-evolution.ts through raw after success 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > primitive raw refusal precedes missing authority [object Null] 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > primitive raw refusal precedes missing authority [object Number] 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > primitive raw refusal precedes missing authority [object Object] 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > primitive raw refusal precedes missing authority [object String] 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > accessor refusal precedes authority IO and does not execute getters 5ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > proxy descriptor refusal precedes missing authority 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > cycle refusal precedes missing authority 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ ✓ tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > semantic primitive/array refusal precedes missing authority [object Null] 4ms
+ ✓ tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > semantic primitive/array refusal precedes missing authority [object Number] 2ms
+ ✓ tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > semantic primitive/array refusal precedes missing authority [object String] 2ms
+ ✓ tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > semantic primitive/array refusal precedes missing authority [object Array] 1ms
+ ✓ tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > semantic primitive/array refusal precedes missing authority [object Boolean] 1ms
+ × tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > hidden/symbol/sparse/inherited descriptors refuse before missing authority 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 174 ⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > derives genuine1782 raw/semantic predecessors and replays all26 additions
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-canonical-3c6-inventory-successor.test.ts:1440:25
+ ❯ tests/issue-3518-canonical-3c6-inventory-successor.test.ts:1639:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/174]⎯
+
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > preserves all retained rows/layers/history/edges and C2a ownership
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-canonical-3c6-inventory-successor.test.ts:1440:25
+ ❯ policy tests/issue-3518-canonical-3c6-inventory-successor.test.ts:1456:41
+ ❯ tests/issue-3518-canonical-3c6-inventory-successor.test.ts:1658:15
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/174]⎯
+
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing row src/codegen/object-model/native-names.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing row src/codegen/object-model/ports.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing row src/codegen/array/array-ctor-this.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing row src/codegen/array/array-copywithin-native.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing row src/codegen/array/array-length-holes.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing row src/codegen/array/array-like-exotic-arms.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing row src/codegen/array/array-set-length-coercion.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing row src/codegen/array/array-unscopables.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing row src/codegen/expressions/bool-to-locale-string.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing row src/codegen/object-model/define-rejection-channel.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing row src/codegen/expressions/eval-param-scope-hoist.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing row src/codegen/helpers/core-delegates.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing row src/codegen/helpers/reserved-helper-funcs.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing row src/codegen/expressions/tagged-template-standalone.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing row src/codegen/expressions/eval-spread-args.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing row src/codegen/expressions/with-call-binding.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing row src/codegen/expressions/new-target-value.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing row src/codegen/object-model/object-assign-primitive-operands.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing row src/codegen/object-model/object-literal-reflective-escape.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing row src/codegen/object-model/object-own-key-order.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing row src/codegen/object-model/object-proto-to-locale-string.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing row src/codegen/object-model/proxy-own-keys-surfaces.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing row src/codegen/object-model/proxy-trap-read.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing row src/codegen/closures/proxy-trap-closure-return.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing row src/codegen/registry/expression-helper-delegates.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing row src/codegen/array/vec-elem-fidelity.ts
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-canonical-3c6-inventory-successor.test.ts:1440:25
+ ❯ policy tests/issue-3518-canonical-3c6-inventory-successor.test.ts:1456:41
+ ❯ tests/issue-3518-canonical-3c6-inventory-successor.test.ts:1671:17
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/174]⎯
+
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses duplicate row src/codegen/object-model/native-names.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses duplicate row src/codegen/object-model/ports.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses duplicate row src/codegen/array/array-ctor-this.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses duplicate row src/codegen/array/array-copywithin-native.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses duplicate row src/codegen/array/array-length-holes.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses duplicate row src/codegen/array/array-like-exotic-arms.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses duplicate row src/codegen/array/array-set-length-coercion.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses duplicate row src/codegen/array/array-unscopables.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses duplicate row src/codegen/expressions/bool-to-locale-string.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses duplicate row src/codegen/object-model/define-rejection-channel.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses duplicate row src/codegen/expressions/eval-param-scope-hoist.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses duplicate row src/codegen/helpers/core-delegates.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses duplicate row src/codegen/helpers/reserved-helper-funcs.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses duplicate row src/codegen/expressions/tagged-template-standalone.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses duplicate row src/codegen/expressions/eval-spread-args.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses duplicate row src/codegen/expressions/with-call-binding.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses duplicate row src/codegen/expressions/new-target-value.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses duplicate row src/codegen/object-model/object-assign-primitive-operands.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses duplicate row src/codegen/object-model/object-literal-reflective-escape.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses duplicate row src/codegen/object-model/object-own-key-order.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses duplicate row src/codegen/object-model/object-proto-to-locale-string.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses duplicate row src/codegen/object-model/proxy-own-keys-surfaces.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses duplicate row src/codegen/object-model/proxy-trap-read.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses duplicate row src/codegen/closures/proxy-trap-closure-return.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses duplicate row src/codegen/registry/expression-helper-delegates.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses duplicate row src/codegen/array/vec-elem-fidelity.ts
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-canonical-3c6-inventory-successor.test.ts:1440:25
+ ❯ policy tests/issue-3518-canonical-3c6-inventory-successor.test.ts:1456:41
+ ❯ tests/issue-3518-canonical-3c6-inventory-successor.test.ts:1676:17
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/174]⎯
+
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses changed six ownership fields src/codegen/object-model/native-names.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses changed six ownership fields src/codegen/object-model/ports.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses changed six ownership fields src/codegen/array/array-ctor-this.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses changed six ownership fields src/codegen/array/array-copywithin-native.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses changed six ownership fields src/codegen/array/array-length-holes.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses changed six ownership fields src/codegen/array/array-like-exotic-arms.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses changed six ownership fields src/codegen/array/array-set-length-coercion.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses changed six ownership fields src/codegen/array/array-unscopables.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses changed six ownership fields src/codegen/expressions/bool-to-locale-string.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses changed six ownership fields src/codegen/object-model/define-rejection-channel.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses changed six ownership fields src/codegen/expressions/eval-param-scope-hoist.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses changed six ownership fields src/codegen/helpers/core-delegates.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses changed six ownership fields src/codegen/helpers/reserved-helper-funcs.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses changed six ownership fields src/codegen/expressions/tagged-template-standalone.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses changed six ownership fields src/codegen/expressions/eval-spread-args.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses changed six ownership fields src/codegen/expressions/with-call-binding.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses changed six ownership fields src/codegen/expressions/new-target-value.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses changed six ownership fields src/codegen/object-model/object-assign-primitive-operands.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses changed six ownership fields src/codegen/object-model/object-literal-reflective-escape.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses changed six ownership fields src/codegen/object-model/object-own-key-order.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses changed six ownership fields src/codegen/object-model/object-proto-to-locale-string.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses changed six ownership fields src/codegen/object-model/proxy-own-keys-surfaces.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses changed six ownership fields src/codegen/object-model/proxy-trap-read.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses changed six ownership fields src/codegen/closures/proxy-trap-closure-return.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses changed six ownership fields src/codegen/registry/expression-helper-delegates.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses changed six ownership fields src/codegen/array/vec-elem-fidelity.ts
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-canonical-3c6-inventory-successor.test.ts:1440:25
+ ❯ policy tests/issue-3518-canonical-3c6-inventory-successor.test.ts:1456:41
+ ❯ tests/issue-3518-canonical-3c6-inventory-successor.test.ts:1682:19
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/174]⎯
+
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses row schema/order changes src/codegen/object-model/native-names.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses row schema/order changes src/codegen/object-model/ports.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses row schema/order changes src/codegen/array/array-ctor-this.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses row schema/order changes src/codegen/array/array-copywithin-native.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses row schema/order changes src/codegen/array/array-length-holes.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses row schema/order changes src/codegen/array/array-like-exotic-arms.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses row schema/order changes src/codegen/array/array-set-length-coercion.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses row schema/order changes src/codegen/array/array-unscopables.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses row schema/order changes src/codegen/expressions/bool-to-locale-string.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses row schema/order changes src/codegen/object-model/define-rejection-channel.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses row schema/order changes src/codegen/expressions/eval-param-scope-hoist.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses row schema/order changes src/codegen/helpers/core-delegates.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses row schema/order changes src/codegen/helpers/reserved-helper-funcs.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses row schema/order changes src/codegen/expressions/tagged-template-standalone.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses row schema/order changes src/codegen/expressions/eval-spread-args.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses row schema/order changes src/codegen/expressions/with-call-binding.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses row schema/order changes src/codegen/expressions/new-target-value.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses row schema/order changes src/codegen/object-model/object-assign-primitive-operands.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses row schema/order changes src/codegen/object-model/object-literal-reflective-escape.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses row schema/order changes src/codegen/object-model/object-own-key-order.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses row schema/order changes src/codegen/object-model/object-proto-to-locale-string.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses row schema/order changes src/codegen/object-model/proxy-own-keys-surfaces.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses row schema/order changes src/codegen/object-model/proxy-trap-read.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses row schema/order changes src/codegen/closures/proxy-trap-closure-return.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses row schema/order changes src/codegen/registry/expression-helper-delegates.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses row schema/order changes src/codegen/array/vec-elem-fidelity.ts
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-canonical-3c6-inventory-successor.test.ts:1440:25
+ ❯ policy tests/issue-3518-canonical-3c6-inventory-successor.test.ts:1456:41
+ ❯ tests/issue-3518-canonical-3c6-inventory-successor.test.ts:1688:17
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/174]⎯
+
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses neighbor and reordered membership src/codegen/object-model/native-names.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses neighbor and reordered membership src/codegen/object-model/ports.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses neighbor and reordered membership src/codegen/array/array-ctor-this.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses neighbor and reordered membership src/codegen/array/array-copywithin-native.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses neighbor and reordered membership src/codegen/array/array-length-holes.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses neighbor and reordered membership src/codegen/array/array-like-exotic-arms.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses neighbor and reordered membership src/codegen/array/array-set-length-coercion.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses neighbor and reordered membership src/codegen/array/array-unscopables.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses neighbor and reordered membership src/codegen/expressions/bool-to-locale-string.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses neighbor and reordered membership src/codegen/object-model/define-rejection-channel.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses neighbor and reordered membership src/codegen/expressions/eval-param-scope-hoist.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses neighbor and reordered membership src/codegen/helpers/core-delegates.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses neighbor and reordered membership src/codegen/helpers/reserved-helper-funcs.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses neighbor and reordered membership src/codegen/expressions/tagged-template-standalone.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses neighbor and reordered membership src/codegen/expressions/eval-spread-args.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses neighbor and reordered membership src/codegen/expressions/with-call-binding.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses neighbor and reordered membership src/codegen/expressions/new-target-value.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses neighbor and reordered membership src/codegen/object-model/object-assign-primitive-operands.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses neighbor and reordered membership src/codegen/object-model/object-literal-reflective-escape.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses neighbor and reordered membership src/codegen/object-model/object-own-key-order.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses neighbor and reordered membership src/codegen/object-model/object-proto-to-locale-string.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses neighbor and reordered membership src/codegen/object-model/proxy-own-keys-surfaces.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses neighbor and reordered membership src/codegen/object-model/proxy-trap-read.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses neighbor and reordered membership src/codegen/closures/proxy-trap-closure-return.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses neighbor and reordered membership src/codegen/registry/expression-helper-delegates.ts
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses neighbor and reordered membership src/codegen/array/vec-elem-fidelity.ts
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-canonical-3c6-inventory-successor.test.ts:1440:25
+ ❯ policy tests/issue-3518-canonical-3c6-inventory-successor.test.ts:1456:41
+ ❯ tests/issue-3518-canonical-3c6-inventory-successor.test.ts:1696:17
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/174]⎯
+
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing/duplicate/reordered raw insertion group 0
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing/duplicate/reordered raw insertion group 1
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing/duplicate/reordered raw insertion group 2
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing/duplicate/reordered raw insertion group 3
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing/duplicate/reordered raw insertion group 4
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing/duplicate/reordered raw insertion group 5
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing/duplicate/reordered raw insertion group 6
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing/duplicate/reordered raw insertion group 7
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing/duplicate/reordered raw insertion group 8
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing/duplicate/reordered raw insertion group 9
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing/duplicate/reordered raw insertion group 10
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing/duplicate/reordered raw insertion group 11
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing/duplicate/reordered raw insertion group 12
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing/duplicate/reordered raw insertion group 13
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing/duplicate/reordered raw insertion group 14
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing/duplicate/reordered raw insertion group 15
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing/duplicate/reordered raw insertion group 16
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing/duplicate/reordered raw insertion group 17
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses missing/duplicate/reordered raw insertion group 18
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-canonical-3c6-inventory-successor.test.ts:1440:25
+ ❯ tests/issue-3518-canonical-3c6-inventory-successor.test.ts:1715:20
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/174]⎯
+
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses unrelated retained rows and top-level field changes
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-canonical-3c6-inventory-successor.test.ts:1440:25
+ ❯ policy tests/issue-3518-canonical-3c6-inventory-successor.test.ts:1456:41
+ ❯ tests/issue-3518-canonical-3c6-inventory-successor.test.ts:1759:15
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/174]⎯
+
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > refuses stale1782 and double-projected domains
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-canonical-3c6-inventory-successor.test.ts:1440:25
+ ❯ policy tests/issue-3518-canonical-3c6-inventory-successor.test.ts:1456:41
+ ❯ tests/issue-3518-canonical-3c6-inventory-successor.test.ts:1770:49
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/174]⎯
+
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > freshly rereads accepted caller mutations without caching or normalization
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-canonical-3c6-inventory-successor.test.ts:1440:25
+ ❯ policy tests/issue-3518-canonical-3c6-inventory-successor.test.ts:1456:41
+ ❯ tests/issue-3518-canonical-3c6-inventory-successor.test.ts:1778:15
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[11/174]⎯
+
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > freshly refuses mutation physical tests/helpers/ir-runtime-program-policy-canonical-3c6.json through receipt after success
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > freshly refuses mutation physical tests/helpers/ir-runtime-program-policy-canonical-3c6.json through semantic after success
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > freshly refuses mutation physical tests/helpers/ir-runtime-program-policy-canonical-3c6.json through raw after success
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > freshly refuses missing physical tests/helpers/ir-runtime-program-policy-canonical-3c6.json through receipt after success
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > freshly refuses missing physical tests/helpers/ir-runtime-program-policy-canonical-3c6.json through semantic after success
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > freshly refuses missing physical tests/helpers/ir-runtime-program-policy-canonical-3c6.json through raw after success
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > freshly refuses mutation physical tests/helpers/ir-runtime-program-policy-evolution.ts through receipt after success
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > freshly refuses mutation physical tests/helpers/ir-runtime-program-policy-evolution.ts through semantic after success
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > freshly refuses mutation physical tests/helpers/ir-runtime-program-policy-evolution.ts through raw after success
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > freshly refuses missing physical tests/helpers/ir-runtime-program-policy-evolution.ts through receipt after success
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > freshly refuses missing physical tests/helpers/ir-runtime-program-policy-evolution.ts through semantic after success
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > freshly refuses missing physical tests/helpers/ir-runtime-program-policy-evolution.ts through raw after success
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-canonical-3c6-inventory-successor.test.ts:1440:25
+ ❯ policy tests/issue-3518-canonical-3c6-inventory-successor.test.ts:1456:41
+ ❯ tests/issue-3518-canonical-3c6-inventory-successor.test.ts:1789:21
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[12/174]⎯
+
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > primitive raw refusal precedes missing authority [object Null]
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > primitive raw refusal precedes missing authority [object Number]
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > primitive raw refusal precedes missing authority [object Object]
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > primitive raw refusal precedes missing authority [object String]
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-canonical-3c6-inventory-successor.test.ts:1440:25
+ ❯ tests/issue-3518-canonical-3c6-inventory-successor.test.ts:1813:20
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[13/174]⎯
+
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > accessor refusal precedes authority IO and does not execute getters
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-canonical-3c6-inventory-successor.test.ts:1440:25
+ ❯ policy tests/issue-3518-canonical-3c6-inventory-successor.test.ts:1456:41
+ ❯ tests/issue-3518-canonical-3c6-inventory-successor.test.ts:1823:15
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[14/174]⎯
+
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > proxy descriptor refusal precedes missing authority
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-canonical-3c6-inventory-successor.test.ts:1440:25
+ ❯ policy tests/issue-3518-canonical-3c6-inventory-successor.test.ts:1456:41
+ ❯ tests/issue-3518-canonical-3c6-inventory-successor.test.ts:1839:25
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[15/174]⎯
+
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > cycle refusal precedes missing authority
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-canonical-3c6-inventory-successor.test.ts:1440:25
+ ❯ policy tests/issue-3518-canonical-3c6-inventory-successor.test.ts:1456:41
+ ❯ tests/issue-3518-canonical-3c6-inventory-successor.test.ts:1850:15
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[16/174]⎯
+
+ FAIL  tests/issue-3518-canonical-3c6-inventory-successor.test.ts > fixed inventory-only canonical 3c6 successor > hidden/symbol/sparse/inherited descriptors refuse before missing authority
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-canonical-3c6-inventory-successor.test.ts:1440:25
+ ❯ policy tests/issue-3518-canonical-3c6-inventory-successor.test.ts:1456:41
+ ❯ tests/issue-3518-canonical-3c6-inventory-successor.test.ts:1866:20
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[17/174]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  174 failed | 61 passed (235)
+   Start at  22:44:59
+   Duration  2.00s (transform 486ms, setup 0ms, collect 583ms, tests 1.02s, environment 0ms, prepare 67ms)
+

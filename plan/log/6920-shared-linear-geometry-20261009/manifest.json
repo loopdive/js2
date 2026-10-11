@@ -1,0 +1,394 @@
+{
+  "schema": 1,
+  "status": "frozen-uncommitted-unqualified-documentary-packet",
+  "base": "8452732f0b88c14c5c7634ece58f83240970ea4c",
+  "sourceWorktree": "/private/tmp/js2-6920-shared-linear-geometry-20261009",
+  "sourceBranch": "codex/6920-shared-linear-geometry-20261009",
+  "docsHead": "f0e0af9c6364220e10ad61fefe4d51e276b54027",
+  "documentationClaimEffectRead": {
+    "id": "6920",
+    "slice": "geometry-packet-publication-20261009",
+    "assignee": "ttraenkler/codex-sol-geometry-packet-publication-20261009",
+    "requested_by": "ttraenkler/codex-sol-geometry-packet-publication-20261009",
+    "status": "in-progress",
+    "branch": "codex/6865-session-a-b-contract-handoff-20261008",
+    "claimed_at": "2026-10-08T23:12:47Z",
+    "updated_at": "2026-10-08T23:12:47Z",
+    "write_id": "7437-e9y1gc57"
+  },
+  "sourceClaimUnchanged": {
+    "slice": "6920:shared-linear-geometry-20261009",
+    "owner": "ttraenkler/codex-ir-shared-linear-geometry-20261009",
+    "write_id": "94949-it9b3u84",
+    "provenance": "source worker record"
+  },
+  "preimages": [
+    {
+      "path": "src/shared/contracts/linear-memory-layout.ts",
+      "exists": false,
+      "bytes": null,
+      "sha256": null
+    },
+    {
+      "path": "src/ir/analysis/contracts/linear-memory-layout.ts",
+      "exists": true,
+      "bytes": 4763,
+      "sha256": "977e572b62737c3459df08c15e4d3f6ce7f461f9fc5b1aac344ad676690e3754"
+    },
+    {
+      "path": "src/ir/analysis/linear-memory-plan.ts",
+      "exists": true,
+      "bytes": 49040,
+      "sha256": "5f2f5ded3a788e2cc1b70dceb01afe97d249e0e5407e555ced11c5aedb0dbc52"
+    },
+    {
+      "path": "tests/issue-6865-linear-layout-contract.test.ts",
+      "exists": false,
+      "bytes": null,
+      "sha256": null
+    },
+    {
+      "path": "scripts/compiler-boundaries.json",
+      "exists": true,
+      "bytes": 605605,
+      "sha256": "424591ac33717356b1edd6278b7fefc35eec597418911674fb75267093de70da"
+    }
+  ],
+  "frozenOperands": [
+    {
+      "path": "src/shared/contracts/linear-memory-layout.ts",
+      "bytes": 7580,
+      "sha256": "08c85d9e8c9891a74b9c0c02a1310b67b16832980849dc0e7b6d511d91350937"
+    },
+    {
+      "path": "src/ir/analysis/contracts/linear-memory-layout.ts",
+      "bytes": 3161,
+      "sha256": "83e6b8a07bdc8e8b93fed590bc0aed5c5f779bde98466e9cbbe3feb7a825cb91"
+    },
+    {
+      "path": "src/ir/analysis/linear-memory-plan.ts",
+      "bytes": 45359,
+      "sha256": "08f844117ef1b6e0eb17a87555d00db5be89257e5817ad76322320fa837ae7fc"
+    },
+    {
+      "path": "tests/issue-6865-linear-layout-contract.test.ts",
+      "bytes": 16086,
+      "sha256": "f388e290cbbf7d1e70719b103cf0892bfec9d80c74250ffe6d9ebc604a0eb149"
+    },
+    {
+      "path": "scripts/compiler-boundaries.json",
+      "bytes": 605662,
+      "sha256": "0c090c0a5dac160bacdc368f7fc617bedaa81dacd348426cc62cbaba928292e6"
+    }
+  ],
+  "patches": {
+    "source.patch": {
+      "bytes": 19675,
+      "sha256": "759889320f82a2761961b9af3d74a9c7d840e909c4292826863ce15a5abf4901"
+    },
+    "tests.patch": {
+      "bytes": 16656,
+      "sha256": "edcea62258f8f16712b6f826dfc3c695ce46cf6289568e1858435bd6c5e2117e"
+    },
+    "boundaries.patch": {
+      "bytes": 648,
+      "sha256": "8068abcac73db2354db1c0a24bc292ef114f1d04d5b401dbf65d08e4e5a56a59"
+    }
+  },
+  "originalPredecessorPreserved": {
+    "path": "/private/tmp/js2-6920-geometry-owner-packet-20261009/geometry-owner-review.patch",
+    "bytes": 19595,
+    "sha256": "85aa3efab25d7a459be3947ab0533e06663df54bfaacb382851309261d52e43d",
+    "independentlyVerifiedBeforeAndAfterReplay": true
+  },
+  "custodyAudit": {
+    "path": "/private/tmp/js2-6920-source-custody-audit-20261009/FINDING.md",
+    "bytes": 6680,
+    "sha256": "fa877e83e04602a23e725478d7d24dd4b9efa227d29a331adf58df3f96a150af"
+  },
+  "G24ExpectedNames": [
+    "preserves i8 storage and canonical i8 vector geometry",
+    "preserves i16 storage and canonical i16 vector geometry",
+    "preserves i32 storage and canonical i32 vector geometry",
+    "preserves i64 storage and canonical i64 vector geometry",
+    "preserves f32 storage and canonical f32 vector geometry",
+    "preserves f64 storage and canonical f64 vector geometry",
+    "preserves bytes16 storage and canonical v128 vector geometry",
+    "preserves pointer storage and canonical externref vector geometry",
+    "keeps string pointer vector identity distinct from scalar pointer",
+    "keeps nested vector pointer identity including nullability",
+    "keeps ordered object field semantics in pointer vector identity",
+    "keeps canonical nominal class identity in pointer vector layout",
+    "keeps boxed scalar identity in pointer vector layout",
+    "keeps dynamic pointer vector identity distinct from scalar pointer",
+    "keeps closure signature identity and rejects canonical support references",
+    "preserves the independently specified empty record header",
+    "preserves ordered mixed record slots and both fixed pointer offsets",
+    "retains the existing eight-byte record slot for bytes16 storage",
+    "preserves the independently specified UTF-8 byte string layout",
+    "retains five function bindings through planner and public IR compatibility exports",
+    "returns fresh mutable layouts and isolates nested array mutations",
+    "shares one frozen forwarding object with independently specified header bytes",
+    "has a nonempty shared source owner with zero value or type references and exact IR delegation",
+    "detects injected forbidden IR value and type references with the repository parser"
+  ],
+  "G24Inventory": {
+    "authoredLiteralNames": 24,
+    "unique": 24,
+    "matchesIndependentRootExpected": true,
+    "collected": null,
+    "passed": null
+  },
+  "toolPinsByteVerifiedBeforeAndAfterReplay": [
+    {
+      "path": ".tmp/geometry-static-review.mjs",
+      "bytes": 6194,
+      "sha256": "5b5c43d5a6984992a83fa17bf10525d05a892a1618acae1fd90d57952f7f9dda"
+    },
+    {
+      "path": ".tmp/scalar-production-census.mjs",
+      "bytes": 1481,
+      "sha256": "784f15567c373a6b933d7c4bab05891c5649fab957b7060d3bf1f5fff6a0682a"
+    },
+    {
+      "path": "scripts/check-compiler-boundaries.mjs",
+      "bytes": 31751,
+      "sha256": "dd440013f7047518e1c844be7a6e17012e0523384482d4460276754c283bd12c"
+    },
+    {
+      "path": "scripts/audit-legacy-reachability.mjs",
+      "bytes": 60778,
+      "sha256": "45f0425192903d19110eb04b49719021feeb9a79de5261046a1db9ee57602a71"
+    },
+    {
+      "path": "scripts/lib/core-node-execution-gate.mjs",
+      "bytes": 5591,
+      "sha256": "807210d9fe56b39b258ad3008665ab3b9e7923bf14c5102a4d80532b870a9d6b"
+    },
+    {
+      "path": "tsconfig.json",
+      "bytes": 448,
+      "sha256": "c520c3a1d8da732e73833cb53571f93609d0c899f6bcf638d752cb91b8c1fa79"
+    },
+    {
+      "path": "tsconfig.ts7.json",
+      "bytes": 1069,
+      "sha256": "e739b6bbafbc3026dd7769692798bb6a01b5b9efe3149038756d80ab57cfb1e2"
+    },
+    {
+      "path": ".tmp/tsconfig-geometry-test.json",
+      "bytes": 292,
+      "sha256": "96e134228b438a0b9ebc46c5440642e330d9969ab41c8f8bf40dfad910893505"
+    },
+    {
+      "path": "package.json",
+      "bytes": 29828,
+      "sha256": "bc084f6c2a17667e42d0c985330cbe064715984a7007201a5635c1622b10c395"
+    },
+    {
+      "path": "pnpm-lock.yaml",
+      "bytes": 292602,
+      "sha256": "6a8b59fd4430c6600dc16ac33a749d0f5fed4ef0c100425de8490e43d916f2ac"
+    },
+    {
+      "path": "node_modules/typescript/lib/typescript.js",
+      "bytes": 9112572,
+      "sha256": "3ae902c92cc44dace175c0e69e13a4b0899f6983c6121d76b9ab8dd5795e7675"
+    },
+    {
+      "path": "node_modules/typescript7/lib/tsc.js",
+      "bytes": 609,
+      "sha256": "cbdfbf11c26ed00dfc073155e316a42d6d6d8a387be61006b82fa9aa93ac572e"
+    },
+    {
+      "path": "node_modules/typescript7/lib/getExePath.js",
+      "bytes": 3051,
+      "sha256": "96c10fd3a18e165d7323de8e314ac8d755ad96811f9fbc304a5b3ba4e05285cc"
+    },
+    {
+      "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/node_modules/.pnpm/@typescript+typescript-darwin-arm64@7.0.2/node_modules/@typescript/typescript-darwin-arm64/lib/tsc",
+      "bytes": 23653616,
+      "sha256": "a82f731365ad69d5c4c15f5e18fba4584bf3b7b839960172a76c3462b5114bf2"
+    },
+    {
+      "path": "node_modules/prettier/package.json",
+      "bytes": 6328,
+      "sha256": "b73c6d16f392858c9bad2b4b4d2357c96773676d5769c5e6b700a32be7609f2e"
+    },
+    {
+      "path": "node_modules/@biomejs/biome/package.json",
+      "bytes": 1442,
+      "sha256": "005bbcbb91b777b7d4b25f6e648d0338e9db507b25c295dd751b375ea683373a"
+    },
+    {
+      "path": ".tmp/geometry-static-review-source-executed.mjs",
+      "bytes": 6171,
+      "sha256": "dfac77d2784198ad8dd15d053939afc0f6165b8b1a93c8e463418617741a06d6"
+    },
+    {
+      "path": ".tmp/geometry-static-review-source.json",
+      "bytes": 6778,
+      "sha256": "b502d8a8902c20389184d2a3cda9fe675eea31ad550c2dc696521e03929a15f9"
+    },
+    {
+      "path": ".tmp/geometry-owned-source.patch",
+      "bytes": 19675,
+      "sha256": "759889320f82a2761961b9af3d74a9c7d840e909c4292826863ce15a5abf4901"
+    },
+    {
+      "path": ".tmp/geometry-owned-tests.patch",
+      "bytes": 16656,
+      "sha256": "edcea62258f8f16712b6f826dfc3c695ce46cf6289568e1858435bd6c5e2117e"
+    },
+    {
+      "path": ".tmp/geometry-ts7-source.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": ".tmp/geometry-ts7-test-final.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": ".tmp/geometry-format-final.log",
+      "bytes": 66,
+      "sha256": "17aa973d3f004560237d9a95171210b0671deff23d61628eecf7322ff5938f20"
+    },
+    {
+      "path": ".tmp/geometry-lint-final.log",
+      "bytes": 43,
+      "sha256": "7316929f3be23fdf35141f3bd29419f8db9163cae05fc31bed9d4bd33ea6b885"
+    }
+  ],
+  "orderedSourceOperand": {
+    "path": ".tmp/owned.source",
+    "format": "ordered path NUL file-bytes NUL for sourcePins",
+    "bytes": 56236,
+    "sha256": "31e021cd3fc6c7e29bae1faa89ed27969b0c2e947550f113da3e0a23a77f8239"
+  },
+  "sourceWorkerStaticOutcomes": {
+    "sourceTypeScript5": {
+      "exit": 0,
+      "errors": 0,
+      "roots": 1893,
+      "files": 2376,
+      "heapMiB": 4096
+    },
+    "sourceTypeScript7": {
+      "exit": 0,
+      "errors": 0
+    },
+    "authoredTestTypeScript7": {
+      "exit": 0,
+      "errors": 0
+    },
+    "format": {
+      "exit": 0,
+      "files": 4
+    },
+    "lint": {
+      "exit": 0,
+      "files": 4,
+      "errors": 0
+    },
+    "sourceBodyIdentities": {
+      "movedOrUnchanged": 30,
+      "retained": 59,
+      "resolvedSymbols": 28
+    },
+    "coreNodeExecution": {
+      "assessed": false
+    },
+    "newRuntimeTests": {
+      "collected": null,
+      "passed": null,
+      "reason": "Awaiting root explicit release"
+    },
+    "ordinaryDeadExportBeforeAfter": {
+      "beforeExit": 0,
+      "afterExit": 0,
+      "graph": "OPEN",
+      "strictModeledClosure": "FAIL",
+      "preservationFull": 6,
+      "preservationCut": 6,
+      "coreTypeFull": 10,
+      "coreTypeCut": 10
+    }
+  },
+  "sourceWorkerReportCorrection": "The TypeScript5 executed scratch script duplicated source counts under a test key; stored source report corrected to authored-test unassessed in that run. Independent final authored-test TypeScript7 result is actual exit0/errors0.",
+  "replay": {
+    "path": "/private/tmp/js2-6920-geometry-patch-replay-v2qad3io",
+    "exactDonorArchive": "8452732f0b88c14c5c7634ece58f83240970ea4c",
+    "patchesCheckedAndApplied": 3,
+    "resultingFilesByteEqual": 5,
+    "commands": [
+      {
+        "patch": "source.patch",
+        "argv": ["/usr/bin/patch", "--batch", "-p1", "--dry-run"],
+        "exit": 0,
+        "stdout": "patching file 'src/shared/contracts/linear-memory-layout.ts'\npatching file 'src/ir/analysis/contracts/linear-memory-layout.ts'\npatching file 'src/ir/analysis/linear-memory-plan.ts'\n",
+        "stderr": ""
+      },
+      {
+        "patch": "source.patch",
+        "argv": ["/usr/bin/patch", "--batch", "-p1"],
+        "exit": 0,
+        "stdout": "patching file 'src/shared/contracts/linear-memory-layout.ts'\npatching file 'src/ir/analysis/contracts/linear-memory-layout.ts'\npatching file 'src/ir/analysis/linear-memory-plan.ts'\n",
+        "stderr": ""
+      },
+      {
+        "patch": "tests.patch",
+        "argv": ["/usr/bin/patch", "--batch", "-p1", "--dry-run"],
+        "exit": 0,
+        "stdout": "patching file 'tests/issue-6865-linear-layout-contract.test.ts'\n",
+        "stderr": ""
+      },
+      {
+        "patch": "tests.patch",
+        "argv": ["/usr/bin/patch", "--batch", "-p1"],
+        "exit": 0,
+        "stdout": "patching file 'tests/issue-6865-linear-layout-contract.test.ts'\n",
+        "stderr": ""
+      },
+      {
+        "patch": "boundaries.patch",
+        "argv": ["/usr/bin/patch", "--batch", "-p1", "--dry-run"],
+        "exit": 0,
+        "stdout": "patching file 'scripts/compiler-boundaries.json'\n",
+        "stderr": ""
+      },
+      {
+        "patch": "boundaries.patch",
+        "argv": ["/usr/bin/patch", "--batch", "-p1"],
+        "exit": 0,
+        "stdout": "patching file 'scripts/compiler-boundaries.json'\n",
+        "stderr": ""
+      }
+    ],
+    "gitApplyFailure": "git apply --check rejected dev/null: No such file or directory; source/test additions omit new file mode. Original bytes preserved; POSIX patch -p1 dry-run/apply used successfully."
+  },
+  "collectionExecuted": false,
+  "runtimeExecuted": false,
+  "compilerBodiesExecutedByPacketWriter": false,
+  "mainMerges": 0,
+  "publishedIssuePrefixUnchanged": {
+    "bytes": 109170,
+    "sha256": "4e496964c254c7a3f3d4ac6bf9dfaef99d5a7b0ceaffef056098671c002d991c"
+  },
+  "rootRetains": [
+    "integration",
+    "runtime release",
+    "publication",
+    "registry",
+    "historical proof successors",
+    "HOLD",
+    "protected queue"
+  ],
+  "policyTransportQualification": {
+    "actual": "foundation.entries append plus minModules 9 to 10 only",
+    "inventoryFilesRow": "missing",
+    "completeRegistration": false,
+    "plannedFollowup": "root-owned final three-field registration; not source-worker ownership"
+  }
+}

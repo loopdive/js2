@@ -1,0 +1,17 @@
+tests/issue-3299.test.ts(345,40): error TS2339: Property 'getVecScratchLocalIndices' does not exist on type 'LinearEmitter'.
+tests/issue-3299.test.ts(370,11): error TS2339: Property 'instance' does not exist on type 'Instance'.
+tests/issue-3299.test.ts(391,5): error TS2322: Type '{ vecStructTypeIdx: number; lengthFieldIdx: number; dataFieldIdx: number; arrayTypeIdx: number; elementValType: { kind: "f64"; }; linearMemory: { allocation: LinearAllocationSitePlan; layout: LinearVectorLayoutPlan; allocate: LinearRuntimeOperation; initializeElement: LinearRuntimeOperation; }; }' is not assignable to type 'IrVecLowering & LinearVecLowering'.
+  Property 'valueType' is missing in type '{ vecStructTypeIdx: number; lengthFieldIdx: number; dataFieldIdx: number; arrayTypeIdx: number; elementValType: { kind: "f64"; }; linearMemory: { allocation: LinearAllocationSitePlan; layout: LinearVectorLayoutPlan; allocate: LinearRuntimeOperation; initializeElement: LinearRuntimeOperation; }; }' but required in type 'LinearVecLowering'.
+tests/issue-3518-lowering-cycle.test.ts(392,42): error TS2345: Argument of type '{ kind: "null"; }' is not assignable to parameter of type 'IrConst'.
+  Property 'ty' is missing in type '{ kind: "null"; }' but required in type '{ readonly kind: "null"; readonly ty: IrType; }'.
+tests/issue-3518-lowering-cycle.test.ts(400,21): error TS2345: Argument of type '{ kind: "null"; }' is not assignable to parameter of type 'IrConst'.
+  Property 'ty' is missing in type '{ kind: "null"; }' but required in type '{ readonly kind: "null"; readonly ty: IrType; }'.
+tests/issue-3518-lowering-cycle.test.ts(508,46): error TS2345: Argument of type 'Uint8Array<ArrayBufferLike>' is not assignable to parameter of type 'BufferSource'.
+  Type 'Uint8Array<ArrayBufferLike>' is not assignable to type 'ArrayBufferView<ArrayBuffer>'.
+    Types of property 'buffer' are incompatible.
+      Type 'ArrayBufferLike' is not assignable to type 'ArrayBuffer'.
+        Type 'SharedArrayBuffer' is not assignable to type 'ArrayBuffer'.
+          Types of property '[Symbol.toStringTag]' are incompatible.
+            Type '"SharedArrayBuffer"' is not assignable to type '"ArrayBuffer"'.
+tests/issue-6920-vector-representation.test.ts(290,11): error TS2339: Property 'instance' does not exist on type 'Instance'.
+exit=1

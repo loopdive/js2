@@ -1,0 +1,46 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/issue-4566-standalone-algorithms-module-init.test.ts > #4566 standalone Algorithms compile-once component > seals all seven terminals together and removes the final three avoidable legacy bodies 2123ms
+ ✓ tests/issue-4566-standalone-algorithms-module-init.test.ts > #4566 standalone Algorithms compile-once component > matches the direct backend twice by value and output with zero imports 953ms
+ ✓ tests/issue-4566-standalone-algorithms-module-init.test.ts > #4566 standalone Algorithms compile-once component > bypasses both direct emitters and proves each poison remains live 821ms
+ ✓ tests/issue-4566-standalone-algorithms-module-init.test.ts > #4566 standalone Algorithms compile-once component > preserves native Map/string/vector optimizations and beats the direct size ceilings 66ms
+ ✓ tests/issue-4566-standalone-algorithms-module-init.test.ts > #4566 standalone Algorithms compile-once component > inlines native number and Map carrier thunks and keeps the off control live 685ms
+ ✓ tests/issue-4566-standalone-algorithms-module-init.test.ts > #4566 standalone Algorithms compile-once component > keeps a shared native Map adapter single-level when the raw helper has multiple source sites 504ms
+ ✓ tests/issue-4566-standalone-algorithms-module-init.test.ts > #4566 standalone Algorithms compile-once component > keeps a nine-operand native concat tree pairwise instead of requesting an unsupported helper 82ms
+ ✓ tests/issue-4566-standalone-algorithms-module-init.test.ts > #4566 standalone Algorithms compile-once component > remaps the native Map carrier through unrelated type churn 428ms
+ ✓ tests/issue-4566-standalone-algorithms-module-init.test.ts > #4566 standalone Algorithms compile-once component > initializes one persistent native Map whose mutations survive export calls 301ms
+ × tests/issue-4566-standalone-algorithms-module-init.test.ts > #4566 standalone Algorithms compile-once component > fills the early deferred callable with one direct body after a prepared withdrawal 200ms
+   → expected [] to deeply equal [ '<module-init>', 'read' ]
+ ✓ tests/issue-4566-standalone-algorithms-module-init.test.ts > #4566 standalone Algorithms compile-once component > compiles deferred standalone initialization once while retaining pre-init TDZ guards 629ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/issue-4566-standalone-algorithms-module-init.test.ts > #4566 standalone Algorithms compile-once component > fills the early deferred callable with one direct body after a prepared withdrawal
+AssertionError: expected [] to deeply equal [ '<module-init>', 'read' ]
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- [[39m
+[32m-   "<module-init>",[39m
+[32m-   "read",[39m
+[32m- ][39m
+[31m+ [][39m
+
+ ❯ tests/issue-4566-standalone-algorithms-module-init.test.ts:541:73
+    539|     expect(result.success, result.errors.map((error) => error.message)…
+    540|     expect(WebAssembly.validate(result.binary)).toBe(true);
+    541|     expect(result.irPostClaimErrors?.map((error) => error.func).sort()…
+       |                                                                         ^
+    542|     for (const observed of [outcome(result, "module-init", "<module-in…
+    543|       expect(observed).toMatchObject({
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 10 passed (11)
+   Start at  20:12:52
+   Duration  39.89s (transform 22.95s, setup 0ms, collect 32.60s, tests 6.80s, environment 0ms, prepare 69ms)
+

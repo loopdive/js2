@@ -1,0 +1,74 @@
+// #6931 before/after probe. Usage: npx tsx .tmp/probe-6931.mts
+// Prints one TSV row per (program, target, fn, arg): wasm result vs Node.
+import ts from "typescript";
+import { compile } from "../src/index.js";
+import { buildImports, instantiateWasm } from "../src/runtime.js";
+
+const PROGRAMS: Record<string, { src: string; fns: string[]; observe?: string[] }> = {
+  // IR path (issue Finding 1).
+  ir: {
+    src: `export function eqUsed(o: any): number { return o == 1 ? 1 : 0; }
+export function eqStr(o: any): number { return o == "1" ? 1 : 0; }
+export function neUsed(o: any): number { return o != 1 ? 1 : 0; }
+export function isNull(o: any): number { return o == null ? 1 : 0; }
+export function strictOne(o: any): number { return o === 1 ? 1 : 0; }
+`,
+    fns: ["eqUsed", "eqStr", "neUsed"],
+    observe: ["isNull", "strictOne"],
+  },
+  // Legacy path (issue Finding 2): eqUsed/eqStr are sent to the legacy lowering.
+  legacy: {
+    src: `function eqUsed(o: any): number { return o == 1 ? 1 : 0; }
+function eqStr(o: any): number { return o == "1" ? 1 : 0; }
+export function ident(o: any): any { return o; }
+export function viaStr(): number { return eqUsed("1"); }
+export function viaBool(): number { return eqUsed(true); }
+export function viaObj(): number { return eqUsed({ valueOf() { return 1; } }); }
+export function viaUndef(): number { return eqUsed(undefined); }
+export function viaStrS(): number { return eqStr("1"); }
+export function exported(o: any): number { return eqUsed(o); }
+export function exportedS(o: any): number { return eqStr(o); }
+`,
+    fns: ["exported", "exportedS"],
+    observe: ["viaStr", "viaBool", "viaObj", "viaUndef", "viaStrS", "ident"],
+  },
+};
+const INPUTS: [string, () => unknown][] = [
+  ["1", () => 1], ["5", () => 5], ["1.5", () => 1.5], ['"1"', () => "1"], ['"x"', () => "x"],
+  ["{}", () => ({})], ["{valueOf:()=>1}", () => ({ valueOf: () => 1 })], ["null", () => null],
+  ["undefined", () => undefined], ["true", () => true],
+];
+const show = (f: () => unknown) => {
+  try { return JSON.stringify(f()); } catch (e: any) {
+    const msg = e instanceof WebAssembly.Exception ? "WebAssembly.Exception" : `${e?.constructor?.name}: ${e?.message}`;
+    return `THROW ${msg}`;
+  }
+};
+console.log(["program", "target", "kind", "fn", "arg", "wasm", "node", "verdict"].join("\t"));
+for (const [pname, prog] of Object.entries(PROGRAMS)) {
+  const js = ts.transpileModule(prog.src, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
+  const node: any = {}; new Function("exports", js)(node);
+  for (const target of ["gc", "standalone"] as const) {
+    const r = await compile(prog.src, { fileName: "p.ts", trackIrOutcomes: true, ...(target === "standalone" ? { target } : {}) });
+    if (!r.success) { console.log([pname, target, "COMPILE-FAIL", r.errors.map((e: any) => e.message).join("|")].join("\t")); continue; }
+    const units = (r.irOutcomes ?? []).map((u: any) => `${u.displayName}:${u.kind}${u.irBodyEmitted ? "+body" : ""}`).join(" ");
+    console.log([pname, target, "irOutcomes", units].join("\t"));
+    const imp = buildImports(r.imports, {}, r.stringPool);
+    const { instance } = await instantiateWasm(r.binary, imp.env, imp.string_constants);
+    (imp as any).setExports?.(instance.exports as any);
+    const ex: any = instance.exports;
+    const rows = (fns: string[], kind: string, withArgs: boolean) => {
+      for (const fn of fns) for (const [label, mk] of withArgs ? INPUTS : [["()", () => undefined] as [string, () => unknown]]) {
+        const w = show(() => ex[fn](mk()));
+        const n = show(() => node[fn](mk()));
+        const verdict = w === n ? "match" : w.startsWith("THROW RuntimeError") ? "TRAP" : w.startsWith("THROW") ? "deliberate-throw" : "WRONG";
+        console.log([pname, target, kind, fn, label, w, n, verdict].join("\t"));
+      }
+    };
+    rows(prog.fns, "scope", true);
+    const noArg = (prog.observe ?? []).filter((f) => f.startsWith("via"));
+    const withArg = (prog.observe ?? []).filter((f) => !f.startsWith("via"));
+    rows(noArg, "observe", false);
+    rows(withArg, "observe", true);
+  }
+}
