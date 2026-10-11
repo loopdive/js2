@@ -194,14 +194,11 @@ __r = b;
 
   // ── Residual pins: today's (spec-wrong) answers this slice did NOT close ──
 
-  it("RESIDUAL — `new` on a closure read out of a property still answers null", async () => {
-    // `new A(2)` where `A` came from `o.s` evaluates to **null** and the body
-    // never runs, while the identical value bound directly to a local
-    // constructs correctly (the case three tests up). The `prototype` half is
-    // fixed for both — bit 2 below is the vivify — so what remains is the
-    // dynamic-`new` dispatch for a property-sourced callee, a different
-    // mechanism. Pinned so the lane that closes it sees a failing assertion
-    // here instead of silently moving a boundary nobody recorded.
+  it("CLOSED by #6954 — `new` on a closure read out of a property constructs", async () => {
+    // `new A(2)` where `A` came from `o.s` used to evaluate to **null** with
+    // the body never run (answer 11 = 1|2|8). #6954 ended the standalone
+    // dynamic-`new` chains in a runtime-function [[Construct]] arm, so the
+    // body runs and the result is an object: 1|2|4 = 7, node's answer.
     expect(
       await runTest262Shaped(`
 var ran = 0;
@@ -216,6 +213,6 @@ if (ran === 1) b |= 4;
 if (t === null) b |= 8;
 __r = b;
 `),
-    ).toBe(11);
+    ).toBe(7);
   });
 });
