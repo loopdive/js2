@@ -161,3 +161,34 @@ describe("#6809 generic Unicode BCP 47 locale kernel", () => {
     );
   });
 });
+
+describe("#6809 bare Unicode extension keys", () => {
+  const data: IntlLocaleCanonicalizationData = {
+    schemaVersion: 1,
+    localeAliases: { language: {}, script: {}, region: {}, variant: {} },
+    likelySubtags: {},
+    unicodeExtension: { keyAliases: {}, keys: {} },
+    transformedExtension: { fields: {} },
+  };
+
+  it("retains an empty value for an unknown key without a trailing hyphen", () => {
+    expect(canonicalizeUnicodeLocaleIdentifier("en-u-xx", data)).toBe("en-u-xx");
+    expect(canonicalizeUnicodeLocaleIdentifier("en-u-xx-true", data)).toBe("en-u-xx");
+    expect(canonicalizeUnicodeLocaleIdentifier("en-u-xx-foobar", data)).toBe("en-u-xx-foobar");
+  });
+
+  it("accepts a described bare key while retaining nonempty type validation", () => {
+    const described: IntlLocaleCanonicalizationData = {
+      ...data,
+      unicodeExtension: {
+        keyAliases: { zz: "ca" },
+        keys: { ca: { aliases: [], preferred: null, typeAliases: {}, types: {} } },
+      },
+    };
+    expect(canonicalizeUnicodeLocaleIdentifier("en-u-ca", described)).toBe("en-u-ca");
+    expect(canonicalizeUnicodeLocaleIdentifier("en-u-zz", described)).toBe("en-u-ca");
+    expect(canonicalizeUnicodeLocaleIdentifier("en-u-ca-gregory", described)).toBe("en-u-ca-gregory");
+    expect(canonicalizeUnicodeLocaleIdentifier("en-u-ca-islamicc", localeData)).toBe("en-u-ca-islamic-civil");
+    expect(() => canonicalizeUnicodeLocaleIdentifier("en-t-d0", described)).toThrow(IntlLocaleSyntaxError);
+  });
+});

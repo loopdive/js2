@@ -955,7 +955,11 @@ function canonicalizeUnicodeExtension(
     );
     if (seenKeys.has(key)) continue;
     seenKeys.add(key);
-    const value = canonicalizeExtensionValue(keyword.value, descriptor?.typeAliases, descriptor?.types);
+    // A bare Unicode key has no type subtags; preserve that empty vector.
+    const value =
+      keyword.value.length === 0
+        ? []
+        : canonicalizeExtensionValue(keyword.value, descriptor?.typeAliases, descriptor?.types);
     keywords.push({ key, value: value.length === 1 && value[0] === "true" ? [] : value });
   }
   keywords.sort((left, right) => compareAscii(left.key, right.key));
