@@ -62,13 +62,14 @@ two or three members is fine; `.length` from `nativeClosureMeta`.
 
 ## Acceptance
 
-- [ ] The 70 rows pass on the regime lane (scoped runs per member:
+- [ ] The 70 rows pass on the regime lane — the refusal is gone for all twelve members, but not every row passes (substrate residuals, see Test Results) (scoped runs per member:
       `TEST262_SEMANTIC_PROVIDERS=native-first TEST262_PATH_FILTER="built-ins/Array/prototype/<member>/"`)
       and on `--target standalone`; no row that passed before fails.
-- [ ] Focused test per member: `Array.prototype.<member>.call(arrayLike, …)`
+- [x] Focused test per member: `Array.prototype.<member>.call(arrayLike, …)`
       with and without the optional argument (including an explicit
       `undefined`, which counts as present).
-- [ ] Default `gc` byte-identical; standalone high-water floor moves up only.
+- [x] Default `gc` byte-identical (probe sha256, every PR); standalone floor
+      moves up only in the scoped runs (no pass→fail row on either lane).
 - [ ] `check:edition-ratchet --compare` reports no `pass → not-pass` in ES2023.
 
 ## Progress
@@ -163,4 +164,58 @@ two or three members is fine; `.length` from `nativeClosureMeta`.
 - The comparefn is called through `__apply_closure(fn, undefined, $ObjVec[x, y])`.
 - Both members keep the fixed ABI with `.length` 1. An omitted comparator and an
   explicit `undefined` behave the same, so presence does not matter here.
+
+## Test Results
+
+These are local scoped runs with `JS2WASM_EVAL_ENGINE=interpreter` and the
+refusal provider. Each cell is passing rows, base → after, out of the
+directory total.
+
+- A+B base was `b5991f6c` and their after-bundle predates the string-receiver
+  fix.
+- C+D base was `dbf5b4f74b`, with the compile timeout raised to 180 s because
+  of box load.
+
+| PR | member | regime (native-first) | standalone |
+| --- | --- | --- | --- |
+| A | indexOf | 148 → 165 / 201 ¹ | 160 → 167 / 201 |
+| A | lastIndexOf | 137 → 163 / 198 ¹ | 153 → 164 / 198 |
+| A | includes | 15 → 16 / 30 | 25 → 26 / 30 |
+| B | pop | 4 → 13 / 23 ² | 6 → 12 / 23 ² |
+| B | shift | 3 → 11 / 20 ² | 5 → 11 / 20 ² |
+| B | toString | 5 → 7 / 11 | 8 → 9 / 11 |
+| C | toReversed | 7 → 12 / 17 | 8 → 13 / 17 |
+| C | with | 11 → 14 / 21 | 12 → 14 / 21 |
+| C | toSpliced | 16 → 22 / 30 | 17 → 23 / 30 |
+| C | copyWithin | 33 → 33 / 39 | 32 → 32 / 39 |
+| D | sort | 17 → 18 / 54 | 17 → 18 / 54 |
+| D | toSorted | 6 → 11 / 21 | 6 → 11 / 21 |
+
+¹ The A+B regime base had 35 compile timeouts under load (indexOf 15,
+lastIndexOf 16). Part of that gain is noise; the standalone column is the
+clean comparison.
+² Measured before 1358664be1. Each lane had one pass→fail row: the
+string-receiver rows `pop/throws-with-string-receiver.js` and
+`shift/throws-when-this-value-length-is-writable-false.js`. Both are fixed
+there.
+
+**Pass→fail rows.** The only ones found were those two (fixed) and
+`sort/comparefn-nonfunction-call-throws.js`. That one was fixed by
+8bda0e54cb, which moved sort/toSorted to the variadic ABI because a padded
+slot reads `null` for an omitted comparator. The final after-runs show none on
+either lane.
+
+**What still fails.** No row in these directories still fails with "not yet
+callable as a value". The remaining failures are shared-substrate gaps, not
+these bodies:
+- frozen or non-writable-`length` vec receivers;
+- `length` stores on closed structs;
+- 2^53-scale lengths;
+- Proxy/TypedArray receivers;
+- argument coercion that resizes the receiver;
+- the inherited-method read on vecs: `vec["join"]` misses
+  `Array.prototype.join` (worked around in toString).
+
+**Not done.** `check:edition-ratchet --compare` was not run: it needs a full
+run, and these were scoped runs only.
 

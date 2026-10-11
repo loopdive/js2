@@ -1481,6 +1481,26 @@
       "skip": 0
     }
   },
+  "language/global-code": {
+    "ES5": {
+      "pass": 3,
+      "fail": 0,
+      "ce": 0,
+      "skip": 0
+    },
+    "ES2015": {
+      "pass": 17,
+      "fail": 15,
+      "ce": 0,
+      "skip": 0
+    },
+    "ES2022": {
+      "pass": 4,
+      "fail": 0,
+      "ce": 0,
+      "skip": 0
+    }
+  },
   "language/identifier-resolution": {
     "ES5": {
       "pass": 6,
@@ -1541,39 +1561,11 @@
       "skip": 0
     }
   },
-  "language/global-code": {
-    "ES5": {
-      "pass": 3,
-      "fail": 0,
-      "ce": 0,
-      "skip": 0
-    },
-    "ES2015": {
-      "pass": 17,
-      "fail": 15,
-      "ce": 0,
-      "skip": 0
-    },
-    "ES2022": {
-      "pass": 4,
-      "fail": 0,
-      "ce": 0,
-      "skip": 0
-    }
-  },
   "built-ins/AsyncFromSyncIteratorPrototype": {
     "ES2018": {
       "pass": 6,
       "fail": 31,
       "ce": 1,
-      "skip": 0
-    }
-  },
-  "built-ins/WeakRef": {
-    "ES2021": {
-      "pass": 16,
-      "fail": 13,
-      "ce": 0,
       "skip": 0
     }
   },
@@ -1585,18 +1577,18 @@
       "skip": 0
     }
   },
-  "language/directive-prologue": {
-    "ES5": {
-      "pass": 61,
-      "fail": 1,
+  "built-ins/WeakRef": {
+    "ES2021": {
+      "pass": 16,
+      "fail": 13,
       "ce": 0,
       "skip": 0
     }
   },
-  "language/future-reserved-words": {
+  "language/directive-prologue": {
     "ES5": {
-      "pass": 55,
-      "fail": 0,
+      "pass": 61,
+      "fail": 1,
       "ce": 0,
       "skip": 0
     }
@@ -1611,6 +1603,14 @@
     "ES2018": {
       "pass": 6,
       "fail": 16,
+      "ce": 0,
+      "skip": 0
+    }
+  },
+  "language/future-reserved-words": {
+    "ES5": {
+      "pass": 55,
+      "fail": 0,
       "ce": 0,
       "skip": 0
     }
@@ -1703,17 +1703,17 @@
       "skip": 0
     }
   },
-  "built-ins/MapIteratorPrototype": {
-    "ES2015": {
-      "pass": 11,
+  "built-ins/Infinity": {
+    "ES5": {
+      "pass": 5,
       "fail": 0,
       "ce": 0,
       "skip": 0
     }
   },
-  "built-ins/Infinity": {
-    "ES5": {
-      "pass": 5,
+  "built-ins/MapIteratorPrototype": {
+    "ES2015": {
+      "pass": 11,
       "fail": 0,
       "ce": 0,
       "skip": 0
@@ -1751,17 +1751,17 @@
       "skip": 0
     }
   },
-  "language/punctuators": {
+  "language/line-terminators": {
     "ES5": {
-      "pass": 11,
+      "pass": 41,
       "fail": 0,
       "ce": 0,
       "skip": 0
     }
   },
-  "language/line-terminators": {
+  "language/punctuators": {
     "ES5": {
-      "pass": 41,
+      "pass": 11,
       "fail": 0,
       "ce": 0,
       "skip": 0

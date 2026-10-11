@@ -48,6 +48,13 @@ export function test(): number {
   threw = false;
   try { toSorted.call(undefined); } catch (e) { threw = e instanceof TypeError; }
   if (!threw) return 41;
+  // null is not undefined: a TypeError comparator, and an element that sorts as "null".
+  threw = false;
+  try { sort.call({ get length(): number { throw new RangeError("ToObject first?"); } }, null); } catch (e) { threw = e instanceof TypeError; }
+  if (!threw) return 42;
+  const nl: any = { 0: "o", 1: null, 2: "a", length: 3 };
+  sort.call(nl);
+  if (str(nl) !== "a,null,o") return 43;
   if (sort.length !== 1 || toSorted.length !== 1) return 50;
   return 1;
 }`;

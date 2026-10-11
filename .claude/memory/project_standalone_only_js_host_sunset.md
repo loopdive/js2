@@ -1,30 +1,21 @@
 ---
-name: standalone-only — the JS host (gc) lane is being sunset
-description: Project-lead decision 2026-10-10. Only `--target standalone` is relevant; prioritize, measure and plan for standalone only.
-type: project
+name: project_standalone_only_js_host_sunset
+description: "Project-lead decision 2026-10-10: standalone only for all sessions; JS-host lane is being sunset"
+metadata:
+  node_type: memory
+  type: project
 ---
 
-# Only standalone is relevant — the JS host lane is being sunset
+**Standalone only. The JS-host lane is being sunset.** This is the project lead's decision of 2026-10-10. It applies to every session and agent.
 
-**Decision (project lead, 2026-10-10):** the JS-host lane (`gc` target, host
-imports via the JS runtime) will be sunset. Only `--target standalone` (pure
-WasmGC, no JS host) matters.
-
-**How to apply:**
-
-- **Pick and rank work by standalone impact.** A fix that only helps the host
-  lane is low value: do not start it, and park host-only halves of existing
-  issues.
-- **Measure standalone.** Octane (#874), test262 and benchmarks are reported
-  for the standalone lane. A host-lane pass is not progress.
-- **Do not regress the host lane while it still exists.** The equivalence gate
-  and the existing gc tests must stay green, because CI still gates on them.
-  New tests need no host-lane cases.
-- **Do not add a new host import as the only implementation of a feature.**
-  This tightens the "Dual-mode: JS host optional" principle in `CLAUDE.md`
-  until that text is updated.
-
-Status when the decision was made (Session D, #874): standalone Octane passes
-0 of 9 runnable benchmarks. Blockers are #6949 (richards, crypto), #6950
-(splay), #6951 (deltablue), #1472 (raytrace), and untriaged regexp,
-navier-stokes, box2d and earley-boyer.
+- **In scope:** both no-host targets.
+  - `--target standalone` (pure WasmGC).
+  - The Linear/WASI native backend.
+- **Out of scope for new work:**
+  - JS-host IR paths.
+  - New host imports.
+  - Host-only fast paths.
+  - Treating host-lane (`gc`) test262 numbers as the priority.
+- **Existing JS-host code stays until it is retired.** Removing it needs its own reviewed change, so do not delete it opportunistically. Until then, keep gc output byte-identical when touching shared code.
+- **Supersedes:** the older "Dual-mode: JS host optional" principle in CLAUDE.md, wherever they conflict.
+- **Where it was announced:** loopdive/js2 PR 6583, comment 6102591012.

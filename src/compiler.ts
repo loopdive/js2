@@ -1817,13 +1817,17 @@ export function compileSourceSync(
   processedSource = foldGroundCalls(processedSource, effectiveFileName, options.optimize, isJsMode && !forceTsGrammar);
 
   // Step 1a: #3418 — host-free targets elide dead pure top-level bindings before
-  // parsing so unreachable bodies do not register host imports.
+  // parsing so unreachable bodies do not register host imports. (#6898) The
+  // native regime in a JS environment elides too: which bindings are dead is a
+  // question of the implementation (`nativeRegime` ≡ `ctx.standalone`), not of
+  // the embedder. Without it the unused test262 `$262.evalScript` shim kept a
+  // live direct `eval` and put every regime row into runtime-eval mode.
   // Context-owned declarations remain observable from later Scripts even when
   // this source never reads them. Private-program dead-binding proofs do not
   // apply; keep their original source and stable IR inventory intact.
   if (
     !options.standaloneScriptVarBindings &&
-    (targetProfile.environment === "none" || targetProfile.environment === "wasi")
+    (targetProfile.environment === "none" || targetProfile.environment === "wasi" || targetProfile.nativeRegime)
   ) {
     const scriptKind = isJsMode && !forceTsGrammar ? ts.ScriptKind.JS : ts.ScriptKind.TS;
     const elision = irIds.elideWithIrIds(processedSource, effectiveFileName, scriptKind, irInventory);

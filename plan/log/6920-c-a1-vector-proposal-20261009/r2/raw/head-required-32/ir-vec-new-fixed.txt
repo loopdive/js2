@@ -1,0 +1,19 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/ir-vec-new-fixed.test.ts > #1804 — IR vec.new_fixed array-literal construction > (1) number literal — element type inferred from elements 2208ms
+ ✓ tests/ir-vec-new-fixed.test.ts > #1804 — IR vec.new_fixed array-literal construction > (2) empty literal — element type from the declared hint 291ms
+ ✓ tests/ir-vec-new-fixed.test.ts > #1804 — IR vec.new_fixed array-literal construction > (4) f([1,2,3]) — call-graph closure keeps the callee claimed 250ms
+ ✓ tests/ir-vec-new-fixed.test.ts > #1804 — IR vec.new_fixed array-literal construction > (5) return [a, b] — element type from same-typed params, indexed read 413ms
+ ✓ tests/ir-vec-new-fixed.test.ts > #1804 — IR vec.new_fixed array-literal construction > constructed vec round-trips through .length and vec.get 189ms
+ ✓ tests/ir-vec-new-fixed.test.ts > #1804 — IR vec.new_fixed array-literal construction > (6a) spread literal stays legacy and still runs 75ms
+ ✓ tests/ir-vec-new-fixed.test.ts > #1804 — IR vec.new_fixed array-literal construction > (6b) sparse literal stays legacy and still runs 93ms
+ ✓ tests/ir-vec-new-fixed.test.ts > #1804 — IR vec.new_fixed array-literal construction > (6d) hintless empty literal stays legacy and still runs 76ms
+ ✓ tests/ir-vec-new-fixed.test.ts > #1804 — IR vec.new_fixed array-literal construction > (6e) vec read inside a while loop stays legacy and runs correctly 123ms
+ ✓ tests/ir-vec-new-fixed.test.ts > #1804 — IR vec.new_fixed array-literal construction > (6f) vec read inside a C-style for loop stays legacy and runs correctly 90ms
+
+ Test Files  1 passed (1)
+      Tests  10 passed (10)
+   Start at  19:26:24
+   Duration  51.84s (transform 32.79s, setup 0ms, collect 46.93s, tests 3.82s, environment 0ms, prepare 102ms)
+

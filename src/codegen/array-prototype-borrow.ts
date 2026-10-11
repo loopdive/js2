@@ -513,7 +513,7 @@ export function compileArrayLikePrototypeCall(
   if (cbTsReturnsBool && !noJsHost(ctx)) {
     ensureLateImport(ctx, "__box_boolean", [{ kind: "i32" }], [{ kind: "externref" }]);
   }
-  const lengthLimit = methodName === "map" ? arrayLikeLengthLimitGuard(ctx, fctx) : []; // (#6651 H6) ArrayCreate
+  const lengthLimit = methodName === "map" ? arrayLikeLengthLimitGuard(ctx, fctx, true) : []; // (#6651 H6) ArrayCreate
   flushLateImportShifts(ctx, fctx);
 
   // Compile receiver to externref
@@ -747,10 +747,10 @@ export function compileArrayLikePrototypeCall(
   /** Convert callback result to i32 truthy flag */
   const toTruthy: Instr[] =
     closureInfo.returnType === null
-      ? // void callback: call_ref leaves nothing on stack — just push truthy (1).
-        // The callback never returns a meaningful value; void → always truthy so
-        // every/find/some behave as if all elements match (correct for empty loops).
-        [{ op: "i32.const", value: 1 }]
+      ? // void callback: call_ref leaves nothing on stack. Its result is `undefined`,
+        // which is FALSY (#6898, `filter/15.4.4.20-9-c-iii-2`); the host lane keeps
+        // its historical constant 1 (byte-identical), the native regime answers 0.
+        [{ op: "i32.const", value: ctx.standalone ? 0 : 1 }]
       : closureInfo.returnType.kind === "f64"
         ? // NaN is falsy in JS; f64.ne(0) treats NaN as truthy. Use |x|>0 instead.
           [{ op: "f64.abs" }, { op: "f64.const", value: 0 }, { op: "f64.gt" }]

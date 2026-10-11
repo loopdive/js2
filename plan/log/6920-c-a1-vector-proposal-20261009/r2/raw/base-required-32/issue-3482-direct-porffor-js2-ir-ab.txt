@@ -1,0 +1,13 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/issue-3482-direct-porffor-js2-ir-ab.test.ts > #3482 direct Porffor / JS2 source A/B > pins one exact TypeScript byte sequence and its semantic oracle 6ms
+ ✓ tests/issue-3482-direct-porffor-js2-ir-ab.test.ts > #3482 direct Porffor / JS2 source A/B > uses R-7 quartiles for the 21-sample summaries 1ms
+ ↓ tests/issue-3482-direct-porffor-js2-ir-ab.test.ts > #3482 direct Porffor / JS2 source A/B > runs the exact pinned direct Porffor C command model
+ ↓ tests/issue-3482-direct-porffor-js2-ir-ab.test.ts > #3482 direct Porffor / JS2 source A/B > records plain direct Porffor's expected UBSan failure and requires both JS2 rows clean
+
+ Test Files  1 passed (1)
+      Tests  2 passed | 2 skipped (4)
+   Start at  20:04:07
+   Duration  587ms (transform 91ms, setup 0ms, collect 105ms, tests 9ms, environment 0ms, prepare 90ms)
+
