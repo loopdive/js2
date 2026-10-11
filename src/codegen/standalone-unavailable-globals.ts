@@ -7,6 +7,7 @@ import { runtimeEvalStateMayShadowBinding } from "./direct-eval-environment.js";
 import { resolvesToAmbientGlobal } from "./expressions/non-constructable.js";
 import { emitThrowReferenceError } from "./js-errors.js";
 import { BUILTIN_CLASS_NAMES } from "./expressions/builtin-class-names.js";
+import { BUILTIN_STATIC_METHOD_ARITY } from "./builtin-fn-meta.js";
 
 /**
  * (#6664) Browser (lib.dom) globals that a host-free `--target standalone`
@@ -170,7 +171,22 @@ export function isHostResolvedBuiltinReceiver(
   if (!ts.isIdentifier(receiver) || !BUILTIN_CLASS_NAMES.has(receiver.text)) return false;
   if (!ctx.standalone) return true;
   if (receiver.text === "Buffer") return false;
-  return !(methodName === "captureStackTrace" && STANDALONE_ERROR_CONSTRUCTORS.has(receiver.text));
+  if (methodName === "captureStackTrace" && STANDALONE_ERROR_CONSTRUCTORS.has(receiver.text)) return false;
+  return !isBuiltinCarrierExpandoCall(ctx, receiver, methodName);
+}
+
+/**
+ * (#1472 raytrace) `Object.extend(d, s)` / `Math.foo()` on standalone: a name
+ * with no modelled static is an EXPANDO on the carrier value, not a host
+ * builtin. The caller must capture the method (`[[Get]]`) BEFORE evaluating
+ * the arguments (§13.3.6.1), which the generic `__extern_method_call` bridge
+ * does not — it resolves the name after them.
+ */
+export function isBuiltinCarrierExpandoCall(ctx: CodegenContext, receiver: ts.Expression, methodName: string): boolean {
+  if (!ctx.standalone || !ts.isIdentifier(receiver) || !BUILTIN_CLASS_NAMES.has(receiver.text)) return false;
+  if (receiver.text === "Buffer") return false;
+  if (methodName === "captureStackTrace" && STANDALONE_ERROR_CONSTRUCTORS.has(receiver.text)) return false;
+  return BUILTIN_STATIC_METHOD_ARITY[receiver.text]?.[methodName] === undefined;
 }
 
 /**
