@@ -1,0 +1,24 @@
+"""Insert one compiler-boundaries row for vector-representation.ts, textually, after string-contract.ts."""
+p = "scripts/compiler-boundaries.json"
+s = open(p).read()
+anchor = """      "path": "src/ir/backend/string-contract.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+    },
+"""
+assert s.count(anchor) == 1
+row = """    {
+      "path": "src/ir/backend/vector-representation.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "3518-coordinator",
+      "nextBoundary": "#6920 A-C1 vector representation policy with type-only imports; consumed by generic lowering, the linear overlay and frontend joins. Certify as pure contract once IR-node and backend-handle type dependencies move to ir-core."
+    },
+"""
+s = s.replace(anchor, anchor + row)
+open(p, "w").write(s)
+print("ok")

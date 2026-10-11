@@ -1,0 +1,11 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/issue-3478-porffor-source-to-native-canary.test.ts > #3478 real source to shared linear-memory plan > feeds the exact source-derived typed SSA and plan to both backend adapters 10ms
+ ↓ tests/issue-3478-porffor-source-to-native-canary.test.ts > #3478 real source to shared linear-memory plan > matches JavaScript and linear-Wasm in pinned Porffor-C under ASan/UBSan
+
+ Test Files  1 passed (1)
+      Tests  1 passed | 1 skipped (2)
+   Start at  19:32:16
+   Duration  33.52s (transform 21.98s, setup 0ms, collect 32.25s, tests 762ms, environment 0ms, prepare 77ms)
+
