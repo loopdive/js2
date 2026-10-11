@@ -154,16 +154,16 @@ describe("#5162 constructor → own prototype method", () => {
     expect(await run(src, "standalone")).toBe(expected);
   });
 
-  // XFAIL PINS. Each of these SHOULD return 10. They throw today. When the
-  // `not-in-twin` decline stops being a hard failure in standalone (#4405 or a
-  // successor), these go red — tighten them to `.toBe(10)` rather than deleting.
+  // Former XFAIL pins (they threw in standalone until #6970 made a `this.<m>`
+  // read of a fnctor prototype member resolve through the prototype instead of
+  // minting an own field). Tightened to the spec value, as this file asked.
   it.each([
     ["method assigned AFTER the constructor (the filed shape)", AFTER],
     ["method assigned BEFORE the constructor", BEFORE],
     ["the write-once `var pp = PP.prototype` idiom", FNCTOR],
     ["two-step `var p = new PP(5); p.v`", TWO_STEP],
-  ])("standalone XFAIL: %s still throws (spec says 10)", async (_name, src) => {
-    expect(await threw(src, "standalone")).toBe(true);
+  ])("standalone: %s returns 10", async (_name, src) => {
+    expect(await run(src, "standalone")).toBe(10);
   });
 
   // Source order is NOT the discriminator — the filed hypothesis, refuted.
