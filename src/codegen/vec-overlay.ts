@@ -113,7 +113,11 @@ import {
   buildVecLengthConfig,
   buildVecLengthDescriptorValue,
 } from "./vec-length-descriptor.js";
-import { buildArgumentsLengthDeletedBail, fillArgumentsLengthBrand } from "./arguments-length-brand.js"; // (#4658)
+import {
+  buildArgumentsCompanionArm, // (#6972)
+  buildArgumentsLengthDeletedBail,
+  fillArgumentsLengthBrand,
+} from "./arguments-length-brand.js"; // (#4658)
 import {
   allowedCarriers,
   carrierDefaultInstrs,
@@ -357,6 +361,8 @@ function ensureOverlayCore(ctx: CodegenContext, objectTypeIdx: number, newPlainO
     const sigIdx = addFuncType(ctx, [{ kind: "anyref" }], [objRefNull], `$${name}_type`);
     const funcIdx = mintDefinedFunc(ctx);
     const body: Instr[] = [
+      // (#6972) a branded arguments object keeps its companion in its own slot.
+      ...(tableGlobalIdx === stateGlobalIdx ? buildArgumentsCompanionArm(ctx, objectTypeIdx) : []),
       // st = state ; if st == null → null (the fast path for overlay-free runs)
       { op: "global.get", index: tableGlobalIdx },
       { op: "local.tee", index: 1 },
@@ -474,6 +480,10 @@ function ensureOverlayCore(ctx: CodegenContext, objectTypeIdx: number, newPlainO
         { op: "global.set", index: tableGlobalIdx },
       ],
     },
+    // (#6972) …but a branded arguments object's companion goes into its slot,
+    // never the strongly-held table (the state above stays non-null, which is
+    // what the string-key read prologues gate on).
+    ...(compInstrs ? [] : buildArgumentsCompanionArm(ctx, objectTypeIdx, { newPlainObjectIdx, compLocal: 7 })),
     // count / tab / cap
     { op: "local.get", index: 2 },
     { op: "ref.as_non_null" },
