@@ -185,3 +185,20 @@ export function variableSlotHoldsReconstructedFnctorInstance(
   if (init === undefined || !ts.isNewExpression(init)) return false;
   return newExpressionReconstructsAsObject(ctx, init);
 }
+
+/**
+ * (#6975) Is `inner` (a `new F` result, parens/casts already unwrapped by the
+ * caller) the value of a `<x>.prototype = …` / `<x>["prototype"] = …` store?
+ * Such a value becomes a [[Prototype]] link, which must be an `$Object`.
+ */
+export function isPrototypeStoreValue(parent: ts.Node, inner: ts.Expression): boolean {
+  if (!ts.isBinaryExpression(parent) || parent.right !== inner) return false;
+  if (parent.operatorToken.kind !== ts.SyntaxKind.EqualsToken) return false;
+  const target = parent.left;
+  if (ts.isPropertyAccessExpression(target)) return target.name.text === "prototype";
+  return (
+    ts.isElementAccessExpression(target) &&
+    ts.isStringLiteralLike(target.argumentExpression) &&
+    target.argumentExpression.text === "prototype"
+  );
+}

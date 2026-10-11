@@ -217,7 +217,7 @@ import { emitFnctorProtoGet, resolveUserFnctorName } from "./fnctor-prototype.js
 import { emitStandalonePromiseFromExecutor, emitStandalonePromiseFromExecutorValue } from "../promise-executor.js"; // (#2959 / #2903 R1) native new Promise(executor)
 import { funcConstructorForCallee } from "../fnctor-ctor-decl.js"; // (#6974) a bare name is not a binding
 import { deriveFnctorFields, resolveFnctorSymbol, resolveEnclosingFnctorOwner } from "../fnctor-escape-gate.js"; // (#2660 S3a) canonical fnctor-name key; (#2773 S1) shared field derivation; (#2681/#2686 A1) `new this()` owner
-import { newExpressionReconstructsAsObject } from "../fnctor-instance-object-slot.js"; // (#4506 S1) the site-level reconstruct predicate the slot typer shares
+import { isPrototypeStoreValue, newExpressionReconstructsAsObject } from "../fnctor-instance-object-slot.js"; // (#4506 S1) the site-level reconstruct predicate the slot typer shares
 import {
   appendFnctorConstructorParam,
   emitFnctorConstructorArguments,
@@ -2475,6 +2475,10 @@ function flattenCallArgs(args: readonly ts.Expression[]): ts.Expression[] | null
  *   (b) an inline member/element receiver `new F().x` / `new F()[i]` (unwrapping
  *       `( )`/`as`/`!`): an externref receiver routes through the dynamic
  *       `__extern_get` + `$proto` walk — the resolution path we want.
+ *   (c) (#6975) the right-hand side of a `<x>.prototype = new F` store. The
+ *       value becomes a [[Prototype]] link, and `__object_create` / the `$proto`
+ *       walk accept only an `$Object` there: a struct prototype was dropped, so
+ *       every `new <subclass>` lost the chain (`Box2D.inherit`'s `new K`).
  * Anything else (a struct-typed local or global, a call argument, a return, an
  * assignment target) → false → status-quo struct lowering. The conservative
  * miss costs a row, never the floor.
@@ -2506,7 +2510,7 @@ function fnctorNewResultConsumedAsExternref(
   }
   if (ts.isPropertyAccessExpression(parent) && parent.expression === inner) return true;
   if (ts.isElementAccessExpression(parent) && parent.expression === inner) return true;
-  return false;
+  return isPrototypeStoreValue(parent, inner);
 }
 
 /**

@@ -1,7 +1,8 @@
 ---
 id: 6975
 title: "standalone: `y.prototype = new K` keeps the fnctor struct as the prototype; `__object_create` drops a non-plain proto, so subclass instances lose inherited methods (Octane box2d `Box2D.inherit` → `SetAsEdge` not a function)"
-status: ready
+status: in-progress
+assignee: ttraenkler/senior-dev
 sprint: current
 created: 2026-10-11
 priority: high
@@ -13,6 +14,12 @@ area: compiler
 language_feature: constructor-functions, prototype, new
 goal: standalone-gap
 related: [6974, 6970, 6969, 6951, 6944]
+loc-budget-allow:
+  # 2026-10-11 (#6975) new-super.ts +4: the reconstruct consumer check's doc gains
+  #   case (c), the `.prototype` store; the predicate itself lives in
+  #   fnctor-instance-object-slot.ts (`isPrototypeStoreValue`). Also restates
+  #   #6974's +1 (its import) so the grant is not stranded if #6974 lands first.
+  - src/codegen/expressions/new-super.ts
 ---
 
 # A `new F` result stored as a prototype stays a fnctor struct
