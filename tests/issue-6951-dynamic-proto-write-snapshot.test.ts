@@ -14,12 +14,16 @@ function runNode(src: string): string {
   return String(main());
 }
 
-async function runStandalone(src: string): Promise<string> {
+async function runStandalone(src: string, opts: { sloppy?: boolean } = {}): Promise<string> {
   const result = await compile(src, {
     fileName: "case.js",
     allowJs: true,
     skipSemanticDiagnostics: true,
     target: "standalone",
+    // A source with `export` is module code (always strict) unless the caller
+    // says otherwise; the sloppy controls need the script-goal strictness that
+    // node's `new Function` runs them under.
+    ...(opts.sloppy ? { inferModuleStrictArguments: false } : {}),
   });
   expect(result.success, result.errors.map((e) => e.message).join("; ")).toBe(true);
   try {
@@ -114,7 +118,76 @@ export function main() {
 export function main() { var a = new F(); var b = new F(); return (Object.getPrototypeOf(a) === F.prototype) + "," + (Object.getPrototypeOf(a) === Object.getPrototypeOf(b)) + "," + (a.constructor === F); }`,
 };
 
+// Review finding (PR #6644, P1): the edge write stored the canonical per-fnctor
+// prototype global BEFORE the own `prototype` descriptor was consulted, so a
+// `writable: false` prototype was silently replaced and `new F()` observed it
+// (head answered 20 for both of these). The descriptor now decides first.
+const PROTO_WRITE_ARGS = `function F(){this.x=1;}
+function set(c,p){c.prototype=p;}`;
+const NON_WRITABLE_BODY = `export function main(){
+ F.prototype={tag:1};
+ Object.defineProperty(F,"prototype",{writable:false});
+ var caught=0;
+ try{set(F,{tag:2});}catch(e){caught=e instanceof TypeError?1:2;}
+ var a=new F();
+ return caught*100+a.tag*10;
+}`;
+const DESCRIPTOR_CASES: { name: string; src: string; sloppy: boolean; expected: string }[] = [
+  // strict: TypeError, and the constructor keeps the old prototype.
+  {
+    name: "strictNonWritableThrows",
+    src: `"use strict";\n${PROTO_WRITE_ARGS}\n${NON_WRITABLE_BODY}`,
+    sloppy: false,
+    expected: "110",
+  },
+  // sloppy: silent no-op, no throw, the old prototype stays.
+  { name: "sloppyNonWritableNoop", src: `${PROTO_WRITE_ARGS}\n${NON_WRITABLE_BODY}`, sloppy: true, expected: "10" },
+  // The four ordinary writes keep working, strict and sloppy.
+  {
+    name: "dynamicWrite",
+    src: `${PROTO_WRITE_ARGS}
+export function main(){ F.prototype={tag:1}; set(F,{tag:2}); var a=new F(); return a.tag*10+a.x; }`,
+    sloppy: false,
+    expected: "21",
+  },
+  {
+    name: "dynamicWriteSloppy",
+    src: `${PROTO_WRITE_ARGS}
+export function main(){ F.prototype={tag:1}; set(F,{tag:2}); var a=new F(); return a.tag*10+a.x; }`,
+    sloppy: true,
+    expected: "21",
+  },
+  {
+    name: "snapshot",
+    src: `${PROTO_WRITE_ARGS}
+export function main(){ F.prototype={tag:1}; var a=new F(); set(F,{tag:2}); var b=new F(); return a.tag*10+b.tag; }`,
+    sloppy: false,
+    expected: "12",
+  },
+  {
+    name: "setPrototypeOf",
+    src: `${PROTO_WRITE_ARGS}
+export function main(){ F.prototype={tag:1}; set(F,{tag:2}); var a=new F(); Object.setPrototypeOf(a,{tag:3}); return a.tag*10+a.x; }`,
+    sloppy: false,
+    expected: "31",
+  },
+  {
+    name: "nullPrototype",
+    src: `${PROTO_WRITE_ARGS}
+export function main(){ F.prototype={tag:1}; set(F,null); var a=new F();
+ return (a.tag===undefined?10:0)+a.x+(typeof a.hasOwnProperty==="function"?100:0); }`,
+    sloppy: false,
+    expected: "111",
+  },
+];
+
 describe("#6951 standalone dynamic prototype write and construction-time snapshot", () => {
+  for (const { name, src, sloppy, expected } of DESCRIPTOR_CASES) {
+    it(`descriptor ${name} answers ${expected}`, async () => {
+      expect(runNode(src)).toBe(expected);
+      expect(await runStandalone(src, { sloppy })).toBe(expected);
+    });
+  }
   for (const [name, src] of Object.entries(CASES)) {
     it(`case ${name} matches node`, async () => {
       expect(await runStandalone(src)).toBe(runNode(src));

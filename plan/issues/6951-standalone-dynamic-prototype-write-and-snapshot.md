@@ -214,3 +214,23 @@ was the `__fnctor_proto_start` reservation next to #6944's
 - The array-prototype helpers (`fnctor-array-prototype.ts`) and
   `fnctor-missing-method-dispatch.ts` still read the live global.
 - The acorn +4 bytes/instance measurement (acceptance 4) was not taken.
+
+### Review fix (2026-10-11, PR #6644 P1): own `prototype` descriptor decides first
+- Defect: the G2 edge write (`__closure_proto_set`) ran before the own
+  `prototype` descriptor was consulted, so after
+  `Object.defineProperty(F, "prototype", {writable: false})` a dynamic
+  `set(F, v)` replaced the canonical per-fnctor global, reported success, and
+  `new F()` observed the forbidden prototype (strict probe 20, node 110).
+- Fix: `closurePrototypeOwnDescriptorGuard` (closure-prototype-edge.ts) runs at
+  the head of the `prototype` write arm. Only when the closure's bag already
+  owns `prototype` does it ask `__extern_set_decide`: HANDLED → success,
+  REFUSED → `SET_RESULT_REFUSED` (strict caller throws, sloppy no-ops),
+  allowed → the own entry is updated too, then the edge/bag arms run as before.
+  No own entry ⇒ the mandatory writable property, so the edge path is
+  unchanged and an inherited descriptor cannot claim it.
+- Known gap, NOT this fix (also on the #6639 prerequisite):
+  `Object.defineProperty(F, "prototype", {value: X})` on a bag with no
+  `prototype` entry builds the record from the partial descriptor alone
+  (writable/configurable default false, and `{writable:false}` loses the
+  value), because the define path seeds intrinsic `length`/`name` but not
+  `prototype` (`fn-intrinsic-seed.ts`). A later write is then refused.

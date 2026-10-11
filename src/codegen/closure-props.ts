@@ -67,7 +67,12 @@ import type { ClosureReadBinding } from "../runtime/wasmgc/values/object-get-arm
 import type { FieldDef, Instr, ValType, WasmFunction } from "../ir/types.js";
 import { undefinedExternInstrs } from "./any-helpers.js";
 import { collectClosureBaseWrapperTypeIdxs } from "./closure-classifier.js";
-import { CLOSURE_PROTO_SET, closurePrototypeEdgeGetArm, hasClosurePrototypeEdges } from "./closure-prototype-edge.js"; // (#2660 M3; #6951 G2 write twin)
+import {
+  CLOSURE_PROTO_SET,
+  closurePrototypeEdgeGetArm,
+  closurePrototypeOwnDescriptorGuard,
+  hasClosurePrototypeEdges,
+} from "./closure-prototype-edge.js"; // (#2660 M3; #6951 G2 write twin + own-descriptor gate)
 import type { CodegenContext } from "./context/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { nativeStringLiteralInstrs } from "./native-strings.js";
@@ -447,6 +452,8 @@ function buildFnctorPrototypeWriteArm(
           op: "if",
           blockType: { kind: "empty" },
           then: [
+            // (#6951 G2 review) an own re-described `prototype` decides first.
+            ...(sharedSetAvailable ? closurePrototypeOwnDescriptorGuard(ctx, setResultGlobalIdx) : []),
             ...writeEdge(),
             ...constructibleTypeIdxs.flatMap((typeIdx): Instr[] => [
               { op: "local.get", index: 0 },
