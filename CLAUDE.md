@@ -2,6 +2,26 @@
 
 TypeScript-to-WebAssembly compiler using WasmGC.
 
+## ⚠ Direction: standalone only — the JS-host lane is being sunset (project-lead decision, 2026-10-10)
+
+**Applies to every session and agent.** All new work targets the two no-host
+targets only:
+
+- **`--target standalone`**: pure WasmGC, no JS host.
+- **The Linear/WASI native backend**: `src/codegen-linear/` and the IR Linear
+  backend.
+
+Consequences:
+
+- **No new JS-host work.** Do not add JS-host IR paths, new host imports, or
+  host-only fast paths. Do not prioritise test262 host-lane (`gc`) results
+  over standalone.
+- **Existing JS-host code stays until it is retired.** Do not delete it
+  opportunistically: removing it needs its own reviewed change. Until then,
+  keep gc output byte-identical when you change shared code.
+- **This overrides the older "Dual-mode: JS host optional" principle below**
+  wherever the two conflict.
+
 ## Answering style
 
 Be concise. Lead with the answer, then only the context needed to act on it.
@@ -116,7 +136,7 @@ node scripts/check-loc-budget.mjs && node scripts/check-func-budget.mjs \
 
 ## Architecture Principles
 
-- **Dual-mode: JS host optional** — the compiler supports two modes: JS host mode (uses host imports for performance/completeness) and standalone mode (pure Wasm, no JS runtime). New features should have Wasm-native implementations for standalone mode; JS host imports are acceptable as a fast path when a JS runtime is available. Don't add new host imports without a standalone fallback.
+- **Dual-mode: JS host optional** — *(superseded 2026-10-10: standalone only, JS-host lane being sunset; see the top of this file)* the compiler supports two modes: JS host mode (uses host imports for performance/completeness) and standalone mode (pure Wasm, no JS runtime). New features should have Wasm-native implementations for standalone mode; JS host imports are acceptable as a fast path when a JS runtime is available. Don't add new host imports without a standalone fallback.
 - This follows the pattern of #679 (dual string backend) and #682 (dual RegExp backend).
 - **Two orthogonal axes in codegen** (see #1527):
   - **Backend lowering**: `src/codegen/` (WasmGC) vs `src/codegen-linear/` (linear memory). These are **alternatives, not one superseding the other** — the choice depends on target (browser/WasmGC vs WASI/linear) and tradeoffs. Both stay.
