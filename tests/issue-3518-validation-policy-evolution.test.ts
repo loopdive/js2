@@ -293,7 +293,10 @@ describe("Phase B exact current policy and bounded historical metadata", () => {
     p.files[0]!.path += ".stale";
     expect(() => historicalIrValidationPolicyView(p)).toThrow();
   });
-  it("rejects getter, hidden, symbol, cyclic, sparse and inherited policy data without executing getters", () => {
+  // Keep each malformed-data control independently fresh. These cases retain
+  // the unchanged test deadline; splitting redistributes the aggregate budget,
+  // rather than reducing the source-authentication work performed by actual().
+  it("rejects getter policy data without executing the getter", () => {
     let calls = 0;
     const p = actual();
     Object.defineProperty(p, "files", {
@@ -305,36 +308,58 @@ describe("Phase B exact current policy and bounded historical metadata", () => {
     });
     expect(() => authenticateIrValidationPolicy(p)).toThrow();
     expect(calls).toBe(0);
-    for (const mutate of [
-      (v: MutablePolicy) => {
+  });
+  const policyDataMutations: { name: string; mutate: (v: MutablePolicy) => void }[] = [
+    {
+      name: "hidden",
+      mutate: (v: MutablePolicy) => {
         Object.defineProperty(v, "hidden", { value: 1 });
       },
-      (v: MutablePolicy) => {
+    },
+    {
+      name: "symbol",
+      mutate: (v: MutablePolicy) => {
         Object.defineProperty(v, Symbol("extra"), { value: 1, enumerable: true });
       },
-      (v: MutablePolicy) => {
+    },
+    {
+      name: "cycle",
+      mutate: (v: MutablePolicy) => {
         v.extra = v;
       },
-      (v: MutablePolicy) => {
+    },
+    {
+      name: "undefined",
+      mutate: (v: MutablePolicy) => {
         v.extra = undefined;
       },
-      (v: MutablePolicy) => {
+    },
+    {
+      name: "sparse",
+      mutate: (v: MutablePolicy) => {
         const originalLength = v.activationHistory.length;
         expect(Reflect.deleteProperty(v.activationHistory, "1")).toBe(true);
         expect(v.activationHistory.length).toBe(originalLength);
         expect(Object.hasOwn(v.activationHistory, "1")).toBe(false);
       },
-      (v: MutablePolicy) => {
+    },
+    {
+      name: "inherited",
+      mutate: (v: MutablePolicy) => {
         Object.setPrototypeOf(v, { inherited: true });
       },
-      (v: MutablePolicy) => {
+    },
+    {
+      name: "toJSON",
+      mutate: (v: MutablePolicy) => {
         v.toJSON = () => actual();
       },
-    ]) {
-      const v = actual();
-      mutate(v);
-      expect(() => authenticateIrValidationPolicy(v)).toThrow();
-    }
+    },
+  ];
+  it.each(policyDataMutations)("rejects $name policy data", ({ mutate }) => {
+    const v = actual();
+    mutate(v);
+    expect(() => authenticateIrValidationPolicy(v)).toThrow();
   });
   it("rejects a changed fixed receipt and a before-B or double-projected policy", () => {
     expect(() => authenticateIrValidationPolicyEvolution(receiptText + "\n")).toThrow("receipt digest mismatch");
