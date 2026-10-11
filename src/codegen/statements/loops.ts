@@ -74,8 +74,10 @@ import {
   collectBindingNames,
   collectForInHeadClosureCaptures,
   detectI32LoopVar,
-  findAllNamesCapturedByClosuresInForLoop,
+  findAllNamesCapturedByClosuresInLoop,
   findBodyLocalLexicalNames,
+  findForInOfHeadNames,
+  findNamesWrittenInLoop,
   findHeadBindingsCapturedByClosures,
   forOfDstrNeedsInboundsUndef,
   isIncreasingStep,
@@ -192,6 +194,180 @@ function emitPromotedI32Increment(fctx: FunctionContext, stmt: ts.ForStatement):
   return true;
 }
 
+type SavedBoxedCaptures = Map<string, { refCellTypeIdx: number; valType: ValType } | undefined>;
+
+interface PreBoxedBinding {
+  name: string;
+  refCellTypeIdx: number;
+  boxedLocal: number;
+  originalLocalIdx: number;
+  valType: ValType;
+  /** (#6960) The cell stays the binding's storage after the loop (see below). */
+  functionWide: boolean;
+}
+
+/**
+ * #1589 / #6960: pre-emptive boxing for non-let/const names captured by
+ * closures built inside a loop. MUST run while `fctx.body` is the OUTER body,
+ * before the loop condition is compiled.
+ *
+ * The closure-construction codegen promotes a captured binding to a ref cell
+ * where the closure literal is compiled: after the loop condition already
+ * read the raw slot, and (re-run each iteration) re-wrapping the raw slot into
+ * a FRESH cell, which drops the previous iteration's write. A loop that
+ * mutates such a binding then never sees its own writes and spins forever.
+ * Promoting the binding to one cell here makes condition, body, incrementor
+ * and every closure share it. `writeBackPreBoxedBindings` then either restores
+ * the raw slot (#1589 `for` locals) or, for the write-gated #6960 admissions,
+ * keeps the cell as the binding's storage exactly as the construction site
+ * would have, so nothing is saved/restored for those.
+ *
+ * Admission: names in `localMap` holding a value type, not a body-local
+ * lexical, not already boxed (let/const per-iteration cells). A parameter, and
+ * any binding of a non-`for` loop (#6960), additionally must be WRITTEN in the
+ * loop: a read-only capture keeps its unboxed slot (no per-access
+ * `struct.get` cost). `for` keeps its #1589 admission for locals unchanged.
+ * Parameters of a function with a mapped `arguments` object are skipped: the
+ * mapped-sync emitters address the raw parameter slot.
+ */
+function preBoxLoopCapturedBindings(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  stmt: ts.IterationStatement,
+  saved: SavedBoxedCaptures,
+): PreBoxedBinding[] {
+  const preBoxed: PreBoxedBinding[] = [];
+  const capturedNames = findAllNamesCapturedByClosuresInLoop(stmt);
+  if (capturedNames.size === 0) return preBoxed;
+  // Body-local `let`/`const`/class/function bindings are block-scoped to each
+  // iteration and handled by the body declaration + closure-construction path.
+  // Pre-boxing them at the loop head conflates the hoisted value slot with the
+  // ref cell (`ref.is_null` over an f64 local). Exclude them.
+  const bodyLocalLexical = findBodyLocalLexicalNames(stmt);
+  // A for-in/for-of head binding is (re)bound by the lowering itself, which may
+  // retype it into a fresh local; leave it to that lowering.
+  for (const n of findForInOfHeadNames(stmt)) bodyLocalLexical.add(n);
+  let written: Set<string> | undefined;
+  for (const name of capturedNames) {
+    if (bodyLocalLexical.has(name)) continue;
+    if (fctx.boxedCaptures?.has(name)) continue; // already boxed (let/const per-iter)
+    const oldLocalIdx = fctx.localMap.get(name);
+    if (oldLocalIdx === undefined) continue; // not a local: globals/imports
+    const isParam = oldLocalIdx < fctx.params.length;
+    if (isParam && fctx.mappedArgsInfo) continue;
+    const writeGated = isParam || !ts.isForStatement(stmt);
+    if (writeGated) {
+      written ??= findNamesWrittenInLoop(stmt);
+      if (!written.has(name)) continue;
+    }
+    const oldType: ValType = isParam
+      ? fctx.params[oldLocalIdx]!.type
+      : (fctx.locals[oldLocalIdx - fctx.params.length]?.type ?? { kind: "f64" });
+    // Only box value-typed slots (i32, f64, externref, ref_null). A non-null
+    // `ref` slot (a native-string parameter, …) is admitted on the #6960 paths
+    // and boxed exactly like the closure-construction site boxes it (same
+    // `getOrRegisterRefCellType(ctx, type)` cell, same `valType`).
+    if (
+      !(writeGated && oldType.kind === "ref") &&
+      oldType.kind !== "i32" &&
+      oldType.kind !== "f64" &&
+      oldType.kind !== "i64" &&
+      oldType.kind !== "f32" &&
+      oldType.kind !== "externref" &&
+      oldType.kind !== "ref_null"
+    ) {
+      continue;
+    }
+    const refCellTypeIdx = getOrRegisterRefCellType(ctx, oldType);
+    const boxedLocal = allocLocal(fctx, `__pre_box_${name}`, { kind: "ref_null", typeIdx: refCellTypeIdx });
+    // Box the current value into a fresh ref cell.
+    fctx.body.push({ op: "local.get", index: oldLocalIdx });
+    fctx.body.push({ op: "struct.new", typeIdx: refCellTypeIdx });
+    fctx.body.push({ op: "local.set", index: boxedLocal });
+    if (!writeGated && !saved.has(name)) saved.set(name, fctx.boxedCaptures?.get(name));
+    fctx.localMap.set(name, boxedLocal);
+    if (!fctx.boxedCaptures) fctx.boxedCaptures = new Map();
+    fctx.boxedCaptures.set(name, { refCellTypeIdx, valType: oldType });
+    preBoxed.push({
+      name,
+      refCellTypeIdx,
+      boxedLocal,
+      originalLocalIdx: oldLocalIdx,
+      valType: oldType,
+      functionWide: writeGated,
+    });
+  }
+  return preBoxed;
+}
+
+/**
+ * #1589: write each pre-boxed cell's final value back to the original raw slot
+ * so post-loop reads observe the loop's final state, then restore `localMap`.
+ * Must be emitted into the OUTER body right after the assembled loop.
+ */
+function writeBackPreBoxedBindings(fctx: FunctionContext, preBoxed: readonly PreBoxedBinding[]): void {
+  for (const pb of preBoxed) {
+    if (pb.functionWide) {
+      // (#6960) The closure-construction site this pre-box replaces rebinds the
+      // name FUNCTION-wide; keep that, only hoisted to the loop entry. Inside
+      // the loop the cell dominates every access; from here on a path that
+      // skipped the loop may still hold a null cell, so record the raw slot
+      // for the lazy repair (closures/conditional-capture-box.ts). Closures
+      // built in the loop then also observe writes made after it.
+      fctx.boxedCaptures?.set(pb.name, {
+        refCellTypeIdx: pb.refCellTypeIdx,
+        valType: pb.valType,
+        rawLocalIdx: pb.originalLocalIdx,
+      });
+      continue;
+    }
+    // Null guard: skip the writeback rather than trapping if the cell is null.
+    fctx.body.push({ op: "local.get", index: pb.boxedLocal });
+    fctx.body.push({ op: "ref.is_null" });
+    fctx.body.push({
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [],
+      else: [
+        { op: "local.get", index: pb.boxedLocal },
+        { op: "ref.as_non_null" },
+        { op: "struct.get", typeIdx: pb.refCellTypeIdx, fieldIdx: 0 },
+        { op: "local.set", index: pb.originalLocalIdx },
+      ],
+    });
+    fctx.localMap.set(pb.name, pb.originalLocalIdx);
+  }
+}
+
+/** Restore the `boxedCaptures` entries a loop overrode (scoped boxing). */
+function restoreSavedBoxedCaptures(fctx: FunctionContext, saved: SavedBoxedCaptures | null): void {
+  if (!saved || saved.size === 0) return;
+  if (!fctx.boxedCaptures) fctx.boxedCaptures = new Map();
+  for (const [name, prev] of saved) {
+    if (prev) fctx.boxedCaptures.set(name, prev);
+    else fctx.boxedCaptures.delete(name);
+  }
+}
+
+/**
+ * (#6960) for-in / for-of have many lowerings (array, string, iterator,
+ * collection, static unroll, …); pre-box around the whole dispatch so each of
+ * them reads and writes a loop-written, closure-captured outer binding through
+ * one shared cell.
+ */
+function withPreBoxedLoopCaptures(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  stmt: ts.ForInStatement | ts.ForOfStatement,
+  compile: () => void,
+): void {
+  const savedBoxed: SavedBoxedCaptures = new Map();
+  const preBoxed = preBoxLoopCapturedBindings(ctx, fctx, stmt, savedBoxed);
+  compile();
+  writeBackPreBoxedBindings(fctx, preBoxed);
+  restoreSavedBoxedCaptures(fctx, savedBoxed);
+}
+
 export function compileWhileStatement(ctx: CodegenContext, fctx: FunctionContext, stmt: ts.WhileStatement): void {
   // block $break
   //   loop $continue
@@ -204,6 +380,9 @@ export function compileWhileStatement(ctx: CodegenContext, fctx: FunctionContext
   //   end
   // end
 
+  // (#6960) Pre-box loop-written bindings captured by closures in the loop.
+  const savedBoxed: SavedBoxedCaptures = new Map();
+  const preBoxed = preBoxLoopCapturedBindings(ctx, fctx, stmt, savedBoxed);
   const arenaMark = containsLinearU8Allocation(ctx, stmt.statement)
     ? emitLinearU8ArenaMark(ctx, fctx, "__linu8_loop_mark")
     : undefined;
@@ -251,6 +430,8 @@ export function compileWhileStatement(ctx: CodegenContext, fctx: FunctionContext
   ];
   fctx.body.push(blockLoop(loopBody));
   ctx.liveBodies.delete(condInstrs);
+  writeBackPreBoxedBindings(fctx, preBoxed);
+  restoreSavedBoxedCaptures(fctx, savedBoxed);
 }
 
 /**
@@ -684,70 +865,8 @@ export function compileForStatement(ctx: CodegenContext, fctx: FunctionContext, 
   // pass above (those are in `boxedCaptures` now). Names not in `localMap`
   // (e.g. globals, module imports) are left alone — the closure-construction
   // path handles them by reading the underlying global.
-  const preBoxedNames: {
-    name: string;
-    refCellTypeIdx: number;
-    boxedLocal: number;
-    valType: ValType;
-    originalLocalIdx: number;
-  }[] = [];
-  {
-    const capturedNames = findAllNamesCapturedByClosuresInForLoop(stmt);
-    // Body-local `let`/`const`/class/function bindings are block-scoped to each
-    // iteration and handled by the body declaration + closure-construction path.
-    // Pre-boxing them at the loop head conflates the hoisted value slot with the
-    // ref cell (→ `ref.is_null` over an f64 local). Exclude them.
-    const bodyLocalLexical = findBodyLocalLexicalNames(stmt);
-    for (const name of capturedNames) {
-      if (bodyLocalLexical.has(name)) continue;
-      if (fctx.boxedCaptures?.has(name)) continue; // already boxed (let/const per-iter)
-      const oldLocalIdx = fctx.localMap.get(name);
-      if (oldLocalIdx === undefined) continue; // not a local — globals/imports
-      if (oldLocalIdx < fctx.params.length) continue; // params get boxed by closure construction itself
-      const oldType = fctx.locals[oldLocalIdx - fctx.params.length]?.type ?? {
-        kind: "f64" as const,
-      };
-      // Only box value-typed locals (i32, f64, externref, ref_null) — ref-cell
-      // boxing of arbitrary struct/array refs is handled by the closure-side
-      // path which knows the underlying type.
-      if (
-        oldType.kind !== "i32" &&
-        oldType.kind !== "f64" &&
-        oldType.kind !== "i64" &&
-        oldType.kind !== "f32" &&
-        oldType.kind !== "externref" &&
-        oldType.kind !== "ref_null"
-      ) {
-        continue;
-      }
-      const refCellTypeIdx = getOrRegisterRefCellType(ctx, oldType);
-      const boxedLocal = allocLocal(fctx, `__pre_box_${name}`, {
-        kind: "ref_null",
-        typeIdx: refCellTypeIdx,
-      });
-      // Box the current value into a fresh ref cell.
-      fctx.body.push({ op: "local.get", index: oldLocalIdx });
-      fctx.body.push({ op: "struct.new", typeIdx: refCellTypeIdx });
-      fctx.body.push({ op: "local.set", index: boxedLocal });
-
-      // Save prior boxedCaptures entry so we can restore it on loop exit.
-      if (!savedForBoxedCaptures) savedForBoxedCaptures = new Map();
-      if (!savedForBoxedCaptures.has(name)) {
-        savedForBoxedCaptures.set(name, fctx.boxedCaptures?.get(name));
-      }
-
-      fctx.localMap.set(name, boxedLocal);
-      if (!fctx.boxedCaptures) fctx.boxedCaptures = new Map();
-      fctx.boxedCaptures.set(name, { refCellTypeIdx, valType: oldType });
-      preBoxedNames.push({
-        name,
-        refCellTypeIdx,
-        boxedLocal,
-        valType: oldType,
-        originalLocalIdx: oldLocalIdx,
-      });
-    }
-  }
+  if (!savedForBoxedCaptures) savedForBoxedCaptures = new Map();
+  const preBoxedNames = preBoxLoopCapturedBindings(ctx, fctx, stmt, savedForBoxedCaptures);
 
   // Loop structure:
   // block $break {                    ; break target (depth 2 from body)
@@ -943,34 +1062,8 @@ export function compileForStatement(ctx: CodegenContext, fctx: FunctionContext, 
   ctx.liveBodies.delete(condInstrs);
   ctx.liveBodies.delete(incrInstrs);
 
-  // #1589: For pre-emptively boxed `var`/outer-scope names, write the final
-  // ref-cell value back to the original unboxed local so post-loop reads of
-  // the variable observe the loop's final state, then restore localMap.
-  if (preBoxedNames.length > 0) {
-    for (const pb of preBoxedNames) {
-      fctx.body.push({ op: "local.get", index: pb.boxedLocal });
-      // Null guard: if the ref cell somehow ended up null (shouldn't happen
-      // since we struct.new'd it at loop entry), skip the writeback rather
-      // than trapping.
-      fctx.body.push({ op: "ref.is_null" });
-      fctx.body.push({
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [],
-        else: [
-          { op: "local.get", index: pb.boxedLocal },
-          { op: "ref.as_non_null" },
-          {
-            op: "struct.get",
-            typeIdx: pb.refCellTypeIdx,
-            fieldIdx: 0,
-          },
-          { op: "local.set", index: pb.originalLocalIdx },
-        ],
-      });
-      fctx.localMap.set(pb.name, pb.originalLocalIdx);
-    }
-  }
+  // #1589: write the pre-boxed cells back to their raw slots, restore localMap.
+  writeBackPreBoxedBindings(fctx, preBoxedNames);
 
   // (#5271 step 2.2, for-head twin) Forget head-fresh slots that hid nothing.
   for (const name of introducedNames) {
@@ -999,13 +1092,7 @@ export function compileForStatement(ctx: CodegenContext, fctx: FunctionContext, 
   }
   // #1453: restore previous boxedCaptures entries so the per-iteration boxing
   // is scoped to this loop (relevant for nested loops with same-named bindings).
-  if (savedForBoxedCaptures) {
-    if (!fctx.boxedCaptures) fctx.boxedCaptures = new Map();
-    for (const [name, prev] of savedForBoxedCaptures) {
-      if (prev) fctx.boxedCaptures.set(name, prev);
-      else fctx.boxedCaptures.delete(name);
-    }
-  }
+  restoreSavedBoxedCaptures(fctx, savedForBoxedCaptures);
 }
 
 export function compileDoWhileStatement(ctx: CodegenContext, fctx: FunctionContext, stmt: ts.DoStatement): void {
@@ -1020,6 +1107,9 @@ export function compileDoWhileStatement(ctx: CodegenContext, fctx: FunctionConte
   //   }
   // }
 
+  // (#6960) Pre-box loop-written bindings captured by closures in the loop.
+  const savedBoxed: SavedBoxedCaptures = new Map();
+  const preBoxed = preBoxLoopCapturedBindings(ctx, fctx, stmt, savedBoxed);
   const arenaMark = containsLinearU8Allocation(ctx, stmt.statement)
     ? emitLinearU8ArenaMark(ctx, fctx, "__linu8_loop_mark")
     : undefined;
@@ -1072,9 +1162,15 @@ export function compileDoWhileStatement(ctx: CodegenContext, fctx: FunctionConte
 
   // (#1690) The cond Instr objects are now reachable via fctx.body → loop.
   ctx.liveBodies.delete(condInstrs);
+  writeBackPreBoxedBindings(fctx, preBoxed);
+  restoreSavedBoxedCaptures(fctx, savedBoxed);
 }
 
 export function compileForOfStatement(ctx: CodegenContext, fctx: FunctionContext, stmt: ts.ForOfStatement): void {
+  withPreBoxedLoopCaptures(ctx, fctx, stmt, () => compileForOfStatementInner(ctx, fctx, stmt));
+}
+
+function compileForOfStatementInner(ctx: CodegenContext, fctx: FunctionContext, stmt: ts.ForOfStatement): void {
   ensureForAwaitMarkHandled(ctx, fctx, stmt); // (#6791) before any driver captures a func index
   // Check the TS type of the iterable to decide compilation strategy
   const exprTsType = ctx.checker.getTypeAtLocation(stmt.expression);
@@ -3916,6 +4012,10 @@ function emitForInPerIterationCellInitializers(
 }
 
 export function compileForInStatement(ctx: CodegenContext, fctx: FunctionContext, stmt: ts.ForInStatement): void {
+  withPreBoxedLoopCaptures(ctx, fctx, stmt, () => compileForInStatementInner(ctx, fctx, stmt));
+}
+
+function compileForInStatementInner(ctx: CodegenContext, fctx: FunctionContext, stmt: ts.ForInStatement): void {
   // Get the loop variable name
   const init = stmt.initializer;
   // (#2705) Unwrap a CoverParenthesizedExpression head — `for ((x) in obj)` /
