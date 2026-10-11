@@ -1,0 +1,583 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ × tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > proves the fixed five identities, complete current profiles and reciprocal1808 predecessor 296ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > refuses missing row src/codegen/classes/class-ctor-call-apply.ts 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > refuses duplicate row src/codegen/classes/class-ctor-call-apply.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > refuses forbidden clean state src/codegen/classes/class-ctor-call-apply.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > refuses missing row src/codegen/classes/class-heritage-comma.ts 8ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > refuses duplicate row src/codegen/classes/class-heritage-comma.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > refuses forbidden clean state src/codegen/classes/class-heritage-comma.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > refuses missing row src/codegen/classes/class-heritage-runtime-get.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > refuses duplicate row src/codegen/classes/class-heritage-runtime-get.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > refuses forbidden clean state src/codegen/classes/class-heritage-runtime-get.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > refuses missing row src/codegen/classes/ctor-return-override.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > refuses duplicate row src/codegen/classes/ctor-return-override.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > refuses forbidden clean state src/codegen/classes/ctor-return-override.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > refuses missing row src/codegen/classes/derived-ctor-this-guard.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > refuses duplicate row src/codegen/classes/derived-ctor-this-guard.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > refuses forbidden clean state src/codegen/classes/derived-ctor-this-guard.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > refuses swapping the same-index comma/runtime-get additions 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > refuses an extra ownership row key 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > refuses a changed retained row 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > refuses activation-history mutation 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > refuses allowedEdges mutation 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > refuses omitted raw insertion group 0 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > refuses duplicated raw insertion group 0 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > refuses reordered complete raw insertion group 0 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > refuses omitted raw insertion group 1 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > refuses duplicated raw insertion group 1 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > refuses reordered complete raw insertion group 1 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > refuses omitted raw insertion group 2 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > refuses duplicated raw insertion group 2 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > refuses reordered complete raw insertion group 2 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > refuses omitted raw insertion group 3 7ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > refuses duplicated raw insertion group 3 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > refuses reordered complete raw insertion group 3 5ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > refuses the stale1808 semantic predecessor 11ms
+   → expected [Function] to throw error including 'complete policy profile mismatch' but got 'Deno post-position main successor: co…'
+ × tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > refuses the stale1808 raw predecessor 4ms
+   → expected [Function] to throw error including 'canonical complete raw source profile…' but got 'Deno post-position main successor: co…'
+ × tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > raw wrapper refusal precedes missing receipt without conversion 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > non-object policy refusal precedes missing receipt 6ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > getter refusal precedes missing receipt and never executes the getter 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > hidden and symbol keys refuse before missing receipt 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > throwing descriptor proxy refuses before missing receipt 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > cycle refuses before missing receipt 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ ✓ tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > refuses a changed new receipt byte 1ms
+ ✓ tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > refuses an added receipt schema field 1ms
+ ✓ tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > refuses the stale prior3c6 receipt 0ms
+ × tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > freshly refuses mutation physical tests/helpers/ir-runtime-program-policy-canonical-489d.json through receipt after success 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > freshly refuses mutation physical tests/helpers/ir-runtime-program-policy-canonical-489d.json through semantic after success 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > freshly refuses mutation physical tests/helpers/ir-runtime-program-policy-canonical-489d.json through raw after success 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > freshly refuses missing physical tests/helpers/ir-runtime-program-policy-canonical-489d.json through receipt after success 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > freshly refuses missing physical tests/helpers/ir-runtime-program-policy-canonical-489d.json through semantic after success 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > freshly refuses missing physical tests/helpers/ir-runtime-program-policy-canonical-489d.json through raw after success 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > freshly refuses mutation physical tests/helpers/ir-runtime-program-policy-evolution.ts through receipt after success 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > freshly refuses mutation physical tests/helpers/ir-runtime-program-policy-evolution.ts through semantic after success 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > freshly refuses mutation physical tests/helpers/ir-runtime-program-policy-evolution.ts through raw after success 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > freshly refuses missing physical tests/helpers/ir-runtime-program-policy-evolution.ts through receipt after success 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > freshly refuses missing physical tests/helpers/ir-runtime-program-policy-evolution.ts through semantic after success 8ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > freshly refuses missing physical tests/helpers/ir-runtime-program-policy-evolution.ts through raw after success 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > rechecks a changed mutable argument and accepts exact restoration 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-489d-inventory-successor.test.ts > fresh canonical 489d inventory capture authority > fresh capture refuses mutation physical tests/helpers/ir-runtime-program-policy-canonical-489d.json through semantic after success 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-489d-inventory-successor.test.ts > fresh canonical 489d inventory capture authority > fresh capture refuses mutation physical tests/helpers/ir-runtime-program-policy-canonical-489d.json through raw after success 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-489d-inventory-successor.test.ts > fresh canonical 489d inventory capture authority > fresh capture refuses missing physical tests/helpers/ir-runtime-program-policy-canonical-489d.json through semantic after success 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-489d-inventory-successor.test.ts > fresh canonical 489d inventory capture authority > fresh capture refuses missing physical tests/helpers/ir-runtime-program-policy-canonical-489d.json through raw after success 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-489d-inventory-successor.test.ts > fresh canonical 489d inventory capture authority > fresh capture refuses mutation physical tests/helpers/ir-runtime-program-policy-evolution.ts through semantic after success 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-489d-inventory-successor.test.ts > fresh canonical 489d inventory capture authority > fresh capture refuses mutation physical tests/helpers/ir-runtime-program-policy-evolution.ts through raw after success 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-489d-inventory-successor.test.ts > fresh canonical 489d inventory capture authority > fresh capture refuses missing physical tests/helpers/ir-runtime-program-policy-evolution.ts through semantic after success 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-canonical-489d-inventory-successor.test.ts > fresh canonical 489d inventory capture authority > fresh capture refuses missing physical tests/helpers/ir-runtime-program-policy-evolution.ts through raw after success 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 62 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > proves the fixed five identities, complete current profiles and reciprocal1808 predecessor
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-canonical-489d-inventory-successor.test.ts:378:23
+ ❯ tests/issue-3518-canonical-489d-inventory-successor.test.ts:575:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/62]⎯
+
+ FAIL  tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > refuses missing row src/codegen/classes/class-ctor-call-apply.ts
+ FAIL  tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > refuses missing row src/codegen/classes/class-heritage-comma.ts
+ FAIL  tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > refuses missing row src/codegen/classes/class-heritage-runtime-get.ts
+ FAIL  tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > refuses missing row src/codegen/classes/ctor-return-override.ts
+ FAIL  tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > refuses missing row src/codegen/classes/derived-ctor-this-guard.ts
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-canonical-489d-inventory-successor.test.ts:378:23
+ ❯ policy tests/issue-3518-canonical-489d-inventory-successor.test.ts:393:41
+ ❯ tests/issue-3518-canonical-489d-inventory-successor.test.ts:651:17
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/62]⎯
+
+ FAIL  tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > refuses duplicate row src/codegen/classes/class-ctor-call-apply.ts
+ FAIL  tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > refuses duplicate row src/codegen/classes/class-heritage-comma.ts
+ FAIL  tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > refuses duplicate row src/codegen/classes/class-heritage-runtime-get.ts
+ FAIL  tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > refuses duplicate row src/codegen/classes/ctor-return-override.ts
+ FAIL  tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > refuses duplicate row src/codegen/classes/derived-ctor-this-guard.ts
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-canonical-489d-inventory-successor.test.ts:378:23
+ ❯ policy tests/issue-3518-canonical-489d-inventory-successor.test.ts:393:41
+ ❯ tests/issue-3518-canonical-489d-inventory-successor.test.ts:656:17
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/62]⎯
+
+ FAIL  tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > refuses forbidden clean state src/codegen/classes/class-ctor-call-apply.ts
+ FAIL  tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > refuses forbidden clean state src/codegen/classes/class-heritage-comma.ts
+ FAIL  tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > refuses forbidden clean state src/codegen/classes/class-heritage-runtime-get.ts
+ FAIL  tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > refuses forbidden clean state src/codegen/classes/ctor-return-override.ts
+ FAIL  tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > refuses forbidden clean state src/codegen/classes/derived-ctor-this-guard.ts
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-canonical-489d-inventory-successor.test.ts:378:23
+ ❯ policy tests/issue-3518-canonical-489d-inventory-successor.test.ts:393:41
+ ❯ tests/issue-3518-canonical-489d-inventory-successor.test.ts:661:17
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/62]⎯
+
+ FAIL  tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > refuses swapping the same-index comma/runtime-get additions
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-canonical-489d-inventory-successor.test.ts:378:23
+ ❯ policy tests/issue-3518-canonical-489d-inventory-successor.test.ts:393:41
+ ❯ tests/issue-3518-canonical-489d-inventory-successor.test.ts:667:15
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/62]⎯
+
+ FAIL  tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > refuses an extra ownership row key
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-canonical-489d-inventory-successor.test.ts:378:23
+ ❯ policy tests/issue-3518-canonical-489d-inventory-successor.test.ts:393:41
+ ❯ tests/issue-3518-canonical-489d-inventory-successor.test.ts:672:15
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/62]⎯
+
+ FAIL  tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > refuses a changed retained row
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-canonical-489d-inventory-successor.test.ts:378:23
+ ❯ policy tests/issue-3518-canonical-489d-inventory-successor.test.ts:393:41
+ ❯ tests/issue-3518-canonical-489d-inventory-successor.test.ts:677:15
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/62]⎯
+
+ FAIL  tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > refuses activation-history mutation
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-canonical-489d-inventory-successor.test.ts:378:23
+ ❯ policy tests/issue-3518-canonical-489d-inventory-successor.test.ts:393:41
+ ❯ tests/issue-3518-canonical-489d-inventory-successor.test.ts:682:15
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/62]⎯
+
+ FAIL  tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > refuses allowedEdges mutation
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-canonical-489d-inventory-successor.test.ts:378:23
+ ❯ policy tests/issue-3518-canonical-489d-inventory-successor.test.ts:393:41
+ ❯ tests/issue-3518-canonical-489d-inventory-successor.test.ts:687:15
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/62]⎯
+
+ FAIL  tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > refuses omitted raw insertion group 0
+ FAIL  tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > refuses omitted raw insertion group 1
+ FAIL  tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > refuses omitted raw insertion group 2
+ FAIL  tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > refuses omitted raw insertion group 3
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-canonical-489d-inventory-successor.test.ts:378:23
+ ❯ tests/issue-3518-canonical-489d-inventory-successor.test.ts:695:20
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/62]⎯
+
+ FAIL  tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > refuses duplicated raw insertion group 0
+ FAIL  tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > refuses duplicated raw insertion group 1
+ FAIL  tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > refuses duplicated raw insertion group 2
+ FAIL  tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > refuses duplicated raw insertion group 3
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-canonical-489d-inventory-successor.test.ts:378:23
+ ❯ tests/issue-3518-canonical-489d-inventory-successor.test.ts:705:20
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[11/62]⎯
+
+ FAIL  tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > refuses reordered complete raw insertion group 0
+ FAIL  tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > refuses reordered complete raw insertion group 1
+ FAIL  tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > refuses reordered complete raw insertion group 2
+ FAIL  tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > refuses reordered complete raw insertion group 3
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-canonical-489d-inventory-successor.test.ts:378:23
+ ❯ tests/issue-3518-canonical-489d-inventory-successor.test.ts:715:20
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[12/62]⎯
+
+ FAIL  tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > refuses the stale1808 semantic predecessor
+AssertionError: expected [Function] to throw error including 'complete policy profile mismatch' but got 'Deno post-position main successor: co…'
+
+Expected: [32m"[7mcomplete policy[27m profile mismatch"[39m
+Received: [31m"[7mDeno post-position main successor: complete raw source[27m profile mismatch"[39m
+
+ ❯ tests/issue-3518-canonical-489d-inventory-successor.test.ts:745:100
+    743|   }
+    744|   it("refuses the stale1808 semantic predecessor", () => {
+    745|     expect(() => beforeCanonical489dInventoryPolicy(beforeCanonical489…
+       |                                                                                                    ^
+    746|       "complete policy profile mismatch",
+    747|     );
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[13/62]⎯
+
+ FAIL  tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > refuses the stale1808 raw predecessor
+AssertionError: expected [Function] to throw error including 'canonical complete raw source profile…' but got 'Deno post-position main successor: co…'
+
+Expected: [32m"[7mcanonical[27m complete raw source profile mismatch"[39m
+Received: [31m"[7mDeno post-position main successor:[27m complete raw source profile mismatch"[39m
+
+ ❯ tests/issue-3518-canonical-489d-inventory-successor.test.ts:752:109
+    750|   });
+    751|   it("refuses the stale1808 raw predecessor", () => {
+    752|     expect(() => beforeCanonical489dInventoryPolicySource(beforeCanoni…
+       |                                                                                                             ^
+    753|       "canonical complete raw source profile mismatch",
+    754|     );
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[14/62]⎯
+
+ FAIL  tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > raw wrapper refusal precedes missing receipt without conversion
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-canonical-489d-inventory-successor.test.ts:378:23
+ ❯ tests/issue-3518-canonical-489d-inventory-successor.test.ts:761:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[15/62]⎯
+
+ FAIL  tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > non-object policy refusal precedes missing receipt
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-canonical-489d-inventory-successor.test.ts:378:23
+ ❯ policy tests/issue-3518-canonical-489d-inventory-successor.test.ts:393:41
+ ❯ tests/issue-3518-canonical-489d-inventory-successor.test.ts:794:21
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[16/62]⎯
+
+ FAIL  tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > getter refusal precedes missing receipt and never executes the getter
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-canonical-489d-inventory-successor.test.ts:378:23
+ ❯ policy tests/issue-3518-canonical-489d-inventory-successor.test.ts:393:41
+ ❯ tests/issue-3518-canonical-489d-inventory-successor.test.ts:801:15
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[17/62]⎯
+
+ FAIL  tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > hidden and symbol keys refuse before missing receipt
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-canonical-489d-inventory-successor.test.ts:378:23
+ ❯ policy tests/issue-3518-canonical-489d-inventory-successor.test.ts:393:41
+ ❯ tests/issue-3518-canonical-489d-inventory-successor.test.ts:832:20
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[18/62]⎯
+
+ FAIL  tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > throwing descriptor proxy refuses before missing receipt
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-canonical-489d-inventory-successor.test.ts:378:23
+ ❯ policy tests/issue-3518-canonical-489d-inventory-successor.test.ts:393:41
+ ❯ tests/issue-3518-canonical-489d-inventory-successor.test.ts:853:25
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[19/62]⎯
+
+ FAIL  tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > cycle refuses before missing receipt
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-canonical-489d-inventory-successor.test.ts:378:23
+ ❯ policy tests/issue-3518-canonical-489d-inventory-successor.test.ts:393:41
+ ❯ tests/issue-3518-canonical-489d-inventory-successor.test.ts:874:15
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[20/62]⎯
+
+ FAIL  tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > freshly refuses mutation physical tests/helpers/ir-runtime-program-policy-canonical-489d.json through receipt after success
+ FAIL  tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > freshly refuses mutation physical tests/helpers/ir-runtime-program-policy-canonical-489d.json through semantic after success
+ FAIL  tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > freshly refuses mutation physical tests/helpers/ir-runtime-program-policy-canonical-489d.json through raw after success
+ FAIL  tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > freshly refuses missing physical tests/helpers/ir-runtime-program-policy-canonical-489d.json through receipt after success
+ FAIL  tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > freshly refuses missing physical tests/helpers/ir-runtime-program-policy-canonical-489d.json through semantic after success
+ FAIL  tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > freshly refuses missing physical tests/helpers/ir-runtime-program-policy-canonical-489d.json through raw after success
+ FAIL  tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > freshly refuses mutation physical tests/helpers/ir-runtime-program-policy-evolution.ts through receipt after success
+ FAIL  tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > freshly refuses mutation physical tests/helpers/ir-runtime-program-policy-evolution.ts through semantic after success
+ FAIL  tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > freshly refuses mutation physical tests/helpers/ir-runtime-program-policy-evolution.ts through raw after success
+ FAIL  tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > freshly refuses missing physical tests/helpers/ir-runtime-program-policy-evolution.ts through receipt after success
+ FAIL  tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > freshly refuses missing physical tests/helpers/ir-runtime-program-policy-evolution.ts through semantic after success
+ FAIL  tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > freshly refuses missing physical tests/helpers/ir-runtime-program-policy-evolution.ts through raw after success
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-canonical-489d-inventory-successor.test.ts:378:23
+ ❯ policy tests/issue-3518-canonical-489d-inventory-successor.test.ts:393:41
+ ❯ tests/issue-3518-canonical-489d-inventory-successor.test.ts:906:21
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[21/62]⎯
+
+ FAIL  tests/issue-3518-canonical-489d-inventory-successor.test.ts > fixed inventory-only canonical 489d successor > rechecks a changed mutable argument and accepts exact restoration
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-canonical-489d-inventory-successor.test.ts:378:23
+ ❯ policy tests/issue-3518-canonical-489d-inventory-successor.test.ts:393:41
+ ❯ tests/issue-3518-canonical-489d-inventory-successor.test.ts:929:15
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[22/62]⎯
+
+ FAIL  tests/issue-3518-canonical-489d-inventory-successor.test.ts > fresh canonical 489d inventory capture authority > fresh capture refuses mutation physical tests/helpers/ir-runtime-program-policy-canonical-489d.json through semantic after success
+ FAIL  tests/issue-3518-canonical-489d-inventory-successor.test.ts > fresh canonical 489d inventory capture authority > fresh capture refuses mutation physical tests/helpers/ir-runtime-program-policy-canonical-489d.json through raw after success
+ FAIL  tests/issue-3518-canonical-489d-inventory-successor.test.ts > fresh canonical 489d inventory capture authority > fresh capture refuses missing physical tests/helpers/ir-runtime-program-policy-canonical-489d.json through semantic after success
+ FAIL  tests/issue-3518-canonical-489d-inventory-successor.test.ts > fresh canonical 489d inventory capture authority > fresh capture refuses missing physical tests/helpers/ir-runtime-program-policy-canonical-489d.json through raw after success
+ FAIL  tests/issue-3518-canonical-489d-inventory-successor.test.ts > fresh canonical 489d inventory capture authority > fresh capture refuses mutation physical tests/helpers/ir-runtime-program-policy-evolution.ts through semantic after success
+ FAIL  tests/issue-3518-canonical-489d-inventory-successor.test.ts > fresh canonical 489d inventory capture authority > fresh capture refuses mutation physical tests/helpers/ir-runtime-program-policy-evolution.ts through raw after success
+ FAIL  tests/issue-3518-canonical-489d-inventory-successor.test.ts > fresh canonical 489d inventory capture authority > fresh capture refuses missing physical tests/helpers/ir-runtime-program-policy-evolution.ts through semantic after success
+ FAIL  tests/issue-3518-canonical-489d-inventory-successor.test.ts > fresh canonical 489d inventory capture authority > fresh capture refuses missing physical tests/helpers/ir-runtime-program-policy-evolution.ts through raw after success
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-canonical-489d-inventory-successor.test.ts:378:23
+ ❯ policy tests/issue-3518-canonical-489d-inventory-successor.test.ts:393:41
+ ❯ tests/issue-3518-canonical-489d-inventory-successor.test.ts:951:21
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[23/62]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  62 failed | 3 passed (65)
+   Start at  22:45:02
+   Duration  1.44s (transform 446ms, setup 0ms, collect 535ms, tests 487ms, environment 0ms, prepare 69ms)
+

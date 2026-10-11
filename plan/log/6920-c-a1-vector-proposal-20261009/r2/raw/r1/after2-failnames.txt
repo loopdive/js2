@@ -1,0 +1,159 @@
+ FAIL  tests/issue-2856-builtins-component.test.ts > #2856 builtins component > keeps bounded toFixed out of unsupported representation modes
+ FAIL  tests/issue-2856-builtins-component.test.ts > #2856 builtins component > rejects a literal initialized with a non-string local representation before claim
+ FAIL  tests/issue-2856-builtins-component.test.ts > #2856 builtins component > rejects literal replace before claim when the linear planner has no method plan
+ FAIL  tests/issue-3497-linear-jsdoc-landing-signatures.test.ts > #3497 — TypeScript-effective JSDoc signatures > keeps unannotated and any-valued operations on the dynamic rejection path
+ FAIL  tests/issue-3518-lowering-cycle.test.ts > lowering cycle separation > resolves the real transitive value graph without a wrapper/emitter/facade cycle
+ FAIL  tests/issue-3518-native-family-source-contract.test.ts > complete native family logical source preparation > export-only GVN=off decoded=false: prepares the entire native family
+ FAIL  tests/issue-3518-native-family-source-contract.test.ts > complete native family logical source preparation > export-only GVN=off decoded=true: prepares the entire native family
+ FAIL  tests/issue-3518-native-family-source-contract.test.ts > complete native family logical source preparation > export-only GVN=on decoded=false: prepares the entire native family
+ FAIL  tests/issue-3518-native-family-source-contract.test.ts > complete native family logical source preparation > export-only GVN=on decoded=true: prepares the entire native family
+ FAIL  tests/issue-3518-native-family-source-contract.test.ts > complete native family logical source preparation > original GVN=off decoded=false: prepares the entire native family
+ FAIL  tests/issue-3518-native-family-source-contract.test.ts > complete native family logical source preparation > original GVN=off decoded=true: prepares the entire native family
+ FAIL  tests/issue-3518-native-family-source-contract.test.ts > complete native family logical source preparation > original GVN=on decoded=false: prepares the entire native family
+ FAIL  tests/issue-3518-native-family-source-contract.test.ts > complete native family logical source preparation > original GVN=on decoded=true: prepares the entire native family
+ FAIL  tests/issue-3518-native-string-no-demand-emitter-forward.test.ts > authenticates the landed import pair and exact repaired-emitter inverse
+ FAIL  tests/issue-3518-native-string-no-demand-emitter-forward.test.ts > rejects a different fixed commit or parent after the canonical positive
+ FAIL  tests/issue-3518-native-string-no-demand-emitter-forward.test.ts > rejects a missing or duplicate nullability guard after the canonical positive
+ FAIL  tests/issue-3518-native-string-no-demand-emitter-forward.test.ts > rejects absent forwarding and a missing import after the canonical positive
+ FAIL  tests/issue-3518-native-string-no-demand-emitter-forward.test.ts > rejects altered before or after authority bytes after the canonical positive
+ FAIL  tests/issue-3518-native-string-no-demand-emitter-forward.test.ts > rejects duplicate forwarded imports after the canonical positive
+ FAIL  tests/issue-3518-native-string-no-demand-emitter-forward.test.ts > rejects retargeted, value-kind and attributed imports after the canonical positive
+ FAIL  tests/issue-3518-native-string-no-demand-emitter-forward.test.ts > rejects unrelated candidate edits and a matching forged repaired pair
+ FAIL  tests/issue-3518-typed-async-preparation.test.ts > IR-only async preparation extraction > retains src/ir/async-linear-prepare.ts's 16 exact declarations and docs
+ FAIL  tests/issue-3518-typed-async-preparation.test.ts > IR-only async preparation extraction > retains src/ir/async-prepare-ir.ts's 18 exact declarations and docs
+ FAIL  tests/issue-3518-typed-async-preparation.test.ts > IR-only async preparation extraction > retains src/ir/passes/monomorphize.ts's 22 exact declarations and docs
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > authenticates the independently fixed receipt and complete current domain
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > detaches semantic input and independently replays rows layer history and moves
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw reauthenticates missing src/backend/wasmgc/lowering/dynamic-scratch.ts after warm success
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw reauthenticates missing src/backend/wasmgc/lowering/wasm-int32-coercion.ts after warm success
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw reauthenticates missing src/backend/wasmgc/lowering/wasm-math-minmax.ts after warm success
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw reauthenticates missing src/ir/backend/wasm-int32-coercion.ts after warm success
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw reauthenticates missing src/ir/backend/wasm-math-minmax.ts after warm success
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw reauthenticates missing src/ir/lowering-dynamic-scratch.ts after warm success
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw reauthenticates missing tests/helpers/ir-runtime-program-policy-evolution.ts after warm success
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw reauthenticates missing tests/helpers/ir-runtime-program-policy-program-validator.json after warm success
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw reauthenticates missing tests/helpers/ir-runtime-program-policy-wasmgc-helper-owners.json after warm success
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw reauthenticates mutation src/backend/wasmgc/lowering/dynamic-scratch.ts after warm success
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw reauthenticates mutation src/backend/wasmgc/lowering/wasm-int32-coercion.ts after warm success
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw reauthenticates mutation src/backend/wasmgc/lowering/wasm-math-minmax.ts after warm success
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw reauthenticates mutation src/ir/backend/wasm-int32-coercion.ts after warm success
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw reauthenticates mutation src/ir/backend/wasm-math-minmax.ts after warm success
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw reauthenticates mutation src/ir/lowering-dynamic-scratch.ts after warm success
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw reauthenticates mutation tests/helpers/ir-runtime-program-policy-evolution.ts after warm success
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw reauthenticates mutation tests/helpers/ir-runtime-program-policy-program-validator.json after warm success
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw reauthenticates mutation tests/helpers/ir-runtime-program-policy-wasmgc-helper-owners.json after warm success
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses a one-byte valid-JSON retained-field change
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses exact current-domain allowed edge drift
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses exact current-domain backend entry drift
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses exact current-domain backend floor drift
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses exact current-domain donor extra key drift
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses exact current-domain donor state drift
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses exact current-domain duplicate owner drift
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses exact current-domain extra move drift
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses exact current-domain extra top-level field drift
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses exact current-domain facade neighbor drift
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses exact current-domain missing activation tail drift
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses exact current-domain missing owner drift
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses exact current-domain move tail order drift
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses exact current-domain new activation tail drift
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses exact current-domain old activation prefix drift
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses exact current-domain old move prefix drift
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses exact current-domain owner extra key drift
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses exact current-domain reordered owners drift
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses exact current-domain retained description drift
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 0 duplicated literal
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 0 omission
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 0 reordered literal
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 1 duplicated literal
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 1 omission
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 1 reordered literal
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 10 duplicated literal
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 10 omission
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 10 reordered literal
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 11 duplicated literal
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 11 omission
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 11 reordered literal
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 12 duplicated literal
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 12 omission
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 12 reordered literal
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 13 duplicated literal
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 13 omission
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 13 reordered literal
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 2 duplicated literal
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 2 omission
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 2 reordered literal
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 3 duplicated literal
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 3 omission
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 3 reordered literal
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 4 duplicated literal
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 4 omission
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 4 reordered literal
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 5 duplicated literal
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 5 omission
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 5 reordered literal
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 6 duplicated literal
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 6 omission
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 6 reordered literal
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 7 duplicated literal
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 7 omission
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 7 reordered literal
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 8 duplicated literal
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 8 omission
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 8 reordered literal
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 9 duplicated literal
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 9 omission
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses fixed span 9 reordered literal
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses stale445 while the unchanged program-validator API accepts it
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw refuses whitespace drift
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw rejects array before missing receipt with valid ENOENT witness
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw rejects boolean before missing receipt with valid ENOENT witness
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw rejects boxed before missing receipt with valid ENOENT witness
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw rejects null before missing receipt with valid ENOENT witness
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw rejects number before missing receipt with valid ENOENT witness
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > raw rejects undefined before missing receipt with valid ENOENT witness
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > recovers genuine445 raw bytes and replays all14 spans before unchanged old API
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic reauthenticates missing src/backend/wasmgc/lowering/dynamic-scratch.ts after warm success
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic reauthenticates missing src/backend/wasmgc/lowering/wasm-int32-coercion.ts after warm success
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic reauthenticates missing src/backend/wasmgc/lowering/wasm-math-minmax.ts after warm success
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic reauthenticates missing src/ir/backend/wasm-int32-coercion.ts after warm success
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic reauthenticates missing src/ir/backend/wasm-math-minmax.ts after warm success
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic reauthenticates missing src/ir/lowering-dynamic-scratch.ts after warm success
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic reauthenticates missing tests/helpers/ir-runtime-program-policy-evolution.ts after warm success
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic reauthenticates missing tests/helpers/ir-runtime-program-policy-program-validator.json after warm success
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic reauthenticates missing tests/helpers/ir-runtime-program-policy-wasmgc-helper-owners.json after warm success
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic reauthenticates mutation src/backend/wasmgc/lowering/dynamic-scratch.ts after warm success
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic reauthenticates mutation src/backend/wasmgc/lowering/wasm-int32-coercion.ts after warm success
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic reauthenticates mutation src/backend/wasmgc/lowering/wasm-math-minmax.ts after warm success
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic reauthenticates mutation src/ir/backend/wasm-int32-coercion.ts after warm success
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic reauthenticates mutation src/ir/backend/wasm-math-minmax.ts after warm success
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic reauthenticates mutation src/ir/lowering-dynamic-scratch.ts after warm success
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic reauthenticates mutation tests/helpers/ir-runtime-program-policy-evolution.ts after warm success
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic reauthenticates mutation tests/helpers/ir-runtime-program-policy-program-validator.json after warm success
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic reauthenticates mutation tests/helpers/ir-runtime-program-policy-wasmgc-helper-owners.json after warm success
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic refuses accessor without getter invocation before missing receipt
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic refuses exact current-domain allowed edge drift
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic refuses exact current-domain backend entry drift
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic refuses exact current-domain backend floor drift
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic refuses exact current-domain donor extra key drift
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic refuses exact current-domain donor state drift
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic refuses exact current-domain duplicate owner drift
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic refuses exact current-domain extra move drift
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic refuses exact current-domain extra top-level field drift
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic refuses exact current-domain facade neighbor drift
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic refuses exact current-domain missing activation tail drift
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic refuses exact current-domain missing owner drift
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic refuses exact current-domain move tail order drift
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic refuses exact current-domain new activation tail drift
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic refuses exact current-domain old activation prefix drift
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic refuses exact current-domain old move prefix drift
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic refuses exact current-domain owner extra key drift
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic refuses exact current-domain reordered owners drift
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic refuses exact current-domain retained description drift
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic refuses stale445 while the unchanged program-validator API accepts it
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic rejects boxed before missing receipt with valid ENOENT witness
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic rejects cyclic before missing receipt with valid ENOENT witness
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic rejects hidden before missing receipt with valid ENOENT witness
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic rejects primitive before missing receipt with valid ENOENT witness
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic rejects sparse before missing receipt with valid ENOENT witness
+ FAIL  tests/issue-3518-wasmgc-helper-policy-evolution.test.ts > fixed three WasmGC helper owners policy predecessor capture > semantic rejects symbol before missing receipt with valid ENOENT witness
+ FAIL  tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts [ tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts ]

@@ -1,0 +1,287 @@
+eqUsed:unsupported ident:emitted+body viaStr:unsupported viaBool:unsupported viaObj:unsupported viaUndef:unsupported exported:unsupported <module-init>:non-executable
+viaStr() = 1   (node: 1)
+viaBool() = 1   (node: 1)
+viaObj() = 1   (node: 1)
+viaUndef() = 0   (node: 0)
+exported("1") = 0 (node: 1)
+ident("x") roundtrip = "x"
+imports: (none)
+(func $eqUsed (type 44)
+    (local $__tmp_0 externref)
+    (local $__tmp_1 externref)
+    (local $__tmp_2 anyref)
+    (local $__tmp_3 anyref)
+    (local $$smi_box_f64 f64)
+    (local $$smi_box_i32 i32)
+    local.get 0
+    f64.const 1
+    local.tee 5
+    i32.trunc_sat_f64_s
+    local.tee 6
+    f64.convert_i32_s
+    local.get 5
+    f64.eq
+    local.get 6
+    i32.const 1
+    i32.shl
+    i32.const 1
+    i32.shr_s
+    local.get 6
+    i32.eq
+    i32.and
+    local.get 6
+    i32.const 0
+    i32.ne
+    local.get 5
+    i64.reinterpret_f64
+    i64.const 0
+    i64.lt_s
+    i32.eqz
+    i32.or
+    i32.and
+    (if (result externref)
+      (then
+      local.get 6
+      ref.i31
+      extern.convert_any
+      )
+      (else
+      local.get 5
+      call 53
+      )
+    )
+    local.set 1
+    local.tee 2
+    call 69
+    local.get 1
+    call 69
+    i32.ne
+    (if
+      (then
+      local.get 2
+      global.get 42
+      extern.convert_any
+      call 175
+      local.set 2
+      local.get 1
+      global.get 42
+      extern.convert_any
+      call 175
+      local.set 1
+      )
+    )
+    local.get 2
+    call 139
+    local.get 1
+    call 139
+    i32.or
+    (if (result i32)
+      (then
+      local.get 2
+      call 139
+      local.get 1
+      call 139
+      i32.and
+      )
+      (else
+      local.get 2
+      call 64
+      local.get 2
+      call 65
+      i32.or
+      local.get 1
+      call 64
+      local.get 1
+      call 65
+      i32.or
+      i32.and
+      (if (result i32)
+        (then
+        local.get 2
+        call 65
+        (if (result f64)
+          (then
+          local.get 2
+          call 57
+          f64.convert_i32_s
+          )
+          (else
+          local.get 2
+          call 54
+          )
+        )
+        local.get 1
+        call 65
+        (if (result f64)
+          (then
+          local.get 1
+          call 57
+          f64.convert_i32_s
+          )
+          (else
+          local.get 1
+          call 54
+          )
+        )
+        f64.eq
+        )
+        (else
+        local.get 2
+        call 65
+        local.get 1
+        call 65
+        i32.and
+        (if (result i32)
+          (then
+          local.get 2
+          call 57
+          local.get 1
+          call 57
+          i32.eq
+          )
+          (else
+          local.get 2
+          call 66
+          local.get 1
+          call 66
+          i32.and
+          (if (result i32)
+            (then
+            local.get 2
+            call 59
+            local.get 1
+            call 59
+            i64.eq
+            )
+            (else
+            local.get 2
+            any.convert_extern
+            local.get 1
+            any.convert_extern
+            local.set 4
+            local.tee 3
+            ref.test (ref 6)
+            local.get 1
+            call 64
+            local.get 1
+            call 65
+            i32.or
+            i32.and
+            local.get 4
+            ref.test (ref 6)
+            local.get 2
+            call 64
+            local.get 2
+            call 65
+            i32.or
+            i32.and
+            i32.or
+            (if (result i32)
+              (then
+              local.get 3
+              ref.test (ref 6)
+              (if (result f64)
+                (then
+                local.get 2
+                call 52
+                )
+                (else
+                local.get 2
+                call 65
+                (if (result f64)
+                  (then
+                  local.get 2
+                  call 57
+                  f64.convert_i32_s
+                  )
+                  (else
+                  local.get 2
+                  call 54
+                  )
+                )
+                )
+              )
+              local.get 4
+              ref.test (ref 6)
+              (if (result f64)
+                (then
+                local.get 1
+                call 52
+                )
+                (else
+                local.get 1
+                call 65
+                (if (result f64)
+                  (then
+                  local.get 1
+                  call 57
+                  f64.convert_i32_s
+                  )
+                  (else
+                  local.get 1
+                  call 54
+                  )
+                )
+                )
+              )
+              f64.eq
+              )
+              (else
+              local.get 3
+              ref.test (ref 6)
+              local.get 4
+              ref.test (ref 6)
+              i32.and
+              (if (result i32)
+                (then
+                local.get 3
+                ref.cast (ref 6)
+                local.get 4
+                ref.cast (ref 6)
+                call 5
+                )
+                (else
+                local.get 3
+                ref.test (ref -19)
+                local.get 4
+                ref.test (ref -19)
+                i32.and
+                (if (result i32)
+                  (then
+                  local.get 3
+                  ref.cast (ref -19)
+                  local.get 4
+                  ref.cast (ref -19)
+                  ref.eq
+                  )
+                  (else
+                  local.get 3
+                  ref.is_null
+                  local.get 4
+                  ref.is_null
+                  i32.and
+                  )
+                )
+                )
+              )
+              )
+            )
+            )
+          )
+          )
+        )
+        )
+      )
+      )
+    )
+    (if (result f64)
+      (then
+      f64.const 1
+      )
+      (else
+      f64.const 0
+      )
+    )
+    return
+  )
+

@@ -1,0 +1,25 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/issue-3526-boolean-boundary-intrinsic.test.ts > #3526 F1-S2 boolean-boundary contract > retains the boxing ABI alongside explicit Boolean extraction 4ms
+ ✓ tests/issue-3526-boolean-boundary-intrinsic.test.ts > #3526 F1-S2 boolean-boundary contract > keeps ONE central catalogue, and the async projection excludes the row BY ID 2ms
+ ✓ tests/issue-3526-boolean-boundary-intrinsic.test.ts > #3526 F1-S2 provider policy > selects the exact host arm and its canonical capability record 9ms
+ ✓ tests/issue-3526-boolean-boundary-intrinsic.test.ts > #3526 F1-S2 provider policy > refuses the arm its caller resolved to unsupported, naming the intrinsic and the policy 3ms
+ ✓ tests/issue-3526-boolean-boundary-intrinsic.test.ts > #3526 F1-S2 provider policy > defaults an omitted policy closed and publishes the resolved decision 2ms
+ ✓ tests/issue-3526-boolean-boundary-intrinsic.test.ts > #3526 F1-S2 provider policy > resolves the boolean arm independently of the number arms 2ms
+ ✓ tests/issue-3526-boolean-boundary-intrinsic.test.ts > #3526 F1-S2 freeze discipline > accepts an identical re-attachment and rejects every substitution or crosswire 9ms
+ ✓ tests/issue-3526-boolean-boundary-intrinsic.test.ts > #3526 F1-S2 freeze discipline > rejects a post-freeze request and a non-canonical capability catalogue 11ms
+ ✓ tests/issue-3526-boolean-boundary-intrinsic.test.ts > #3526 F1-S2 freeze discipline > keeps Math-only, async-only and number-only manifests free of the boolean record 4ms
+ ✓ tests/issue-3526-boolean-boundary-intrinsic.test.ts > #3526 F1-S2 front-end migration > lowers the branded carrier to the provider-free intrinsic, with no direct call 609ms
+ ✓ tests/issue-3526-boolean-boundary-intrinsic.test.ts > #3526 F1-S2 front-end migration > reads no lane fact: the same IR under either answer to the deleted predicate 13ms
+ ✓ tests/issue-3526-boolean-boundary-intrinsic.test.ts > #3526 F1-S2 front-end migration > keeps the BRAND gate: an unbranded i32 in an externref position still demotes 289ms
+ ✓ tests/issue-3526-boolean-boundary-intrinsic.test.ts > #3526 F1-S2 host-lane parity > keeps the exact env import set and order and the same answers on the host lane 118ms
+ ✓ tests/issue-3526-boolean-boundary-intrinsic.test.ts > #3526 F1-S2 owner-local demote parity > demotes only the requesting owner when the lane cannot provide the arm 399ms
+ ✓ tests/issue-3526-boolean-boundary-intrinsic.test.ts > #3526 F1-S2 owner-local demote parity > demotes the same way on the standalone and WASI lanes 527ms
+ ✓ tests/issue-3526-boolean-boundary-intrinsic.test.ts > #3526 F1-S2 owner-local demote parity > reports the same accounting when the owners are declared in the other order 344ms
+
+ Test Files  1 passed (1)
+      Tests  16 passed (16)
+   Start at  19:37:36
+   Duration  36.29s (transform 23.77s, setup 0ms, collect 33.45s, tests 2.35s, environment 0ms, prepare 75ms)
+
