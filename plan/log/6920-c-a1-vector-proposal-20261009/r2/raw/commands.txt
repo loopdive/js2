@@ -1,0 +1,47 @@
+#6920 A-C1 revision 2 — exact commands (worktree /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93)
+
+Base sha: dbf5b4f74b37d67e525b2af36fd1fe49803b1348
+r1 HEAD : 293024148ac8528f135655e834268a5f0610bd0b
+r2 HEAD : 2944307a4a1291a74893c346f46f128e27e176b2
+Environment: see environment.txt (node v22.22.0, pnpm 10.30.2, vitest 3.2.7,
+pnpm-lock.yaml sha256 6a8b59fd4430c6600dc16ac33a749d0f5fed4ef0c100425de8490e43d916f2ac, identical at base and HEAD).
+Harness scripts are copied verbatim under harness/ (renamed *.txt).
+
+## HEAD phase (tree == 2944307a, `git status` clean)
+npx tsx .tmp/probe/probe-r2.mts raw/probe-head.tsv
+  (per source x target: default compile -> sha256; compile with experimentalIR:false -> ir_vs_legacy;
+   WAT regex $vec_data_\d+ / $linear_vec_ptr_\d+ -> scratch; compile with trackIrOutcomes:true -> ir_outcomes,
+   plus tracking_binary = whether the tracked compile's binary equals the default one)
+.tmp/run-list-r2.sh raw/head-required-32 raw/list-required-32.txt
+.tmp/run-list-r2.sh raw/head-source-reading-23 raw/list-source-reading-23.txt
+  (each file: timeout 900 npx vitest run <file> --reporter=verbose; failing-tests.txt = sorted unique " FAIL " lines)
+.tmp/gates-r2.sh raw/head-gates
+  (npm run -s typecheck; node scripts/check-loc-budget.mjs [also with LOC_GATE_BASE=<base>];
+   node scripts/check-func-budget.mjs [also with LOC_GATE_BASE=<base>]; node scripts/check-coercion-sites.mjs;
+   npm run -s check:oracle-ratchet; npm run -s check:dead-exports; pnpm run -s check:ir-fallbacks;
+   node --max-old-space-size=2048 scripts/check-compiler-boundaries.mjs --mode inventory --base <base>;
+   npx vitest run tests/issue-3518-lowering-cycle.test.ts --reporter=verbose) -> gate-exits.txt
+npx vitest run tests/issue-6920-vector-representation.test.ts --reporter=verbose        -> head-6920-verbose.txt
+npx vitest run tests/issue-6920-vector-representation.test.ts --reporter=json --outputFile=raw/head-6920-results.json
+node .tmp/json-to-tsv.cjs raw/head-6920-results.json raw/head-6920-tests.tsv
+
+## Base phase (pristine base tree)
+git reset --soft dbf5b4f7; git checkout dbf5b4f7 -- src;
+git rm --cached src/ir/backend/vector-representation.ts tests/issue-6920-vector-representation.test.ts;
+move both files aside  => HEAD == dbf5b4f7, `git status` empty
+then the same probe / run-list / gates commands with base-* output paths.
+Restore: git reset --soft 2944307a; git checkout 2944307a -- src tests/issue-6920-vector-representation.test.ts
+(verified byte-equal to the held copies; `git status` empty).
+
+## Comparison
+python3 .tmp/join-r2.py raw          -> probe-identity.tsv, probe-identity-summary.tsv
+diff base-<set>/failing-tests.txt head-<set>/failing-tests.txt -> diff-failing-<set>.txt
+diff base-<set>/summary.txt head-<set>/summary.txt             -> diff-summary-<set>.txt
+
+## Non-vacuity A/B for the r2 tests (ab-r1-source-with-r2-tests.txt)
+copy src/ir/backend/vector-representation.ts and src/ir/lower-generic.ts from 29302414 (r1) over the tree,
+npx vitest run tests/issue-6920-vector-representation.test.ts --reporter=verbose, restore r2 copies (cmp-verified).
+
+## Patches
+git diff dbf5b4f7..HEAD     > a-c1-proposal-r2.patch
+git diff 29302414..HEAD     > a-c1-r2-delta.patch

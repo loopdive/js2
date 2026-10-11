@@ -1,0 +1,128 @@
+diff --git a/scripts/compiler-boundaries.json b/scripts/compiler-boundaries.json
+index da3dbc17..8dbb11c0 100644
+--- a/scripts/compiler-boundaries.json
++++ b/scripts/compiler-boundaries.json
+@@ -11651,6 +11651,14 @@
+       "owner": "3518-coordinator",
+       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+     },
++    {
++      "path": "src/ir/backend/vector-representation.ts",
++      "state": "unmigrated",
++      "layer": "mixed-needs-split",
++      "destination": "ir-core",
++      "owner": "3518-coordinator",
++      "nextBoundary": "#6920 A-C1 vector representation policy with type-only imports; consumed by generic lowering, the linear overlay and frontend joins. Certify as pure contract once IR-node and backend-handle type dependencies move to ir-core."
++    },
+     {
+       "path": "src/ir/backend/wasm-int32-coercion.ts",
+       "state": "compatibility-adapter",
+diff --git a/tests/issue-3299.test.ts b/tests/issue-3299.test.ts
+index b0b4144d..ae28fc6b 100644
+--- a/tests/issue-3299.test.ts
++++ b/tests/issue-3299.test.ts
+@@ -25,12 +25,7 @@ import {
+   type IrType,
+ } from "../src/ir/index.js";
+ import { LinearEmitter } from "../src/ir/backend/linear-emitter.js";
+-import type {
+-  IrVecLowering,
+-  LinearMemoryFieldLowering,
+-  LinearObjectLowering,
+-  LinearVecLowering,
+-} from "../src/ir/backend/handles.js";
++import type { LinearMemoryFieldLowering, LinearObjectLowering, LinearVecLowering } from "../src/ir/backend/handles.js";
+ import { PORFFOR_KIND_NAMES, porfforRendererOutputText, type PorfforNode } from "../src/ir/backend/porffor/compat.js";
+ import { lowerIrModuleToPorffor } from "../src/ir/backend/porffor/integration.js";
+ import { loadOptionalPorffor } from "../src/ir/backend/porffor/loader.js";
+@@ -342,21 +337,12 @@ async function instantiateLinearProof(
+     });
+     const params = body.params.flatMap((param) => [...param.slots]);
+     const results = body.results.flatMap((result) => [...result]);
+-    const vecScratch = new Set(emitter.getVecScratchLocalIndices());
++    // #6920: generic lowering declares the vec construction scratch as i32; locals are used verbatim.
+     const lowered: WasmFunction = {
+       name: body.name,
+       typeIdx: internFuncType(wasm, { kind: "func", params, results }),
+       locals: body.locals.flatMap((local) =>
+-        local.slots.map((type, slot) => {
+-          const index =
+-            params.length +
+-            body.locals.slice(0, body.locals.indexOf(local)).reduce((n, item) => n + item.slots.length, 0) +
+-            slot;
+-          return {
+-            name: slot === 0 ? local.name : `${local.name}$${slot}`,
+-            type: vecScratch.has(index) ? ({ kind: "i32" } as const) : type,
+-          };
+-        }),
++        local.slots.map((type, slot) => ({ name: slot === 0 ? local.name : `${local.name}$${slot}`, type })),
+       ),
+       body: body.body,
+       exported: body.exported,
+@@ -385,14 +371,11 @@ function linearResolver(wasm: WasmModule, plan: LinearMemoryPlan, objectHelperId
+     if (!found) throw new Error(`missing planned operation for site ${allocation.id as number}`);
+     return found;
+   };
+-  const vec = (alloc?: AllocSiteId): IrVecLowering & LinearVecLowering => {
++  const vec = (alloc?: AllocSiteId): LinearVecLowering => {
+     const layout = plan.layoutForVector(F64)!;
+     const allocation = allocationFor(layout.id, alloc);
+     return {
+-      vecStructTypeIdx: 0,
+-      lengthFieldIdx: 0,
+-      dataFieldIdx: 0,
+-      arrayTypeIdx: 0,
++      valueType: { kind: "i32" },
+       elementValType: { kind: "f64" },
+       linearMemory: {
+         allocation,
+@@ -451,10 +434,10 @@ function linearResolver(wasm: WasmModule, plan: LinearMemoryPlan, objectHelperId
+         },
+       };
+     },
+-    resolveVec(valType: ValType): IrVecLowering | null {
++    resolveVec(valType: ValType): LinearVecLowering | null {
+       return valType.kind === "i32" ? vec() : null;
+     },
+-    resolveVecForElement(elementValType: ValType, alloc?: AllocSiteId): IrVecLowering | null {
++    resolveVecForElement(elementValType: ValType, alloc?: AllocSiteId): LinearVecLowering | null {
+       return elementValType.kind === "f64" ? vec(alloc) : null;
+     },
+   };
+diff --git a/tests/issue-3518-lowering-cycle.test.ts b/tests/issue-3518-lowering-cycle.test.ts
+index 11b3b3c9..6f105f73 100644
+--- a/tests/issue-3518-lowering-cycle.test.ts
++++ b/tests/issue-3518-lowering-cycle.test.ts
+@@ -196,6 +196,7 @@ describe("lowering cycle separation", () => {
+     const graph = valueClosure();
+     // Exact 549b value graph plus the frozen D1 legality analysis owner.
+     // Compatibility forwards preserve identities; pin every edge occurrence.
++    // #6920 A-C1 successor of the 33-module / 13-generic-out-edge pin: + type-only leaf vector-representation.ts.
+     expect(graph.modules).toEqual([
+       "src/backend/wasmgc/lowering/dynamic-scratch.ts",
+       "src/backend/wasmgc/lowering/wasm-int32-coercion.ts",
+@@ -204,6 +205,7 @@ describe("lowering cycle separation", () => {
+       "src/ir/analysis/effects.ts",
+       "src/ir/analysis/nested-stackification.ts",
+       "src/ir/backend/legality.ts",
++      "src/ir/backend/vector-representation.ts",
+       "src/ir/backend/wasm-int32-coercion.ts",
+       "src/ir/backend/wasm-math-minmax.ts",
+       "src/ir/callable-bindings.ts",
+@@ -238,6 +240,7 @@ describe("lowering cycle separation", () => {
+       "src/ir/analysis/backend-legality.ts -> src/ir/core/types.ts",
+       "src/ir/core/types.ts -> src/ir/core/tag-refinement.ts",
+       "src/ir/core/types.ts -> src/ir/core/binding-key-primitives.ts",
++      "src/ir/lower-generic.ts -> src/ir/backend/vector-representation.ts",
+       "src/ir/lower-generic.ts -> src/ir/backend/wasm-int32-coercion.ts",
+       "src/ir/backend/wasm-int32-coercion.ts -> src/backend/wasmgc/lowering/wasm-int32-coercion.ts",
+       "src/ir/lower-generic.ts -> src/ir/backend/wasm-math-minmax.ts",
+@@ -271,7 +274,7 @@ describe("lowering cycle separation", () => {
+       "src/ir/core/string-runtime.ts -> src/ir/core/string-callables.ts",
+     ]);
+     expect(graph.modules).toContain("src/shared/contracts/identity-values.ts");
+-    expect(graph.edges.filter((edge) => edge.startsWith(genericPath + " -> "))).toHaveLength(13);
++    expect(graph.edges.filter((edge) => edge.startsWith(genericPath + " -> "))).toHaveLength(14);
+   });
+ 
+   it.each(forbidden)("rejects an injected reverse edge through a barrel to %s", (target) => {

@@ -1,0 +1,29 @@
+eqUsed:emitted+body viaStr:emitted+body exported:emitted+body exportedS:emitted+body <module-init>:non-executable
+viaStr "1" 1
+viaStr {} 1
+viaStr undefined 1
+viaStr true 1
+exported "1" illegal cast 
+     at __str_to_number (wasm://wasm/00036b6a:wasm-function[53]:0xad4d)
+    at __extern_loose_eq (wasm://wasm/00036b6a:wasm-function[318]:0xbca4)
+    at eqUsed (wasm://wasm/00036b6a:wasm-function[50]:0xac9e)
+    at <anonymous> (/home/user/js2/.claude/worktrees/agent-a4022d934675184ae/.tmp/probe-trap.mts:18:49)
+exported {} illegal cast 
+     at __str_to_number (wasm://wasm/00036b6a:wasm-function[53]:0xad4d)
+    at __extern_loose_eq (wasm://wasm/00036b6a:wasm-function[318]:0xbca4)
+    at eqUsed (wasm://wasm/00036b6a:wasm-function[50]:0xac9e)
+    at <anonymous> (/home/user/js2/.claude/worktrees/agent-a4022d934675184ae/.tmp/probe-trap.mts:18:49)
+exported undefined illegal cast 
+     at __str_to_number (wasm://wasm/00036b6a:wasm-function[53]:0xad4d)
+    at __extern_loose_eq (wasm://wasm/00036b6a:wasm-function[318]:0xbca4)
+    at eqUsed (wasm://wasm/00036b6a:wasm-function[50]:0xac9e)
+    at <anonymous> (/home/user/js2/.claude/worktrees/agent-a4022d934675184ae/.tmp/probe-trap.mts:18:49)
+exported true illegal cast 
+     at __str_to_number (wasm://wasm/00036b6a:wasm-function[53]:0xad4d)
+    at __extern_loose_eq (wasm://wasm/00036b6a:wasm-function[318]:0xbca4)
+    at eqUsed (wasm://wasm/00036b6a:wasm-function[50]:0xac9e)
+    at <anonymous> (/home/user/js2/.claude/worktrees/agent-a4022d934675184ae/.tmp/probe-trap.mts:18:49)
+exportedS "1" 0
+exportedS {} 0
+exportedS undefined 0
+exportedS true 0
