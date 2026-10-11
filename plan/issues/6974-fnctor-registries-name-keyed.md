@@ -15,18 +15,10 @@ language_feature: constructor-functions, new, scoping
 goal: standalone-gap
 related: [6970, 6969, 6951, 6949, 4241]
 loc-budget-allow:
-  # 2026-10-11 (#6974) new-super.ts +13: the `new <identifier>` arm and the
-  #   native construct driver ask `funcConstructorForCallee` /
-  #   `fnctorNameOwnedElsewhere` (fnctor-ctor-decl.ts owns the logic) instead
-  #   of a bare-name `funcConstructorMap` lookup; the remaining lines are the
-  #   owner record at the builder and the call-site guards.
+  # 2026-10-11 (#6974) new-super.ts +1: the import of `funcConstructorForCallee`;
+  #   the identity check itself lives in fnctor-ctor-decl.ts and replaces four
+  #   bare-name `funcConstructorMap` lookups line for line.
   - src/codegen/expressions/new-super.ts
-func-budget-allow:
-  # 2026-10-11 (#6974) compileNewExpression +8: identity-checked cache lookup
-  #   and the guard that keeps a same-named second declaration off the struct
-  #   path; compileNewFunctionDeclaration +2: the cached ctor's owner record.
-  - src/codegen/expressions/new-super.ts::compileNewExpression
-  - src/codegen/expressions/new-super.ts::compileNewFunctionDeclaration
 ---
 
 # Fnctor registries keyed by name resolve `new <alias>` to the wrong constructor
