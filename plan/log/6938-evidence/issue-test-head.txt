@@ -1,0 +1,20 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a510ffd37560d1243
+
+ ✓ tests/issue-6938-fnctor-instance-anon-struct.test.ts (11 tests) 9610ms
+   ✓ #6938 fnctor instance type never becomes a phantom anon struct > r11: member store through an unpinned Packet receiver (gc + standalone)  2332ms
+   ✓ #6938 fnctor instance type never becomes a phantom anon struct > r15: richards addTo loop, kind-routed queues (gc + standalone)  1099ms
+   ✓ #6938 fnctor instance type never becomes a phantom anon struct > ctor-level @param {Packet} on Packet's own link field (gc + standalone)  1014ms
+   ✓ #6938 fnctor instance type never becomes a phantom anon struct > method call on an unpinned, annotation-typed approved fnctor receiver  701ms
+   ✓ #6938 fnctor instance type never becomes a phantom anon struct > method call on an unpinned, inference-typed approved fnctor receiver  650ms
+   ✓ #6938 fnctor instance type never becomes a phantom anon struct > no __anon struct carrying a fnctor's prototype method names is registered  672ms
+   ✓ #6938 negative controls > r11 without the declaration-level JSDoc  741ms
+   ✓ #6938 negative controls > r11 without the method-level JSDoc  631ms
+   ✓ #6938 negative controls > a class named Packet keeps its own struct  572ms
+   ✓ #6938 negative controls > fnctor instances passed through annotated params keep their fields  930ms
+
+ Test Files  1 passed (1)
+      Tests  11 passed (11)
+   Start at  07:44:49
+   Duration  45.13s (transform 25.65s, setup 0ms, collect 34.88s, tests 9.61s, environment 0ms, prepare 95ms)
+
