@@ -179,6 +179,28 @@ Non-object values are stored as-is, matching the static path.
   identically on base (timeouts).
 - `node scripts/equivalence-gate.mjs`: no new regressions (22 known failures).
 
+**Octane** (`--only deltablue,raytrace --lanes node,standalone --timeout 300`,
+on a throwaway `c-octane-integ` (f8d43b197f) + these two commits; only conflict
+was the `__fnctor_proto_start` reservation next to #6944's
+`reserveFnctorStructProtoHelpers`, kept both):
+- deltablue standalone: before `TypeError: called value is not a function`
+  (the `inheritsFrom` chain); after, the chain is built (db19/db27 `true,2,1`)
+  and it fails LATER, `Cannot access property on null or undefined at 506:29`
+  (`Strength.weaker`). Root cause is NOT prototype linkage and predates this
+  issue (reproduces on integ without these commits, no inheritance needed):
+  a prototype method's `this.input()` — `return (this.direction == 1) ? this.v1
+  : this.v2` — returns `NaN` (a number) instead of the `Variable` object
+  (`.tmp/db42.js` shape: node `object:a>b`, standalone `number:undefined>undefined`).
+- raytrace standalone: unchanged, `opaque wasm exception thrown by the module's
+  top-level code`. Its first lines are the guarded namespace init
+  `if (typeof Flog.RT == "undefined") Flog.RT = {};` — with that guard, a later
+  `Flog.RT.Color.prototype` read throws `Cannot access property on null or
+  undefined`; without the guard it works. Separately, an object-literal
+  prototype written onto a member-held `Class.create()` closure (no edge, so G2
+  keeps the bag write) is dropped by the construct driver (`new P()` gets
+  `Object.prototype`; `Object.create(...)`-built prototypes work). Neither is in
+  this issue's file list.
+
 ### Remaining
 - `Object.setPrototypeOf(inst, p)` / `__proto__ =` on a `$__fnctor_F` receiver
   (plan item for `dynamic-proto.ts`) is NOT implemented: the slot is mutable,
