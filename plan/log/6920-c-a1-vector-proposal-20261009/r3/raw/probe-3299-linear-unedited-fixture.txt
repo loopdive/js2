@@ -1,0 +1,29 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ × .tmp/probe-3299-unedited.test.ts > #6920 r3 probe — edited 3299 linear fixture without Porffor > linear-Wasm half of the optional proof runs with the genuine i32 handle and verbatim locals 62ms
+   → emitter.getVecScratchLocalIndices is not a function
+ ✓ .tmp/probe-3299-unedited.test.ts > #3299 shared heap/layout plan > binds Porffor Alloc/Load/Store exclusively to planned arena layouts 46ms
+ ↓ .tmp/probe-3299-unedited.test.ts > #3299 shared heap/layout plan > executes the same typed SSA through linear-Wasm and Porffor-C with JS semantics
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  .tmp/probe-3299-unedited.test.ts > #6920 r3 probe — edited 3299 linear fixture without Porffor > linear-Wasm half of the optional proof runs with the genuine i32 handle and verbatim locals
+TypeError: emitter.getVecScratchLocalIndices is not a function
+ ❯ instantiateLinearProof .tmp/probe-3299-unedited.test.ts:355:40
+    353|     const params = body.params.flatMap((param) => [...param.slots]);
+    354|     const results = body.results.flatMap((result) => [...result]);
+    355|     const vecScratch = new Set(emitter.getVecScratchLocalIndices());
+       |                                        ^
+    356|     const lowered: WasmFunction = {
+    357|       name: body.name,
+ ❯ .tmp/probe-3299-unedited.test.ts:148:26
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 1 passed | 1 skipped (3)
+   Start at  21:59:54
+   Duration  43.84s (transform 30.13s, setup 0ms, collect 43.08s, tests 110ms, environment 0ms, prepare 96ms)
+

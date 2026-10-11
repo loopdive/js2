@@ -1,0 +1,145 @@
+.tmp/6938/rel-head {"passed":2266,"failed":1270,"skipped":124,"pending":3} files 238
+  FILE tests/issue-1058-ambient-performance-global.test.ts failed
+  FILE tests/issue-1058-generic-base-node-factory.test.ts failed
+  FILE tests/issue-1058-multifile-generic-callback-registration.test.ts failed
+  FILE tests/issue-1589a.test.ts failed
+  FILE tests/issue-2009.test.ts failed
+  FILE tests/issue-2175-null-proto-toprimitive.test.ts failed
+  FILE tests/issue-2580-m3-protoextend.test.ts failed
+  FILE tests/issue-2660-s2-fnctor-prototype-object.test.ts failed
+  FILE tests/issue-2680.test.ts failed
+  FILE tests/issue-2853.test.ts failed
+  FILE tests/issue-2937.test.ts failed
+  FILE tests/issue-2944.test.ts failed
+  FILE tests/issue-2992-delete-widening.test.ts failed
+  FILE tests/issue-3123.test.ts failed
+  FILE tests/issue-3138.test.ts failed
+  FILE tests/issue-3200.test.ts failed
+  FILE tests/issue-3429.test.ts failed
+  FILE tests/issue-3518-conversion-source-composition.test.ts failed
+  FILE tests/issue-3518-core-nodes-boundary.test.ts failed
+  FILE tests/issue-3518-core-type-boundary.test.ts failed
+  FILE tests/issue-3518-core-type-seam.test.ts failed
+  FILE tests/issue-3518-native-object-get-bodies.test.ts failed
+  FILE tests/issue-3518-native-object-storage-resources.test.ts failed
+  FILE tests/issue-3518-native-object-write-composition.test.ts failed: later-main dependency mismatch: src/codegen/builtin-ctor-value-invoke.ts
+  FILE tests/issue-3518-nested-stackification-policy-evolution.test.ts failed
+  FILE tests/issue-3518-number-prerequisite-policy-evolution.test.ts failed
+  FILE tests/issue-3518-object-runtime-main-composition.test.ts failed: later-main dependency mismatch: src/codegen/builtin-ctor-value-invoke.ts
+  FILE tests/issue-3518-program-data-contract-boundary.test.ts failed
+  FILE tests/issue-3518-prototype-chain-preservation.test.ts failed: prototype chain source mismatch
+  FILE tests/issue-3518-runtime-data-contract-seam.test.ts failed
+  FILE tests/issue-3518-semantic-provider-boundary.test.ts failed
+  FILE tests/issue-3518-symbolic-support-ref.test.ts failed
+  FILE tests/issue-3518-to-primitive-wrapper-forward.test.ts failed
+  FILE tests/issue-3521-r2-withdrawal-telemetry.test.ts failed
+  FILE tests/issue-3523-module-init-discovery-static.test.ts failed
+  FILE tests/issue-3614.test.ts failed
+  FILE tests/issue-3683-direct-calls.test.ts failed
+  FILE tests/issue-3683-numeric-fields.test.ts failed
+  FILE tests/issue-3685-presence-tracked-proven-reads.test.ts failed
+  FILE tests/issue-3719-new-assigned-to-binding.test.ts failed
+  FILE tests/issue-3920-standalone-closed-struct-reflection.test.ts failed
+  FILE tests/issue-4384-moment-js-runtime-body.test.ts failed
+  FILE tests/issue-4464.test.ts failed
+  FILE tests/issue-4480.test.ts failed
+  FILE tests/issue-4484.test.ts failed
+  FILE tests/issue-4492-wave5.test.ts failed
+  FILE tests/issue-4493-object-entries-struct-cast.test.ts failed
+  FILE tests/issue-4504-inherited-set.test.ts failed: Hook timed out in 600000ms.
+  FILE tests/issue-4506.test.ts failed
+  FILE tests/issue-4519.test.ts failed
+  FILE tests/issue-4623.test.ts failed
+  FILE tests/issue-4637.test.ts failed
+  FILE tests/issue-4653.test.ts failed
+  FILE tests/issue-4656.test.ts failed
+  FILE tests/issue-5162-ctor-own-prototype-method.test.ts failed
+  FILE tests/issue-5195-r3-review.test.ts failed
+  FILE tests/issue-5254.test.ts failed
+  FILE tests/issue-5376-accessor-valueof-field-read.test.ts failed
+  FILE tests/issue-6460-standalone-static-spread-arity.test.ts failed
+  FILE tests/issue-6689-extern-set-decide-fnctor-proto.test.ts failed
+  FILE tests/issue-743-ctor-sites-in-fixpoint.test.ts failed
+  FILE tests/issue-743-derivation-defaults.test.ts failed
+  FILE tests/issue-743-dts-entrypoint-seeds.test.ts failed
+  FILE tests/issue-820m.test.ts failed
+.tmp/6938/rel-base {"passed":2271,"failed":1273,"skipped":116,"pending":3} files 238
+  FILE tests/issue-1058-ambient-performance-global.test.ts failed
+  FILE tests/issue-1058-generic-base-node-factory.test.ts failed
+  FILE tests/issue-1058-multifile-generic-callback-registration.test.ts failed
+  FILE tests/issue-1589a.test.ts failed
+  FILE tests/issue-2009.test.ts failed
+  FILE tests/issue-2175-null-proto-toprimitive.test.ts failed
+  FILE tests/issue-2580-m3-protoextend.test.ts failed
+  FILE tests/issue-2608-new-this-fnctor-static.test.ts failed
+  FILE tests/issue-2660-s2-fnctor-prototype-object.test.ts failed
+  FILE tests/issue-2680.test.ts failed
+  FILE tests/issue-2853.test.ts failed
+  FILE tests/issue-2937.test.ts failed
+  FILE tests/issue-2944.test.ts failed
+  FILE tests/issue-2992-delete-widening.test.ts failed
+  FILE tests/issue-3123.test.ts failed
+  FILE tests/issue-3138.test.ts failed
+  FILE tests/issue-3200.test.ts failed
+  FILE tests/issue-3429.test.ts failed
+  FILE tests/issue-3518-conversion-source-composition.test.ts failed
+  FILE tests/issue-3518-core-nodes-boundary.test.ts failed
+  FILE tests/issue-3518-core-type-boundary.test.ts failed
+  FILE tests/issue-3518-core-type-seam.test.ts failed
+  FILE tests/issue-3518-native-object-get-bodies.test.ts failed
+  FILE tests/issue-3518-native-object-storage-resources.test.ts failed
+  FILE tests/issue-3518-native-object-write-composition.test.ts failed: later-main dependency mismatch: src/codegen/builtin-ctor-value-invoke.ts
+  FILE tests/issue-3518-nested-stackification-policy-evolution.test.ts failed
+  FILE tests/issue-3518-number-prerequisite-policy-evolution.test.ts failed
+  FILE tests/issue-3518-object-runtime-main-composition.test.ts failed: later-main dependency mismatch: src/codegen/builtin-ctor-value-invoke.ts
+  FILE tests/issue-3518-program-data-contract-boundary.test.ts failed
+  FILE tests/issue-3518-prototype-chain-preservation.test.ts failed: prototype chain source mismatch
+  FILE tests/issue-3518-runtime-data-contract-seam.test.ts failed
+  FILE tests/issue-3518-semantic-provider-boundary.test.ts failed
+  FILE tests/issue-3518-symbolic-support-ref.test.ts failed
+  FILE tests/issue-3518-to-primitive-wrapper-forward.test.ts failed
+  FILE tests/issue-3521-r2-withdrawal-telemetry.test.ts failed
+  FILE tests/issue-3523-module-init-discovery-static.test.ts failed
+  FILE tests/issue-3614.test.ts failed
+  FILE tests/issue-3683-direct-calls.test.ts failed
+  FILE tests/issue-3683-numeric-fields.test.ts failed
+  FILE tests/issue-3685-presence-tracked-proven-reads.test.ts failed
+  FILE tests/issue-3719-new-assigned-to-binding.test.ts failed
+  FILE tests/issue-3920-standalone-closed-struct-reflection.test.ts failed
+  FILE tests/issue-4384-moment-js-runtime-body.test.ts failed
+  FILE tests/issue-4464.test.ts failed
+  FILE tests/issue-4480.test.ts failed
+  FILE tests/issue-4484.test.ts failed
+  FILE tests/issue-4492-wave5.test.ts failed
+  FILE tests/issue-4493-object-entries-struct-cast.test.ts failed
+  FILE tests/issue-4504-inherited-set.test.ts failed: Hook timed out in 600000ms.
+  FILE tests/issue-4506.test.ts failed
+  FILE tests/issue-4519.test.ts failed
+  FILE tests/issue-4623.test.ts failed
+  FILE tests/issue-4637.test.ts failed
+  FILE tests/issue-4653.test.ts failed
+  FILE tests/issue-4656.test.ts failed
+  FILE tests/issue-5162-ctor-own-prototype-method.test.ts failed
+  FILE tests/issue-5195-r3-review.test.ts failed
+  FILE tests/issue-5254.test.ts failed
+  FILE tests/issue-5376-accessor-valueof-field-read.test.ts failed
+  FILE tests/issue-6460-standalone-static-spread-arity.test.ts failed
+  FILE tests/issue-6689-extern-set-decide-fnctor-proto.test.ts failed
+  FILE tests/issue-743-ctor-sites-in-fixpoint.test.ts failed
+  FILE tests/issue-743-derivation-defaults.test.ts failed
+  FILE tests/issue-743-dts-entrypoint-seeds.test.ts failed
+  FILE tests/issue-820m.test.ts failed
+  DIFF tests/issue-2608-new-this-fnctor-static.test.ts :: #2586 — `new this(...)` in an fnctor static method invokes a prototype method with arguments on inline `new this()` A= passed B= failed
+  DIFF tests/issue-2608-new-this-fnctor-static.test.ts :: #2586 — `new this(...)` in an fnctor static method preserves a nested fnctor field through an aliased prototype method A= passed B= failed
+  DIFF tests/issue-2608-new-this-fnctor-static.test.ts :: #2586 — `new this(...)` in an fnctor static method treats a fnctor field assigned by both if/else arms as always present A= passed B= failed
+  DIFF tests/issue-3719-new-assigned-to-binding.test.ts :: #3719 — new-expression assigned to a binding (standalone) reads a prototype method as a value (not just calls it) A= failed B= passed
+  DIFF tests/issue-5162-ctor-own-prototype-method.test.ts :: #5162 constructor → own prototype method standalone: the same call from another prototype method returns its spec value A= passed B= failed
+  DIFF tests/issue-5195-r3-heritage-check.test.ts :: #5195 r3-5 — a non-constructor heritage throws TypeError in standalone r3-5: language/expressions/class/heritage-arrow-function.js passes in standalone A= skipped B= passed
+  DIFF tests/issue-5195-r3-heritage-check.test.ts :: #5195 r3-5 — a non-constructor heritage throws TypeError in standalone r3-5: language/expressions/class/heritage-async-arrow-function.js passes in standalone A= skipped B= passed
+  DIFF tests/issue-5195-r3-heritage-check.test.ts :: #5195 r3-5 — a non-constructor heritage throws TypeError in standalone r3-5: language/statements/class/subclass/superclass-arrow-function.js passes in standalone A= skipped B= passed
+  DIFF tests/issue-5195-r3-heritage-check.test.ts :: #5195 r3-5 — a non-constructor heritage throws TypeError in standalone r3-5: language/statements/class/subclass/superclass-async-function.js passes in standalone A= skipped B= passed
+  DIFF tests/issue-5195-r3-heritage-check.test.ts :: #5195 r3-5 — a non-constructor heritage throws TypeError in standalone r3-5: language/statements/class/subclass/superclass-async-generator-function.js passes in standalone A= skipped B= passed
+  DIFF tests/issue-5195-r3-heritage-check.test.ts :: #5195 r3-5 — a non-constructor heritage throws TypeError in standalone r3-5: language/statements/class/subclass/superclass-generator-function.js passes in standalone A= skipped B= passed
+  DIFF tests/issue-5195-r3-restricted-properties.test.ts :: #5195 r3-7 — `caller`/`arguments` on a class object throw in standalone r3-7: language/statements/class/restricted-properties.js passes in standalone A= skipped B= passed
+  DIFF tests/issue-5195-r3-restricted-properties.test.ts :: #5195 r3-7 — `caller`/`arguments` on a class object throw in standalone r3-7: language/expressions/class/restricted-properties.js passes in standalone A= skipped B= passed
+differences: 13
