@@ -1,11 +1,10 @@
 {
   "id": "6958",
-  "assignee": "",
+  "assignee": "ttraenkler/claude-session-d",
   "requested_by": "ttraenkler/claude-session-d",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-10-10T23:44:37Z",
-  "updated_at": "2026-10-10T23:44:37Z",
-  "write_id": "22162-ruhuwxti",
-  "pr_scan": "degraded"
+  "status": "in-progress",
+  "branch": "claude/standalone-fnctor-param-inference",
+  "claimed_at": "2026-10-11T02:28:23Z",
+  "updated_at": "2026-10-11T02:28:23Z",
+  "write_id": "19065-d0v2wx4d"
 }
