@@ -846,3 +846,91 @@ export function sourceOverridesArrayIterator(sourceFile: ts.SourceFile): boolean
   walk(sourceFile);
   return found;
 }
+
+/**
+ * (#6957) Builtin namespaces whose static members a program can patch
+ * (`Math.random = fn`). Only these are scanned — they are the #4199 plain
+ * namespace singletons whose carrier is seeded with every modelled method.
+ */
+const PATCHABLE_NAMESPACES: ReadonlySet<string> = new Set(["Math", "JSON", "Reflect"]);
+
+const patchedMembersCache = new WeakMap<ts.SourceFile, ReadonlyMap<string, ReadonlySet<string>>>();
+
+function stripWrappers(expr: ts.Expression): ts.Expression {
+  let e = expr;
+  while (ts.isParenthesizedExpression(e) || ts.isAsExpression(e) || ts.isNonNullExpression(e)) e = e.expression;
+  return e;
+}
+
+/**
+ * (#6957) Every `<Math|JSON|Reflect>.<name>` the program WRITES — assignment
+ * (`=` and compound), `++`/`--`, `delete`, and the literal-key element spelling
+ * `Math["random"] = …`. Keyed namespace → member names. Purely syntactic: a
+ * write through a locally shadowed `Math` is also collected, which only costs
+ * that member the (still correct) dynamic carrier path at global call sites —
+ * each consumer re-checks that ITS receiver is the ambient global.
+ *
+ * Cached per `SourceFile`; callers gate on standalone so host/gc compiles never
+ * pay the walk (the #3437 harness compile-work budget meters gc compiles).
+ */
+export function patchedBuiltinStaticMembers(sourceFile: ts.SourceFile): ReadonlyMap<string, ReadonlySet<string>> {
+  const cached = patchedMembersCache.get(sourceFile);
+  if (cached) return cached;
+  const found = new Map<string, Set<string>>();
+  const note = (target: ts.Expression): void => {
+    const lhs = stripWrappers(target);
+    let receiver: ts.Expression;
+    let name: string;
+    if (ts.isPropertyAccessExpression(lhs) && !ts.isPrivateIdentifier(lhs.name)) {
+      receiver = lhs.expression;
+      name = lhs.name.text;
+    } else if (ts.isElementAccessExpression(lhs) && ts.isStringLiteralLike(stripWrappers(lhs.argumentExpression))) {
+      receiver = lhs.expression;
+      name = (stripWrappers(lhs.argumentExpression) as ts.StringLiteralLike).text;
+    } else {
+      return;
+    }
+    const base = stripWrappers(receiver);
+    if (!ts.isIdentifier(base) || !PATCHABLE_NAMESPACES.has(base.text)) return;
+    let names = found.get(base.text);
+    if (!names) found.set(base.text, (names = new Set()));
+    names.add(name);
+  };
+  function walk(node: ts.Node): void {
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+      node.operatorToken.kind <= ts.SyntaxKind.LastAssignment
+    ) {
+      note(node.left);
+    } else if (
+      (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
+      (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken)
+    ) {
+      note(node.operand);
+    } else if (ts.isDeleteExpression(node)) {
+      note(node.expression);
+    }
+    forEachChild(node, walk);
+  }
+  walk(sourceFile);
+  patchedMembersCache.set(sourceFile, found);
+  return found;
+}
+
+/**
+ * (#6957) Has the program patched `<ns>.<name>` in any of its source files?
+ * Standalone only — the host lane keeps its static lowering byte-for-byte, and
+ * so does every standalone program that never writes the member.
+ */
+export function isPatchedBuiltinStaticMember(
+  ctx: { readonly standalone?: boolean; readonly callableSourceFiles?: readonly ts.SourceFile[] },
+  ns: string,
+  name: string,
+): boolean {
+  if (!ctx.standalone || !PATCHABLE_NAMESPACES.has(ns)) return false;
+  for (const sourceFile of ctx.callableSourceFiles ?? []) {
+    if (patchedBuiltinStaticMembers(sourceFile).get(ns)?.has(name)) return true;
+  }
+  return false;
+}
