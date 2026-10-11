@@ -33,7 +33,11 @@ import {
 import type { Instr, ValType } from "../../ir/types.js";
 import { compileHostFreeCryptoCall, isHostFreeCryptoCall, marshalRegimeCryptoUuid } from "./standalone-crypto.js";
 import { tryStandaloneQueueMicrotaskCall } from "./standalone-queue-microtask.js";
-import { tryStandaloneHostFreeCall } from "./standalone-dynamic-code.js"; // (#6675/#6676) timers, Function(src)
+import {
+  emitRefusedDynamicFunction,
+  isRuntimeEvalProviderAbsent,
+  tryStandaloneHostFreeCall,
+} from "./standalone-dynamic-code.js"; // (#6675/#6676) timers, Function(src); (#6956) refused eval
 import { compileArrayMethodCall, compileArrayPrototypeCall, resolveArrayInfo } from "../array-methods.js";
 import { emitGlobalThisGopdFold } from "../dyn-read.js"; // (#2984)
 import { tryEmitNullishReceiverCall } from "../nullish-receiver-coercible.js"; // (#4484 B) §7.3.2 on a syntactic null/undefined receiver
@@ -7583,6 +7587,53 @@ function tryRuntimeEvalInterpretedBoundaryIntrinsic(
   return externref;
 }
 
+/**
+ * (#6956) `eval(x)` in a standalone module compiled with
+ * `runtimeEvalProvider: false`. PerformEval (§19.2.1.1) returns a non-String
+ * `x` unchanged and only consults HostEnsureCanCompileStrings for a String,
+ * so the refusal is the same catchable EvalError `Function(src)` throws, but
+ * raised only when `x` is a native string at run time (a host string handed
+ * in across the zero-import boundary is opaque and passes through). All
+ * arguments are evaluated first, in order; nothing is imported.
+ */
+function emitRefusedEvalCall(ctx: CodegenContext, fctx: FunctionContext, args: readonly ts.Expression[]): ValType {
+  const externref: ValType = { kind: "externref" };
+  if (args.length === 0) {
+    emitUndefined(ctx, fctx);
+    return externref;
+  }
+  const srcType = compileExpression(ctx, fctx, args[0]!);
+  if (srcType === null) emitUndefined(ctx, fctx);
+  else if (srcType.kind !== "externref") coerceType(ctx, fctx, srcType, externref);
+  const srcLocal = allocLocal(fctx, `__eval_src_${fctx.locals.length}`, externref);
+  fctx.body.push({ op: "local.set", index: srcLocal });
+  for (let i = 1; i < args.length; i++) {
+    if (compileExpression(ctx, fctx, args[i]!) !== null) fctx.body.push({ op: "drop" });
+  }
+  if (ctx.anyStrTypeIdx >= 0) {
+    const outerBody = fctx.body;
+    const refuseArm: Instr[] = [];
+    ctx.liveBodies.add(refuseArm);
+    fctx.savedBodies.push(outerBody);
+    fctx.body = refuseArm;
+    try {
+      emitRefusedDynamicFunction(ctx, fctx, []);
+    } finally {
+      fctx.savedBodies.pop();
+      fctx.body = outerBody;
+      ctx.liveBodies.delete(refuseArm);
+    }
+    outerBody.push(
+      { op: "local.get", index: srcLocal },
+      { op: "any.convert_extern" },
+      { op: "ref.test", typeIdx: ctx.anyStrTypeIdx },
+      { op: "if", blockType: { kind: "empty" }, then: refuseArm },
+    );
+  }
+  fctx.body.push({ op: "local.get", index: srcLocal });
+  return externref;
+}
+
 function compileCallExpression(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -7897,6 +7948,8 @@ function compileCallExpression(
       if (inlined !== undefined) return inlined;
       const spreadEval = tryCompileStandaloneEvalSpread(ctx, fctx, expr); // (#6774 S18)
       if (spreadEval !== undefined) return spreadEval;
+      // (#6956) No provider: refuse in-module instead of importing js2wasm:runtime-eval.
+      if (isRuntimeEvalProviderAbsent(ctx)) return emitRefusedEvalCall(ctx, fctx, expr.arguments);
       // #2928/#2929 — direct eval adds live caller cells to indirect eval's global environment.
       const runtimeEval =
         evalKind === "direct"
