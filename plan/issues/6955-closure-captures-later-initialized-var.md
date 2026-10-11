@@ -1,7 +1,8 @@
 ---
 id: 6955
 title: "Closure captures a `var` BY VALUE when the var's initializer runs AFTER the closure is created (hoisted `var dt = 0.1` at the end of a constructor) — captured value is the uninitialized default (Octane navier-stokes: every field NaN, checksum 0)"
-status: ready
+status: done
+completed: 2026-10-10
 sprint: current
 created: 2026-10-10
 priority: high
@@ -12,7 +13,11 @@ task_type: bugfix
 area: compiler
 language_feature: closures, var-hoisting
 goal: standalone-gap
-related: [874, 6937, 1177, 996]
+related: [874, 6937, 1177, 996, 6942]
+# 2026-10-10 (#6955): +~20 lines — the hoisted-var arm of the closure capture
+# predicate lives beside closurePrecedesBindingInitializerStore, its only caller.
+loc-budget-allow:
+  - src/codegen/closures/arrow-phases.ts
 ---
 
 # Closure capture-by-value of a var initialized after the closure
@@ -81,3 +86,27 @@ default (f64 `0`/NaN-undefined) at construction and never sees the later store.
 
 ## Ownership / overlap
 `src/codegen/closures/arrow-phases.ts` — not touched by #6949/#6950/#6951.
+
+## Implementation Notes (2026-10-10)
+
+- `closurePrecedesBindingInitializerStore` now has a second arm,
+  `hoistedVarInitializerFollowsClosure`: a `var` declarator WITH an initializer,
+  textually after the closure (`declaration.pos >= closure.end`), whose nearest
+  enclosing frame (function-like / SourceFile / class static block) equals the
+  closure's. The ancestor walk's "nested function" exit changed from
+  `return false` to `break` so that arm is reached — the old early return fired
+  on the enclosing function for every closure NOT inside the declarator, which is
+  why the plan's first sketch alone had no effect.
+- Both callers (`planClosureCaptures`, `closures.ts` callback capture) pick it up
+  through the shared predicate. Captures of declarations that precede their
+  closures keep the by-value path.
+- Also fixes the late-bound sibling shape `var a = function(){ return b(); };
+  var b = function(){…}` (base threw `Cannot access property on null`).
+- **Dependency:** the `new FF()` repro (`.tmp/ns7.js`, Octane `FluidField`) also
+  needs the fnctor twin (`__fnctor_<F>_new`, `expressions/new-super.ts`) to hoist
+  its `var` slots before the body compiles — otherwise `dt` has no local when the
+  closure is planned and is never captured at all. That is #6942 (commit
+  65365e6243, on `c-octane-integ`, not yet on main). On main without #6942,
+  ns7 still returns 0; with both, 0.2.
+- Out of scope, pre-existing: a number-typed hoisted `var` read before its
+  initializer reads `0`, not `undefined` (`typeof dt` before `var dt = 5`).
