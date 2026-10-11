@@ -1,0 +1,35 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/issue-3526-boundary-residuals.test.ts > #3526 F1-S4 extern-is-undefined contract > adds exactly ONE versioned ID with a 1:1 feature row and the exact probe ABI 4ms
+ ✓ tests/issue-3526-boundary-residuals.test.ts > #3526 F1-S4 extern-is-undefined contract > is TWO-armed at the provider level, unlike the one-armed boolean family 1ms
+ ✓ tests/issue-3526-boundary-residuals.test.ts > #3526 F1-S4 extern-is-undefined contract > keeps ONE central catalogue, and the async projection excludes the row BY ID 1ms
+ ✓ tests/issue-3526-boundary-residuals.test.ts > #3526 F1-S4 provider policy > selects the host arm through the central capability record 8ms
+ ✓ tests/issue-3526-boundary-residuals.test.ts > #3526 F1-S4 provider policy > selects the native arm on the runtime symbol, requesting NO host capability 2ms
+ ✓ tests/issue-3526-boundary-residuals.test.ts > #3526 F1-S4 provider policy > refuses the arm its caller resolved to unsupported, naming the intrinsic and the policy 3ms
+ ✓ tests/issue-3526-boundary-residuals.test.ts > #3526 F1-S4 provider policy > defaults an omitted policy closed and publishes the resolved decision 2ms
+ ✓ tests/issue-3526-boundary-residuals.test.ts > #3526 F1-S4 provider policy > resolves the probe independently of the number and boolean arms 1ms
+ ✓ tests/issue-3526-boundary-residuals.test.ts > #3526 F1-S4 provider policy > its truth table is a THIRD one — native where numberBoundary is unsupported 4ms
+ ✓ tests/issue-3526-boundary-residuals.test.ts > #3526 F1-S4 the front-end reads no lane fact > lowers the strict-undefined arm to the provider-free intrinsic 561ms
+ ✓ tests/issue-3526-boundary-residuals.test.ts > #3526 F1-S4 the front-end reads no lane fact > emits the SAME body under either answer to the deleted predicate 15ms
+ ✓ tests/issue-3526-boundary-residuals.test.ts > #3526 F1-S4 the front-end reads no lane fact > normalises the operand through coerce.to_externref, which lowering elides 7ms
+ ✓ tests/issue-3526-boundary-residuals.test.ts > #3526 F1-S4 end-to-end behaviour is unchanged > answers the probe correctly on the host lane, through the env import 387ms
+ ✓ tests/issue-3526-boundary-residuals.test.ts > #3526 F1-S4 end-to-end behaviour is unchanged > uses the host-free Wasm function on standalone, with no env import 436ms
+ ✓ tests/issue-3526-boundary-residuals.test.ts > #3526 F1-S4 end-to-end behaviour is unchanged > keeps the host lane's env import on the exported bare probe too 63ms
+ ✓ tests/issue-3526-boundary-residuals.test.ts > #3526 F1-S4 every gen.* callable has ONE authority > attaches 'gen.push''s provider unconditionally on a generator owner 2ms
+ ✓ tests/issue-3526-boundary-residuals.test.ts > #3526 F1-S4 every gen.* callable has ONE authority > attaches 'gen.epilogue''s provider unconditionally on a generator owner 0ms
+ ✓ tests/issue-3526-boundary-residuals.test.ts > #3526 F1-S4 every gen.* callable has ONE authority > attaches 'gen.yieldStar''s provider unconditionally on a generator owner 1ms
+ ✓ tests/issue-3526-boundary-residuals.test.ts > #3526 F1-S4 every gen.* callable has ONE authority > attaches 'gen.setReturn''s provider unconditionally on a generator owner 1ms
+ ✓ tests/issue-3526-boundary-residuals.test.ts > #3526 F1-S4 every gen.* callable has ONE authority > refuses to lower an unattached 'gen.push' instead of re-deciding the symbol 1ms
+ ✓ tests/issue-3526-boundary-residuals.test.ts > #3526 F1-S4 every gen.* callable has ONE authority > refuses to lower an unattached 'gen.epilogue' instead of re-deciding the symbol 1ms
+ ✓ tests/issue-3526-boundary-residuals.test.ts > #3526 F1-S4 every gen.* callable has ONE authority > refuses to lower an unattached 'gen.yieldStar' instead of re-deciding the symbol 1ms
+ ✓ tests/issue-3526-boundary-residuals.test.ts > #3526 F1-S4 every gen.* callable has ONE authority > refuses to lower an unattached 'gen.setReturn' instead of re-deciding the symbol 0ms
+ ✓ tests/issue-3526-boundary-residuals.test.ts > #3526 F1-S4 every gen.* callable has ONE authority > leaves a NON-generator owner's gen.* untouched — the buffer-slot guard owns that case 0ms
+ ✓ tests/issue-3526-boundary-residuals.test.ts > #3526 F1-S4 sub-A is stopped, and the divergence is pinned > still emits the RAW runtime symbol — the arms are unmigrated 137ms
+ ✓ tests/issue-3526-boundary-residuals.test.ts > #3526 F1-S4 sub-A is stopped, and the divergence is pinned > the raw symbol resolves on gc-native-strings, where the policy says unsupported 174ms
+
+ Test Files  1 passed (1)
+      Tests  26 passed (26)
+   Start at  19:38:13
+   Duration  35.28s (transform 23.26s, setup 0ms, collect 32.94s, tests 1.82s, environment 0ms, prepare 71ms)
+

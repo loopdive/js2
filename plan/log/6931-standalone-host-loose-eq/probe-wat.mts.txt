@@ -1,0 +1,12 @@
+import { compile } from "../src/index.js";
+const SRC = `export function eqUsed(o: any): number { return o == 1 ? 1 : 0; }\n`;
+const r = await compile(SRC, { fileName: "probe3.ts", trackIrOutcomes: true, target: "standalone", emitWat: true });
+if (!r.success) { console.log("FAIL"); process.exit(0); }
+console.log((r.irOutcomes ?? []).map((u: any) => `${u.displayName}:${u.kind}${u.irBodyEmitted ? "+body" : ""}`).join(" "));
+const m = r.wat.match(/\(func \$eqUsed[\s\S]*?\n  \)\n/); console.log(m ? m[0] : "none");
+for (const n of [...new Set([...(m?.[0] ?? "").matchAll(/call (\d+)/g)].map(x => +x[1]))]) { const f = r.wat.match(new RegExp(`\\(func \\$([\\w$.]+) \\(;${n};\\)`)); console.log("call", n, f?.[1] ?? "?"); }
+const lines = r.wat.split("\n"); let idx = -1; const heads: string[] = [];
+for (const l of lines) { const mm = l.match(/^  \(func (\$[\w$.:-]+)/); if (mm) heads.push(mm[1]); }
+const imps = (r.wat.match(/^  \(import [^\n]*\(func/gm) ?? []).length;
+console.log("imported funcs:", imps, "246->", heads[246 - imps], "305->", heads[305 - imps]);
+for (const name of [heads[246 - imps], heads[305 - imps]]) { const s = r.wat.indexOf(`(func ${name} `); console.log(r.wat.slice(s, s + 2500)); }

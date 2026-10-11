@@ -15,7 +15,7 @@ import { registerAnnexBGlobalLiveBindings } from "./annexb-global-live-binding.j
 import { exactClassExpressionTypeName } from "./class-expression-identity.js";
 import { emitToBoolean } from "./coercion-engine.js";
 import { interfaceHasClassImplementer } from "./interface-class-implementer.js";
-import { isConstructedFnctorName } from "./fnctor-instance-names.js";
+import { isFnctorInstanceType } from "./fnctor-instance-names.js";
 import {
   emitNativeErrorBoundaryBridge,
   emitWasiErrorConstructor,
@@ -13008,17 +13008,10 @@ export function resolveWasmType(ctx: CodegenContext, tsType: ts.Type, _depth = 0
     // in compileNewFunctionDeclaration — both read the same pure-AST predicate.
     const foreignReturnFnctor = (ctx.standalone || ctx.wasi) && typeIsForeignReturnFnctorInstance(tsType);
     if ((!ctx.standalone && !ctx.wasi) || approvedStandaloneFnctor || foreignReturnFnctor) {
-      const fnDecl = sym?.valueDeclaration;
-      const isFnCtorType =
-        (sym?.name !== undefined && isConstructedFnctorName(ctx, sym.name)) ||
-        (!!fnDecl &&
-          (ts.isFunctionDeclaration(fnDecl) ||
-            ts.isFunctionExpression(fnDecl) ||
-            (ts.isVariableDeclaration(fnDecl) && !!fnDecl.initializer && ts.isFunctionExpression(fnDecl.initializer))));
       // Only when the type is an INSTANCE shape (has properties but is not
       // itself callable) — the function VALUE type (callable) must keep its
-      // closure-wrapper resolution.
-      if (isFnCtorType && tsType.getCallSignatures().length === 0) {
+      // closure-wrapper resolution. Shared with ensureStructForType (#6938).
+      if (isFnctorInstanceType(ctx, tsType)) {
         // (#2071) Foreign-return-capable: always dynamic, never the reserved
         // struct — the value at runtime may not BE that struct. This WINS over
         // escape-gate approval: approval says the struct layout is stable, not
@@ -13473,6 +13466,8 @@ export function ensureStructForType(ctx: CodegenContext, tsType: ts.Type): void 
   if (tsType.symbol?.name === "globalThis" && (dtsDecls?.length ?? 0) === 0) {
     return;
   }
+  // (#6938) Never a checker-shape struct (never allocated) — lockstep with resolveWasmType.
+  if (isFnctorInstanceType(ctx, tsType)) return;
   // #1247: Array types compile to vec structs (length+data) via getOrRegisterVecType,
   // not anonymous structs that pull in every Array.prototype method as a field. Without
   // this guard, `string[]` registers an anonymous struct named after Array.prototype's

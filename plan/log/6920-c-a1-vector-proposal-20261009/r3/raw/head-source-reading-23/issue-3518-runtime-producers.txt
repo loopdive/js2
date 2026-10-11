@@ -1,0 +1,34 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/issue-3518-runtime-producers.test.ts > #3518 complete-program runtime producers > publishes an explicit empty manifest while preserving the legacy optional result 11ms
+ ✓ tests/issue-3518-runtime-producers.test.ts > #3518 complete-program runtime producers > also prepares a truly empty population without inventing a source owner 2ms
+ ✓ tests/issue-3518-runtime-producers.test.ts > #3518 complete-program runtime producers > keeps same-name functions and initializer uses source-qualified 4ms
+ ✓ tests/issue-3518-runtime-producers.test.ts > #3518 complete-program runtime producers > prepares every async owner and returns complete derived state provenance 11ms
+ ✓ tests/issue-3518-runtime-producers.test.ts > #3518 complete-program runtime producers > retains authenticated async joins for { target: 'host', backend: 'wasmgc' } 10ms
+ ✓ tests/issue-3518-runtime-producers.test.ts > #3518 complete-program runtime producers > retains authenticated async joins for { target: 'standalone', backend: 'wasmgc' } 7ms
+ ✓ tests/issue-3518-runtime-producers.test.ts > #3518 complete-program runtime producers > locates a malformed intrinsic in its original dependency owner 1ms
+ ✓ tests/issue-3518-runtime-producers.test.ts > #3518 complete-program runtime producers > refuses a missing per-artifact demand scan even when the body has no runtime use 0ms
+ ✓ tests/issue-3518-runtime-producers.test.ts > #3518 complete-program runtime producers > locates an unavailable non-intrinsic provider through its exact demand owner 3ms
+ ✓ tests/issue-3518-runtime-producers.test.ts > #3518 complete-program runtime producers > reports a linear async capability gap as failure evidence 4ms
+ ✓ tests/issue-3518-runtime-producers.test.ts > #3518 complete-program runtime producers > rejects incomplete semantic async preparation before manifest freeze 0ms
+ ✓ tests/issue-3518-runtime-producers.test.ts > #3518 complete-program runtime producers > returns explicit unsupported for a body the existing async producer cannot represent 1ms
+ ✓ tests/issue-3518-runtime-producers.test.ts > #3518 complete-program runtime producers > rejects duplicate units and derived state collisions 1ms
+ ✓ tests/issue-3518-runtime-producers.test.ts > #3518 complete-program runtime producers > rejects an empty or subset body vector for a nonempty original census 1ms
+ ✓ tests/issue-3518-runtime-producers.test.ts > #3518 complete-program runtime producers > rejects a pre-existing async plan with missing state bodies or provenance 4ms
+ ✓ tests/issue-3518-runtime-producers.test.ts > #3518 complete-program runtime producers > keeps an unsupported non-suspending async owner explicit 0ms
+ ✓ tests/issue-3518-runtime-producers.test.ts > #3518 complete-program runtime producers > never fabricates a source location for an unowned function 0ms
+ ✓ tests/issue-3518-runtime-producers.test.ts > #3518 complete-program runtime producers > preserves the original numeric await carrier and rejects contradictory type evidence 3ms
+ ✓ tests/issue-3518-runtime-producers.test.ts > #3518 complete-program runtime producers > declares the exact host caught-exception dependency and rejects ABI mutations 9ms
+ ✓ tests/issue-3518-runtime-producers.test.ts > #3518 complete-program runtime producers > reports the shared-frame prerequisite for a valid minimal settled plan before allocation 8ms
+ ✓ tests/issue-3518-runtime-producers.test.ts > #3518 complete-program runtime producers > requires the numeric Promise bridge without changing generic number policy 3ms
+ ✓ tests/issue-3518-runtime-producers.test.ts > #3518 complete-program runtime producers > executes a numeric host Promise frame with settleOnly=false without late imports 94ms
+ ✓ tests/issue-3518-runtime-producers.test.ts > #3518 complete-program runtime producers > executes a numeric host Promise frame with settleOnly=true without late imports 65ms
+ ✓ tests/issue-3518-runtime-producers.test.ts > #3518 complete-program runtime producers > does not reuse a runtime projection as fresh semantic input 6ms
+ ✓ tests/issue-3518-runtime-producers.test.ts > #3518 complete-program runtime producers > reattaches the runtime in a fresh process with frontend imports blocked 372ms
+
+ Test Files  1 passed (1)
+      Tests  25 passed (25)
+   Start at  22:11:30
+   Duration  30.84s (transform 20.62s, setup 0ms, collect 29.72s, tests 622ms, environment 0ms, prepare 101ms)
+

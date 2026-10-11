@@ -1,0 +1,68 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ❯ tests/ir-backend-emitter.test.ts (24 tests | 1 failed) 15ms
+   ✓ #1713 WasmGcEmitter — vec group byte-identity > emitVecLen → struct.get $length (no f64.convert; caller owns that) 1ms
+   ✓ #1713 WasmGcEmitter — vec group byte-identity > emitVecDataPtr → struct.get $data 0ms
+   ✓ #1713 WasmGcEmitter — vec group byte-identity > emitElemGet → array.get $arr 0ms
+   ✓ #1713 WasmGcEmitter — pass-through group byte-identity > emitConst delegates to the shared const lowering (f64.const) 0ms
+   ✓ #1713 WasmGcEmitter — pass-through group byte-identity > emitBinary / emitUnary push the bare op 0ms
+   ✓ #1713 WasmGcEmitter — pass-through group byte-identity > local / global get-set-tee carry the index unchanged 0ms
+   ✓ #1713 WasmGcEmitter — pass-through group byte-identity > drop / select / return / unreachable are bare ops 0ms
+   ✓ #1713 WasmGcEmitter — pass-through group byte-identity > emitIf nests then/else under a structured if 0ms
+   ✓ #1713 WasmGcEmitter — pass-through group byte-identity > emitBr / emitBrIf carry the depth unchanged 0ms
+   ✓ #2953 WasmGcEmitter — ref-cell family byte-identity > emitRefCellNew → struct.new $cell (value already on the stack) 0ms
+   ✓ #2953 WasmGcEmitter — ref-cell family byte-identity > emitRefCellGet → struct.get $cell $value 0ms
+   ✓ #2953 WasmGcEmitter — ref-cell family byte-identity > emitRefCellSet → struct.set $cell $value 0ms
+   ✓ #2953 WasmGcEmitter — closure family byte-identity > emitClosureNew → struct.new $closure (function and captures already on the stack) 0ms
+   ✓ #2953 WasmGcEmitter — closure family byte-identity > emitClosureFuncGet → struct.get $closure $func 0ms
+   ✓ #2953 WasmGcEmitter — closure family byte-identity > emitCaptureGet maps the capture position through the layout 0ms
+   ✓ #2953 WasmGcEmitter — function-reference family byte-identity > emitFuncRef → ref.func $lifted 0ms
+   × #2953 WasmGcEmitter — Promise aggregate family byte-identity > emitPromiseNew → struct.new $Promise 8ms
+     → expected [ { op: 'ref.null.extern' }, …(2) ] to deeply equal [ { op: 'struct.new', typeIdx: 43 } ]
+   ✓ #2953 WasmGcEmitter — Promise aggregate family byte-identity > emitPromiseStateGet → struct.get $Promise $state 0ms
+   ✓ #2953 WasmGcEmitter — Promise aggregate family byte-identity > emitPromiseValueGet → struct.get $Promise $value 0ms
+   ✓ #2953 WasmGcEmitter — ref-coercion/null family byte-identity > emitNull selects the canonical nullable-ref and externref ops 0ms
+   ✓ #2953 WasmGcEmitter — ref-coercion/null family byte-identity > emitToExternref re-tags the anyref subtype 0ms
+   ✓ #2953 WasmGcEmitter — ref-coercion/null family byte-identity > emitDowncast narrows a reference without an externref conversion 0ms
+   ✓ #2953 WasmGcEmitter — ref-coercion/null family byte-identity > emitFromExternref converts then narrows in canonical order 0ms
+   ✓ #2953 WasmGcEmitter — ref-coercion/null family byte-identity > emitConst routes typed null materialization through emitNull 0ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/ir-backend-emitter.test.ts > #2953 WasmGcEmitter — Promise aggregate family byte-identity > emitPromiseNew → struct.new $Promise
+AssertionError: expected [ { op: 'ref.null.extern' }, …(2) ] to deeply equal [ { op: 'struct.new', typeIdx: 43 } ]
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[2m  [[22m
+[2m    {[22m
+[31m+     "op": "ref.null.extern",[39m
+[31m+   },[39m
+[31m+   {[39m
+[31m+     "op": "i32.const",[39m
+[31m+     "value": 0,[39m
+[31m+   },[39m
+[31m+   {[39m
+[2m      "op": "struct.new",[22m
+[2m      "typeIdx": 43,[22m
+[2m    },[22m
+[2m  ][22m
+
+ ❯ tests/ir-backend-emitter.test.ts:186:17
+    184|     const out: Instr[] = [];
+    185|     emitter.emitPromiseNew(43, out);
+    186|     expect(out).toEqual([{ op: "struct.new", typeIdx: 43 }]);
+       |                 ^
+    187|   });
+    188| 
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 23 passed (24)
+   Start at  22:49:09
+   Duration  487ms (transform 131ms, setup 0ms, collect 166ms, tests 15ms, environment 0ms, prepare 60ms)
+
