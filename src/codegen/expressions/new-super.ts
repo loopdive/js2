@@ -215,6 +215,7 @@ import { NEW_INDEXED_FALLTHROUGH, tryCompileIndexedBuiltinNew } from "./new-inde
 import { tryCompileIntlHostOnlyNew } from "./new-intl-host-bridge.js"; // (#5355) standalone Intl refusal
 import { emitFnctorProtoGet, resolveUserFnctorName } from "./fnctor-prototype.js"; // (#2660 S3a) reconstruct `new F()` as $Object; (#3981) proto for a value-bound ctor
 import { emitStandalonePromiseFromExecutor, emitStandalonePromiseFromExecutorValue } from "../promise-executor.js"; // (#2959 / #2903 R1) native new Promise(executor)
+import { fnctorNameOwnedElsewhere, funcConstructorForCallee, recordFuncConstructorOwner } from "../fnctor-ctor-decl.js"; // (#6974)
 import { deriveFnctorFields, resolveFnctorSymbol, resolveEnclosingFnctorOwner } from "../fnctor-escape-gate.js"; // (#2660 S3a) canonical fnctor-name key; (#2773 S1) shared field derivation; (#2681/#2686 A1) `new this()` owner
 import { newExpressionReconstructsAsObject } from "../fnctor-instance-object-slot.js"; // (#4506 S1) the site-level reconstruct predicate the slot typer shares
 import {
@@ -641,7 +642,7 @@ function resolvesToLateAssignedConstructSignatureValue(ctx: CodegenContext, call
   if (
     ctx.classSet.has(calleeExpr.text) ||
     ctx.externClasses.has(calleeExpr.text) ||
-    ctx.funcConstructorMap.has(calleeExpr.text)
+    funcConstructorForCallee(ctx, calleeExpr) // (#6974) a same-named fnctor elsewhere is not this binding
   ) {
     return false;
   }
@@ -846,7 +847,8 @@ function resolvesToDynamicAnyCtorValue(ctx: CodegenContext, calleeExpr: ts.Expre
   if (!ts.isIdentifier(calleeExpr)) return false;
   const externClassName = ctx.externClasses.has(calleeExpr.text) && !bcv.shadowsExternClassName(ctx, calleeExpr);
   if (ctx.classSet.has(calleeExpr.text) || externClassName) return false;
-  if (ctx.funcConstructorMap?.has(calleeExpr.text)) return false;
+  if (funcConstructorForCallee(ctx, calleeExpr)) return false; // (#6974) identity, not the name
+  if (fnctorNameOwnedElsewhere(ctx, calleeExpr)) return true; // (#6974) a same-named 2nd `function K`
   // (#1930) Destructured-alias form for the symbol lookup (out of ratchet scope);
   // the type-flags check routes through the oracle (`typeFactOf`) rather than a
   // direct `getTypeAtLocation`.
@@ -2776,13 +2778,15 @@ function compileNewFunctionDeclaration(
   pushDefinedFunc(ctx, ctorFuncIdx, ctorFunc);
 
   // Cache the mapping
-  ctx.funcConstructorMap.set(funcName, {
+  const ctorEntry = {
     structTypeIdx,
     ctorFuncName: ctorName,
     captureLayout,
     resultIsExtern,
     readsArguments: ctorReadsArguments,
-  });
+  };
+  ctx.funcConstructorMap.set(funcName, ctorEntry);
+  recordFuncConstructorOwner(ctorEntry, funcDecl); // (#6974) identity, not just the name
 
   // 4. Compile the constructor body
   const paramDefs: { name: string; type: ValType }[] = [];
@@ -3886,7 +3890,7 @@ function tryCompileNativeConstructFromValue(
   )
     return undefined;
   // A compiled fnctor for this binding means the typed-struct path owns it.
-  if (ts.isIdentifier(calleeExpr) && ctx.funcConstructorMap.has(calleeExpr.text)) return undefined;
+  if (ts.isIdentifier(calleeExpr) && funcConstructorForCallee(ctx, calleeExpr)) return undefined;
   const runtimeFunctionAlias =
     ts.isIdentifier(calleeExpr) &&
     ctx.runtimeEvalCallableBoundaryEnabled === true &&
@@ -3906,7 +3910,8 @@ function tryCompileNativeConstructFromValue(
     !resolvesToConstructableFunctionValue(ctx, calleeExpr) &&
     !resolvesToLateAssignedConstructSignatureValue(ctx, calleeExpr) &&
     !(noJsHost(ctx) && isDefaultExpressionImport(ctx, calleeExpr)) && // (#6720) the snapshot cell's VALUE
-    !admitBoundValueConstruct(ctx, calleeExpr) // (#6651 W2b) `var D = f.bind(…); new D()`
+    !admitBoundValueConstruct(ctx, calleeExpr) && // (#6651 W2b) `var D = f.bind(…); new D()`
+    !(ts.isIdentifier(calleeExpr) && fnctorNameOwnedElsewhere(ctx, calleeExpr)) // (#6974) same-named 2nd `function K`
   )
     return undefined;
 
@@ -7416,7 +7421,11 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
     // predicate — so the miss would store a fnctor struct into an `$Object`
     // slot, where every dynamic read fails its `ref.test $Object`. The two must
     // agree; asking here is how.
-    if (newExpressionReconstructsAsObject(ctx, expr) && fnctorNewResultConsumedAsExternref(ctx, fctx, expr)) {
+    if (
+      !fnctorNameOwnedElsewhere(ctx, calleeIdent) && // (#6974) the gate's name may be another `function K`
+      newExpressionReconstructsAsObject(ctx, expr) &&
+      fnctorNewResultConsumedAsExternref(ctx, fctx, expr)
+    ) {
       // The gate's own resolution, not a second symbol query: the predicate
       // above already required it to exist.
       const key = ctx.fnctorEscapeGate?.siteCtorName.get(expr) ?? fnName;
@@ -7425,8 +7434,10 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
       // The helper declined without emitting (its contract) — fall through to
       // the ordinary cached/struct path below, exactly as before.
     }
-    // Check cache first — if we already built a constructor for this function
-    const cachedFnCtor = ctx.funcConstructorMap.get(fnName);
+    // Check cache first — if we already built a constructor for THIS function
+    // (#6974: the callee must bind to the entry's declaration, not just its name).
+    const cachedFnCtor = funcConstructorForCallee(ctx, calleeIdent);
+    const nameTakenByOtherFnctor = fnctorNameOwnedElsewhere(ctx, calleeIdent);
     if (cachedFnCtor) {
       const ctorFuncIdx = ctx.funcMap.get(cachedFnCtor.ctorFuncName);
       if (ctorFuncIdx !== undefined) {
@@ -7466,8 +7477,10 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
           : { kind: "ref", typeIdx: cachedFnCtor.structTypeIdx };
       }
     }
-    // Resolve via type checker to find the function declaration
-    if (!cachedFnCtor) {
+    // Resolve via type checker to find the function declaration. (#6974) Not
+    // when another declaration already owns this name's struct/ctor — that
+    // `new` constructs from the runtime value below.
+    if (!cachedFnCtor && !nameTakenByOtherFnctor && !ctx.funcConstructorMap.has(fnName)) {
       // (#3163) Resolve on the unwrapped identifier — a cast/paren node has no
       // symbol of its own.
       const exprSymbol = ctx.checker.getSymbolAtLocation(calleeIdent);

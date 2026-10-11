@@ -45,6 +45,7 @@
  *     slot and re-open the split from the other side.
  */
 import { ts } from "../ts-api.js";
+import type { CodegenContext } from "./context/types.js";
 
 /** Per-`ts.Symbol` memo; entries die with the program the symbols came from. */
 const cache = new WeakMap<ts.Symbol, ts.FunctionExpression | null>();
@@ -150,7 +151,17 @@ export function fnctorDeclFromSymbol(
   sym: ts.Symbol,
   checker?: ts.TypeChecker,
 ): ts.FunctionDeclaration | ts.FunctionExpression | undefined {
-  for (const decl of sym.getDeclarations() ?? []) {
+  return (
+    fnctorDeclFromDeclarations(sym.getDeclarations() ?? []) ??
+    (checker ? lateAssignedFunctionExpression(checker, sym) : undefined)
+  );
+}
+
+/** The syntactic arms of {@link fnctorDeclFromSymbol}, over a binding's declarations. */
+export function fnctorDeclFromDeclarations(
+  decls: readonly ts.Declaration[],
+): ts.FunctionDeclaration | ts.FunctionExpression | undefined {
+  for (const decl of decls) {
     if (ts.isFunctionDeclaration(decl) && decl.body) return decl;
     if (ts.isFunctionExpression(decl) && decl.body) return decl;
     if (ts.isVariableDeclaration(decl) && decl.initializer) {
@@ -159,5 +170,82 @@ export function fnctorDeclFromSymbol(
       if (ts.isFunctionExpression(init) && init.body) return init;
     }
   }
-  return checker ? lateAssignedFunctionExpression(checker, sym) : undefined;
+  return undefined;
+}
+
+type FuncConstructorEntry = CodegenContext["funcConstructorMap"] extends Map<string, infer V> ? V : never;
+
+/**
+ * (#6974) Which declaration OWNS a fnctor name's name-keyed registries
+ * (`funcConstructorMap`, the `__fnctor_<Name>` struct, `fnctorPrototypeObject`).
+ *
+ * Those registries are keyed by bare identifier text, but a bare name does not
+ * identify a function: minified bundles (Octane box2d) declare `function K` in
+ * one IIFE and `var K = NS.T` in another, and two IIFEs may each declare their
+ * own `function K`. A name-only lookup ran the first `K`'s synthesized ctor for
+ * every later `new K`. Rather than re-key the whole substrate, every lookup now
+ * checks that the callee binds to the owning declaration; any other binding of
+ * the name constructs from its runtime value. The owner is, in order: the
+ * escape gate's pre-codegen choice (it reserved the struct from that body), the
+ * declaration a cached ctor was built from, or the first declaration to claim
+ * the name.
+ */
+const ctorOwners = new WeakMap<FuncConstructorEntry, ts.Node>();
+const claimedNames = new WeakMap<CodegenContext, Map<string, ts.Node>>();
+
+export function recordFuncConstructorOwner(entry: FuncConstructorEntry, decl: ts.Node): void {
+  ctorOwners.set(entry, decl);
+}
+
+function fnctorNameOwner(ctx: CodegenContext, name: string): ts.Node | undefined {
+  const gateDecl = ctx.fnctorEscapeGate?.ctorDeclByName.get(name);
+  if (gateDecl !== undefined) return gateDecl;
+  const entry = ctx.funcConstructorMap.get(name);
+  return (entry && ctorOwners.get(entry)) ?? claimedNames.get(ctx)?.get(name);
+}
+
+/**
+ * Does `decl` own `name`? A name nobody owns yet is claimed by `decl`, so the
+ * answer stays stable for the rest of the compile.
+ */
+export function ownsFnctorName(ctx: CodegenContext, name: string, decl: ts.Node): boolean {
+  const owner = fnctorNameOwner(ctx, name);
+  if (owner !== undefined) return owner === decl;
+  let claims = claimedNames.get(ctx);
+  if (!claims) claimedNames.set(ctx, (claims = new Map()));
+  claims.set(name, decl);
+  return true;
+}
+
+/** The fnctor body a `new <ident>` callee binds to, resolved through import aliases. */
+function calleeFnctorDecl(ctx: CodegenContext, ident: ts.Identifier): ts.Node | undefined {
+  const direct = fnctorDeclFromDeclarations(ctx.oracle.declarationsOf(ident));
+  if (direct !== undefined) return direct;
+  const aliased = ctx.oracle.aliasedValueDeclarationOf(ident);
+  return aliased === undefined ? undefined : fnctorDeclFromDeclarations([aliased]);
+}
+
+/**
+ * (#6974) The cached synthesized constructor for `new <ident>`, but only when
+ * `ident` binds to the declaration that owns the name. `undefined` for an alias
+ * (`var K = NS.T`), a parameter, or a different same-named function — those
+ * construct from the runtime value instead.
+ */
+export function funcConstructorForCallee(ctx: CodegenContext, ident: ts.Identifier): FuncConstructorEntry | undefined {
+  const entry = ctx.funcConstructorMap.get(ident.text);
+  if (entry === undefined) return undefined;
+  const owner = fnctorNameOwner(ctx, ident.text);
+  return owner === undefined || owner === calleeFnctorDecl(ctx, ident) ? entry : undefined;
+}
+
+/**
+ * (#6974) `ident` binds to a fnctor body, but a DIFFERENT same-named
+ * declaration owns the name's registries — so the static struct path must not
+ * build or reuse them for this site.
+ */
+export function fnctorNameOwnedElsewhere(ctx: CodegenContext, ident: ts.Identifier): boolean {
+  const decl = calleeFnctorDecl(ctx, ident);
+  if (decl === undefined) return false;
+  const owner = fnctorNameOwner(ctx, ident.text);
+  return owner !== undefined && owner !== decl;
 }

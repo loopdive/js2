@@ -39,6 +39,7 @@ import type { Instr, ValType } from "../../ir/types.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { allocLocal } from "../context/locals.js";
 import { resolveFnctorSymbol } from "../fnctor-escape-gate.js";
+import { fnctorDeclFromDeclarations, ownsFnctorName } from "../fnctor-ctor-decl.js"; // (#6974)
 import { FUNCTION_FROM_PROTO, PROTO_FROM_FUNCTION } from "../proto-function-value.js"; // (#4643) callable → proto-view at the S2 store
 import { nextModuleGlobalIdx } from "../registry/imports.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
@@ -177,6 +178,11 @@ export function resolveUserFnctorName(ctx: CodegenContext, expr: ts.Expression):
   if (!gate?.approvedNames.has(sym.name) && !hasRuntimeDescriptorInstall && !neverConstructed) {
     return undefined;
   }
+  // (#6974) Two declarations can share a name (box2d's minifier reuses `K`, `w`,
+  // … in every IIFE); the name-keyed prototype global belongs to ONE of them.
+  // Any other answers through its runtime closure value.
+  const decl = fnctorDeclFromDeclarations(sym.getDeclarations() ?? []);
+  if (decl !== undefined && !ownsFnctorName(ctx, sym.name, decl)) return undefined;
   // Key by the stable symbol name so the WRITE site (`F.prototype = …`) and the
   // READ site (`Object.create(F.prototype)`) resolve to the SAME global.
   return sym.name;

@@ -1,7 +1,8 @@
 ---
 id: 6974
 title: "standalone: fnctor registries are keyed by identifier text, so `new K` where `var K = <other fnctor>` runs an unrelated same-named `function K` from another IIFE (Octane box2d `SetV` on undefined)"
-status: ready
+status: in-progress
+assignee: ttraenkler/senior-dev
 sprint: current
 created: 2026-10-11
 priority: high
@@ -13,6 +14,19 @@ area: compiler
 language_feature: constructor-functions, new, scoping
 goal: standalone-gap
 related: [6970, 6969, 6951, 6949, 4241]
+loc-budget-allow:
+  # 2026-10-11 (#6974) new-super.ts +13: the `new <identifier>` arm and the
+  #   native construct driver ask `funcConstructorForCallee` /
+  #   `fnctorNameOwnedElsewhere` (fnctor-ctor-decl.ts owns the logic) instead
+  #   of a bare-name `funcConstructorMap` lookup; the remaining lines are the
+  #   owner record at the builder and the call-site guards.
+  - src/codegen/expressions/new-super.ts
+func-budget-allow:
+  # 2026-10-11 (#6974) compileNewExpression +8: identity-checked cache lookup
+  #   and the guard that keeps a same-named second declaration off the struct
+  #   path; compileNewFunctionDeclaration +2: the cached ctor's owner record.
+  - src/codegen/expressions/new-super.ts::compileNewExpression
+  - src/codegen/expressions/new-super.ts::compileNewFunctionDeclaration
 ---
 
 # Fnctor registries keyed by name resolve `new <alias>` to the wrong constructor
