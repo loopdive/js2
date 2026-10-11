@@ -161,6 +161,9 @@ describe("#4199 keep predicate scope", () => {
     ["Reflect.writable = true;", true],
     ['JSON["value"] = 1;', true],
     ["(Math as any).value = 1;", true],
+    // (#6957) a modelled Math METHOD now has a reader — patched-member calls
+    // and value reads consult the carrier the write lands on
+    ["Math.abs = f;", true],
   ])("keeps %s", (code, want) => {
     expect(isBuiltinNamespaceExpandoWriteTarget(lhsOf(code), shadow)).toBe(want);
   });
@@ -168,7 +171,6 @@ describe("#4199 keep predicate scope", () => {
   it.each([
     // own static surface — must stay dropped (see the module header)
     ["Math.PI = 3;", false],
-    ["Math.abs = f;", false],
     ["JSON.stringify = f;", false],
     ['Math["PI"] = 3;', false],
     // non-namespace receivers stay owned by the #4176 / #2671 / #3468 arms
