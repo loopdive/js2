@@ -1,0 +1,17 @@
+diff --git a/scripts/compiler-boundaries.json b/scripts/compiler-boundaries.json
+index bbaeb9f80f..478a89412d 100644
+--- a/scripts/compiler-boundaries.json
++++ b/scripts/compiler-boundaries.json
+@@ -28,9 +28,10 @@
+         "src/shared/contracts/ir-unit-inventory.ts",
+         "src/shared/contracts/ir-preparation-errors.ts",
+         "src/shared/contracts/ir-counted-string-site-id.ts",
+-        "src/shared/contracts/string-surrogate.ts"
++        "src/shared/contracts/string-surrogate.ts",
++        "src/shared/contracts/linear-memory-layout.ts"
+       ],
+-      "minModules": 9
++      "minModules": 10
+     },
+     {
+       "id": "wasm-model",

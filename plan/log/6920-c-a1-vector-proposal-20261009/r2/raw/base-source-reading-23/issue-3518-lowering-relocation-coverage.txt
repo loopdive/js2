@@ -1,0 +1,37 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/issue-3518-lowering-relocation-coverage.test.ts > #3518 lowering relocation keeps the real pushRaw gate connected > requires all five fixed paths independently of the baseline 4ms
+ ✓ tests/issue-3518-lowering-relocation-coverage.test.ts > #3518 lowering relocation keeps the real pushRaw gate connected > accepts the actual old-to-new source diff with both original sites and tags 435ms
+ ✓ tests/issue-3518-lowering-relocation-coverage.test.ts > #3518 lowering relocation keeps the real pushRaw gate connected > rejects a new untagged escape in src/ir/lower.ts, including untracked files 258ms
+ ✓ tests/issue-3518-lowering-relocation-coverage.test.ts > #3518 lowering relocation keeps the real pushRaw gate connected > rejects a new untagged escape in src/ir/lower-generic.ts, including untracked files 265ms
+ ✓ tests/issue-3518-lowering-relocation-coverage.test.ts > #3518 lowering relocation keeps the real pushRaw gate connected > rejects a new untagged escape in src/ir/backend/lower-contracts.ts, including untracked files 235ms
+ ✓ tests/issue-3518-lowering-relocation-coverage.test.ts > #3518 lowering relocation keeps the real pushRaw gate connected > rejects a new untagged escape in src/ir/backend/wasm-constants.ts, including untracked files 220ms
+ ✓ tests/issue-3518-lowering-relocation-coverage.test.ts > #3518 lowering relocation keeps the real pushRaw gate connected > rejects a new untagged escape in src/ir/backend/wasm-lowering.ts, including untracked files 254ms
+ ✓ tests/issue-3518-lowering-relocation-coverage.test.ts > #3518 lowering relocation keeps the real pushRaw gate connected > rejects replacing a moved legacy site without changing the denominator 262ms
+ ✓ tests/issue-3518-lowering-relocation-coverage.test.ts > #3518 lowering relocation keeps the real pushRaw gate connected > does not grant duplicate legacy site credit to the facade 299ms
+ ✓ tests/issue-3518-lowering-relocation-coverage.test.ts > #3518 lowering relocation keeps the real pushRaw gate connected > still admits newly reviewed tagged sites 282ms
+ ✓ tests/issue-3518-lowering-relocation-coverage.test.ts > #3518 lowering relocation keeps the real pushRaw gate connected > compares the canonical path with itself after the relocation has landed 386ms
+ ✓ tests/issue-3518-lowering-relocation-coverage.test.ts > #3518 lowering relocation keeps the real pushRaw gate connected > fails closed for a missing src/ir/lower.ts (change-scoped) 221ms
+ ✓ tests/issue-3518-lowering-relocation-coverage.test.ts > #3518 lowering relocation keeps the real pushRaw gate connected > fails closed for a missing src/ir/lower-generic.ts (change-scoped) 190ms
+ ✓ tests/issue-3518-lowering-relocation-coverage.test.ts > #3518 lowering relocation keeps the real pushRaw gate connected > fails closed for a missing src/ir/backend/lower-contracts.ts (change-scoped) 181ms
+ ✓ tests/issue-3518-lowering-relocation-coverage.test.ts > #3518 lowering relocation keeps the real pushRaw gate connected > fails closed for a missing src/ir/backend/wasm-constants.ts (change-scoped) 211ms
+ ✓ tests/issue-3518-lowering-relocation-coverage.test.ts > #3518 lowering relocation keeps the real pushRaw gate connected > fails closed for a missing src/ir/backend/wasm-lowering.ts (change-scoped) 200ms
+ ✓ tests/issue-3518-lowering-relocation-coverage.test.ts > #3518 lowering relocation keeps the real pushRaw gate connected > fails closed for a missing src/ir/lower.ts (--all) 163ms
+ ✓ tests/issue-3518-lowering-relocation-coverage.test.ts > #3518 lowering relocation keeps the real pushRaw gate connected > fails closed for a missing src/ir/lower-generic.ts (--all) 214ms
+ ✓ tests/issue-3518-lowering-relocation-coverage.test.ts > #3518 lowering relocation keeps the real pushRaw gate connected > fails closed for a missing src/ir/backend/lower-contracts.ts (--all) 185ms
+ ✓ tests/issue-3518-lowering-relocation-coverage.test.ts > #3518 lowering relocation keeps the real pushRaw gate connected > fails closed for a missing src/ir/backend/wasm-constants.ts (--all) 196ms
+ ✓ tests/issue-3518-lowering-relocation-coverage.test.ts > #3518 lowering relocation keeps the real pushRaw gate connected > fails closed for a missing src/ir/backend/wasm-lowering.ts (--all) 207ms
+ ✓ tests/issue-3518-lowering-relocation-coverage.test.ts > #3518 lowering relocation keeps the real pushRaw gate connected > fails closed for a missing src/ir/lower.ts (--json) 209ms
+ ✓ tests/issue-3518-lowering-relocation-coverage.test.ts > #3518 lowering relocation keeps the real pushRaw gate connected > fails closed for a missing src/ir/lower-generic.ts (--json) 180ms
+ ✓ tests/issue-3518-lowering-relocation-coverage.test.ts > #3518 lowering relocation keeps the real pushRaw gate connected > fails closed for a missing src/ir/backend/lower-contracts.ts (--json) 171ms
+ ✓ tests/issue-3518-lowering-relocation-coverage.test.ts > #3518 lowering relocation keeps the real pushRaw gate connected > fails closed for a missing src/ir/backend/wasm-constants.ts (--json) 165ms
+ ✓ tests/issue-3518-lowering-relocation-coverage.test.ts > #3518 lowering relocation keeps the real pushRaw gate connected > fails closed for a missing src/ir/backend/wasm-lowering.ts (--json) 154ms
+ ✓ tests/issue-3518-lowering-relocation-coverage.test.ts > #3518 lowering relocation keeps the real pushRaw gate connected > rejects a baseline that drops a tracked lowering path 159ms
+ ↓ tests/issue-3518-lowering-relocation-coverage.test.ts > #3518 initial relocation budget provenance > moves exact bodies with no duplicate allowance or growth credit
+
+ Test Files  1 passed (1)
+      Tests  27 passed | 1 skipped (28)
+   Start at  20:18:14
+   Duration  7.05s (transform 81ms, setup 0ms, collect 730ms, tests 5.91s, environment 0ms, prepare 70ms)
+

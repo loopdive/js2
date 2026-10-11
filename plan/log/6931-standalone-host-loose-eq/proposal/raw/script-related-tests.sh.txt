@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Builds the related-test list for #6931 into .tmp/6931-out/raw/related-tests.txt
+cd "$(dirname "$0")/.."
+{
+  grep -rlE "__any_eq|loose|any-eq|#2081" tests --include=*.test.ts
+  grep -rlE "#2175" tests --include=*.test.ts
+  ls tests/issue-6921*.test.ts
+  grep -rl "standalone" tests --include=*.test.ts | grep -iE "eq|equal|boundary|loose|any|extern|foreign|host"
+} | sort -u > .tmp/6931-out/raw/related-tests.txt
+wc -l < .tmp/6931-out/raw/related-tests.txt

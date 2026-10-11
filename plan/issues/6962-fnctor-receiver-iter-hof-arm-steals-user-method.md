@@ -1,13 +1,21 @@
 ---
 id: 6962
 title: "standalone: dynamic `.find()/.map()` on an untyped fnctor-instance receiver is routed to the Iterator-helper arm instead of the user's prototype method (Octane splay wrong size)"
-status: ready
+status: done
+completed: 2026-10-10
 sprint: current
 goal: standalone-gap
 area: compiler
 priority: high
 horizon: s
 feasibility: easy
+# 2026-10-10 (#6962): the fix appends `ref.test $__fnctor_*` terms to the two
+# #2903 iterator arms' exclusion test inside fillClosedMethodDispatch; the
+# helper must sit beside its only caller (scope of this slice is that file).
+loc-budget-allow:
+  - src/codegen/closed-method-dispatch.ts
+func-budget-allow:
+  - src/codegen/closed-method-dispatch.ts::fillClosedMethodDispatch
 ---
 
 # Problem
@@ -159,3 +167,26 @@ In the same probe, calling `Probe` through an array of functions
 (`var steps = [Setup, Probe]; steps[1]()`) made `main()` return `undefined` in
 standalone (node: the string). Worth a separate 2-line issue if it reproduces
 in isolation.
+
+## Implementation Notes (2026-10-10)
+
+- Change 1 landed as planned: `fnctorNotIterTest(ctx, anyLocalIdx)` in
+  `closed-method-dispatch.ts` ORs `ref.test` for every `structMap` entry named
+  `__fnctor_*` (instance carriers and `__fnctor_proto_*` objects — both are plain
+  objects) into `notIterTest` of the eager (#2903) and lazy (#2903 R3) arms.
+  Enumerating `structMap` rather than `fnctorPrototypeObject` also covers
+  fnctors whose prototype object was never materialized. Structural collisions
+  with iterator carriers are already excluded by #2853 shape branding.
+- Change 2 (loud misroute) not done: out of the file scope of this slice.
+- Precedence: the #3098 vec/fnctor-Array-prototype HOF arm wraps outside and
+  is unchanged. Known limit: a fnctor whose prototype really is an Iterator
+  (`F.prototype = Object.create(Iterator.prototype)`) now reaches
+  `__extern_method_call` instead of the native helper.
+- Tests: `tests/issue-6962-fnctor-receiver-iter-hof-arm.test.ts` (standalone).
+- Pre-existing, not touched here: a typed local generator `var g = gen();
+  g.find(cb)` answers null on standalone (base and head); `new AP()` with
+  `AP.prototype = [10,20,30]` and `ap.find(cb)` answers undefined (base and head).
+- Side observation (`var steps = [Setup, Probe]; steps[1]()` → undefined)
+  reproduces in isolation without any fnctor or iterator-helper name, on both
+  standalone and gc (`function P(){return "s"} var steps=[P]; steps[0]()`),
+  so it is unrelated to this issue and needs its own issue.
