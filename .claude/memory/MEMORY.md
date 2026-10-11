@@ -2,6 +2,7 @@
 
 ## CRITICAL RULES (check every time)
 
+- **ONLY STANDALONE IS RELEVANT — the JS host (gc) lane is being sunset** (project lead, 2026-10-10). Rank, measure and plan work by `--target standalone` impact only; host-only fixes are low value; keep gc CI green but add no new host-lane cases — [standalone-only](project_standalone_only_js_host_sunset.md)
 - **A DETECTOR MUST BE ABLE TO SAY "I DON'T KNOW"** — ask any gate/verifier: *what does it do when it CANNOT SEE?* If that equals "sees nothing wrong", it is unsound.
 - **READ THE RECORD, NOT THE REPORT** — trust state, never a tool's output. Verify by effect — [budget-grant-family](reference_budget_grant_from_another_issue_fails_in_ci.md)
 - **SILENT-EMPTY IS THE DEFAULT HYPOTHESIS** — empty/zero/green from an unproven tool ≠ a result. Positive control · floor the count · print provenance — [silent-empty](reference_silent_empty_is_indistinguishable_from_real.md)
