@@ -5,6 +5,11 @@
  *
  * Extracted from codegen/index.ts (#1013).
  */
+import { isTopLevelClassPrototypeWrite } from "./class-proto-toplevel-write.js";
+import { widenJsDefaultGuessSlot } from "./js-default-param-type-guess.js";
+import { collectScopeLocalDeclNames } from "./scope-local-decl-names.js";
+import { registerResolvedRestParam, restPatternParamVecType } from "./resolved-rest-param.js"; // (#1058)
+import { widenUndefinedDefaultParamSlot } from "./destructuring-params.js";
 import { expressionHasWidenedPropertyType } from "./strict-eq-stale-type.js";
 import { functionReturnsWidenedProperty } from "./declarations/widened-property-return.js";
 import { ts, forEachChild } from "../ts-api.js";
@@ -46,6 +51,7 @@ import { emitScriptGlobalVarBindings } from "./global-var-bindings.js"; // (#449
 import { isHoistedTopLevelVarName } from "./top-level-hoisted-var-names.js"; // (#4491 T3) pre-declaration writes
 import { isAssignmentOverTopLevelFunctionName } from "./top-level-assigned-function-names.js"; // (#4491 T12)
 import { moduleVarDirectPreInitValueIsObserved } from "./declarations/hoisted-var-preinit-read.js";
+import { isExpressionRootedAssignmentTarget } from "./declarations/expression-rooted-assignment-target.js"; // (#6651) `f(o).p = v`
 import {
   ASYNC_CPS_ENABLED,
   asyncFnNeedsCps,
@@ -66,6 +72,9 @@ import {
 import { collectClassDeclaration, compileClassBodies, type ClassBodyCompileRouting } from "./class-bodies.js";
 import { shouldCollectTopLevelClassForRuntimeHeritage } from "./class-expression-identity.js";
 import { classHasUnresolvedComputedMemberName, classHierarchyHasDynamicMember } from "./class-dynamic-keys.js"; // (#5195 Step 1 / R2-3)
+import { classHasComputedKeyAssignment } from "./class-member-keys.js"; // (#6772 S5)
+import { standaloneCommaHeritage } from "./classes/class-heritage-comma.js"; // (#6772 S6)
+import { heritagePrototypeGetTarget } from "./classes/class-heritage-runtime-get.js"; // (#6772 S11)
 import { routeTopLevelClassBodies } from "./prepared-class-body-cutover.js";
 import {
   collectBindingPatternNames,
@@ -80,9 +89,15 @@ import { filterResultNeedsDynamicCarrier } from "./array-filter-spec-access.js";
 import { addFunctionOwnLocals } from "../ir/analysis/binding-info.js"; // (#2103) memoized own-locals oracle
 import { dedupeDiagnosticsFrom, reportError } from "./context/errors.js";
 import type { CodegenContext, FunctionContext, OptionalParamInfo } from "./context/types.js";
+import { jsValueBoundary } from "./context/types.js";
 import { compileFunctionBody, dumpFrameBreach, registerInlinableFunction } from "./audited-function-body.js";
 import { _hasRuntimeComputedKey, objectLiteralForcesHostPath } from "./literals.js"; // (#3024/#4638) module-global externref routing in lockstep with the literal's own host-path gate
+import {
+  objectLiteralTakesHostCarrier,
+  unwrapReturnCarrierExpression,
+} from "./declarations/host-carrier-object-literal.js"; // (#6650) return boundary: BOTH host-path reasons
 import { needsImplicitArgumentsObject } from "./helpers/body-uses-arguments.js";
+import { readsAmbientThisGlobal } from "./helpers/body-references-own-this.js";
 import { mappedFormalNeedsExternref } from "./mapped-arguments-formal-widening.js";
 import { markIdentityPreservingStructuralParam } from "./identity-preserving-structural-param.js";
 import { genericCallbackResultDeclaration } from "./generic-callback-result.js";
@@ -127,7 +142,7 @@ import {
 } from "./native-dynamic-boundary-tag.js";
 import { prepareStandaloneNativePromiseNumberBoundary } from "./native-promise-number-boundary.js";
 import { prepareAsyncCallableAbi } from "./async-ir-planning.js";
-import { bakeActivatedAsyncPromiseResult, widenAsyncThenableResults } from "./async-thenable-return.js";
+import { widenAsyncDeclarationResults } from "./async-activation.js"; // (#5371 + #6780)
 import {
   ensureNativeStringBoundaryBridge,
   ensureNativeStringExternBridge,
@@ -155,7 +170,11 @@ import {
 } from "./registry/types.js";
 import { isArrayProtoIteratorAssignTarget } from "./expressions/proto-override.js";
 import { isFnctorPrototypeAssignTarget } from "./expressions/fnctor-prototype.js";
-import { shouldKeepBuiltinReceiverWrite } from "./builtin-write-keeps.js"; // (#4176/#4199) builtin-receiver write keeps
+import { isGeneratorDeclarationPrototypeWrite } from "./generators-factory-prototype.js"; // (#6651 A8)
+import {
+  isStandaloneIntrinsicPromiseResolveWriteTarget,
+  shouldKeepBuiltinReceiverWrite,
+} from "./builtin-write-keeps.js"; // (#4176/#4199/#5197) builtin-receiver write keeps
 import { compileExpression, compileStatement, skipTransparentExpressions } from "./shared.js";
 import { functionReturnsPreInitVarValue } from "./function-declaration-observation.js";
 import { inferNativeTaViewConstructType } from "./dataview-native.js";
@@ -165,6 +184,7 @@ import { pushProgramAbiModuleInitCallable } from "./program-abi-module-init-plan
 import {
   pushProgramAbiNestedFunctionDeclaration,
   pushProgramAbiTopLevelCallable,
+  sourceFunctionPositionForDeclaration,
 } from "./program-abi-source-callable-planning.js";
 import {
   isolateRuntimeModuleCallableRegistration,
@@ -190,11 +210,14 @@ import {
 } from "./module-init-chunks.js";
 import { emitModuleVarUndefinedSeeds } from "./declarations/module-var-undefined-seed.js";
 import { inferStandaloneRegExpMatchGlobalType } from "./regexp-standalone.js";
+import { mintUntypedRegExpReceiverMembers } from "./regexp-untyped-receiver.js";
 import {
   prepareModuleTdzGlobals,
+  prepareSelfImportingModuleTdzGlobals,
   registerModuleGlobal,
   registerModulePatternTdzGlobal,
   registerModuleTdzGlobal,
+  scriptVarRedeclaresAmbientGlobal, // (#6651 V10b)
 } from "./module-global-registration.js";
 import { annexBModuleGlobalSeedsFromTopLevel } from "./annexb-global-live-binding.js";
 import { variableSlotHoldsReconstructedFnctorInstance } from "./fnctor-instance-object-slot.js";
@@ -233,6 +256,8 @@ import {
   resolveStructFieldTypes,
 } from "./declarations/struct-type-registration.js";
 import { profileCount, profilePhase } from "../compile-profile.js";
+import { recordBigIntKernel } from "./bigint-carrier-operands.js";
+import { readEnv } from "../env.js";
 /**
  * Record source-level boundary classifications for a user-exported function
  * so the JS-host `wrapExports` can marshal native strings and TypedArray
@@ -358,6 +383,29 @@ function ensureNativeDynamicBoundaryBridge(ctx: CodegenContext): void {
   }
 
   ensureNativeDynamicBoundaryTag(ctx);
+}
+
+/**
+ * (#6879) `export { parse }` exports a function declared elsewhere in the
+ * file; only `export function` recorded its boundary signature, so on the
+ * native regime the adapter passed such an export's JS arguments through raw
+ * (an un-admitted options object, an un-marshalled string) and acorn's
+ * `parse(input, { ecmaVersion })` lost its options. Gated on the regime's JS
+ * value boundary so the host lane and the host-free targets keep their bytes.
+ */
+function recordExportListSignature(
+  ctx: CodegenContext,
+  sourceFile: ts.SourceFile,
+  localName: string,
+  exportedName: string,
+): void {
+  if (ctx.targetProfile.semanticProviders !== "native-first" || !jsValueBoundary(ctx)) return;
+  if (ctx.exportSignatures.has(exportedName)) return;
+  const decl = sourceFile.statements.find(
+    (s): s is ts.FunctionDeclaration => ts.isFunctionDeclaration(s) && s.name?.text === localName && !!s.body,
+  );
+  if (!decl) return;
+  recordExportSignature(ctx, exportedName, decl, hasAsyncModifier(decl));
 }
 
 function recordExportSignature(
@@ -1065,20 +1113,6 @@ export function functionReturnsDynamicObjectCarrier(stmt: ts.FunctionDeclaration
   return false;
 }
 
-function unwrapReturnCarrierExpression(expression: ts.Expression): ts.Expression {
-  let current = expression;
-  while (
-    ts.isParenthesizedExpression(current) ||
-    ts.isAsExpression(current) ||
-    ts.isTypeAssertionExpression(current) ||
-    ts.isNonNullExpression(current) ||
-    ts.isSatisfiesExpression(current)
-  ) {
-    current = current.expression;
-  }
-  return current;
-}
-
 /**
  * Detect an ordinary function whose returned value is created by an object
  * literal that the literal compiler must represent as a host plain object.
@@ -1111,7 +1145,7 @@ function functionReturnsHostObjectLiteralCarrier(ctx: CodegenContext, stmt: ts.F
     }
     if (ts.isVariableDeclaration(node) && node.initializer) {
       const initializer = unwrapReturnCarrierExpression(node.initializer);
-      if (ts.isObjectLiteralExpression(initializer) && objectLiteralForcesHostPath(ctx, initializer)) {
+      if (ts.isObjectLiteralExpression(initializer) && objectLiteralTakesHostCarrier(ctx, initializer)) {
         hostDeclarations.add(node);
       }
     } else if (ts.isReturnStatement(node) && node.expression) {
@@ -1123,7 +1157,7 @@ function functionReturnsHostObjectLiteralCarrier(ctx: CodegenContext, stmt: ts.F
 
   const isHostCarrier = (expression: ts.Expression): boolean => {
     const current = unwrapReturnCarrierExpression(expression);
-    if (ts.isObjectLiteralExpression(current)) return objectLiteralForcesHostPath(ctx, current);
+    if (ts.isObjectLiteralExpression(current)) return objectLiteralTakesHostCarrier(ctx, current);
     if (ts.isIdentifier(current)) {
       const declaration = ctx.oracle.valueDeclarationOf(current);
       return declaration !== undefined && ts.isVariableDeclaration(declaration) && hostDeclarations.has(declaration);
@@ -1451,7 +1485,10 @@ function lowerParamType(
   if (isUndefinedDefaultOnlyParam(param, paramType)) {
     wasmType = { kind: "externref" };
   }
+  // (#6651 C3) …and the same for a JS defaulted parameter whose type is read
+  // off its own initializer. See `paramTypeIsJsDefaultGuess`.
   if (nativeParam === null) {
+    wasmType = widenUndefinedDefaultParamSlot(param, wasmType);
     wasmType = preserveIdentityForStructuralParam(ctx, param, index, stmt, wasmType, paramType);
   }
   if (jsArrayParamNeedsOpenObjectCarrier(ctx, param, stmt, wasmType)) {
@@ -1598,8 +1635,15 @@ function inferredNumericResultType(
   isAsync: boolean,
   isImplicitAnyReturn: boolean,
   params: readonly ValType[],
+  stmt?: ts.FunctionDeclaration,
 ): ValType | undefined {
-  if (isAsync || !isImplicitAnyReturn) return undefined;
+  if (isAsync) return undefined;
+  // (#6656 slice 3) A BigInt kernel in untyped JS gets a branded i64 result, so
+  // the exact i64 is not converted back at the return. Deliberately ABOVE the
+  // implicit-any guard: TypeScript types `a * b` over two `any` parameters as
+  // `number`, so such a kernel is not an implicit-any return at all.
+  if (stmt !== undefined && recordBigIntKernel(ctx, name, params, stmt)) return { kind: "i64", bigint: true };
+  if (!isImplicitAnyReturn) return undefined;
   const bindingAware = numericReturnsFlagEnabled() ? ctx.bindingAwareNumericReturnTypes?.get(name) : undefined;
   if (bindingAware) return bindingAware;
   const legacy = ctx.numericReturnTypes?.get(name);
@@ -1744,6 +1788,10 @@ function resolveGenericDeclarationCallSiteTypes(
             (identityCarrier.kind === "externref" || identityCarrier.kind === "ref_extern")
           ? [identityCarrier]
           : resolved.results;
+  // (#6656 slice 3) The call-site signature gets the PARAMETERS' bigint-branded
+  // i64 slots right, but the checker types the RESULT `number`, so an
+  // `f64.convert_i64_s` rounded the exact i64 away at the return.
+  if (recordBigIntKernel(ctx, name, params, stmt)) return { params, results: [{ kind: "i64", bigint: true }] };
   return {
     params,
     results,
@@ -1799,13 +1847,18 @@ function registerBodylessFunctionDeclaration(
     params = [];
     for (let i = 0; i < stmt.parameters.length; i++) {
       const param = stmt.parameters[i]!;
-      params.push(lowerParamType(ctx, param, name, i, stmt, sourceFile));
+      params.push(
+        restPatternParamVecType(ctx, param, (t) => getOrRegisterVecType(ctx, "externref", t)) ??
+          lowerParamType(ctx, param, name, i, stmt, sourceFile),
+      );
     }
+    if (noJsHost(ctx)) registerResolvedRestParam(ctx, name, stmt, params); // (#6651 A10) rest packs like a plain function
     const nativeGenerator = registerNativeGenerator(ctx, stmt, name, params);
     results = nativeGenerator ? [{ kind: "ref", typeIdx: nativeGenerator.stateTypeIdx }] : [{ kind: "externref" }];
   } else if (resolved) {
     params = resolved.params;
     results = resolved.results;
+    registerResolvedRestParam(ctx, name, stmt, params); // (#1058)
   } else {
     params = [];
     for (let i = 0; i < stmt.parameters.length; i++) {
@@ -1835,7 +1888,7 @@ function registerBodylessFunctionDeclaration(
     const dynamicReturn = functionReturnsThroughWithScope(ctx, stmt) || functionReturnsWidenedProperty(ctx, stmt);
     const inferredNumericRet = dynamicReturn
       ? null
-      : inferredNumericResultType(ctx, name, isAsync, isImplicitAnyReturn, params);
+      : inferredNumericResultType(ctx, name, isAsync, isImplicitAnyReturn, params, stmt);
     if (inferredNumericRet) {
       results = [inferredNumericRet];
     } else if (dynamicReturn) {
@@ -1857,7 +1910,7 @@ function registerBodylessFunctionDeclaration(
   }
 
   [params, results] = prepareAsyncCallableAbi(ctx, stmt, expandLinearU8ParamTypes(ctx, stmt, params), results);
-  results = bakeActivatedAsyncPromiseResult(ctx, stmt, widenAsyncThenableResults(ctx, stmt, results));
+  results = widenAsyncDeclarationResults(ctx, stmt, results);
 
   const optionalParams: OptionalParamInfo[] = [];
   for (let i = 0; i < stmt.parameters.length; i++) {
@@ -1878,6 +1931,8 @@ function registerBodylessFunctionDeclaration(
   if (needsImplicitArgumentsObject(stmt)) {
     ctx.funcUsesArguments.add(name);
   }
+  // (#6436) A plain call to this name must install `undefined` as the receiver.
+  if (readsAmbientThisGlobal(stmt)) ctx.funcReadsOwnThis.add(name);
 
   const typeIdx = addFuncType(ctx, params, results, `${name}_type`);
   const funcIdx = mintDefinedFunc(ctx);
@@ -2460,7 +2515,11 @@ function collectPreparedTopLevelClassComputedNameEffects(ctx: CodegenContext, st
   // it: that predicate is `!ctx.standalone && …`, so it never fires here.)
   if (
     ts.isClassDeclaration(statement) &&
-    (classHasUnresolvedComputedMemberName(ctx, statement) || topLevelClassInheritsRuntimeKeys(ctx, statement))
+    (classHasUnresolvedComputedMemberName(ctx, statement) ||
+      classHasComputedKeyAssignment(statement) || // (#6772 S5) a folded key's write runs at definition
+      standaloneCommaHeritage(ctx, statement) !== undefined || // (#6772 S6) so does a comma heritage's prefix
+      heritagePrototypeGetTarget(ctx, statement) !== undefined || // (#6772 S11) and Get(superclass, "prototype")
+      topLevelClassInheritsRuntimeKeys(ctx, statement))
   ) {
     ctx.moduleInitStatements.push(statement);
     return true;
@@ -2501,7 +2560,8 @@ function shouldCollectTopLevelAssignment(ctx: CodegenContext, target: ts.Express
     isAssignmentOverTopLevelFunctionName(target) ||
     (operator === ts.SyntaxKind.EqualsToken && isExactTopLevelClassAccessorWrite(ctx, target)) ||
     (operator === ts.SyntaxKind.EqualsToken && isTopLevelClassAccessorPropertyWrite(ctx, target)) ||
-    createsGlobalObjectBinding(target, ctx.sloppyImplicitGlobals)
+    createsGlobalObjectBinding(target, ctx.sloppyImplicitGlobals) ||
+    isExpressionRootedAssignmentTarget(target)
   );
 }
 
@@ -2561,7 +2621,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
   moduleInitSourceOrdinal(ctx, sourceFile);
   // (#4754) Snapshot once for this declaration collector. The exact token `0`
   // restores #4931's unconditional module-Proxy widening for same-tree A/B.
-  const proxyModuleEscapeGateEnabled = process.env.JS2WASM_PROXY_MODULE_ESCAPE_GATE !== "0";
+  const proxyModuleEscapeGateEnabled = readEnv("JS2WASM_PROXY_MODULE_ESCAPE_GATE") !== "0";
   const runtimeModuleGroups = runtimeModuleDeclarationGroups(sourceFile);
 
   // First: collect enum declarations (so enum values are available)
@@ -2642,7 +2702,12 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
         // Also map the LHS identifier to the synthetic name so `new C()` resolves
         if (nameHint) {
           const syntheticName = ctx.anonClassExprNames.get(rhs);
-          if (syntheticName) {
+          // (#6772 S7) a second, DIFFERENT class bound to the name makes it dynamic
+          const prior = ctx.classExprNameMap.get(nameHint);
+          if (syntheticName && prior !== undefined && prior !== syntheticName) {
+            ctx.classExprNameMap.delete(nameHint);
+            ctx.classExprAmbiguousNames.add(nameHint);
+          } else if (syntheticName && !ctx.classExprAmbiguousNames.has(nameHint)) {
             ctx.classExprNameMap.set(nameHint, syntheticName);
           }
         }
@@ -2787,7 +2852,11 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
         for (const decl of stmt.declarationList.declarations) {
           if (ts.isIdentifier(decl.name) && decl.initializer && ts.isClassExpression(decl.initializer)) {
             const syntheticName = ctx.anonClassExprNames.get(decl.initializer);
-            if (syntheticName && !ctx.classExprNameMap.has(decl.name.text)) {
+            if (
+              syntheticName &&
+              !ctx.classExprNameMap.has(decl.name.text) &&
+              !ctx.classExprAmbiguousNames.has(decl.name.text)
+            ) {
               ctx.classExprNameMap.set(decl.name.text, syntheticName);
             }
           }
@@ -2918,14 +2987,19 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
         params = [];
         for (let i = 0; i < stmt.parameters.length; i++) {
           const param = stmt.parameters[i]!;
-          params.push(lowerParamType(ctx, param, name, i, stmt, sourceFile));
+          params.push(
+            restPatternParamVecType(ctx, param, (t) => getOrRegisterVecType(ctx, "externref", t)) ??
+              lowerParamType(ctx, param, name, i, stmt, sourceFile),
+          );
         }
+        if (noJsHost(ctx)) registerResolvedRestParam(ctx, name, stmt, params); // (#6651 A10) rest packs like a plain function
         const nativeGenerator = registerNativeGenerator(ctx, stmt, name, params);
         results = nativeGenerator ? [{ kind: "ref", typeIdx: nativeGenerator.stateTypeIdx }] : [{ kind: "externref" }]; // JS-host fallback returns a Generator object
       } else if (resolved) {
         // Use call-site resolved types for generic functions
         params = resolved.params;
         results = resolved.results;
+        registerResolvedRestParam(ctx, name, stmt, params); // (#1058)
       } else {
         params = [];
         for (let i = 0; i < stmt.parameters.length; i++) {
@@ -2964,7 +3038,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
         const preInitVarReturn = functionReturnsPreInitVarValue(ctx, stmt);
         const inferredNumericRet = dynamicReturn
           ? null
-          : inferredNumericResultType(ctx, name, isAsync, isImplicitAnyReturn, params);
+          : inferredNumericResultType(ctx, name, isAsync, isImplicitAnyReturn, params, stmt);
         if (nativeTaViewReturn !== null) {
           results = [nativeTaViewReturn];
         } else if (inferredNumericRet) {
@@ -2996,7 +3070,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
       }
 
       [params, results] = prepareAsyncCallableAbi(ctx, stmt, expandLinearU8ParamTypes(ctx, stmt, params), results);
-      results = bakeActivatedAsyncPromiseResult(ctx, stmt, widenAsyncThenableResults(ctx, stmt, results));
+      results = widenAsyncDeclarationResults(ctx, stmt, results);
 
       const optionalParams: OptionalParamInfo[] = [];
       for (let i = 0; i < stmt.parameters.length; i++) {
@@ -3025,6 +3099,8 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
       if (needsImplicitArgumentsObject(stmt)) {
         ctx.funcUsesArguments.add(name);
       }
+      // (#6436) A plain call to this name must install `undefined` as the receiver.
+      if (readsAmbientThisGlobal(stmt)) ctx.funcReadsOwnThis.add(name);
 
       const typeIdx = addFuncType(ctx, params, results, `${name}_type`);
       const funcIdx = mintDefinedFunc(ctx);
@@ -3109,6 +3185,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
           name: "default",
           desc: { kind: "func", index: funcIdx },
         });
+        for (const name of [targetName, "default"]) recordExportListSignature(ctx, sourceFile, targetName, name);
       }
     }
   }
@@ -3135,6 +3212,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
         if (func && !func.exported) func.exported = true;
         if (!ctx.mod.exports.some((e) => e.name === exportedName)) {
           ctx.mod.exports.push({ name: exportedName, desc: { kind: "func", index: funcIdx } });
+          recordExportListSignature(ctx, sourceFile, localName, exportedName);
         }
       }
     }
@@ -3202,7 +3280,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
             const params: ValType[] = [];
             for (const param of fnExpr.parameters) {
               const paramType = ctx.checker.getTypeAtLocation(param);
-              params.push(resolveWasmType(ctx, paramType));
+              params.push(widenJsDefaultGuessSlot(param, resolveWasmType(ctx, paramType)));
             }
             const retType = ctx.checker.getReturnTypeOfSignature(sig);
             // (#2905) Carrier own-return guard — see findCallSignature. An async
@@ -3273,7 +3351,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
           const params: ValType[] = [];
           for (const param of fnExpr.parameters) {
             const paramType = ctx.checker.getTypeAtLocation(param);
-            params.push(resolveWasmType(ctx, paramType));
+            params.push(widenJsDefaultGuessSlot(param, resolveWasmType(ctx, paramType)));
           }
           const retType = ctx.checker.getReturnTypeOfSignature(sig);
           // (#2905) Carrier own-return guard — see findCallSignature. CJS named
@@ -3352,7 +3430,16 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
     if (decl.initializer && ts.isIdentifier(decl.initializer)) {
       return resolveIdentifierType(ctx, decl.initializer);
     }
-    return ctx.checker.getTypeAtLocation(decl);
+    // (#6651 V10b) A SCRIPT `var` that redeclares an ambient lib global
+    // (`var length = {valueOf…}` vs lib.dom's `declare var length: number`)
+    // merges into one checker symbol whose declared type is the LIB's. Typing
+    // the global from it made the binding an f64 global, so the initializer
+    // ran ToNumber (an observable `valueOf` call) at the declaration. The
+    // runtime binding holds whatever the script stores; type it from the
+    // initializer instead.
+    const typedNode =
+      decl.initializer !== undefined && scriptVarRedeclaresAmbientGlobal(ctx, decl) ? decl.initializer : decl;
+    return ctx.checker.getTypeAtLocation(typedNode);
   }
 
   /**
@@ -4099,7 +4186,9 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
       const hasRuntimeKeyedClassExpression = stmt.declarationList.declarations.some((declaration) => {
         const init = declaration.initializer;
         if (init === undefined || !ts.isClassExpression(init)) return false;
-        if (classHasUnresolvedComputedMemberName(ctx, init)) return true;
+        if (classHasUnresolvedComputedMemberName(ctx, init) || classHasComputedKeyAssignment(init)) return true; // (#6772 S5)
+        if (standaloneCommaHeritage(ctx, init) !== undefined) return true; // (#6772 S6)
+        if (heritagePrototypeGetTarget(ctx, init) !== undefined) return true; // (#6772 S11)
         const className = ctx.anonClassExprNames.get(init);
         return className !== undefined && classHierarchyHasDynamicMember(ctx, className);
       });
@@ -4335,7 +4424,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
         // interception and the host lane's `_getOrVivifyFnPrototype` path use
         // the same source-level assignment; dropping it only in the host lane
         // leaves `new F().method()` with an empty prototype.
-        if (isFnctorPrototypeAssignTarget(ctx, expr.left)) {
+        if (isFnctorPrototypeAssignTarget(ctx, expr.left) || isGeneratorDeclarationPrototypeWrite(ctx, expr.left)) {
           ctx.moduleInitStatements.push(stmt);
           continue;
         }
@@ -4347,6 +4436,17 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
         // keeping the statement is the whole fix. Scope + the cases that must
         // STAY dropped: builtin-write-keeps.ts.
         if (shouldKeepBuiltinReceiverWrite(ctx, expr.left)) {
+          ctx.moduleInitStatements.push(stmt);
+          continue;
+        }
+        // (#5197 R3-2) An intrinsic `Promise.resolve = fn` replacement is a
+        // source-ordered observable setup step for Promise combinators. The
+        // broad builtin-write keep deliberately declines supported static
+        // methods, but this direct standalone form needs the ordinary
+        // property-write lowering so the later `Get(C, "resolve")` sees the
+        // replacement. The local declaration proof rejects user shadows while
+        // ignoring TypeScript's synthetic property-write Identifier entry.
+        if (opKind === ts.SyntaxKind.EqualsToken && isStandaloneIntrinsicPromiseResolveWriteTarget(ctx, expr.left)) {
           ctx.moduleInitStatements.push(stmt);
           continue;
         }
@@ -4369,6 +4469,15 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
             ctx.moduleInitStatements.push(stmt);
             continue;
           }
+        }
+        // (#6651 cluster C, C2) A top-level `C.prototype.<name> = value` on a
+        // compiled CLASS. The static arm above keeps `C.<name> = …`; the
+        // prototype chain has a PropertyAccess receiver and fell past every
+        // keep, so the statement compiled to NOTHING. Measurement and scope:
+        // class-proto-toplevel-write.ts.
+        if (isTopLevelClassPrototypeWrite(ctx, expr.left)) {
+          ctx.moduleInitStatements.push(stmt);
+          continue;
         }
         // (#3468 F1) STANDALONE counterpart of the #2671 keep below (which is
         // gated `!ctx.standalone`): a top-level `F.<name> = …` static property
@@ -5378,31 +5487,6 @@ export function compileDeclarations(
     }
   }
 
-  // (#2818) Collect the names of *block-scoped* (`let`/`const`) variables
-  // declared directly in a statement list (not descending into nested blocks
-  // or function bodies). Only `let`/`const` — a `var` is function-scoped and,
-  // when referenced by a class method, is already hoisted to a module global
-  // (see `wrapTest` and the module-global skip in
-  // `promoteAccessorCapturesToGlobals`), so it needs no deferral; including
-  // `var` needlessly perturbed the order-sensitive async-generator lowering.
-  function collectBlockScopedDeclNames(
-    stmts: ts.NodeArray<ts.Statement> | readonly ts.Statement[],
-    out: Set<string>,
-  ): void {
-    for (const stmt of stmts) {
-      if (!ts.isVariableStatement(stmt)) continue;
-      const isBlockScoped = (stmt.declarationList.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) !== 0;
-      if (!isBlockScoped) continue;
-      for (const decl of stmt.declarationList.declarations) {
-        if (ts.isIdentifier(decl.name)) {
-          out.add(decl.name.text);
-        } else if (ts.isObjectBindingPattern(decl.name) || ts.isArrayBindingPattern(decl.name)) {
-          collectBindingPatternNames(decl.name, out);
-        }
-      }
-    }
-  }
-
   // (#2818) True iff any method / constructor / accessor body — or a
   // parameter-default initializer — of `decl` references a name in `names`
   // that `promoteAccessorCapturesToGlobals` would actually promote. Mirrors the
@@ -5508,7 +5592,7 @@ export function compileDeclarations(
     let scopeLocals: Set<string> | null = enclosingLocals;
     if (enclosingLocals) {
       scopeLocals = new Set(enclosingLocals);
-      collectBlockScopedDeclNames(stmts, scopeLocals);
+      collectScopeLocalDeclNames(stmts, scopeLocals);
     }
     for (const stmt of stmts) {
       // Mirror the `.d.ts` ambient guard from `collectClassesFromStatements`:
@@ -5816,6 +5900,7 @@ export function compileDeclarations(
     forEachChild(node, compileAnonymousClassBodiesInNode);
   }
 
+  prepareSelfImportingModuleTdzGlobals(ctx, sourceFile); // (#6651 V6) a class body may build `ns` first
   compileClassesFromStatements(sourceFile.statements);
 
   // Compile away TDZ tracking for definite-assignment top-level let/const
@@ -6074,7 +6159,7 @@ export function compileDeclarations(
     chunkModuleInitEntries = false,
   ): FunctionContext {
     ctx.irBodyRouteAuditSession?.recordRoot("compileModuleInitBody", "__module_init", sourceFile);
-    if (process.env.JS2WASM_TEST_POISON_DIRECT_MODULE_INIT_BODY === "1") {
+    if (readEnv("JS2WASM_TEST_POISON_DIRECT_MODULE_INIT_BODY") === "1") {
       throw new Error("injected direct module-init body poison");
     }
     // Captured globals are lexical to the function/module-init body that
@@ -6092,6 +6177,7 @@ export function compileDeclarations(
     const initFctx: FunctionContext = targetFctx ?? createModuleInitFunctionContext();
     const previousFunc = ctx.currentFunc;
     ctx.currentFunc = initFctx;
+    mintUntypedRegExpReceiverMembers(ctx, initFctx, sourceFile); // (#6651 B10) untyped-RegExp proto reads
 
     // (#5271 step 8) §16.1.7 GlobalDeclarationInstantiation step 5.d — a
     // top-level lexical declaration whose name is a RESTRICTED GLOBAL
@@ -6130,7 +6216,7 @@ export function compileDeclarations(
     // (#4491 T4) §9.1.1.4.17 — and the `var` twin of the same instantiation
     // step, AFTER the functions so a name declared both ways keeps the function
     // binding GDI actually initialises. See global-var-bindings.ts.
-    emitScriptGlobalVarBindings(ctx, initFctx);
+    emitScriptGlobalVarBindings(ctx, initFctx, sourceFile);
 
     if (ctx.liveFuncBindingGlobals && ctx.liveFuncBindingGlobals.size > 0) {
       const seededGlobals = new Set<number>();
@@ -6205,6 +6291,9 @@ export function compileDeclarations(
         let chunkOrdinal = 0;
         for (const chunk of chunks) {
           const chunkFctx = createModuleInitFunctionContext(true);
+          // (#6651 V10c) Chunks split ONE top-level frame: a raw-lastIndex identity
+          // recorded in chunk N must still suppress the ToPrimitive copy in chunk N+1.
+          chunkFctx.regexpLastIndexIdentityStructTypes = initFctx.regexpLastIndexIdentityStructTypes ??= new Set();
           ctx.currentFunc = chunkFctx;
           for (const initEntry of chunk) compileOrderedModuleInitEntry(chunkFctx, initEntry);
           if (chunkFctx.body.length === 0) continue;
@@ -6251,7 +6340,7 @@ export function compileDeclarations(
   // for the six measured regression clusters that put it behind this seam. With
   // the seam unset every expression below is `false`/`undefined` and this
   // function takes exactly the two-pass path it took before the slice.
-  const discoveryStaticEnabled = process.env[DISCOVERY_STATIC_ENABLE_SEAM] === "1";
+  const discoveryStaticEnabled = readEnv(DISCOVERY_STATIC_ENABLE_SEAM) === "1";
   const preLift =
     discoveryStaticEnabled && (hasModuleInits || hasStaticInits) && moduleInitMode === "full" && !skipModuleInitBody
       ? planModuleClosurePreLift(ctx, { moduleInitMode, sourceFile, hasAsyncGraphInit })
@@ -6261,7 +6350,7 @@ export function compileDeclarations(
   // restores pass 1 as well as pass 2, not just the recompile.
   const discoveryStatic =
     preLift !== undefined &&
-    process.env.JS2WASM_TEST_FORCE_MODULE_INIT_PASS2 !== "1" &&
+    readEnv("JS2WASM_TEST_FORCE_MODULE_INIT_PASS2") !== "1" &&
     moduleInitDiscoveryIsStatic(preLift);
 
   // (#4195) With pass 1 skipped the dedupe MARK is a program POSITION, not a
@@ -6297,7 +6386,7 @@ export function compileDeclarations(
     // The test-only seam runs the GATE without the registrations, so the suite
     // can MEASURE that the inventory is load-bearing (h1's body loses its
     // `call_ref` and falls back to `__call_function_*`) instead of asserting it.
-    if (process.env[PRELIFT_DISABLE_SEAM] !== "1") {
+    if (readEnv(PRELIFT_DISABLE_SEAM) !== "1") {
       profilePhase("module-init-prelift", () =>
         applyModuleClosurePreLift(ctx, preLift!, createModuleInitFunctionContext()),
       );
@@ -6322,7 +6411,7 @@ export function compileDeclarations(
       if (stmt.name && stmt.body && lastFnWithBody.get(stmt.name.text) !== stmt) continue;
       const fnName = stmt.name ? stmt.name.text : "default";
       if (stmt.body) {
-        const idx = funcByName.get(fnName);
+        const idx = sourceFunctionPositionForDeclaration(ctx, stmt) ?? funcByName.get(fnName);
         if (idx !== undefined) {
           const func = ctx.mod.functions[idx]!;
           // (#2138/#3521) Skip direct body emission. The compatibility overlay
@@ -6496,7 +6585,7 @@ export function compileDeclarations(
     // rather than via the scan's AwaitExpression refusal. The env seam restores
     // the unconditional recompile so tests can A/B against the two-pass body.
     if (
-      process.env.JS2WASM_TEST_FORCE_MODULE_INIT_PASS2 === "1" ||
+      readEnv("JS2WASM_TEST_FORCE_MODULE_INIT_PASS2") === "1" ||
       hasAsyncGraphInit ||
       moduleInitChunkingRequired ||
       // (#3523 R4 gap-6a) With pass 1 skipped this IS the only compile, so it
@@ -6655,7 +6744,7 @@ export function compileDeclarations(
     // `wasi-start-export` case.
     if (skipModuleInitBody) {
       const plannedAdapter = ctx.wasi ? "wasi-start-export" : exportModuleInit ? "deferred-export" : "wasm-start";
-      if (process.env.JS2WASM_TEST_MODULE_INIT_DOUBLE_ADAPTER === "1") {
+      if (readEnv("JS2WASM_TEST_MODULE_INIT_DOUBLE_ADAPTER") === "1") {
         // Anti-vacuity seam: install an adapter the planned policy did NOT
         // choose, so the reconciliation below has a real violation to catch.
         // Under WASI the start section is exactly the adapter that would make

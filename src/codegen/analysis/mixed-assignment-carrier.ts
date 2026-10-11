@@ -16,6 +16,7 @@ import { annexBExistingVarUpdateNames } from "../annexb-cancel.js";
 import { getLocalType } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { initializerMayProduceHostCallable } from "./host-callable-initializer.js";
+import { readEnv } from "../../env.js";
 
 function stripParens(expr: ts.Expression): ts.Expression {
   while (ts.isParenthesizedExpression(expr)) expr = expr.expression;
@@ -224,6 +225,29 @@ function isInsideWithBody(node: ts.Node): boolean {
   return false;
 }
 
+/** The unannotated function declaration `expr` directly calls, if any. */
+function untypedCallTarget(ctx: CodegenContext, expr: ts.Expression): ts.FunctionDeclaration | undefined {
+  const call = stripParens(expr);
+  if (!ts.isCallExpression(call) || !ts.isIdentifier(call.expression)) return undefined;
+  const target = ctx.oracle.valueDeclarationOf(call.expression);
+  return target && ts.isFunctionDeclaration(target) && target.body && !target.type ? target : undefined;
+}
+
+/**
+ * (#2917) Same JS domain ("object"), different Wasm representation. Two
+ * unannotated functions that each return an object literal have distinct
+ * anonymous types, lowered to distinct structs; the slot keeps the
+ * initializer's struct and the later assignment's guarded cast answers null.
+ * The Temporal polyfill's `Duration#round`: `let m = qr(this); … m = Jr(…)`
+ * then read `m.date` → "Cannot access property on null or undefined".
+ */
+function crossesUntypedObjectReturns(ctx: CodegenContext, initializer: ts.Expression, value: ts.Expression): boolean {
+  const initialTarget = untypedCallTarget(ctx, initializer);
+  if (!initialTarget) return false;
+  const assignedTarget = untypedCallTarget(ctx, value);
+  return assignedTarget !== undefined && assignedTarget !== initialTarget;
+}
+
 /**
  * Decide whether the initialized binding must use a carrier that can represent
  * assignments from more than one JavaScript domain. The scope index preserves
@@ -266,7 +290,7 @@ export function bindingHasMixedAssignmentCarrier(ctx: CodegenContext, decl: ts.V
   // merely a cheaper guess. A resolved cross-domain assignment still demotes
   // regardless — that is #3961's hazard and it is untouched.
   const provenNumeric =
-    process.env.JS2WASM_MIXED_CARRIER_NUMERIC !== "0" &&
+    readEnv("JS2WASM_MIXED_CARRIER_NUMERIC") !== "0" &&
     initialDomain === "number" &&
     ctx.numericLocalVerdict?.(decl.name, decl.name.text) === true;
 
@@ -292,6 +316,10 @@ export function bindingHasMixedAssignmentCarrier(ctx: CodegenContext, decl: ts.V
       mixed = true;
       break;
     }
+    if (initialDomain === "object" && crossesUntypedObjectReturns(ctx, decl.initializer, fact.value)) {
+      mixed = true;
+      break;
+    }
   }
   return mixed;
 }
@@ -305,7 +333,7 @@ export function bindingHasMixedAssignmentCarrier(ctx: CodegenContext, decl: ts.V
  * `JS2WASM_NUMERIC_RETURNS`.
  */
 export function numericAdmissionEnabled(): boolean {
-  const value = process.env.JS2WASM_NUMERIC_ADMISSION;
+  const value = readEnv("JS2WASM_NUMERIC_ADMISSION");
   return value !== "0" && value !== "off" && value !== "";
 }
 

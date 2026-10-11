@@ -1,0 +1,18 @@
+
+ RUN  v3.2.4 /private/tmp/js2-ir-source-contracts-main-20261001
+
+ ✓ tests/issue-3518-runtime-contract-evolution.test.ts (331 tests) 3290ms
+   ✓ issue 3518: runtime contract initial-source evolution > captures exactly 27 production sources once, without reading authoring test provenance  302ms
+   ✓ issue 3518: runtime contract initial-source evolution > keeps actual compiler inputs raw while the initial historical reader returns the old view  334ms
+ ✓ tests/issue-3954-phase3-nonjs-domain.test.ts (26 tests) 7ms
+ ✓ tests/ir/fnctor-abi.test.ts (7 tests) 2ms
+ ✓ tests/issue-3954-tag-domain.test.ts (16 tests) 1ms
+ ✓ tests/backend-contract.test.ts (9 tests) 3ms
+ ✓ tests/ir-dominance.test.ts (13 tests) 1ms
+
+ Test Files  6 passed (6)
+      Tests  402 passed (402)
+   Start at  06:39:54
+   Duration  4.06s (transform 268ms, setup 0ms, collect 548ms, tests 3.31s, environment 0ms, prepare 29ms)
+
+JSON report written to /private/tmp/js2-ir-source-contracts-main-20261001/.tmp/source-contracts-main/runtime-resume/runtime-after-eof-compatibility.json

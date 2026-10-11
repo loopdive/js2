@@ -19,7 +19,7 @@ import {
   type IrModuleInitPlanningEvidence,
   type LegacyModuleInitStaticEntry,
 } from "../ir/module-init-plan.js";
-import type { IrSourceId, IrSourceKind, IrTerminalUnitRecord, IrUnitId, IrUnitInventory } from "../ir/identity.js";
+import type { IrSourceId, IrSourceKind, IrUnitId, IrUnitInventory } from "../ir/identity.js";
 import { IrInvariantError } from "../ir/outcomes.js";
 import type { IrPlanningIdentityContext } from "../ir/planning-identity.js";
 import { ts } from "../ts-api.js";
@@ -178,17 +178,31 @@ function sourceRecordFor(
   sourceFile: ts.SourceFile,
 ): IrUnitInventory["sources"][number] {
   const sourceId = identityContext.sourceIdBySourceFile.get(sourceFile);
-  const source = sourceId
-    ? identityContext.inventory.sources.find((candidate) => candidate.id === sourceId)
-    : undefined;
+  const source = sourceId ? censusInventoryIndex(identityContext.inventory).sourceById.get(sourceId) : undefined;
   if (!sourceId || !source || identityContext.sourceFileBySourceId.get(sourceId) !== sourceFile) {
     return censusInvariant("source-join", `source ${sourceFile.fileName} is absent from the exact inventory join`);
   }
   return source;
 }
 
-function terminalRecordsFor(inventory: IrUnitInventory, sourceId: IrSourceId): readonly IrTerminalUnitRecord[] {
-  return inventory.terminalUnits.filter((terminal) => terminal.sourceId === sourceId);
+/**
+ * (#6737) Group `values` by source file in ONE pass, keeping each group in
+ * input order — exactly what a per-source `values.filter(sf === source)` gives,
+ * without the O(sources x values) rescans. The census checks below run once per
+ * module body and overlay, so a per-source filter made every call quadratic.
+ */
+function groupBySourceFile<T>(
+  values: readonly T[],
+  sourceFileOf: (value: T) => ts.SourceFile | undefined,
+): ReadonlyMap<ts.SourceFile | undefined, readonly T[]> {
+  const groups = new Map<ts.SourceFile | undefined, T[]>();
+  for (const value of values) {
+    const sourceFile = sourceFileOf(value);
+    const group = groups.get(sourceFile);
+    if (group) group.push(value);
+    else groups.set(sourceFile, [value]);
+  }
+  return groups;
 }
 
 function snapshotSourceSyntax(sourceFile: ts.SourceFile): SourceSyntaxSnapshot {
@@ -330,12 +344,14 @@ function captureLegacyObservation(
   const foreignStatic = staticNodes.some((node) => !knownSources.has(node.getSourceFile()));
   const foreignStatements = moduleStatements.some((statement) => !knownSources.has(statement.getSourceFile()));
   const bySource = new Map<ts.SourceFile, LegacySnapshot>();
+  const staticBySource = groupBySourceFile(staticEntries, (entry) =>
+    (entry.staticBlock ?? entry.initializer)?.getSourceFile(),
+  );
+  const statementsBySource = groupBySourceFile(moduleStatements, (statement) => statement.getSourceFile());
   for (const sourcePlan of sourcePlans) {
     const sourceFile = sourcePlan.sourceFile;
-    const staticForSource = staticEntries.filter(
-      (entry) => (entry.staticBlock ?? entry.initializer)?.getSourceFile() === sourceFile,
-    );
-    const statementsForSource = moduleStatements.filter((statement) => statement.getSourceFile() === sourceFile);
+    const staticForSource = staticBySource.get(sourceFile) ?? [];
+    const statementsForSource = statementsBySource.get(sourceFile) ?? [];
     bySource.set(
       sourceFile,
       Object.freeze({
@@ -434,7 +450,6 @@ export function buildMultiPreparedModuleInitCensus(
         `plan for ${sourceFile.fileName} carries ${plan.sourceId}, expected ${source.id}`,
       );
     }
-    const terminalUnits = terminalRecordsFor(inventory, source.id);
     const moduleTerminal = plan.unitId
       ? inventory.terminalUnits.find(
           (terminal) =>
@@ -458,7 +473,7 @@ export function buildMultiPreparedModuleInitCensus(
       kind: source.kind,
       canonicalOrder: source.order,
       semanticOrder,
-      terminalUnitIds: freezeArray(terminalUnits.map((terminal) => terminal.id)),
+      terminalUnitIds: freezeArray(censusInventoryIndex(inventory).terminalIdsBySource.get(source.id) ?? []),
       unitId: plan.executable ? plan.unitId : null,
       executable: plan.executable,
       evaluationCount: plan.evaluations.length,
@@ -590,8 +605,75 @@ function sameLegacySnapshot(actual: LegacySnapshot, expected: LegacySnapshot): b
   );
 }
 
-/** Recheck source/inventory/AST and, when observed, queue currentness. */
+/**
+ * (#6737, #6741) Inventory-derived join indexes for the currentness check. An
+ * inventory from `buildIrUnitInventory` is frozen together with its `sources`
+ * and `terminalUnits` arrays and their records, so an index derived from one
+ * inventory object can never go stale: it is built once per inventory instead
+ * of once per check. A non-frozen inventory (a test double) is re-indexed on
+ * every call, exactly as before.
+ */
+interface CensusInventoryIndex {
+  readonly sourceById: ReadonlyMap<IrSourceId, IrUnitInventory["sources"][number]>;
+  readonly terminalIdsBySource: ReadonlyMap<IrSourceId, readonly IrUnitId[]>;
+}
+
+const indexByInventory = new WeakMap<IrUnitInventory, CensusInventoryIndex>();
+
+function censusInventoryIndex(inventory: IrUnitInventory): CensusInventoryIndex {
+  const immutable =
+    Object.isFrozen(inventory) && Object.isFrozen(inventory.sources) && Object.isFrozen(inventory.terminalUnits);
+  const cached = immutable ? indexByInventory.get(inventory) : undefined;
+  if (cached) return cached;
+  // First record wins, as `Array.prototype.find` did.
+  const sourceById = new Map<IrSourceId, IrUnitInventory["sources"][number]>();
+  for (const candidate of inventory.sources) {
+    if (!sourceById.has(candidate.id)) sourceById.set(candidate.id, candidate);
+  }
+  const terminalIdsBySource = new Map<IrSourceId, IrUnitId[]>();
+  for (const terminal of inventory.terminalUnits) {
+    const group = terminalIdsBySource.get(terminal.sourceId);
+    if (group) group.push(terminal.id);
+    else terminalIdsBySource.set(terminal.sourceId, [terminal.id]);
+  }
+  const index: CensusInventoryIndex = { sourceById, terminalIdsBySource };
+  if (immutable) indexByInventory.set(inventory, index);
+  return index;
+}
+
+/**
+ * Recheck source/inventory/AST and, when observed, queue currentness for the
+ * WHOLE program. Runs at every phase boundary of the Prepared owner (census
+ * build, queue reconciliation, module-init registration, body-boundary seal,
+ * body-to-overlay transition, routes-complete seal, publication), so any drift
+ * anywhere in the program fails closed before an artifact is published.
+ */
 export function assertMultiPreparedModuleInitCensusCurrent(census: MultiPreparedModuleInitCensus): void {
+  assertCensusCurrent(census, undefined);
+}
+
+/**
+ * (#6737, #6741) The per-source-entry form of the check, run once per module
+ * body and once per module overlay. It keeps every whole-program join, order,
+ * and legacy-queue identity check (all O(sources + queue) map lookups), and
+ * re-derives the three per-source facts that cost O(program) to re-derive for
+ * the whole program — the AST syntax walk, the terminal denominator, and the
+ * legacy parity report — for `sourceFile`, the source being entered, only.
+ * Re-deriving them for every source on every entry made the compile quadratic
+ * (61 % of lodash-es, ~70 % of jsdom, which never finished). A drift in a
+ * source other than the entered one is caught when that source is entered, or
+ * at the next whole-program phase-boundary check. With no `sourceFile` (a
+ * phase-boundary visit, or a cursor past the last source) this is the
+ * whole-program check.
+ */
+export function assertMultiPreparedModuleInitCensusSourceCurrent(
+  census: MultiPreparedModuleInitCensus,
+  sourceFile: ts.SourceFile | undefined,
+): void {
+  assertCensusCurrent(census, sourceFile);
+}
+
+function assertCensusCurrent(census: MultiPreparedModuleInitCensus, focus: ts.SourceFile | undefined): void {
   const metadata = metadataByCensus.get(census);
   if (!metadata) censusInvariant("parity-changed", "census has no retained metadata");
   if (census.inventory !== census.identityContext.inventory) {
@@ -601,6 +683,10 @@ export function assertMultiPreparedModuleInitCensusCurrent(census: MultiPrepared
     censusInvariant("source-count", "census source population changed");
   }
   const sourceById = new Map(census.sourcePlans.map((sourcePlan) => [sourcePlan.sourceId, sourcePlan] as const));
+  const { sourceById: inventorySourceById, terminalIdsBySource } = censusInventoryIndex(
+    census.identityContext.inventory,
+  );
+  const derives = (sourceFile: ts.SourceFile): boolean => focus === undefined || sourceFile === focus;
   const seenFiles = new Set<ts.SourceFile>();
   for (const [semanticOrder, sourceFile] of census.sourceFiles.entries()) {
     if (seenFiles.has(sourceFile)) censusInvariant("source-join", `source ${sourceFile.fileName} occurs twice`);
@@ -613,16 +699,18 @@ export function assertMultiPreparedModuleInitCensusCurrent(census: MultiPrepared
       sourcePlan.sourceFile !== sourceFile ||
       sourcePlan.semanticOrder !== semanticOrder ||
       census.identityContext.sourceFileBySourceId.get(sourceId) !== sourceFile ||
-      !currentSourceSyntax(metadata.syntaxBySourceFile.get(sourceFile)!, sourceFile)
+      (derives(sourceFile) && !currentSourceSyntax(metadata.syntaxBySourceFile.get(sourceFile)!, sourceFile))
     ) {
       censusInvariant("syntax-changed", `source ${sourceFile.fileName} no longer matches the retained census`);
     }
-    const source = census.identityContext.inventory.sources.find((candidate) => candidate.id === sourceId);
+    const source = inventorySourceById.get(sourceId);
     if (!source || sourcePlan.sourceKey !== source.sourceKey || sourcePlan.canonicalOrder !== source.order) {
       censusInvariant("canonical-order", `source ${sourceFile.fileName} changed canonical identity`);
     }
-    const terminals = terminalRecordsFor(census.identityContext.inventory, sourceId).map((terminal) => terminal.id);
-    if (!sameIdentityArray(sourcePlan.terminalUnitIds, terminals)) {
+    if (
+      derives(sourceFile) &&
+      !sameIdentityArray(sourcePlan.terminalUnitIds, terminalIdsBySource.get(sourceId) ?? [])
+    ) {
       censusInvariant("terminal-join", `source ${sourceId} changed its terminal denominator`);
     }
     const moduleUnit = census.identityContext.moduleInitUnitIdBySourceFile.get(sourceFile) ?? null;
@@ -632,6 +720,9 @@ export function assertMultiPreparedModuleInitCensusCurrent(census: MultiPrepared
     ) {
       censusInvariant("terminal-join", `source ${sourceId} changed its module-init unit join`);
     }
+  }
+  if (focus !== undefined && !seenFiles.has(focus)) {
+    censusInvariant("source-join", `entered source ${focus.fileName} is not a census source`);
   }
   const canonical = census.canonicalSourceIds;
   if (
@@ -675,6 +766,7 @@ export function assertMultiPreparedModuleInitCensusCurrent(census: MultiPrepared
       censusInvariant("parity-changed", `legacy queue for ${sourcePlan.sourceId} changed after reconciliation`);
     }
     if (
+      derives(sourcePlan.sourceFile) &&
       sourcePlan.parity &&
       !sameParity(
         reconcileIrModuleInitPlan(sourcePlan.plan, sourcePlan.sourceFile, {

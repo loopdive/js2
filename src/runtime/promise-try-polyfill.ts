@@ -1,5 +1,8 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
+import { _installPromiseKeyedCombinators, type ThenableMirror } from "./promise-keyed-combinators.js";
+export type { ThenableMirror } from "./promise-keyed-combinators.js";
+
 /**
  * #6440 — `Promise.try` polyfill for hosts below the engine that ships it.
  *
@@ -19,20 +22,9 @@
  * tomorrow). A polyfill installed only when the intrinsic is missing keeps
  * both the declared floor and the emitted `Promise.try` call working, with
  * zero effect on hosts (CI's Node 24/25 included) that already have it. This
- * mirrors the existing `_installIteratorHelperPolyfills` (#1464) precedent of
- * ambiently patching a global constructor from the host-lane runtime.
+ * follows the existing compatibility adapter; installation targets only its
+ * selected Promise constructor, preserving injected and sandbox realms.
  */
-
-/**
- * The distinct Promise constructor(s) `Promise.try` should be checked/
- * installed on for a given `node:vm` sandbox realm (or none, for the plain
- * host-realm case): the real global `Promise`, plus the sandbox's own
- * `Promise` when it differs (they are distinct constructors under a `vm`
- * context — the real global is otherwise never mutated for a sandboxed run).
- */
-export function _promiseTryTargets(globalSandbox: Record<string, any> | undefined): unknown[] {
-  return [Promise, globalSandbox?.Promise].filter((C, i, arr) => C != null && arr.indexOf(C) === i);
-}
 
 /**
  * Install `Promise.try` (per spec §27.2.4.8, "PerformPromiseTry") on `C` if
@@ -74,4 +66,12 @@ export function _installPromiseTryPolyfill(C: unknown): void {
     enumerable: false,
     configurable: true,
   });
+}
+
+/** Install compatibility-only Promise statics on the already-selected realm.
+ * Realm selection and enablement remain owned by the compatibility adapter.
+ */
+export function _installSelectedPromiseCompatibility(C: unknown, mirrorThenable?: ThenableMirror): void {
+  _installPromiseKeyedCombinators(C, mirrorThenable);
+  _installPromiseTryPolyfill(C);
 }

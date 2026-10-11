@@ -107,8 +107,29 @@ export const MERGE_GROUP_RESERVED_RUNNERS = 18;
 // and MERGE_GROUP_RESERVED_RUNNERS (18). Shorter standalone shards also cut
 // exposure to the hosted-runner shutdown waves the THIRD note was worried
 // about (~495 -> ~435 s).
-export const JS_HOST_CHUNKS = 52;
-export const STANDALONE_CHUNKS = 50;
+// FIFTH ratio drift (2026-09-28): the #3451 slice 6 flip (2026-09-17) moved
+// the js-host lane onto the LINKED harness oracle — the harness prefix is
+// compiled once per include-set instead of once per row — while standalone
+// kept the whole-assembly (honest) compile. js-host work fell ~4x; standalone
+// did not move. At 52/50 standalone was the long pole of every run by ~11 min.
+// Measured `Run shard` totals, six consecutive green merge_group runs at 52/50:
+//   36375344400: js-host 8,294 rs (mean 160 s, max 229 s)
+//                standalone 40,189 rs (mean 804 s, max 938 s)
+//   36373666471: js-host 8,570 rs / standalone 40,285 rs
+//   36372049678: js-host 8,968 rs / standalone 39,451 rs
+//   36371437444: js-host 8,505 rs / standalone 38,702 rs
+//   36370111071: js-host 8,538 rs / standalone 40,059 rs
+//   36368683255: js-host 8,401 rs / standalone 38,434 rs
+// Work ratio js-host:standalone = **0.21-0.23** (call it 0.215). The exact
+// balance of the same 102-shard budget is ~18/84; 20/82 is used because the
+// js-host lane's max/mean skew is higher (~1.38 vs ~1.17 standalone), so a
+// slightly larger host share keeps its slowest shard under standalone's.
+// Projected means: js-host ~425 s, standalone ~485 s (max ~570 s, down from
+// ~920 s). Unchanged: MERGE_GROUP_RUNNER_CAPACITY (120) and
+// MERGE_GROUP_RESERVED_RUNNERS (18). If a standalone linked oracle lands, the
+// ratio moves again — re-derive with the procedure above.
+export const JS_HOST_CHUNKS = 20;
+export const STANDALONE_CHUNKS = 82;
 
 /**
  * @param {string} targetName matrix job-name suffix, e.g. "js-host"

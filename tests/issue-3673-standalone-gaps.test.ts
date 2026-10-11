@@ -152,7 +152,11 @@ export function testOther(): number {
   // affect the corpus; the real repair is teaching the dispatcher to enumerate
   // fnctor prototype methods at finalize, which lives in the fnctor/typed-this
   // machinery.
-  it.fails("single-call-site fnctor prototype method still loses to the string sentinel", async () => {
+  //
+  // FIXED (2026-09-24): measured passing on origin/main e3bb60ac10 with main's
+  // own src (and on the #5383 lane-C branch), so the `it.fails` expectation is
+  // flipped to a plain regression guard — an `it.fails` that passes fails CI.
+  it("single-call-site fnctor prototype method no longer loses to the string sentinel", async () => {
     const got = await runStandalone(`function St(this: any) { this.pos = 5; this.source = "ab"; }
 (St as any).prototype.at = function (i: any) { if (i >= 2) { return -1; } return 55; };
 export function test(): number {

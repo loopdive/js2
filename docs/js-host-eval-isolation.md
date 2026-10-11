@@ -13,9 +13,34 @@ const { instance } = await WebAssembly.instantiate(result.binary, imports);
 imports.setInstance?.(instance);
 ```
 
-The evaluator is synchronous because a normal Wasm import is synchronous. The
-runtime also supports `dynamicCode: "deny"` for a fail-closed host and preserves
-the existing `"compat"` behavior by default.
+The evaluator is synchronous because a normal Wasm import is synchronous.
+
+## Policies
+
+`buildImports(..., { dynamicCode })` decides where a runtime `eval(src)` or
+`new Function(params, body)` string runs (#6779). Strings the compiler can fold
+at compile time (a literal `eval("1 + 2")`) never reach this choice.
+
+| `dynamicCode`      | Where a runtime string runs                                        | Reaches host globals?       |
+| ------------------ | ------------------------------------------------------------------ | --------------------------- |
+| `"deny"` (default) | Nowhere: throws `EvalError`                                        | No                          |
+| `"evaluator"`      | The `dynamicCodeEvaluator` you supply (iframe realm, Node Worker)  | Only what that realm reaches |
+| `"hostEval"`       | A js2wasm child module, else the host realm's `eval` / `Function`  | Yes                         |
+| `"native"`         | The host realm's `eval` / `Function`                               | Yes                         |
+| `"compat"`         | Deprecated alias of `"hostEval"` (the default before #6779)        | Yes                         |
+
+`"hostEval"` compiles the string into a child Wasm module and falls back to the
+host realm only when that module cannot be **built** (parse, compile,
+instantiate). A throw from **running** the string propagates once, unchanged;
+the string is never re-run in the host. The child module also resolves
+`globalThis` to the host global, so even its Wasm path reaches host globals.
+`"compat"` logs one deprecation warning per `buildImports` call, and an unknown
+policy string throws `TypeError` there.
+
+Only `"deny"` keeps dynamic code from running outside the compiled module.
+`"evaluator"` moves it into a realm the embedder chooses; as the security model
+below explains, a separate realm or Worker is not a security boundary by
+itself.
 
 ## Node.js eval Worker
 
@@ -118,6 +143,12 @@ loudly instead of copying object identity.
 
 ## Boundary and security model
 
+- `dynamicCode` governs the compiler's `eval(...)` and `new Function(...)` call
+  sites only. With the default import object, a compiled module's `globalThis`
+  is the host global object: it can read `globalThis.process` without any eval,
+  and reading the `eval` property off it hands back the host's own `eval`,
+  which no policy intercepts. Containment is decided by what the import object
+  exposes, not by compiling to Wasm.
 - A Node Worker is a separate realm, heap, and thread, but not an OS or
   capability sandbox. It still has Node capabilities unless the host restricts
   them.

@@ -40,12 +40,11 @@
  */
 import type { Instr, ValType } from "../ir/types.js";
 import type { ClosureInfo, CodegenContext, FunctionContext } from "./context/types.js";
+import { getOrCreateFuncRefWrapperTypes } from "./closures/funcref-wrapper-types.js";
 import {
-  closureArityField,
-  closureBagField,
-  closureBagInitInstr,
-  getOrCreateFuncRefWrapperTypes,
-} from "./closures/funcref-wrapper-types.js";
+  createBuiltinFunctionMetadataType,
+  buildBuiltinClosureValueInstrs,
+} from "../runtime/wasmgc/values/closure-layouts.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 
 /**
@@ -54,8 +53,63 @@ import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
  * a `$bag` slot at index 2 and these two shifted with it.
  * Layout: `[func, $arity, $bag, bfnstate, bfnid]`.
  */
-export const BFN_STATE_FIELD_IDX = 3;
-export const BFN_ID_FIELD_IDX = 4;
+export { BFN_STATE_FIELD_IDX, BFN_ID_FIELD_IDX } from "../runtime/wasmgc/values/closure-layouts.js";
+
+/**
+ * (#6651 U1b, V0) The `bfnid` claim is a MODULE-LOCAL type index, so it is an
+ * ownership answer only while no closure of another module can reach this one.
+ * A canonically linked module (`canonicalRuntimeRecGroup`: the Temporal
+ * provider and its consumer, a linked harness, a package graph) breaks that:
+ * the per-(brand, member) meta structs are structurally equal in every module,
+ * so a PEER's closure passes the family `ref.test`, and its `bfnid` is the
+ * peer's own type index — which can equal one of ours.
+ *
+ * Measured (`Temporal/Duration/prototype/round/balance-subseconds.js`,
+ * standalone, linked provider): the polyfill's `n.toPrecision(o)` reached the
+ * consumer through the reverse method-call hop and resolved to the PROVIDER's
+ * `Number.prototype.toPrecision` closure, `bfnid` 719 — the consumer's id for
+ * `Set.prototype.values` once `Set` is seeded on the realm global. The arm then
+ * cast the `(self, this, arg)` funcref to `values`' `(self, this)` type and
+ * trapped `illegal cast in __call_fn_method_1`.
+ *
+ * So in a linked module every `bfnid == <local id>` compare is AND-ed with
+ * "field 0 has the claimed type's exact funcref signature". Push it right
+ * after the `i32.eq`; it consumes that i32 and leaves one. `target.typeIdx` is
+ * what `self` is cast to before reading field 0 (any type of the family — field
+ * 0 is the shared closure header's funcref); `funcTypeIdx` is the claimed
+ * entry's signature. A same-signature collision is harmless only where the arm
+ * then calls THROUGH field 0, i.e. the peer's own function. Unlinked modules
+ * emit nothing and keep their bytes.
+ */
+export function linkedSignatureGuard(
+  ctx: CodegenContext,
+  target: { typeIdx: number; funcTypeIdx: number | undefined },
+  self: Instr[],
+): Instr[] {
+  if (ctx.mod.canonicalRuntimeRecGroup === undefined || target.funcTypeIdx === undefined) return [];
+  return [
+    ...self,
+    { op: "ref.cast", typeIdx: target.typeIdx },
+    { op: "struct.get", typeIdx: target.typeIdx, fieldIdx: 0 },
+    { op: "ref.test", typeIdx: target.funcTypeIdx },
+    { op: "i32.and" },
+  ];
+}
+
+/**
+ * {@link linkedSignatureGuard} for the builtin meta type `metaTypeIdx`, whose
+ * signature is the one its registration recorded (`ensureBuiltinFnMetaType`
+ * always records closure info). `castTypeIdx` defaults to the meta type.
+ */
+export function linkedMetaSignatureGuard(
+  ctx: CodegenContext,
+  metaTypeIdx: number,
+  self: Instr[],
+  castTypeIdx = metaTypeIdx,
+): Instr[] {
+  const funcTypeIdx = ctx.closureInfoByTypeIdx.get(metaTypeIdx)?.funcTypeIdx;
+  return linkedSignatureGuard(ctx, { typeIdx: castTypeIdx, funcTypeIdx }, self);
+}
 
 /**
  * Spec `{name, length}` for the builtin STATIC method closures wired in
@@ -68,6 +122,8 @@ export const STANDALONE_STATIC_METHOD_META: Record<string, { name: string; lengt
   "Array.isArray": { name: "isArray", length: 1 },
   "Object.assign": { name: "assign", length: 2 },
   "Object.keys": { name: "keys", length: 1 },
+  // (#6684) One-slot closure ABI (see the builtin-value-read case); spec `.length` 2.
+  "Object.create": { name: "create", length: 2 },
   "Object.getOwnPropertyDescriptor": { name: "getOwnPropertyDescriptor", length: 2 },
   // (#2933) Fixed-arity Reflect.* namespace static-method value reads. Spec
   // `length` per §28.1 (receiver arg is optional and not counted).
@@ -271,23 +327,7 @@ export function ensureBuiltinFnMetaType(
   if (existing !== undefined) return existing;
 
   const typeIdx = ctx.mod.types.length;
-  ctx.mod.types.push({
-    kind: "struct",
-    name: `__builtinfn_meta_${typeIdx}_struct`,
-    fields: [
-      // Field 0 must mirror the supertype exactly (same type + mutability) —
-      // as must the #3673 $arity slot at index 1.
-      { name: "func", type: { kind: "funcref" as const }, mutable: false },
-      closureArityField(),
-      closureBagField(),
-      // Deleted-bits mask: bit 0 = "name" deleted, bit 1 = "length" deleted.
-      { name: "bfnstate", type: { kind: "i32" as const }, mutable: true },
-      // Stable per-module metadata identity. Structurally-equivalent meta
-      // subtypes cannot be distinguished by ref.test alone.
-      { name: "bfnid", type: { kind: "i32" as const }, mutable: false },
-    ],
-    superTypeIdx: baseStructTypeIdx,
-  });
+  ctx.mod.types.push(createBuiltinFunctionMetadataType(typeIdx, baseStructTypeIdx));
 
   ctx.closureInfoByTypeIdx.set(typeIdx, { ...baseClosureInfo, structTypeIdx: typeIdx });
   if (!ctx.builtinFnMetaByTypeIdx) ctx.builtinFnMetaByTypeIdx = new Map();
@@ -308,7 +348,7 @@ export function pushBuiltinFnClosureValueInstrs(
   closure: { type: { kind: "ref"; typeIdx: number }; funcIdx: number },
 ): Instr[] {
   const isMeta = ctx.builtinFnMetaByTypeIdx?.has(closure.type.typeIdx) ?? false;
-  const instrs: Instr[] = [{ op: "ref.func", funcIdx: closure.funcIdx }];
+
   // (#3673) $arity field 1 — the builtin's spec `length` when meta-typed,
   // else the registered closure signature's param count.
   // Receiver-aware variadic native-proto values are the one exception: their
@@ -323,13 +363,7 @@ export function pushBuiltinFnClosureValueInstrs(
       : isMeta
         ? (ctx.builtinFnMetaByTypeIdx?.get(closure.type.typeIdx)?.length ?? 0)
         : (closureInfo?.paramTypes.length ?? 0);
-  instrs.push({ op: "i32.const", value: arity });
-  instrs.push(closureBagInitInstr()); // (#4241) $bag field 2
-  if (isMeta) {
-    instrs.push({ op: "i32.const", value: 0 }, { op: "i32.const", value: closure.type.typeIdx });
-  }
-  instrs.push({ op: "struct.new", typeIdx: closure.type.typeIdx });
-  return instrs;
+  return buildBuiltinClosureValueInstrs(closure.type.typeIdx, closure.funcIdx, arity, isMeta);
 }
 
 /**

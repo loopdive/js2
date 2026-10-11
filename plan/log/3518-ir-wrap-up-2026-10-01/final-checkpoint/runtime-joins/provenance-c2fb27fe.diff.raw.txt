@@ -1,0 +1,137 @@
+diff --git a/src/ir/analysis/intrinsics.ts b/src/ir/analysis/intrinsics.ts
+index 83b10ec4b2..1a86a55e9a 100644
+--- a/src/ir/analysis/intrinsics.ts
++++ b/src/ir/analysis/intrinsics.ts
+@@ -41,6 +41,11 @@ function signatureMismatch(use: IntrinsicUse, signature: IntrinsicSignature): st
+       return `${use.id} argument ${index} does not match its v${signature.version} signature`;
+     }
+   }
++  if (
++    use.id === "js.boolean.unbox" &&
++    (use.resultType.kind !== "val" || use.resultType.val.kind !== "i32" || use.resultType.val.boolean !== true)
++  )
++    return `${use.id} result must preserve its Boolean carrier brand`;
+   if (!irTypeEquals(use.resultType, signature.result)) {
+     return `${use.id} result does not match its v${signature.version} signature`;
+   }
+diff --git a/src/ir/core/intrinsic-vocabulary.ts b/src/ir/core/intrinsic-vocabulary.ts
+index 528bebdab2..6e837f8b8b 100644
+--- a/src/ir/core/intrinsic-vocabulary.ts
++++ b/src/ir/core/intrinsic-vocabulary.ts
+@@ -59,17 +59,8 @@ export const NUMBER_BOUNDARY_INTRINSIC_IDS = Object.freeze(["js.number.box", "js
+ 
+ export type NumberBoundaryIntrinsicId = (typeof NUMBER_BOUNDARY_INTRINSIC_IDS)[number];
+ 
+-/**
+- * (#3526 F1-S2) The synchronous BOOLEAN boundary — the branded-i32→externref
+- * carrier the front-end used to emit as a direct named call to
+- * `__box_boolean` after reading the `hasHostBooleanBox` resolver predicate.
+- *
+- * A deliberate SIBLING of the number constants, not a widening of them: this
+- * family is one-armed. There is no `js.boolean.unbox` because there is no
+- * front-end producer for one — `__unbox_boolean` is a union member with no IR
+- * consumer, and the boolean capability has no widening follow-up.
+- */
+-export const BOOLEAN_BOUNDARY_INTRINSIC_IDS = Object.freeze(["js.boolean.box"] as const);
++/** Boolean carrier boundaries. Unbox requires a proven Boolean carrier, never general truthiness. */
++export const BOOLEAN_BOUNDARY_INTRINSIC_IDS = Object.freeze(["js.boolean.box", "js.boolean.unbox"] as const);
+ 
+ export type BooleanBoundaryIntrinsicId = (typeof BOOLEAN_BOUNDARY_INTRINSIC_IDS)[number];
+ 
+diff --git a/src/ir/core/intrinsics.ts b/src/ir/core/intrinsics.ts
+index b68b63191d..a8d550388b 100644
+--- a/src/ir/core/intrinsics.ts
++++ b/src/ir/core/intrinsics.ts
+@@ -68,6 +68,13 @@ export const I32_TO_EXTERNREF_INTRINSIC_SIGNATURE: IntrinsicSignature = Object.f
+   result: EXTERNREF_TYPE,
+ });
+ 
++/** Exact Boolean carrier extraction. The logical brand survives the physical i32 ABI. */
++export const EXTERNREF_TO_BOOLEAN_INTRINSIC_SIGNATURE: IntrinsicSignature = Object.freeze({
++  version: INTRINSIC_SIGNATURE_VERSION,
++  params: Object.freeze([EXTERNREF_TYPE]),
++  result: Object.freeze({ kind: "val" as const, val: Object.freeze({ kind: "i32" as const, boolean: true as const }) }),
++});
++
+ /**
+  * `(externref) -> i32` — the exact ABI of the `__extern_is_undefined` probe,
+  * shared by its host import and its host-free Wasm function (#4461 registered
+@@ -190,6 +197,7 @@ export const INTRINSIC_DEFINITIONS: Readonly<Record<IntrinsicId, IntrinsicDefini
+   "js.number.box": definition("js.number.box", F64_TO_EXTERNREF_INTRINSIC_SIGNATURE),
+   "js.number.unbox": definition("js.number.unbox", EXTERNREF_TO_F64_INTRINSIC_SIGNATURE),
+   "js.boolean.box": definition("js.boolean.box", I32_TO_EXTERNREF_INTRINSIC_SIGNATURE),
++  "js.boolean.unbox": definition("js.boolean.unbox", EXTERNREF_TO_BOOLEAN_INTRINSIC_SIGNATURE),
+   "js.extern.is_undefined": definition("js.extern.is_undefined", EXTERNREF_TO_I32_INTRINSIC_SIGNATURE),
+   "math.abs": definition("math.abs", F64_UNARY_INTRINSIC_SIGNATURE),
+   "math.acos": definition("math.acos", F64_UNARY_INTRINSIC_SIGNATURE),
+diff --git a/src/ir/intrinsics.ts b/src/ir/intrinsics.ts
+index 3356bc74ab..5e3a09f86e 100644
+--- a/src/ir/intrinsics.ts
++++ b/src/ir/intrinsics.ts
+@@ -46,6 +46,7 @@ export type {
+ export {
+   F64_TO_EXTERNREF_INTRINSIC_SIGNATURE,
+   EXTERNREF_TO_F64_INTRINSIC_SIGNATURE,
++  EXTERNREF_TO_BOOLEAN_INTRINSIC_SIGNATURE,
+   I32_TO_EXTERNREF_INTRINSIC_SIGNATURE,
+   EXTERNREF_TO_I32_INTRINSIC_SIGNATURE,
+   EXTERNREF_PAIR_TO_I32_INTRINSIC_SIGNATURE,
+diff --git a/src/ir/runtime/contracts/intrinsics.ts b/src/ir/runtime/contracts/intrinsics.ts
+index 3bc31e819b..04e452f4a7 100644
+--- a/src/ir/runtime/contracts/intrinsics.ts
++++ b/src/ir/runtime/contracts/intrinsics.ts
+@@ -55,8 +55,8 @@ export const NUMERIC_COERCION_RUNTIME_FEATURES = Object.freeze(["js.to_uint32"]
+ /** Feature rows mirror the number-boundary intrinsic IDs 1:1. */
+ export const NUMBER_BOUNDARY_RUNTIME_FEATURES = Object.freeze(["js.number.box", "js.number.unbox"] as const);
+ 
+-/** (#3526 F1-S2) The boolean-boundary feature row, 1:1 with its one ID. */
+-export const BOOLEAN_BOUNDARY_RUNTIME_FEATURES = Object.freeze(["js.boolean.box"] as const);
++/** Boolean carrier features mirror the semantic intrinsic IDs. */
++export const BOOLEAN_BOUNDARY_RUNTIME_FEATURES = Object.freeze(["js.boolean.box", "js.boolean.unbox"] as const);
+ 
+ /** (#3526 F1-S4) The extern undefined-probe feature row, 1:1 with its one ID. */
+ export const EXTERN_BOUNDARY_RUNTIME_FEATURES = Object.freeze(["js.extern.is_undefined"] as const);
+diff --git a/src/ir/runtime/contracts/manifest.ts b/src/ir/runtime/contracts/manifest.ts
+index a7d9e37a79..a9b945e529 100644
+--- a/src/ir/runtime/contracts/manifest.ts
++++ b/src/ir/runtime/contracts/manifest.ts
+@@ -106,8 +106,12 @@ export const NUMBER_BOUNDARY_RUNTIME_PROVIDER_IDS = Object.freeze([
+ 
+ export type NumberBoundaryRuntimeProviderId = (typeof NUMBER_BOUNDARY_RUNTIME_PROVIDER_IDS)[number];
+ 
+-/** (#3526 F1-S2) The one admitted boolean-boundary policy arm. */
+-export const BOOLEAN_BOUNDARY_RUNTIME_PROVIDER_IDS = Object.freeze(["host.js.boolean.box"] as const);
++/** Explicit host boxing and native Boolean carrier providers. */
++export const BOOLEAN_BOUNDARY_RUNTIME_PROVIDER_IDS = Object.freeze([
++  "host.js.boolean.box",
++  "native.js.boolean.box",
++  "native.js.boolean.unbox",
++] as const);
+ 
+ export type BooleanBoundaryRuntimeProviderId = (typeof BOOLEAN_BOUNDARY_RUNTIME_PROVIDER_IDS)[number];
+ 
+diff --git a/src/runtime/contracts/provider-policy.ts b/src/runtime/contracts/provider-policy.ts
+index 985a93ec1e..9e11795823 100644
+--- a/src/runtime/contracts/provider-policy.ts
++++ b/src/runtime/contracts/provider-policy.ts
+@@ -26,16 +26,11 @@ export const NUMBER_BOUNDARY_POLICY_DISABLED: NumberBoundaryPolicy = Object.free
+   unbox: "unsupported",
+ });
+ 
+-/**
+- * (#3526 F1-S2) The exact, already-resolved BOOLEAN-boundary provider policy of
+- * one preparation caller — a sibling of {@link NumberBoundaryPolicy}, not a
+- * widening of it. The family is one-armed: the box arm resolves through the
+- * host `env.__box_boolean` import, and there is no native boolean boxer to
+- * select, so the union has no `"native"` member.
+- */
++/** Resolved Boolean carrier policy. Native extraction requires a proven carrier, not ToBoolean. */
+ export interface BooleanBoundaryPolicy {
+-  /** `host` selects `env.__box_boolean`. There is no native box arm. */
+-  readonly box: "host" | "unsupported";
++  readonly box: "host" | "native" | "unsupported";
++  /** Omitted means unsupported, preserving existing host-only and disabled policy records. */
++  readonly unbox?: "native" | "unsupported";
+ }
+ 
+ /** Adapters that expose no boolean boundary resolve the box arm to this. */

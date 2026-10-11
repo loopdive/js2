@@ -49,6 +49,8 @@
  * The family's shared token rule. Exported for the tests that pin the spelling;
  * production code should call one of the named predicates below.
  */
+import { readEnv } from "./env.js";
+
 export function derivationFlagEnabled(raw: string | undefined): boolean {
   if (raw === undefined) return true;
   const norm = raw.trim().toLowerCase();
@@ -84,7 +86,7 @@ export function resetDerivationFlagCache(): void {
 function cachedFlag(name: string): boolean {
   const hit = flagCache.get(name);
   if (hit !== undefined) return hit;
-  const value = derivationFlagEnabled(process.env[name]);
+  const value = derivationFlagEnabled(readEnv(name));
   flagCache.set(name, value);
   return value;
 }

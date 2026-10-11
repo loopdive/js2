@@ -88,6 +88,7 @@
  * host/GC output stays byte-identical.
  */
 import { ts } from "../ts-api.js";
+import type { TypeOracle } from "../checker/oracle.js";
 import { isBrandedBuiltinName } from "./builtin-brands.js";
 import { BUILTIN_STATIC_METHOD_ARITY } from "./builtin-fn-meta.js";
 
@@ -128,6 +129,11 @@ export interface BuiltinWriteKeepCtx {
   readonly moduleGlobals: { has(name: string): boolean };
   readonly topLevelFunctionNames: { has(name: string): boolean };
   readonly classSet: { has(name: string): boolean };
+}
+
+/** The context needed by #5197's direct intrinsic Promise.resolve keep. */
+export interface IntrinsicPromiseResolveWriteCtx extends BuiltinWriteKeepCtx {
+  readonly oracle: Pick<TypeOracle, "declarationsOf">;
 }
 
 /**
@@ -200,4 +206,97 @@ export function shouldKeepBuiltinReceiverWrite(ctx: BuiltinWriteKeepCtx, left: t
   if (!ctx.standalone) return false;
   if ((ctx.protoNamedDirty || ctx.protoIndexDirty) && isBuiltinProtoWriteTarget(left)) return true;
   return isBuiltinNamespaceExpandoWriteTarget(left, ctx);
+}
+
+/**
+ * A JavaScript property write causes TypeScript to append the receiver
+ * Identifier to an ambient symbol's `declarations`. That is an assignment use,
+ * not a shadowing declaration.
+ */
+function isSyntheticPropertyAssignmentReceiverDeclaration(declaration: ts.Declaration): boolean {
+  if (!ts.isIdentifier(declaration)) return false;
+  const member = declaration.parent;
+  if (!ts.isPropertyAccessExpression(member) || member.expression !== declaration) return false;
+  const assignment = member.parent;
+  return (
+    ts.isBinaryExpression(assignment) &&
+    assignment.left === member &&
+    assignment.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+    assignment.operatorToken.kind <= ts.SyntaxKind.LastAssignment
+  );
+}
+
+function hasDeclareModifier(statement: ts.VariableStatement): boolean {
+  return ts.getModifiers(statement)?.some((modifier) => modifier.kind === ts.SyntaxKind.DeclareKeyword) ?? false;
+}
+
+/**
+ * The single-source import rewriter replaces a value import with a source-file
+ * `declare const`. The checker can still choose lib.d.ts's merged Promise
+ * symbol, so retain this source-level negative guard for imports and stubs.
+ */
+function sourceHasPromiseImportOrDeclareBinding(sourceFile: ts.SourceFile): boolean {
+  for (const statement of sourceFile.statements) {
+    if (ts.isImportDeclaration(statement)) {
+      const clause = statement.importClause;
+      if (clause?.name?.text === "Promise") return true;
+      const bindings = clause?.namedBindings;
+      if (bindings && ts.isNamespaceImport(bindings) && bindings.name.text === "Promise") return true;
+      if (
+        bindings &&
+        ts.isNamedImports(bindings) &&
+        bindings.elements.some((element) => element.name.text === "Promise")
+      ) {
+        return true;
+      }
+    }
+    if (ts.isImportEqualsDeclaration(statement) && statement.name.text === "Promise") return true;
+    if (
+      ts.isVariableStatement(statement) &&
+      hasDeclareModifier(statement) &&
+      statement.declarationList.declarations.some(
+        (declaration) => ts.isIdentifier(declaration.name) && declaration.name.text === "Promise",
+      )
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * (#5197 R3-2) True only for a direct, unshadowed intrinsic
+ * `Promise.resolve = ...` receiver. The generic builtin-write keep declines
+ * supported static methods; this predicate is the bounded exception required
+ * before an observable combinator can read the replacement in source order.
+ */
+export function isStandaloneIntrinsicPromiseResolveWriteTarget(
+  ctx: IntrinsicPromiseResolveWriteCtx,
+  left: ts.Expression,
+): boolean {
+  const target = unwrap(left);
+  if (
+    !ctx.standalone ||
+    !ts.isPropertyAccessExpression(target) ||
+    ts.isPrivateIdentifier(target.name) ||
+    target.name.text !== "resolve"
+  ) {
+    return false;
+  }
+  const receiver = unwrap(target.expression);
+  if (!ts.isIdentifier(receiver) || receiver.text !== "Promise") return false;
+  if (ctx.moduleGlobals.has("Promise") || ctx.topLevelFunctionNames.has("Promise") || ctx.classSet.has("Promise")) {
+    return false;
+  }
+  if (sourceHasPromiseImportOrDeclareBinding(receiver.getSourceFile())) return false;
+
+  const declarations = ctx.oracle.declarationsOf(receiver);
+  if (declarations.length === 0) return false;
+  const ambientDeclarations = declarations.filter(
+    (declaration) => !isSyntheticPropertyAssignmentReceiverDeclaration(declaration),
+  );
+  return (
+    ambientDeclarations.length > 0 &&
+    ambientDeclarations.every((declaration) => declaration.getSourceFile().isDeclarationFile)
+  );
 }

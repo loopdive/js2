@@ -1,0 +1,1 @@
+coercion-sites gate: OK (no net vocabulary growth across 0 changed codegen file(s); base: env:LOC_GATE_BASE).

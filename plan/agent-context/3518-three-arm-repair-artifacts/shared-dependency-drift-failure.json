@@ -1,0 +1,60 @@
+{
+  "status": "BLOCKED_AT_REAL_POSITIVE_PREFLIGHT",
+  "exitCode": 1,
+  "positiveControlsPassed": 0,
+  "negativeControlsExecuted": 0,
+  "observedDependencyCensus": {
+    "root": "/Users/thomas/Code/js2/node_modules",
+    "count": 31789,
+    "sha256": "a0fd4dada69bc1989a89ae492d76cd9722a5d5a1d503b2be21b1f867f5e33711"
+  },
+  "manifestDependencySha256": "3eb0bbaa82a6b0a85d47598abfa35f78696e95048ea41048246b03e8d6faab65",
+  "clarification": "A real preflight attempt stopped at dependency admission before source/Git checks. No successful full preflight or frozen replay occurred. The proposed late controls are not measured coverage. No baseline, dependency, manifest or compiler writes; no compiler/comparison launches.",
+  "run": {
+    "schema": "frame-delay-late-admission-controls-v1",
+    "manifestSha256": "ffc56c483ec1b4fb503fa868b2c51fbc1959cdb274233a2056abd49c0a8b85c2",
+    "contractSha256": "d664380114128fff2eb7588927eecdd057cfcabd51b11ead8d8b666ccdc81082",
+    "node": "v22.23.2",
+    "platform": "darwin",
+    "arch": "arm64",
+    "status": "FAIL",
+    "tests": 1,
+    "passed": 0,
+    "nativeObservation": "one full real review preflight; optional Git index writes disabled",
+    "replay": "observed file SHA256 values, directory/link metadata and read-only Git results; census strings rehashed normally; zero host IO in replay",
+    "limitations": [
+      "not execution approval",
+      "not a repeated live filesystem admission",
+      "real OS Git dirty/untracked behavior not exercised by synthetic output mutations",
+      "final protected-original/candidate-repaired alias assertions not independently reached; earlier root/census defenses reject first",
+      "no compiler or comparison arms"
+    ],
+    "counters": {
+      "nativeReads": 29593,
+      "nativeReadBytes": 1336556852,
+      "nativeRealpaths": 2207,
+      "nativeLists": 5979,
+      "nativeGit": 0,
+      "replayReads": 0,
+      "replayHashes": 0,
+      "comparisonRuns": 0,
+      "compilerInvocations": 0
+    },
+    "cacheEntries": {
+      "reads": 29593,
+      "realpaths": 2207,
+      "lists": 5979,
+      "git": 0
+    },
+    "results": [
+      {
+        "name": "STOP",
+        "pass": false,
+        "error": {
+          "name": "AssertionError",
+          "message": "complete dependency census drift\n+ actual - expected\n\n  {\n    count: 31789,\n    root: '/Users/thomas/Code/js2/node_modules',\n+   sha256: 'a0fd4dada69bc1989a89ae492d76cd9722a5d5a1d503b2be21b1f867f5e33711'\n-   sha256: '3eb0bbaa82a6b0a85d47598abfa35f78696e95048ea41048246b03e8d6faab65'\n  }\n"
+        }
+      }
+    ]
+  }
+}

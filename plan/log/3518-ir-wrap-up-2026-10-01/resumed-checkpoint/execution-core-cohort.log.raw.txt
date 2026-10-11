@@ -1,0 +1,12 @@
+
+ RUN  v3.2.4 /private/tmp/js2-ir-source-contracts-main-20261001
+
+ ✓ tests/issue-3518-core-vocabulary-seam.test.ts (20 tests) 1375ms
+ ✓ tests/issue-3518-core-vocabulary-evolution.test.ts (132 tests) 11274ms
+
+ Test Files  2 passed (2)
+      Tests  152 passed (152)
+   Start at  06:00:37
+   Duration  13.13s (transform 103ms, setup 0ms, collect 321ms, tests 12.65s, environment 0ms, prepare 29ms)
+
+JSON report written to /private/tmp/js2-ir-source-contracts-main-20261001/.tmp/source-contracts-main/resume-core/core-cohort.json

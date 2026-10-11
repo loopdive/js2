@@ -40,7 +40,9 @@ if (!compiled.success) {
 }
 
 const module = await WebAssembly.compile(compiled.binary);
-const imports = buildImports(compiled.imports, undefined, compiled.stringPool);
+// (#6779) lodash's root detection reaches `Function("return this")()`; keep the
+// pre-#6779 dynamic-code behaviour rather than the library's `deny` default.
+const imports = buildImports(compiled.imports, undefined, compiled.stringPool, { dynamicCode: "hostEval" });
 const instance = await WebAssembly.instantiate(module, imports);
 imports.setExports?.(instance.exports);
 

@@ -1566,6 +1566,8 @@ async function wasmtimeCell(
     fileName: source.path,
     ...LANDING_WASMTIME_COMPILE_OPTIONS,
     experimentalIR: false,
+    // #6776: js2CompileMs below is published; keep it comparable with pre-validation runs.
+    validate: false,
   } as const;
   const compiled = await compile(source.source, compileOptions);
   const js2CompileMs = performance.now() - started;

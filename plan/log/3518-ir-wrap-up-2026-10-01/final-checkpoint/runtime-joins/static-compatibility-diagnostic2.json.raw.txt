@@ -1,0 +1,2671 @@
+{
+  "kind": "static syntax/source-receipt compatibility only; no tests/checker/compiler",
+  "head": "1265c47d6fc41300a380ef7e4abc45fdfcfd2c61",
+  "stageResults": [
+    {
+      "name": "assertIntrinsicSpecialization unchanged",
+      "result": "accepted"
+    },
+    {
+      "name": "callableSourceView pre-vector-clock",
+      "result": "accepted (all original10link/5owner/stage checks retained)"
+    },
+    {
+      "name": "callableSourceView pre-clock-callable",
+      "result": "accepted (all original10link/5owner/stage checks retained)"
+    },
+    {
+      "name": "acceptedHistoricalDeclarations src/ir/runtime/contracts/intrinsics.ts",
+      "result": "original receipt accepted"
+    },
+    {
+      "name": "acceptedHistoricalDeclarations src/ir/async-runtime-providers.ts",
+      "result": "original receipt accepted"
+    },
+    {
+      "name": "acceptedHistoricalDeclarations src/ir/runtime-manifest.ts",
+      "result": "original receipt accepted"
+    },
+    {
+      "name": "acceptedHistoricalDeclarations src/ir/intrinsics.ts",
+      "result": "original receipt accepted"
+    },
+    {
+      "name": "acceptedHistoricalDeclarations src/ir/async-plan.ts",
+      "result": "original receipt accepted"
+    },
+    {
+      "name": "acceptedHistoricalDeclarations src/ir/intrinsic-support.ts",
+      "result": "original receipt accepted"
+    },
+    {
+      "name": "acceptedHistoricalDeclarations src/ir/runtime/callable-declarations.ts",
+      "result": "original receipt accepted"
+    },
+    {
+      "name": "acceptedHistoricalDeclarations src/ir/runtime/contracts/manifest.ts",
+      "result": "original receipt accepted"
+    },
+    {
+      "name": "canonical alias and combined verifier source",
+      "result": 3766
+    },
+    {
+      "name": "runtime75 moved src/runtime/contracts/async-provider-schema.ts",
+      "result": "exact moved requirements accepted"
+    },
+    {
+      "name": "runtime75 moved src/runtime/contracts/provider-policy.ts",
+      "result": "exact moved requirements accepted"
+    },
+    {
+      "name": "runtime75 moved src/ir/runtime/contracts/intrinsics.ts",
+      "result": "exact moved requirements accepted"
+    },
+    {
+      "name": "runtime75 moved src/ir/runtime/contracts/manifest.ts",
+      "result": "exact moved requirements accepted"
+    },
+    {
+      "name": "runtime75 retained src/ir/async-runtime-providers.ts",
+      "result": "exact retained requirements accepted"
+    },
+    {
+      "name": "runtime75 retained src/ir/runtime-manifest.ts",
+      "result": "exact retained requirements accepted"
+    },
+    {
+      "name": "runtime75 retained src/ir/intrinsics.ts",
+      "result": "exact retained requirements accepted"
+    },
+    {
+      "name": "runtime75 retained src/ir/async-plan.ts",
+      "result": "exact retained requirements accepted"
+    },
+    {
+      "name": "runtime75 retained src/ir/intrinsic-support.ts",
+      "result": "exact retained requirements accepted"
+    }
+  ],
+  "receipts": [
+    {
+      "path": "src/ir/runtime/contracts/intrinsics.ts",
+      "count": 20,
+      "functions": 0,
+      "sha256": "3e3c8fd145f03837dce98ce6b364fabddb88cc98bcc9281304a8a48da009b3f9",
+      "order": [
+        [
+          "src/ir/runtime/contracts/intrinsics.ts",
+          "var",
+          "PURE_MATH_RUNTIME_FEATURES",
+          0
+        ],
+        [
+          "src/ir/runtime/contracts/intrinsics.ts",
+          "var",
+          "NUMERIC_COERCION_RUNTIME_FEATURES",
+          0
+        ],
+        [
+          "src/ir/runtime/contracts/intrinsics.ts",
+          "var",
+          "NUMBER_BOUNDARY_RUNTIME_FEATURES",
+          0
+        ],
+        [
+          "src/ir/runtime/contracts/intrinsics.ts",
+          "var",
+          "BOOLEAN_BOUNDARY_RUNTIME_FEATURES",
+          0
+        ],
+        [
+          "src/ir/runtime/contracts/intrinsics.ts",
+          "var",
+          "EXTERN_BOUNDARY_RUNTIME_FEATURES",
+          0
+        ],
+        [
+          "src/ir/runtime/contracts/intrinsics.ts",
+          "var",
+          "INTRINSIC_RUNTIME_FEATURES",
+          0
+        ],
+        [
+          "src/ir/runtime/contracts/intrinsics.ts",
+          "type",
+          "PureMathRuntimeFeature",
+          0
+        ],
+        [
+          "src/ir/runtime/contracts/intrinsics.ts",
+          "type",
+          "NumericCoercionRuntimeFeature",
+          0
+        ],
+        [
+          "src/ir/runtime/contracts/intrinsics.ts",
+          "type",
+          "NumberBoundaryRuntimeFeature",
+          0
+        ],
+        [
+          "src/ir/runtime/contracts/intrinsics.ts",
+          "type",
+          "BooleanBoundaryRuntimeFeature",
+          0
+        ],
+        [
+          "src/ir/runtime/contracts/intrinsics.ts",
+          "type",
+          "ExternBoundaryRuntimeFeature",
+          0
+        ],
+        [
+          "src/ir/runtime/contracts/intrinsics.ts",
+          "type",
+          "RuntimeFeature",
+          0
+        ],
+        [
+          "src/ir/runtime/contracts/intrinsics.ts",
+          "var",
+          "PURE_MATH_HOST_CAPABILITIES",
+          0
+        ],
+        [
+          "src/ir/runtime/contracts/intrinsics.ts",
+          "type",
+          "HostCapability",
+          0
+        ],
+        [
+          "src/ir/core/intrinsic-contracts.ts",
+          "interface",
+          "IntrinsicSignature",
+          0
+        ],
+        [
+          "src/ir/core/intrinsic-contracts.ts",
+          "interface",
+          "IntrinsicSourceLocation",
+          0
+        ],
+        [
+          "src/ir/core/intrinsic-contracts.ts",
+          "interface",
+          "IntrinsicUse",
+          0
+        ],
+        [
+          "src/ir/core/intrinsic-contracts.ts",
+          "interface",
+          "IntrinsicDefinition",
+          0
+        ],
+        [
+          "src/ir/core/intrinsic-contracts.ts",
+          "type",
+          "IntrinsicVerificationCode",
+          0
+        ],
+        [
+          "src/ir/core/intrinsic-contracts.ts",
+          "interface",
+          "IntrinsicVerificationFailure",
+          0
+        ]
+      ]
+    },
+    {
+      "path": "src/ir/async-runtime-providers.ts",
+      "count": 26,
+      "functions": 12,
+      "sha256": "e6c4a6e91bf4878715ef9b508342a42f7bd692c7bb8ca32fb33568be13635045",
+      "order": [
+        [
+          "src/ir/core/async-intents.ts",
+          "var",
+          "ASYNC_RUNTIME_FEATURE_SET",
+          0
+        ],
+        [
+          "src/ir/core/async-intents.ts",
+          "function",
+          "isAsyncRuntimeFeature",
+          0
+        ],
+        [
+          "src/ir/runtime/async-providers.ts",
+          "var",
+          "ASYNC_HOST_CAPABILITY_ID_SET",
+          0
+        ],
+        [
+          "src/ir/runtime/async-providers.ts",
+          "function",
+          "isAsyncHostCapabilityId",
+          0
+        ],
+        [
+          "src/ir/runtime/async-providers.ts",
+          "function",
+          "asAsyncHostAdapter",
+          0
+        ],
+        [
+          "src/ir/runtime/async-providers.ts",
+          "var",
+          "ASYNC_HOST_CAPABILITY_RECORDS",
+          0
+        ],
+        [
+          "src/ir/runtime/async-providers.ts",
+          "function",
+          "assertAsyncHostCapabilityRecord",
+          0
+        ],
+        [
+          "src/ir/runtime/async-providers.ts",
+          "function",
+          "assertCanonicalAsyncHostCapabilityRecord",
+          0
+        ],
+        [
+          "src/ir/runtime/async-providers.ts",
+          "function",
+          "resolveAsyncHostCapabilityRecord",
+          0
+        ],
+        [
+          "src/ir/runtime/async-providers.ts",
+          "function",
+          "isPreparedAsyncHostCapabilityId",
+          0
+        ],
+        [
+          "src/ir/runtime/async-providers.ts",
+          "function",
+          "asPreparedAsyncHostAdapter",
+          0
+        ],
+        [
+          "src/ir/runtime/async-providers.ts",
+          "function",
+          "assertCanonicalPreparedAsyncHostCapabilityRecord",
+          0
+        ],
+        [
+          "src/ir/runtime/async-providers.ts",
+          "var",
+          "ASYNC_HOST_ADAPTERS",
+          0
+        ],
+        [
+          "src/ir/runtime/async-providers.ts",
+          "var",
+          "ASYNC_OPTIONAL_HOST_ADAPTERS",
+          0
+        ],
+        [
+          "src/ir/runtime/async-providers.ts",
+          "function",
+          "capabilities",
+          0
+        ],
+        [
+          "src/ir/runtime/async-providers.ts",
+          "var",
+          "HOST_TARGET",
+          0
+        ],
+        [
+          "src/ir/runtime/async-providers.ts",
+          "var",
+          "STANDALONE_TARGET",
+          0
+        ],
+        [
+          "src/ir/runtime/async-providers.ts",
+          "var",
+          "WASMGC_BACKEND",
+          0
+        ],
+        [
+          "src/ir/runtime/async-providers.ts",
+          "var",
+          "NO_DEPENDENCIES",
+          0
+        ],
+        [
+          "src/ir/runtime/async-providers.ts",
+          "var",
+          "NO_HOST_CAPABILITIES",
+          0
+        ],
+        [
+          "src/ir/runtime/async-providers.ts",
+          "var",
+          "HOST_CAPABILITY_IMPLEMENTATION",
+          0
+        ],
+        [
+          "src/ir/runtime/async-providers.ts",
+          "var",
+          "HOST_MANAGED_IMPLEMENTATION",
+          0
+        ],
+        [
+          "src/ir/runtime/async-providers.ts",
+          "var",
+          "NATIVE_MANAGED_IMPLEMENTATION",
+          0
+        ],
+        [
+          "src/ir/runtime/async-providers.ts",
+          "function",
+          "provider",
+          0
+        ],
+        [
+          "src/ir/runtime/async-providers.ts",
+          "function",
+          "nativeProvider",
+          0
+        ],
+        [
+          "src/ir/runtime/async-providers.ts",
+          "var",
+          "ASYNC_RUNTIME_PROVIDERS",
+          0
+        ]
+      ]
+    },
+    {
+      "path": "src/ir/runtime-manifest.ts",
+      "count": 85,
+      "functions": 38,
+      "sha256": "3abe53cac71f94ed08ab1c9de8f44bfcc6ca0c254f7d6963bb50e8b572a6f478",
+      "order": [
+        [
+          "src/ir/runtime/manifest.ts",
+          "function",
+          "projectRuntimeBackendRequirements",
+          0
+        ],
+        [
+          "src/ir/runtime/manifest.ts",
+          "type",
+          "RuntimeManifestInvariantCode",
+          0
+        ],
+        [
+          "src/ir/runtime/manifest.ts",
+          "class",
+          "RuntimeManifestInvariantError",
+          0
+        ],
+        [
+          "src/ir/runtime/manifest.ts",
+          "var",
+          "ALL_TARGETS",
+          0
+        ],
+        [
+          "src/ir/runtime/manifest.ts",
+          "var",
+          "ALL_BACKENDS",
+          0
+        ],
+        [
+          "src/ir/runtime/manifest.ts",
+          "var",
+          "REFERENCE_ERROR_DECLARATION",
+          0
+        ],
+        [
+          "src/ir/runtime/callable-declarations.ts",
+          "var",
+          "REFERENCE_ERROR_SIGNATURE",
+          0
+        ],
+        [
+          "src/ir/runtime/manifest.ts",
+          "var",
+          "RUNTIME_FEATURE_SIGNATURES",
+          0
+        ],
+        [
+          "src/ir/runtime/manifest.ts",
+          "function",
+          "provider",
+          0
+        ],
+        [
+          "src/ir/runtime/manifest.ts",
+          "var",
+          "NUMERIC_COERCION_RUNTIME_PROVIDERS",
+          0
+        ],
+        [
+          "src/ir/runtime/manifest.ts",
+          "function",
+          "numberBoundaryProvider",
+          0
+        ],
+        [
+          "src/ir/runtime/manifest.ts",
+          "var",
+          "NUMBER_BOUNDARY_RUNTIME_PROVIDERS",
+          0
+        ],
+        [
+          "src/ir/runtime/manifest.ts",
+          "var",
+          "BOOLEAN_BOUNDARY_RUNTIME_PROVIDERS",
+          0
+        ],
+        [
+          "src/ir/runtime/manifest.ts",
+          "var",
+          "EXTERN_BOUNDARY_RUNTIME_PROVIDERS",
+          0
+        ],
+        [
+          "src/ir/runtime/manifest.ts",
+          "var",
+          "GENERATOR_NUMBER_BOX_RUNTIME_PROVIDERS",
+          0
+        ],
+        [
+          "src/ir/runtime/manifest.ts",
+          "var",
+          "STRING_COMPARE_RUNTIME_PROVIDERS",
+          0
+        ],
+        [
+          "src/ir/runtime/manifest.ts",
+          "function",
+          "stringCompareProviderId",
+          0
+        ],
+        [
+          "src/ir/runtime/manifest.ts",
+          "var",
+          "STRING_COMPARE_FEATURE_SET",
+          0
+        ],
+        [
+          "src/ir/runtime/manifest.ts",
+          "function",
+          "isStringCompareFeature",
+          0
+        ],
+        [
+          "src/ir/runtime/manifest.ts",
+          "var",
+          "STRING_EQ_RUNTIME_PROVIDERS",
+          0
+        ],
+        [
+          "src/ir/runtime/manifest.ts",
+          "function",
+          "stringEqProviderId",
+          0
+        ],
+        [
+          "src/ir/runtime/manifest.ts",
+          "var",
+          "STRING_EQ_FEATURE_SET",
+          0
+        ],
+        [
+          "src/ir/runtime/manifest.ts",
+          "function",
+          "isStringEqFeature",
+          0
+        ],
+        [
+          "src/ir/runtime/manifest.ts",
+          "var",
+          "STRING_LEN_RUNTIME_PROVIDERS",
+          0
+        ],
+        [
+          "src/ir/runtime/manifest.ts",
+          "function",
+          "stringLenProviderId",
+          0
+        ],
+        [
+          "src/ir/runtime/manifest.ts",
+          "var",
+          "STRING_LEN_FEATURE_SET",
+          0
+        ],
+        [
+          "src/ir/runtime/manifest.ts",
+          "function",
+          "isStringLenFeature",
+          0
+        ],
+        [
+          "src/ir/runtime/manifest.ts",
+          "var",
+          "STRING_CONCAT_RUNTIME_PROVIDERS",
+          0
+        ],
+        [
+          "src/ir/runtime/manifest.ts",
+          "var",
+          "STRING_CONCAT_OWNED_RUNTIME_FEATURE",
+          0
+        ],
+        [
+          "src/ir/runtime/manifest.ts",
+          "function",
+          "stringConcatProviderId",
+          0
+        ],
+        [
+          "src/ir/runtime/manifest.ts",
+          "var",
+          "STRING_CONCAT_FEATURE_SET",
+          0
+        ],
+        [
+          "src/ir/runtime/manifest.ts",
+          "function",
+          "isStringConcatFeature",
+          0
+        ],
+        [
+          "src/ir/runtime/manifest.ts",
+          "var",
+          "STRING_CHAR_CODE_AT_RUNTIME_PROVIDERS",
+          0
+        ],
+        [
+          "src/ir/runtime/manifest.ts",
+          "var",
+          "STRING_CONCAT_MANY_RUNTIME_PROVIDERS",
+          0
+        ],
+        [
+          "src/ir/runtime/manifest.ts",
+          "function",
+          "stringCharCodeAtProviderId",
+          0
+        ],
+        [
+          "src/ir/runtime/manifest.ts",
+          "var",
+          "STRING_CHAR_CODE_AT_FEATURE_SET",
+          0
+        ],
+        [
+          "src/ir/runtime/manifest.ts",
+          "function",
+          "isStringCharCodeAtFeature",
+          0
+        ],
+        [
+          "src/ir/runtime/manifest.ts",
+          "function",
+          "stringConcatManyProviderId",
+          0
+        ],
+        [
+          "src/ir/runtime/manifest.ts",
+          "var",
+          "STRING_CONST_RUNTIME_PROVIDERS",
+          0
+        ],
+        [
+          "src/ir/runtime/manifest.ts",
+          "function",
+          "stringConstProviderId",
+          0
+        ],
+        [
+          "src/ir/runtime/manifest.ts",
+          "var",
+          "STRING_CONST_FEATURE_SET",
+          0
+        ],
+        [
+          "src/ir/runtime/manifest.ts",
+          "function",
+          "isStringConstFeature",
+          0
+        ],
+        [
+          "src/ir/runtime/manifest.ts",
+          "var",
+          "STRING_CONCAT_MANY_FEATURE_SET",
+          0
+        ],
+        [
+          "src/ir/runtime/manifest.ts",
+          "function",
+          "isStringConcatManyFeature",
+          0
+        ],
+        [
+          "src/ir/runtime/manifest.ts",
+          "function",
+          "stringConcatManyArityCap",
+          0
+        ],
+        [
+          "src/ir/runtime/manifest.ts",
+          "function",
+          "generatorNumberBoxProviderId",
+          0
+        ],
+        [
+          "src/ir/runtime/manifest.ts",
+          "var",
+          "GENERATOR_NUMBER_BOX_FEATURE_SET",
+          0
+        ],
+        [
+          "src/ir/runtime/manifest.ts",
+          "function",
+          "isGeneratorNumberBoxFeature",
+          0
+        ],
+        [
+          "src/ir/runtime/manifest.ts",
+          "function",
+          "booleanBoundaryProviderId",
+          0
+        ],
+        [
+          "src/ir/runtime/manifest.ts",
+          "var",
+          "BOOLEAN_BOUNDARY_FEATURE_SET",
+          0
+        ],
+        [
+          "src/ir/runtime/manifest.ts",
+          "function",
+          "isBooleanBoundaryFeature",
+          0
+        ],
+        [
+          "src/ir/runtime/manifest.ts",
+          "function",
+          "externIsUndefinedProviderId",
+          0
+        ],
+        [
+          "src/ir/runtime/manifest.ts",
+          "var",
+          "EXTERN_BOUNDARY_FEATURE_SET",
+          0
+        ],
+        [
+          "src/ir/runtime/manifest.ts",
+          "function",
+          "isExternBoundaryFeature",
+          0
+        ],
+        [
+          "src/ir/runtime/manifest.ts",
+          "function",
+          "numberBoundaryProviderId",
+          0
+        ],
+        [
+          "src/ir/runtime/manifest.ts",
+          "var",
+          "NUMBER_BOUNDARY_FEATURE_SET",
+          0
+        ],
+        [
+          "src/ir/runtime/manifest.ts",
+          "function",
+          "isNumberBoundaryFeature",
+          0
+        ],
+        [
+          "src/ir/runtime/manifest.ts",
+          "var",
+          "PROVIDERS_BY_FEATURE",
+          0
+        ],
+        [
+          "src/ir/runtime/manifest.ts",
+          "var",
+          "PURE_MATH_RUNTIME_PROVIDERS",
+          0
+        ],
+        [
+          "src/ir/runtime/manifest.ts",
+          "var",
+          "HOST_CALLBACK_WRAP_RUNTIME_PROVIDERS",
+          0
+        ],
+        [
+          "src/ir/runtime/manifest.ts",
+          "function",
+          "hostCallbackWrapProviderId",
+          0
+        ],
+        [
+          "src/ir/runtime/manifest.ts",
+          "var",
+          "HOST_CALLBACK_WRAP_FEATURE_SET",
+          0
+        ],
+        [
+          "src/ir/runtime/manifest.ts",
+          "function",
+          "isHostCallbackWrapFeature",
+          0
+        ],
+        [
+          "src/ir/runtime/manifest.ts",
+          "var",
+          "FUNCTION_PROTOTYPE_CALL_RUNTIME_PROVIDERS",
+          0
+        ],
+        [
+          "src/ir/runtime/manifest.ts",
+          "function",
+          "functionPrototypeCallProviderId",
+          0
+        ],
+        [
+          "src/ir/runtime/manifest.ts",
+          "var",
+          "FUNCTION_PROTOTYPE_CALL_FEATURE_SET",
+          0
+        ],
+        [
+          "src/ir/runtime/manifest.ts",
+          "function",
+          "isFunctionPrototypeCallFeature",
+          0
+        ],
+        [
+          "src/ir/runtime/callable-declarations.ts",
+          "var",
+          "REFERENCE_ERROR_RUNTIME_PROVIDERS",
+          0
+        ],
+        [
+          "src/ir/runtime/manifest.ts",
+          "var",
+          "RUNTIME_PROVIDERS",
+          0
+        ],
+        [
+          "src/ir/runtime/manifest.ts",
+          "var",
+          "FEATURE_SET",
+          0
+        ],
+        [
+          "src/ir/runtime/manifest.ts",
+          "var",
+          "PROVIDER_ID_SET",
+          0
+        ],
+        [
+          "src/ir/runtime/manifest.ts",
+          "var",
+          "HOST_CAPABILITY_ID_SET",
+          0
+        ],
+        [
+          "src/ir/runtime/manifest.ts",
+          "var",
+          "TARGET_SET",
+          0
+        ],
+        [
+          "src/ir/runtime/manifest.ts",
+          "var",
+          "BACKEND_SET",
+          0
+        ],
+        [
+          "src/ir/runtime/manifest.ts",
+          "function",
+          "isRuntimeFeature",
+          0
+        ],
+        [
+          "src/ir/runtime/manifest.ts",
+          "function",
+          "compareStrings",
+          0
+        ],
+        [
+          "src/ir/runtime/manifest.ts",
+          "function",
+          "signatureEquals",
+          0
+        ],
+        [
+          "src/ir/runtime/manifest.ts",
+          "function",
+          "cloneProvider",
+          0
+        ],
+        [
+          "src/ir/runtime/manifest.ts",
+          "function",
+          "cycleKey",
+          0
+        ],
+        [
+          "src/ir/runtime/manifest.ts",
+          "function",
+          "useOrder",
+          0
+        ],
+        [
+          "src/ir/runtime/manifest.ts",
+          "function",
+          "stronglyConnectedComponents",
+          0
+        ],
+        [
+          "src/ir/runtime/manifest.ts",
+          "function",
+          "buildProviderComponents",
+          0
+        ],
+        [
+          "src/ir/runtime/manifest.ts",
+          "interface",
+          "RuntimeManifestBuilderOptions",
+          0
+        ],
+        [
+          "src/ir/runtime/manifest.ts",
+          "type",
+          "BuilderState",
+          0
+        ],
+        [
+          "src/ir/runtime/manifest.ts",
+          "class",
+          "RuntimeManifestBuilder",
+          0
+        ]
+      ]
+    },
+    {
+      "path": "src/ir/intrinsics.ts",
+      "count": 24,
+      "functions": 5,
+      "sha256": "eee3f92b352fb705c5addda7f396ce665c329ab53e501cfe1f6d7e0fbd93291f",
+      "order": [
+        [
+          "src/ir/core/intrinsics.ts",
+          "var",
+          "F64_TYPE",
+          0
+        ],
+        [
+          "src/ir/core/intrinsics.ts",
+          "var",
+          "I32_TYPE",
+          0
+        ],
+        [
+          "src/ir/core/intrinsics.ts",
+          "var",
+          "U32_TYPE",
+          0
+        ],
+        [
+          "src/ir/core/intrinsics.ts",
+          "var",
+          "EXTERNREF_TYPE",
+          0
+        ],
+        [
+          "src/ir/core/intrinsics.ts",
+          "var",
+          "F64_TO_EXTERNREF_INTRINSIC_SIGNATURE",
+          0
+        ],
+        [
+          "src/ir/core/intrinsics.ts",
+          "var",
+          "EXTERNREF_TO_F64_INTRINSIC_SIGNATURE",
+          0
+        ],
+        [
+          "src/ir/core/intrinsics.ts",
+          "var",
+          "I32_TO_EXTERNREF_INTRINSIC_SIGNATURE",
+          0
+        ],
+        [
+          "src/ir/core/intrinsics.ts",
+          "var",
+          "EXTERNREF_TO_I32_INTRINSIC_SIGNATURE",
+          0
+        ],
+        [
+          "src/ir/core/intrinsics.ts",
+          "var",
+          "EXTERNREF_PAIR_TO_I32_INTRINSIC_SIGNATURE",
+          0
+        ],
+        [
+          "src/ir/core/intrinsics.ts",
+          "var",
+          "REF_EXTERN_TYPE",
+          0
+        ],
+        [
+          "src/ir/core/intrinsics.ts",
+          "var",
+          "EXTERNREF_PAIR_TO_REF_EXTERN_INTRINSIC_SIGNATURE",
+          0
+        ],
+        [
+          "src/ir/core/intrinsics.ts",
+          "var",
+          "EXTERNREF_I32_TO_F64_INTRINSIC_SIGNATURE",
+          0
+        ],
+        [
+          "src/ir/core/intrinsics.ts",
+          "var",
+          "EXTERNREF_GLOBAL_INTRINSIC_SIGNATURE",
+          0
+        ],
+        [
+          "src/ir/core/intrinsics.ts",
+          "var",
+          "F64_TO_U32_INTRINSIC_SIGNATURE",
+          0
+        ],
+        [
+          "src/ir/core/intrinsics.ts",
+          "var",
+          "F64_UNARY_INTRINSIC_SIGNATURE",
+          0
+        ],
+        [
+          "src/ir/core/intrinsics.ts",
+          "var",
+          "F64_BINARY_INTRINSIC_SIGNATURE",
+          0
+        ],
+        [
+          "src/ir/core/intrinsics.ts",
+          "function",
+          "definition",
+          0
+        ],
+        [
+          "src/ir/core/intrinsics.ts",
+          "var",
+          "INTRINSIC_DEFINITIONS",
+          0
+        ],
+        [
+          "src/ir/core/intrinsics.ts",
+          "var",
+          "INTRINSIC_ID_SET",
+          0
+        ],
+        [
+          "src/ir/core/intrinsics.ts",
+          "function",
+          "isIntrinsicId",
+          0
+        ],
+        [
+          "src/ir/analysis/intrinsics.ts",
+          "class",
+          "IntrinsicEffectEvidence",
+          0
+        ],
+        [
+          "src/ir/analysis/intrinsics.ts",
+          "function",
+          "intrinsicEffectEvidence",
+          0
+        ],
+        [
+          "src/ir/analysis/intrinsics.ts",
+          "function",
+          "signatureMismatch",
+          0
+        ],
+        [
+          "src/ir/analysis/intrinsics.ts",
+          "function",
+          "verifyIntrinsicUse",
+          0
+        ]
+      ]
+    },
+    {
+      "path": "src/ir/async-plan.ts",
+      "count": 48,
+      "functions": 39,
+      "sha256": "a7aada275dcd9af1111649c58a4fcce678cd018d6b458f431edcf9eb6e61ab77",
+      "order": [
+        [
+          "src/ir/analysis/async-plan.ts",
+          "function",
+          "asAsyncStateId",
+          0
+        ],
+        [
+          "src/ir/analysis/async-plan.ts",
+          "function",
+          "asAsyncHandlerId",
+          0
+        ],
+        [
+          "src/ir/analysis/async-plan.ts",
+          "function",
+          "canonicalPromiseAbi",
+          0
+        ],
+        [
+          "src/ir/runtime/async-attachment.ts",
+          "var",
+          "preparedManifestByPlan",
+          0
+        ],
+        [
+          "src/ir/runtime/async-attachment.ts",
+          "function",
+          "runtimeAttachmentError",
+          0
+        ],
+        [
+          "src/ir/runtime/async-attachment.ts",
+          "function",
+          "sameOrderedStrings",
+          0
+        ],
+        [
+          "src/ir/runtime/async-attachment.ts",
+          "function",
+          "expectedAsyncProviders",
+          0
+        ],
+        [
+          "src/ir/runtime/async-attachment.ts",
+          "function",
+          "assertFrozenProvider",
+          0
+        ],
+        [
+          "src/ir/runtime/async-attachment.ts",
+          "function",
+          "freezePreparedIrAsyncStateBody",
+          0
+        ],
+        [
+          "src/ir/runtime/async-attachment.ts",
+          "function",
+          "isPreparedIrAsyncStateBodyFrozen",
+          0
+        ],
+        [
+          "src/ir/runtime/async-attachment.ts",
+          "function",
+          "sealPreparedIrAsyncStates",
+          0
+        ],
+        [
+          "src/ir/runtime/async-attachment.ts",
+          "function",
+          "assertPreparedIrAsyncRuntimeCurrent",
+          0
+        ],
+        [
+          "src/ir/runtime/async-attachment.ts",
+          "function",
+          "createPreparedIrAsyncRuntime",
+          0
+        ],
+        [
+          "src/ir/runtime/async-attachment.ts",
+          "function",
+          "sealPreparedIrAsyncRuntimeContainers",
+          0
+        ],
+        [
+          "src/ir/analysis/async-plan.ts",
+          "type",
+          "IrAsyncPlanInvariantCode",
+          0
+        ],
+        [
+          "src/ir/analysis/async-plan.ts",
+          "interface",
+          "IrAsyncPlanVerifyError",
+          0
+        ],
+        [
+          "src/ir/analysis/async-plan.ts",
+          "class",
+          "IrAsyncPlanInvariantError",
+          0
+        ],
+        [
+          "src/ir/analysis/async-plan.ts",
+          "interface",
+          "StateLiveness",
+          0
+        ],
+        [
+          "src/ir/analysis/async-plan.ts",
+          "interface",
+          "StateEdge",
+          0
+        ],
+        [
+          "src/ir/analysis/async-plan.ts",
+          "var",
+          "runtimeIntentOrder",
+          0
+        ],
+        [
+          "src/ir/analysis/async-plan.ts",
+          "var",
+          "runtimeIntentRank",
+          0
+        ],
+        [
+          "src/ir/analysis/async-plan.ts",
+          "function",
+          "isNonNegativeSafeInteger",
+          0
+        ],
+        [
+          "src/ir/analysis/async-plan.ts",
+          "function",
+          "compareNumber",
+          0
+        ],
+        [
+          "src/ir/analysis/async-plan.ts",
+          "function",
+          "sameValueSet",
+          0
+        ],
+        [
+          "src/ir/analysis/async-plan.ts",
+          "function",
+          "describeValues",
+          0
+        ],
+        [
+          "src/ir/analysis/async-plan.ts",
+          "function",
+          "terminatorUses",
+          0
+        ],
+        [
+          "src/ir/analysis/async-plan.ts",
+          "function",
+          "stateUpdates",
+          0
+        ],
+        [
+          "src/ir/analysis/async-plan.ts",
+          "function",
+          "updateMap",
+          0
+        ],
+        [
+          "src/ir/analysis/async-plan.ts",
+          "function",
+          "stateEdges",
+          0
+        ],
+        [
+          "src/ir/analysis/async-plan.ts",
+          "function",
+          "stateLiveness",
+          0
+        ],
+        [
+          "src/ir/analysis/async-plan.ts",
+          "function",
+          "addPurityError",
+          0
+        ],
+        [
+          "src/ir/analysis/async-plan.ts",
+          "function",
+          "verifyPureData",
+          0
+        ],
+        [
+          "src/ir/analysis/async-plan.ts",
+          "function",
+          "addError",
+          0
+        ],
+        [
+          "src/ir/analysis/async-plan.ts",
+          "type",
+          "AsyncValueChecker",
+          0
+        ],
+        [
+          "src/ir/analysis/async-plan.ts",
+          "function",
+          "verifyResumeIncomingEdges",
+          0
+        ],
+        [
+          "src/ir/analysis/async-plan.ts",
+          "function",
+          "verifySpillUpdates",
+          0
+        ],
+        [
+          "src/ir/analysis/async-plan.ts",
+          "function",
+          "verifyCanonicalPromiseAbi",
+          0
+        ],
+        [
+          "src/ir/runtime/async-attachment.ts",
+          "function",
+          "preparedIrAsyncFrameCapabilityFailure",
+          0
+        ],
+        [
+          "src/ir/analysis/async-plan.ts",
+          "function",
+          "irAsyncPlanNeedsNumberBridge",
+          0
+        ],
+        [
+          "src/ir/analysis/async-plan.ts",
+          "function",
+          "requiredRuntimeIntents",
+          0
+        ],
+        [
+          "src/ir/analysis/async-plan.ts",
+          "function",
+          "verifyIrAsyncPlan",
+          0
+        ],
+        [
+          "src/ir/analysis/async-plan.ts",
+          "function",
+          "assertIrAsyncPlan",
+          0
+        ],
+        [
+          "src/ir/analysis/async-plan.ts",
+          "function",
+          "clonePlanData",
+          0
+        ],
+        [
+          "src/ir/analysis/async-plan.ts",
+          "function",
+          "canonicalPlanInput",
+          0
+        ],
+        [
+          "src/ir/analysis/async-plan.ts",
+          "function",
+          "createIrAsyncPlan",
+          0
+        ],
+        [
+          "src/ir/analysis/async-plan.ts",
+          "function",
+          "canonicalJson",
+          0
+        ],
+        [
+          "src/ir/analysis/async-plan.ts",
+          "function",
+          "serializeIrAsyncPlan",
+          0
+        ],
+        [
+          "src/ir/analysis/async-plan.ts",
+          "function",
+          "hashIrAsyncPlan",
+          0
+        ]
+      ]
+    },
+    {
+      "path": "src/ir/intrinsic-support.ts",
+      "count": 41,
+      "functions": 24,
+      "sha256": "eea4525b21f65d7334af27e6ee195dbbb7ca39b9dd57d5781345b80d60d2e8d7",
+      "order": [
+        [
+          "src/ir/runtime/intrinsic-verification.ts",
+          "var",
+          "BACKEND_COMPOSITE_BY_INTRINSIC",
+          0
+        ],
+        [
+          "src/ir/runtime/intrinsic-verification.ts",
+          "function",
+          "callableBindingKey",
+          0
+        ],
+        [
+          "src/ir/runtime/intrinsic-verification.ts",
+          "var",
+          "ADMITTED_CALLABLE_TARGETS",
+          0
+        ],
+        [
+          "src/ir/intrinsic-support.ts",
+          "function",
+          "projectStandaloneAsyncStateInstr",
+          0
+        ],
+        [
+          "src/ir/runtime/intrinsic-verification.ts",
+          "function",
+          "verifyIrIntrinsicInstruction",
+          0
+        ],
+        [
+          "src/ir/intrinsic-support.ts",
+          "function",
+          "mapArray",
+          0
+        ],
+        [
+          "src/ir/intrinsic-support.ts",
+          "function",
+          "valueTypesOf",
+          0
+        ],
+        [
+          "src/ir/intrinsic-support.ts",
+          "function",
+          "providerAttachment",
+          0
+        ],
+        [
+          "src/ir/intrinsic-support.ts",
+          "var",
+          "GENERATOR_NUMBER_BOX_RUNTIME_FEATURE",
+          0
+        ],
+        [
+          "src/ir/intrinsic-support.ts",
+          "function",
+          "preparedGeneratorNumberBoxProvider",
+          0
+        ],
+        [
+          "src/ir/intrinsic-support.ts",
+          "var",
+          "STRING_COMPARE_RUNTIME_FEATURE",
+          0
+        ],
+        [
+          "src/ir/intrinsic-support.ts",
+          "function",
+          "preparedStringCompareProvider",
+          0
+        ],
+        [
+          "src/ir/intrinsic-support.ts",
+          "var",
+          "STRING_EQ_RUNTIME_FEATURE",
+          0
+        ],
+        [
+          "src/ir/intrinsic-support.ts",
+          "function",
+          "preparedStringEqProvider",
+          0
+        ],
+        [
+          "src/ir/intrinsic-support.ts",
+          "var",
+          "STRING_LEN_RUNTIME_FEATURE",
+          0
+        ],
+        [
+          "src/ir/intrinsic-support.ts",
+          "function",
+          "preparedStringLenProvider",
+          0
+        ],
+        [
+          "src/ir/intrinsic-support.ts",
+          "var",
+          "STRING_CONCAT_RUNTIME_FEATURE",
+          0
+        ],
+        [
+          "src/ir/intrinsic-support.ts",
+          "var",
+          "STRING_CONCAT_OWNED_RUNTIME_FEATURE",
+          0
+        ],
+        [
+          "src/ir/intrinsic-support.ts",
+          "function",
+          "stringConcatFeatureFor",
+          0
+        ],
+        [
+          "src/ir/intrinsic-support.ts",
+          "function",
+          "preparedStringConcatProvider",
+          0
+        ],
+        [
+          "src/ir/intrinsic-support.ts",
+          "var",
+          "STRING_CHAR_CODE_AT_RUNTIME_FEATURE",
+          0
+        ],
+        [
+          "src/ir/intrinsic-support.ts",
+          "function",
+          "preparedStringCharCodeAtProvider",
+          0
+        ],
+        [
+          "src/ir/intrinsic-support.ts",
+          "var",
+          "STRING_CONCAT_MANY_RUNTIME_FEATURE",
+          0
+        ],
+        [
+          "src/ir/intrinsic-support.ts",
+          "function",
+          "preparedStringConcatManyProvider",
+          0
+        ],
+        [
+          "src/ir/intrinsic-support.ts",
+          "var",
+          "STRING_CONST_RUNTIME_FEATURE",
+          0
+        ],
+        [
+          "src/ir/intrinsic-support.ts",
+          "var",
+          "STRING_CONST_UTF16_RUNTIME_FEATURE",
+          0
+        ],
+        [
+          "src/ir/intrinsic-support.ts",
+          "function",
+          "stringConstFeatureFor",
+          0
+        ],
+        [
+          "src/ir/intrinsic-support.ts",
+          "function",
+          "preparedStringConstProvider",
+          0
+        ],
+        [
+          "src/ir/intrinsic-support.ts",
+          "var",
+          "HOST_CALLBACK_WRAP_RUNTIME_FEATURE",
+          0
+        ],
+        [
+          "src/ir/intrinsic-support.ts",
+          "var",
+          "FUNCTION_PROTOTYPE_CALL_RUNTIME_FEATURE",
+          0
+        ],
+        [
+          "src/ir/intrinsic-support.ts",
+          "function",
+          "preparedHostCallbackWrapProvider",
+          0
+        ],
+        [
+          "src/ir/intrinsic-support.ts",
+          "function",
+          "preparedFunctionPrototypeCallProvider",
+          0
+        ],
+        [
+          "src/ir/intrinsic-support.ts",
+          "function",
+          "sameProvider",
+          0
+        ],
+        [
+          "src/ir/intrinsic-support.ts",
+          "function",
+          "attachProvidersToBuffer",
+          0
+        ],
+        [
+          "src/ir/intrinsic-support.ts",
+          "function",
+          "attachProviders",
+          0
+        ],
+        [
+          "src/ir/intrinsic-support.ts",
+          "interface",
+          "IrRuntimeManifestDemands",
+          0
+        ],
+        [
+          "src/ir/intrinsic-support.ts",
+          "interface",
+          "PrepareIrRuntimeManifestInput",
+          0
+        ],
+        [
+          "src/ir/intrinsic-support.ts",
+          "class",
+          "IrRuntimeFunctionPreparationError",
+          0
+        ],
+        [
+          "src/ir/intrinsic-support.ts",
+          "function",
+          "prepareIrRuntimeManifest",
+          0
+        ],
+        [
+          "src/ir/intrinsic-support.ts",
+          "function",
+          "prepareIrRuntimeManifest",
+          1
+        ],
+        [
+          "src/ir/intrinsic-support.ts",
+          "function",
+          "prepareIrRuntimeManifest",
+          2
+        ]
+      ]
+    },
+    {
+      "path": "src/ir/runtime/callable-declarations.ts",
+      "count": 5,
+      "functions": 2,
+      "sha256": "ae60c2163949338107ad8f0ba7c2d3e7e2e9e7e469e79ebda871a9f2b7b0700d",
+      "order": [
+        [
+          "src/ir/runtime/callable-declarations.ts",
+          "interface",
+          "IrRuntimeCallableDeclaration",
+          0
+        ],
+        [
+          "src/ir/runtime/callable-declarations.ts",
+          "function",
+          "semanticTypes",
+          0
+        ],
+        [
+          "src/ir/runtime/callable-declarations.ts",
+          "var",
+          "referenceError",
+          0
+        ],
+        [
+          "src/ir/runtime/callable-declarations.ts",
+          "var",
+          "REFERENCE_ERROR_DECLARATION",
+          0
+        ],
+        [
+          "src/ir/runtime/callable-declarations.ts",
+          "function",
+          "irRuntimeCallableDeclaration",
+          0
+        ]
+      ]
+    },
+    {
+      "path": "src/ir/runtime/contracts/manifest.ts",
+      "count": 67,
+      "functions": 0,
+      "sha256": "e7d1bd5d610126b6dcf945ca5584114b21a779b2803139c357f146cb7a16841e",
+      "order": [
+        [
+          "src/ir/runtime/contracts/manifest.ts",
+          "type",
+          "RuntimeFeature",
+          0
+        ],
+        [
+          "src/ir/runtime/contracts/manifest.ts",
+          "type",
+          "HostCapabilityId",
+          0
+        ],
+        [
+          "src/ir/runtime/contracts/manifest.ts",
+          "var",
+          "RUNTIME_BACKEND_REQUIREMENTS",
+          0
+        ],
+        [
+          "src/ir/runtime/contracts/manifest.ts",
+          "type",
+          "RuntimeBackendRequirement",
+          0
+        ],
+        [
+          "src/ir/runtime/contracts/manifest.ts",
+          "var",
+          "PURE_MATH_RUNTIME_PROVIDER_IDS",
+          0
+        ],
+        [
+          "src/ir/runtime/contracts/manifest.ts",
+          "type",
+          "MathRuntimeProviderId",
+          0
+        ],
+        [
+          "src/ir/runtime/contracts/manifest.ts",
+          "var",
+          "NUMERIC_COERCION_RUNTIME_PROVIDER_IDS",
+          0
+        ],
+        [
+          "src/ir/runtime/contracts/manifest.ts",
+          "type",
+          "NumericCoercionRuntimeProviderId",
+          0
+        ],
+        [
+          "src/ir/runtime/contracts/manifest.ts",
+          "var",
+          "NUMBER_BOUNDARY_RUNTIME_PROVIDER_IDS",
+          0
+        ],
+        [
+          "src/ir/runtime/contracts/manifest.ts",
+          "type",
+          "NumberBoundaryRuntimeProviderId",
+          0
+        ],
+        [
+          "src/ir/runtime/contracts/manifest.ts",
+          "var",
+          "BOOLEAN_BOUNDARY_RUNTIME_PROVIDER_IDS",
+          0
+        ],
+        [
+          "src/ir/runtime/contracts/manifest.ts",
+          "type",
+          "BooleanBoundaryRuntimeProviderId",
+          0
+        ],
+        [
+          "src/ir/runtime/contracts/manifest.ts",
+          "var",
+          "EXTERN_BOUNDARY_RUNTIME_PROVIDER_IDS",
+          0
+        ],
+        [
+          "src/ir/runtime/contracts/manifest.ts",
+          "type",
+          "ExternBoundaryRuntimeProviderId",
+          0
+        ],
+        [
+          "src/ir/runtime/contracts/manifest.ts",
+          "var",
+          "GENERATOR_NUMBER_BOX_RUNTIME_FEATURES",
+          0
+        ],
+        [
+          "src/ir/runtime/contracts/manifest.ts",
+          "type",
+          "GeneratorNumberBoxRuntimeFeature",
+          0
+        ],
+        [
+          "src/ir/runtime/contracts/manifest.ts",
+          "var",
+          "GENERATOR_NUMBER_BOX_RUNTIME_PROVIDER_IDS",
+          0
+        ],
+        [
+          "src/ir/runtime/contracts/manifest.ts",
+          "type",
+          "GeneratorNumberBoxRuntimeProviderId",
+          0
+        ],
+        [
+          "src/ir/runtime/contracts/manifest.ts",
+          "var",
+          "STRING_COMPARE_RUNTIME_FEATURES",
+          0
+        ],
+        [
+          "src/ir/runtime/contracts/manifest.ts",
+          "type",
+          "StringCompareRuntimeFeature",
+          0
+        ],
+        [
+          "src/ir/runtime/contracts/manifest.ts",
+          "var",
+          "STRING_COMPARE_RUNTIME_PROVIDER_IDS",
+          0
+        ],
+        [
+          "src/ir/runtime/contracts/manifest.ts",
+          "type",
+          "StringCompareRuntimeProviderId",
+          0
+        ],
+        [
+          "src/ir/runtime/contracts/manifest.ts",
+          "var",
+          "STRING_EQ_RUNTIME_FEATURES",
+          0
+        ],
+        [
+          "src/ir/runtime/contracts/manifest.ts",
+          "type",
+          "StringEqRuntimeFeature",
+          0
+        ],
+        [
+          "src/ir/runtime/contracts/manifest.ts",
+          "var",
+          "STRING_EQ_RUNTIME_PROVIDER_IDS",
+          0
+        ],
+        [
+          "src/ir/runtime/contracts/manifest.ts",
+          "type",
+          "StringEqRuntimeProviderId",
+          0
+        ],
+        [
+          "src/ir/runtime/contracts/manifest.ts",
+          "var",
+          "STRING_LEN_RUNTIME_FEATURES",
+          0
+        ],
+        [
+          "src/ir/runtime/contracts/manifest.ts",
+          "type",
+          "StringLenRuntimeFeature",
+          0
+        ],
+        [
+          "src/ir/runtime/contracts/manifest.ts",
+          "var",
+          "STRING_LEN_RUNTIME_PROVIDER_IDS",
+          0
+        ],
+        [
+          "src/ir/runtime/contracts/manifest.ts",
+          "type",
+          "StringLenRuntimeProviderId",
+          0
+        ],
+        [
+          "src/ir/runtime/contracts/manifest.ts",
+          "var",
+          "STRING_CONCAT_RUNTIME_FEATURES",
+          0
+        ],
+        [
+          "src/ir/runtime/contracts/manifest.ts",
+          "type",
+          "StringConcatRuntimeFeature",
+          0
+        ],
+        [
+          "src/ir/runtime/contracts/manifest.ts",
+          "var",
+          "STRING_CONCAT_RUNTIME_PROVIDER_IDS",
+          0
+        ],
+        [
+          "src/ir/runtime/contracts/manifest.ts",
+          "type",
+          "StringConcatRuntimeProviderId",
+          0
+        ],
+        [
+          "src/ir/runtime/contracts/manifest.ts",
+          "var",
+          "STRING_CHAR_CODE_AT_RUNTIME_FEATURES",
+          0
+        ],
+        [
+          "src/ir/runtime/contracts/manifest.ts",
+          "type",
+          "StringCharCodeAtRuntimeFeature",
+          0
+        ],
+        [
+          "src/ir/runtime/contracts/manifest.ts",
+          "var",
+          "STRING_CHAR_CODE_AT_RUNTIME_PROVIDER_IDS",
+          0
+        ],
+        [
+          "src/ir/runtime/contracts/manifest.ts",
+          "type",
+          "StringCharCodeAtRuntimeProviderId",
+          0
+        ],
+        [
+          "src/ir/runtime/contracts/manifest.ts",
+          "var",
+          "STRING_CONCAT_MANY_RUNTIME_FEATURES",
+          0
+        ],
+        [
+          "src/ir/runtime/contracts/manifest.ts",
+          "type",
+          "StringConcatManyRuntimeFeature",
+          0
+        ],
+        [
+          "src/ir/runtime/contracts/manifest.ts",
+          "var",
+          "STRING_CONCAT_MANY_RUNTIME_PROVIDER_IDS",
+          0
+        ],
+        [
+          "src/ir/runtime/contracts/manifest.ts",
+          "type",
+          "StringConcatManyRuntimeProviderId",
+          0
+        ],
+        [
+          "src/ir/runtime/contracts/manifest.ts",
+          "var",
+          "STRING_CONCAT_MANY_NATIVE_ARITY",
+          0
+        ],
+        [
+          "src/ir/runtime/contracts/manifest.ts",
+          "var",
+          "STRING_CONST_RUNTIME_FEATURES",
+          0
+        ],
+        [
+          "src/ir/runtime/contracts/manifest.ts",
+          "type",
+          "StringConstRuntimeFeature",
+          0
+        ],
+        [
+          "src/ir/runtime/contracts/manifest.ts",
+          "var",
+          "STRING_CONST_RUNTIME_PROVIDER_IDS",
+          0
+        ],
+        [
+          "src/ir/runtime/contracts/manifest.ts",
+          "type",
+          "StringConstRuntimeProviderId",
+          0
+        ],
+        [
+          "src/ir/runtime/contracts/manifest.ts",
+          "var",
+          "HOST_CALLBACK_WRAP_RUNTIME_FEATURES",
+          0
+        ],
+        [
+          "src/ir/runtime/contracts/manifest.ts",
+          "type",
+          "HostCallbackWrapRuntimeFeature",
+          0
+        ],
+        [
+          "src/ir/runtime/contracts/manifest.ts",
+          "var",
+          "HOST_CALLBACK_WRAP_RUNTIME_PROVIDER_IDS",
+          0
+        ],
+        [
+          "src/ir/runtime/contracts/manifest.ts",
+          "type",
+          "HostCallbackWrapRuntimeProviderId",
+          0
+        ],
+        [
+          "src/ir/runtime/contracts/manifest.ts",
+          "var",
+          "FUNCTION_PROTOTYPE_CALL_RUNTIME_FEATURES",
+          0
+        ],
+        [
+          "src/ir/runtime/contracts/manifest.ts",
+          "type",
+          "FunctionPrototypeCallRuntimeFeature",
+          0
+        ],
+        [
+          "src/ir/runtime/contracts/manifest.ts",
+          "var",
+          "FUNCTION_PROTOTYPE_CALL_RUNTIME_PROVIDER_IDS",
+          0
+        ],
+        [
+          "src/ir/runtime/contracts/manifest.ts",
+          "type",
+          "FunctionPrototypeCallRuntimeProviderId",
+          0
+        ],
+        [
+          "src/ir/runtime/contracts/manifest.ts",
+          "var",
+          "REFERENCE_ERROR_RUNTIME_FEATURES",
+          0
+        ],
+        [
+          "src/ir/runtime/contracts/manifest.ts",
+          "type",
+          "ReferenceErrorRuntimeFeature",
+          0
+        ],
+        [
+          "src/ir/runtime/contracts/manifest.ts",
+          "var",
+          "REFERENCE_ERROR_RUNTIME_PROVIDER_IDS",
+          0
+        ],
+        [
+          "src/ir/runtime/contracts/manifest.ts",
+          "type",
+          "ReferenceErrorRuntimeProviderId",
+          0
+        ],
+        [
+          "src/ir/runtime/contracts/manifest.ts",
+          "type",
+          "RuntimeProviderId",
+          0
+        ],
+        [
+          "src/ir/runtime/contracts/manifest.ts",
+          "type",
+          "RuntimeProviderImplementation",
+          0
+        ],
+        [
+          "src/ir/runtime/contracts/manifest.ts",
+          "type",
+          "MathRuntimeProviderImplementation",
+          0
+        ],
+        [
+          "src/ir/runtime/contracts/manifest.ts",
+          "type",
+          "IntrinsicRuntimeProviderImplementation",
+          0
+        ],
+        [
+          "src/ir/runtime/contracts/manifest.ts",
+          "interface",
+          "RuntimeProviderDefinition",
+          0
+        ],
+        [
+          "src/ir/runtime/contracts/manifest.ts",
+          "type",
+          "RuntimeProviderPlan",
+          0
+        ],
+        [
+          "src/ir/runtime/contracts/manifest.ts",
+          "interface",
+          "RuntimeProviderComponent",
+          0
+        ],
+        [
+          "src/ir/runtime/contracts/manifest.ts",
+          "interface",
+          "FrozenRuntimeManifest",
+          0
+        ]
+      ]
+    }
+  ],
+  "failures": [
+    {
+      "name": "callableSourceView current",
+      "error": "historical reconstruction: unreviewed callable source version"
+    },
+    {
+      "name": "runtime75 moved src/ir/runtime/contracts/prepared.ts",
+      "error": "moved receipt mismatch 6780d8b04525f81a2e18c449f626db5522bb8f1082a7798aa1bf274fc16dfb5e"
+    }
+  ],
+  "runtime75SourceRequirements": [
+    {
+      "path": "src/runtime/contracts/async-provider-schema.ts",
+      "count": 10,
+      "sha256": "b7a151c5853157c9aa74a5f56b446ab30483cdfa9942b78f5964d795bb90afb3",
+      "expected": "b7a151c5853157c9aa74a5f56b446ab30483cdfa9942b78f5964d795bb90afb3"
+    },
+    {
+      "path": "src/runtime/contracts/provider-policy.ts",
+      "count": 30,
+      "sha256": "427cef6e60b0e3328fc6ace4a66eabab7afa466ca917e389101f74b892f8c678",
+      "expected": "427cef6e60b0e3328fc6ace4a66eabab7afa466ca917e389101f74b892f8c678"
+    },
+    {
+      "path": "src/ir/runtime/contracts/intrinsics.ts",
+      "count": 20,
+      "sha256": "3e3c8fd145f03837dce98ce6b364fabddb88cc98bcc9281304a8a48da009b3f9",
+      "expected": "3e3c8fd145f03837dce98ce6b364fabddb88cc98bcc9281304a8a48da009b3f9"
+    },
+    {
+      "path": "src/ir/runtime/contracts/manifest.ts",
+      "count": 67,
+      "sha256": "e7d1bd5d610126b6dcf945ca5584114b21a779b2803139c357f146cb7a16841e",
+      "expected": "e7d1bd5d610126b6dcf945ca5584114b21a779b2803139c357f146cb7a16841e"
+    },
+    {
+      "path": "src/ir/async-runtime-providers.ts",
+      "count": 26,
+      "functions": 12,
+      "sha256": "e6c4a6e91bf4878715ef9b508342a42f7bd692c7bb8ca32fb33568be13635045",
+      "expected": "e6c4a6e91bf4878715ef9b508342a42f7bd692c7bb8ca32fb33568be13635045"
+    },
+    {
+      "path": "src/ir/runtime-manifest.ts",
+      "count": 85,
+      "functions": 38,
+      "sha256": "3abe53cac71f94ed08ab1c9de8f44bfcc6ca0c254f7d6963bb50e8b572a6f478",
+      "expected": "3abe53cac71f94ed08ab1c9de8f44bfcc6ca0c254f7d6963bb50e8b572a6f478"
+    },
+    {
+      "path": "src/ir/intrinsics.ts",
+      "count": 24,
+      "functions": 5,
+      "sha256": "eee3f92b352fb705c5addda7f396ce665c329ab53e501cfe1f6d7e0fbd93291f",
+      "expected": "eee3f92b352fb705c5addda7f396ce665c329ab53e501cfe1f6d7e0fbd93291f"
+    },
+    {
+      "path": "src/ir/async-plan.ts",
+      "count": 48,
+      "functions": 39,
+      "sha256": "a7aada275dcd9af1111649c58a4fcce678cd018d6b458f431edcf9eb6e61ab77",
+      "expected": "a7aada275dcd9af1111649c58a4fcce678cd018d6b458f431edcf9eb6e61ab77"
+    },
+    {
+      "path": "src/ir/intrinsic-support.ts",
+      "count": 41,
+      "functions": 24,
+      "sha256": "eea4525b21f65d7334af27e6ee195dbbb7ca39b9dd57d5781345b80d60d2e8d7",
+      "expected": "eea4525b21f65d7334af27e6ee195dbbb7ca39b9dd57d5781345b80d60d2e8d7"
+    }
+  ],
+  "closedHistoricalHelperReadPopulation": [
+    {
+      "path": "src/ir/runtime/contracts/intrinsics.ts",
+      "readCount": 7,
+      "current": {
+        "sha256": "0392774476fc5beb79f6c0ac22e610fb098c3687e80d653a2aa468f85ef25ed2",
+        "bytes": 3101,
+        "gitBlob": "04e452f4a7041ddd094fa3cac9d579d4280febe7"
+      },
+      "reconstructed": {
+        "sha256": "401d18d79bb03d25924fb5f25de22209667067657e36861087be981230357f1f",
+        "bytes": 3090,
+        "gitBlob": "3bc31e819b9c7d9b7c5b27d9d7a6b70ad6f75e00"
+      },
+      "changed": true
+    },
+    {
+      "path": "src/ir/core/vector-runtime.ts",
+      "readCount": 20,
+      "current": {
+        "sha256": "936219b3246105de0222c65d06b2503d4f016795eb3a570e7a6e9ad5ffa657a9",
+        "bytes": 2138,
+        "gitBlob": "66276d1960d7d245e33186d966a5246c0807610e"
+      },
+      "reconstructed": {
+        "sha256": "936219b3246105de0222c65d06b2503d4f016795eb3a570e7a6e9ad5ffa657a9",
+        "bytes": 2138,
+        "gitBlob": "66276d1960d7d245e33186d966a5246c0807610e"
+      },
+      "changed": false
+    },
+    {
+      "path": "src/ir/vector-runtime.ts",
+      "readCount": 110,
+      "current": {
+        "sha256": "3c55a99f4ded681cb44da3baec4939b80fd958770d966a047d20ec6d87e79c96",
+        "bytes": 418,
+        "gitBlob": "2056a001def37f3b9d21702eb4834432cc325b79"
+      },
+      "reconstructed": {
+        "sha256": "3c55a99f4ded681cb44da3baec4939b80fd958770d966a047d20ec6d87e79c96",
+        "bytes": 418,
+        "gitBlob": "2056a001def37f3b9d21702eb4834432cc325b79"
+      },
+      "changed": false
+    },
+    {
+      "path": "src/ir/runtime/vector-callables.ts",
+      "readCount": 20,
+      "current": {
+        "sha256": "b594f734f6126f5c449b7facef61418f9df7eacce8ebd5bf84560e97eec4d04f",
+        "bytes": 6920,
+        "gitBlob": "63c5ed3eeb7f0dd0fd9ac50ee3dc110b87566113"
+      },
+      "reconstructed": {
+        "sha256": "b594f734f6126f5c449b7facef61418f9df7eacce8ebd5bf84560e97eec4d04f",
+        "bytes": 6920,
+        "gitBlob": "63c5ed3eeb7f0dd0fd9ac50ee3dc110b87566113"
+      },
+      "changed": false
+    },
+    {
+      "path": "src/ir/runtime/callable-declarations.ts",
+      "readCount": 30,
+      "current": {
+        "sha256": "6632f6ecb4221bf31e4cd733b51baf5095a0d7268da1b4f7d0ffa14c8cf27911",
+        "bytes": 5642,
+        "gitBlob": "81553cf192d6551d7a55b09553ad6cc6ee01e0f8"
+      },
+      "reconstructed": {
+        "sha256": "db70bc14602f360179ac787c902af82476ffff5297993ba87d7f99be5d348e10",
+        "bytes": 3757,
+        "gitBlob": "fa3936b7a5f0f3e0d947f886a52e866bd94384e5"
+      },
+      "changed": true
+    },
+    {
+      "path": "src/ir/runtime/contracts/manifest.ts",
+      "readCount": 40,
+      "current": {
+        "sha256": "048358db8d8deeee38bb6d49e9fe9be41189441f6b26221733c832f16ce02cd1",
+        "bytes": 28324,
+        "gitBlob": "a9b945e529e106f61089a29440ae73d114d5d2c0"
+      },
+      "reconstructed": {
+        "sha256": "e4d48e76ea52bc2385dab915c6360be5ce31cc77041331c943521ecfc9e83cf0",
+        "bytes": 27119,
+        "gitBlob": "fb3c13fc4a9e624e0942a740e2c564ef90300fcd"
+      },
+      "changed": true
+    },
+    {
+      "path": "src/ir/runtime/manifest.ts",
+      "readCount": 30,
+      "current": {
+        "sha256": "ff36567f298b2ef4946caf7159d9e1647e0e9fdf920296735547dffca15a9ec8",
+        "bytes": 104292,
+        "gitBlob": "aadd390ab836833d18daff12282ffc2524f598f5"
+      },
+      "reconstructed": {
+        "sha256": "d30bb0352b9ce81845f091d3c366297c40e7f9909fa969540711832c04b178c7",
+        "bytes": 103452,
+        "gitBlob": "7e43887fab03d39593b0b95afa4afdc2317cc0c8"
+      },
+      "changed": true
+    },
+    {
+      "path": "src/ir/intrinsic-support.ts",
+      "readCount": 40,
+      "current": {
+        "sha256": "03e5d583b91a7589481c80e1ca1dd5a621fee3e593f5ca9537f9c573b8925e40",
+        "bytes": 49626,
+        "gitBlob": "843e50acc3ac00b01e996a8c0bb24ade33c1fb51"
+      },
+      "reconstructed": {
+        "sha256": "6d404c97436249e65be69d40dc961e284eb2f4900ec184e645aa45486ea0a1d6",
+        "bytes": 49310,
+        "gitBlob": "b158fd86da612e230bb06900feb33cc01e6d4925"
+      },
+      "changed": true
+    },
+    {
+      "path": "src/ir/program-runtime-abi.ts",
+      "readCount": 20,
+      "current": {
+        "sha256": "0f8eb92a65a87a4fe0275aa4e90f88a600f3f598f9278fd01edd198fff4c41a4",
+        "bytes": 4475,
+        "gitBlob": "d10bd411a6030ba898b8febe5bf3d0ff1d99e35f"
+      },
+      "reconstructed": {
+        "sha256": "2d38d6471fa3004ad0e63edc2cbf6d84ee455bb2227de00d5684be496aed7bb5",
+        "bytes": 5355,
+        "gitBlob": "117b15f8b6b19e6a6c22536f775fabfa27477cab"
+      },
+      "changed": true
+    },
+    {
+      "path": "src/ir/runtime-program-manifest.ts",
+      "readCount": 20,
+      "current": {
+        "sha256": "d9698e66ad1d048e51dd58f6a5b47b2adf65a61da1787c5d543b1ac6437036a9",
+        "bytes": 12069,
+        "gitBlob": "bd80eecc4f6937a72757ea0124bea7af92e3cf27"
+      },
+      "reconstructed": {
+        "sha256": "d9698e66ad1d048e51dd58f6a5b47b2adf65a61da1787c5d543b1ac6437036a9",
+        "bytes": 12069,
+        "gitBlob": "bd80eecc4f6937a72757ea0124bea7af92e3cf27"
+      },
+      "changed": true
+    },
+    {
+      "path": "src/ir/program-runtime-validation.ts",
+      "readCount": 20,
+      "current": {
+        "sha256": "bb4006f9bcdf641f665b6b1ee10ea6fd8ced30e168d09faf8439358d574f2b0c",
+        "bytes": 8186,
+        "gitBlob": "0e514564a61e077baaba01048ad5ca6a5688ebd9"
+      },
+      "reconstructed": {
+        "sha256": "bb4006f9bcdf641f665b6b1ee10ea6fd8ced30e168d09faf8439358d574f2b0c",
+        "bytes": 8186,
+        "gitBlob": "0e514564a61e077baaba01048ad5ca6a5688ebd9"
+      },
+      "changed": false
+    },
+    {
+      "path": "src/ir/core/async-callables.ts",
+      "readCount": 30,
+      "current": {
+        "sha256": "147ae75a6c8a58f25344d96958ef8261af7b06589e4e499d43aa47a9dc98ba95",
+        "bytes": 608,
+        "gitBlob": "1716b9018db4094e01772327e6c561f9868b1db2"
+      },
+      "reconstructed": {
+        "sha256": "147ae75a6c8a58f25344d96958ef8261af7b06589e4e499d43aa47a9dc98ba95",
+        "bytes": 608,
+        "gitBlob": "1716b9018db4094e01772327e6c561f9868b1db2"
+      },
+      "changed": false
+    },
+    {
+      "path": "src/ir/runtime/native-async-callables.ts",
+      "readCount": 30,
+      "current": {
+        "sha256": "31b3cb6ab351fe33e543d2b95a1b8bac24d920f788b460153decfc8b750d5d27",
+        "bytes": 14710,
+        "gitBlob": "1694f8ed5c46459814b52e93b5bc59d157757449"
+      },
+      "reconstructed": {
+        "sha256": "31b3cb6ab351fe33e543d2b95a1b8bac24d920f788b460153decfc8b750d5d27",
+        "bytes": 14710,
+        "gitBlob": "1694f8ed5c46459814b52e93b5bc59d157757449"
+      },
+      "changed": false
+    },
+    {
+      "path": "src/ir/core/intrinsic-contracts.ts",
+      "readCount": 4,
+      "current": {
+        "sha256": "ece37f6c4f48129187e326cdad4fd6207217e50c5078739acae1cf5393aa3932",
+        "bytes": 1210,
+        "gitBlob": "177f7aaf3163c4eb47866ae2a226001795745891"
+      },
+      "reconstructed": {
+        "sha256": "ece37f6c4f48129187e326cdad4fd6207217e50c5078739acae1cf5393aa3932",
+        "bytes": 1210,
+        "gitBlob": "177f7aaf3163c4eb47866ae2a226001795745891"
+      },
+      "changed": false
+    },
+    {
+      "path": "src/ir/core/async-intents.ts",
+      "readCount": 2,
+      "current": {
+        "sha256": "411d7ae2cbfcae0da9c00f2a53e04be4a80ed45906c063c9f9b9ca1692909d0b",
+        "bytes": 1159,
+        "gitBlob": "573dd721ad90c6d3f49df6c1ae86b60ef67a4ccc"
+      },
+      "reconstructed": {
+        "sha256": "411d7ae2cbfcae0da9c00f2a53e04be4a80ed45906c063c9f9b9ca1692909d0b",
+        "bytes": 1159,
+        "gitBlob": "573dd721ad90c6d3f49df6c1ae86b60ef67a4ccc"
+      },
+      "changed": false
+    },
+    {
+      "path": "src/ir/runtime/async-providers.ts",
+      "readCount": 2,
+      "current": {
+        "sha256": "8bbbe1f71ccc3a234d9bd894173829fb285fd39cb637c617aeea90dc6d3b0100",
+        "bytes": 9201,
+        "gitBlob": "ae8a6f9a76a509be854fee396bd7d068d9d344e3"
+      },
+      "reconstructed": {
+        "sha256": "8bbbe1f71ccc3a234d9bd894173829fb285fd39cb637c617aeea90dc6d3b0100",
+        "bytes": 9201,
+        "gitBlob": "ae8a6f9a76a509be854fee396bd7d068d9d344e3"
+      },
+      "changed": false
+    },
+    {
+      "path": "src/ir/core/intrinsics.ts",
+      "readCount": 2,
+      "current": {
+        "sha256": "96b3368af4b8777f19abd9a0aa7ebf0a25f102075c1ca0db6504a8ec81aa569f",
+        "bytes": 11038,
+        "gitBlob": "a8d550388b00f810017a5e28213480063c70f014"
+      },
+      "reconstructed": {
+        "sha256": "dd020e9d33602174b4f1e60329e385f20fbb4bbd0eb2c87ab1ac2d5955ae0262",
+        "bytes": 10551,
+        "gitBlob": "b68b63191d636d3a995812d1030efc3bde266f74"
+      },
+      "changed": true
+    },
+    {
+      "path": "src/ir/intrinsics.ts",
+      "readCount": 2,
+      "current": {
+        "sha256": "1e037410c4702272ae7f16a3b20b2a352f4c31525feb20419428399dac20e091",
+        "bytes": 2316,
+        "gitBlob": "5e3a09f86e5743867318740e4706607eb0ea30bb"
+      },
+      "reconstructed": {
+        "sha256": "c39593810291752471e1f7c513b4e6e7b254d28aa236c0122a4587ab7a71f2b7",
+        "bytes": 2272,
+        "gitBlob": "3356bc74ab47b9598ab854701950569b95b59c3c"
+      },
+      "changed": true
+    },
+    {
+      "path": "src/ir/analysis/intrinsics.ts",
+      "readCount": 4,
+      "current": {
+        "sha256": "57af60dfaf3f4b8fe5845b053442aab3863383519db48bc705e6dfb89caeba5d",
+        "bytes": 4751,
+        "gitBlob": "1a86a55e9ac08764d0105c288a68147915b4a786"
+      },
+      "reconstructed": {
+        "sha256": "58d4a7fdc7d374c838ebeb07744c5f8bae543573e5142bfab6bed7846f408651",
+        "bytes": 4520,
+        "gitBlob": "83b10ec4b2ec60d898a588e6af8287f41622b817"
+      },
+      "changed": true
+    },
+    {
+      "path": "src/ir/analysis/async-plan.ts",
+      "readCount": 2,
+      "current": {
+        "sha256": "0589c846108f32bc41835f533fc7ef36f4373039849c92d237e2fdcc6483fa93",
+        "bytes": 31637,
+        "gitBlob": "a8bccc41f618c04d976677fe73cbfdfcb283fcd0"
+      },
+      "reconstructed": {
+        "sha256": "0589c846108f32bc41835f533fc7ef36f4373039849c92d237e2fdcc6483fa93",
+        "bytes": 31637,
+        "gitBlob": "a8bccc41f618c04d976677fe73cbfdfcb283fcd0"
+      },
+      "changed": false
+    },
+    {
+      "path": "src/ir/runtime/async-attachment.ts",
+      "readCount": 2,
+      "current": {
+        "sha256": "d85bb938c33068cafb05f29f5e8c30040ec85f168a616e74fefcfa3d48ff8818",
+        "bytes": 12783,
+        "gitBlob": "0661ee7dee9173baff8a3627c8a6ffa341e41153"
+      },
+      "reconstructed": {
+        "sha256": "d85bb938c33068cafb05f29f5e8c30040ec85f168a616e74fefcfa3d48ff8818",
+        "bytes": 12783,
+        "gitBlob": "0661ee7dee9173baff8a3627c8a6ffa341e41153"
+      },
+      "changed": false
+    },
+    {
+      "path": "src/ir/runtime/intrinsic-verification.ts",
+      "readCount": 4,
+      "current": {
+        "sha256": "2fbc05033b8f62c71f0053ac439590b7f3183701bf855a621027b4ff818bdfbd",
+        "bytes": 4860,
+        "gitBlob": "c91ec8e7e0c088030359fe5ddf696e2a3ee25a3b"
+      },
+      "reconstructed": {
+        "sha256": "2fbc05033b8f62c71f0053ac439590b7f3183701bf855a621027b4ff818bdfbd",
+        "bytes": 4860,
+        "gitBlob": "c91ec8e7e0c088030359fe5ddf696e2a3ee25a3b"
+      },
+      "changed": false
+    },
+    {
+      "path": "src/runtime/contracts/async-provider-schema.ts",
+      "readCount": 1,
+      "current": {
+        "sha256": "5c40a91d9c21a96292a58cfe7d61d87e83ec0b6db916b2c9f714d60c5c93499a",
+        "bytes": 3057,
+        "gitBlob": "28ac7d2773d3b556c935ae3bf4e431d24657a7fd"
+      },
+      "reconstructed": {
+        "sha256": "5c40a91d9c21a96292a58cfe7d61d87e83ec0b6db916b2c9f714d60c5c93499a",
+        "bytes": 3057,
+        "gitBlob": "28ac7d2773d3b556c935ae3bf4e431d24657a7fd"
+      },
+      "changed": false
+    },
+    {
+      "path": "src/runtime/contracts/provider-policy.ts",
+      "readCount": 1,
+      "current": {
+        "sha256": "886c4898fe21558eac4a743cf478a7b9e7ab8edcf460436954dd1f9fda8faa56",
+        "bytes": 21289,
+        "gitBlob": "9e117958237449e8804c1907997f0487c16e3387"
+      },
+      "reconstructed": {
+        "sha256": "655e93317a2c15170f5bf63d12a494d8f9d3ae02f3a17aea216356a538e226f5",
+        "bytes": 21649,
+        "gitBlob": "dd0b6c3c61c29ee36decd179195cc38ad56afa66"
+      },
+      "changed": true
+    },
+    {
+      "path": "src/ir/runtime/contracts/prepared.ts",
+      "readCount": 1,
+      "current": {
+        "sha256": "5ad34666195a78cdca49005de505e8cd468af8b04b40d8ff5de88347489515e9",
+        "bytes": 4370,
+        "gitBlob": "6d3e003b0d8ac79060042c402029e830c734f0bd"
+      },
+      "reconstructed": {
+        "sha256": "5ad34666195a78cdca49005de505e8cd468af8b04b40d8ff5de88347489515e9",
+        "bytes": 4370,
+        "gitBlob": "6d3e003b0d8ac79060042c402029e830c734f0bd"
+      },
+      "changed": false
+    }
+  ],
+  "authoringRawCapturedPopulation": [
+    {
+      "path": "src/runtime/contracts/provider-policy.ts",
+      "sha256": "886c4898fe21558eac4a743cf478a7b9e7ab8edcf460436954dd1f9fda8faa56",
+      "bytes": 21289,
+      "gitBlob": "9e117958237449e8804c1907997f0487c16e3387"
+    },
+    {
+      "path": "src/ir/runtime/contracts/manifest.ts",
+      "sha256": "048358db8d8deeee38bb6d49e9fe9be41189441f6b26221733c832f16ce02cd1",
+      "bytes": 28324,
+      "gitBlob": "a9b945e529e106f61089a29440ae73d114d5d2c0"
+    },
+    {
+      "path": "src/ir/intrinsics.ts",
+      "sha256": "1e037410c4702272ae7f16a3b20b2a352f4c31525feb20419428399dac20e091",
+      "bytes": 2316,
+      "gitBlob": "5e3a09f86e5743867318740e4706607eb0ea30bb"
+    },
+    {
+      "path": "src/ir/core/intrinsic-vocabulary.ts",
+      "sha256": "2aa5c040d09473d683daace9007c4d483cfc76f45eef707b50c7205c7c86854d",
+      "bytes": 3446,
+      "gitBlob": "6e837f8b8b19626a71b13df0f0401921fac073ae"
+    },
+    {
+      "path": "src/ir/runtime/contracts/intrinsics.ts",
+      "sha256": "0392774476fc5beb79f6c0ac22e610fb098c3687e80d653a2aa468f85ef25ed2",
+      "bytes": 3101,
+      "gitBlob": "04e452f4a7041ddd094fa3cac9d579d4280febe7"
+    },
+    {
+      "path": "src/ir/core/intrinsics.ts",
+      "sha256": "96b3368af4b8777f19abd9a0aa7ebf0a25f102075c1ca0db6504a8ec81aa569f",
+      "bytes": 11038,
+      "gitBlob": "a8d550388b00f810017a5e28213480063c70f014"
+    },
+    {
+      "path": "src/ir/analysis/intrinsics.ts",
+      "sha256": "57af60dfaf3f4b8fe5845b053442aab3863383519db48bc705e6dfb89caeba5d",
+      "bytes": 4751,
+      "gitBlob": "1a86a55e9ac08764d0105c288a68147915b4a786"
+    },
+    {
+      "path": "src/ir/runtime/callable-declarations.ts",
+      "sha256": "6632f6ecb4221bf31e4cd733b51baf5095a0d7268da1b4f7d0ffa14c8cf27911",
+      "bytes": 5642,
+      "gitBlob": "81553cf192d6551d7a55b09553ad6cc6ee01e0f8"
+    },
+    {
+      "path": "src/ir/runtime/manifest.ts",
+      "sha256": "ff36567f298b2ef4946caf7159d9e1647e0e9fdf920296735547dffca15a9ec8",
+      "bytes": 104292,
+      "gitBlob": "aadd390ab836833d18daff12282ffc2524f598f5"
+    },
+    {
+      "path": "src/ir/intrinsic-support.ts",
+      "sha256": "03e5d583b91a7589481c80e1ca1dd5a621fee3e593f5ca9537f9c573b8925e40",
+      "bytes": 49626,
+      "gitBlob": "843e50acc3ac00b01e996a8c0bb24ade33c1fb51"
+    },
+    {
+      "path": "src/ir/program-runtime-abi.ts",
+      "sha256": "0f8eb92a65a87a4fe0275aa4e90f88a600f3f598f9278fd01edd198fff4c41a4",
+      "bytes": 4475,
+      "gitBlob": "d10bd411a6030ba898b8febe5bf3d0ff1d99e35f"
+    },
+    {
+      "path": "src/ir/program/runtime-abi-identity.ts",
+      "sha256": "a3d26cbc0e6b8f084825d83786c7c7b2e45714e2335c6c87b8b427c64476dd7f",
+      "bytes": 1242,
+      "gitBlob": "8899261896c18e71fe2226630e6f9a861023ea99"
+    },
+    {
+      "path": "src/ir/runtime-program-manifest.ts",
+      "sha256": "d9698e66ad1d048e51dd58f6a5b47b2adf65a61da1787c5d543b1ac6437036a9",
+      "bytes": 12069,
+      "gitBlob": "bd80eecc4f6937a72757ea0124bea7af92e3cf27"
+    },
+    {
+      "path": "src/ir/core/vector-runtime.ts",
+      "sha256": "936219b3246105de0222c65d06b2503d4f016795eb3a570e7a6e9ad5ffa657a9",
+      "bytes": 2138,
+      "gitBlob": "66276d1960d7d245e33186d966a5246c0807610e"
+    },
+    {
+      "path": "src/ir/vector-runtime.ts",
+      "sha256": "3c55a99f4ded681cb44da3baec4939b80fd958770d966a047d20ec6d87e79c96",
+      "bytes": 418,
+      "gitBlob": "2056a001def37f3b9d21702eb4834432cc325b79"
+    },
+    {
+      "path": "src/ir/runtime/vector-callables.ts",
+      "sha256": "b594f734f6126f5c449b7facef61418f9df7eacce8ebd5bf84560e97eec4d04f",
+      "bytes": 6920,
+      "gitBlob": "63c5ed3eeb7f0dd0fd9ac50ee3dc110b87566113"
+    },
+    {
+      "path": "src/ir/program-runtime-validation.ts",
+      "sha256": "bb4006f9bcdf641f665b6b1ee10ea6fd8ced30e168d09faf8439358d574f2b0c",
+      "bytes": 8186,
+      "gitBlob": "0e514564a61e077baaba01048ad5ca6a5688ebd9"
+    },
+    {
+      "path": "src/ir/core/async-callables.ts",
+      "sha256": "147ae75a6c8a58f25344d96958ef8261af7b06589e4e499d43aa47a9dc98ba95",
+      "bytes": 608,
+      "gitBlob": "1716b9018db4094e01772327e6c561f9868b1db2"
+    },
+    {
+      "path": "src/ir/runtime/native-async-callables.ts",
+      "sha256": "31b3cb6ab351fe33e543d2b95a1b8bac24d920f788b460153decfc8b750d5d27",
+      "bytes": 14710,
+      "gitBlob": "1694f8ed5c46459814b52e93b5bc59d157757449"
+    },
+    {
+      "path": "src/ir/core/intrinsic-contracts.ts",
+      "sha256": "ece37f6c4f48129187e326cdad4fd6207217e50c5078739acae1cf5393aa3932",
+      "bytes": 1210,
+      "gitBlob": "177f7aaf3163c4eb47866ae2a226001795745891"
+    },
+    {
+      "path": "src/ir/core/async-intents.ts",
+      "sha256": "411d7ae2cbfcae0da9c00f2a53e04be4a80ed45906c063c9f9b9ca1692909d0b",
+      "bytes": 1159,
+      "gitBlob": "573dd721ad90c6d3f49df6c1ae86b60ef67a4ccc"
+    },
+    {
+      "path": "src/ir/runtime/async-providers.ts",
+      "sha256": "8bbbe1f71ccc3a234d9bd894173829fb285fd39cb637c617aeea90dc6d3b0100",
+      "bytes": 9201,
+      "gitBlob": "ae8a6f9a76a509be854fee396bd7d068d9d344e3"
+    },
+    {
+      "path": "src/ir/analysis/async-plan.ts",
+      "sha256": "0589c846108f32bc41835f533fc7ef36f4373039849c92d237e2fdcc6483fa93",
+      "bytes": 31637,
+      "gitBlob": "a8bccc41f618c04d976677fe73cbfdfcb283fcd0"
+    },
+    {
+      "path": "src/ir/runtime/async-attachment.ts",
+      "sha256": "d85bb938c33068cafb05f29f5e8c30040ec85f168a616e74fefcfa3d48ff8818",
+      "bytes": 12783,
+      "gitBlob": "0661ee7dee9173baff8a3627c8a6ffa341e41153"
+    },
+    {
+      "path": "src/ir/runtime/intrinsic-verification.ts",
+      "sha256": "2fbc05033b8f62c71f0053ac439590b7f3183701bf855a621027b4ff818bdfbd",
+      "bytes": 4860,
+      "gitBlob": "c91ec8e7e0c088030359fe5ddf696e2a3ee25a3b"
+    },
+    {
+      "path": "tests/issue-3518-runtime-data-contract-seam.test.ts",
+      "sha256": "8d32a071b57435f7d08d6101f1448d4779ac8edcab31b8d8f671a7b138f4bd52",
+      "bytes": 44714,
+      "gitBlob": "6b0986c882129c9f75a784fcd84308eba4af00f8"
+    },
+    {
+      "path": "src/runtime/contracts/async-provider-schema.ts",
+      "sha256": "5c40a91d9c21a96292a58cfe7d61d87e83ec0b6db916b2c9f714d60c5c93499a",
+      "bytes": 3057,
+      "gitBlob": "28ac7d2773d3b556c935ae3bf4e431d24657a7fd"
+    },
+    {
+      "path": "src/ir/runtime/contracts/prepared.ts",
+      "sha256": "5ad34666195a78cdca49005de505e8cd468af8b04b40d8ff5de88347489515e9",
+      "bytes": 4370,
+      "gitBlob": "6d3e003b0d8ac79060042c402029e830c734f0bd"
+    }
+  ],
+  "finalInputDrift": []
+}

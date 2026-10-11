@@ -15,7 +15,7 @@ export interface ExportBoundaryPolicy {
   readonly result: BoundarySlotPolicy;
 }
 
-const PRIMITIVE_BOUNDARY_KINDS: ReadonlySet<ExportBoundaryKind> = new Set(["string", "symbol", "other"]);
+const PRIMITIVE_BOUNDARY_KINDS: ReadonlySet<ExportBoundaryKind> = new Set(["boolean", "string", "symbol", "other"]);
 
 function expectedPolicyDescription(kind: ExportBoundaryKind, direction: "param" | "result"): string {
   if (PRIMITIVE_BOUNDARY_KINDS.has(kind)) return "primitive-value";
@@ -42,7 +42,7 @@ function slotPolicy(
   profile: CompileTargetProfile,
 ): BoundarySlotPolicy {
   let policy: BoundaryValuePolicy;
-  if (kind === "string" || kind === "symbol" || kind === "other") {
+  if (PRIMITIVE_BOUNDARY_KINDS.has(kind)) {
     policy = "primitive-value";
   } else if ((kind === "uint8array" || kind === "typed-array") && direction === "param") {
     // Current flat ABI allocates a fresh Wasm vec for a JS TypedArray input.
@@ -90,7 +90,7 @@ export function validateExportBoundaryPolicies(
   const policyNames = new Set(Object.keys(policies ?? {}));
 
   for (const [name, signature] of signatureEntries) {
-    const policy = policies?.[name];
+    const policy = policies && Object.prototype.hasOwnProperty.call(policies, name) ? policies[name] : undefined;
     policyNames.delete(name);
     if (!policy) {
       diagnostics.push(`export '${name}' has no boundary policy`);

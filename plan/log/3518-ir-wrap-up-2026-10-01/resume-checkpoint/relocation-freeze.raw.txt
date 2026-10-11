@@ -1,0 +1,91 @@
+{
+  "kind": "phase-a-live-source-relocation-test-helper-draft",
+  "state": "frozen-unvalidated",
+  "base": "a8cd258d553278d8e5f908878f56a81377ba8e40",
+  "model": "Codex GPT-6 Astra Max",
+  "worktree": "/private/tmp/js2-ir-source-contracts-writer-20261001",
+  "files": {
+    "tests/helpers/ir-source-contract-relocation.ts": {
+      "sha256": "b8437b4b95231f06d4ad73c5130b76bf573d8b3a976b99c8b061979adafa90b6",
+      "bytes": 11262,
+      "lines": 268
+    },
+    "tests/helpers/ir-source-contract-relocation.json": {
+      "sha256": "0b8fefeeae71e66e2b95726320609d60427cbc7ef4f7ce53a8c094d8a971940b",
+      "bytes": 494067,
+      "lines": 13065
+    },
+    "tests/issue-3518-source-contract-relocation.test.ts": {
+      "sha256": "366f3546392d82b6f0690f29c6401f8bd2f6435b756e1df7c1b15d2d2fb25943",
+      "bytes": 11687,
+      "lines": 292
+    }
+  },
+  "productionFreeze": "/private/tmp/js2-ir-source-contracts-writer-20261001/.tmp/source-contracts-writer/phase-a-role-correction-qktlatcg/freeze.json",
+  "protected26Drift": [],
+  "sourcePopulation": {
+    "donors": 13,
+    "canonicalOwners": 12,
+    "currentOwners": 25,
+    "declarations": 184,
+    "movedDeclarations": 115
+  },
+  "staticTestRows": 65,
+  "unknownTestGroups": [],
+  "testCases": [
+    {
+      "name": "reconstructs the exact original $path from live owners",
+      "rows": 13
+    },
+    {
+      "name": "authenticates the full declaration population and reciprocal live owner reconstruction",
+      "rows": 1
+    },
+    {
+      "name": "stores only non-executable scaffold in literal recipe fragments",
+      "rows": 1
+    },
+    {
+      "name": "requires the live owner %s even for an unrelated requested donor",
+      "rows": 25
+    },
+    {
+      "name": "refuses %s after a genuine positive control",
+      "rows": 12
+    },
+    {
+      "name": "uses a fresh full population audit after warm reads",
+      "rows": 1
+    },
+    {
+      "name": "checks Git blob independently when SHA256 and bytes are correct",
+      "rows": 1
+    },
+    {
+      "name": "refuses a changed %s in the fixed receipt",
+      "rows": 9
+    },
+    {
+      "name": "does not normalize an already historical mutation input again",
+      "rows": 1
+    },
+    {
+      "name": "passes unknown paths through raw without requesting other files",
+      "rows": 1
+    }
+  ],
+  "checks": {
+    "formatting": "scoped Prettier",
+    "generator": "TypeScript syntax-only span derivation with exact inverse and forward byte comparisons",
+    "compiler": "NOT RUN",
+    "tests": "NOT RUN",
+    "Git": "NOT RUN",
+    "network": "NOT USED"
+  },
+  "interfaces": [
+    "readBeforeIrSourceContractRelocation(path, reader?)",
+    "beforeIrSourceContractRelocation(path, rawSource, reader?)",
+    "reconstructIrSourceContractDonors(reader?, receiptText?)"
+  ],
+  "integrationRule": "Compose only at initial LIVE reads, before old inverses. Unknown paths pass through raw; historical mutation inputs must bypass this transport."
+}

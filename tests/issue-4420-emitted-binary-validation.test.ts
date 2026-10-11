@@ -13,8 +13,8 @@ const COMPILE_FILES_VALIDATE_PROBE_MARKER = "__JS2_COMPILE_FILES_VALIDATE_PROBE_
  * #4420 — a compile could report `success: true` and hand back a module the
  * engine rejects. Two halves, both pinned here.
  *
- * PART 1 — the gate. `success` only ever meant "codegen finished". The opt-in
- * `validate: true` option makes it mean "the engine accepts these bytes":
+ * PART 1 — the gate. `success` only ever meant "codegen finished". The
+ * `validate` option (default-on since #6776) makes it mean "the engine accepts these bytes":
  * `validateEmittedBinary` (src/optimize.ts) is the single implementation of the
  * validate-then-recover-the-engine-detail idiom, shared by the CLI's
  * refuse-to-publish check (#3338), the optimizer's own output check (#1941) and
@@ -82,7 +82,7 @@ describe("#4420 Part 2 — dynamic-dispatch result narrowing vs. a typed access"
   });
 });
 
-describe("#4420 Part 1 — the opt-in validate gate", () => {
+describe("#4420 Part 1 — the validate gate", () => {
   it("validateEmittedBinary reports the engine's detail for rejected bytes", () => {
     // A well-formed header followed by a garbage section: `validate` says no,
     // and the detail string is what makes such a failure diagnosable at all.

@@ -68,12 +68,17 @@ export function test(): number {
     expect((instance.exports as { test(): number }).test()).toBe(1111);
   });
 
-  it("keeps explicit Promise.all.call(Subclass, iterable) on the constructor-aware route", async () => {
+  // (#6651 D4) This used to pin the `env::Promise_all` host import — a module that could not run
+  // standalone at all. The explicit `.call(Subclass, …)` spelling is now constructor-aware
+  // natively: NewPromiseCapability(SafePromise) constructs the subclass through the native
+  // construct dispatcher, and the result is a SafePromise instance.
+  it("runs explicit Promise.all.call(Subclass, iterable) natively and constructor-aware", async () => {
     const result = await compile(
       `
 class SafePromise extends Promise<any> {}
-export function test(): any {
-  return Promise.all.call(SafePromise, [] as any);
+export function test(): number {
+  const p: any = Promise.all.call(SafePromise, [] as any);
+  return p instanceof SafePromise ? 1 : 0;
 }
 `,
       {
@@ -84,6 +89,9 @@ export function test(): any {
     );
 
     expect(result.success, result.success ? "" : JSON.stringify(result.errors?.slice(0, 3))).toBe(true);
-    expect((result.imports ?? []).map((entry) => entry.name)).toContain("Promise_all");
+    if (!result.success) return;
+    expect((result.imports ?? []).map((entry) => entry.name)).toEqual([]);
+    const { instance } = await WebAssembly.instantiate(result.binary, {});
+    expect((instance.exports as { test(): number }).test()).toBe(1);
   });
 });

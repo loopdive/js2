@@ -49,6 +49,7 @@ import { standaloneClassProtoObjectApplies } from "./class-proto-object.js";
 import { classStaticSidecarApplies } from "./class-static-sidecar.js"; // (#5195 Step 2)
 import { classProtoBuilderName } from "./standalone-class-dyn-member.js"; // (#5383 S2h)
 import { classStaticBuilderName } from "./standalone-class-dyn-static.js"; // (#5383 S2i)
+import { prependClassProtoWriteArm } from "./class-proto-set-arm.js"; // (#6651 A11)
 
 const LOOKUP_NAME = "__class_proto_lookup";
 
@@ -433,6 +434,7 @@ export function fillClassProtoLookupArm(ctx: CodegenContext): void {
   }
 
   prependClassMethodCallArm(ctx, lookupIdx, externGetIdx);
+  prependClassProtoWriteArm(ctx, lookupIdx, hasOwnIdx); // (#6651 A11) the setter twin
 
   const scratch = 2 + externGetFn.locals.length;
   externGetFn.locals.push({ name: "__class_proto_target", type: { kind: "externref" } });

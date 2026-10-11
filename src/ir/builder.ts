@@ -40,7 +40,9 @@ import {
   irTypeEquals,
 } from "./nodes.js";
 import { irFnctorShapeEquals, validateIrFnctorShape, type IrFnctorShape } from "./fnctor-abi.js";
-import type { AllocSiteRegistry } from "./alloc-registry.js";
+import { copyIrPreparationData, type AllocSiteRegistry } from "./alloc-registry.js";
+import { freezePreparedIrRuntimeValue } from "./program/data.js";
+import type { IrSourceMapOrigin } from "../shared/contracts/ir-unit-inventory.js";
 import type { Instr, ValType } from "./types.js";
 import type { IrCountedStringAppendSiteId } from "./counted-string-append-provenance.js";
 // #3954 phase 1 — the builder's payload-shape question ("does this partition
@@ -53,6 +55,8 @@ import { defaultTagDomain } from "./producer.js";
 import type { TagDomain, TagId } from "./tag-domain.js";
 import type { IrStringConcatMode, IrStringEncoding } from "./string-runtime.js";
 import { INTRINSIC_DEFINITIONS, type IntrinsicId } from "./intrinsics.js";
+
+type CapturedBuilderSite = Extract<IrSiteId, { readonly origin: IrSourceMapOrigin }>;
 
 interface OpenBlock {
   readonly id: IrBlockId;
@@ -95,6 +99,10 @@ export class IrFunctionBuilder {
   // nodes.ts). Labels identify loop frames for `br.label`; unlabeled
   // break/continue resolve to the innermost loop's synthesised label.
   private nextLabelId = 0;
+  declare private sourceSiteCapture?: {
+    current: CapturedBuilderSite | undefined;
+    capture: (site: IrSiteId) => CapturedBuilderSite;
+  };
 
   constructor(
     private readonly id: Pick<IrFunction, "unitId" | "name">,
@@ -109,7 +117,69 @@ export class IrFunctionBuilder {
     // (`producer.ts`), so every existing caller is unchanged; a non-JS producer
     // passes its own domain instead of the builder reaching for a global.
     private readonly tagDomain: TagDomain = defaultTagDomain(),
-  ) {}
+    captureSourceSites = false,
+  ) {
+    if (captureSourceSites) {
+      const invalid = (detail: string): never => {
+        throw new Error(`IrFunctionBuilder: requested source origin ${detail}`);
+      };
+      const capture = (site: IrSiteId): CapturedBuilderSite => {
+        const copied = copyIrPreparationData(site);
+        if (!copied || typeof copied !== "object" || !copied.origin)
+          return invalid("requires an enriched source or generated site");
+        const origin = copied.origin;
+        if (origin.kind === "source") {
+          if (
+            !Number.isSafeInteger(copied.line) ||
+            !Number.isSafeInteger(copied.column) ||
+            copied.line! < 1 ||
+            copied.column! < 0 ||
+            !origin.point
+          )
+            return invalid("requires source coordinates and a source point");
+          return freezePreparedIrRuntimeValue({ ...copied, line: copied.line!, column: copied.column!, origin });
+        }
+        if (origin.kind === "generated") {
+          if (Object.hasOwn(copied, "line") || Object.hasOwn(copied, "column"))
+            return invalid("generated sites must omit diagnostic coordinates");
+          return freezePreparedIrRuntimeValue({ origin });
+        }
+        return invalid("has an unknown origin variant");
+      };
+      const state: NonNullable<IrFunctionBuilder["sourceSiteCapture"]> = { current: undefined, capture };
+      this.sourceSiteCapture = state;
+      const select = (explicit?: IrSiteId): CapturedBuilderSite => {
+        const current = state.current;
+        if (!current) return invalid("requires an active scope");
+        if (explicit === undefined) return current;
+        const copied = copyIrPreparationData(explicit);
+        if (copied.origin !== undefined) return capture(copied);
+        if (current.origin.kind !== "source" || copied.line !== current.line || copied.column !== current.column)
+          return invalid("diagnostic coordinates do not match the active source scope");
+        return current;
+      };
+      const push = this.pushInstr.bind(this);
+      const terminate = this.terminate.bind(this);
+      const allocate = this.allocId.bind(this);
+      this.pushInstr = (instr) => push({ ...instr, site: select(instr.site) });
+      this.terminate = (terminator) => terminate({ ...terminator, site: select(terminator.site) });
+      this.allocId = (kind, type, site) => allocate(kind, type, select(site));
+    }
+  }
+
+  /** Capture one requested lexical scope without changing semantic rollback. */
+  withSourceSite<T>(site: CapturedBuilderSite, run: () => T): T {
+    const state = this.sourceSiteCapture;
+    if (!state) return run();
+    const captured = state.capture(site);
+    const previous = state.current;
+    state.current = captured;
+    try {
+      return run();
+    } finally {
+      state.current = previous;
+    }
+  }
 
   /**
    * #1586: mint a stable allocation-site id for a value-creating instr. Returns
@@ -1672,6 +1742,32 @@ export class IrFunctionBuilder {
     if (valueType.kind !== "closure" || !closureSignatureEquals(valueType.signature, signature)) {
       throw new Error(`IrFunctionBuilder: callable pack requires an exact closure signature (func ${this.id.name})`);
     }
+    const result = this.allocator.fresh();
+    const resultType: IrType = { kind: "callable", signature };
+    this.valueTypes.set(result, resultType);
+    this.pushInstr({ kind: "coerce.to_externref", value, result, resultType });
+    return result;
+  }
+
+  /**
+   * Preserve the exact externref returned by ordinary Get. This only records
+   * logical intent: native acceptance must prove the actual keyed descriptor
+   * result, including every callable projection reconstructed by the codec.
+   * No allocation, cast, call or exception occurs at this representation step.
+   */
+  emitOrdinaryGetCallableResult(value: IrValueId, signature: IrClosureSignature): IrValueId {
+    const definition = (this.bodyBuffer ?? this.current?.instrs)?.find((row) => row.result === value);
+    const type = this.typeOf(value);
+    if (
+      type.kind !== "val" ||
+      type.typeRef ||
+      type.val.kind !== "externref" ||
+      definition?.kind !== "call" ||
+      definition.target.binding.kind !== "intrinsic" ||
+      definition.target.binding.symbol !== "js.object.get" ||
+      definition.args.length !== 3
+    )
+      throw new Error(`IrFunctionBuilder: callable result requires its actual ordinary Get (func ${this.id.name})`);
     const result = this.allocator.fresh();
     const resultType: IrType = { kind: "callable", signature };
     this.valueTypes.set(result, resultType);

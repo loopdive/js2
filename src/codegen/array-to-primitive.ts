@@ -35,6 +35,8 @@ import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js
 import { PROTOIDX_ARRAY_BRAND_OFF, protoIndexBrandCompanionHasInstrs } from "./proto-index-store.js"; // (#4663) Array-only override consult
 import { nativeProtoSeedersByBrandOffset } from "./native-proto.js"; // (#4663) "is this companion seeded with BUILTINS?"
 import { buildOrdinaryToPrimitiveProbe, resolveOrdinaryToPrimitiveProbeDeps } from "./ordinary-to-primitive-probe.js"; // (#4663) §7.1.1.1 walk, shared with the callable arms
+import { makeHelperFctx } from "./helpers/reserved-helper-funcs.js"; // (#6651 U2) scratch fctx for the dyn-view length arm
+import { taDynJoinLengthInstrs } from "./ta-dyn-method-call.js"; // (#6651 U2)
 
 export const ARRAY_TO_PRIMITIVE_STRING = "__array_to_primitive_string";
 
@@ -228,6 +230,25 @@ export function fillArrayToPrimitive(ctx: CodegenContext): void {
   const commaStr: Instr[] = nativeStringLiteralInstrs(ctx, ",");
 
   const strRef: ValType = { kind: "ref", typeIdx: anyStrTypeIdx };
+  const locals: WasmFunction["locals"] = [
+    { name: "result", type: strRef },
+    { name: "len", type: { kind: "i32" } },
+    { name: "i", type: { kind: "i32" } },
+    { name: "elem", type: { kind: "externref" } },
+    ...(overrideArm
+      ? ([
+          { name: "ov_companion", type: { kind: "externref" } },
+          { name: "ov_method", type: { kind: "externref" } },
+          { name: "ov_result", type: { kind: "externref" } },
+        ] satisfies WasmFunction["locals"])
+      : []),
+  ];
+  // (#6651 U2) A dyn TypedArray's `toString` is `Array.prototype.toString` →
+  // Invoke(O, "join") → %TypedArray%.prototype.join, whose step 3 reads the
+  // INTERNAL length, not an own `length`. Appends locals only when the module
+  // has a dynamic view, so every other module keeps this body's exact bytes.
+  const lenFctx = { ...makeHelperFctx(ARRAY_TO_PRIMITIVE_STRING, "arr", { kind: "externref" }), locals };
+  const lenInstrs = taDynJoinLengthInstrs(ctx, lenFctx, L_ARR, externLengthIdx);
 
   const body: Instr[] = [
     // (#4663) A USER-installed `Array.prototype.toString` wins over the join.
@@ -237,8 +258,7 @@ export function fillArrayToPrimitive(ctx: CodegenContext): void {
     ...emptyStr,
     { op: "local.set", index: L_RESULT },
     // len = i32(ToLength(__extern_length(arr)))  — non-array → 0.0 → 0
-    { op: "local.get", index: L_ARR },
-    { op: "call", funcIdx: externLengthIdx },
+    ...lenInstrs,
     { op: "i32.trunc_sat_f64_s" },
     { op: "local.set", index: L_LEN },
     // i = 0
@@ -314,18 +334,6 @@ export function fillArrayToPrimitive(ctx: CodegenContext): void {
     { op: "extern.convert_any" },
   ];
 
-  fn.locals = [
-    { name: "result", type: strRef },
-    { name: "len", type: { kind: "i32" } },
-    { name: "i", type: { kind: "i32" } },
-    { name: "elem", type: { kind: "externref" } },
-    ...(overrideArm
-      ? ([
-          { name: "ov_companion", type: { kind: "externref" } },
-          { name: "ov_method", type: { kind: "externref" } },
-          { name: "ov_result", type: { kind: "externref" } },
-        ] satisfies WasmFunction["locals"])
-      : []),
-  ];
+  fn.locals = lenFctx.locals;
   fn.body = body;
 }

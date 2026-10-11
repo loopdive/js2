@@ -41,13 +41,9 @@ export const NO_ARG_STRING_MEMBER_HELPER: Readonly<Record<string, string>> = {
   toUpperCase: "__str_toUpperCase",
   toLocaleLowerCase: "__str_toLowerCase",
   toLocaleUpperCase: "__str_toUpperCase",
-  // (#5152) `normalize` (§22.1.3.13) has the same reflective shape: declared
-  // length 0, string result, and — until the NFC/NFD tables land — an IDENTITY
-  // transformation, so `__str_flatten` IS its "helper". What the body buys is
-  // the spec preamble the refusal path skipped: RequireObjectCoercible(this)
-  // (`normalize.call(null)` / `(undefined)` must throw TypeError) and
-  // ToString(this) (a user `toString` runs and its abrupt completion
-  // propagates; a Symbol receiver throws).
+  // The native standalone path owns normalize's optional form slot and full
+  // Unicode algorithm. Keep the pre-existing no-arg flatten body for host and
+  // native-first output, whose closure ABI stays intentionally unchanged.
   normalize: "__str_flatten",
 };
 
@@ -118,6 +114,7 @@ export function emitStringProtoToStringFlat(
   paramIdx: number,
   anyToStrIdx: number,
   flattenIdx: number,
+  opts?: { readonly rejectPostPrimitiveSymbol?: boolean },
 ): void {
   // §7.1.17 step 1: ToString of a SYMBOL throws — unlike the deliberately
   // printable `$__any_to_string` fallback, and ToPrimitive passes a Symbol
@@ -138,7 +135,26 @@ export function emitStringProtoToStringFlat(
   }
   const toPrimitive = runtimeToPrimitiveInstrs(ctx, "string");
   const generic: Instr[] = [{ op: "local.get", index: paramIdx }];
-  if (toPrimitive !== null) generic.push(...toPrimitive);
+  if (toPrimitive !== null) {
+    generic.push(...toPrimitive);
+    // Most callers retain the established receiver-only Symbol guard above.
+    // Normalize opts into the stricter §7.1.17 boundary because a user
+    // `@@toPrimitive`/`toString` may itself return a Symbol; feeding that
+    // result to the renderer would spell it as text and select RangeError
+    // instead of propagating ToString's required TypeError.
+    if (opts?.rejectPostPrimitiveSymbol === true && ctx.symbolTypeIdx >= 0) {
+      const primitiveLocal = allocLocal(fctx, `__str_pm_primitive_${fctx.locals.length}`, { kind: "externref" });
+      const symbolThrow: Instr[] = [];
+      emitBrandCheckTypeError(ctx, symbolThrow, "Cannot convert a Symbol value to a string");
+      generic.push(
+        { op: "local.tee", index: primitiveLocal },
+        { op: "any.convert_extern" },
+        { op: "ref.test", typeIdx: ctx.symbolTypeIdx },
+        { op: "if", blockType: { kind: "empty" }, then: symbolThrow },
+        { op: "local.get", index: primitiveLocal },
+      );
+    }
+  }
   generic.push({ op: "any.convert_extern" }, { op: "call", funcIdx: anyToStrIdx }, { op: "call", funcIdx: flattenIdx });
   body.push(
     ...withNullExternArm(

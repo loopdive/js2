@@ -1,0 +1,30 @@
+{
+  "review": "read-only five-path TypedArray preservation repair",
+  "reviewedBefore": {
+    "tests/helpers/typedarray-main-preservation-port.ts": "7f36e6c8b5c9d3051266a1376a94549ad22f9e5112eb8e594cb26c09a26447fc",
+    "tests/fixtures/issue-3518-typedarray-main-preservation/receipt.json": "81b51d14fa321ace63defb89741b0a1d0761c9e6ffcbb08edcde9e6e82e52dd2",
+    "tests/issue-3518-typedarray-main-preservation-port.test.ts": "d81cb8e463f72f4b28de39e0bc94bbd21770b85d4eab790a98d3180e6e0d0153",
+    "tests/helpers/later-main-preservation-port.ts": "26be5329c2140c618078d8a149f5983dc68fe3fa24ffbc7ce51df4ef6efc5f77",
+    "tests/issue-3518-later-main-preservation-port.test.ts": "91c220e95b9b3d3f1d2c5b164172c9e035860d991cdcb2b72c4f1a1157ff4eac"
+  },
+  "reviewedAfter": {
+    "tests/helpers/typedarray-main-preservation-port.ts": "7f36e6c8b5c9d3051266a1376a94549ad22f9e5112eb8e594cb26c09a26447fc",
+    "tests/fixtures/issue-3518-typedarray-main-preservation/receipt.json": "81b51d14fa321ace63defb89741b0a1d0761c9e6ffcbb08edcde9e6e82e52dd2",
+    "tests/issue-3518-typedarray-main-preservation-port.test.ts": "d81cb8e463f72f4b28de39e0bc94bbd21770b85d4eab790a98d3180e6e0d0153",
+    "tests/helpers/later-main-preservation-port.ts": "26be5329c2140c618078d8a149f5983dc68fe3fa24ffbc7ce51df4ef6efc5f77",
+    "tests/issue-3518-later-main-preservation-port.test.ts": "91c220e95b9b3d3f1d2c5b164172c9e035860d991cdcb2b72c4f1a1157ff4eac"
+  },
+  "drift": [],
+  "concreteBlockers": [],
+  "verdict": "Static clearance of this repair; root still owns actual fresh validation and release.",
+  "observations": [
+    "The exact two contextual spans, whole source hash/blob/byte/UTF16 pins and dependency match the independently recorded Git-derived evidence.",
+    "Raw reader remains raw; only explicit initial input reader applies the outer inverse. Existing applyLaterMainPreservation and its injected mutation strings are unchanged.",
+    "Original later-main receipt remains exact; all old error/hash/order/dependency guards and 248 static rows remain.",
+    "New 29 static rows pair corruptions with genuine positive reconstruction; include wrong direction, old-source substitution, outside edits, altered receipt/dependency, raw-reader honesty and full downstream closure reconstruction.",
+    "No generic fallback, whole historical file substitution, repeated normalization or catalog readiness grant was introduced."
+  ],
+  "testsExecuted": false,
+  "compilerExecuted": false,
+  "trackedEdits": false
+}

@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import type { IrBindingId, IrClassId, IrSourceId, IrUnitId } from "./identity.js";
+import type { IrHostDateSnapshotGetter } from "./core/date-callables.js";
 import {
   closureSignatureEquals,
   type IrClassShape,
@@ -325,7 +326,7 @@ export interface IrHostVoidCallbackLoweringPlan {
   readonly standaloneDomReusable?: true;
 }
 
-export type IrHostDateSnapshotGetter = "getDate" | "getMonth" | "getFullYear";
+export type { IrHostDateSnapshotGetter } from "./core/date-callables.js";
 
 /** Exact checker-certified zero-argument ambient Date snapshot construction. */
 export interface IrHostDateSnapshotLoweringPlan {

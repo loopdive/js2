@@ -9,6 +9,7 @@ import type { Instr, ValType } from "../../ir/types.js";
 import { allocLocal } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { ensureLateImport } from "./late-imports.js";
+import { readEnv } from "../../env.js";
 
 export type HostCallFallbackPlan = {
   fixedArity: boolean;
@@ -17,7 +18,7 @@ export type HostCallFallbackPlan = {
 };
 
 export function planHostCallFallback(arity: number, nativeBoundary = false): HostCallFallbackPlan {
-  const fixedArity = nativeBoundary || (process.env.JS2WASM_FIXED_ARITY_HOST_CALLS !== "0" && arity <= 4);
+  const fixedArity = nativeBoundary || (readEnv("JS2WASM_FIXED_ARITY_HOST_CALLS") !== "0" && arity <= 4);
   return {
     fixedArity,
     importName: nativeBoundary
@@ -81,4 +82,23 @@ export function buildHostCallFallbackArm(
   }
   arm.push(...invokePrefix, { op: "local.get", index: hostArgsLocal }, { op: "call", funcIdx: callFn });
   return arm;
+}
+
+/**
+ * (#6686) Under the native regime a dynamic call already has an in-Wasm
+ * default (the apply fallback). The JS boundary callback must only take the
+ * callees Wasm does NOT own — an admitted JS function is a non-eq host ref —
+ * so a native closure that matched no inline arm keeps its native dispatch.
+ */
+export function composeHostCallFallback(
+  nativeDefault: Instr[] | undefined,
+  hostArm: Instr[] | undefined,
+  calleeAnyLocal: number,
+): Instr[] | undefined {
+  if (hostArm === undefined || nativeDefault === undefined) return hostArm;
+  return [
+    { op: "local.get", index: calleeAnyLocal },
+    { op: "ref.test", typeIdx: -19 /* eq */ },
+    { op: "if", blockType: { kind: "val", type: { kind: "externref" } }, then: nativeDefault, else: hostArm },
+  ];
 }

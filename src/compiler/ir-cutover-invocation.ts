@@ -2,7 +2,7 @@
 
 import type { SourceFile } from "typescript";
 import type { IrBodyRouteAudit, IrLegacyBodyEntry } from "../codegen/legacy-body-audit.js";
-import { getDefaultEnvironment } from "../env.js";
+import { getDefaultEnvironment, readEnv } from "../env.js";
 import type { CompileOptions, CompileResult } from "../index.js";
 import type { IrClassRecord } from "../ir/identity.js";
 import type { IrCompileRoute } from "../ir/standalone-route-manifest.js";
@@ -47,7 +47,7 @@ export function readIrCompileRoute(options: CompileOptions, fallback?: IrCompile
  * or explicit injection.
  */
 export function isIrCutoverAuditRequested(): boolean {
-  return typeof process !== "undefined" && (process.env?.JS2WASM_IR_CUTOVER_AUDIT?.length ?? 0) > 0;
+  return (readEnv("JS2WASM_IR_CUTOVER_AUDIT")?.length ?? 0) > 0;
 }
 
 /**
@@ -55,7 +55,7 @@ export function isIrCutoverAuditRequested(): boolean {
  * The stream denominator is generator invocations: failures before codegen cannot emit a record.
  */
 function appendIrCutoverAudit(result: CompileResult): void {
-  const path = typeof process === "undefined" ? undefined : process.env?.JS2WASM_IR_CUTOVER_AUDIT;
+  const path = readEnv("JS2WASM_IR_CUTOVER_AUDIT");
   if (!path || !result.irBodyRouteAudit) return;
   try {
     const fs = getDefaultEnvironment().fs;

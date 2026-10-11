@@ -1,0 +1,95 @@
+diff --git a/src/ir/runtime/manifest.ts b/src/ir/runtime/manifest.ts
+index d9c04bdfb3..aadd390ab8 100644
+--- a/src/ir/runtime/manifest.ts
++++ b/src/ir/runtime/manifest.ts
+@@ -260,6 +260,7 @@ import {
+   EXTERNREF_I32_TO_F64_INTRINSIC_SIGNATURE,
+   INTRINSIC_DEFINITIONS,
+   I32_TO_EXTERNREF_INTRINSIC_SIGNATURE,
++  EXTERNREF_TO_BOOLEAN_INTRINSIC_SIGNATURE,
+ } from "../core/intrinsics.js";
+ import {
+   type IntrinsicSignature,
+@@ -524,12 +525,7 @@ export const NUMBER_BOUNDARY_RUNTIME_PROVIDERS: readonly RuntimeProviderDefiniti
+   ),
+ ]);
+ 
+-/**
+- * (#3526 F1-S2) The synchronous boolean boundary. Host-only by policy: no
+- * native boolean boxer exists, so there is no `runtime-callable` sibling to
+- * select. The physical target stays the exact `env.__box_boolean` union import
+- * the direct call used, so raw consumers and import order are untouched.
+- */
++/** Explicit Boolean carrier providers. Physical admission still requires the issued native owner. */
+ export const BOOLEAN_BOUNDARY_RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.freeze([
+   numberBoundaryProvider(
+     "host.js.boolean.box",
+@@ -538,6 +534,26 @@ export const BOOLEAN_BOUNDARY_RUNTIME_PROVIDERS: readonly RuntimeProviderDefinit
+     { kind: "host-callable", capability: "boolean.box" },
+     ["boolean.box"],
+   ),
++  Object.freeze({
++    ...numberBoundaryProvider(
++      "native.js.boolean.box",
++      "js.boolean.box",
++      I32_TO_EXTERNREF_INTRINSIC_SIGNATURE,
++      { kind: "runtime-callable", symbol: "__box_boolean" },
++      [],
++    ),
++    supportedBackends: Object.freeze(["wasmgc"] as const),
++  }),
++  Object.freeze({
++    ...numberBoundaryProvider(
++      "native.js.boolean.unbox",
++      "js.boolean.unbox",
++      EXTERNREF_TO_BOOLEAN_INTRINSIC_SIGNATURE,
++      { kind: "runtime-callable", symbol: "__unbox_boolean" },
++      [],
++    ),
++    supportedBackends: Object.freeze(["wasmgc"] as const),
++  }),
+ ]);
+ 
+ /**
+@@ -1007,8 +1023,12 @@ function isGeneratorNumberBoxFeature(feature: RuntimeFeature): feature is Genera
+ 
+ /** The exact provider the admitted boolean arm selects, or `null` when the
+  * caller resolved it to unsupported. */
+-function booleanBoundaryProviderId(policy: BooleanBoundaryPolicy): BooleanBoundaryRuntimeProviderId | null {
+-  return policy.box === "host" ? "host.js.boolean.box" : null;
++function booleanBoundaryProviderId(
++  feature: BooleanBoundaryRuntimeFeature,
++  policy: BooleanBoundaryPolicy,
++): BooleanBoundaryRuntimeProviderId | null {
++  if (feature === "js.boolean.unbox") return policy.unbox === "native" ? "native.js.boolean.unbox" : null;
++  return policy.box === "host" ? "host.js.boolean.box" : policy.box === "native" ? "native.js.boolean.box" : null;
+ }
+ 
+ const BOOLEAN_BOUNDARY_FEATURE_SET: ReadonlySet<string> = new Set(BOOLEAN_BOUNDARY_RUNTIME_FEATURES);
+@@ -1631,7 +1651,10 @@ export class RuntimeManifestBuilder {
+     this.#policy = Object.freeze({
+       ...policy,
+       numberBoundary: Object.freeze({ box: numberBoundary.box, unbox: numberBoundary.unbox }),
+-      booleanBoundary: Object.freeze({ box: booleanBoundary.box }),
++      booleanBoundary: Object.freeze({
++        box: booleanBoundary.box,
++        ...(booleanBoundary.unbox === undefined ? {} : { unbox: booleanBoundary.unbox }),
++      }),
+       externIsUndefined: Object.freeze({ probe: externIsUndefined.probe }),
+       generatorNumberBox: Object.freeze({ box: generatorNumberBox.box }),
+       stringCompare: Object.freeze({ compare: stringCompare.compare }),
+@@ -2125,12 +2148,12 @@ export class RuntimeManifestBuilder {
+         // `target` cannot express.
+         isBooleanBoundaryFeature(feature)
+         ? ((): readonly RuntimeProviderDefinition[] => {
+-            const selectedId = booleanBoundaryProviderId(this.#policy.booleanBoundary);
++            const selectedId = booleanBoundaryProviderId(feature, this.#policy.booleanBoundary);
+             if (selectedId === null) {
+               throw new RuntimeManifestInvariantError(
+                 "provider-target-unavailable",
+                 `semantic intrinsic ${feature} is unavailable under boolean-boundary policy ` +
+-                  `box=${this.#policy.booleanBoundary.box}`,
++                  `box=${this.#policy.booleanBoundary.box}/unbox=${this.#policy.booleanBoundary.unbox ?? "unsupported"}`,
+               );
+             }
+             return candidates.filter((candidate) => candidate.id === selectedId);

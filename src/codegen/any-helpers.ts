@@ -6,7 +6,10 @@
  * Extracted from codegen/index.ts (#1013).
  */
 import type { Instr, StructTypeDef, ValType } from "../ir/types.js";
+import type { ts } from "../ts-api.js";
+import { buildAnyValueType, buildUndefinedInitializer } from "../runtime/wasmgc/values/primitive-layouts.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
+import { allocTempLocal, releaseTempLocal } from "./context/locals.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3b) stable-regime minting
 import { ensureAnyToStringHelper, ensureNativeStringHelpers, nativeStringType } from "./native-strings.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
@@ -17,6 +20,7 @@ import { registerAnyBoxHelpers, registerAnyUnboxHelpers } from "./any-boxing-hel
 import { registerAnyEqHelpers } from "./any-eq-helpers.js";
 import { buildAnyTag5ExternProjection } from "./any-to-extern-projection.js";
 import { buildFastStrictEqDispatch } from "./extern-eq-fast.js";
+import { bigIntCarrierEqInstrs } from "./bigint-wide.js";
 export const NATIVE_PROMISE_NUMBER_BOUNDARY_HELPERS = ["__typeof_number", "__unbox_number"] as const;
 /**
  * Register the $AnyValue struct type for boxing `any` typed values.
@@ -28,17 +32,7 @@ export const NATIVE_PROMISE_NUMBER_BOUNDARY_HELPERS = ["__typeof_number", "__unb
 export function ensureAnyValueType(ctx: CodegenContext): void {
   if (ctx.anyValueTypeIdx >= 0) return; // already registered
   ctx.anyValueTypeIdx = ctx.mod.types.length;
-  ctx.mod.types.push({
-    kind: "struct",
-    name: "AnyValue",
-    fields: [
-      { name: "tag", type: { kind: "i32" }, mutable: false },
-      { name: "i32val", type: { kind: "i32" }, mutable: false },
-      { name: "f64val", type: { kind: "f64" }, mutable: false },
-      { name: "refval", type: { kind: "eqref" }, mutable: false },
-      { name: "externval", type: { kind: "externref" }, mutable: false },
-    ],
-  });
+  ctx.mod.types.push(buildAnyValueType());
 
   // (#2106 S1.0) Reserve the standalone `$undefined` singleton up-front, in the
   // same call that registers `$AnyValue`. It is an immutable tag-1 `$AnyValue`
@@ -54,21 +48,13 @@ export function ensureAnyValueType(ctx: CodegenContext): void {
   // this global. The tag-1 shape mirrors `__any_from_extern`'s `nullAny`
   // ({tag:1, i32val:0, f64val:NaN, refval:null, externval:null}).
   if ((ctx.standalone || ctx.nativeStrings) && ctx.undefinedGlobalIdx === undefined) {
-    const EQ_HEAP_TYPE = -19; // WasmGC `eq` abstract heap type
     const anyTypeIdx = ctx.anyValueTypeIdx;
     const globalIdx = ctx.numImportGlobals + ctx.mod.globals.length;
     ctx.mod.globals.push({
       name: "__undefined",
       type: { kind: "ref", typeIdx: anyTypeIdx },
       mutable: false,
-      init: [
-        { op: "i32.const", value: 1 }, // tag = 1 (Undefined)
-        { op: "i32.const", value: 0 }, // i32val
-        { op: "f64.const", value: NaN }, // f64val
-        { op: "ref.null", typeIdx: EQ_HEAP_TYPE }, // refval
-        { op: "ref.null.extern" }, // externval
-        { op: "struct.new", typeIdx: anyTypeIdx },
-      ],
+      init: buildUndefinedInitializer(anyTypeIdx),
     });
     ctx.undefinedGlobalIdx = globalIdx;
   }
@@ -735,6 +721,64 @@ export function ensureAnyFromExternHelper(ctx: CodegenContext, opts?: { forceHon
   return funcIdx;
 }
 
+const PRIMITIVE_FACT_KINDS: ReadonlySet<string> = new Set(["number", "boolean", "string", "undefined", "null", "void"]);
+
+/** (#5185) Is `expr`'s static type a union whose every member is a primitive? */
+function isPrimitiveOnlyUnionFact(ctx: CodegenContext, expr: ts.Expression): boolean {
+  const fact = ctx.oracle.typeFactOf(expr);
+  if (fact.kind !== "union" || fact.parts.length === 0) return false;
+  return fact.parts.every((p) => PRIMITIVE_FACT_KINDS.has(p.kind));
+}
+
+/**
+ * (#5185 / #6651 W9) Box the externref on the stack into `$AnyValue` for a
+ * slot whose static type is a union of PRIMITIVES only (e.g. the
+ * `string | number | boolean | null` element of a heterogeneous literal row).
+ * The generic boxing default (`__any_box_extern_s1`) keeps the #1888 tag-5
+ * lie for every non-nullish externref, so a boxed NUMBER read off a dynamic
+ * receiver (`item[1]` in a `forEach` callback) landed as a tag-5 "string" and
+ * `typeof`/`===` answered for a string. A primitive-only slot cannot hold an
+ * object, so classifying the payload honestly is exact here: `s1` first keeps
+ * its nullish/UNDEF-sentinel partition, then a residual tag-5 wrap is
+ * re-classified by `__any_from_extern` (`$BoxedNumber`/i31 → tag 3,
+ * `$BoxedBoolean` → tag 4, a genuine string stays tag 5). Same per-site
+ * substitution discipline as #6631 / #3055 — the shared default is untouched.
+ * Returns false (nothing emitted) when the regime or a helper is unavailable.
+ */
+export function emitPrimitiveUnionExternToAny(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.Expression,
+): boolean {
+  if (ctx.undefinedSingleton !== true || !(ctx.standalone || ctx.nativeStrings)) return false;
+  if (!isPrimitiveOnlyUnionFact(ctx, expr)) return false;
+  ensureAnyHelpers(ctx);
+  const fromExtern = ensureAnyFromExternHelper(ctx);
+  const s1 = ctx.funcMap.get("__any_box_extern_s1");
+  if (fromExtern === undefined || s1 === undefined || ctx.anyValueTypeIdx < 0) return false;
+  const anyTypeIdx = ctx.anyValueTypeIdx;
+  const tmp = allocTempLocal(fctx, { kind: "ref", typeIdx: anyTypeIdx });
+  fctx.body.push(
+    { op: "call", funcIdx: s1 },
+    { op: "local.tee", index: tmp },
+    { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 0 },
+    { op: "i32.const", value: 5 },
+    { op: "i32.eq" },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "ref", typeIdx: anyTypeIdx } },
+      then: [
+        { op: "local.get", index: tmp },
+        { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 4 },
+        { op: "call", funcIdx: fromExtern },
+      ],
+      else: [{ op: "local.get", index: tmp }],
+    },
+  );
+  releaseTempLocal(fctx, tmp);
+  return true;
+}
+
 /**
  * (#1461/#54) Native standalone `(externref, externref) -> i32` strict-equality
  * (`===`, StrictEqualityComparison) over two boxed externref values. The pure-Wasm
@@ -856,16 +900,8 @@ export function ensureExternStrictEqHelper(ctx: CodegenContext): number | undefi
           {
             op: "if",
             blockType: { kind: "empty" },
-            then: [
-              { op: "local.get", index: 2 },
-              { op: "ref.cast", typeIdx: ctx.nativeBigIntTypeIdx },
-              { op: "struct.get", typeIdx: ctx.nativeBigIntTypeIdx, fieldIdx: 0 },
-              { op: "local.get", index: 3 },
-              { op: "ref.cast", typeIdx: ctx.nativeBigIntTypeIdx },
-              { op: "struct.get", typeIdx: ctx.nativeBigIntTypeIdx, fieldIdx: 0 },
-              { op: "i64.eq" },
-              { op: "return" },
-            ],
+            // (#6656) exact for a value past i64, not just its low 64 bits.
+            then: [...bigIntCarrierEqInstrs(ctx, 2, 3), { op: "return" }],
           },
         ]
       : []) satisfies Instr[]),
@@ -1134,9 +1170,27 @@ export function ensureAnyToExternHelper(ctx: CodegenContext): number | undefined
  * Emit inline wasm helper functions for boxing/unboxing `any` values.
  * Called lazily when any-typed operations are first encountered.
  */
+/**
+ * (#6683) Reserve `__any_to_f64`'s stable handle BEFORE {@link ensureAnyHelpers}
+ * can re-enter codegen. Its `ensureObjectRuntime` call flushes the native-proto
+ * seeders, which can build the globalThis seed and its `Math` namespace carrier;
+ * the `Math.max`/`Math.min` value closures bake a call to `__any_to_f64`, and on
+ * that re-entrant path `anyHelpersEmitted` is already claimed but the helper
+ * not yet registered — so the closure declined and the seed kept a key with no
+ * value (moment's standalone-dynamic `__native_globalThis_ensure` stack-balance
+ * CE). A stable handle resolves to wherever the body is pushed later, so the
+ * physical layout is unchanged.
+ */
+function reserveAnyToF64Handle(ctx: CodegenContext): number {
+  const handle = mintDefinedFunc(ctx);
+  ctx.funcMap.set("__any_to_f64", handle);
+  return handle;
+}
+
 export function ensureAnyHelpers(ctx: CodegenContext): void {
   if (ctx.anyHelpersEmitted) return;
   ctx.anyHelpersEmitted = true;
+  const anyToF64Handle = reserveAnyToF64Handle(ctx); // (#6683)
 
   // Ensure the $AnyValue struct type is registered before emitting helpers
   ensureAnyValueType(ctx);
@@ -1385,7 +1439,7 @@ export function ensureAnyHelpers(ctx: CodegenContext): void {
     locals?: { name: string; type: ValType }[],
   ): void {
     const typeIdx = addFuncType(ctx, params, results, name);
-    const funcIdx = mintDefinedFunc(ctx);
+    const funcIdx = name === "__any_to_f64" ? anyToF64Handle : mintDefinedFunc(ctx); // (#6683)
     pushDefinedFunc(ctx, funcIdx, {
       name,
       typeIdx,

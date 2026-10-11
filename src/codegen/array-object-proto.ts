@@ -1,4 +1,6 @@
 import { emitNativeGeneratorProtocolMethodBody } from "./generators-native-protocol.js";
+import { emitIteratorFamilyNextBody } from "./iterator-proto-next.js"; // (#6484 S2)
+import { ITER_FAMILY_ARRAY, ITER_FAMILY_MAP, ITER_FAMILY_SET } from "./iterator-native.js"; // (#6484 S1)
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
  * (#2193 / #43 harvest) Native `$NativeProto` glue for `Array.prototype` and
@@ -29,6 +31,7 @@ import {
   registerNativeProtoBuiltin,
   emitBrandCheckTypeError,
   emitLazyNativeProtoGet,
+  ensureNativeProtoCompanionSeeder,
   ensureStandaloneNativeMethodClosure,
   type NativeProtoBuiltinGlue,
 } from "./native-proto.js";
@@ -36,6 +39,11 @@ import { ensureStandaloneSpeciesGetterClosure, pushBuiltinFnSingletonValueInstrs
 import { withSpeculativeCompile } from "./context/speculative.js";
 import { buildThrowJsErrorInstrs, emitThrowTypeError } from "./expressions/helpers.js";
 import { ensureNativeArrayHof, NATIVE_HOF_METHODS, NATIVE_HOF_REDUCE } from "./hof-native.js"; // (#4394)
+import {
+  emitArrayProtoHofReceiverGuard,
+  emitArrayReduceProtoMemberBody,
+  isArrayReduceVariadicMember,
+} from "./array-reduce-proto-value.js"; // (#6709)
 import { emitArrayBufferProtoMemberBody, emitDataViewProtoMemberBody, emitTaCtorValue } from "./dataview-native.js";
 import { emitDateProtoMemberBody } from "./expressions/builtins.js"; // (#3219) reflective Date getter bodies
 import { emitDateReflectiveSetterBody } from "./date-reflective-setters.js"; // (#3174) reflective Date setter/toISOString bodies
@@ -66,12 +74,29 @@ import {
   stringConstantExternrefInstrs,
 } from "./native-strings.js";
 import { COLLECTION_KIND } from "./collection-kind.js"; // (#6419) import-free leaf — map-runtime.js is in an import cycle
-import { MAP_LAYOUT, ensureMapHelpers } from "./map-runtime.js"; // (#3171) size getter
+import { ITER_KIND_MAPSET, MAP_LAYOUT, ensureMapHelpers } from "./map-runtime.js"; // (#3171) size getter; (#6653) reflective method bodies
+import { ensureSetHelpers } from "./set-runtime.js"; // (#6653) __set_add for the reflective Set.prototype.add body
+import { ensureNativeIteratorRuntime } from "./iterator-native.js"; // (#6653) $__IterRec producer for reflective entries/keys/values
 import { emitReceiverBrandCheck } from "./receiver-brand.js"; // (#3171) shared brand preamble
 import { pushMarkBuiltinCarrierCallable } from "./builtin-callable-brand.js"; // %TypedArray% carrier is a function
 import { emitTransferredCharAtProtoMemberBody, unboxProtoArgToI32 as unboxArgToI32 } from "./char-at-transfer.js";
 import { compileArrayConcatNativeSpecFromReceiverAndArgsVec } from "./array-concat-spec.js";
+import { emitArrayFlatProtoMemberBody } from "./array-flat-native.js"; // (#2717)
+import {
+  emitSliceProtoArrayLikeFallback,
+  emitSliceProtoEndDefault,
+  clampRelative,
+  requireObjectCoercible,
+  resolveSliceDeps,
+} from "./array-slice-native.js"; // (#6701)
+import { emitArraySpliceProtoMemberBody, isArraySpliceVariadicMember } from "./array-splice-native.js"; // (#6701)
+import { emitArrayProtoIteratorMemberBody } from "./array-proto-iterator-value.js"; // (#6651 RS1)
 import { emitArrayLikeNativeMemberBody } from "./array-like-native.js";
+import { emitArrayFillProtoMemberBody, isArrayFillVariadicMember } from "./array/array-fill-proto-value.js";
+import { emitArraySearchProtoMemberBody, isArraySearchVariadicMember } from "./array/array-search-proto-value.js"; // (#6912)
+import { emitArrayGenericValueMemberBody } from "./array/array-generic-value-bodies.js"; // (#6912)
+import { emitArrayCopyMethodMemberBody, isArrayCopyMethodVariadicMember } from "./array/array-copy-methods-value.js"; // (#6912)
+import { emitArraySortMemberBody, isArraySortVariadicMember } from "./array/array-sort-value.js"; // (#6912)
 // (#4119) The shared member-body tail: `Object.prototype.toString`'s real
 // §20.1.3.6 runtime classifier, and the graceful catchable-TypeError refusal for
 // every `(brand, member)` whose native body is not wired yet. Aliased to the
@@ -80,6 +105,7 @@ import { emitArrayLikeNativeMemberBody } from "./array-like-native.js";
 // brands (a reflective member closure must degrade to a catchable TypeError, not
 // a hard compile error — #2193 PR-C).
 import { emitObjectProtoOrRefusal as emitProtoMemberBodyRefusal } from "./object-proto-tostring.js";
+import { emitObjectProtoOwnPredicateBody } from "./object-proto-has-own-property.js";
 // (#4491) `Object.prototype.isPrototypeOf` — the §20.1.3.3 chain walk, routed
 // to the same `__isPrototypeOf` native the typed call path uses.
 import { emitObjectProtoIsPrototypeOfBody } from "./object-proto-is-prototype-of.js";
@@ -97,6 +123,7 @@ import { htmlWrapperFor } from "./html-wrapper-native.js"; // (#4445) Annex B §
 import { emitStringHtmlWrapperMemberBody } from "./string-proto-html.js"; // (#4445) reflective HTML wrappers
 import { emitStringMatchSearchMemberBody } from "./string-proto-match-search.js"; // (#4439) reflective match/search
 import { emitStringReplaceMemberBody } from "./string-proto-replace-transfer.js"; // (#4232) reflective String.prototype.replace
+import { emitStringNormalizeMemberBody } from "./string-proto-normalize.js";
 import {
   NO_ARG_STRING_MEMBER_HELPER,
   SUPERSEDED_BY_BORROWED_PATH,
@@ -117,16 +144,28 @@ import {
 import { moduleReadsBareFunctionValue } from "./function-intrinsic-carrier.js";
 import { emitFunctionProtoHasInstanceBody, FUNCTION_PROTO_HAS_INSTANCE_MEMBER } from "./function-proto-has-instance.js";
 import {
+  emitFunctionProtoApplyBody,
+  emitFunctionProtoBindBody,
+  emitFunctionProtoCallBody,
+} from "./function-proto-invokers.js"; // (#6630)
+import {
   ERROR_STACK_GETTER_MEMBER,
   ERROR_STACK_SETTER_MEMBER,
   emitErrorStackGetterBody,
   emitErrorStackSetterBody,
 } from "./error-stack-accessor.js";
+import {
+  OBJECT_PROTO_GETTER_MEMBER,
+  OBJECT_PROTO_SETTER_MEMBER,
+  emitObjectProtoProtoMemberBody,
+} from "./object-proto-proto-accessor.js"; // (#6770 S5)
 import { emitSymbolProtoValueOfBody } from "./symbol-proto-valueof.js";
 import { emitSymbolProtoToStringBody } from "./symbol-proto-tostring.js"; // (#4776)
 import { emitNumberProtoFormatBody } from "./number-proto-format.js";
 import { emitDateProtoToPrimitiveBody } from "./date-proto-to-primitive.js"; // (#5156)
+import { emitDateProtoToJsonBody } from "./date-proto-to-json.js"; // (#6775 S8)
 import { ensureSymbolCarrier, usesNativeSymbolProvider } from "./symbol-native.js";
+import { primitiveCarrierTestInstrs } from "./object-model/primitive-carrier-test.js"; // (#6651 V10a)
 import {
   emitStandalonePromiseFinally,
   emitStandalonePromiseThen,
@@ -137,6 +176,26 @@ import {
 // `Invoke(this, "then", …)`, so its non-Promise receiver arm reuses the same
 // vararg `then` dispatcher the thenable-assimilation job already uses.
 import { reserveClosedMethodDispatchVararg } from "./closed-method-dispatch.js";
+import { ARRAY_PROTO_SYMBOL_DATA_PROPS } from "./array/array-unscopables.js"; // (#6771 S5)
+// (#6651 E4) Real §23.2.2.1/§23.2.2.2 bodies for the `%TypedArray%` statics.
+import {
+  emitTaStaticFromOfBody,
+  isTaStaticFromOfMember,
+  taStaticFromOfIsVariadic,
+  taStaticFromOfSpecLength,
+} from "./ta-static-from-of-body.js";
+
+const arrayFillServices = {
+  get clampRelative() {
+    return clampRelative;
+  },
+  get requireObjectCoercible() {
+    return requireObjectCoercible;
+  },
+  get resolveSliceDeps() {
+    return resolveSliceDeps;
+  },
+} as const;
 
 /**
  * `Array.prototype`'s own enumerable+non-enumerable method names (ES2024
@@ -378,18 +437,24 @@ const PROMISE_PROTO_METHODS = ["catch", "finally", "then"] as const;
 /** (#2861) `Iterator.prototype`'s own helper method names (ES2025 iterator
  * helpers, §27.1.4). `[Symbol.iterator]` is a computed key handled elsewhere. */
 const ITERATOR_PROTO_METHODS = [
+  "chunks", // (#6773 S6) iterator-chunking
   "drop",
   "every",
   "filter",
   "find",
   "flatMap",
   "forEach",
+  "join", // (#6773 S6) Iterator.prototype.join
   "map",
   "reduce",
   "some",
   "take",
   "toArray",
+  "windows", // (#6773 S6) iterator-chunking
 ] as const;
+
+/** (#6773 S6) Members seeded as OWN data properties on the `%IteratorPrototype%` root singleton. */
+const ITERATOR_ROOT_SEEDED_METHODS = ["chunks", "join", "windows"] as const;
 
 /** `Function.prototype`'s own method names (ES2024 §20.2.3). */
 const FUNCTION_PROTO_METHODS = ["apply", "bind", "call", "toString", FUNCTION_PROTO_HAS_INSTANCE_MEMBER] as const;
@@ -589,9 +654,15 @@ const PROTO_METHOD_LENGTH: Readonly<Record<string, number>> = Object.assign(
     every: 1,
     fill: 1,
     forEach: 1,
+    // (#6912) §23.1.3.22 / .27 — pop() and shift() take no arguments.
+    pop: 0,
     push: 1,
     reduce: 1,
     reverse: 0,
+    shift: 0,
+    // (#6912) §23.1.3.33 / .35 — toReversed(), toSpliced(start, skipCount, ...items).
+    toReversed: 0,
+    toSpliced: 2,
     slice: 2,
     splice: 2,
     unshift: 1,
@@ -751,6 +822,9 @@ const PROTO_METHOD_LENGTH: Readonly<Record<string, number>> = Object.assign(
  * closure types stay byte-identical.
  */
 const STRING_PROTO_METHOD_PARAM_SLOTS: Readonly<Record<string, number>> = {
+  // `normalize` advertises length 0 but needs a real optional form slot so
+  // borrowed `.call` / `.apply` can distinguish omitted/undefined from null.
+  normalize: 1,
   indexOf: 2, // (searchString, position) §22.1.3.8
   lastIndexOf: 2, // (searchString, position) §22.1.3.9
   includes: 2, // (searchString, position) §22.1.3.7
@@ -890,12 +964,17 @@ function emitArrayProtoMemberBody(ctx: CodegenContext, fctx: FunctionContext, me
   if (member === "concat") {
     return compileArrayConcatNativeSpecFromReceiverAndArgsVec(ctx, fctx, 1, 2) ?? null;
   }
+  if (member === "flat" || member === "flatMap") return emitArrayFlatProtoMemberBody(ctx, fctx, member) ?? null; // (#2717)
 
   // ES2015 §23.1.3.23/.25/.30 — these three methods are intentionally
   // generic.  Their first-class values are transferred onto ordinary objects
   // by the historical Test262 rows, so their reflective closures must operate
   // through the dynamic array-like substrate rather than the typed `$Vec`
   // cores used by direct `array.push`/`reverse`/`unshift` calls.
+  const spliceBody = emitArraySpliceProtoMemberBody(ctx, fctx, member); // (#6701)
+  if (spliceBody !== undefined) return spliceBody;
+  const fillBody = emitArrayFillProtoMemberBody(ctx, fctx, member, arrayFillServices);
+  if (fillBody !== undefined) return fillBody;
   const arrayLikeMutator = emitArrayLikeNativeMemberBody(ctx, fctx, member);
   if (arrayLikeMutator !== undefined) return arrayLikeMutator;
 
@@ -909,8 +988,10 @@ function emitArrayProtoMemberBody(ctx: CodegenContext, fctx: FunctionContext, me
   // on nine standalone harness tests.
   //
   // The reduce family takes `(recv, cb, init, hasInit)` rather than
-  // `(recv, cb, thisArg)`, so it stays on the refusal until its own arg
-  // marshalling is written.
+  // `(recv, cb, thisArg)`; its variadic-ABI marshal lives in
+  // array-reduce-proto-value.ts (#6709), which declines off the native regime.
+  const reduceBody = emitArrayReduceProtoMemberBody(ctx, fctx, member);
+  if (reduceBody !== undefined) return reduceBody;
   if (member !== "slice" && NATIVE_HOF_METHODS.has(member) && !NATIVE_HOF_REDUCE.has(member)) {
     const hofIdx = ensureNativeArrayHof(ctx, member);
     if (hofIdx !== undefined) {
@@ -919,17 +1000,7 @@ function emitArrayProtoMemberBody(ctx: CodegenContext, fctx: FunctionContext, me
       // receiver, so `Array.prototype.map.call(undefined)` passed by accident;
       // routing to the loop without this guard silently returns an empty
       // result instead (measured: 3 regressions in the map/filter suites).
-      // Mirrors the `String.prototype.<member>` receiver guard below: under the
-      // undefined-singleton regime `undefined` is a NON-null sentinel externref,
-      // so `ref.is_null` alone misses `.call(undefined)`.
-      const thisThrow: Instr[] = [];
-      emitBrandCheckTypeError(ctx, thisThrow, `Array.prototype.${member} called on null or undefined`);
-      fctx.body.push({ op: "local.get", index: 1 }, { op: "ref.is_null" });
-      const isUndefinedIdx = undefinedSingletonActive(ctx) ? ctx.funcMap.get("__extern_is_undefined") : undefined;
-      if (isUndefinedIdx !== undefined) {
-        fctx.body.push({ op: "local.get", index: 1 }, { op: "call", funcIdx: isUndefinedIdx }, { op: "i32.or" });
-      }
-      fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: thisThrow });
+      emitArrayProtoHofReceiverGuard(ctx, fctx, member);
       // The closure ABI declares only as many params as the member's own
       // `.length`, so `thisArg` (param 3) exists for `map`/`forEach`/… but not
       // for the 1-arity members. Substitute a null externref when absent
@@ -942,6 +1013,16 @@ function emitArrayProtoMemberBody(ctx: CodegenContext, fctx: FunctionContext, me
       return { kind: "externref" };
     }
   }
+  // (#6651 RS1) `values`/`keys`/`entries` over an arbitrary array-LIKE; declines
+  // (undefined) outside standalone or on a missing dep, keeping the refusal below.
+  const rs1IterBody = emitArrayProtoIteratorMemberBody(ctx, fctx, member);
+  if (rs1IterBody !== undefined) return rs1IterBody;
+  const searchBody = // (#6912) indexOf/lastIndexOf/includes, then pop/shift/toString
+    emitArraySearchProtoMemberBody(ctx, fctx, member) ??
+    emitArrayGenericValueMemberBody(ctx, fctx, member) ??
+    emitArrayCopyMethodMemberBody(ctx, fctx, member) ??
+    emitArraySortMemberBody(ctx, fctx, member);
+  if (searchBody !== undefined) return searchBody;
   if (member !== "slice") {
     // Other Array.prototype members: their *FromVecLocal cores land in PR-C; until
     // then, a reflective call degrades to a catchable TypeError, not a compile error.
@@ -952,6 +1033,7 @@ function emitArrayProtoMemberBody(ctx: CodegenContext, fctx: FunctionContext, me
   // slice: args begin@2, end@3 (closure ABI pads with externref). Unbox to i32.
   const startLocal = unboxArgToI32(ctx, fctx, 2);
   const endLocal = unboxArgToI32(ctx, fctx, 3);
+  emitSliceProtoEndDefault(ctx, fctx, endLocal); // (#6701) omitted end => len
   const resultType: ValType = { kind: "externref" };
 
   // Recover the array instance from the externref `this` (param 1) over the
@@ -977,8 +1059,8 @@ function emitArrayProtoMemberBody(ctx: CodegenContext, fctx: FunctionContext, me
       if (sliced.kind !== "externref") fctx.body.push({ op: "extern.convert_any" }); // vec → externref
     },
     () => {
-      // Non-array (genuine host) `this`: no compiled backing → return undefined.
-      fctx.body.push({ op: "ref.null.extern" });
+      // Non-array `this`: the array-like slice (#6701), else undefined.
+      if (!emitSliceProtoArrayLikeFallback(ctx, fctx)) fctx.body.push({ op: "ref.null.extern" });
     },
   );
   return resultType;
@@ -1071,6 +1153,10 @@ function emitStringProtoMemberBody(ctx: CodegenContext, fctx: FunctionContext, m
   // to `emitProtoMemberBodyRefusal`, so a borrowed `slice` threw
   // "not yet implemented in --target standalone".
   if (member === "slice") return emitStringSubstringMemberBody(ctx, fctx, "slice");
+  // (#6651 I3) `substr` (Annex B B.2.2.1) — third member of the same family;
+  // see string-proto-substring.ts for why the absent-bound sentinel carries
+  // over unchanged to a LENGTH second bound.
+  if (member === "substr") return emitStringSubstringMemberBody(ctx, fctx, "substr");
   // (#4220) `split` (§22.1.3.23) returns an ARRAY, not a string/index/boolean,
   // so it owns a body rather than joining a family above; a null refusal keeps
   // the pre-#4220 behaviour via the shared refusal.
@@ -1097,6 +1183,11 @@ function emitStringProtoMemberBody(ctx: CodegenContext, fctx: FunctionContext, m
   if (member === "replace")
     return (
       emitStringReplaceMemberBody(ctx, fctx, () => emitStringRequireObjectCoercible(ctx, fctx, member)) ??
+      emitProtoMemberBodyRefusal(ctx, fctx, "String", member)
+    );
+  if (member === "normalize" && (ctx.standalone || ctx.wasi))
+    return (
+      emitStringNormalizeMemberBody(ctx, fctx, () => emitStringRequireObjectCoercible(ctx, fctx, member)) ??
       emitProtoMemberBodyRefusal(ctx, fctx, "String", member)
     );
   // (#2875 slice 3a) The number-returning search family — `indexOf` /
@@ -1948,6 +2039,143 @@ function emitCollectionSizeGetterBody(ctx: CodegenContext, fctx: FunctionContext
 }
 
 /**
+ * (#6653 follow-up) Real reflective bodies for the collection proto METHODS
+ * whose native kernels already exist (`__map_get/has/delete/set/clear`,
+ * `__set_add`, `__map_iter_new` + the `$__IterRec` producer that
+ * `%MapIteratorPrototype%.next` (#6484 S2) steps). deno_core's `makeSafe`
+ * calls every zero-arg proto member on a dummy instance, so the
+ * degrade-to-TypeError stand-ins aborted the bootstrap at
+ * "Map.prototype.clear is not yet implemented". Members without a native
+ * kernel (forEach, getOrInsert*, the set-algebra family) return `null` and
+ * keep the catchable refusal.
+ *
+ * Closure ABI (native-proto.ts): local 0 = self wrapper, local 1 = externref
+ * `this`, locals 2+ = the member's boxed externref arguments.
+ */
+function emitCollectionMethodBody(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  name: "Map" | "Set",
+  member: string,
+): ValType | null {
+  const mapMembers = ["clear", "delete", "get", "has", "set", "entries", "keys", "values"];
+  const setMembers = ["add", "clear", "delete", "has", "entries", "values"];
+  if (!(name === "Map" ? mapMembers : setMembers).includes(member)) return null;
+  const resultType: ValType = { kind: "externref" };
+  const refuseMsg = `TypeError: Method ${name}.prototype.${member} called on incompatible receiver`;
+
+  ensureMapHelpers(ctx);
+  if (name === "Set") ensureSetHelpers(ctx);
+  const isIterProducer = member === "entries" || member === "keys" || member === "values";
+  if (isIterProducer) ensureNativeIteratorRuntime(ctx);
+  const helperName =
+    name === "Set" && member === "add" ? "__set_add" : isIterProducer ? "__map_iter_new" : `__map_${member}`;
+  const helperIdx = ctx.mapHelpers.get(helperName);
+  const iterRecTypeIdx = ctx.structMap.get("__IterRec");
+  if (helperIdx === undefined || ctx.mapTypeIdx < 0 || (isIterProducer && iterRecTypeIdx === undefined)) {
+    // No native collection runtime in this module → no receiver can carry the
+    // internal slot → the RequireInternalSlot throw applies unconditionally.
+    emitBrandCheckTypeError(ctx, fctx.body, refuseMsg);
+    return resultType;
+  }
+  const boxBoolIdx =
+    member === "has" || member === "delete"
+      ? ensureLateImport(ctx, "__box_boolean", [{ kind: "i32" }], [{ kind: "externref" }])
+      : undefined;
+  flushLateImportShifts(ctx, fctx);
+
+  // this → brand-checked (ref $Map) on the stack.
+  fctx.body.push({ op: "local.get", index: 1 });
+  emitReceiverBrandCheck(
+    ctx,
+    fctx,
+    { kind: "externref" },
+    {
+      message: refuseMsg,
+      structTypeIdx: ctx.mapTypeIdx,
+      kindField: {
+        fieldIdx: MAP_LAYOUT.M_KIND,
+        accept: [name === "Map" ? COLLECTION_KIND.MAP : COLLECTION_KIND.SET],
+      },
+    },
+  );
+
+  const pushArgAsAny = (local: number): void => {
+    fctx.body.push({ op: "local.get", index: local });
+    fctx.body.push({ op: "any.convert_extern" });
+  };
+  switch (member) {
+    case "clear": {
+      fctx.body.push({ op: "call", funcIdx: helperIdx });
+      // §24.1.3.1 / §24.2.3.2 answer undefined.
+      const undefClear = undefinedExternInstrs(ctx);
+      if (undefClear !== undefined) fctx.body.push(...undefClear);
+      else fctx.body.push({ op: "ref.null.extern" });
+      return resultType;
+    }
+    case "get": {
+      pushArgAsAny(2);
+      fctx.body.push({ op: "call", funcIdx: helperIdx });
+      // A miss is a null anyref; under the undefined-singleton regime it must
+      // surface as the `$undefined` singleton (mirrors the gOPD accessor read).
+      const undefGet = undefinedExternInstrs(ctx);
+      if (undefGet !== undefined) {
+        const anyTmp = allocLocal(fctx, `__coll_get_${fctx.locals.length}`, { kind: "anyref" });
+        fctx.body.push({ op: "local.tee", index: anyTmp });
+        fctx.body.push({ op: "ref.is_null" });
+        fctx.body.push({
+          op: "if",
+          blockType: { kind: "val", type: { kind: "externref" } },
+          then: [...undefGet],
+          else: [{ op: "local.get", index: anyTmp }, { op: "extern.convert_any" }],
+        });
+      } else {
+        fctx.body.push({ op: "extern.convert_any" });
+      }
+      return resultType;
+    }
+    case "has":
+    case "delete": {
+      pushArgAsAny(2);
+      fctx.body.push({ op: "call", funcIdx: helperIdx });
+      fctx.body.push({ op: "call", funcIdx: boxBoolIdx! });
+      return resultType;
+    }
+    case "add":
+    case "set": {
+      pushArgAsAny(2);
+      if (member === "set") pushArgAsAny(3);
+      fctx.body.push({ op: "call", funcIdx: helperIdx });
+      // Both return `this` (the receiver map/set) — chainable.
+      fctx.body.push({ op: "extern.convert_any" });
+      return resultType;
+    }
+    default: {
+      // entries / keys / values → the same live `$__IterRec` record the
+      // expression-position producer builds (emitLiveCollectionIterRec), so
+      // `%MapIteratorPrototype%.next`'s family check adopts it unchanged.
+      const vecTypeIdx = getOrRegisterVecType(ctx, "externref", { kind: "externref" });
+      const iterKind = member === "entries" ? 2 : name === "Set" ? 1 : member === "keys" ? 0 : 1;
+      const mTmp = allocLocal(fctx, `__coll_iter_m_${fctx.locals.length}`, { kind: "ref", typeIdx: ctx.mapTypeIdx });
+      fctx.body.push({ op: "local.set", index: mTmp });
+      fctx.body.push(
+        { op: "i32.const", value: ITER_KIND_MAPSET },
+        { op: "ref.null", typeIdx: vecTypeIdx },
+        { op: "i32.const", value: 0 },
+        { op: "local.get", index: mTmp },
+        { op: "i32.const", value: iterKind },
+        { op: "call", funcIdx: helperIdx },
+        { op: "extern.convert_any" },
+        { op: "i32.const", value: name === "Set" ? ITER_FAMILY_SET : ITER_FAMILY_MAP },
+        { op: "struct.new", typeIdx: iterRecTypeIdx! },
+        { op: "extern.convert_any" },
+      );
+      return resultType;
+    }
+  }
+}
+
+/**
  * (#3171) Glue factory for Map/Set — `makeGlue` plus the `size` accessor
  * getter (real reflective body via {@link emitCollectionSizeGetterBody}).
  */
@@ -1978,7 +2206,7 @@ function makeCollectionGlue(brand: number, name: "Map" | "Set", members: readonl
     emitMemberBody: (c, fctx, member) =>
       member === "size"
         ? emitCollectionSizeGetterBody(c, fctx, name)
-        : emitProtoMemberBodyRefusal(c, fctx, name, member),
+        : (emitCollectionMethodBody(c, fctx, name, member) ?? emitProtoMemberBodyRefusal(c, fctx, name, member)),
   };
 }
 
@@ -2262,6 +2490,7 @@ function emitPromiseProtoCatchBody(ctx: CodegenContext, fctx: FunctionContext): 
   ) {
     return null;
   }
+  if (usesNativeSymbolProvider(ctx)) ensureSymbolCarrier(ctx); // (#6651 V10a) the primitive-`this` test below
   const promiseTypeIdx = getOrRegisterPromiseType(ctx);
   const argsLocal = allocLocal(fctx, `__pcatch_args_${fctx.locals.length}`, { kind: "externref" });
 
@@ -2300,12 +2529,19 @@ function emitPromiseProtoCatchBody(ctx: CodegenContext, fctx: FunctionContext): 
     fctx.body = saved;
   }
 
+  // (#6651 V10a) The predicate is the RESOLVE-path thenable test, which must
+  // answer 0 for every primitive (§27.2.1.3.2 step 8). Invoke's GetV ToObjects
+  // instead, so a primitive `this` skips it and reaches the dispatcher's
+  // `__extern_method_call` fallback, which walks the wrapper prototype.
+  const primitiveThis = primitiveCarrierTestInstrs(ctx, 1);
   const genericArm: Instr[] = [
     ...(hasCallableThenIdx !== undefined && notCallableThrow.length > 0
       ? ([
           { op: "local.get", index: 1 },
           { op: "call", funcIdx: hasCallableThenIdx },
           { op: "i32.eqz" },
+          ...primitiveThis,
+          ...(primitiveThis.length > 0 ? ([{ op: "i32.eqz" }, { op: "i32.and" }] satisfies Instr[]) : []),
           { op: "if", blockType: { kind: "empty" }, then: notCallableThrow },
         ] satisfies Instr[])
       : []),
@@ -2356,7 +2592,8 @@ function emitPromiseProtoMemberBody(ctx: CodegenContext, fctx: FunctionContext, 
       // is receivers the spec already rejects. Without it `emitStandalonePromiseThen`'s
       // `ref.cast` trapped on a foreign `this` instead of throwing.
       emitPromiseReceiverIsPromiseGuard(ctx, fctx);
-      emitStandalonePromiseThen(ctx, fctx, receiver, dynamicPromiseHandler(2), dynamicPromiseHandler(3));
+      // (#6651 D7) `true`: this IS the intrinsic `then` — an own `p.then` must not re-dispatch.
+      emitStandalonePromiseThen(ctx, fctx, receiver, dynamicPromiseHandler(2), dynamicPromiseHandler(3), true);
       return { kind: "externref" };
     case "catch": {
       const generic = emitPromiseProtoCatchBody(ctx, fctx);
@@ -2406,6 +2643,14 @@ function makeGlue(
           ] as ReadonlyArray<{ readonly key: string; readonly get: string; readonly set: string }>,
         }
       : {}),
+    // (#6770 S5) Annex B §B.2.2.1 `Object.prototype.__proto__`, same kind.
+    ...(name === "Object" && ctx.standalone
+      ? {
+          accessorProps: [
+            { key: "__proto__", get: OBJECT_PROTO_GETTER_MEMBER, set: OBJECT_PROTO_SETTER_MEMBER },
+          ] as ReadonlyArray<{ readonly key: string; readonly get: string; readonly set: string }>,
+        }
+      : {}),
     // Array/Object.prototype members are all data methods (no accessor getters
     // on the prototype itself; `length` is an own data property of an instance,
     // not the proto).
@@ -2417,9 +2662,9 @@ function makeGlue(
       // (#5269 D-1) The accessor pair's halves: a getter takes nothing, a
       // setter takes the value. They are not in `memberCsv`, so the table
       // below would otherwise hand them its default of 1.
-      member === ERROR_STACK_GETTER_MEMBER
+      member === ERROR_STACK_GETTER_MEMBER || member === OBJECT_PROTO_GETTER_MEMBER
         ? 0
-        : member === ERROR_STACK_SETTER_MEMBER
+        : member === ERROR_STACK_SETTER_MEMBER || member === OBJECT_PROTO_SETTER_MEMBER
           ? 1
           : name === "Number" && member === "toString"
             ? 1
@@ -2430,11 +2675,38 @@ function makeGlue(
     // `position` arg — give their closures a real param slot for it. Non-String
     // families return 0 (= "no override": the slot count falls back to the spec
     // arity), keeping their closure types byte-identical.
-    memberParamSlots: (member) => (name === "String" ? (STRING_PROTO_METHOD_PARAM_SLOTS[member] ?? 0) : 0),
+    memberParamSlots: (member) => {
+      if (name !== "String") return 0;
+      // All pre-existing String slot overrides are shared with host/native-first
+      // closure ABIs. Only normalize's new optional-form slot belongs to the
+      // native standalone/WASI body.
+      if (member === "normalize" && !(ctx.standalone || ctx.wasi)) return 0;
+      return STRING_PROTO_METHOD_PARAM_SLOTS[member] ?? 0;
+    },
     memberIsVariadic: (member) =>
-      name === "Array" && (member === "join" || member === "push" || member === "unshift" || member === "concat")
+      // (#6709) reduce/reduceRight need the argument COUNT (initialValue presence).
+      (name === "Array" && isArrayReduceVariadicMember(ctx, member)) ||
+      (name === "Array" && isArraySpliceVariadicMember(ctx, member)) || // (#6701)
+      (name === "Array" && isArrayFillVariadicMember(ctx, member)) ||
+      (name === "Array" &&
+        (isArraySearchVariadicMember(ctx, member) ||
+          isArrayCopyMethodVariadicMember(ctx, member) ||
+          isArraySortVariadicMember(ctx, member))) || // (#6912)
+      (name === "Array" &&
+      (member === "join" ||
+        member === "push" ||
+        member === "unshift" ||
+        member === "concat" ||
+        member === "flat" ||
+        member === "flatMap")
         ? true
-        : name === "String" && member === "concat",
+        : name === "String" && member === "concat"
+          ? true
+          : // (#6630, merged with #6493 S1 2026-09-18) `call`/`bind` both take
+            // `(thisArg, ...rest)` — the packed vec ABI the invoker bodies below
+            // unpack themselves. `apply` stays fixed at its 2-slot spec arity
+            // (thisArg, argArray).
+            name === "Function" && (member === "call" || member === "bind")),
     // (#4485) §B.2.4.3 — `Date.prototype.toGMTString` IS `Date.prototype.
     // toUTCString` (one function object, asserted by test262 annexB
     // .../toGMTString/value.js). The Annex B String aliases have the same
@@ -2461,6 +2733,7 @@ function makeGlue(
       // them — and the setter needs the brand to identify its home object.
       (name === "Error" && member === ERROR_STACK_GETTER_MEMBER ? emitErrorStackGetterBody(c, fctx) : null) ??
       (name === "Error" && member === ERROR_STACK_SETTER_MEMBER ? emitErrorStackSetterBody(c, fctx, brand) : null) ??
+      (name === "Object" ? emitObjectProtoProtoMemberBody(c, fctx, member) : null) ?? // (#6770 S5)
       (name === "Symbol" && member === "valueOf" ? emitSymbolProtoValueOfBody(c, fctx) : null) ??
       // (#5269 B-c) §20.4.3.3 `Symbol.prototype.toString` — SymbolDescriptiveString
       // of `thisSymbolValue(this)`. Placed with the `valueOf` arm (and BEFORE the
@@ -2480,6 +2753,7 @@ function makeGlue(
       // (#5156, §21.4.4.45) `Date.prototype[Symbol.toPrimitive]` — the one
       // builtin whose ToPrimitive prefers `toString` under the "default" hint.
       (name === "Date" && member === "@@3" ? emitDateProtoToPrimitiveBody(c, fctx) : null) ??
+      (name === "Date" && member === "toJSON" ? emitDateProtoToJsonBody(c, fctx) : null) ?? // (#6775 S8)
       // ES2015 §20.5.3.4 — Error.prototype.toString is inherited by each
       // NativeError prototype, so all of those glues share the same ordered
       // property-read and Symbol-rejecting body.
@@ -2505,6 +2779,13 @@ function makeGlue(
       (name === "Function" && member === FUNCTION_PROTO_HAS_INSTANCE_MEMBER
         ? emitFunctionProtoHasInstanceBody(c, fctx)
         : null) ??
+      // (#6630) `call`/`apply`/`bind` as reflective VALUES — forward to the
+      // generic "invoke any callable" primitives (`__apply_closure`/
+      // `__bind_dyn`) the rest of the runtime already uses for this question.
+      // See function-proto-invokers.ts's header for the full defect trace.
+      (name === "Function" && member === "call" ? emitFunctionProtoCallBody(c, fctx) : null) ??
+      (name === "Function" && member === "apply" ? emitFunctionProtoApplyBody(c, fctx) : null) ??
+      (name === "Function" && member === "bind" ? emitFunctionProtoBindBody(c, fctx) : null) ??
       (name === "Array"
         ? emitArrayProtoMemberBody(c, fctx, member)
         : name === "Promise"
@@ -2531,6 +2812,9 @@ function makeGlue(
                   // OrdinaryToPrimitive walk reaches; refusing it made ToPrimitive
                   // throw where the spec just falls through to `toString`.
                   (name === "Object" ? emitObjectProtoValueOfBody(c, fctx, member) : null) ??
+                  // (#6684) `hasOwnProperty` / `propertyIsEnumerable` as VALUES
+                  // (lodash-es: `var hasOwnProperty = objectProto.hasOwnProperty`).
+                  (name === "Object" ? emitObjectProtoOwnPredicateBody(c, fctx, member) : null) ??
                   emitProtoMemberBodyRefusal(c, fctx, name, member))),
   };
 }
@@ -2568,7 +2852,16 @@ function makeTypedArrayGlue(brand: number, name: string, parentBrand?: number): 
     dataProps: isIntrinsic || bytesPerElement === undefined ? undefined : [["BYTES_PER_ELEMENT", bytesPerElement]],
     memberKind: (member) =>
       TYPED_ARRAY_PROTO_GETTERS.has(member) || member === TYPED_ARRAY_PROTO_TO_STRING_TAG_MEMBER ? "getter" : "method",
-    memberLength: (member) => TYPED_ARRAY_PROTO_METHOD_LENGTH[member] ?? 1,
+    // (#6651 E4) `from`/`of` are §23.2.2 STATICS of the intrinsic, not prototype
+    // members — they are deliberately absent from `memberCsv`, and reach the
+    // factory only through the explicit seeding below in
+    // `emitTypedArrayIntrinsicCtorObject`. Their §17 `length` (1 and 0) is not
+    // in the prototype table, so it is answered here.
+    memberLength: (member) =>
+      (isIntrinsic ? taStaticFromOfSpecLength(member) : undefined) ?? TYPED_ARRAY_PROTO_METHOD_LENGTH[member] ?? 1,
+    // Both take the packed variadic ABI: `from` must see whether `mapfn` was
+    // SUPPLIED (§23.2.2.1 step 3), which fixed slots cannot express.
+    memberIsVariadic: (member) => isIntrinsic && taStaticFromOfIsVariadic(member),
     // §23.2.3.36: the `@@iterator` value IS the `values` function object.
     memberAliasOf: (member) => (member === "@@1" ? "values" : undefined),
     // §23.2.3.32: `%TypedArray%.prototype.toString` IS `Array.prototype.toString`
@@ -2577,7 +2870,12 @@ function makeTypedArrayGlue(brand: number, name: string, parentBrand?: number): 
     // (#2893 PR-1) The `length`/`byteLength`/`byteOffset` accessor getters now
     // emit real reflective bodies (brand-recover the view → read/compute the
     // field → throw on non-view); `buffer` + all methods stay a catchable refusal.
-    emitMemberBody: (c, fctx, member) => emitTypedArrayProtoMemberBody(c, fctx, member, name),
+    emitMemberBody: (c, fctx, member) =>
+      // (#6651 E4) The two §23.2.2 statics get their REAL bodies. A decline
+      // (non-standalone, or a missing runtime dependency) falls through to the
+      // prototype-member emitter, whose refusal is the pre-E4 answer.
+      (isIntrinsic && isTaStaticFromOfMember(member) ? emitTaStaticFromOfBody(c, fctx, member) : null) ??
+      emitTypedArrayProtoMemberBody(c, fctx, member, name),
   };
 }
 
@@ -2618,9 +2916,32 @@ export function ensureArrayNativeProtoGlue(ctx: CodegenContext): number | undefi
   const brand = getBuiltinBrand(ctx, "Array");
   if (brand === undefined) return undefined;
   if (!getNativeProtoBuiltinGlue(ctx, brand)) {
-    registerNativeProtoBuiltin(ctx, makeGlue(ctx, brand, "Array", ARRAY_PROTO_METHODS));
+    registerNativeProtoBuiltin(ctx, {
+      ...makeGlue(ctx, brand, "Array", ARRAY_PROTO_METHODS),
+      symbolDataProps: ARRAY_PROTO_SYMBOL_DATA_PROPS, // (#6771 S5) @@unscopables
+    });
   }
   return brand;
+}
+
+/**
+ * (#6651 V10b) Demand the `Array.prototype` companion for a DYNAMIC
+ * `<vec>[Symbol.iterator]` value read on the host-free lane.
+ *
+ * The read goes through `__extern_get`, whose vec arm resolves an inherited
+ * member through the per-brand `$Object` companion — and that companion is
+ * seeded only when its seeder was registered at compile time, which nothing
+ * did unless the module also spelled `Array.prototype` as a value. So
+ * `[][Symbol.iterator]` read `undefined` where §23.1.3.40 answers
+ * `%Array.prototype.values%`. Registering the seeder here is the same demand a
+ * bare `Array.prototype` mention makes; it is still gated on the pre-scan's
+ * `protoMemberDirty` (inside `ensureNativeProtoCompanionSeeder`), so a module
+ * that never reflects on a builtin prototype keeps its bytes.
+ */
+export function demandArrayProtoDynamicCompanion(ctx: CodegenContext): void {
+  if (!ctx.standalone) return;
+  const brand = ensureArrayNativeProtoGlue(ctx);
+  if (brand !== undefined) ensureNativeProtoCompanionSeeder(ctx, brand);
 }
 
 /** Register `Object.prototype` glue (idempotent) and return its brand. */
@@ -2737,12 +3058,54 @@ export function ensurePromiseNativeProtoGlue(ctx: CodegenContext): number | unde
   return brand;
 }
 
+/**
+ * (#6484 S1) Compiler spelling of the `[Symbol.iterator]` member key. `@@1` is
+ * the well-known-symbol id for `Symbol.iterator`, and
+ * `nativeProtoMemberDisplayName` turns it into the `.name` the spec requires,
+ * `"[Symbol.iterator]"`.
+ */
+const ITERATOR_PROTO_SYMBOL_ITERATOR = "@@1";
+
 /** (#2861) Register `Iterator.prototype` glue (idempotent) and return its brand. */
 export function ensureIteratorNativeProtoGlue(ctx: CodegenContext): number | undefined {
   const brand = getBuiltinBrand(ctx, "Iterator");
   if (brand === undefined) return undefined;
   if (!getNativeProtoBuiltinGlue(ctx, brand)) {
-    registerNativeProtoBuiltin(ctx, makeGlue(ctx, brand, "Iterator", ITERATOR_PROTO_METHODS));
+    const base = makeGlue(ctx, brand, "Iterator", ITERATOR_PROTO_METHODS);
+    registerNativeProtoBuiltin(ctx, {
+      ...base,
+      // (#6484 S1) §27.1.2.1 `%IteratorPrototype%[@@iterator]` — `length` 0, and
+      // a body that returns its `this` UNCHANGED for every value, primitives
+      // included (the spec step is literally "Return the this value"). The
+      // member is deliberately NOT added to `memberCsv`: that CSV describes
+      // `Iterator.prototype`'s own-property surface, which this slice does not
+      // touch; the closure identity is all `%IteratorPrototype%` needs.
+      memberLength: (member) => (member === ITERATOR_PROTO_SYMBOL_ITERATOR ? 0 : base.memberLength(member)),
+      emitMemberBody: (c, fctx, member, kind) => {
+        if (member !== ITERATOR_PROTO_SYMBOL_ITERATOR) return base.emitMemberBody(c, fctx, member, kind);
+        fctx.body.push({ op: "local.get", index: 1 });
+        return { kind: "externref" };
+      },
+    });
+  }
+  return brand;
+}
+
+/**
+ * (#6484 S1) Register `%ArrayIteratorPrototype%` glue (idempotent). Same shape
+ * as the Map/Set twins below — one own `next` member, `length` 0 — which is
+ * what `ArrayIteratorPrototype/next/{name,length,property-descriptor}.js` read.
+ */
+export function ensureArrayIteratorNativeProtoGlue(ctx: CodegenContext): number | undefined {
+  const brand = getBuiltinBrand(ctx, "ArrayIterator");
+  if (brand === undefined) return undefined;
+  if (!getNativeProtoBuiltinGlue(ctx, brand)) {
+    registerNativeProtoBuiltin(ctx, {
+      ...makeGlue(ctx, brand, "ArrayIterator", ["next"]),
+      memberLength: () => 0,
+      emitMemberBody: (c, fctx) =>
+        emitIteratorFamilyNextBody(c, fctx, ITER_FAMILY_ARRAY, "%ArrayIteratorPrototype%.next"),
+    });
   }
   return brand;
 }
@@ -2760,6 +3123,17 @@ export function ensureCollectionIteratorNativeProtoGlue(ctx: CodegenContext, kin
     registerNativeProtoBuiltin(ctx, {
       ...makeGlue(ctx, brand, `${kind}Iterator`, ["next"]),
       memberLength: () => 0,
+      // (#6484 S2) A real §24.1.5.2 / §24.2.5.2 body — brand-check the receiver
+      // against this family, then step the record. Before this the member was a
+      // pure metadata stand-in whose body always threw, so
+      // `iterator.next.call(<a genuine map iterator>)` threw too.
+      emitMemberBody: (c, fctx) =>
+        emitIteratorFamilyNextBody(
+          c,
+          fctx,
+          kind === "Set" ? ITER_FAMILY_SET : ITER_FAMILY_MAP,
+          `%${kind}IteratorPrototype%.next`,
+        ),
     });
   }
   return brand;
@@ -2794,6 +3168,10 @@ export function ensureFunctionNativeProtoGlue(ctx: CodegenContext): number | und
   const brand = getBuiltinBrand(ctx, "Function");
   if (brand === undefined) return undefined;
   if (!getNativeProtoBuiltinGlue(ctx, brand)) {
+    // (#6775 S16) %Function.prototype%'s own `length` 0 / `name` "" are NOT
+    // seeded into the companion: every callable's miss walks to it, so a
+    // provider-owned function (`GeneratorFunction()`) read `name` "" instead
+    // of reaching its owner (GeneratorFunction/instance-{name,length}.js).
     registerNativeProtoBuiltin(ctx, makeGlue(ctx, brand, "Function", FUNCTION_PROTO_METHODS));
   }
   return brand;
@@ -3520,84 +3898,9 @@ export function emitGeneratorPrototypeSingleton(ctx: CodegenContext, fctx: Funct
   return { kind: "externref" };
 }
 
-/**
- * (#3236 S1) Native standalone `%Generator%` (= `%GeneratorFunction.prototype%`,
- * §27.3.3) value — the object `getPrototypeOf(genFn)` must return. A lazily-cached
- * `$Object` singleton whose:
- *   - `[[Prototype]]` (`$proto`) is `%Function.prototype%` (so
- *     `getPrototypeOf(getPrototypeOf(genFn)) === getPrototypeOf(ordinaryFn)`,
- *     §27.3.3.2 — the `prototype-relation-to-function.js` identity), built via
- *     `__object_create(%Function.prototype%)`, and
- *   - own `prototype` data property is `%GeneratorPrototype%` (§27.3.3.3), so
- *     `getPrototypeOf(genFn).prototype` reaches GP for the GeneratorPrototype
- *     descriptor / this-val tests.
- * Modelled on `emitTypedArrayIntrinsicCtorObject` (the `$Object`-with-a-native-
- * proto-`prototype` shape). Standalone/WASI only. Leaves the `%Generator%`
- * externref on the stack; returns its ValType or `null` on unavailable runtime.
- */
-export function emitGeneratorFunctionPrototypeSingleton(ctx: CodegenContext, fctx: FunctionContext): ValType | null {
-  const brand = ensureGeneratorPrototypeNativeProtoGlue(ctx);
-  if (brand === undefined) return null;
-
-  ensureObjectRuntime(ctx);
-  const createIdx = ctx.funcMap.get("__object_create");
-  const setIdx = ctx.funcMap.get("__extern_set");
-  if (createIdx === undefined || setIdx === undefined) return null;
-
-  const globalName = "__native_generator_function_prototype";
-  let globalIdx = ctx.builtinObjectGlobals.get(globalName);
-  if (globalIdx === undefined) {
-    globalIdx = ctx.numImportGlobals + ctx.mod.globals.length;
-    ctx.mod.globals.push({
-      name: globalName,
-      type: { kind: "externref" },
-      mutable: true,
-      init: [{ op: "ref.null.extern" }],
-    });
-    ctx.builtinObjectGlobals.set(globalName, globalIdx);
-  }
-
-  const objLocal = allocLocal(fctx, `__genfn_proto_obj_${fctx.locals.length}`, { kind: "externref" });
-  const initBody: Instr[] = [];
-
-  // (#2182 pattern) `savedBody` is detached during the swap; register it in
-  // `liveBodies` so any late-import funcidx shift still walks it.
-  const savedBody = fctx.body;
-  fctx.body = initBody;
-  ctx.liveBodies.add(savedBody);
-  let ok = true;
-  try {
-    // G = __object_create(%Function.prototype%)  — sets $proto for the relation
-    // identity. FP materialization (its own lazy-global guard) nests here.
-    if (emitFunctionPrototypeObjectSingleton(ctx, fctx) === null) {
-      ok = false;
-    } else {
-      fctx.body.push({ op: "call", funcIdx: createIdx });
-      fctx.body.push({ op: "local.set", index: objLocal });
-      // G.prototype = %GeneratorPrototype%
-      fctx.body.push({ op: "local.get", index: objLocal });
-      addStringConstantGlobal(ctx, "prototype");
-      for (const instr of stringConstantExternrefInstrs(ctx, "prototype")) fctx.body.push(instr);
-      if (emitGeneratorPrototypeSingleton(ctx, fctx) !== null) {
-        fctx.body.push({ op: "call", funcIdx: setIdx });
-        fctx.body.push({ op: "local.get", index: objLocal });
-        fctx.body.push({ op: "global.set", index: globalIdx });
-      } else {
-        ok = false;
-      }
-    }
-  } finally {
-    fctx.body = savedBody;
-    ctx.liveBodies.delete(savedBody);
-  }
-  if (!ok) return null;
-
-  fctx.body.push({ op: "global.get", index: globalIdx });
-  fctx.body.push({ op: "ref.is_null" });
-  fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: initBody, else: [] });
-  fctx.body.push({ op: "global.get", index: globalIdx });
-  return { kind: "externref" };
-}
+// (#6651 A3) `emitGeneratorFunctionPrototypeSingleton` — the standalone
+// `%GeneratorFunction.prototype%` / `%GeneratorFunction%` pair — lives in
+// `generator-function-intrinsic.ts`.
 
 /**
  * Native standalone `%AsyncGenerator%` (= `%AsyncGeneratorFunction.prototype%`)
@@ -4059,12 +4362,164 @@ export function emitIteratorPrototypeSingleton(
       );
     }
   }
+  // (#6484 S1) `%ArrayIteratorPrototype%.next` is an own data property too
+  // (§23.1.5.2) — Map/Set/String already install theirs above; Array was the
+  // one family whose prototype had no `next` at all, so `verifyProperty(proto
+  // .next, …)` saw `undefined`.
+  if (kind === "Array" && defineValueIdx !== undefined) {
+    const brand = ensureArrayIteratorNativeProtoGlue(ctx);
+    const closure =
+      brand === undefined
+        ? null
+        : ensureStandaloneNativeMethodClosure(ctx, brand, "next", "method", { refusalBodyFallback: true });
+    if (closure) {
+      initBody.push(
+        { op: "local.get", index: objLocal },
+        ...stringConstantExternrefInstrs(ctx, "next"),
+        ...pushBuiltinFnSingletonValueInstrs(ctx, closure),
+        { op: "extern.convert_any" },
+        { op: "f64.const", value: 0x01 | 0x04 }, // writable:true, enumerable:false, configurable:true
+        { op: "call", funcIdx: defineValueIdx },
+        { op: "drop" },
+      );
+    }
+  }
+
+  // (#6484 S1) §27.1.2 — all four family prototypes INHERIT from the single
+  // %IteratorPrototype%. Linking it here (rather than at each call site) is what
+  // makes `Object.getPrototypeOf(Object.getPrototypeOf([][Symbol.iterator]()))`
+  // an object with an own `[Symbol.iterator]`. The link is written inside the
+  // one-shot init, so it costs nothing on later reads.
+  emitIteratorRootPrototypeInit(ctx, fctx, initBody, objLocal, boxSymbolIdx);
+
   initBody.push({ op: "local.get", index: objLocal }, { op: "global.set", index: globalIdx });
   fctx.body.push({ op: "global.get", index: globalIdx });
   fctx.body.push({ op: "ref.is_null" });
   fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: initBody, else: [] });
   fctx.body.push({ op: "global.get", index: globalIdx });
   return { kind: "externref" };
+}
+
+/**
+ * (#6484 S1) Materialize `%IteratorPrototype%` (§27.1.2) and append the
+ * `[[Prototype]]` link from the family prototype in `objLocal` onto `initBody`.
+ *
+ * The root is its own identity-stable `$Object` singleton in
+ * `__native_iterator_prototype`, with an own `[Symbol.iterator]` data property
+ * whose value is the `%IteratorPrototype%[@@iterator]` closure (`name`
+ * `"[Symbol.iterator]"`, `length` 0, returns its `this`). Returns the root's
+ * global index, or `undefined` when the object runtime cannot supply the
+ * pieces — then the family prototype keeps its historical null parent.
+ */
+function emitIteratorRootPrototypeInit(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  initBody: Instr[],
+  objLocal: number,
+  boxSymbolIdx: number | undefined,
+): number | undefined {
+  const setProtoIdx = ctx.funcMap.get("__object_setPrototypeOf");
+  if (setProtoIdx === undefined) return undefined;
+  const root = iteratorRootPrototypeEnsureInstrs(ctx, boxSymbolIdx, () =>
+    allocLocal(fctx, `__iter_root_proto_${fctx.locals.length}`, { kind: "externref" }),
+  );
+  if (root === undefined) return undefined;
+  initBody.push(
+    ...root.instrs,
+    { op: "local.get", index: objLocal },
+    { op: "global.get", index: root.globalIdx },
+    { op: "call", funcIdx: setProtoIdx },
+    { op: "drop" },
+  );
+  return root.globalIdx;
+}
+
+/**
+ * (#6484 S1; #6773 S4 exports it) FRESH instrs that initialise the ONE
+ * `%IteratorPrototype%` root singleton (`__native_iterator_prototype`) when it
+ * is still null — `$Object` + own `[Symbol.iterator]` closure — plus its
+ * global index. Every consumer (the family prototypes above, the
+ * `%IteratorHelperPrototype%` in iter-lazy-native.ts) runs this same guarded
+ * init, so whichever runs first mints the root and all link to it.
+ * `rootLocal` allocates the externref scratch local the init needs.
+ */
+export function iteratorRootPrototypeEnsureInstrs(
+  ctx: CodegenContext,
+  boxSymbolIdx: number | undefined,
+  rootLocal: () => number,
+): { globalIdx: number; instrs: Instr[] } | undefined {
+  const newObjectIdx = ctx.funcMap.get("__new_plain_object");
+  const defineValueIdx = ctx.funcMap.get("__defineProperty_value");
+  if (
+    newObjectIdx === undefined ||
+    defineValueIdx === undefined ||
+    ctx.funcMap.get("__object_setPrototypeOf") === undefined
+  )
+    return undefined;
+  if (boxSymbolIdx === undefined) return undefined;
+
+  const globalName = "__native_iterator_prototype";
+  let globalIdx = ctx.builtinObjectGlobals.get(globalName);
+  if (globalIdx === undefined) {
+    globalIdx = ctx.numImportGlobals + ctx.mod.globals.length;
+    ctx.mod.globals.push({
+      name: globalName,
+      type: { kind: "externref" },
+      mutable: true,
+      init: [{ op: "ref.null.extern" }],
+    });
+    ctx.builtinObjectGlobals.set(globalName, globalIdx);
+  }
+
+  const rootSlot = rootLocal();
+  const rootInit: Instr[] = [
+    { op: "call", funcIdx: newObjectIdx },
+    { op: "local.set", index: rootSlot },
+  ];
+  const brand = ensureIteratorNativeProtoGlue(ctx);
+  const closure =
+    brand === undefined
+      ? null
+      : ensureStandaloneNativeMethodClosure(ctx, brand, ITERATOR_PROTO_SYMBOL_ITERATOR, "method");
+  if (closure) {
+    rootInit.push(
+      { op: "local.get", index: rootSlot },
+      { op: "i32.const", value: 1 }, // Symbol.iterator
+      { op: "call", funcIdx: boxSymbolIdx },
+      ...pushBuiltinFnSingletonValueInstrs(ctx, closure),
+      { op: "extern.convert_any" },
+      { op: "f64.const", value: 0x01 | 0x04 }, // writable:true, enumerable:false, configurable:true
+      { op: "call", funcIdx: defineValueIdx },
+      { op: "drop" },
+    );
+  }
+  // (#6773 S6) `chunks` / `join` / `windows` are own methods of the root, like
+  // `[Symbol.iterator]` above: `Iterator.prototype.join` must read as a
+  // (non-constructor) function. The closure's refusal body throws a catchable
+  // TypeError when CALLED; calls on a helper receiver keep the native lazy arm.
+  for (const name of brand === undefined ? [] : ITERATOR_ROOT_SEEDED_METHODS) {
+    const member = ensureStandaloneNativeMethodClosure(ctx, brand!, name, "method", { refusalBodyFallback: true });
+    if (!member) continue;
+    addStringConstantGlobal(ctx, name);
+    rootInit.push(
+      { op: "local.get", index: rootSlot },
+      ...stringConstantExternrefInstrs(ctx, name),
+      ...pushBuiltinFnSingletonValueInstrs(ctx, member),
+      { op: "extern.convert_any" },
+      { op: "f64.const", value: 0x01 | 0x04 }, // writable:true, enumerable:false, configurable:true
+      { op: "call", funcIdx: defineValueIdx },
+      { op: "drop" },
+    );
+  }
+  rootInit.push({ op: "local.get", index: rootSlot }, { op: "global.set", index: globalIdx });
+  return {
+    globalIdx,
+    instrs: [
+      { op: "global.get", index: globalIdx },
+      { op: "ref.is_null" },
+      { op: "if", blockType: { kind: "empty" }, then: rootInit, else: [] },
+    ],
+  };
 }
 
 export function emitArrayIteratorPrototypeSingleton(ctx: CodegenContext, fctx: FunctionContext): ValType | null {

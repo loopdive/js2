@@ -62,5 +62,14 @@ export function userErrorCtorCarrierGlobal(ctx: CodegenContext, name: string): n
   if (moduleGlobalIdx !== undefined && (ctx.liveFuncBindingGlobals?.has(name) === true || ctx.closureMap.has(name))) {
     return moduleGlobalIdx;
   }
-  return ctx.funcClosureGlobals.get(name);
+  const closureGlobalIdx = ctx.funcClosureGlobals.get(name);
+  // (#6723 D4) A standalone module that links a harness/package provider can
+  // bind the name as a plain `var` holding the PROVIDER's constructor (the
+  // linked-harness prelude: `var Test262Error = __js2wasm_get___h_…();`). No
+  // function declaration exists here, so the module global IS the only carrier
+  // and the value `===` compares against.
+  if (closureGlobalIdx === undefined && moduleGlobalIdx !== undefined && ctx.standalone) {
+    if (ctx.linkedPackageBindings.size > 0) return moduleGlobalIdx;
+  }
+  return closureGlobalIdx;
 }

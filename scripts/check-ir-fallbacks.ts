@@ -52,7 +52,6 @@
  * Corpus: every `.ts` file under `playground/examples/` (excluding `.d.ts`).
  */
 import { readFileSync, writeFileSync, existsSync, statSync, readdirSync } from "node:fs";
-import { createRequire } from "node:module";
 import { join, dirname, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { analyzeFiles } from "../src/checker/index.js";
@@ -78,12 +77,6 @@ import {
 import { compile, compileFiles } from "../src/index.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-// `analyzeFiles` is also consumed from the published CJS-compatible surface
-// and currently obtains node:path through `require`. The gate executes source
-// directly as ESM, so supply the same Node require binding before compileFiles.
-(globalThis as typeof globalThis & { require?: ReturnType<typeof createRequire> }).require ??= createRequire(
-  import.meta.url,
-);
 const REPO_ROOT = resolve(__dirname, "..");
 const BASELINE_PATH = join(REPO_ROOT, "scripts/ir-fallback-baseline.json");
 const CORPUS_ROOTS = [join(REPO_ROOT, "website/playground/examples")];

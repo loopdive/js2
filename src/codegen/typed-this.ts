@@ -103,6 +103,7 @@ import { inheritedSetAffectsKey } from "./inherited-set-gate.js"; // (#4602) per
 import { isBrandedBoolean, retUnboxAbiEnabled, retUnboxAbiPoisoned } from "./ret-unbox-abi.js";
 import { paramSlotRefinableOn, paramUnboxAbiEnabled, paramUnboxAbiPoisoned } from "./param-unbox-abi.js"; // (#4406 P3)
 import { emitToBoolean } from "./coercion-engine.js"; // (#4406 Phase 3) ToBoolean ≠ coerceType's ToNumber
+import { readEnv } from "../env.js";
 
 /**
  * Property names whose reads/writes have dedicated lowerings (array length,
@@ -114,7 +115,7 @@ const RESERVED_PROPS = new Set(["length", "constructor", "__proto__", "prototype
 
 /** Env kill-switch: `JS2WASM_TYPED_THIS=0` disables twin emission entirely. */
 function typedThisEnabled(): boolean {
-  return process.env.JS2WASM_TYPED_THIS !== "0";
+  return readEnv("JS2WASM_TYPED_THIS") !== "0";
 }
 
 /**
@@ -135,7 +136,7 @@ export const typedThisStats = {
 };
 let statsHookInstalled = false;
 function noteStats(): void {
-  if (statsHookInstalled || process.env.JS2WASM_TYPED_THIS_DEBUG !== "1") return;
+  if (statsHookInstalled || readEnv("JS2WASM_TYPED_THIS_DEBUG") !== "1") return;
   statsHookInstalled = true;
   process.on("exit", () => {
     const top = [...typedThisStats.declinedField.entries()].sort((a, b) => b[1] - a[1]).slice(0, 25);
@@ -148,7 +149,7 @@ function noteStats(): void {
   });
 }
 function noteDeclinedField(reason: string): void {
-  if (process.env.JS2WASM_TYPED_THIS_DEBUG !== "1") return;
+  if (readEnv("JS2WASM_TYPED_THIS_DEBUG") !== "1") return;
   noteStats();
   typedThisStats.declinedField.set(reason, (typedThisStats.declinedField.get(reason) ?? 0) + 1);
 }
@@ -433,7 +434,7 @@ export function resolveTypedThisField(
   // NONE of the inline field lowerings. The A/B against a full build isolates
   // the shim's per-call overhead from the inline branches' win, which is the
   // only way to tell "the branches don't pay" from "the shim eats the win".
-  if (process.env.JS2WASM_TYPED_THIS === "shim") return undefined;
+  if (readEnv("JS2WASM_TYPED_THIS") === "shim") return undefined;
   if (receiver.kind !== ts.SyntaxKind.ThisKeyword) {
     // (#4405 Phase 0) In a twin, but the receiver is not `this` — the exact
     // population #4405 targets, histogrammed by shape.
@@ -773,7 +774,7 @@ export function tryEmitTypedThisIncDec(
 
 /** Env kill-switch: `JS2WASM_DIRECT_CALLS=0` disables S3 devirtualization. */
 function directCallsEnabled(): boolean {
-  return process.env.JS2WASM_DIRECT_CALLS !== "0";
+  return readEnv("JS2WASM_DIRECT_CALLS") !== "0";
 }
 
 /**
@@ -784,7 +785,7 @@ function directCallsEnabled(): boolean {
  * A/B arms attribute the delta to the right change.
  */
 function arityPaddingEnabled(): boolean {
-  return process.env.JS2WASM_DIRECT_CALLS !== "nopad";
+  return readEnv("JS2WASM_DIRECT_CALLS") !== "nopad";
 }
 
 /** (#3683 S3) Devirtualization tallies — inert unless `_DEBUG=1`. */
@@ -799,7 +800,7 @@ export const directCallStats = {
 };
 let directStatsHookInstalled = false;
 function noteDirectStats(): void {
-  if (directStatsHookInstalled || process.env.JS2WASM_DIRECT_CALLS_DEBUG !== "1") return;
+  if (directStatsHookInstalled || readEnv("JS2WASM_DIRECT_CALLS_DEBUG") !== "1") return;
   directStatsHookInstalled = true;
   process.on("exit", () => {
     const top = [...directCallStats.declined.entries()].sort((a, b) => b[1] - a[1]).slice(0, 25);
@@ -816,7 +817,7 @@ function noteDirectStats(): void {
   });
 }
 function declineDirect(reason: string): undefined {
-  if (process.env.JS2WASM_DIRECT_CALLS_DEBUG === "1") {
+  if (readEnv("JS2WASM_DIRECT_CALLS_DEBUG") === "1") {
     noteDirectStats();
     directCallStats.declined.set(reason, (directCallStats.declined.get(reason) ?? 0) + 1);
   }
@@ -1098,7 +1099,7 @@ export function refinedTwinReturnType(
 ): ValType | undefined {
   // `JS2WASM_NUMERIC_TWINS=0` restores the externref twin ABI byte-for-byte,
   // which is what makes the A/B differential for this slice possible.
-  if (process.env.JS2WASM_NUMERIC_TWINS === "0") return undefined;
+  if (readEnv("JS2WASM_NUMERIC_TWINS") === "0") return undefined;
   if (!ctx.standalone || !directCallLoweringEnabled()) return undefined;
   // Only worth doing — and only SOUND to do — when the declared result is the
   // boxed one. Anything else is already a native type the body agrees with.
@@ -1398,13 +1399,13 @@ function reserveDirectCallTrampoline(
 // #3683 kill-switches so a suspected miscompile can be bisected to this slice
 // without a rebuild.
 function provenFieldsEnabled(): boolean {
-  return process.env.JS2WASM_PROVEN_FIELDS !== "0";
+  return readEnv("JS2WASM_PROVEN_FIELDS") !== "0";
 }
 
 const provenFieldStats = { gets: 0 };
 
 /** `JS2WASM_PROVEN_FIELDS_DEBUG=1` prints the inlined-read count at exit. */
-if (process.env.JS2WASM_PROVEN_FIELDS_DEBUG === "1") {
+if (readEnv("JS2WASM_PROVEN_FIELDS_DEBUG") === "1") {
   process.on("exit", () => {
     if (provenFieldStats.gets > 0) console.error(`[proven-fields] inlined reads=${provenFieldStats.gets}`);
   });
@@ -1602,7 +1603,7 @@ export function tryEmitProvenReceiverFieldGet(
   // verdict traps — and refused unless explicitly asked for. It exists to price
   // the guard: S4 (hoist one test per binding) is only worth building if the
   // gap between this and the guarded form is real. Mirrors `JS2WASM_TYPED_THIS=shim`.
-  if (process.env.JS2WASM_PROVEN_FIELDS === "unguarded") {
+  if (readEnv("JS2WASM_PROVEN_FIELDS") === "unguarded") {
     for (const instr of inlineRead) fctx.body.push(instr);
     provenFieldStats.gets++;
     noteProvenReceiverPhase("inlined");
@@ -1687,7 +1688,7 @@ function provenReceiverClass(ctx: CodegenContext, fctx: FunctionContext, receive
   const verdict = receiverClassOf(result, receiver, enclosing);
   // (#4405 Phase 0) Attribute every refusal to the pass that produced it.
   if (verdict === undefined) noteReceiverDeclineDetail(result, receiver);
-  if (process.env.JS2WASM_PROVEN_FIELDS_DEBUG === "1") {
+  if (readEnv("JS2WASM_PROVEN_FIELDS_DEBUG") === "1") {
     console.error(
       `[proven-fields] receiver ${receiver.getText()} -> ${verdict ?? "(unproven)"}` +
         ` (verdicts=${result.byDeclaration.size} tally=${JSON.stringify(result.tally)})`,
@@ -1727,7 +1728,7 @@ export function tryEmitDirectTwinCall(
 
   if (!isThis || structName === undefined || thisLocalIdx === undefined || structTypeIdx === undefined) {
     if (isThis) {
-      if (process.env.JS2WASM_PINNED_THIS_DIRECT_CALLS === "0") return undefined;
+      if (readEnv("JS2WASM_PINNED_THIS_DIRECT_CALLS") === "0") return undefined;
       const pinned = fctx.thisStructName;
       const pinnedIdx = pinned === undefined ? undefined : ctx.structMap.get(pinned);
       if (pinned === undefined || pinnedIdx === undefined) return undefined;
@@ -1825,7 +1826,7 @@ export function tryEmitDirectTwinCall(
     results: callResult === null ? [] : [callResult],
     guardedReceiver,
     needsArgcFrame:
-      process.env.JS2WASM_ELIDE_UNUSED_ARGC_FRAME === "0" || formals.some((formal) => formal.initializer !== undefined),
+      readEnv("JS2WASM_ELIDE_UNUSED_ARGC_FRAME") === "0" || formals.some((formal) => formal.initializer !== undefined),
     deps,
   });
   // The legacy-dispatcher reservation above may have added late imports; settle
@@ -2194,7 +2195,7 @@ export function fillDirectCallTrampolines(ctx: CodegenContext): void {
       }
       arm.push(...legacy);
       directCallStats.legacyFills++;
-      if (process.env.JS2WASM_DIRECT_CALLS_DEBUG === "1") {
+      if (readEnv("JS2WASM_DIRECT_CALLS_DEBUG") === "1") {
         const reason =
           twin === undefined
             ? "no-twin"
@@ -2227,7 +2228,7 @@ export function fillDirectCallTrampolines(ctx: CodegenContext): void {
     // operations and one spill on every parser-method call. Guarded twins keep
     // the frame for their legacy miss arm, and generic retained-closure bodies
     // keep it because both can still read `__current_this`.
-    const elideCurrentThisFrame = onlyCallsTypedTwin && process.env.JS2WASM_TWIN_RECEIVER_PARAM !== "0";
+    const elideCurrentThisFrame = onlyCallsTypedTwin && readEnv("JS2WASM_TWIN_RECEIVER_PARAM") !== "0";
     const needsCleanup = !elideCurrentThisFrame || t.needsArgcFrame;
     const locals: LocalDef[] = [];
     let prevLocal = -1;

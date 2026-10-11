@@ -1,0 +1,8 @@
+{
+  "commit": "fdaa94315aeeeab5dc85a3596f2b4997b388ac76",
+  "blob": "accac33484a267a868145ba59b442bcb12cdd561",
+  "sourcePath": "src/codegen/registry/types.ts",
+  "sourceSha256": "54a64e571a8ef1b42ca72e6837f8306cbe9cbe009a795d984404cb7cdd54f886",
+  "functionSha256": "c0cdb135e5604f855c82574dfdf67fb229730215ead5f39f9fef40d1a26e6fee",
+  "function": "export function getOrRegisterRefCellType(ctx: CodegenContext, valType: ValType): number {\n  const key =\n    valType.kind === \"ref\" || valType.kind === \"ref_null\"\n      ? `${valType.kind}_${(valType as { typeIdx: number }).typeIdx}`\n      : valType.kind;\n  const existing = ctx.refCellTypeMap.get(key);\n  if (existing !== undefined) return existing;\n\n  const typeIdx = ctx.mod.types.length;\n  ctx.mod.types.push({\n    kind: \"struct\",\n    name: `__ref_cell_${key}`,\n    fields: [{ name: \"value\", type: valType, mutable: true }],\n  });\n  ctx.refCellTypeMap.set(key, typeIdx);\n  return typeIdx;\n}"
+}

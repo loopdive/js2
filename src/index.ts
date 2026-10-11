@@ -365,6 +365,12 @@ export interface CompileResult {
    * r.importObject.__setInstance?.(instance);
    * ```
    *
+   * `__setInstance(instance)` is what establishes the data-struct authority the
+   * boundary needs to decode a returned object. (#6438) The legacy
+   * `__setExports(instance.exports)` wiring does not: after it, passing the raw
+   * exports record to `wrapExports` makes any struct-returning export throw
+   * rather than answer `{}`. Pass the instance to both.
+   *
    * Standalone / `wasi` mode is the zero-import portable default and needs no
    * import object; for those targets this is an empty object. Computed lazily —
    * accessing it builds the runtime once and caches the result.
@@ -441,8 +447,9 @@ export interface CompileError {
   column: number;
   /** Whether the diagnostic is fatal (`"error"`) or advisory (`"warning"`). */
   severity: "error" | "warning";
-  /** TS diagnostic code (if from TypeScript diagnostics) */
-  code?: number;
+  /** TS diagnostic code (number), or a compiler-owned string code: `"invalid-module"` /
+   *  `"validation-skipped"` (see {@link CompileOptions.validate}). */
+  code?: number | string;
   /**
    * Source file the diagnostic originated in (#1929). Populated from
    * `diag.file.fileName` for TypeScript diagnostics; absent for diagnostics
@@ -478,24 +485,21 @@ export interface CompileOptions {
   /** Emit WAT debug output (default: true) */
   emitWat?: boolean;
   /**
-   * (#4420) Gate the result on the host WebAssembly engine.
+   * (#4420, #6776) Gate the result on the host WebAssembly engine. Default:
+   * `true` — every compile validates its output.
    *
-   * `success` alone means "codegen ran to completion", NOT "the bytes are a
-   * module". Self-compiling `src/emit/binary.ts` returned `success: true` with
-   * 268 KB of Wasm the engine then rejected — so any scoreboard built on the
-   * flag (self-hosting progress, npm-compat matrix, conformance counts) could
-   * report progress that does not exist.
+   * If `WebAssembly.validate` rejects the emitted binary, `success` is `false`
+   * and `errors` gains `{ severity: "error", code: "invalid-module", message }`
+   * carrying the engine's own complaint (from `new WebAssembly.Module`). The
+   * binary is still returned so the caller can dump or diff it. Without this,
+   * a type-confused lowering compiled "successfully" and only the engine
+   * noticed, at instantiate time. A host with no `WebAssembly` global cannot
+   * check; the compile then succeeds with a `"validation-skipped"` warning.
    *
-   * With `validate: true` the emitted binary is run through
-   * `validateEmittedBinary`; if the engine rejects it, `success` flips to
-   * `false` and an error-severity {@link CompileError} carrying the engine's
-   * detail string is pushed onto `errors`. The binary is still returned so the
-   * caller can dump/diff it.
-   *
-   * Opt-in: validation costs a full engine decode of the module, and existing
-   * callers that deliberately inspect invalid output (WAT dumps, minimizers)
-   * must keep getting it. The CLI runs its own post-optimize check (#3338) and
-   * therefore does NOT set this — it would double-report.
+   * Pass `validate: false` to opt out — validation costs a full engine decode
+   * of the module. Opt out when you measure compile time (benchmarks), when you
+   * validate the bytes yourself with richer reporting (the test262 workers),
+   * or when you deliberately inspect invalid output (WAT dumps, minimizers).
    */
   validate?: boolean;
   /**
@@ -534,12 +538,43 @@ export interface CompileOptions {
    * An optional `call` import provides `(callable, receiver, args) -> result`
    * for values owned by that realm. Module-local closure shapes still use the
    * normal direct dispatcher; only its terminal miss crosses this bridge.
+   * An optional `exceptionTag` names the provider's `(externref)` exception
+   * tag export. Consumers import that same tag so exceptions thrown by linked
+   * realm callables match their native try/catch and Promise rejection handlers.
+   * Omitting it preserves the existing module-local exception tag.
+   * Optional paired `owns` and `get` imports delegate property reads to the
+   * proven owner before inspecting consumer-local property tables. The owner
+   * must distinguish its own objects from references it merely roots for
+   * another graph. Getter exceptions use the shared exceptionTag when set.
    *
    * This option is valid only with `target: "standalone"`. It is deliberately
    * explicit and has no default, preserving host-free standalone output for
    * all existing callers.
    */
-  standaloneGlobalThisImport?: { module: string; name: string; call?: string };
+  standaloneGlobalThisImport?: {
+    module: string;
+    name: string;
+    call?: string;
+    exceptionTag?: string;
+    /** Ownership predicate (externref) -> i32, paired with get below. */
+    owns?: string;
+    /** Owner's Get(object, key, receiver) -> externref, preserving reference identity. */
+    get?: string;
+  };
+  /** Experimental Context-owned Script var storage. Requires standalone,
+   * scriptGoal and an ownership-aware shared realm provider/exception tag.
+   * Typed private slots are refused
+   * until cross-Script mutation is incorporated into their planning. */
+  standaloneScriptVarBindings?: boolean;
+  /** Opt-in allocation provenance predicate (externref) -> i32. Adds one hidden
+   * owner-token field to GC structs; all linked graph artifacts must opt in. */
+  standaloneAllocationOwnerExport?: string;
+  /** Optional native-host notification `() -> void` after each Wasm-owned
+   * microtask enqueue. The host can combine notifications from multiple
+   * graphs with its native queue and call `__drain_one_microtask` in order.
+   * Requires standalone and an explicitly linked import namespace.
+   */
+  standaloneMicrotaskNotifyImport?: { module: string; name: string };
   /**
    * Dynamic direct-eval lowering for the WasmGC JavaScript-host target.
    *
@@ -555,6 +590,9 @@ export interface CompileOptions {
    * the WasmGC cell carrier.
    */
   directEval?: "legacy" | "reified-host";
+  /** Standalone only (#6676). `false`: no `js2wasm:runtime-eval` provider will be linked, so a
+   *  non-constant `Function(src)` throws EvalError in-module instead of importing the interpreter. */
+  runtimeEvalProvider?: boolean;
   /**
    * (#743) Declaration source text for the entry module's shipped sibling
    * `.d.ts` (e.g. acorn's `dist/acorn.d.ts` when compiling `dist/acorn.mjs`).
@@ -640,6 +678,47 @@ export interface CompileOptions {
    * `"use strict"` prologue and class context still force strict regardless.
    */
   inferModuleStrictArguments?: boolean;
+  /**
+   * (#6491 round 3) The compilation unit is explicitly **Script** goal.
+   *
+   * The positive counterpart of `inferModuleStrictArguments`, and it has to be
+   * its own flag rather than its negation: `inferModuleStrictArguments === false`
+   * is ALSO what every ordinary product compile leaves behind (the option is
+   * simply absent), and a product `.ts` file legitimately contains `export` and
+   * `import`. So "not module goal" cannot be read as "Script goal" — doing that
+   * would reject valid code with a SyntaxError.
+   *
+   * Only a caller that KNOWS the goal may set it. Today that is exactly the
+   * test262 runner, which reads it off the test's own `flags: [module]`
+   * metadata. It gates the three Script-goal rules — `import`/`export`
+   * declarations (§16.1.1) and `import.meta` (§13.3.12.1) are ModuleItems and
+   * are SyntaxErrors in a Script — and nothing else.
+   */
+  scriptGoal?: boolean;
+  /**
+   * (#6474) Let the MULTI-FILE codegen path derive the entry's source goal from
+   * the entry file itself instead of forcing the module goal.
+   *
+   * `generateMultiModule` sets `ctx.sourceIsModule = true` unconditionally
+   * ("multi-file compilation is linked through import/export module records").
+   * For an ordinary package graph that is right. For the linked test262 harness
+   * lane it is not: the entry is a test262 **script**, and the module goal
+   * changes observable semantics — a top-level `var` becomes module-scoped
+   * instead of a global-object property (so a closure created before the
+   * declaration sees `undefined`, and a `with`-introduced `var` never reaches
+   * the global), top-level `this` becomes `undefined`, and an undeclared
+   * assignment stops creating a global.
+   *
+   * When `true`, `ctx.sourceIsModule` follows the entry file's own
+   * `externalModuleIndicator` — a genuine `import`/`export` in the entry still
+   * yields the module goal. Sibling files are unaffected; they keep their own
+   * per-file binding scoping.
+   *
+   * Opt-in and OFF by default, so every other `compileMulti` / `compileProject`
+   * caller is byte-identical. Today the only caller that sets it is
+   * `compileHarnessLinkedBody`.
+   */
+  entryScriptGoal?: boolean;
   /** Use WasmGC-native strings (array i16) instead of wasm:js-string imports.
    *  Enabled automatically when fast: true or target: "wasi".
    *  Required for non-browser runtimes (wasmtime, wasmer, etc.) */
@@ -950,7 +1029,7 @@ export interface CompileOptions {
    * `true` for project compiles.
    */
   packageLinking?: boolean | "separate" | "merge";
-  /** Optional directory for content-addressed npm provider binaries. */
+  /** Directory for content-addressed npm provider binaries; default: `node_modules/.cache/js2wasm` (#6794). */
   packageCacheDir?: string;
   /** Internal package-link import map populated by compileProject's planner. */
   linkedPackageBindings?: ReadonlyMap<string, { module: string; field: string }>;

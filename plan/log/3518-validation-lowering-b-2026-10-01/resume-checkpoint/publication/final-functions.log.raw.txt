@@ -1,0 +1,6 @@
+
+> @loopdive/js2@0.71.0 check:func-budget /private/tmp/js2-ir-source-contracts-main-20261001
+> node scripts/check-func-budget.mjs
+
+
+Function budget gate: OK — no unallowed growth in 25 changed src file(s) (base: env:LOC_GATE_BASE).

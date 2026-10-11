@@ -44,7 +44,7 @@ import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js
 import { nativeStringLiteralInstrs } from "./native-string-literals.js"; // (#4629) dyn-dispatch fill key compares
 import { getWellKnownSymbolId } from "./literals.js"; // (#4629) @@iterator id
 import { ensureSymbolCarrier, usesNativeSymbolProvider } from "./symbol-native.js"; // (#5267 A-2) symbol keys box as symbols, not ids
-import { ensureNativeIteratorRuntime } from "./iterator-native.js"; // (#5267 B-2) live collection iterator records
+import { ensureNativeIteratorRuntime, ITER_FAMILY_MAP, ITER_FAMILY_SET } from "./iterator-native.js"; // (#5267 B-2) live collection iterator records; (#6484 S1) family tags
 import { getClosureFuncSelfTypeIdx, getOrCreateFuncRefWrapperTypes } from "./closures/funcref-wrapper-types.js"; // (#4629) iterator closure singleton
 
 /** WasmGC `eq` abstract heap type, signed-LEB `0x6d` = -19. Used for ref.eq on
@@ -85,6 +85,7 @@ export const MAP_LAYOUT = {
 // `collection-kind.js`. It used to be declared here, but this module sits in an
 // import cycle, so a module that entered the cycle from the other side could
 // read the binding while it was still in TDZ. Import it from the leaf.
+export { COLLECTION_KIND, type CollectionKind } from "./collection-kind.js";
 
 /**
  * Register the WasmGC struct/array types backing the native Map. Idempotent.
@@ -126,25 +127,28 @@ export function ensureMapRuntimeTypes(ctx: CodegenContext): void {
   } as ArrayTypeDef);
 
   // $Map: struct { buckets; entries; entryCount(mut i32); liveCount(mut i32) }
+  // (#6754) Reserved `__map_*` names: a collection-subclass carrier repeats this
+  // prefix in `ctx.structFields`, where a user `x.entries()`/`x.kind` structural
+  // scan must not match it. Field names are not encoded in the binary.
   ctx.mapTypeIdx = ctx.mod.types.length;
   ctx.mod.types.push({
     kind: "struct",
     name: "Map",
     fields: [
       {
-        name: "buckets",
+        name: "__map_buckets",
         type: { kind: "ref", typeIdx: ctx.mapBucketsTypeIdx },
         mutable: true,
       },
       {
-        name: "entries",
+        name: "__map_entries",
         type: { kind: "ref", typeIdx: ctx.mapEntriesTypeIdx },
         mutable: true,
       },
-      { name: "entryCount", type: { kind: "i32" }, mutable: true },
-      { name: "liveCount", type: { kind: "i32" }, mutable: true },
+      { name: "__map_entryCount", type: { kind: "i32" }, mutable: true },
+      { name: "__map_liveCount", type: { kind: "i32" }, mutable: true },
       // (#3171) COLLECTION_KIND brand tag, trailing + immutable — see MAP_LAYOUT.
-      { name: "kind", type: { kind: "i32" }, mutable: false },
+      { name: "__map_kind", type: { kind: "i32" }, mutable: false },
     ],
   } as StructTypeDef);
   ctx.structMap.set("Map", ctx.mapTypeIdx);
@@ -481,15 +485,16 @@ export function ensureMapHelpers(ctx: CodegenContext): void {
             { op: "call", funcIdx: flatten },
             { op: "ref.cast", typeIdx: strTypeIdx },
             { op: "local.tee", index: 5 },
-            // data array (field 3 of NativeString: len,byteLen?,off,data — use struct.get by name index)
-            // NativeString layout: { len(i32), ..., data }. We read length via array.len of data.
+            // NativeString is a view: hash only its logical UTF-16 contents,
+            // not spare capacity or characters outside a substring's bounds.
             {
               op: "struct.get",
               typeIdx: strTypeIdx,
               fieldIdx: nativeStrDataFieldIdx(ctx),
             },
-            { op: "local.tee", index: 6 },
-            { op: "array.len" },
+            { op: "local.set", index: 6 },
+            { op: "local.get", index: 5 },
+            { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 0 },
             { op: "local.set", index: 7 },
             { op: "i32.const", value: 0x811c9dc5 | 0 },
             { op: "local.set", index: 3 },
@@ -510,7 +515,10 @@ export function ensureMapHelpers(ctx: CodegenContext): void {
                     // h ^= cu
                     { op: "local.get", index: 3 },
                     { op: "local.get", index: 6 },
+                    { op: "local.get", index: 5 },
+                    { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 1 },
                     { op: "local.get", index: 4 },
+                    { op: "i32.add" },
                     {
                       op: "array.get_u",
                       typeIdx: dataTypeIdx,
@@ -2222,6 +2230,9 @@ export function emitLiveCollectionIterRec(
     { op: "i32.const", value: iterKind },
     { op: "call", funcIdx: iterNewIdx },
     { op: "extern.convert_any" },
+    // (#6484 S1) family — statically known here: this producer is only reached
+    // from a checker-proven Map/Set receiver.
+    { op: "i32.const", value: isSet ? ITER_FAMILY_SET : ITER_FAMILY_MAP },
     { op: "struct.new", typeIdx: iterRecTypeIdx },
     { op: "extern.convert_any" },
   );
@@ -2842,6 +2853,20 @@ export function fillMapSetDynDispatchArms(ctx: CodegenContext): void {
               },
               { op: "call", funcIdx: iterNewIdx },
               { op: "extern.convert_any" },
+              // (#6484 S1) family — the SAME `m.kind === SET` discriminator the
+              // projection above uses, so a dynamically-reached Set iterator
+              // reports `%SetIteratorPrototype%` and a Map one reports
+              // `%MapIteratorPrototype%`.
+              ...castMap(),
+              { op: "struct.get", typeIdx: mapIdx, fieldIdx: MAP_LAYOUT.M_KIND },
+              { op: "i32.const", value: 1 },
+              { op: "i32.eq" },
+              {
+                op: "if",
+                blockType: { kind: "val", type: { kind: "i32" } },
+                then: [{ op: "i32.const", value: ITER_FAMILY_SET }],
+                else: [{ op: "i32.const", value: ITER_FAMILY_MAP }],
+              },
               { op: "struct.new", typeIdx: iterRecTypeIdx },
               { op: "extern.convert_any" },
               { op: "return" },

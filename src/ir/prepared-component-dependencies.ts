@@ -42,6 +42,8 @@ import {
 import type { PreparedComponentAbiEntry, PreparedComponentAbiLookup } from "./program/abi-lookup.js";
 export type { PreparedComponentAbiEntry, PreparedComponentAbiLookup } from "./program/abi-lookup.js";
 
+export { assertPreparedIrRuntimeSupportDependencies } from "./program/runtime-support-dependencies.js";
+
 export type {
   PreparedClassAccessorWritebackEvidence,
   PreparedComponentClosureSupportEvidence,
@@ -332,6 +334,15 @@ function recordImplicitTypeRequirement(
     });
   };
   switch (type.kind) {
+    case "support-ref":
+      recordSupportTypeReference(
+        evidence,
+        type.ref,
+        abi,
+        ownership,
+        "IR symbolic support reference must use a compiler-support Program ABI type ref",
+      );
+      return;
     case "val":
       if (type.val.kind === "ref" || type.val.kind === "ref_null") {
         if (!type.typeRef) {

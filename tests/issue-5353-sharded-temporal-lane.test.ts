@@ -111,8 +111,8 @@ describe("#5353 the sharded worker's refusals", () => {
     expect(worker).not.toMatch(/msg\.temporal === true && target === undefined/);
     // The provider is resolved PER TARGET — a host artifact in a standalone
     // consumer is a silently wrong realm, not a compile error.
-    expect(worker).toContain("getWorkerTemporalProvider(target)");
-    expect(worker).toContain("temporalProviderCompileOptions(target)");
+    expect(worker).toContain("getWorkerTemporalProvider(target, semanticProviders)");
+    expect(worker).toContain("temporalProviderCompileOptions(target, semanticProviders)");
   });
 
   it("routes provider registration through the runtime copy its imports came from", () => {

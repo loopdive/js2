@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { afterEach, describe, expect, it } from "vitest";
 
-import { compile } from "../src/index.js";
+import { compile, validateEmittedBinary } from "../src/index.js";
 import { getLastLinearIrReport } from "../src/ir/backend/linear-integration.js";
 
 const ORIGINAL_LINEAR_IR = process.env.JS2WASM_LINEAR_IR;
@@ -72,9 +72,12 @@ describe("linear Number::toString", () => {
     process.env.JS2WASM_LINEAR_IR = "1";
     const result = await compile(
       `export function user(x: number): number { return x + 1; }\nsetTimeout(() => {}, 1);`,
-      { target: "linear", fileName: "linear-timer-provenance.ts" },
+      // #6800: this test asserts attempt-root telemetry only; the linear setTimeout wrapper emits an
+      // engine-invalid binary (tracked there) — validation is deliberately off so the telemetry claim stays testable
+      { target: "linear", fileName: "linear-timer-provenance.ts", validate: false },
     );
     expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(validateEmittedBinary(result.binary).valid).toBe(false); // #6800: flips to true when fixed; then remove the opt-out
     const report = getLastLinearIrReport();
     expect(report).toBeDefined();
     expect(report?.ownerEvidence.map((entry) => entry.legacyName)).not.toContain("setTimeout");

@@ -1,0 +1,125 @@
+{
+  "schema": 1,
+  "kind": "fixed-arraybuffer-isview-main-policy-evolution",
+  "provenance": {
+    "preparationCommit": "d304a35aa9a318906bb7c5459a1cf9359f50e227",
+    "canonicalMainCommit": "844398d2c773e631b8ca8e54141a53e11dd685d4",
+    "remoteRefreshCommit": "3b4bc52137bbf8f7b86f9e659453f34b7ce29ad0",
+    "canonicalPolicy": {
+      "bytes": 584340,
+      "sha256": "172cbb5c10a980cf4d1ddd70a24195a5f4c5536e3888e50da96a05e16d272189",
+      "gitBlob": "546d0403813cfb67389fac728dd3e4a40c090bb0"
+    },
+    "planSha256": "4e57afdffaa60df87273226917e08ac4ca3a07e22657a682b665bc6e6d342378",
+    "legacyRetained": true
+  },
+  "helperPrefix": {
+    "path": "tests/helpers/ir-runtime-program-policy-evolution.ts",
+    "bytes": 369345,
+    "sha256": "3ccadadfcceb0134ba97816c4fa6dedada6248c183b37f9ad339e765c608730f",
+    "gitBlob": "eeaaafffec963ce21dfbf27e76ae24beea86ae79"
+  },
+  "predecessorReceipt": {
+    "path": "tests/helpers/ir-runtime-program-policy-presentation-classification.json",
+    "bytes": 4227,
+    "sha256": "dd0273b99eb2f96ed66e033bec6a4365b65137359d3a9b7fc2e3b0e7b4b80dee",
+    "gitBlob": "c65ce4a7a6c60f6c28ac01977fca8f6262e9584b"
+  },
+  "topLevelKeys": [
+    "schema",
+    "description",
+    "sourceRoot",
+    "tsconfig",
+    "requireGitProvenance",
+    "externalAssets",
+    "frontendWrapper",
+    "moduleExtensions",
+    "layers",
+    "allowedEdges",
+    "externalPackages",
+    "activationHistory",
+    "nonModules",
+    "moves",
+    "evidence",
+    "files"
+  ],
+  "before": {
+    "source": {
+      "bytes": 584358,
+      "sha256": "b1693461855cc60546bb29bee370c02ad3cf21e17e539d521c8f2b6598b0e411",
+      "gitBlob": "b77bcc4a76f1a959bc77db8c37cf8ef48ad2da0f"
+    },
+    "dataSha256": "475ebcec73e71dddd9b3cca9ec1e8c36c9e345436b3e2a7173e13da29c09427a",
+    "fileCount": 1825,
+    "filesSha256": "2155c33a508f2f0177541878b0b50e4b11b5f7ccba4aceb762e90877023203a0",
+    "activationCount": 104,
+    "activationHistorySha256": "27cbdad6be8299ff447e8407b2d04adbb44a28e11999c3dd56d75948f47b44ab",
+    "layersSha256": "45c79ff9c27d08c74dfab859be8cec1ef6a85acbc1cae121e096c0ca35026eeb",
+    "allowedEdgesSha256": "efe7e7ed8dee1a009d2bef3ff36dba80df1a805cd3f5b7b472e62ec6dcff64c7",
+    "moveCount": 12,
+    "movesSha256": "050fb62b7369179b0b3bd81193ec9bc275a77db1ebb45ac5fdef1a136ab037f2"
+  },
+  "current": {
+    "source": {
+      "bytes": 584712,
+      "sha256": "c71c9f9a61cebf84bff0f75f26fcd271265e53c83a66f59ed416e1cbc1675209",
+      "gitBlob": "2a85037d2b4ffa2dd93aff1fa4080581e48a8c88"
+    },
+    "dataSha256": "7975101a306d4746f3431244115981fa1824bc558a4b563c2a55288ab457591c",
+    "fileCount": 1826,
+    "filesSha256": "5e1616a98a054c70dcde26118598dbbd66eed02747f48c76e024cf64f9279e6b",
+    "activationCount": 104,
+    "activationHistorySha256": "27cbdad6be8299ff447e8407b2d04adbb44a28e11999c3dd56d75948f47b44ab",
+    "layersSha256": "45c79ff9c27d08c74dfab859be8cec1ef6a85acbc1cae121e096c0ca35026eeb",
+    "allowedEdgesSha256": "efe7e7ed8dee1a009d2bef3ff36dba80df1a805cd3f5b7b472e62ec6dcff64c7",
+    "moveCount": 12,
+    "movesSha256": "050fb62b7369179b0b3bd81193ec9bc275a77db1ebb45ac5fdef1a136ab037f2"
+  },
+  "delta": {
+    "addedRowIndex": 445,
+    "addedRow": {
+      "path": "src/codegen/expressions/arraybuffer-isview-static-decision.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate legacy class-metadata static decisions from frontend classification and backend lowering."
+    },
+    "previousRow": {
+      "path": "src/codegen/expressions/array-constructor-carrier.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    "nextRow": {
+      "path": "src/codegen/expressions/assignment.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    "presentationRow": {
+      "path": "src/compiler/ir-program-presentation.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "compiler",
+      "owner": "3525-prepared-presentation",
+      "nextBoundary": "Separate AST declaration capture and finalizer presentation from prepared-program output association before compiler-layer activation."
+    },
+    "presentationBeforeIndex": 1824,
+    "presentationCurrentIndex": 1825,
+    "activationHistoryUnchanged": true,
+    "movesUnchanged": true
+  },
+  "rawSpans": [
+    {
+      "beforeOffset": 190010,
+      "afterOffset": 190010,
+      "before": "",
+      "after": "    {\n      \"path\": \"src/codegen/expressions/arraybuffer-isview-static-decision.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Separate legacy class-metadata static decisions from frontend classification and backend lowering.\"\n    },\n"
+    }
+  ]
+}

@@ -4,12 +4,13 @@
  * `new Function(params, body)` / `Function(params, body)` (#2960), extracted
  * from `resolveImport` (#4650).
  *
- * Policy arms (`deny` / `native` / `evaluator`) are the embedder's explicit
- * dynamic-code choices. The default `compat` arm is meta-circular: the body is
- * compiled by js2wasm itself (`createNewFunctionShim`) so the constructed
- * function is a real, JS-callable value the parent module can invoke — with two
- * carve-outs that route to the host `Function` constructor instead, because the
- * meta-circular path cannot represent them:
+ * Policy arms (`deny` — the default — / `native` / `evaluator` / `hostEval`)
+ * are the embedder's dynamic-code choices (src/runtime/dynamic-code-policy.ts).
+ * The `hostEval` arm is meta-circular first: the body is compiled by js2wasm
+ * itself (`createNewFunctionShim`) so the constructed function is a real,
+ * JS-callable value the parent module can invoke. It routes to the host
+ * `Function` constructor only when that child module cannot be BUILT, and for
+ * two carve-outs the meta-circular path cannot represent:
  *
  *   - `class` in the body (#3058) — the child module's compiled class is an
  *     opaque struct the parent cannot construct, and a class extending a host
@@ -22,15 +23,15 @@
  *     (`containsThisKeyword`, #2924 park fix).
  */
 
-export type DynamicFunctionPolicy = "deny" | "native" | "evaluator" | "compat" | (string & {});
+import { isDynamicCodeBuildFailure, type ResolvedDynamicCodePolicy } from "./dynamic-code-policy.js";
 
 export interface DynamicFunctionImportOptions {
-  policy: DynamicFunctionPolicy;
+  policy: ResolvedDynamicCodePolicy;
   /** Embedder-supplied evaluator for the `evaluator` policy. */
   createFunction?: (params: string, body: string) => unknown;
   /**
    * Factory for the meta-circular js2wasm shim. Called at most once, and only
-   * under the default `compat` policy — the other policies never build one.
+   * under the `hostEval` policy — the other policies never build one.
    */
   createWasmNewFunctionShim: () => (params: unknown, body: string) => unknown;
   /**
@@ -46,13 +47,14 @@ export interface DynamicFunctionImportOptions {
 export function createDynamicFunctionImport(options: DynamicFunctionImportOptions): Function {
   const { policy, createFunction, createWasmNewFunctionShim, moduleGlobal, makeEvalError } = options;
 
-  if (policy === "deny") {
+  // `deny` — and fail closed on anything unrecognised.
+  if (policy !== "native" && policy !== "evaluator" && policy !== "hostEval") {
     return () => {
       throw makeEvalError("dynamic code generation is disabled by the host");
     };
   }
   if (policy === "native") {
-    // biome-ignore lint/security/noGlobalEval: explicit opt-in host-eval engine
+    // Explicit opt-in host-eval engine
     return (params: any, body: any) => new Function(String(params ?? ""), String(body ?? ""));
   }
   if (policy === "evaluator") {
@@ -69,11 +71,13 @@ export function createDynamicFunctionImport(options: DynamicFunctionImportOption
     if (!/\bclass\b/.test(bodyStr) && !referencesThis) {
       try {
         return wasmNewFunctionShim(params, bodyStr);
-      } catch {
-        /* the js2wasm pipeline could not compile it — use the host ctor */
+      } catch (e) {
+        // (#6779) Only a failure to BUILD the child module may fall back to
+        // the host ctor; anything else propagates once, unchanged.
+        if (!isDynamicCodeBuildFailure(e)) throw e;
       }
     }
-    // biome-ignore lint/security/noGlobalEval: intentional runtime new Function
+    // Intentional runtime new Function
     const hostFn = new Function(String(params ?? ""), bodyStr);
     if (!referencesThis || moduleGlobal === (globalThis as unknown)) return hostFn;
     // (#4650) A host function body's unbound `this` is the HOST global, but the

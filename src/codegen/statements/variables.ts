@@ -3,6 +3,7 @@
  * Variable declaration statement lowering.
  */
 import { expressionHasWidenedPropertyType } from "../strict-eq-stale-type.js";
+import { widenJsDefaultGuessSymbolSlot } from "../js-default-param-type-guess.js";
 import { ts, forEachChild } from "../../ts-api.js";
 import { isNullablePrimitiveType, isStringType, isVoidType } from "../../checker/type-mapper.js";
 import type { Instr, ValType } from "../../ir/types.js";
@@ -24,11 +25,15 @@ import {
   varBindingNeedsExternrefForUndefined,
 } from "../index.js";
 import { nativeTypeOfDeclaration } from "../native-type-annotations.js";
+import { nullableNativeStringElemBindingType } from "../nullable-native-string-elem-binding.js"; // (#6603)
 import { widenedVarKeyFromDecl } from "../widened-var-key.js";
 import { concatCallYieldsDynamicCarrier } from "../array-concat-carrier.js"; // (#4655) concat result-slot carrier
 import { filterResultNeedsDynamicCarrier } from "../array-filter-spec-access.js";
 import { emitShapeInferredVecInit } from "../shape-vec-literal-seed.js"; // (#4491) module-global array-carrier seed
+import { rebindWidenedArrayInit } from "../declarations/array-rebind-element-widening.js"; // (#6651 U4)
+import { moduleVarSlotIsUndefinedSeeded } from "../declarations/module-var-undefined-seed.js";
 import {
+  compileArrayLiteral,
   arrayLiteralEscapeWidensToExternref,
   objectLiteralIsStandaloneAnyObjectCarrier,
   objectLiteralForcesHostPath,
@@ -38,7 +43,6 @@ import {
 import { ensureObjectRuntime } from "../object-runtime.js"; // (#3037 CS1a) $Object type idx for any-object carrier
 import { localGlobalIdx } from "../registry/imports.js";
 import {
-  getOrRegisterArrayType,
   getOrRegisterHoleyArrayType,
   getOrRegisterSubviewType,
   getOrRegisterTaViewType,
@@ -59,6 +63,8 @@ import { typedArrayCtorArgIsArithmeticPrimitive } from "../expressions/typed-arr
 import { compileArrayDestructuring, compileObjectDestructuring } from "./destructuring.js";
 import { compileNestedClassDeclaration, emitUnresolvedComputedAccessorNameEffects } from "./nested-declarations.js";
 import { emitStandaloneHeritageCheck } from "../class-heritage-check.js"; // (#5195 r3-5)
+import { emitStandaloneCommaHeritageEffects } from "../classes/class-heritage-comma.js"; // (#6772 S6)
+import { emitStandaloneHeritagePrototypeGet } from "../classes/class-heritage-runtime-get.js"; // (#6772 S11)
 import { emitLocalTdzInit, emitTdzInit } from "./tdz.js";
 import { ensureNativeStringHelpers, flatStringType } from "../native-strings.js";
 import { compileStringBuilderInit } from "../string-builder.js";
@@ -84,16 +90,17 @@ import { tryCompileDerivedAsciiCaseBinding as tryAsciiCase } from "../derived-as
 import { detectNullGuardAlias } from "./null-guard-alias.js"; // (#4555) extraction
 import { reusedVarSlotIndex } from "./var-slot-reuse.js"; // (#4555) §10.5 step 8
 import { emitRealmGlobalPrimitiveMethodWriteback } from "../global-environment.js";
-import { isModuleInitChunkFunctionContext } from "../module-init-chunks.js";
+import { chunkDeclarationIsFunctionLocal, isModuleInitChunkFunctionContext } from "../module-init-chunks.js";
 import {
   tryCompileClassExpressionBindingValue,
   tryEmitPromiseSubclassClassExpressionValue,
 } from "../expressions/promise-subclass.js";
-import {
-  hostRegExpMatchResultNeedsExternref,
-  isStaticRegExpExpression,
-  stripInferenceWrapper,
-} from "../regexp-host-match.js";
+import { hostRegExpMatchResultNeedsExternref, stripInferenceWrapper } from "../regexp-host-match.js";
+import { taStaticFromOfReflectiveCallNeedsExternref } from "../ta-static-from-of-spec.js";
+import { objectAssignResultNeedsExternref } from "../object-model/object-assign-primitive-operands.js";
+import { integrityLiteralResultNeedsExternref } from "../object-model/object-literal-reflective-escape.js";
+import { reflectiveArrayCallNeedsExternref } from "../array/array-ctor-this.js"; // (#6771)
+import { inferStandaloneRegExpMatchResultType } from "../regexp-standalone.js";
 
 /**
  * A class-expression binding fast path emits its value before this caller can
@@ -115,6 +122,8 @@ function emitHandledClassExpressionBindingEffects(
   // is IsConstructor-checked before the class object exists, and before the
   // computed-key effects that follow it here.
   emitStandaloneHeritageCheck(ctx, fctx, initializer, compileExpression);
+  emitStandaloneCommaHeritageEffects(ctx, fctx, initializer, compileExpression); // (#6772 S6)
+  emitStandaloneHeritagePrototypeGet(ctx, fctx, initializer); // (#6772 S11)
   emitUnresolvedComputedAccessorNameEffects(ctx, fctx, initializer);
   const materialization = fctx.body.splice(materializationStart, materializationEnd - materializationStart);
   const effects = fctx.body.splice(materializationStart);
@@ -166,6 +175,10 @@ export function transferredArrayLikeResultNeedsExternref(
   initializer: ts.Expression | undefined,
 ): boolean {
   if (hostRegExpMatchResultNeedsExternref(ctx, initializer)) return true;
+  if (taStaticFromOfReflectiveCallNeedsExternref(ctx, initializer)) return true; // (#6651 E5)
+  if (objectAssignResultNeedsExternref(ctx, initializer)) return true; // (#6770 S1)
+  if (integrityLiteralResultNeedsExternref(ctx.standalone, initializer)) return true; // (#6770 S2)
+  if (reflectiveArrayCallNeedsExternref(ctx, initializer)) return true; // (#6771) Array.from/of.call, O-returning borrows
   if (!(ctx.standalone || ctx.wasi) || !initializer || !ts.isCallExpression(initializer)) return false;
   const callee = initializer.expression;
   if (!ts.isPropertyAccessExpression(callee) || ts.isPrivateIdentifier(callee.name)) return false;
@@ -971,7 +984,7 @@ export function resolveSpillLocalValType(ctx: CodegenContext, decl: ts.VariableD
     if (isDirectProxyConstruction(init, ctx)) return { kind: "externref" };
     // Representations the var-decl path computes from a decl/receiver-driven
     // inference that diverges from resolveWasmType — defer to the host path.
-    if (inferStandaloneRegExpMatchArrayType(ctx, init) !== null) return null;
+    if (inferStandaloneRegExpMatchArrayType(ctx, decl) !== null) return null;
     const unwrapped = stripInferenceWrapper(init);
     if (
       ts.isCallExpression(unwrapped) &&
@@ -1019,15 +1032,6 @@ export function resolveSpillLocalValType(ctx: CodegenContext, decl: ts.VariableD
   }
 }
 
-function nativeStringVecType(ctx: CodegenContext): ValType | null {
-  if (!ctx.nativeStrings || ctx.anyStrTypeIdx < 0) return null;
-  const elemKey = `ref_${ctx.anyStrTypeIdx}`;
-  const elemType: ValType = { kind: "ref_null", typeIdx: ctx.anyStrTypeIdx };
-  getOrRegisterArrayType(ctx, elemKey, elemType);
-  const vecTypeIdx = getOrRegisterVecType(ctx, elemKey, elemType);
-  return { kind: "ref_null", typeIdx: vecTypeIdx };
-}
-
 /**
  * (#2106 S1 / PR-2) Will this `var` declaration's slot be retyped from the
  * hoist-time externref to a concrete non-any ref during its declaration compile?
@@ -1061,7 +1065,7 @@ function nativeStringVecType(ctx: CodegenContext): ValType | null {
  * never trapping.
  */
 export function hoistedVarRetypesToConcreteRef(ctx: CodegenContext, decl: ts.VariableDeclaration): boolean {
-  if (inferStandaloneRegExpMatchArrayType(ctx, decl.initializer) !== null) return true;
+  if (inferStandaloneRegExpMatchArrayType(ctx, decl) !== null) return true;
   // (#3316) Mirror `initIsAnyObjectCarrier` (declaration compile, #3037 CS1a).
   if (
     decl.initializer !== undefined &&
@@ -1075,22 +1079,8 @@ export function hoistedVarRetypesToConcreteRef(ctx: CodegenContext, decl: ts.Var
   return false;
 }
 
-function inferStandaloneRegExpMatchArrayType(
-  ctx: CodegenContext,
-  initializer: ts.Expression | undefined,
-): ValType | null {
-  if (!ctx.standalone || !initializer) return null;
-  const unwrapped = stripInferenceWrapper(initializer);
-  if (!ts.isCallExpression(unwrapped)) return null;
-  if (!ts.isPropertyAccessExpression(unwrapped.expression)) return null;
-  const method = unwrapped.expression.name.text;
-  if (method === "exec") {
-    return isStaticRegExpExpression(ctx, unwrapped.expression.expression) ? nativeStringVecType(ctx) : null;
-  }
-  if (method === "match" && unwrapped.arguments.length === 1) {
-    return isStaticRegExpExpression(ctx, unwrapped.arguments[0]!) ? nativeStringVecType(ctx) : null;
-  }
-  return null;
+function inferStandaloneRegExpMatchArrayType(ctx: CodegenContext, declaration: ts.VariableDeclaration): ValType | null {
+  return ctx.standalone ? inferStandaloneRegExpMatchResultType(ctx, declaration) : null;
 }
 
 /**
@@ -1313,7 +1303,8 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
   const chunkedModuleInit = isModuleInitChunkFunctionContext(fctx);
   for (const decl of stmt.declarationList.declarations) {
     if (ts.isObjectBindingPattern(decl.name)) {
-      compileObjectDestructuring(ctx, fctx, decl);
+      // (#6651 V7) a `var` pattern inside a `with` body resolves through the object first.
+      if (!tryCompileWithScopedVarDeclaration(ctx, fctx, stmt, decl)) compileObjectDestructuring(ctx, fctx, decl);
       continue;
     }
 
@@ -1356,7 +1347,8 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
     // cannot shadow a module binding in a later source entry: for example, a
     // completed top-level block may have used the same local name before the
     // following source-level `let` must initialize its module global.
-    const hasLocalShadow = !chunkedModuleInit && fctx.localMap.has(name);
+    // (#6877) …unless the declaration is inside an inlined function (IIFE).
+    const hasLocalShadow = fctx.localMap.has(name) && (!chunkedModuleInit || chunkDeclarationIsFunctionLocal(stmt));
     // A lexical declaration nested in a top-level block is still local to that
     // block. `moduleGlobals` is keyed only by name, so an outer Script-level
     // binding with the same name must not make this declaration take the
@@ -1726,7 +1718,10 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
         const globalDef = ctx.mod.globals[localGlobalIdx(ctx, moduleGlobalIdx)];
         const wasmType = globalDef?.type ?? resolveWasmType(ctx, ctx.checker.getTypeAtLocation(decl));
         const materializationStart = fctx.body.length;
-        if (tryEmitPromiseSubclassClassExpressionValue(ctx, fctx, decl.initializer, wasmType) === undefined) {
+        const widenedInit = rebindWidenedArrayInit(ctx, decl, wasmType);
+        if (widenedInit) {
+          compileArrayLiteral(ctx, fctx, widenedInit, { kind: "externref" }); // (#6651 U4) straight into the widened vec
+        } else if (tryEmitPromiseSubclassClassExpressionValue(ctx, fctx, decl.initializer, wasmType) === undefined) {
           compileExpression(ctx, fctx, decl.initializer, wasmType);
         } else {
           emitHandledClassExpressionBindingEffects(ctx, fctx, decl.initializer, materializationStart);
@@ -1741,8 +1736,14 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
         // No initializer: `let x;` at module level — in JS, uninitialized
         // variables are `undefined`. For externref globals, emit __get_undefined()
         // so `x === undefined` works correctly (#737).
+        // (#6894) A `var` whose slot the prologue already seeded is a no-op here.
         const globalDef = ctx.mod.globals[localGlobalIdx(ctx, moduleGlobalIdx)];
-        if (globalDef?.type.kind === "externref") {
+        const isVarDecl = (stmt.declarationList.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) === 0;
+        if (
+          globalDef?.type.kind === "externref" &&
+          !(isVarDecl && ctx.standaloneScriptVarBindings && !ctx.sourceIsModule) &&
+          !(isVarDecl && moduleVarSlotIsUndefinedSeeded(ctx, name))
+        ) {
           emitUndefined(ctx, fctx);
           fctx.body.push({ op: "global.set", index: moduleGlobalIdx });
         }
@@ -1864,7 +1865,7 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
       ctx.externrefAccessorVars.add(name);
     }
 
-    const standaloneRegExpMatchArrayType = inferStandaloneRegExpMatchArrayType(ctx, decl.initializer);
+    const standaloneRegExpMatchArrayType = inferStandaloneRegExpMatchArrayType(ctx, decl);
     const subarraySubviewType = inferSubarraySubviewType(ctx, fctx, decl.initializer);
     // (#3054 B1) `new <TA>(buffer)` → shared-backing `$__ta_view` local type.
     const taViewType = inferTaViewType(ctx, decl.initializer);
@@ -2062,9 +2063,13 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
     // initializer had its global widened to externref; the module-init shadow
     // local is the same binding and must not be narrowed back by the checker's
     // (first-declaration) symbol type. See `redeclared-var-widening.ts`.
-    const wasmType: ValType =
+    const wasmType: ValType = nullableNativeStringElemBindingType(
+      ctx,
+      fctx,
+      decl,
       redeclarationWidenedLocalSlotType(ctx, decl) ??
-      (wasmTypeBase.kind === "externref" ? (resolveFnctorTypedBindingType(ctx, decl) ?? wasmTypeBase) : wasmTypeBase);
+        (wasmTypeBase.kind === "externref" ? (resolveFnctorTypedBindingType(ctx, decl) ?? wasmTypeBase) : wasmTypeBase),
+    );
 
     // (#2814) Bug C: re-align a block-scoped let/const with its OWN pre-hoisted
     // slot. `saveBlockScopedShadows` removed this name's localMap (and TDZ-flag)
@@ -2357,7 +2362,7 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
           const sigParamWasmTypes: ValType[] = [];
           for (let i = 0; i < sigParamCount; i++) {
             const paramType = ctx.checker.getTypeOfSymbol(sig.parameters[i]!);
-            sigParamWasmTypes.push(resolveWasmType(ctx, paramType));
+            sigParamWasmTypes.push(widenJsDefaultGuessSymbolSlot(sig.parameters[i], resolveWasmType(ctx, paramType)));
           }
 
           let matchedClosureInfo:

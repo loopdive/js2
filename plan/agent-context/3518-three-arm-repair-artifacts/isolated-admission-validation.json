@@ -1,0 +1,249 @@
+{
+  "schema": "frame-delay-late-admission-controls-v1",
+  "manifestSha256": "bab290d12b0ea78fd773c4bf3c5e7343eeac71be58dfcde2def82027f605c161",
+  "contractSha256": "d664380114128fff2eb7588927eecdd057cfcabd51b11ead8d8b666ccdc81082",
+  "node": "v22.23.2",
+  "platform": "darwin",
+  "arch": "arm64",
+  "status": "PASS",
+  "tests": 30,
+  "passed": 30,
+  "nativeObservation": "one full real review preflight; optional Git index writes disabled",
+  "replay": "observed file SHA256 values, directory/link metadata and read-only Git results; census strings rehashed normally; zero host IO in replay",
+  "limitations": [
+    "not execution approval",
+    "not a repeated live filesystem admission",
+    "real OS Git dirty/untracked behavior not exercised by synthetic output mutations",
+    "final protected-original/candidate-repaired alias assertions not independently reached; earlier root/census defenses reject first",
+    "no compiler or comparison arms"
+  ],
+  "counters": {
+    "nativeReads": 37666,
+    "nativeReadBytes": 1716749406,
+    "nativeRealpaths": 2219,
+    "nativeLists": 6255,
+    "nativeGit": 16,
+    "replayReads": 1046170,
+    "replayHashes": 1046170,
+    "comparisonRuns": 0,
+    "compilerInvocations": 0
+  },
+  "cacheEntries": {
+    "reads": 36279,
+    "realpaths": 2217,
+    "lists": 6204,
+    "git": 13
+  },
+  "results": [
+    {
+      "name": "positive: real complete review preflight",
+      "phase": "capture",
+      "expectedAssertion": null,
+      "pass": true,
+      "elapsedMs": 4238
+    },
+    {
+      "name": "positive: frozen observed snapshot admits unchanged review manifest",
+      "phase": "replay",
+      "expectedAssertion": null,
+      "pass": true,
+      "elapsedMs": 106
+    },
+    {
+      "name": "frame: original/repaired root alias",
+      "phase": "replay",
+      "expectedAssertion": "aliased original/repaired roots",
+      "pass": true,
+      "elapsedMs": 93
+    },
+    {
+      "name": "frame: missing repair difference entry",
+      "phase": "replay",
+      "expectedAssertion": "unapproved repair hunk/postimage",
+      "pass": true,
+      "elapsedMs": 95
+    },
+    {
+      "name": "frame: changed repair postimage",
+      "phase": "replay",
+      "expectedAssertion": "unapproved repair hunk/postimage",
+      "pass": true,
+      "elapsedMs": 95
+    },
+    {
+      "name": "frame: reordered repair difference",
+      "phase": "replay",
+      "expectedAssertion": "unapproved repair hunk/postimage",
+      "pass": true,
+      "elapsedMs": 100
+    },
+    {
+      "name": "frame: stale patch digest",
+      "phase": "replay",
+      "expectedAssertion": "patch drift",
+      "pass": true,
+      "elapsedMs": 103
+    },
+    {
+      "name": "frame: wrong patch path with original digest",
+      "phase": "replay",
+      "expectedAssertion": "patch drift",
+      "pass": true,
+      "elapsedMs": 98
+    },
+    {
+      "name": "frame: substituted patch with matching observed digest",
+      "phase": "replay",
+      "expectedAssertion": "unapproved patch",
+      "pass": true,
+      "elapsedMs": 101
+    },
+    {
+      "name": "delay: original/repaired root alias",
+      "phase": "replay",
+      "expectedAssertion": "aliased original/repaired roots",
+      "pass": true,
+      "elapsedMs": 113
+    },
+    {
+      "name": "delay: missing repair difference entry",
+      "phase": "replay",
+      "expectedAssertion": "unapproved repair hunk/postimage",
+      "pass": true,
+      "elapsedMs": 105
+    },
+    {
+      "name": "delay: changed repair postimage",
+      "phase": "replay",
+      "expectedAssertion": "unapproved repair hunk/postimage",
+      "pass": true,
+      "elapsedMs": 97
+    },
+    {
+      "name": "delay: reordered repair difference",
+      "phase": "replay",
+      "expectedAssertion": "unapproved repair hunk/postimage",
+      "pass": true,
+      "elapsedMs": 99
+    },
+    {
+      "name": "delay: stale patch digest",
+      "phase": "replay",
+      "expectedAssertion": "patch drift",
+      "pass": true,
+      "elapsedMs": 96
+    },
+    {
+      "name": "delay: wrong patch path with original digest",
+      "phase": "replay",
+      "expectedAssertion": "patch drift",
+      "pass": true,
+      "elapsedMs": 99
+    },
+    {
+      "name": "delay: substituted patch with matching observed digest",
+      "phase": "replay",
+      "expectedAssertion": "unapproved patch",
+      "pass": true,
+      "elapsedMs": 97
+    },
+    {
+      "name": "cross-suite original root alias",
+      "phase": "replay",
+      "expectedAssertion": "aliased original/repaired roots",
+      "pass": true,
+      "elapsedMs": 97
+    },
+    {
+      "name": "evidence 0: changed digest",
+      "phase": "replay",
+      "expectedAssertion": "original evidence denominator",
+      "pass": true,
+      "elapsedMs": 94
+    },
+    {
+      "name": "evidence 0: wrong path preserving approved digest population",
+      "phase": "replay",
+      "expectedAssertion": "original receipt changed",
+      "pass": true,
+      "elapsedMs": 102
+    },
+    {
+      "name": "evidence 1: changed digest",
+      "phase": "replay",
+      "expectedAssertion": "original evidence denominator",
+      "pass": true,
+      "elapsedMs": 99
+    },
+    {
+      "name": "evidence 1: wrong path preserving approved digest population",
+      "phase": "replay",
+      "expectedAssertion": "original receipt changed",
+      "pass": true,
+      "elapsedMs": 99
+    },
+    {
+      "name": "evidence 2: changed digest",
+      "phase": "replay",
+      "expectedAssertion": "original evidence denominator",
+      "pass": true,
+      "elapsedMs": 96
+    },
+    {
+      "name": "evidence 2: wrong path preserving approved digest population",
+      "phase": "replay",
+      "expectedAssertion": "original receipt changed",
+      "pass": true,
+      "elapsedMs": 138
+    },
+    {
+      "name": "evidence 3: changed digest",
+      "phase": "replay",
+      "expectedAssertion": "original evidence denominator",
+      "pass": true,
+      "elapsedMs": 97
+    },
+    {
+      "name": "evidence 3: wrong path preserving approved digest population",
+      "phase": "replay",
+      "expectedAssertion": "original receipt changed",
+      "pass": true,
+      "elapsedMs": 95
+    },
+    {
+      "name": "missing historical evidence",
+      "phase": "replay",
+      "expectedAssertion": "original evidence denominator",
+      "pass": true,
+      "elapsedMs": 97
+    },
+    {
+      "name": "duplicate historical evidence",
+      "phase": "replay",
+      "expectedAssertion": "original evidence denominator",
+      "pass": true,
+      "elapsedMs": 97
+    },
+    {
+      "name": "observed Git output mutation: original source dirty",
+      "phase": "replay",
+      "expectedAssertion": "original/candidate source dirty",
+      "pass": true,
+      "elapsedMs": 82
+    },
+    {
+      "name": "observed Git output mutation: repaired untracked source",
+      "phase": "replay",
+      "expectedAssertion": "untracked source",
+      "pass": true,
+      "elapsedMs": 95
+    },
+    {
+      "name": "positive: unchanged frozen snapshot after all negative controls",
+      "phase": "replay",
+      "expectedAssertion": null,
+      "pass": true,
+      "elapsedMs": 97
+    }
+  ]
+}

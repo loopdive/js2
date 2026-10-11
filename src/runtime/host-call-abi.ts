@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /** Fixed-arity imports for erased Wasm-to-host function calls. */
 import { applyWithVecMirrorWriteback } from "./vec-mirror-writeback.js";
+import { linkedClosureDispatch } from "./linked-closure-dispatch.js";
 
 type CallbackState = { getExports: () => Record<string, Function> | undefined } | undefined;
 type HostCallAdapters = {
@@ -17,6 +18,8 @@ export function isHostCallImportName(name: string): boolean {
 
 export function createHostCallImport(name: string, callbackState: CallbackState, adapters: HostCallAdapters): Function {
   const invoke: InvokeHostFunction = (fn, thisArg, args) => {
+    // (#6757) A dispatcher handing back the closure it is dispatching.
+    linkedClosureDispatch.noteFallback(fn, thisArg, callbackState?.getExports());
     if (typeof fn !== "function" && adapters.isWasmStruct(fn)) {
       const wrapped = adapters.maybeWrapCallable(fn, callbackState);
       if (typeof wrapped === "function") fn = wrapped;

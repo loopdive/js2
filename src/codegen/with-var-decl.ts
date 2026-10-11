@@ -34,6 +34,7 @@ import { reportError } from "./context/errors.js";
 import { compileExpression, coerceType } from "./shared.js";
 import { captureDynamicWithHasBindings, compileWithBindingAssignment, resolveWithBinding } from "./with-scope.js";
 import { emitDynamicWithIdentifierWrite } from "./expressions/assignment.js";
+import { tryEmitSpecOrderedBindingPattern } from "./dstr-assign-iterator-drive.js";
 
 /**
  * If `decl` is a `var` whose name resolves to an open `with` scope, emit its
@@ -53,12 +54,13 @@ export function tryCompileWithScopedVarDeclaration(
   decl: ts.VariableDeclaration,
 ): boolean {
   if (!fctx.withScopes || fctx.withScopes.length === 0) return false;
-  if (!ts.isIdentifier(decl.name)) return false;
   // Lexical declarations DO shadow the object environment record — leave them to
   // the ordinary local path (and to `blockedNames`, which already excludes them
   // from `with` resolution).
   const lexicalFlags = ts.NodeFlags.Let | ts.NodeFlags.Const | ts.NodeFlags.Using | ts.NodeFlags.AwaitUsing;
   if ((stmt.declarationList.flags & lexicalFlags) !== 0) return false;
+  if (ts.isObjectBindingPattern(decl.name)) return tryCompileWithScopedVarObjectPattern(ctx, fctx, decl, decl.name);
+  if (!ts.isIdentifier(decl.name)) return false;
 
   const name = decl.name.text;
   const res = resolveWithBinding(fctx, name);
@@ -87,4 +89,37 @@ export function tryCompileWithScopedVarDeclaration(
   fctx.body.push({ op: "local.set", index: rhsTmp });
   emitDynamicWithIdentifierWrite(ctx, fctx, decl.name, rhsTmp, captures);
   return true;
+}
+
+/**
+ * (#6651 V7) `with (o) { var { [k]: x = d } = src; }` — §14.3.3.3: each element
+ * resolves its binding (HasBinding on the with object) AFTER its PropertyName
+ * and BEFORE the GetV, then writes through the scope chain the resolution chose.
+ * Taken only when a bound name resolves through an open dynamic `with` scope
+ * (standalone/WASI); otherwise the ordinary pattern lowering is unchanged.
+ */
+function tryCompileWithScopedVarObjectPattern(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  decl: ts.VariableDeclaration,
+  pattern: ts.ObjectBindingPattern,
+): boolean {
+  if (!(ctx.standalone || ctx.wasi) || !decl.initializer) return false;
+  const bound = pattern.elements.some(
+    (el) => ts.isIdentifier(el.name) && resolveWithBinding(fctx, el.name.text)?.kind === "dynamic",
+  );
+  if (!bound) return false;
+  const initializer = decl.initializer;
+  const emitSource = (): number => {
+    const srcType = compileExpression(ctx, fctx, initializer, { kind: "externref" });
+    if (!srcType) fctx.body.push({ op: "ref.null.extern" });
+    else if (srcType.kind !== "externref") coerceType(ctx, fctx, srcType, { kind: "externref" });
+    const srcLocal = allocLocal(fctx, `__with_var_src_${fctx.locals.length}`, { kind: "externref" });
+    fctx.body.push({ op: "local.set", index: srcLocal });
+    return srcLocal;
+  };
+  return tryEmitSpecOrderedBindingPattern(ctx, fctx, pattern, emitSource, (id) => {
+    const captures = captureDynamicWithHasBindings(ctx, fctx, id.text);
+    return (valueLocal) => emitDynamicWithIdentifierWrite(ctx, fctx, id, valueLocal, captures);
+  });
 }

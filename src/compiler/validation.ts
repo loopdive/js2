@@ -1,5 +1,6 @@
 import type { CompileError, CompileOptions } from "../index.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { validateEmittedBinary } from "../optimize.js";
 import { PositionMap, type CompilerSourceOriginSpan, type SourceEdit } from "../position-map.js";
 import { forEachChild, ts } from "../ts-api.js";
 import { detectEarlyErrors } from "./early-errors/index.js";
@@ -30,6 +31,7 @@ function pushSourceAnchoredDiagnostic(
   sourceFile: ts.SourceFile,
   message: string,
   severity: "error" | "warning",
+  code?: CompileError["code"],
 ): void {
   const loc = getApproxSourceLocation(sourceFile);
   errors.push({
@@ -37,7 +39,44 @@ function pushSourceAnchoredDiagnostic(
     line: loc.line,
     column: loc.column,
     severity,
+    ...(code === undefined ? {} : { code }),
   });
+}
+
+/**
+ * (#4420, #6776) Engine-validate an emitted module. ON by default; only
+ * `validate: false` skips it. `success: true` used to mean "codegen finished",
+ * so a type-confused lowering shipped as a green compile and the engine
+ * rejected the bytes at instantiate time. Returns `false` (and pushes an
+ * `invalid-module` error carrying the engine's message) when the engine
+ * rejects the binary. A host without a `WebAssembly` global cannot check, and
+ * says so with a `validation-skipped` warning rather than staying silent.
+ */
+function gateEmittedModule(
+  binary: Uint8Array,
+  options: CompileOptions,
+  errors: CompileError[],
+  sourceFile: ts.SourceFile,
+): boolean {
+  if (options.validate === false || binary.length === 0) return true;
+  // `validateEmittedBinary` answers `valid: true` when it cannot check at all;
+  // detect that case here so it is reported instead of passing silently.
+  if (typeof (globalThis as { WebAssembly?: { validate?: unknown } }).WebAssembly?.validate !== "function") {
+    const message = "emitted WebAssembly was not validated: no WebAssembly global in this host";
+    pushSourceAnchoredDiagnostic(errors, sourceFile, message, "warning", "validation-skipped");
+    return true;
+  }
+  const verdict = validateEmittedBinary(binary);
+  if (verdict.valid) return true;
+  const detail = verdict.detail ? ` — ${verdict.detail}` : "";
+  pushSourceAnchoredDiagnostic(
+    errors,
+    sourceFile,
+    `emitted WebAssembly failed validation${detail}`,
+    "error",
+    "invalid-module",
+  );
+  return false;
 }
 
 /** Validate source against safe mode restrictions. Returns errors for violations. */
@@ -309,6 +348,7 @@ function rewriteEvalSuperCall(source: string): string {
 export {
   DEFAULT_BLOCKED_MEMBERS,
   detectEarlyErrors,
+  gateEmittedModule,
   getApproxSourceLocation,
   hasExportModifier,
   pushSourceAnchoredDiagnostic,

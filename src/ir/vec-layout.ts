@@ -79,6 +79,7 @@ export function attachIrVecLayouts(
   };
 
   function mapType(type: IrType): IrType {
+    if (type.kind === "support-ref") return type;
     const cached = typeMemo.get(type);
     if (cached) return cached;
     let mapped: IrType;
@@ -201,6 +202,7 @@ export function attachIrVecLayouts(
     ? {
         signature: mapSignature(fn.closureSubtype.signature),
         captureFieldTypes: mapArray(fn.closureSubtype.captureFieldTypes, mapType),
+        ...(fn.closureSubtype.parameters ? { parameters: fn.closureSubtype.parameters } : {}),
         ...(fn.closureSubtype.hostOneShot ? { hostOneShot: true } : {}),
         ...(fn.closureSubtype.domCallbackAuthority
           ? { domCallbackAuthority: fn.closureSubtype.domCallbackAuthority }
@@ -211,6 +213,7 @@ export function attachIrVecLayouts(
     closureSubtype === undefined ||
     (closureSubtype.signature === fn.closureSubtype?.signature &&
       closureSubtype.captureFieldTypes === fn.closureSubtype.captureFieldTypes &&
+      closureSubtype.parameters === fn.closureSubtype.parameters &&
       closureSubtype.hostOneShot === fn.closureSubtype.hostOneShot &&
       closureSubtype.domCallbackAuthority === fn.closureSubtype.domCallbackAuthority);
   const mapped =
@@ -262,6 +265,7 @@ export function attachIrVecLayouts(
       case "class":
       case "extern":
       case "dynamic":
+      case "support-ref":
         return;
     }
   };

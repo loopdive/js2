@@ -23,8 +23,9 @@ import type {
 import { compileMultiSource } from "./compiler.js";
 import type { ProjectModuleResolutions } from "./checker/index.js";
 import { getBarePackageName } from "./resolve.js";
+import { resolveCompileTargetProfile } from "./target-profile.js";
 import { LINKED_IMPORT_GETTER_PREFIX, LINKED_IMPORT_REEXPORT_PREFIX } from "./linked-import-getter-names.js";
-import { getDefaultEnvironment } from "./env.js";
+import { defaultCacheDir, getDefaultEnvironment } from "./env.js";
 import { buildCompiledImports } from "./runtime.js";
 import { installSharedExceptionTag } from "./linked-provider-runtime.js";
 import { RUNTIME_RECGROUP_ABI_VERSION } from "./emit/canonical-recgroup.js";
@@ -1379,6 +1380,20 @@ function topoPackages(packages: Map<string, PackageNode>): { order?: PackageNode
 }
 
 /**
+ * (#6723 D1) Namespaces a separately linked provider may import beyond the
+ * string/env set: a standalone provider that reaches eval or `Function(src)`
+ * imports the `js2wasm:runtime-eval` ABI exactly as a standalone root does,
+ * and inherits it from the root import object (`buildProviderImportObject`
+ * passes every non-env namespace through). `runtimeEvalProvider: false`
+ * (#6676) promises no provider will be linked, so it stays out. (#6930) The
+ * native-first JS regime (`ctx.standalone`) lowers eval the same way.
+ */
+function standaloneProviderRuntimeImports(options: CompileOptions): string[] {
+  const regime = options.target === "standalone" || resolveCompileTargetProfile(options).nativeRegime;
+  return regime && options.runtimeEvalProvider !== false ? ["js2wasm:runtime-eval"] : [];
+}
+
+/**
  * Attempt separate npm package compilation. The caller owns the bundled
  * fallback so that the existing compileProject route remains byte-stable for
  * unsupported graphs.
@@ -1709,7 +1724,7 @@ export async function compileLinkedProject(input: PackageLinkInput): Promise<Pac
     }
   }
 
-  const cacheDir = input.options.packageCacheDir ?? path.join(input.rootDir, ".js2wasm-cache", "npm-modules");
+  const cacheDir = input.options.packageCacheDir ?? defaultCacheDir(input.rootDir, "npm-modules");
   const namespaceByRoot = new Map<string, string>();
   const artifactByRoot = new Map<string, LinkedModuleArtifact>();
   let compiledProviders = 0;
@@ -1936,6 +1951,7 @@ export async function compileLinkedProject(input: PackageLinkInput): Promise<Pac
       "wasm:js-string",
       "string_constants",
       "string_constants16",
+      ...standaloneProviderRuntimeImports(input.options),
       ...(input.options.link ?? []),
       ...Array.from(dependencyBindings.values(), (binding) => binding.module),
     ]);

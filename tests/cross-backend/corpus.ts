@@ -26,6 +26,11 @@
  * issue's sprint-62 amendment intended — only programs that compile on BOTH
  * backends are diffed. If such a program later starts compiling on linear, the
  * harness reports it so the flag can be removed (ratchet direction).
+ *
+ * `expectLinearDivergence` (per call) marks a call that compiles and runs on
+ * linear but returns a known-wrong value (#6793: `undefined` is f64 0 on
+ * linear). The harness asserts the call STILL diverges rather than skipping it,
+ * so the gap is measured; when linear is fixed the flag must be removed.
  */
 
 export interface CrossBackendCall {
@@ -33,6 +38,15 @@ export interface CrossBackendCall {
   readonly fn: string;
   /** Argument tuple (numbers/booleans cross the JS↔Wasm boundary natively). */
   readonly args: readonly (number | boolean)[];
+  /**
+   * #6793 — a KNOWN linear miscompile: the program compiles and runs on linear
+   * but this call returns a different value than WasmGC. The value names the
+   * tracking issue. The harness asserts the divergence STILL exists, so the gap
+   * is measured on main without turning the advisory check red, and the moment
+   * linear agrees the assertion flips and prompts removing the flag (ratchet
+   * direction, same as `expectLinearUnsupported`).
+   */
+  readonly expectLinearDivergence?: string;
 }
 
 export interface CrossBackendProgram {
@@ -408,6 +422,24 @@ export const CROSS_BACKEND_CORPUS: readonly CrossBackendProgram[] = [
     ],
   },
   {
+    // #6778: `+` with ONE string operand concatenates (ToString the other side);
+    // linear used to emit numeric f64.add on the i32 string pointer.
+    name: "string/mixed-plus",
+    category: "string",
+    source: `
+      export function strNum(): number { const s = "1" + 2; return s.length; }
+      export function numStr(n: number): number { const s = n + "px"; return s === "12.5px" ? 1 : 0; }
+      export function strBool(): number { const s = "a" + true; return s.length; }
+      export function plusEq(): number { let s = ""; for (let i = 0; i < 3; i++) s += i; return s === "012" ? 1 : 0; }
+    `,
+    calls: [
+      { fn: "strNum", args: [] },
+      { fn: "numStr", args: [12.5] },
+      { fn: "strBool", args: [] },
+      { fn: "plusEq", args: [] },
+    ],
+  },
+  {
     // `**` (exponent) is not yet lowered by the linear backend
     // (Unsupported binary operator: AsteriskAsteriskToken). Ratchet entry.
     name: "numeric/exponent",
@@ -530,6 +562,65 @@ export const CROSS_BACKEND_CORPUS: readonly CrossBackendProgram[] = [
       export function roundtrip(n: number): number { const x: any = n; const y = x as number; return y + 1; }
     `,
     calls: [{ fn: "roundtrip", args: [6] }],
+    expectLinearUnsupported: true,
+  },
+
+  // ── `undefined` vs `0` (#6793) ─────────────────────────────────────────────
+  // The linear backend represents `undefined` as f64 0 (`__arr_get` returns
+  // 0.0 out of bounds; `f64.const 0` is the undefined sentinel), so every
+  // `undefined`-vs-`0` distinction is wrong by construction. Calls linear gets
+  // right are diffed normally; calls it miscompiles carry
+  // `expectLinearDivergence` so the gap is MEASURED instead of silent. WasmGC
+  // returns the JS value on every call below (checked against Node 2026-10-02).
+  {
+    name: "undefined/vs-zero",
+    category: "undefined",
+    source: `
+      function isUndef(x?: number): number { return x === undefined ? 1 : 0; }
+      export function uninitIsUndef(): number { let x: number | undefined; return x === undefined ? 1 : 0; }
+      export function untypedUninitIsUndef(): number { let x; return x === undefined ? 1 : 0; }
+      export function omittedArgIsUndef(): number { return isUndef(); }
+      export function oobReadIsZero(): number { const a = [1, 2]; const v = a[5]; return v === 0 ? 100 : 1; }
+      export function zeroIsUndef(): number { const x: number | undefined = 0; return x === undefined ? 1 : 0; }
+      export function uninitIsZero(): number { let x: number | undefined; return x === 0 ? 1 : 0; }
+      export function zeroArgIsUndef(): number { return isUndef(0); }
+      export function zeroIsNullish(): number { const x: number | undefined = 0; return x == null ? 1 : 0; }
+    `,
+    calls: [
+      { fn: "uninitIsUndef", args: [] },
+      { fn: "untypedUninitIsUndef", args: [] },
+      { fn: "omittedArgIsUndef", args: [] },
+      { fn: "oobReadIsZero", args: [], expectLinearDivergence: "#6793" },
+      { fn: "zeroIsUndef", args: [], expectLinearDivergence: "#6793" },
+      { fn: "uninitIsZero", args: [], expectLinearDivergence: "#6793" },
+      { fn: "zeroArgIsUndef", args: [], expectLinearDivergence: "#6793" },
+      { fn: "zeroIsNullish", args: [], expectLinearDivergence: "#6793" },
+    ],
+  },
+  {
+    // `typeof` is not lowered by the linear backend (Unsupported expression:
+    // TypeOfExpression). Ratchet entry; once it compiles, the call is diffed.
+    name: "undefined/typeof",
+    category: "undefined",
+    source: `
+      export function typeofUninit(): number { let x; return typeof x === "undefined" ? 1 : 0; }
+    `,
+    calls: [{ fn: "typeofUninit", args: [] }],
+    expectLinearUnsupported: true,
+  },
+  {
+    // `??` is not lowered by the linear backend (Unsupported binary operator:
+    // QuestionQuestionToken). Ratchet entry; `0 ?? 7` must stay 0 once it does.
+    name: "undefined/nullish-default",
+    category: "undefined",
+    source: `
+      export function uninitDefault(): number { let x: number | undefined; return x ?? 7; }
+      export function zeroKept(): number { const x: number | undefined = 0; return x ?? 7; }
+    `,
+    calls: [
+      { fn: "uninitDefault", args: [] },
+      { fn: "zeroKept", args: [] },
+    ],
     expectLinearUnsupported: true,
   },
 ];

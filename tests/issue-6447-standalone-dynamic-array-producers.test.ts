@@ -24,13 +24,8 @@
 // asserted for BOTH members because they compose: fixing `concat` alone moves
 // the failure one statement later onto a `sort` that is broken the same way.
 //
-// NOT covered here, on purpose: `slice`, `reverse`, `includes`, `splice` and
-// `flat` share the identical root cause and are still wrong on an `any`
-// receiver. They are named in #6447 with this same reduction; each needs its
-// own species / hole-semantics review and none of them is on the attributed
-// path, so widening the arm to them was deliberately left out of this slice
-// rather than forgotten. The `it` at the end PINS that residual, so the day
-// someone fixes them the stale expectation fails loudly instead of rotting.
+// `slice`/`reverse`/`at` (#6683, array-slice-native.ts), `flat` (#2717) and
+// `splice` (#6701, array-splice-native.ts) have since joined the arm.
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
 
@@ -152,10 +147,7 @@ describe("#6447 — Array producer methods on an `any` receiver, standalone", ()
     ).resolves.toBe(7);
   });
 
-  it("PINS the residual: slice/reverse/splice/flat on an `any` receiver are still WRONG", async () => {
-    // Deliberately out of this slice (#6447 "Implementation Plan" step 2). When
-    // one of these is fixed this assertion fails and must be updated — that is
-    // the point: the residual is recorded as an executable claim, not a note.
+  it("slice/reverse/flat/splice on an `any` receiver answer (#6683, #2717, #6701)", async () => {
     await expect(
       runStandalone(
         `export function run() {
@@ -169,6 +161,14 @@ describe("#6447 — Array producer methods on an `any` receiver, standalone", ()
            return f(["b", "a"]);
          }`,
       ),
-    ).resolves.toBe(7);
+    ).resolves.toBe(0);
+    await expect(
+      runStandalone(
+        `export function run() {
+           function f(n) { try { const r = n.splice(0, 1); return r === null || r === undefined ? 1 : (r[0] === "b" && n.length === 1 ? 0 : 2); } catch (e) { return 1; } }
+           return f(["b", "a"]);
+         }`,
+      ),
+    ).resolves.toBe(0);
   });
 });

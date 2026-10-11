@@ -29,6 +29,7 @@ import {
   asyncGenConsumerNeedsDrive,
 } from "./async-frame.js";
 import { isStandalonePromiseActive } from "./async-scheduler.js";
+import { widenAsyncThenableResults } from "./async-thenable-return.js";
 
 /**
  * Rewrite a compiled function's registered result type. An activated async
@@ -135,15 +136,17 @@ function decideAsyncActivation(
  * gating — C-1 claims FunctionDeclarations only; #2957's closure shapes stay
  * on their own activation path).
  *
- * (#3587) On a decline this ALSO runs the loud-refusal hazard guard: a
- * declined-but-rejection-observing shape must not silently proceed on EITHER
- * downstream lane (legacy sync pass-through or IR C-1 — both compile `await`
- * as a synchronous pass-through that cannot deliver rejections). Deduped per
- * declaration, so the later `maybeActivateAsync` call cannot double-report.
+ * (#3587/#6780) On a decline this ALSO runs the loud-refusal guards
+ * ({@link reportDeclinedAsyncBody}): a declined-but-rejection-observing shape,
+ * or a declined body of only settled awaits, must not silently proceed on
+ * EITHER downstream lane (legacy sync pass-through or IR C-1 — both compile
+ * `await` as a synchronous pass-through that neither delivers rejections nor
+ * yields a microtask turn). Deduped per declaration, so the later
+ * `maybeActivateAsync` call cannot double-report.
  */
 export function asyncEngineWouldActivate(ctx: CodegenContext, decl: ts.FunctionLikeDeclaration): boolean {
   const claimed = decideAsyncActivation(ctx, decl, /*isAsync*/ true, /*allowNonDeclaration*/ false) !== null;
-  if (!claimed && ts.isFunctionDeclaration(decl)) reportDeclinedAsyncRejectionHazard(ctx, decl);
+  if (!claimed && ts.isFunctionDeclaration(decl)) reportDeclinedAsyncBody(ctx, decl);
   return claimed;
 }
 
@@ -217,7 +220,7 @@ function findSuspensionInsideTry(decl: ts.FunctionLikeDeclaration): ts.Node | nu
  * No-op when the body cannot really suspend (statically-resolved awaits
  * cannot reject) or when no suspension sits inside a `try`.
  */
-export function reportDeclinedAsyncRejectionHazard(ctx: CodegenContext, decl: ts.FunctionLikeDeclaration): void {
+function reportDeclinedAsyncRejectionHazard(ctx: CodegenContext, decl: ts.FunctionLikeDeclaration): void {
   if (!ASYNC_CPS_ENABLED || decl.body === undefined) return;
   if (ctx.wasi === true || ctx.standalone === true) return;
   const seen = hazardReportedByCtx.get(ctx);
@@ -225,6 +228,17 @@ export function reportDeclinedAsyncRejectionHazard(ctx: CodegenContext, decl: ts
   const plan = analyzeAsyncBody(ctx, decl);
   const realSuspension = plan.awaitPoints.some((a) => plan.awaitedStaticallyResolved.get(a) !== true);
   if (!realSuspension && plan.forAwaitPoints.length === 0) return;
+  // (#6504 round 30) The `try`-scoped condition is LOAD-BEARING, not a
+  // conservative placeholder. Dropping it — refusing loudly for every decline
+  // with a real suspension — was measured on the six async slices (linked) and
+  // costs **402 of 2,212 rows**, 396 of them `statements/for-await-of`
+  // destructuring shapes that the engine declines and the sync fallback runs
+  // acceptably today. That is 20x the >= 20-row budget the widening was gated
+  // on, so it is not a tuning question: the declined-with-real-suspension
+  // population is most of the for-await-of corpus, and turning it into compile
+  // errors trades a latent rejection bug for 402 certain failures. Any future
+  // widening has to name a SUBSET (e.g. by decline reason), never the whole
+  // population.
   const hazard = findSuspensionInsideTry(decl);
   if (hazard === null) return;
   if (seen === undefined) hazardReportedByCtx.set(ctx, new WeakSet([decl]));
@@ -241,35 +255,74 @@ export function reportDeclinedAsyncRejectionHazard(ctx: CodegenContext, decl: ts
   );
 }
 
-/**
- * (#6412) Pre-pass / body-time agreement check on the activated-async result.
- *
- * `collectDeclarations` bakes the Promise carrier (`externref`) into a
- * FunctionDeclaration's registered result when {@link asyncEngineWouldActivate}
- * says the engine will claim it. If the engine claims it HERE but the
- * registered result is something else, the pre-pass predicate and the body-time
- * decision disagreed — and every call site compiled before this body already
- * emitted a coercion against the stale result (that is exactly the invalid
- * `extern.convert_any (call $callee)` this issue is about). Fail loudly instead
- * of shipping a mistyped call.
- */
-function reportDeclaredAsyncResultDisagreement(
-  ctx: CodegenContext,
-  decl: ts.FunctionLikeDeclaration,
-  func: WasmFunction,
-): void {
-  if (!ts.isFunctionDeclaration(decl)) return;
-  const ft = ctx.mod.types[func.typeIdx];
-  if (!ft || ft.kind !== "func") return;
-  if (ft.results.length === 1 && ft.results[0]?.kind === "externref") return;
+// ── (#6780) Loud refusal: a declined body must not elide `await <settled>` ──
+//
+// `await null` / `await 1` / `await Promise.resolve()` still yields one
+// microtask turn (§27.7.5.3): the code after the CALL SITE runs before the
+// continuation. The host engine therefore claims such bodies like any other
+// (`asyncFnNeedsHostDrive` has no all-static decline). A body it still declines
+// is declined for its SHAPE (e.g. an await inside a loop), and the synchronous
+// pass-through would run every continuation inline — a silent reordering, so
+// refuse instead.
+//
+// Scope is a NAMED SUBSET, as #6504 round 30 requires of any widening: host
+// lane only; only bodies with no real suspension (real-suspension declines
+// stay on the #3587 `try`-scoped guard above); and only the engine's own
+// claimable entry points — top-level declarations, arrows and function
+// expressions. Nested declarations (policy-declined in
+// nested-declarations.ts) and methods (#2957) run the pass-through for REAL
+// awaits too; refusing only their settled awaits would refuse a population the
+// engine never claims at any operand.
+
+const staticDeclineReportedByCtx = new WeakMap<CodegenContext, WeakSet<ts.Node>>();
+
+function isHostDriveLane(ctx: CodegenContext): boolean {
+  return ctx.wasi !== true && ctx.standalone !== true && !isStandalonePromiseActive(ctx);
+}
+
+function isEngineEntryPoint(decl: ts.FunctionLikeDeclaration): boolean {
+  if (ts.isArrowFunction(decl) || ts.isFunctionExpression(decl)) return true;
+  return ts.isFunctionDeclaration(decl) && ts.isSourceFile(decl.parent);
+}
+
+/** First await of a declined host body whose every await is settled, else `null`. */
+function findElidedSettledAwait(ctx: CodegenContext, decl: ts.FunctionLikeDeclaration): ts.AwaitExpression | null {
+  if (!ASYNC_CPS_ENABLED || decl.body === undefined || !isHostDriveLane(ctx)) return null;
+  if (!isEngineEntryPoint(decl) || decl.asteriskToken !== undefined) return null;
+  const plan = analyzeAsyncBody(ctx, decl);
+  if (plan.awaitPoints.length === 0 || plan.forAwaitPoints.length > 0) return null;
+  if (plan.awaitPoints.some((a) => plan.awaitedStaticallyResolved.get(a) !== true)) return null;
+  return plan.awaitPoints[0]!;
+}
+
+function reportDeclinedSettledAwaitBody(ctx: CodegenContext, decl: ts.FunctionLikeDeclaration): void {
+  const seen = staticDeclineReportedByCtx.get(ctx);
+  if (seen?.has(decl)) return;
+  const elided = findElidedSettledAwait(ctx, decl);
+  if (elided === null) return;
+  if (seen === undefined) staticDeclineReportedByCtx.set(ctx, new WeakSet([decl]));
+  else seen.add(decl);
   reportError(
     ctx,
-    decl,
-    `internal: async function \`${func.name}\` activates a state machine (result: Promise/externref) ` +
-      `but its declaration-time signature registered ${ft.results.length === 0 ? "no result" : `a \`${ft.results[0]?.kind}\` result`}. ` +
-      "Call sites compiled before this body coerced against the stale result, which emits invalid " +
-      "Wasm. The declaration pre-pass and the body-time activation decision must agree (#6412)",
+    elided,
+    "async shape not supported: this `await` has an already-settled operand, but the body's " +
+      "control flow (e.g. an await inside a loop) is a shape the async engine cannot drive yet, " +
+      "and the synchronous fallback would run the continuation BEFORE the caller resumes (an " +
+      "`await` always yields a microtask turn, whatever its operand). Restructure toward canonical " +
+      "awaits — top-level `await x` / `const v = await x` / `return await x` statements, awaits " +
+      "inside if/try — or hoist the await out of the loop (#6780)",
   );
+}
+
+/**
+ * Decline-side guards for an async function-like the engine did NOT claim
+ * (#3587 rejection hazard + #6780 elided settled awaits). Each is
+ * self-scoping and deduped per declaration, so the IR-selector probe and the
+ * body-compile path may both call this.
+ */
+export function reportDeclinedAsyncBody(ctx: CodegenContext, decl: ts.FunctionLikeDeclaration): void {
+  reportDeclinedAsyncRejectionHazard(ctx, decl);
+  reportDeclinedSettledAwaitBody(ctx, decl);
 }
 
 /**
@@ -318,23 +371,46 @@ export function maybeActivateAsync(
   const isAsync = ctx.asyncFunctions.has(func.name);
   const decision = decideAsyncActivation(ctx, decl, isAsync, /*allowNonDeclaration*/ false);
   if (!decision) {
-    // (#3587) A declined-but-rejection-observing declaration must refuse
-    // loudly rather than fall to the sync pass-through (see the guard's doc).
-    if (isAsync && ts.isFunctionDeclaration(decl)) reportDeclinedAsyncRejectionHazard(ctx, decl);
+    // (#3587/#6780) A declined-but-rejection-observing (or settled-await-only)
+    // declaration must refuse loudly rather than fall to the sync pass-through.
+    if (isAsync && ts.isFunctionDeclaration(decl)) reportDeclinedAsyncBody(ctx, decl);
     return false;
   }
 
   // The async function returns a Promise object (externref), not the unwrapped
-  // value. `collectDeclarations` already bakes that carrier into the registered
-  // signature at declaration time (#6412), so this rewrite is a no-op for every
-  // declaration that went through the pre-pass — it stays for the shapes that
-  // did not. A pre-pass/body-time DISAGREEMENT is a mistyped call at every site
-  // compiled before this body, so it must be loud rather than silent.
-  reportDeclaredAsyncResultDisagreement(ctx, decl, func);
+  // value. Rewrite the registered signature's result + fctx before emitting.
   rewriteFuncResultType(ctx, func, { kind: "externref" });
   fctx.returnType = { kind: "externref" };
   emitAsyncLane(ctx, fctx, decl, decision);
   return true;
+}
+
+/**
+ * Declaration-time wasm result for a top-level function declaration: the
+ * #5371 thenable widening, then (#6780) the Promise carrier for an async
+ * declaration the HOST engine will drive.
+ *
+ * {@link maybeActivateAsync} rewrites a driven declaration's result to
+ * `externref` only when its BODY compiles. A caller compiled earlier — a
+ * forward reference, e.g. `main` declared above its helpers — had already
+ * baked the unwrapped `T`, and the stack repair then unboxed the returned
+ * Promise to NaN (`await helper()` read NaN). #6780 put every
+ * settled-await body on the engine, so this registers the carrier the body
+ * will produce up front, making call sites order-independent. Host lane only
+ * (the wasi/standalone drive lane keys its call sites on `calleeIsDriveLowered`
+ * instead); same decision as the activation itself, so the two cannot drift.
+ */
+export function widenAsyncDeclarationResults(
+  ctx: CodegenContext,
+  decl: ts.FunctionDeclaration,
+  results: ValType[],
+): ValType[] {
+  const widened = widenAsyncThenableResults(ctx, decl, results);
+  if (!ts.isSourceFile(decl.parent) || decl.asteriskToken !== undefined || !isHostDriveLane(ctx)) return widened;
+  if (widened.length === 1 && widened[0]!.kind === "externref") return widened;
+  const isAsync = decl.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword) === true;
+  if (decideAsyncActivation(ctx, decl, isAsync, /*allowNonDeclaration*/ false)?.lane !== "host-drive") return widened;
+  return [{ kind: "externref" }];
 }
 
 /**

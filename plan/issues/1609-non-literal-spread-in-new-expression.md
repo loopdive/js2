@@ -1,7 +1,7 @@
 ---
 id: 1609
 title: "codegen: non-literal spread argument in new-expression not supported"
-status: in_progress
+status: in-progress
 created: 2026-05-24
 updated: 2026-08-27
 priority: high

@@ -18,10 +18,11 @@
  * Only used in `noJsHost` mode; JS-host mode keeps the spec-accurate host
  * accessor path unchanged.
  */
+import { createSymbolCarrierType, buildSymbolBoxBody } from "../runtime/wasmgc/values/symbol-carrier-bodies.js";
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { allocLocal } from "./context/locals.js";
-import { ensureSymbolCounter } from "./literals.js";
+import { ensureSymbolCounter, wellKnownSymbolName } from "./literals.js";
 import { ensureNativeStringBoundaryBridge, ensureNativeStringHelpers, nativeStringType } from "./native-strings.js";
 import { addFuncType, getOrRegisterArrayType } from "./registry/types.js";
 import { compileNativeStringLiteral } from "./string-ops.js";
@@ -70,14 +71,7 @@ export function ensureSymbolCarrier(ctx: CodegenContext): number {
     ensureNativeStringHelpers(ctx);
     const anyStrTypeIdx = ctx.anyStrTypeIdx;
     const idx = ctx.mod.types.length;
-    ctx.mod.types.push({
-      kind: "struct",
-      name: "$Symbol",
-      fields: [
-        { name: "id", type: { kind: "i32" }, mutable: false },
-        { name: "desc", type: { kind: "ref_null", typeIdx: anyStrTypeIdx }, mutable: false },
-      ],
-    });
+    ctx.mod.types.push(createSymbolCarrierType(anyStrTypeIdx));
     ctx.symbolTypeIdx = idx;
   }
   if (ctx.funcMap.get("__box_symbol") === undefined) {
@@ -122,93 +116,10 @@ export function ensureSymbolCarrier(ctx: CodegenContext): number {
         { name: "existing", type: symNull },
         { name: "grow", type: arrNull },
       ],
-      body: [
-        // tbl = global; allocate (id+1, min 16) slots if null.
-        { op: "global.get", index: internGlobalIdx },
-        { op: "local.tee", index: TBL },
-        { op: "ref.is_null" },
-        {
-          op: "if",
-          blockType: { kind: "empty" },
-          then: [
-            // allocate id+1 slots; the grow loop below extends ×2 as ids climb.
-            { op: "local.get", index: 0 },
-            { op: "i32.const", value: 1 },
-            { op: "i32.add" },
-            { op: "array.new_default", typeIdx: internArrTypeIdx },
-            { op: "local.set", index: TBL },
-            { op: "local.get", index: TBL },
-            { op: "global.set", index: internGlobalIdx },
-          ],
-        },
-        // grow ×2 until id < tbl.len
-        {
-          op: "block",
-          blockType: { kind: "empty" },
-          body: [
-            {
-              op: "loop",
-              blockType: { kind: "empty" },
-              body: [
-                { op: "local.get", index: 0 },
-                { op: "local.get", index: TBL },
-                { op: "ref.as_non_null" },
-                { op: "array.len" },
-                { op: "i32.lt_s" },
-                { op: "br_if", depth: 1 },
-                { op: "local.get", index: TBL },
-                { op: "ref.as_non_null" },
-                { op: "array.len" },
-                { op: "i32.const", value: 2 },
-                { op: "i32.mul" },
-                { op: "array.new_default", typeIdx: internArrTypeIdx },
-                { op: "local.set", index: GROW },
-                { op: "local.get", index: GROW },
-                { op: "ref.as_non_null" },
-                { op: "i32.const", value: 0 },
-                { op: "local.get", index: TBL },
-                { op: "ref.as_non_null" },
-                { op: "i32.const", value: 0 },
-                { op: "local.get", index: TBL },
-                { op: "ref.as_non_null" },
-                { op: "array.len" },
-                { op: "array.copy", dstTypeIdx: internArrTypeIdx, srcTypeIdx: internArrTypeIdx },
-                { op: "local.get", index: GROW },
-                { op: "local.set", index: TBL },
-                { op: "local.get", index: TBL },
-                { op: "global.set", index: internGlobalIdx },
-                { op: "br", depth: 0 },
-              ],
-            },
-          ],
-        },
-        // existing = tbl[id]; if null create + store; return extern(existing).
-        { op: "local.get", index: TBL },
-        { op: "ref.as_non_null" },
-        { op: "local.get", index: 0 },
-        { op: "array.get", typeIdx: internArrTypeIdx },
-        { op: "local.tee", index: EXISTING },
-        { op: "ref.is_null" },
-        {
-          op: "if",
-          blockType: { kind: "val", type: { kind: "externref" } },
-          then: [
-            // tbl[id] = new $Symbol{id, null}; tee into `existing`
-            { op: "local.get", index: TBL },
-            { op: "ref.as_non_null" },
-            { op: "local.get", index: 0 },
-            { op: "local.get", index: 0 },
-            { op: "ref.null", typeIdx: anyStrTypeIdx },
-            { op: "struct.new", typeIdx: symIdx },
-            { op: "local.tee", index: EXISTING },
-            { op: "array.set", typeIdx: internArrTypeIdx },
-            { op: "local.get", index: EXISTING },
-            { op: "ref.as_non_null" },
-            { op: "extern.convert_any" },
-          ],
-          else: [{ op: "local.get", index: EXISTING }, { op: "ref.as_non_null" }, { op: "extern.convert_any" }],
-        },
-      ],
+      body: buildSymbolBoxBody(
+        { symIdx, anyStrTypeIdx, internArrTypeIdx, internGlobalIdx },
+        { table: TBL, existing: EXISTING, grow: GROW },
+      ),
       exported: false,
     });
   }
@@ -475,13 +386,70 @@ export function emitSymbolDescStore(ctx: CodegenContext, fctx: FunctionContext):
   fctx.body.push({ op: "array.set", typeIdx: arrTypeIdx });
 }
 
+/** Highest reserved well-known symbol id (see WELL_KNOWN_SYMBOLS in literals.ts). */
+const MAX_WELL_KNOWN_SYMBOL_ID = 15;
+
+/**
+ * (#6651 W1) `id -> "Symbol.<name>"` for the well-known symbols, else `miss`.
+ *
+ * §20.4.2 gives every well-known symbol a [[Description]]: `Symbol.unscopables`
+ * is described `"Symbol.unscopables"`, so `String(Symbol.unscopables)` renders
+ * `"Symbol(Symbol.unscopables)"` and `.description` answers that string.
+ * Standalone mints those carriers through `__box_symbol(<reserved id>)`, which
+ * never touches the id→description side table — so EVERY well-known symbol
+ * rendered as `"Symbol()"`. That is user-visible wherever a symbol is stringified:
+ * the `language/statements/with/*-with-proxy-env.js` rows log
+ * `"get:" + String(pk)` and compare the whole trap array, so the missing
+ * description alone failed three of them on the standalone lane.
+ *
+ * Implemented as an inline id→constant chain consulted on a description-table
+ * MISS, rather than by seeding the table — seeding would need a module start
+ * function and would pay for 15 string constants in every module that boxes any
+ * symbol. Each literal is a single interned `global.get`, so the chain is ~5
+ * instructions per well-known id. A user-registered description (`Symbol.for`)
+ * always lives in the table and so still wins; the reserved ids are unreachable
+ * from `Symbol()` (user ids start at 100), so the namespaces cannot collide.
+ *
+ * `idInstrs` must push the i32 id (it is re-emitted per level, so it has to be
+ * side-effect-free — a `local.get`, or the local-free carrier re-read that
+ * `fillSymbolAnyToStringArm` uses at finalize, where allocating a local is not
+ * available). `missInstrs` supplies the non-well-known answer and fixes the
+ * chain's result type.
+ */
+function wellKnownSymbolDescInstrs(
+  ctx: CodegenContext,
+  idInstrs: readonly Instr[],
+  resultType: ValType,
+  missInstrs: readonly Instr[],
+): Instr[] {
+  let out: Instr[] = [...missInstrs];
+  for (let id = MAX_WELL_KNOWN_SYMBOL_ID; id >= 1; id--) {
+    const name = wellKnownSymbolName(id);
+    if (name === undefined) continue;
+    out = [
+      ...idInstrs,
+      { op: "i32.const", value: id },
+      { op: "i32.eq" },
+      {
+        op: "if",
+        blockType: { kind: "val", type: resultType },
+        then: [...nativeStringLiteralInstrs(ctx, `Symbol.${name}`), { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx }],
+        else: out,
+      },
+    ];
+  }
+  return out;
+}
+
 /**
  * Emit code that loads the description for a symbol id from the native table.
  *
  * Stack in:  `[i32 id]`
  * Stack out: `[ref_null $AnyString]`  (null when the table is unallocated, the
  *            id is out of range, or the slot was never set — all of which the
- *            `.description` accessor treats as `undefined`).
+ *            `.description` accessor treats as `undefined`), EXCEPT for the
+ *            reserved well-known ids, which fall back to their §20.4.2
+ *            [[Description]] (see `ensureSymbolWellKnownDescNative`).
  */
 export function emitSymbolDescLoad(ctx: CodegenContext, fctx: FunctionContext): void {
   ensureSymbolDescTable(ctx);
@@ -527,6 +495,22 @@ export function emitSymbolDescLoad(ctx: CodegenContext, fctx: FunctionContext): 
       },
     ],
   });
+
+  // (#6651 W1) Table MISS → the well-known [[Description]] chain. Appended after
+  // the table read so a stored description always wins.
+  if (ctx.anyStrTypeIdx >= 0) {
+    const resLocal = allocLocal(fctx, `__symdescr_res_${fctx.locals.length}`, anyStrNull);
+    fctx.body.push({ op: "local.tee", index: resLocal });
+    fctx.body.push({ op: "ref.is_null" });
+    fctx.body.push({
+      op: "if",
+      blockType: { kind: "val", type: anyStrNull },
+      then: wellKnownSymbolDescInstrs(ctx, [{ op: "local.get", index: idLocal }], anyStrNull, [
+        { op: "ref.null", typeIdx: ctx.anyStrTypeIdx },
+      ]),
+      else: [{ op: "local.get", index: resLocal }],
+    });
+  }
 }
 
 /** Initial registry capacity (most programs register a handful of global symbols). */
@@ -1097,13 +1081,17 @@ export function fillSymbolAnyToStringArm(ctx: CodegenContext): void {
           },
         ]
       : [{ op: "ref.null", typeIdx: ctx.anyStrTypeIdx }];
+  // (#6651 W1) A table MISS falls back to the well-known [[Description]] chain
+  // before collapsing to "" — `String(Symbol.unscopables)` is
+  // "Symbol(Symbol.unscopables)", not "Symbol()". Local-free like the rest of
+  // this finalize fill: the id is re-read from the carrier at each level.
   const descLookup: Instr[] = [
     ...descOrEmpty,
     { op: "ref.is_null" },
     {
       op: "if",
       blockType: { kind: "val", type: anyStr },
-      then: emptyStr,
+      then: wellKnownSymbolDescInstrs(ctx, carrierId, anyStr, emptyStr),
       else: [...descOrEmpty, { op: "ref.as_non_null" }],
     },
   ];

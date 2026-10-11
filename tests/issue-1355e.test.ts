@@ -57,9 +57,13 @@ describe("#1355 standalone Proxy — ownKeys trap (§10.5.11)", () => {
   });
 
   it("the ownKeys trap's array result flows through Object.keys (length observed)", async () => {
+    // (#6770 S7) §20.1.2.17 Object.keys keeps only the trap's keys whose
+    // [[GetOwnProperty]] answers an ENUMERABLE descriptor, so the trap's keys
+    // must exist on the target (node answers 0 for a `{a, b}` target). Four
+    // target keys, three returned: the trap's list, not the target's, is used.
     expect(
       await runStandalone(`export function test(): number {
-        const p: any = new Proxy({ a: 1, b: 2 }, { ownKeys: (t: any) => ["x", "y", "z"] });
+        const p: any = new Proxy({ x: 1, y: 2, z: 3, w: 4 }, { ownKeys: (t: any) => ["x", "y", "z"] });
         return Object.keys(p).length;
       }`),
     ).toBe(3);

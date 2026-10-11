@@ -1,0 +1,92 @@
+{
+  "schema": "issue-3518-instrument-main-delivery-v1",
+  "pr": 5717,
+  "head": "a930d34afbf4166968095a7de36343db77c70ede",
+  "base": "1429cfdf2167f31532d70c5304430a9300c2a982",
+  "main": "26ad33b51c8e39e39096817526aa763ab58d3e75",
+  "parents": ["1429cfdf2167f31532d70c5304430a9300c2a982", "a930d34afbf4166968095a7de36343db77c70ede"],
+  "files": [
+    {
+      "path": "plan/agent-context/3518-forward-d-handoff.md",
+      "reviewedBlob": "35e3a61b07cb277ccf668f55bf84c83796d36a1e",
+      "mainBlob": "35e3a61b07cb277ccf668f55bf84c83796d36a1e"
+    },
+    {
+      "path": "scripts/check-ir-retirement.ts",
+      "reviewedBlob": "dcf4d7d29d6ed15a3a296888228f4b4b98655af3",
+      "mainBlob": "dcf4d7d29d6ed15a3a296888228f4b4b98655af3"
+    },
+    {
+      "path": "tests/fixtures/ir-retirement/class-closure.ts",
+      "reviewedBlob": "372b8c57addab83e58e5edd5d18398a541e342df",
+      "mainBlob": "372b8c57addab83e58e5edd5d18398a541e342df"
+    },
+    {
+      "path": "tests/fixtures/ir-retirement/common.cjs",
+      "reviewedBlob": "948f8d8177920dff0056db8cc2e724ec2259e5f8",
+      "mainBlob": "948f8d8177920dff0056db8cc2e724ec2259e5f8"
+    },
+    {
+      "path": "tests/fixtures/ir-retirement/dynamic.ts",
+      "reviewedBlob": "89f6df282d79a4682a161935b66765a21409f8f7",
+      "mainBlob": "89f6df282d79a4682a161935b66765a21409f8f7"
+    },
+    {
+      "path": "tests/fixtures/ir-retirement/entry-scalar.ts",
+      "reviewedBlob": "3220139a3c65cb60f8a0c29538bd63da5b1667af",
+      "mainBlob": "3220139a3c65cb60f8a0c29538bd63da5b1667af"
+    },
+    {
+      "path": "tests/fixtures/ir-retirement/entry.ts",
+      "reviewedBlob": "dd461e5bc24ab174ae1bee173ab4492d0c1226b7",
+      "mainBlob": "dd461e5bc24ab174ae1bee173ab4492d0c1226b7"
+    },
+    {
+      "path": "tests/fixtures/ir-retirement/manifest.json",
+      "reviewedBlob": "7f24a082b0d628ea2072c44931e7614e1428be7e",
+      "mainBlob": "7f24a082b0d628ea2072c44931e7614e1428be7e"
+    },
+    {
+      "path": "tests/fixtures/ir-retirement/math.ts",
+      "reviewedBlob": "43a59296b1cee7f5aef503e91f189d5f570bd170",
+      "mainBlob": "43a59296b1cee7f5aef503e91f189d5f570bd170"
+    },
+    {
+      "path": "tests/fixtures/ir-retirement/namespace.ts",
+      "reviewedBlob": "5dc5b9c25413df90700f5f174675d400735f5f21",
+      "mainBlob": "5dc5b9c25413df90700f5f174675d400735f5f21"
+    },
+    {
+      "path": "tests/fixtures/ir-retirement/oracle.mjs",
+      "reviewedBlob": "6f1dd5e53b8abdcdbbefb88c365431ce9a4c4881",
+      "mainBlob": "6f1dd5e53b8abdcdbbefb88c365431ce9a4c4881"
+    },
+    {
+      "path": "tests/fixtures/ir-retirement/scalar.ts",
+      "reviewedBlob": "a8f2a815abf0f2f3fe08b2205959bbcb978dd461",
+      "mainBlob": "a8f2a815abf0f2f3fe08b2205959bbcb978dd461"
+    },
+    {
+      "path": "tests/fixtures/ir-retirement/state.ts",
+      "reviewedBlob": "eda097be05003778fe40a654a3a9f0fa06773e30",
+      "mainBlob": "eda097be05003778fe40a654a3a9f0fa06773e30"
+    },
+    {
+      "path": "tests/fixtures/ir-retirement/timeout-control.mjs",
+      "reviewedBlob": "416e0a9634fb1cacdd5e941d8fb5155b2cd95a60",
+      "mainBlob": "416e0a9634fb1cacdd5e941d8fb5155b2cd95a60"
+    },
+    {
+      "path": "tests/fixtures/ir-retirement/types.ts",
+      "reviewedBlob": "2c1a8c35f26031cad6b5dba1c37ffb91ae506f77",
+      "mainBlob": "2c1a8c35f26031cad6b5dba1c37ffb91ae506f77"
+    },
+    {
+      "path": "tests/issue-3518-public-retirement-gate.test.ts",
+      "reviewedBlob": "6f387f988b43779c3bfabf78999af7687ce7bef4",
+      "mainBlob": "6f387f988b43779c3bfabf78999af7687ce7bef4"
+    }
+  ],
+  "meaning": "Instrument-only delivery; not production migration or conformance clearance",
+  "migrationComplete": false
+}

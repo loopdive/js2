@@ -15,12 +15,52 @@ function parseProbe(stdout) {
   return JSON.parse(payload);
 }
 
+// TS8xxx "X can only be used in TypeScript files" is non-fatal under allowJs
+// (the JS-host graph's timer shim prepends typed declarations to `.js` files
+// and TypeScript reports them); never name it as the reason a compile failed.
+const JS_GRAMMAR_NOISE_RE = /can only be used in TypeScript files\.?$/;
+
+export function isJsGrammarNoiseDiagnostic(message) {
+  return typeof message === "string" && JS_GRAMMAR_NOISE_RE.test(message);
+}
+
+function blockingError(errors) {
+  return errors.find((error) => !isJsGrammarNoiseDiagnostic(error?.message)) ?? errors[0];
+}
+
+/**
+ * One-line reason a package-entry report did not yield a runnable module.
+ *
+ * `report` is this harness's own output, whose shape is `compile.{success,
+ * timedOut, timeoutMs, errors[], categories}` + `validation.firstError`. Every
+ * returned string says which gate failed, so a perf lane blocked by it
+ * (scripts/generate-npm-compat-report.mjs) never shows a generic placeholder
+ * such as the former "package entry did not produce a runnable Wasm module".
+ */
+export function packageEntryBlockReason(report) {
+  const compile = report?.compile ?? {};
+  const gate = "JS-host package-entry";
+  if (compile.success === false) {
+    if (compile.timedOut) {
+      return `${gate} compile exceeded the ${compile.timeoutMs ?? "?"}ms harness budget (compile-budget; lane not attempted)`;
+    }
+    const messages = (compile.errors ?? []).map((error) => error?.message).filter((m) => typeof m === "string");
+    const blocker = messages.find((message) => !isJsGrammarNoiseDiagnostic(message)) ?? messages[0];
+    const reason = compile.error ?? blocker ?? report?.validation?.firstError;
+    if (reason) return `${gate} compile failed: ${reason}`;
+    return `${gate} compile failed without a diagnostic (errorCount ${compile.errorCount ?? 0})`;
+  }
+  const invalid = report?.validation?.error ?? report?.validation?.firstError;
+  if (report?.validation?.validates === false && invalid) return `${gate} binary is invalid: ${invalid}`;
+  return `${gate} report is not runnable (compile.success=${String(compile.success)}, validates=${String(report?.validation?.validates)})`;
+}
+
 function diagnosticCategories(errors, timedOut, timeoutMs) {
   if (timedOut) {
     return { "compile-budget": { count: 1, sample: `compileProject exceeded the ${timeoutMs}ms budget` } };
   }
   if (errors.length === 0) return {};
-  return { "compiler-diagnostic": { count: errors.length, sample: errors[0].message } };
+  return { "compiler-diagnostic": { count: errors.length, sample: blockingError(errors).message } };
 }
 
 export function createPackageEntryHarness({
@@ -74,7 +114,7 @@ export function createPackageEntryHarness({
       : processError
         ? `compile probe failed: ${processError}`
         : !compileSuccess
-          ? (errors[0]?.message ?? "compile did not emit a binary")
+          ? (blockingError(errors)?.message ?? "compile did not emit a binary")
           : !validates
             ? (probe.validationError ?? "emitted binary failed WebAssembly validation")
             : "runtime differential harness not implemented";

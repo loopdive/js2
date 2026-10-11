@@ -14,6 +14,7 @@ import { assertAstFreeClassConstructorNewWrapper } from "./class-constructor-wra
 import { classMemberFuncKey } from "./class-member-keys.js";
 import type { CodegenContext } from "./context/types.js";
 import { definedFuncAt } from "./func-space.js";
+import { readEnv } from "../env.js";
 
 type ExecutableClassMember =
   | ts.ConstructorDeclaration
@@ -109,7 +110,7 @@ export function tryCorrelateFullyPreparedStandaloneClassBodies(
   funcByName: ReadonlyMap<string, number>,
   routing: ClassBodyCompileRouting | undefined,
 ): boolean {
-  if (process.env.JS2WASM_PREPARED_CLASS_ROUTE_CUTOVER === "0") return false;
+  if (readEnv("JS2WASM_PREPARED_CLASS_ROUTE_CUTOVER") === "0") return false;
   if (!ctx.standalone || ctx.wasi || ctx.currentFunc != null || !routing || !declaration.name) return false;
   if (!ts.isSourceFile(declaration.parent) || hasResidualClassBodySyntax(declaration)) return false;
 
@@ -198,7 +199,7 @@ export function tryCorrelateFullyPreparedStandaloneClassBodies(
   ) {
     throw new Error(`prepared class ${className} has no exact allocator-owned constructor support pair`);
   }
-  if (process.env.JS2WASM_TEST_TAMPER_PREPARED_CLASS_NEW?.split(",").includes(className)) {
+  if (readEnv("JS2WASM_TEST_TAMPER_PREPARED_CLASS_NEW")?.split(",").includes(className)) {
     newFunc.body = [{ op: "unreachable" }];
   }
   assertAstFreeClassConstructorNewWrapper(ctx, {

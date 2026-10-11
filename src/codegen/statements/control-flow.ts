@@ -43,11 +43,13 @@ import {
 import { definedFuncAt } from "../func-space.js"; // (#1916 S2) positional-read chokepoint
 import { emitUndefined } from "../expressions/late-imports.js";
 import { emitConstructReturnSelect } from "../construct-return-value.js"; // (#4464)
+import { emitCtorBareReturnOverride, tryEmitCtorOverrideReturn } from "../classes/ctor-return-override.js"; // (#6772 S2)
 import {
   emitHostTypedArrayCarrierRegistration,
   isHostTypedArrayCarrierName,
 } from "../expressions/typed-array-host-carrier.js";
 import { buildThrowJsErrorInstrs } from "../js-errors.js";
+import { readEnv } from "../../env.js";
 
 /**
  * (#2061) Compute the extra nesting depth between a finally-inline site and the
@@ -175,6 +177,7 @@ function normalizeReturnExpression(
   expression: ts.Expression,
   exprType: ValType | null,
 ): void {
+  if (fctx.hostBooleanReturn === true && exprType?.kind === "i32") exprType = { kind: "i32", boolean: true };
   if (exprType && fctx.returnType && !valTypesMatch(exprType, fctx.returnType)) {
     // (#4406) A BOOLEAN-branded i32 return target wants ToBoolean, and
     // `coerceType(externref → i32)` is ToNumber + `i32.trunc_sat_f64_s`. On the
@@ -453,7 +456,12 @@ export function compileReturnStatement(ctx: CodegenContext, fctx: FunctionContex
   ) {
     const selfIdx = fctx.localMap.get("this")!;
     const structTypeIdx = fctx.returnType.typeIdx;
-    if (!stmt.expression) {
+    if (!stmt.expression && emitCtorBareReturnOverride(ctx, fctx)) {
+      // (#6772 S2) marked class: the register carries the frame's default.
+      fctx.body.push({ op: "local.get", index: selfIdx });
+    } else if (stmt.expression && tryEmitCtorOverrideReturn(ctx, fctx, stmt.expression, selfIdx)) {
+      // (#6772 S2) §10.2.1.3 step 13 through the return-override register.
+    } else if (!stmt.expression) {
       // Bare `return;` → return `this` (the guard-clause idiom). #2018
       // (#5195 Step 11 E) …including in a DERIVED constructor with a nominal
       // struct result, which this arm used to decline outright: the statement
@@ -1182,7 +1190,7 @@ function isProvenNumericLocalSwitchDiscriminant(
   fctx: FunctionContext,
   expr: ts.Expression,
 ): boolean {
-  if (process.env.JS2WASM_GROUNDED_NUMERIC_SWITCHES === "0") return false;
+  if (readEnv("JS2WASM_GROUNDED_NUMERIC_SWITCHES") === "0") return false;
   if (!ts.isIdentifier(expr)) return false;
   const localIdx = fctx.localMap.get(expr.text);
   if (localIdx !== undefined && getLocalType(fctx, localIdx)?.kind === "f64") return true;

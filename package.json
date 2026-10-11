@@ -70,18 +70,10 @@
     "node": ">=20"
   },
   "peerDependencies": {
-    "binaryen": "^132.0.0",
-    "bun": ">=1.3.14",
-    "deno": ">=2.8.1"
+    "binaryen": "^132.0.0"
   },
   "peerDependenciesMeta": {
     "binaryen": {
-      "optional": true
-    },
-    "bun": {
-      "optional": true
-    },
-    "deno": {
       "optional": true
     }
   },
@@ -90,7 +82,7 @@
     "new:issue-id": "node scripts/claim-issue.mjs --allocate",
     "preview:issue-id": "node scripts/next-issue-id.mjs",
     "worktree:provision": "bash scripts/provision-worktree-deps.sh",
-    "build": "vite build --config vite.config.lib.ts && node scripts/build-test262-cli.mjs",
+    "build": "vite build --config vite.config.lib.ts && node scripts/prune-dist-declarations.mjs && node scripts/build-test262-cli.mjs",
     "build:jsr": "vite build --config vite.config.lib.ts --mode jsr && node scripts/prepare-jsr-dist.mjs",
     "build:test262-cli": "node scripts/build-test262-cli.mjs",
     "build:runtime-provider": "node scripts/build-runtime-provider.mjs",
@@ -118,6 +110,8 @@
     "check:ir-kind-neutrality": "node scripts/check-ir-kind-neutrality.mjs",
     "check:jstag-seam": "node scripts/check-jstag-seam.mjs",
     "check:ir-layering": "node scripts/check-ir-layering.mjs",
+    "check:import-cycles": "node scripts/check-import-cycles.mjs",
+    "check:flat-dir-budget": "node scripts/check-flat-dir-budget.mjs",
     "check:compiler-boundaries": "node scripts/check-compiler-boundaries.mjs",
     "check:compiler-boundaries:inventory": "node scripts/check-compiler-boundaries.mjs --mode inventory",
     "check:edition-ratchet": "npx tsx scripts/test262-edition-ratchet.ts",
@@ -142,6 +136,7 @@
     "inventory:test262-linked-harness": "npx tsx scripts/test262-linked-harness-inventory.ts",
     "check:dead-exports": "node scripts/audit-legacy-reachability.mjs --check --moved-reference-contract=preservation-v1 --require-core-types --require-core-nodes",
     "check:godfiles": "node scripts/profile-godfiles.mjs --check",
+    "check:orphaned-scripts": "node scripts/check-orphaned-scripts.mjs",
     "profile:godfiles": "node scripts/profile-godfiles.mjs",
     "gen:ir-adoption": "node scripts/gen-ir-adoption.mjs",
     "check:ir-adoption": "node scripts/gen-ir-adoption.mjs --check",
@@ -154,8 +149,10 @@
     "check:test262-hard-errors": "node scripts/check-test262-hard-errors.mjs",
     "check:issue-spec-coverage": "node scripts/check-issue-spec-coverage.mjs",
     "check:done-status-integrity": "node scripts/check-done-status-integrity.mjs",
+    "check:tracked-ignored": "node scripts/check-tracked-ignored.mjs",
     "check:verdict-oracle": "node scripts/check-verdict-oracle-bump.mjs",
     "check:issues": "node scripts/update-issues.mjs --check && node scripts/check-ir-optimization-retirement.mjs",
+    "check:claude-md-paths": "node scripts/check-claude-md-paths.mjs",
     "test:diff": "npx tsx scripts/diff-test.ts",
     "test:diff:triage": "npx tsx scripts/diff-triage.ts",
     "test:diff:gate": "npx tsx scripts/diff-test-gate.ts",
@@ -195,6 +192,7 @@
     "dogfood:uuid-upstream-suite": "node --import tsx tests/dogfood/uuid-upstream-suite.mjs",
     "dogfood:typescript": "node --import tsx tests/dogfood/npm-compat-catalog-harness.mjs --package typescript",
     "dogfood:typescript-binder-source": "node tests/dogfood/typescript-upstream-build-probe.mjs --root tests/dogfood/.npm-upstream-suites/typescript --prepare-pinned-typescript --mode source --entry ../../fixtures/typescript-binder-workload.ts --consumer-driven-barrels --invoke-export runCase --require-invocations 2 --invoke-case ../../fixtures/typescript-binder/const-local.ts=65792 --invoke-case ../../fixtures/typescript-binder/duplicate-let.ts=131330 --timeout-ms 900000 --heap-mb 4096 --json",
+    "dogfood:typescript-checker-source": "node tests/dogfood/typescript-upstream-build-probe.mjs --root tests/dogfood/.npm-upstream-suites/typescript --prepare-pinned-typescript --mode source --entry ../../fixtures/typescript-checker-workload.ts --consumer-driven-barrels --invoke-export runCase --require-invocations 3 --invoke-case ../../fixtures/typescript-checker/assign-mismatch.ts=67858 --invoke-case ../../fixtures/typescript-checker/assign-ok.ts=0 --invoke-case ../../fixtures/typescript-checker/two-mismatches.ts=133394 --timeout-ms 3600000 --heap-mb 8192 --json",
     "dogfood:typescript-parser-source": "node tests/dogfood/typescript-upstream-build-probe.mjs --root tests/dogfood/.npm-upstream-suites/typescript --prepare-pinned-typescript --mode source --entry ../../fixtures/typescript-parser-workload.ts --consumer-driven-barrels --invoke-export runCase --require-invocations 3 --invoke-case src/compiler/builderStatePublic.ts=13386537220945 --invoke-case src/compiler/corePublic.ts=40098163538143 --invoke-case src/compiler/performanceCore.ts=49645738923599 --timeout-ms 600000 --heap-mb 4096 --json",
     "dogfood:redux": "node --import tsx tests/dogfood/npm-compat-catalog-harness.mjs --package redux",
     "dogfood:redux-workload": "node --import tsx tests/dogfood/redux-workload-harness.mjs",
@@ -280,6 +278,8 @@
     "refresh:benchmarks": "npx tsx --experimental-wasm-stringref --experimental-wasm-custom-descriptors benchmarks/run.ts && pnpm run build:compiler-bundle && node --experimental-wasm-stringref --experimental-wasm-custom-descriptors scripts/generate-playground-benchmark-sidebar.mjs && node --experimental-wasm-stringref --experimental-wasm-custom-descriptors scripts/generate-playground-benchmark-sidebar-no-jit.mjs && pnpm run generate:size-benchmarks && node scripts/generate-browser-runtime-benchmarks.mjs",
     "refresh:benchmarks:no-jit": "pnpm run build:compiler-bundle && node --experimental-wasm-stringref --experimental-wasm-custom-descriptors scripts/generate-playground-benchmark-sidebar-no-jit.mjs",
     "refresh:benchmarks:wasmtime": "pnpm run build:compiler-bundle && node --experimental-wasm-stringref --experimental-wasm-custom-descriptors scripts/generate-wasmtime-hot-runtime.mjs",
+    "benchmark:octane": "node benchmarks/octane/run.mjs",
+    "benchmark:octane:fetch": "node benchmarks/octane/fetch.mjs",
     "benchmark:lifecycle": "node scripts/benchmark-lifecycle.mjs",
     "benchmark:package": "node scripts/benchmark-lifecycle.mjs package",
     "benchmark:validate": "node scripts/benchmark-lifecycle.mjs validate",
@@ -292,7 +292,7 @@
     "build:standalone-cli": "node scripts/build-standalone-cli.mjs",
     "format": "prettier --write 'src/**/*.ts' 'tests/**/*.ts' 'scripts/**/*.ts'",
     "format:check": "prettier --check 'src/**/*.ts' 'tests/**/*.ts' 'scripts/**/*.ts'",
-    "lint": "biome lint src tests scripts --diagnostic-level=error",
+    "lint": "biome lint src tests scripts --diagnostic-level=error --max-diagnostics=none",
     "typecheck": "node node_modules/typescript7/lib/tsc.js --noEmit -p tsconfig.ts7.json",
     "typecheck:ts5": "node node_modules/typescript/lib/tsc.js --noEmit",
     "typecheck:ts7": "pnpm run typecheck",
@@ -375,7 +375,7 @@
     "uuid": "14.0.1",
     "vite": "^6",
     "vite-plugin-dts": "^4",
-    "vitest": "^3",
+    "vitest": "^3.2.6",
     "wabt": "^1.0.39",
     "web-streams-polyfill": "4.3.0",
     "webpack": "5.109.2"
@@ -383,7 +383,7 @@
   "lint-staged": {
     "*.{ts,js,mjs}": [
       "prettier --write",
-      "biome lint --diagnostic-level=error --no-errors-on-unmatched"
+      "biome lint --diagnostic-level=error --max-diagnostics=none --no-errors-on-unmatched"
     ],
     "*.json": "prettier --write"
   },

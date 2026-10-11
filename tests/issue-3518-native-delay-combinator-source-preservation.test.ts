@@ -4,6 +4,9 @@ import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import ts from "typescript";
+import { B1_FACTORY_PATH } from "./helpers/native-delay-combinator-b1-inverse.mjs";
+import { beforePromiseExportMain } from "./helpers/promise-export-main-port.js";
+import { beforeEarlierPromiseMain } from "./helpers/promise-earlier-main-port.js";
 import {
   allAdapterPath,
   combinatorPath,
@@ -26,7 +29,8 @@ import {
 } from "./helpers/native-delay-combinator-source-receipts.mjs";
 
 const root = resolve(import.meta.dirname, ".."),
-  read = readerAt(root);
+  rawRead = readerAt(root),
+  read = (path: string): string => beforeEarlierPromiseMain(path, beforePromiseExportMain(path, rawRead(path)));
 const verifyCurrent = (reader: (path: string) => string) => verifyForwardDelayHistorical(reader).historical;
 describe("eight historical combinator bodies reconstructed from mandatory live owners", () => {
   it("retains the eight-donor denominator and separately accounts for delay/vector/dispatch", () => {
@@ -38,7 +42,7 @@ describe("eight historical combinator bodies reconstructed from mandatory live o
       sharedDispatchHelpers: 1,
     });
   });
-  for (const missing of [combinatorPath, delayPath, donorPath, delayAdapterPath, allAdapterPath]) {
+  for (const missing of [combinatorPath, delayPath, donorPath, delayAdapterPath, allAdapterPath, B1_FACTORY_PATH]) {
     it(`rejects missing mandatory source ${missing}`, () =>
       expect(() =>
         verifyCurrent((path: string) => {
@@ -47,12 +51,22 @@ describe("eight historical combinator bodies reconstructed from mandatory live o
         }),
       ).toThrow());
   }
+  it("rejects changes to the mandatory canonical B1 field layout", () => {
+    expect(verifyCurrent(read).historicalDonors).toBe(8);
+    const text = read(B1_FACTORY_PATH);
+    const before = 'name: "remaining", type: { kind: "i32" }, mutable: true';
+    expect(text.includes(before)).toBe(true);
+    const changed = text.replace(before, 'name: "remaining", type: { kind: "i32" }, mutable: false');
+    expect(() => verifyCurrent((path: string) => (path === B1_FACTORY_PATH ? changed : read(path)))).toThrow(
+      "mandatory B1 canonical factory",
+    );
+  });
   for (const [label, path, before, after] of [
     ["callback handle", delayPath, "funcIdx: resources.resolveValueFuncIdx", "funcIdx: resources.boxNumberFuncIdx"],
     ["capture field", delayPath, "fieldIdx: resources.capture.promiseFieldIdx", "fieldIdx: 4"],
     ["timer capture order", delayPath, 'op: "local.get", index: 1', 'op: "local.get", index: 0'],
     ["timer foreign rejection", delayPath, "funcIdx: resources.rejectFuncIdx", "funcIdx: resources.timerFuncIdx"],
-    ["capture header", delayAdapterPath, "superTypeIdx: callbackWrapper.structTypeIdx", "superTypeIdx: 0"],
+    ["capture header", delayAdapterPath, "superTypeIdx: captureShape.parent.typeIdx", "superTypeIdx: 0"],
     ["allocation observation", delayAdapterPath, 'ctx, [], [], "host-one-shot"', 'ctx, [], [], "ordinary"'],
     ["closure bag validation", delayAdapterPath, 'bagInit.op !== "ref.null.extern"', "false"],
     ["resolve-value guard", combinatorPath, "ids.resolveValueFuncIdx < 0", "ids.resolveValueFuncIdx < -1"],

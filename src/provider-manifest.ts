@@ -15,8 +15,17 @@ import { WasmEncoder } from "./emit/encoder.js";
 
 export const PROVIDER_MANIFEST_SECTION_NAME = "js2wasm.provider.v1" as const;
 export const PROVIDER_MANIFEST_FORMAT_VERSION = 1 as const;
-/** Bump when the compiler's provider-byte/metadata contract changes. */
-export const PROVIDER_COMPILER_ABI_VERSION = "js2wasm-provider-compiler-v1" as const;
+/**
+ * Bump when the compiler's provider-byte/metadata contract changes.
+ *
+ * v2 (#6491): every closure dispatcher family gained a
+ * `__\0js2_call_fn_argc_<arity>` export. The host bridge asks a provider for
+ * that export when it widens an under-applied call, and a v1 artifact does not
+ * have it — so a cached v1 provider would silently keep the wrong
+ * `arguments.length`. The cache key reads this constant (no compiler-source
+ * hash is in it), so the bump is what evicts those artifacts.
+ */
+export const PROVIDER_COMPILER_ABI_VERSION = "js2wasm-provider-compiler-v2" as const;
 /**
  * The package-linker ABI is versioned independently from the section format.
  * v4 (#5226): every linked module imports its exception tag from `env.__exn`,

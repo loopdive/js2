@@ -1,0 +1,106 @@
+{
+  "kind": "explicit-structural-extraction-with-private-factory-token-defence",
+  "priorForwardFixtureSha256": "c12630d715fd7419e89785b9a8f942bc15cc99c114b846bd44c29964fc6ff3d2",
+  "store": {
+    "path": "src/codegen/proto-index-store.ts",
+    "beforeSha256": "47016e670aa0e7fe444661b07aee735e096a0d8357acf0ac2cbe3ddea22ed532",
+    "afterSha256": "6d28104eb47004ef75b280c35ece42df705600872dcee057058d1a16116a71c6",
+    "spans": [
+      {
+        "beforeStart": 84,
+        "afterStart": 84,
+        "before": "import { buildProtoIndexRead, type ProtoIndexReadBinding } from \"../runtime/wasmgc/values/object-get-arms.js\";\n",
+        "after": ""
+      },
+      {
+        "beforeStart": 6910,
+        "afterStart": 6799,
+        "before": "",
+        "after": "import { createToPrimitivePresenceOwner } from \"./to-primitive-presence.js\";\nexport {\n  protoIndexRecvGetMissInstrs,\n  captureProtoIndexReadBinding,\n  protoIndexRecvHasMissInstrs,\n} from \"./proto-index-read-bindings.js\";\n\nconst toPrimitivePresence = createToPrimitivePresenceOwner();\n"
+      },
+      {
+        "beforeStart": 12460,
+        "afterStart": 12633,
+        "before": "  const presenceReservations = new Map<string, PresenceFunctionReceipt>();\n",
+        "after": "  const presenceReservations = toPrimitivePresence.createReservations(ctx);\n"
+      },
+      {
+        "beforeStart": 13139,
+        "afterStart": 13313,
+        "before": "    presenceReservations.set(name, presenceFunctionReceipt(ctx, placeholder));\n",
+        "after": "    toPrimitivePresence.recordReservation(ctx, presenceReservations, name, placeholder);\n"
+      },
+      {
+        "beforeStart": 16776,
+        "afterStart": 16960,
+        "before": "  protoIndexPresenceReservations.set(ctx, presenceReservations);\n",
+        "after": "  toPrimitivePresence.installReservations(ctx, presenceReservations);\n"
+      },
+      {
+        "beforeStart": 17622,
+        "afterStart": 17811,
+        "before": "}\n\n/**\n * (#4176) Receiver-aware GET consult `[recv, key] -> externref` for a\n * non-`$Object` miss chokepoint (`__closure_prop_get` / `__vec_prop_get`\n * tails): classifies the receiver's proto brand at runtime and consults that\n * companion, then Object's. `undefined` when unreserved — the caller keeps\n * its pre-existing miss byte-identically.\n */\nexport function protoIndexRecvGetMissInstrs(\n  ctx: CodegenContext,\n  recvLocal: number,\n  keyLocal: number,\n  accessorRecvLocal?: number,\n): Instr[] | undefined {\n  return buildProtoIndexRead(captureProtoIndexReadBinding(ctx, recvLocal, keyLocal, accessorRecvLocal));\n}\n\nexport function captureProtoIndexReadBinding(\n  ctx: CodegenContext,\n  recvLocal: number,\n  keyLocal: number,\n  accessorRecvLocal?: number,\n): ProtoIndexReadBinding | undefined {\n  const getRIdx = ctx.funcMap.get(PROTOIDX_GET_R);\n  if (getRIdx === undefined) return undefined;\n  const getKIdx = ctx.funcMap.get(PROTOIDX_GET_K);\n  const brandOffIdx = ctx.funcMap.get(PROTOIDX_BRAND_OFF);\n  if (\n    accessorRecvLocal !== undefined &&\n    accessorRecvLocal !== recvLocal &&\n    getKIdx !== undefined &&\n    brandOffIdx !== undefined\n  ) {\n    return {\n      kind: \"split-receiver\",\n      receiver: recvLocal,\n      key: keyLocal,\n      accessorReceiver: accessorRecvLocal,\n      brandOffset: brandOffIdx,\n      getKey: getKIdx,\n    };\n  }\n  return { kind: \"direct\", receiver: recvLocal, key: keyLocal, get: getRIdx };\n",
+        "after": ""
+      },
+      {
+        "beforeStart": 23635,
+        "afterStart": 22383,
+        "before": "/** The ToPrimitive call site binds this stable reservation, never early absence. */\nconst TO_PRIMITIVE_PRESENCE = \"__to_primitive_companion_presence\";\nconst PRESENCE_FILL_NAMES = [\n  PROTOIDX_COMPANION,\n  PROTOIDX_NORM_KEY,\n  PROTOIDX_HAS_K,\n  PROTOIDX_BRAND_OFF,\n  PROTOIDX_HAS_R,\n] as const;\ninterface PresenceFunctionReceipt {\n  readonly fn: WasmFunction;\n  readonly type: CodegenContext[\"mod\"][\"types\"][number];\n  readonly body: Instr[];\n  readonly locals: WasmFunction[\"locals\"];\n  readonly graph: readonly PresenceGraphNode[];\n}\ninterface ToPrimitivePresenceCapture {\n  readonly reservation: PresenceFunctionReceipt;\n  completion?: {\n    readonly kind: \"absent\" | \"call\";\n    readonly bridge: PresenceFunctionReceipt;\n    readonly dependencies: readonly PresenceFunctionReceipt[];\n  };\n}\nconst toPrimitivePresenceCaptures = new WeakMap<CodegenContext, ToPrimitivePresenceCapture>();\nconst protoIndexPresenceReservations = new WeakMap<CodegenContext, ReadonlyMap<string, PresenceFunctionReceipt>>();\n\nfunction protoIndexPresenceDemanded(ctx: CodegenContext): boolean {\n  return (\n    ctx.standalone && !!(ctx.protoIndexDirty || ctx.protoNamedDirty || ctx.protoMemberDirty || ctx.moduleUsesDynTaView)\n  );\n}\n\ninterface PresenceGraphNode {\n  readonly object: object;\n  readonly prototype: object | null;\n  readonly keys: readonly PropertyKey[];\n  readonly descriptors: PropertyDescriptorMap;\n  readonly numbers: ReadonlyMap<PropertyKey, bigint>;\n}\n\nfunction presenceNumberBits(value: number): bigint {\n  const view = new DataView(new ArrayBuffer(8));\n  view.setFloat64(0, value, true);\n  return view.getBigUint64(0, true);\n}\n\n/** Retain the real plain-data graph, including alias identity and scalar bits. */\nfunction presenceGraph(...roots: object[]): readonly PresenceGraphNode[] {\n  const rows: PresenceGraphNode[] = [];\n  const seen = new Set<object>();\n  const visit = (value: unknown): void => {\n    if (typeof value === \"function\") throw new Error(\"ToPrimitive presence data contains executable content\");\n    if (value === null || typeof value !== \"object\" || seen.has(value)) return;\n    const prototype = Object.getPrototypeOf(value);\n    if (prototype !== null && prototype !== Object.prototype && prototype !== Array.prototype)\n      throw new Error(\"ToPrimitive presence data is not a plain descriptor\");\n    seen.add(value);\n    const keys = Reflect.ownKeys(value);\n    const descriptors = Object.getOwnPropertyDescriptors(value);\n    const numbers = new Map<PropertyKey, bigint>();\n    rows.push({ object: value, prototype, keys, descriptors, numbers });\n    for (const key of keys) {\n      const descriptor = Reflect.get(descriptors, key) as PropertyDescriptor;\n      if (!Object.hasOwn(descriptor, \"value\")) throw new Error(\"ToPrimitive presence data contains an accessor\");\n      if (typeof descriptor.value === \"number\") numbers.set(key, presenceNumberBits(descriptor.value));\n      visit(descriptor.value);\n    }\n  };\n  for (const root of roots) visit(root);\n  return rows;\n}\n\nfunction assertPresenceGraphCurrent(rows: readonly PresenceGraphNode[]): void {\n  for (const row of rows) {\n    const keys = Reflect.ownKeys(row.object);\n    if (\n      Object.getPrototypeOf(row.object) !== row.prototype ||\n      keys.length !== row.keys.length ||\n      keys.some((key, index) => key !== row.keys[index])\n    )\n      throw new Error(\"ToPrimitive companion presence target or content changed\");\n    for (const key of keys) {\n      const expected = Reflect.get(row.descriptors, key) as PropertyDescriptor;\n      const actual = Object.getOwnPropertyDescriptor(row.object, key)!;\n      if (\n        !Object.hasOwn(actual, \"value\") ||\n        !Object.is(actual.value, expected.value) ||\n        actual.writable !== expected.writable ||\n        actual.enumerable !== expected.enumerable ||\n        actual.configurable !== expected.configurable ||\n        (typeof actual.value === \"number\" && presenceNumberBits(actual.value) !== row.numbers.get(key))\n      )\n        throw new Error(\"ToPrimitive companion presence target or content changed\");\n    }\n  }\n}\n\nfunction presenceFunctionReceipt(ctx: CodegenContext, fn: WasmFunction): PresenceFunctionReceipt {\n  const type = ctx.mod.types[fn.typeIdx];\n  if (!type) throw new Error(\"ToPrimitive companion presence signature is missing\");\n  return { fn, type, body: fn.body, locals: fn.locals, graph: presenceGraph(fn, type) };\n}\n\nfunction assertPresenceFunctionCurrent(ctx: CodegenContext, receipt: PresenceFunctionReceipt): void {\n  const fn = receipt.fn;\n  const index = ctx.funcMap.get(fn.name);\n  if (\n    index === undefined ||\n    definedFuncAt(ctx, index) !== fn ||\n    ctx.mod.types[fn.typeIdx] !== receipt.type ||\n    fn.body !== receipt.body ||\n    fn.locals !== receipt.locals\n  )\n    throw new Error(\"ToPrimitive companion presence target or content changed\");\n  assertPresenceGraphCurrent(receipt.graph);\n}\n\n",
+        "after": ""
+      },
+      {
+        "beforeStart": 28730,
+        "afterStart": 22600,
+        "before": "  const previous = toPrimitivePresenceCaptures.get(ctx);\n  if (previous) {\n    assertToPrimitivePresenceCurrent(ctx);\n    return { kind: \"call\", hasIdx: ctx.funcMap.get(TO_PRIMITIVE_PRESENCE)! };\n  }\n  if (ctx.funcMap.has(TO_PRIMITIVE_PRESENCE))\n    throw new Error(\"ToPrimitive companion presence reservation already exists without its owner\");\n  const ext: ValType = { kind: \"externref\" };\n  const typeIdx = addFuncType(ctx, [ext, ext], [{ kind: \"i32\" }], \"$to_primitive_companion_presence_type\");\n  const hasIdx = mintDefinedFunc(ctx);\n  const fn: WasmFunction = {\n    name: TO_PRIMITIVE_PRESENCE,\n    typeIdx,\n    locals: [],\n    body: [{ op: \"unreachable\" }],\n    exported: false,\n  };\n  pushDefinedFunc(ctx, hasIdx, fn);\n  ctx.funcMap.set(TO_PRIMITIVE_PRESENCE, hasIdx);\n  toPrimitivePresenceCaptures.set(ctx, { reservation: presenceFunctionReceipt(ctx, fn) });\n  return { kind: \"call\", hasIdx };\n}\n\nfunction assertToPrimitivePresenceCurrent(ctx: CodegenContext): void {\n  const captured = toPrimitivePresenceCaptures.get(ctx);\n  if (!captured) return;\n  const completed = captured.completion;\n  assertPresenceFunctionCurrent(ctx, completed?.bridge ?? captured.reservation);\n  if (!completed) return;\n  if (completed.kind === \"absent\") {\n    if (ctx.protoIndexStoreReserved || protoIndexPresenceDemanded(ctx) || ctx.funcMap.has(PROTOIDX_HAS_R))\n      throw new Error(\"ToPrimitive companion absence became stale after completed finalization\");\n  } else {\n    if (!ctx.protoIndexStoreReserved || !ctx.protoIndexStoreFilled)\n      throw new Error(\"ToPrimitive companion presence completed store state changed\");\n    for (const receipt of completed.dependencies) assertPresenceFunctionCurrent(ctx, receipt);\n  }\n}\n\n/** Capture the actual selected descriptors before their canonical fill steps. */\nfunction capturePresenceFillInputs(ctx: CodegenContext): readonly PresenceFunctionReceipt[] {\n  if (!toPrimitivePresenceCaptures.has(ctx)) return [];\n  const reservations = protoIndexPresenceReservations.get(ctx);\n  return PRESENCE_FILL_NAMES.map((name) => {\n    const receipt = reservations?.get(name);\n    if (!receipt) throw new Error(\"ToPrimitive companion presence dependency has no reservation receipt\");\n    assertPresenceFunctionCurrent(ctx, receipt);\n    return receipt;\n  });\n}\n\n/** No flag or matching signature can substitute for the executed fill chain. */\nfunction completeToPrimitivePresence(ctx: CodegenContext, filled?: readonly PresenceFunctionReceipt[]): void {\n  const captured = toPrimitivePresenceCaptures.get(ctx);\n  if (!captured) return;\n  assertToPrimitivePresenceCurrent(ctx);\n  if (captured.completion) return;\n  if (!filled && (ctx.protoIndexStoreReserved || protoIndexPresenceDemanded(ctx) || ctx.funcMap.has(PROTOIDX_HAS_R)))\n    throw new Error(\"ToPrimitive companion presence dependency was not filled\");\n  const dependencies = (filled ?? []).map((prior) => {\n    const current = findFn(ctx, prior.fn.name);\n    if (current !== prior.fn || current.body === prior.body)\n      throw new Error(\"ToPrimitive companion presence dependency was not filled\");\n    return presenceFunctionReceipt(ctx, current);\n  });\n  const fn = captured.reservation.fn;\n  fn.body = filled\n    ? [\n        { op: \"local.get\", index: 0 },\n        { op: \"local.get\", index: 1 },\n        { op: \"call\", funcIdx: ctx.funcMap.get(PROTOIDX_HAS_R)! },\n      ]\n    : [{ op: \"i32.const\", value: 0 }];\n  captured.completion = {\n    kind: filled ? \"call\" : \"absent\",\n    bridge: presenceFunctionReceipt(ctx, fn),\n    dependencies,\n  };\n  assertToPrimitivePresenceCurrent(ctx);\n}\n\n/** (#4176) Receiver-aware HAS consult `[recv, key] -> i32`; see get twin. */\nexport function protoIndexRecvHasMissInstrs(\n  ctx: CodegenContext,\n  recvLocal: number,\n  keyLocal: number,\n): Instr[] | undefined {\n  const hasRIdx = ctx.funcMap.get(PROTOIDX_HAS_R);\n  if (hasRIdx === undefined) return undefined;\n  return [\n    { op: \"local.get\", index: recvLocal },\n    { op: \"local.get\", index: keyLocal },\n    { op: \"call\", funcIdx: hasRIdx },\n  ];\n",
+        "after": "  return toPrimitivePresence.capture(ctx);\n"
+      },
+      {
+        "beforeStart": 39409,
+        "afterStart": 29299,
+        "before": "  assertToPrimitivePresenceCurrent(ctx);\n",
+        "after": "  toPrimitivePresence.assertCurrent(ctx);\n"
+      },
+      {
+        "beforeStart": 39600,
+        "afterStart": 29491,
+        "before": "  if (toPrimitivePresenceCaptures.has(ctx) && protoIndexPresenceDemanded(ctx)) reserveProtoIndexStore(ctx);\n",
+        "after": "  if (toPrimitivePresence.needsReservation(ctx)) reserveProtoIndexStore(ctx);\n"
+      },
+      {
+        "beforeStart": 39775,
+        "afterStart": 29636,
+        "before": "    completeToPrimitivePresence(ctx);\n",
+        "after": "    toPrimitivePresence.complete(ctx);\n"
+      },
+      {
+        "beforeStart": 39917,
+        "afterStart": 29779,
+        "before": "    completeToPrimitivePresence(ctx); // A selected consumer must not bind unfilled stubs.\n",
+        "after": "    toPrimitivePresence.complete(ctx); // A selected consumer must not bind unfilled stubs.\n"
+      },
+      {
+        "beforeStart": 40024,
+        "afterStart": 29887,
+        "before": "  const presenceInputs = capturePresenceFillInputs(ctx);\n",
+        "after": "  const presenceInputs = toPrimitivePresence.captureFillInputs(ctx);\n"
+      },
+      {
+        "beforeStart": 40556,
+        "afterStart": 30431,
+        "before": "  completeToPrimitivePresence(ctx, presenceInputs);\n",
+        "after": "  toPrimitivePresence.complete(ctx, presenceInputs);\n"
+      }
+    ]
+  },
+  "modules": [
+    {
+      "path": "src/codegen/to-primitive-presence.ts",
+      "sha256": "738333156cc92b9c4e995863b41c9d4e168860dd5fa339acbddb72c20c2c6cc6"
+    },
+    {
+      "path": "src/codegen/proto-index-read-bindings.ts",
+      "sha256": "c144a5567e8d4cb98e58e23b14187cba9dd05b34cc219f5d1faa527a165f86eb"
+    }
+  ],
+  "preservation": "Original forward/donor fixtures are unchanged. Pure graph/currentness functions, canonical capture and completion body, and receiver read adapters are retained. Added per-instance opaque reservation and fill tokens reject external map/array authority; only the private production instance participates in existing reservation/fill calls."
+}

@@ -50,6 +50,7 @@
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
+import { iteratorRootPrototypeEnsureInstrs } from "./array-object-proto.js"; // (#6773 S4) the ONE %IteratorPrototype%
 import { reserveIterHofSteppers } from "./iter-hof-native.js";
 import { ensureNativeArrayFromIterN, ensureNativeIteratorRuntime } from "./iterator-native.js";
 import { ensureObjectRuntime, reserveApplyClosure } from "./object-runtime.js";
@@ -500,14 +501,24 @@ function ensureLazyStepper(ctx: CodegenContext, deps: LazyDeps): void {
     { op: "ref.cast", typeIdx: helperTypeIdx },
   ];
   const doneReturn: Instr[] = [{ op: "i32.const", value: 1 }, { op: "ref.null.extern" }, { op: "return" }];
-  // (done, val) = __iter_hof_next(src); if done → return (done, null).
+  // (#6773 S3) helper.flags |= 1 read from the FIELD — the helper is
+  // `completed` (§27.1.2.1): its source reported done, or `.return()` ran.
+  const markCompleted: Instr[] = [
+    ...cast(),
+    ...cast(),
+    { op: "struct.get", typeIdx: helperTypeIdx, fieldIdx: F_FLAGS },
+    { op: "i32.const", value: 1 },
+    { op: "i32.or" },
+    { op: "struct.set", typeIdx: helperTypeIdx, fieldIdx: F_FLAGS },
+  ];
+  // (done, val) = __iter_hof_next(src); if done → completed, return (done, null).
   const pullStep: Instr[] = [
     { op: "local.get", index: SRC },
     { op: "call", funcIdx: nextIdx },
     { op: "local.set", index: VAL },
     { op: "local.set", index: DONE },
     { op: "local.get", index: DONE },
-    { op: "if", blockType: { kind: "empty" }, then: doneReturn },
+    { op: "if", blockType: { kind: "empty" }, then: [...markCompleted, ...doneReturn] },
   ];
   // args = [val, box(st)].
   const buildArgs: Instr[] = [
@@ -580,7 +591,7 @@ function ensureLazyStepper(ctx: CodegenContext, deps: LazyDeps): void {
     {
       op: "if",
       blockType: { kind: "empty" },
-      then: [{ op: "local.get", index: SRC }, { op: "call", funcIdx: closeIdx }, ...doneReturn],
+      then: [{ op: "local.get", index: SRC }, { op: "call", funcIdx: closeIdx }, ...markCompleted, ...doneReturn],
     },
     ...pullStep,
     // st -= 1; persist.
@@ -885,6 +896,13 @@ function ensureLazyStepper(ctx: CodegenContext, deps: LazyDeps): void {
     { op: "local.get", index: SRC },
     { op: "ref.is_null" },
     { op: "if", blockType: { kind: "empty" }, then: doneReturn },
+    // (#6773 S3) completed (exhausted or `.return()`ed) ⇒ done, every kind —
+    // the underlying iterator is never stepped again (§27.1.2.1.1).
+    ...cast(),
+    { op: "struct.get", typeIdx: helperTypeIdx, fieldIdx: F_FLAGS },
+    { op: "i32.const", value: 1 },
+    { op: "i32.and" },
+    { op: "if", blockType: { kind: "empty" }, then: doneReturn },
     // kind / st
     ...cast(),
     { op: "struct.get", typeIdx: helperTypeIdx, fieldIdx: F_KIND },
@@ -954,10 +972,28 @@ function ensureLazyStepper(ctx: CodegenContext, deps: LazyDeps): void {
   });
 
   // __lazy_iter_close(helperExt) → IteratorClose(src) when non-null.
-  const closeBody: Instr[] = [
+  // (#6773 S3) §27.1.2.1.2 %IteratorHelperPrototype%.return: a `completed`
+  // helper (source exhausted, or already returned) forwards NOTHING; otherwise
+  // it is marked completed BEFORE the close, so a throwing underlying
+  // `return()` still leaves it completed and a second `.return()` is a no-op.
+  const helper = (): Instr[] => [
     { op: "local.get", index: 0 },
     { op: "any.convert_extern" },
     { op: "ref.cast", typeIdx: helperTypeIdx },
+  ];
+  const closeBody: Instr[] = [
+    ...helper(),
+    { op: "struct.get", typeIdx: helperTypeIdx, fieldIdx: F_FLAGS },
+    { op: "i32.const", value: 1 },
+    { op: "i32.and" },
+    { op: "if", blockType: { kind: "empty" }, then: [{ op: "return" }] },
+    ...helper(),
+    ...helper(),
+    { op: "struct.get", typeIdx: helperTypeIdx, fieldIdx: F_FLAGS },
+    { op: "i32.const", value: 1 },
+    { op: "i32.or" },
+    { op: "struct.set", typeIdx: helperTypeIdx, fieldIdx: F_FLAGS },
+    ...helper(),
     { op: "struct.get", typeIdx: helperTypeIdx, fieldIdx: F_SRC },
     { op: "local.set", index: 1 },
     { op: "local.get", index: 1 },
@@ -980,6 +1016,85 @@ function ensureLazyStepper(ctx: CodegenContext, deps: LazyDeps): void {
     typeIdx: closeTypeIdx,
     locals: [{ name: "src", type: { kind: "externref" } }],
     body: closeBody,
+    exported: false,
+  });
+  reserveLazyHelperPrototype(ctx); // (#6773 S4)
+}
+
+/** (#6773 S4) `%IteratorHelperPrototype%` singleton helper / global / tag. */
+const HELPER_PROTO_FN = "__lazy_iter_helper_proto";
+const HELPER_PROTO_GLOBAL = "__native_iterator_helper_prototype";
+const HELPER_PROTO_TAG = "Iterator Helper";
+
+/**
+ * (#6773 S4) Emit `__lazy_iter_helper_proto() -> externref` — the
+ * `%IteratorHelperPrototype%` (§27.1.2.1) every `$LazyIterHelper` reports as
+ * its `[[Prototype]]`: a lazily created `$Object` singleton with an own
+ * `@@toStringTag` "Iterator Helper" (data, configurable only — §27.1.2.1.3)
+ * whose parent is the ONE `%IteratorPrototype%` root (#6484 S1): its guarded
+ * init is the same `iteratorRootPrototypeEnsureInstrs` sequence the family
+ * prototypes run, so whichever runs first mints the root — never a second one.
+ * Built here, at wrapper-reserve time (the same body-compile context as
+ * `emitIteratorPrototypeSingleton`), so the finalize ladder fill only reads
+ * funcMap (#1719). Emits nothing when the object runtime pieces are missing
+ * (the `__getPrototypeOf` arm is then not installed).
+ */
+function reserveLazyHelperPrototype(ctx: CodegenContext): void {
+  if (ctx.funcMap.has(HELPER_PROTO_FN)) return;
+  const newObjectIdx = ctx.funcMap.get("__new_plain_object");
+  const defineValueIdx = ctx.funcMap.get("__defineProperty_value");
+  const setProtoIdx = ctx.funcMap.get("__object_setPrototypeOf");
+  const boxSymbolIdx = ctx.funcMap.get("__box_symbol");
+  if (newObjectIdx === undefined || defineValueIdx === undefined || setProtoIdx === undefined) return;
+  if (boxSymbolIdx === undefined) return;
+  // Locals: 0 = obj, 1 = the root init's scratch.
+  const root = iteratorRootPrototypeEnsureInstrs(ctx, boxSymbolIdx, () => 1);
+  if (root === undefined) return;
+  addStringConstantGlobal(ctx, HELPER_PROTO_TAG);
+  let protoGlobal = ctx.builtinObjectGlobals.get(HELPER_PROTO_GLOBAL);
+  if (protoGlobal === undefined) {
+    protoGlobal = ctx.numImportGlobals + ctx.mod.globals.length;
+    ctx.mod.globals.push({
+      name: HELPER_PROTO_GLOBAL,
+      type: { kind: "externref" },
+      mutable: true,
+      init: [{ op: "ref.null.extern" }],
+    });
+    ctx.builtinObjectGlobals.set(HELPER_PROTO_GLOBAL, protoGlobal);
+  }
+  const init: Instr[] = [
+    ...root.instrs,
+    { op: "call", funcIdx: newObjectIdx },
+    { op: "local.set", index: 0 },
+    { op: "local.get", index: 0 },
+    { op: "i32.const", value: 4 }, // Symbol.toStringTag
+    { op: "call", funcIdx: boxSymbolIdx },
+    ...stringConstantExternrefInstrs(ctx, HELPER_PROTO_TAG),
+    { op: "f64.const", value: 0x04 }, // writable:false, enumerable:false, configurable:true
+    { op: "call", funcIdx: defineValueIdx },
+    { op: "drop" },
+    { op: "local.get", index: 0 },
+    { op: "global.get", index: root.globalIdx },
+    { op: "call", funcIdx: setProtoIdx },
+    { op: "drop" },
+    { op: "local.get", index: 0 },
+    { op: "global.set", index: protoGlobal },
+  ];
+  const funcIdx = mintDefinedFunc(ctx);
+  ctx.funcMap.set(HELPER_PROTO_FN, funcIdx);
+  pushDefinedFunc(ctx, funcIdx, {
+    name: HELPER_PROTO_FN,
+    typeIdx: addFuncType(ctx, [], [{ kind: "externref" }]),
+    locals: [
+      { name: "obj", type: { kind: "externref" } },
+      { name: "root", type: { kind: "externref" } },
+    ],
+    body: [
+      { op: "global.get", index: protoGlobal },
+      { op: "ref.is_null" },
+      { op: "if", blockType: { kind: "empty" }, then: init },
+      { op: "global.get", index: protoGlobal },
+    ],
     exported: false,
   });
 }
@@ -1233,6 +1348,13 @@ export function fillLazyIterLadderArms(ctx: CodegenContext): void {
   prepend("__iterator_next", [{ op: "local.get", index: 0 }, { op: "call", funcIdx: stepIdx }, { op: "return" }]);
   // __iterator_return(rec) → __lazy_iter_close(rec).
   prepend("__iterator_return", [{ op: "local.get", index: 0 }, { op: "call", funcIdx: closeIdx }, { op: "return" }]);
+  // (#6773 S4) __getPrototypeOf(wrapper) → %IteratorHelperPrototype%. One arm
+  // serves `Object.getPrototypeOf`, `isPrototypeOf` (its class-instance seed
+  // asks `__getPrototypeOf` for the first link) and so `instanceof Iterator`.
+  const helperProtoIdx = ctx.funcMap.get(HELPER_PROTO_FN);
+  if (helperProtoIdx !== undefined) {
+    prepend("__getPrototypeOf", [{ op: "call", funcIdx: helperProtoIdx }, { op: "return" }]);
+  }
   // __iterator_rest(rec) → __array_from_iter_n(rec, -1) — the bulk drain used by
   // `Array.from(...)` / `[...wrapper]`. `__iterator_rest`'s vec body would hard-
   // cast the wrapper to `$IterRec`; delegate to the element-wise drainer (which

@@ -40,7 +40,8 @@ import { ensureExnTag } from "./registry/imports.js";
 import { coerceType, emitGuardedFuncRefCast, pushDefaultValue } from "./type-coercion.js";
 import { emitNullCheckThrow } from "./property-access.js";
 import { ensureObjectRuntime, reserveApplyClosure } from "./object-runtime.js";
-import { addUnionImportsViaRegistry } from "./shared.js";
+import { addUnionImportsViaRegistry, ensureLateImport, flushLateImportShifts } from "./shared.js";
+import { buildThrowJsErrorInstrs } from "./js-errors.js";
 import { buildStandardTryTable } from "../ir/try-table.js";
 import {
   PROMISE_STATE_PENDING,
@@ -123,7 +124,16 @@ export function emitStandalonePromiseFromExecutor(
     ctx.liveBodies.delete(execInstrs);
     return false;
   }
-  const { resolveClFuncIdx, rejectClFuncIdx, promiseTypeIdx, rejectFuncIdx } = closures;
+  const { resolveClFuncIdx, rejectClFuncIdx, promiseTypeIdx } = closures;
+  const guardLocal = allocLocal(fctx, `__pexec_pair_${fctx.locals.length}`, {
+    kind: "ref",
+    typeIdx: closures.guardTypeIdx,
+  });
+  fctx.body.push(
+    { op: "i32.const", value: 0 },
+    { op: "struct.new", typeIdx: closures.guardTypeIdx },
+    { op: "local.set", index: guardLocal },
+  );
 
   // 2. Allocate the pending $Promise: {state: PENDING, value: null, callbacks: null}.
   const pLocal = allocLocal(fctx, `__pexec_p_${fctx.locals.length}`, { kind: "ref", typeIdx: promiseTypeIdx });
@@ -131,6 +141,7 @@ export function emitStandalonePromiseFromExecutor(
   fctx.body.push({ op: "ref.null.extern" });
   fctx.body.push({ op: "ref.null.extern" });
   fctx.body.push(closureBagInitInstr());
+  fctx.body.push({ op: "i32.const", value: 0 });
   fctx.body.push({ op: "struct.new", typeIdx: promiseTypeIdx });
   fctx.body.push({ op: "local.set", index: pLocal });
   fctx.body.push(...buildDenoPromiseHookCall(ctx, DENO_PROMISE_HOOK_INIT, [{ op: "local.get", index: pLocal }]));
@@ -140,7 +151,14 @@ export function emitStandalonePromiseFromExecutor(
   //    upcast to externref. (#5197) The metadata slots make the escaped
   //    `resolve`/`reject` real §27.2.1.3 function objects.
   const emitSettleValue = (clFuncIdx: number, dst: number): void => {
-    fctx.body.push(...buildPromiseSettleClosureInstrs(closures, clFuncIdx, [{ op: "local.get", index: pLocal }]));
+    fctx.body.push(
+      ...buildPromiseSettleClosureInstrs(
+        closures,
+        clFuncIdx,
+        [{ op: "local.get", index: pLocal }],
+        [{ op: "local.get", index: guardLocal }],
+      ),
+    );
     fctx.body.push({ op: "extern.convert_any" });
     fctx.body.push({ op: "local.set", index: dst });
   };
@@ -200,10 +218,11 @@ export function emitStandalonePromiseFromExecutor(
         payloadType: { kind: "externref" },
         body: [
           { op: "local.set", index: reasonLocal },
-          { op: "local.get", index: pLocal },
+          { op: "local.get", index: rjLocal },
+          { op: "any.convert_extern" },
+          { op: "ref.cast", typeIdx: closures.capTypeIdx },
           { op: "local.get", index: reasonLocal },
-          { op: "call", funcIdx: rejectFuncIdx },
-          { op: "drop" },
+          { op: "call", funcIdx: rejectClFuncIdx },
         ],
       },
     ]),
@@ -213,6 +232,26 @@ export function emitStandalonePromiseFromExecutor(
   fctx.body.push({ op: "local.get", index: pLocal });
   fctx.body.push({ op: "extern.convert_any" });
   return true;
+}
+
+/**
+ * (#6651 C5) The §27.2.3.1 step-2 guard's pieces: the `typeof`-function
+ * classifier and the TypeError throw, both registered before the caller bakes
+ * any funcIdx. `undefined` (no guard, the pre-C5 shape) when the classifier
+ * cannot be registered.
+ */
+function ensureNotCallableGuard(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+): { typeofFunctionIdx: number; throwInstrs: Instr[] } | undefined {
+  ensureLateImport(ctx, "__typeof_function", [{ kind: "externref" }], [{ kind: "i32" }]);
+  const throwInstrs = buildThrowJsErrorInstrs(ctx, "TypeError", "Promise resolver is not a function", {
+    flush: fctx,
+    forceInModuleCtor: true,
+  });
+  flushLateImportShifts(ctx, fctx);
+  const typeofFunctionIdx = ctx.funcMap.get("__typeof_function");
+  return typeofFunctionIdx === undefined ? undefined : { typeofFunctionIdx, throwInstrs };
 }
 
 /**
@@ -234,10 +273,10 @@ export function emitStandalonePromiseFromExecutor(
  * when inapplicable (host/gc mode, deps unavailable), so the caller falls
  * through to the `Promise_new` host path byte-unchanged.
  *
- * BOUNDARY: a non-callable executor value is dispatched through
- * `__apply_closure` (which no-ops / returns undefined on a non-closure) rather
- * than throwing the spec §27.2.3.1-step-2 TypeError — the same no-throw
- * discipline as the other #2903 native bodies; the promise simply stays pending.
+ * (#6651 C5) A non-callable executor value throws the §27.2.3.1-step-2
+ * TypeError before the promise is allocated. It used to be dispatched through
+ * `__apply_closure` (a no-op on a non-closure), leaving a pending promise —
+ * which is how `class P extends Promise {}; new P()` completed normally.
  */
 export function emitStandalonePromiseFromExecutorValue(
   ctx: CodegenContext,
@@ -249,11 +288,25 @@ export function emitStandalonePromiseFromExecutorValue(
   const exnTag = ensureExnTag(ctx);
   const closures = ensurePromiseExecutorClosures(ctx);
   if (!closures) return false;
-  const { resolveClFuncIdx, rejectClFuncIdx, promiseTypeIdx, rejectFuncIdx } = closures;
+  const { resolveClFuncIdx, rejectClFuncIdx, promiseTypeIdx } = closures;
+  const guardLocal = allocLocal(fctx, `__pexecv_pair_${fctx.locals.length}`, {
+    kind: "ref",
+    typeIdx: closures.guardTypeIdx,
+  });
+  fctx.body.push(
+    { op: "i32.const", value: 0 },
+    { op: "struct.new", typeIdx: closures.guardTypeIdx },
+    { op: "local.set", index: guardLocal },
+  );
 
   // Open-`any` closure bridge + the boxed-any args vec builders.
   ensureObjectRuntime(ctx);
   addUnionImportsViaRegistry(ctx);
+  // (#6651 C5) §27.2.3.1 step 2 — `IsCallable(executor)` false → TypeError,
+  // BEFORE the promise exists. Registered here, ahead of every funcIdx this
+  // lowering bakes. `typeof` is the IsCallable test (§13.5.3: "function" iff
+  // the object has [[Call]]), not `__is_callable`, which excludes classes.
+  const notCallable = ensureNotCallableGuard(ctx, fctx);
   const applyClosureIdx = reserveApplyClosure(ctx);
   const objVecNewIdx = ctx.funcMap.get("__objvec_new");
   const objVecPushIdx = ctx.funcMap.get("__objvec_push");
@@ -264,6 +317,14 @@ export function emitStandalonePromiseFromExecutorValue(
   const execLocal = allocLocal(fctx, `__pexecv_fn_${fctx.locals.length}`, { kind: "externref" });
   compileExecutorValue();
   fctx.body.push({ op: "local.set", index: execLocal });
+  if (notCallable) {
+    fctx.body.push(
+      { op: "local.get", index: execLocal },
+      { op: "call", funcIdx: ctx.funcMap.get("__typeof_function") ?? notCallable.typeofFunctionIdx },
+      { op: "i32.eqz" },
+      { op: "if", blockType: { kind: "empty" }, then: notCallable.throwInstrs },
+    );
+  }
 
   // 2. Allocate the pending $Promise.
   const pLocal = allocLocal(fctx, `__pexecv_p_${fctx.locals.length}`, { kind: "ref", typeIdx: promiseTypeIdx });
@@ -271,13 +332,21 @@ export function emitStandalonePromiseFromExecutorValue(
   fctx.body.push({ op: "ref.null.extern" });
   fctx.body.push({ op: "ref.null.extern" });
   fctx.body.push(closureBagInitInstr());
+  fctx.body.push({ op: "i32.const", value: 0 });
   fctx.body.push({ op: "struct.new", typeIdx: promiseTypeIdx });
   fctx.body.push({ op: "local.set", index: pLocal });
   fctx.body.push(...buildDenoPromiseHookCall(ctx, DENO_PROMISE_HOOK_INIT, [{ op: "local.get", index: pLocal }]));
 
   // 3. resolve / reject as capturing closure VALUES (externref), capturing p.
   const emitSettleValue = (clFuncIdx: number, dst: number): void => {
-    fctx.body.push(...buildPromiseSettleClosureInstrs(closures, clFuncIdx, [{ op: "local.get", index: pLocal }]));
+    fctx.body.push(
+      ...buildPromiseSettleClosureInstrs(
+        closures,
+        clFuncIdx,
+        [{ op: "local.get", index: pLocal }],
+        [{ op: "local.get", index: guardLocal }],
+      ),
+    );
     fctx.body.push({ op: "extern.convert_any" });
     fctx.body.push({ op: "local.set", index: dst });
   };
@@ -313,10 +382,11 @@ export function emitStandalonePromiseFromExecutorValue(
         payloadType: { kind: "externref" },
         body: [
           { op: "local.set", index: reasonLocal },
-          { op: "local.get", index: pLocal },
+          { op: "local.get", index: rjLocal },
+          { op: "any.convert_extern" },
+          { op: "ref.cast", typeIdx: closures.capTypeIdx },
           { op: "local.get", index: reasonLocal },
-          { op: "call", funcIdx: rejectFuncIdx },
-          { op: "drop" },
+          { op: "call", funcIdx: rejectClFuncIdx },
         ],
       },
     ]),

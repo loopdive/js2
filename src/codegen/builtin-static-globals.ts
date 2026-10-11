@@ -16,11 +16,13 @@ import { BUILTIN_STATIC_METHOD_ARITY, pushBuiltinFnSingletonValueInstrs } from "
 import { ensureStandaloneBuiltinStaticMethodClosure } from "./builtin-value-read.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { allocLocal } from "./context/locals.js";
+import { emitPreparedBuiltinConstructorIdentityRead } from "./builtin-constructor-prepared.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { addFuncType } from "./registry/types.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { ensureLateImport, flushLateImportShifts } from "./shared.js";
+import { noteBuiltinCollectionCarrierReserved } from "./builtin-collection-dyn-construct.js";
 
 const SUPPORTED_STATIC_PROPS: ReadonlyMap<string, readonly string[]> = new Map([
   ["Array", ["isArray"]],
@@ -194,6 +196,7 @@ export function reserveBuiltinConstructorIdentityGlobal(ctx: CodegenContext, bui
     init: [{ op: "ref.null.extern" }],
   });
   ctx.builtinObjectGlobals.set(key, globalIdx);
+  noteBuiltinCollectionCarrierReserved(ctx, builtinName); // (#6720)
   return globalIdx;
 }
 
@@ -202,49 +205,7 @@ export function emitBuiltinConstructorIdentity(
   fctx: FunctionContext,
   builtinName: string,
 ): ValType {
-  ensureObjectRuntime(ctx);
-  const newObjectIdx = ctx.funcMap.get("__new_plain_object")!;
-
-  const globalIdx = reserveBuiltinConstructorIdentityGlobal(ctx, builtinName);
-
-  // (#2984 ctor-carrier own props) The carrier is materialized through a local
-  // so the §17/§20 own data properties (`length`/`name`/`prototype`) can be
-  // installed on it before its seed completes. Without them the carrier is an
-  // EMPTY `$Object`, and every RUNTIME descriptor query
-  // test262's `verifyProperty` makes through its any-typed harness parameter
-  // (`hasOwnProperty`, `gOPD`, for-in, write, delete) answers "absent".
-  const objLocal = allocLocal(fctx, `__builtin_ctor_${builtinName}_obj_${fctx.locals.length}`, {
-    kind: "externref",
-  });
-  const initBody: Instr[] = [
-    { op: "call", funcIdx: newObjectIdx },
-    { op: "local.set", index: objLocal },
-    // Publish before seeding: the prototype seed may re-enter this helper via
-    // its native-prototype companion. Leaving the global null until after that
-    // re-entry lets it mint a second carrier, splitting constructor identity.
-    { op: "local.get", index: objLocal },
-    { op: "global.set", index: globalIdx },
-  ];
-
-  // (#2182 pattern) `savedBody` is detached during the swap; register it in
-  // `liveBodies` so a late-import funcidx shift walks it too.
-  const savedBody = fctx.body;
-  fctx.body = initBody;
-  ctx.liveBodies.add(savedBody);
-  ctx.liveBodies.add(initBody);
-  try {
-    pushBuiltinCtorOwnPropSeed(ctx, fctx, builtinName, objLocal);
-  } finally {
-    fctx.body = savedBody;
-    ctx.liveBodies.delete(savedBody);
-    ctx.liveBodies.delete(initBody);
-  }
-
-  fctx.body.push({ op: "global.get", index: globalIdx });
-  fctx.body.push({ op: "ref.is_null" });
-  fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: initBody, else: [] });
-  fctx.body.push({ op: "global.get", index: globalIdx });
-  return { kind: "externref" };
+  return emitPreparedBuiltinConstructorIdentityRead(ctx, fctx, builtinName);
 }
 
 export function isSupportedBuiltinStaticProperty(builtinName: string, propName: string): boolean {
@@ -483,6 +444,28 @@ function pushMathReflectNamespaceTagSeed(
   fctx.body.push({ op: "drop" });
 }
 
+/**
+ * (#6713) Reserve — without materializing — the slot holding the namespace
+ * carrier for `builtinName` (the Error family's bare-value carriers, #2907).
+ * The namespace twin of `reserveBuiltinConstructorIdentityGlobal`: a site that
+ * compares a value against the carrier cannot depend on a read having been
+ * compiled first, and a later read reuses this slot.
+ */
+export function reserveBuiltinNamespaceObjectGlobal(ctx: CodegenContext, builtinName: string): number {
+  const existing = ctx.builtinObjectGlobals.get(builtinName);
+  if (existing !== undefined) return existing;
+  const globalIdx = ctx.numImportGlobals + ctx.mod.globals.length;
+  ctx.mod.globals.push({
+    name: `__builtin_${builtinName}`,
+    type: { kind: "externref" },
+    mutable: true,
+    init: [{ op: "ref.null.extern" }],
+  });
+  ctx.builtinObjectGlobals.set(builtinName, globalIdx);
+  noteBuiltinCollectionCarrierReserved(ctx, builtinName); // (#6775 S10) Error family
+  return globalIdx;
+}
+
 export function emitBuiltinNamespaceObject(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -506,17 +489,7 @@ export function emitBuiltinNamespaceObject(
   const newObjectIdx = ctx.funcMap.get("__new_plain_object")!;
   const defineValueIdx = ctx.funcMap.get("__defineProperty_value")!;
 
-  let globalIdx = ctx.builtinObjectGlobals.get(builtinName);
-  if (globalIdx === undefined) {
-    globalIdx = ctx.numImportGlobals + ctx.mod.globals.length;
-    ctx.mod.globals.push({
-      name: `__builtin_${builtinName}`,
-      type: { kind: "externref" },
-      mutable: true,
-      init: [{ op: "ref.null.extern" }],
-    });
-    ctx.builtinObjectGlobals.set(builtinName, globalIdx);
-  }
+  const globalIdx = reserveBuiltinNamespaceObjectGlobal(ctx, builtinName);
 
   const objLocal = allocLocal(fctx, `__builtin_${builtinName}_obj_${fctx.locals.length}`, { kind: "externref" });
   const initBody: Instr[] = [

@@ -1,0 +1,23 @@
+{
+  "oldHash": "2323443257621a9645041ececdac85b2dbcf1ff995112e723f543c8f9c051cd3",
+  "newHash": "df7000e7e9006700b59d85f18d6b4736096dbcd12e2ccda1d24553e8fb67b36e",
+  "count": 1,
+  "diffs": [
+    {
+      "path": ".vite/vitest/da39a3ee5e6b4b0d3255bfef95601890afd80709/results.json",
+      "before": {
+        "path": ".vite/vitest/da39a3ee5e6b4b0d3255bfef95601890afd80709/results.json",
+        "type": "file",
+        "bytes": 24440,
+        "sha256": "e7a057622f6738961ce0101f4b3be7966d8c82ab1b86b0782a5f6bc0ac5da123"
+      },
+      "after": {
+        "path": ".vite/vitest/da39a3ee5e6b4b0d3255bfef95601890afd80709/results.json",
+        "type": "file",
+        "bytes": 24547,
+        "sha256": "f3af540e67a8264e9f8dfe0384b6bdd61cbe60dd6217347373a6117444572cb8"
+      }
+    }
+  ],
+  "reason": "A Vitest results cache changed in the dependency source used by the artifact PR tests. No package code differences were observed. The first fresh copy is preserved as node_modules-rejected; exact replacement copied from the previous controlled-trial dependency root. No fixtures executed and equality admission remains required."
+}

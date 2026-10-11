@@ -1,10 +1,11 @@
 ---
 id: 6434
 title: "module `var x = void 0` later rebound to an object gets an i32 slot — the object is truncated to 0"
-status: ready
+status: done
 sprint: current
 created: 2026-09-12
-updated: 2026-09-12
+updated: 2026-09-13
+completed: 2026-09-13
 priority: medium
 horizon: m
 feasibility: medium
@@ -116,3 +117,69 @@ about.
 ## Dispatch
 
 **opus** — a two-line predicate change in one shared collector plus a template-shaped test, but the value is in running the filter-bucket and full test262 A/B honestly and narrowing the numeric-rebind case if it moves; not mechanical enough for sonnet, not a design problem for fable.
+
+## Resolution
+
+Fixed in `src/ir/heterogeneous-module-bindings.ts` — the shared collector both
+direct codegen and the IR module-binding resolver read, so the two cannot
+disagree on a slot. Two independent misses, exactly as the plan predicted:
+
+1. `initializerTagOf` admitted only `HETEROGENEOUS_PRIMITIVE_SLOT_TAGS`
+   (number/string/boolean/bigint); `void 0` tags `"undefined"` and was dropped,
+   so the binding was never a widening candidate at all. It is now admitted —
+   but ONLY for a **syntactic** `void <e>` initializer (paren-stripped
+   `ts.VoidExpression`), the downlevelled shape of an unassigned `let`. A
+   binding whose initializer merely *has type* `undefined` (an optional read, a
+   delete sentinel) keeps its specialized slot. `HETEROGENEOUS_PRIMITIVE_SLOT_TAGS`
+   itself is unchanged, so `redeclared-var-widening.ts` is untouched.
+2. `visit` matched only `EqualsToken`. It now also indexes `||=`, `??=` and
+   `&&=` (`WIDENING_ASSIGNMENT_OPERATORS`) — conditional storage is the same
+   representation question as unconditional storage for a Wasm slot. This is
+   what hono's `nameSpaceContext ||= createContext("")` needs.
+
+Probe on upstream/main `69ccb3494f`, seven variants, before → after:
+
+| variant | slot before | run before | slot after | run after |
+| --- | --- | --- | --- | --- |
+| `void 0` + `\|\|=` (hono) | i32 | `null\|null\|plain` | externref | `ctx-6434\|ctx-6434\|plain` |
+| `void 0` + `=` in closure | i32 | `null\|null\|plain` | externref | `ctx-6434\|ctx-6434\|plain` |
+| `void 0` + top-level `=` | i32 | `null\|null\|plain` | externref | `ctx-6434\|ctx-6434\|plain` |
+| bare `var` + `\|\|=` (control) | externref | correct | externref | correct |
+| `= undefined` + `\|\|=` (control) | externref | correct | externref | correct |
+| `void 0`, never rebound (narrowness) | i32 | — | **i32** | — |
+| `void 0` + numeric rebind | i32 | correct | externref | correct |
+
+On this HEAD the defect was a silent falsy `0`, not the null-deref trap the
+Problem section describes — that was the pre-#6413 base, as the plan recorded.
+
+**AC3 — test262 A/B, `built-ins/Array/prototype/filter`** (`TEST262_PATH_FILTER`,
+gc target, same workspace, arms swapped by file copy): **186 pass / 242 both
+arms, and a per-entry diff over all 242 rows shows ZERO status differences**
+(pass 186 / fail 50 / compile_error 6 on each). The four tests the #4491 note
+named are unchanged by this commit: `15.4.4.20-9-2` and `-9-4` pass on both
+arms, `-9-3` and `-9-6` fail on both. That confirms the plan's reading — those
+failures belong to the #4206 pre-init arm of
+`varBindingNeedsExternrefForUndefined`, which this change does not touch — and
+retires "the `void 0` arm regressed filter" as a misattribution. The full
+sharded run is the `merge_group` re-validation on the merged state.
+
+**Dogfood A/B, all 17 upstream suites**, both arms measured on this box at this
+HEAD: byte-identical — same headline AND the same per-file `native; Wasm` line
+for every file in every suite. webpack 16/16 · three 17/18 · clsx 32/32 ·
+cookie 63740/63740 · lodash 59/62 · redux 67/82 · axios 208/231 ·
+stylelint 108/108 · tailwindcss 13/13 · jsdom 6/6 · styled-components 9/9 ·
+uuid 75/75 · marked 16/30 · moment 10/10 · prettier 108/151 · jest 335/356 ·
+hono 268/324. As the plan predicted, no upstream package witnesses the fix:
+hono's suite runs 20 non-DOM files and `jsx/dom` is deferred, so the
+`<svg>`/`<head>` path is only exercised by the regression fixture.
+
+Regression test `tests/issue-6434-module-var-void0-rebound.test.ts`: 4 red on
+the parent (the three slot+value cases plus `??=`), 3 green on both arms (two
+anti-vacuity controls and the never-rebound narrowness control).
+
+### Out of scope, still open
+
+`scopeCarrierFacts` (`src/codegen/analysis/mixed-assignment-carrier.ts`) also
+indexes only `=`, so the FUNCTION-LOCAL twin — `var x = 0; x ||= obj` inside a
+function body — keeps the same `||=` blind spot. Not touched here; tracked as
+#6469.

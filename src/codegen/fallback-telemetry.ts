@@ -23,6 +23,7 @@
  */
 import { ts } from "../ts-api.js";
 import type { CodegenContext } from "./context/types.js";
+import { readEnv } from "../env.js";
 
 /**
  * The seven silent-fallback pattern classes from the fail-loud audit
@@ -82,9 +83,13 @@ export function truthyEnv(v: string | undefined): boolean {
  * matters once a class is promoted. Typed IR Invariants are independently
  * always fatal and do not use this environment gate.
  */
-export function strictFallbacksEnabled(env: Record<string, string | undefined> = process.env): boolean {
+export function strictFallbacksEnabled(env?: Record<string, string | undefined>): boolean {
+  const read = (name: string): string | undefined => (env ? env[name] : readEnv(name));
   return (
-    truthyEnv(env.JS2WASM_STRICT_FALLBACKS) || truthyEnv(env.CI) || env.NODE_ENV === "test" || truthyEnv(env.VITEST)
+    truthyEnv(read("JS2WASM_STRICT_FALLBACKS")) ||
+    truthyEnv(read("CI")) ||
+    read("NODE_ENV") === "test" ||
+    truthyEnv(read("VITEST"))
   );
 }
 
@@ -117,7 +122,7 @@ export function reportSilentFallback(
   bySite.set(site, (bySite.get(site) ?? 0) + 1);
 
   const strict = STRICT_FALLBACK_CLASSES.has(cls) && strictFallbacksEnabled();
-  const warn = ctx.trackSilentFallbacks === true || truthyEnv(process.env.JS2WASM_LOG_CODEGEN_FALLBACKS);
+  const warn = ctx.trackSilentFallbacks === true || truthyEnv(readEnv("JS2WASM_LOG_CODEGEN_FALLBACKS"));
   if (!strict && !warn) return;
 
   // 2/3. emit a structured diagnostic (warning, or hard error when strict)

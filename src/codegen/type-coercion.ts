@@ -10,13 +10,17 @@ import { coercionPlan } from "./coercion-plan.js";
 import { recordVecFromExternMaterializer } from "./compiler-support-abi.js";
 import { boxToAny, UNDEF_F64_BITS } from "./value-tags.js";
 import { allocLocal, allocTempLocal, releaseTempLocal } from "./context/locals.js";
+import { emitToInt32 } from "./binary-ops.js";
 import { popBody, pushBody } from "./context/bodies.js";
 import type { ClosureInfo, CodegenContext, FunctionContext, OptionalParamInfo } from "./context/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { addUnionImports, ensureAnyHelpers, ensureAnyToExternHelper, isAnyValue } from "./index.js";
-import { canonicalUndefinedExternInstrs, undefinedExternInstrs } from "./any-helpers.js"; // (#2106 S1 / #2864 wave-2 S1)
+import { canonicalUndefinedExternInstrs, ensureAnyFromExternHelper, undefinedExternInstrs } from "./any-helpers.js"; // (#2106 S1 / #2864 wave-2 S1 / #6631)
+import { anyValueElemFromExternInstrs } from "./anyvalue-elem-materialize.js"; // (#2717)
 import { ensureAnyToStringHelper, stringConstantExternrefInstrs } from "./native-strings.js";
 import { buildThrowJsErrorInstrs } from "./expressions/helpers.js";
+import { arrayLikeLengthLimitGuard } from "./proxy-array-like.js"; // (#6651 H6)
+import { prepareVecF64UndefElem, vecF64ElemFromExternInstrs } from "./array/vec-elem-fidelity.js"; // (#6771 S8)
 import { ensureWrapperStringValueHelper } from "./object-runtime.js";
 import { ensureNativeArrayFromIterN } from "./iterator-native.js";
 import { markNoBrandSiblingShapes } from "./shape-brand.js";
@@ -25,7 +29,9 @@ import { emitNativeNumberFormat } from "./number-format-native.js";
 import { reserveObjLitToPrimitive } from "./objlit-to-primitive.js"; // (#3481 step 3)
 import { buildRecordFromExternref } from "./record-from-host-object.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
-import { addFuncType, getArrTypeIdxFromVec } from "./registry/types.js";
+import { addFuncType } from "./registry/types.js";
+import { emitHostCarrierToStringTail, isHostArrayCarrier } from "./host-carrier-to-primitive.js"; // (#6788)
+import { ensureCanonicalUndefinedExtern } from "./undefined-extern-import.js"; // (#6419/#6492 r6)
 import { f64HoleToExternrefInstrs } from "./vec-f64-hole-coercion.js";
 import {
   elemGetOp,
@@ -37,10 +43,13 @@ import {
   reserveTypedMemberGetF64DispatchLate,
   unpackedElemType,
 } from "./shared.js";
+import { tryRuntimeRefToNumber } from "./runtime-ref-number.js";
 import { tryEmitFastToNumber } from "./tonumber-fast-paths.js"; // (#4157) flag-gated, default OFF
 import { structMustReifyAtExternrefBoundary } from "./struct-boundary-reify.js"; // (#2358, #4491)
 import { pushZeroArgCallPad } from "./zero-arg-method-pad.js"; // (#4644) declared-but-unpassed params
 import { samePhysicalValType } from "./struct-hierarchy-layout.js";
+import { wrapArrayProtoVecAlias } from "./vec-proto-link.js"; // (#2917) stable Array.prototype in vec slots
+import { emitOptionalFieldWidening } from "./object-model/struct-optional-widen.js"; // (#6867)
 
 /**
  * Emit a guarded ref.cast: use ref.test to check if the cast will succeed.
@@ -958,6 +967,8 @@ export function buildVecFromExternref(
       [{ kind: "externref" }],
     );
   }
+  const lengthGuard = arrayLikeLengthLimitGuard(ctx, fctx); // (#6651 H6) before the flush
+  prepareVecF64UndefElem(ctx, vecInfo.elemType); // (#6771 S8) before the flush
   flushLateImportShifts(ctx, fctx);
   const lenIdx = ctx.funcMap.get("__extern_length");
   const getIdx = ctx.funcMap.get("__extern_get");
@@ -982,10 +993,34 @@ export function buildVecFromExternref(
   });
   const idxLocal = allocLocal(fctx, `__vec_idx_${fctx.locals.length}`, { kind: "i32" });
 
+  // (#2866 slice 3, see the i32 element arm) `$Symbol` carrier → its id, else
+  // a number unbox. (#6770 S2) Shared with the tuple-field arm below.
+  const symbolCarrierOrNumberUnbox = (unbox: number): Instr[] | undefined => {
+    if (!(ctx.standalone || ctx.wasi) || ctx.symbolTypeIdx < 0) return undefined;
+    const symIdx = ctx.symbolTypeIdx;
+    const tmpSym = allocLocal(fctx, `__sym_elem_${fctx.locals.length}`, { kind: "externref" });
+    return [
+      { op: "local.tee", index: tmpSym },
+      { op: "any.convert_extern" },
+      { op: "ref.test", typeIdx: symIdx },
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "i32" } },
+        then: [
+          { op: "local.get", index: tmpSym },
+          { op: "any.convert_extern" },
+          { op: "ref.cast", typeIdx: symIdx },
+          { op: "struct.get", typeIdx: symIdx, fieldIdx: 0 },
+        ],
+        else: [{ op: "local.get", index: tmpSym }, { op: "call", funcIdx: unbox }, { op: "i32.trunc_sat_f64_s" }],
+      },
+    ];
+  };
+
   const buildElemCoerce = (): Instr[] => {
     const et = vecInfo.elemType;
     if (et.kind === "f64" && unboxIdx !== undefined) {
-      return [{ op: "call", funcIdx: unboxIdx }];
+      return vecF64ElemFromExternInstrs(ctx, fctx, unboxIdx); // (#6771 S8) undefined → UNDEF_F64_BITS
     }
     // i8/i16 are PACKED array element kinds (Uint8Array, Int8Array, Uint16Array,
     // …). Their value-position representation is i32: a packed `array.set`
@@ -1031,30 +1066,8 @@ export function buildVecFromExternref(
       // runtime: a `$Symbol` carrier yields its i32 id (`$Symbol.id`), anything
       // else unboxes as a number. Gated on the carrier being registered
       // (standalone/WASI symbol modules); plain numeric modules are byte-identical.
-      if ((ctx.standalone || ctx.wasi) && ctx.symbolTypeIdx >= 0 && et.kind === "i32") {
-        const symIdx = ctx.symbolTypeIdx;
-        const tmpSym = allocLocal(fctx, `__sym_elem_${fctx.locals.length}`, { kind: "externref" });
-        return [
-          { op: "local.tee", index: tmpSym },
-          { op: "any.convert_extern" },
-          { op: "ref.test", typeIdx: symIdx },
-          {
-            op: "if",
-            blockType: { kind: "val", type: { kind: "i32" } },
-            then: [
-              { op: "local.get", index: tmpSym },
-              { op: "any.convert_extern" },
-              { op: "ref.cast", typeIdx: symIdx },
-              { op: "struct.get", typeIdx: symIdx, fieldIdx: 0 },
-            ],
-            else: [
-              { op: "local.get", index: tmpSym },
-              { op: "call", funcIdx: unboxIdx },
-              { op: "i32.trunc_sat_f64_s" },
-            ],
-          },
-        ];
-      }
+      const symbolElem = et.kind === "i32" ? symbolCarrierOrNumberUnbox(unboxIdx) : undefined;
+      if (symbolElem) return symbolElem;
       return [{ op: "call", funcIdx: unboxIdx }, { op: "i32.trunc_sat_f64_s" }];
     }
     // (#3024) i64 (BigInt) element arrays previously fell through to the empty
@@ -1135,8 +1148,9 @@ export function buildVecFromExternref(
           if (fieldType.kind === "f64" && unboxIdx !== undefined) {
             instrs.push({ op: "call", funcIdx: unboxIdx });
           } else if (fieldType.kind === "i32" && unboxIdx !== undefined) {
-            instrs.push({ op: "call", funcIdx: unboxIdx });
-            instrs.push({ op: "i32.trunc_sat_f64_s" });
+            // (#6770 S2) a `symbol` field keeps its carrier's identity
+            const sym = fieldType.symbol === true ? symbolCarrierOrNumberUnbox(unboxIdx) : undefined;
+            instrs.push(...(sym ?? [{ op: "call", funcIdx: unboxIdx }, { op: "i32.trunc_sat_f64_s" }]));
           }
           // externref fields don't need conversion
         }
@@ -1144,8 +1158,10 @@ export function buildVecFromExternref(
         instrs.push({ op: "struct.new", typeIdx: elemTypeIdx });
         return instrs;
       }
-      // Default: try anyref cast (works for WasmGC structs passed through externref)
-      return [{ op: "any.convert_extern" }, { op: "ref.cast_null", typeIdx: elemTypeIdx }];
+      // Default: try anyref cast (works for WasmGC structs passed through externref);
+      // (#2717) a boxed primitive bound for an `$AnyValue` slot is classified instead.
+      const anyValueElem = anyValueElemFromExternInstrs(ctx, fctx, elemTypeIdx);
+      return anyValueElem ?? [{ op: "any.convert_extern" }, { op: "ref.cast_null", typeIdx: elemTypeIdx }];
     }
     return [];
   };
@@ -1167,6 +1183,7 @@ export function buildVecFromExternref(
     ...matInstrs,
     { op: "local.get", index: matLocal },
     { op: "call", funcIdx: lenIdx },
+    ...lengthGuard,
     { op: "i32.trunc_sat_f64_s" },
     { op: "local.set", index: lenLocal },
     { op: "local.get", index: lenLocal },
@@ -1744,9 +1761,10 @@ function getStructNarrowInfo(
   ctx: CodegenContext,
   fromTypeIdx: number,
   toTypeIdx: number,
+  allowOptional = false,
 ): {
   srcFields: ({ name: string; type: ValType; fieldIdx: number } | undefined)[];
-  dstFields: { name: string; type: ValType }[];
+  dstFields: { name: string; type: ValType; optional?: true }[];
 } | null {
   const fromDef = ctx.mod.types[fromTypeIdx];
   const toDef = ctx.mod.types[toTypeIdx];
@@ -1771,16 +1789,19 @@ function getStructNarrowInfo(
       // does not materialize them. Permit a structural projection to complete
       // only these erased fields with their null/zero default; every ordinary
       // missing field still rejects the projection.
-      if (!erasedTypeBrandFieldCanDefault(field)) return null;
+      // (#6867) …and, when widening, declared-optional (`k?: T`) fields.
+      if (!erasedTypeBrandFieldCanDefault(field) && !(allowOptional && field.optional)) return null;
       srcFields.push(undefined);
       continue;
     }
     srcFields.push({ name: field.name, type: srcField.type, fieldIdx: srcField.fieldIdx });
   }
+  // (#6867) Widening needs a shared field: an unrelated shape is no evidence.
+  if (allowOptional && !srcFields.some((field) => field !== undefined)) return null;
 
   return {
     srcFields,
-    dstFields: dstStruct.fields.map((f) => ({ name: f.name, type: f.type })),
+    dstFields: dstStruct.fields.map((f) => ({ name: f.name, type: f.type, optional: f.optional })),
   };
 }
 
@@ -1889,10 +1910,29 @@ function emitSafeStructConversion(
   // Case 3: struct narrowing — destination fields are a subset of source fields
   const narrowInfo = getStructNarrowInfo(ctx, fromTypeIdx, toTypeIdx);
   if (narrowInfo) {
-    return emitStructNarrowBody(ctx, fctx, fromTypeIdx, toTypeIdx, narrowInfo, fromNullable, toNullable);
+    const pair = `${fromTypeIdx}>${toTypeIdx}`;
+    let active = narrowingInProgress.get(ctx);
+    if (!active) narrowingInProgress.set(ctx, (active = new Set()));
+    if (active.has(pair)) {
+      fctx.body.push({ op: "call", funcIdx: recursiveStructNarrowHelper(ctx, fromTypeIdx, toTypeIdx, narrowInfo) });
+      if (!toNullable) fctx.body.push({ op: "ref.as_non_null" });
+      return true;
+    }
+    active.add(pair);
+    try {
+      return emitStructNarrowBody(ctx, fctx, fromTypeIdx, toTypeIdx, narrowInfo, fromNullable, toNullable);
+    } finally {
+      active.delete(pair);
+    }
   }
 
-  return false;
+  // Case 4 (#6867): the destination only ADDS declared-optional fields.
+  const widen = getStructNarrowInfo(ctx, fromTypeIdx, toTypeIdx, true);
+  if (!widen) return false;
+  emitOptionalFieldWidening(fctx, fromTypeIdx, toTypeIdx, toNullable, () =>
+    emitStructNarrowBody(ctx, fctx, fromTypeIdx, toTypeIdx, widen, false, false),
+  );
+  return true;
 }
 
 /**
@@ -2148,6 +2188,32 @@ function emitVecToVecBody(
       },
     );
     releaseTempLocal(fctx, elemLocal);
+  } else if (
+    needsCoerce &&
+    srcKind === "externref" &&
+    isAnyValue(dstVec.elemType, ctx) &&
+    ensureAnyFromExternHelper(ctx) !== undefined
+  ) {
+    // (#6631) A heterogeneous-primitive-union vec (e.g. `(string | number)[]`
+    // from `["x", 1976]`) widens its raw-externref elements (each boxed by its
+    // OWN static type — `__box_number`/`__box_boolean`/native-string — never a
+    // tagged `$AnyValue`) into this vec's `$AnyValue` element slot. The generic
+    // `coerceType` path below routes through `boxToAny`'s externref arm, whose
+    // `undefinedSingleton` default (`__any_box_extern_s1`) only recovers NULL
+    // and the UNDEF_F64-sentinel `$BoxedNumber`; every other externref —
+    // including a perfectly ordinary boxed number or boolean — falls to the
+    // #1888 tag-5 "string" lie. That made `typeof row[1]` report "string" for
+    // the NUMBER `1976` (and `typeof` on ANY element of such a literal, since
+    // the corruption happens once, at construction, not per-read).
+    //
+    // `ensureAnyFromExternHelper` (the #3055 fix for the `===`/`==` operand
+    // seam) classifies `$BoxedNumber`/i31/`$BoxedBoolean` BEFORE falling back
+    // to tag-5, so it recovers the correct tag for every element this literal
+    // can produce. Scoped to exactly this call site (mirrors #3055's own
+    // per-site substitution) — `boxToAny`'s shared default is untouched, so
+    // the −788/−794 standalone regression that flipping it globally caused
+    // cannot recur here.
+    fctx.body.push({ op: "call", funcIdx: ensureAnyFromExternHelper(ctx)! });
   } else if (needsCoerce) {
     coerceType(ctx, fctx, readElemType, dstVec.elemType);
   }
@@ -2201,6 +2267,47 @@ function emitVecToVecBody(
   return true;
 }
 
+/**
+ * (#1058) Struct pairs whose narrowing body is being emitted. A field that needs
+ * the same pair again (TypeScript's `MappedType.target: MappedType`) calls an
+ * outlined helper instead of inlining the body into itself without end.
+ */
+const narrowingInProgress = new WeakMap<CodegenContext, Set<string>>();
+
+function recursiveStructNarrowHelper(
+  ctx: CodegenContext,
+  fromTypeIdx: number,
+  toTypeIdx: number,
+  info: NonNullable<ReturnType<typeof getStructNarrowInfo>>,
+): number {
+  const name = `__struct_narrow_${fromTypeIdx}_${toTypeIdx}`;
+  const existing = ctx.funcMap.get(name);
+  if (existing !== undefined) return existing;
+  const param: ValType = { kind: "ref_null", typeIdx: fromTypeIdx };
+  const result: ValType = { kind: "ref_null", typeIdx: toTypeIdx };
+  const typeIdx = addFuncType(ctx, [param], [result]);
+  const funcIdx = mintDefinedFunc(ctx);
+  ctx.funcMap.set(name, funcIdx);
+  const helper: FunctionContext = {
+    name,
+    params: [{ name: "src", type: param }],
+    locals: [],
+    localMap: new Map(),
+    returnType: result,
+    body: [{ op: "local.get", index: 0 }],
+    blockDepth: 0,
+    breakStack: [],
+    continueStack: [],
+    labelMap: new Map(),
+    savedBodies: [],
+  };
+  // Published before its body is emitted so a late import added while the
+  // fields are coerced shifts this body's calls too.
+  pushDefinedFunc(ctx, funcIdx, { name, typeIdx, locals: helper.locals, body: helper.body, exported: false });
+  emitStructNarrowBody(ctx, helper, fromTypeIdx, toTypeIdx, info, true, true);
+  return ctx.funcMap.get(name) ?? funcIdx;
+}
+
 /** Emit struct narrowing: extract a subset of fields from a larger struct */
 function emitStructNarrowBody(
   ctx: CodegenContext,
@@ -2209,7 +2316,7 @@ function emitStructNarrowBody(
   toTypeIdx: number,
   info: {
     srcFields: ({ name: string; type: ValType; fieldIdx: number } | undefined)[];
-    dstFields: { name: string; type: ValType }[];
+    dstFields: { name: string; type: ValType; optional?: true }[];
   },
   fromNullable: boolean,
   toNullable: boolean,
@@ -2250,7 +2357,9 @@ function emitStructNarrowBody(
     const dstField = info.dstFields[i]!;
 
     if (!srcField) {
-      fctx.body.push(...defaultValueInstrs(dstField.type));
+      if (dstField.optional && dstField.type.kind === "externref")
+        emitUndefinedValue(ctx, fctx); // (#6867)
+      else fctx.body.push(...defaultValueInstrs(dstField.type));
       continue;
     }
 
@@ -2919,9 +3028,10 @@ export function coerceType(
     fctx.body.push({ op: "f64.convert_i32_s" });
     return;
   }
-  // f64 → i32
+  // f64 → i32 (#6798: a native `i32` destination wraps with ToInt32, like `| 0`)
   if (from.kind === "f64" && to.kind === "i32") {
-    fctx.body.push({ op: "i32.trunc_sat_f64_s" });
+    if (to.int32 === true) emitToInt32(fctx);
+    else fctx.body.push({ op: "i32.trunc_sat_f64_s" });
     return;
   }
   // externref → i32 (unbox as number to preserve value, then truncate)
@@ -3140,7 +3250,7 @@ export function coerceType(
           op: "if",
           blockType: { kind: "val", type: { kind: "ref_null", typeIdx: toIdx } },
           then: [{ op: "ref.null", typeIdx: toIdx }],
-          else: materializeWithSidecar,
+          else: wrapArrayProtoVecAlias(ctx, tmpExternLocal, toIdx, vecInfo.arrTypeIdx, materializeWithSidecar),
         },
       ];
     } else {
@@ -3241,6 +3351,24 @@ export function coerceType(
   // f64 → externref (box number)
   if (from.kind === "f64" && to.kind === "externref") {
     addUnionImports(ctx);
+    // (#6492 round 6) The sentinel arm below resolves the lane's canonical
+    // `undefined` through `canonicalUndefinedExternInstrs`, which is READ-ONLY
+    // by design and falls back to `ref.null.extern` — JS **`null`** — when
+    // `__get_undefined` is not registered yet. That fallback is not a fallback
+    // here: it changes the VALUE. Measured on the linked test262 lane, where a
+    // body-only compile unit has no other reason to import it,
+    // `for await (let { w: [x, y, z] = [4, 5, 6] } of [{ w: [7, undefined,] }])`
+    // bound `y` to `null` (`typeof y === "object"`) while the honest whole
+    // assembly — whose harness prefix imports `__get_undefined` long before
+    // this site — bound `undefined`.
+    //
+    // It MUST run before `__box_number`'s index is read: registering an import
+    // shifts func indices, and `flushLateImportShifts` remaps already-EMITTED
+    // instructions, not a `funcIdx` already captured in a local. Gated on the
+    // brand so every other f64 box is byte-identical, and `ensureCanonical…`
+    // is itself a no-op on the standalone/native-strings lanes and after the
+    // #1984 index-space freeze.
+    if (from.undefSentinel === true) ensureCanonicalUndefinedExtern(ctx, fctx);
     const funcIdx = ctx.funcMap.get("__box_number");
     // (#2864 wave-2 S1) UNDEF-SENTINEL-BRANDED f64 (`{kind:"f64",
     // undefSentinel:true}`) — an f64 read out of a slot that genuinely holds
@@ -3483,6 +3611,9 @@ export function coerceType(
       return;
     }
     fctx.body.push({ op: "extern.convert_any" });
+    // (#6788) No in-Wasm `@@toPrimitive`/`toString` reduced the carrier above;
+    // a string-hint consumer needs its ToString, not the object itself.
+    if (toPrimitiveHint === "string" && emitHostCarrierToStringTail(ctx, fctx, typeIdx)) return;
     // Vec structs (arrays) need Symbol.iterator to be iterable by JS APIs (#854).
     // After extern.convert_any, call __make_iterable to attach Symbol.iterator via sidecar.
     // Skip i32_byte vec structs (ArrayBuffer/DataView backing) — neither is
@@ -3495,13 +3626,7 @@ export function coerceType(
     // JS boundary exposes the identity-cached live array view. Materializing a
     // detached JS array merely because an internal type widens to externref
     // would make the embedder a semantic provider again and lose ownership.
-    if (
-      !ctx.standalone &&
-      !ctx.wasi &&
-      ctx.targetProfile.semanticProviders !== "native-first" &&
-      getArrTypeIdxFromVec(ctx, typeIdx) >= 0 &&
-      ctx.vecTypeMap.get("i32_byte") !== typeIdx
-    ) {
+    if (isHostArrayCarrier(ctx, typeIdx)) {
       const makeIterIdx = ensureLateImport(ctx, "__make_iterable", [{ kind: "externref" }], [{ kind: "externref" }]);
       if (makeIterIdx !== undefined) {
         flushLateImportShifts(ctx, fctx);
@@ -3708,31 +3833,7 @@ export function coerceType(
   // Re-entrancy guard: prevent infinite recursion when valueOf itself returns a struct.
   if ((from.kind === "ref" || from.kind === "ref_null") && to.kind === "f64") {
     const typeIdx = (from as { typeIdx: number }).typeIdx;
-    if (
-      ctx.nativeStrings &&
-      (typeIdx === ctx.anyStrTypeIdx || (ctx.nativeStrTypeIdx >= 0 && typeIdx === ctx.nativeStrTypeIdx))
-    ) {
-      let strToNumberIdx = ctx.funcMap.get("__str_to_number");
-      if (strToNumberIdx === undefined) {
-        addUnionImports(ctx);
-        strToNumberIdx = ctx.funcMap.get("__str_to_number");
-      }
-      if (strToNumberIdx !== undefined) {
-        fctx.body.push({ op: "extern.convert_any" });
-        fctx.body.push({ op: "call", funcIdx: strToNumberIdx });
-        return;
-      }
-      addUnionImports(ctx);
-      const unboxIdx = ctx.funcMap.get("__unbox_number");
-      if (unboxIdx !== undefined) {
-        fctx.body.push({ op: "extern.convert_any" });
-        fctx.body.push({ op: "call", funcIdx: unboxIdx });
-        return;
-      }
-      fctx.body.push({ op: "drop" });
-      fctx.body.push({ op: "f64.const", value: NaN });
-      return;
-    }
+    if (tryRuntimeRefToNumber(ctx, fctx, typeIdx, toPrimitiveHint)) return;
     const wasInsideValueOf = (ctx as any).__insideValueOfCoercion ?? false;
     if (wasInsideValueOf) {
       // Already inside a valueOf coercion — don't recurse, return NaN
@@ -5024,6 +5125,7 @@ export function coercionInstrs(ctx: CodegenContext, from: ValType, to: ValType, 
     const plan = coercionPlan(from, to, {
       boxNumberIdx: ctx.funcMap.get("__box_number") ?? null,
       unboxNumberIdx: ctx.funcMap.get("__unbox_number") ?? null,
+      boxBigIntIdx: ctx.funcMap.get("__box_bigint") ?? null,
     });
     if (plan && !plan.lossy) return plan.instrs;
   }

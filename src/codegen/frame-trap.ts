@@ -16,6 +16,7 @@
 
 import type { FunctionContext } from "./context/types.js";
 import type { Instr } from "../ir/types.js";
+import { readEnv } from "../env.js";
 
 const WRAPPED = Symbol("js2.frameTrapWrapped");
 
@@ -30,7 +31,7 @@ function localIndexOf(instr: Instr): number | undefined {
  * Returns immediately (and leaves `fctx` untouched) otherwise.
  */
 export function installFrameTrap(fctx: FunctionContext, label: string): void {
-  const want = process.env.JS2WASM_FRAME_TRAP;
+  const want = readEnv("JS2WASM_FRAME_TRAP");
   if (!want || want !== label) return;
 
   const wrap = (arr: Instr[]): Instr[] => {

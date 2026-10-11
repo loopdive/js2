@@ -1,0 +1,38 @@
+Pre-push: typecheck + lint (parallel) ...
+Pre-push: typecheck + lint OK.
+Pre-push: prettier format:check ...
+Pre-push: format:check OK.
+Pre-push: oracle ratchet ...
+
+> @loopdive/js2@0.71.0 check:oracle-ratchet /private/tmp/js2-ir-validation-lowering-b-20261001
+> node scripts/check-oracle-ratchet.mjs
+
+[oracle-ratchet] OK — no net checker-usage growth across 0 changed src/codegen file(s) (getTypeAtLocation +0, ctx.checker +0; base: env:LOC_GATE_BASE).
+Pre-push: oracle ratchet OK.
+Pre-push: coercion-site ratchet ...
+
+> @loopdive/js2@0.71.0 check:coercion-sites /private/tmp/js2-ir-validation-lowering-b-20261001
+> node scripts/check-coercion-sites.mjs
+
+coercion-sites gate: OK (no net vocabulary growth across 0 changed codegen file(s); base: env:LOC_GATE_BASE).
+Pre-push: coercion-site ratchet OK.
+Pre-push: numeric-local IR parity (#3765) ...
+
+ RUN  v3.2.4 /private/tmp/js2-ir-validation-lowering-b-20261001
+
+ ✓ tests/issue-3765-numeric-locals.test.ts (18 tests) 2501ms
+   ✓ #3765 — a provably-numeric local gets an f64 slot > gives the tokenizer's `var c` an f64 local in the typed twin  541ms
+
+ Test Files  1 passed (1)
+      Tests  18 passed (18)
+   Start at  07:39:06
+   Duration  9.71s (transform 5.14s, setup 0ms, collect 7.02s, tests 2.50s, environment 0ms, prepare 37ms)
+
+Pre-push: numeric-local IR parity OK.
+Pre-push: issue integrity OK.
+remote: 
+remote: Create a pull request for 'codex/3518-validation-lowering-b-20261001' on GitHub by visiting:        
+remote:      https://github.com/ttraenkler/js2/pull/new/codex/3518-validation-lowering-b-20261001        
+remote: 
+To https://github.com/ttraenkler/js2.git
+ * [new branch]              HEAD -> codex/3518-validation-lowering-b-20261001

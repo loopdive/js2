@@ -144,6 +144,7 @@ export function emitFnctorCtorArgumentsObject(
     userParamOffset,
     { vecTypeIdx, arrTypeIdx, argsLocalIdx: argsLocal, arrTmpIdx: arrTmp },
     shouldRegisterArgumentsWithHost(ctx, funcDecl.body, ctorFctx.directEvalBindingNames !== undefined),
+    funcDecl.parameters,
   );
 }
 

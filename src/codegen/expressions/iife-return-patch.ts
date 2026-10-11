@@ -31,6 +31,7 @@
  * reaches, and a `TryTableCatch` carries a label depth rather than a body.
  */
 import type { Instr } from "../../ir/types.js";
+import type { FunctionContext } from "../context/types.js";
 
 /** The structured arms this walker has to look inside. */
 type StructuredArms = {
@@ -87,4 +88,52 @@ export function patchInlinedIifeReturns(instrs: Instr[], depth: number, retLocal
       }
     }
   }
+}
+
+/**
+ * (#6651 C3b) The enclosing function's `return` PROTOCOL, parked while an IIFE
+ * is inlined into its body.
+ *
+ * An inlined IIFE has no Wasm function of its own, but it IS a source function
+ * boundary: `return v` inside it returns from the IIFE. `compileReturnStatement`
+ * dispatches on two `fctx` hooks BEFORE the ordinary path —
+ * `isGenerator` (stash the value on `__gen_buffer`, `br` to the generator's exit)
+ * and `asyncDriveReturn` (settle the frame's result `$Promise`, then `return`) —
+ * and both fire for a `return` that belongs to the inlined IIFE, not to the host
+ * function. Measured on a native generator's parameter defaults, where the
+ * factory carries `isGenerator`:
+ *
+ *     function* g(a = function () { return 5; }()) { … }   // a arrived NaN
+ *
+ * The emitted body was `f64.const 5; drop; br 1` — the generator arm's
+ * value-drop plus its exit branch — leaving the IIFE's `__iife_ret_*` local
+ * never written. `patchInlinedIifeReturns` cannot repair that: the generator arm
+ * emits a `br`, so no `return` op survives for the walker to rewrite.
+ *
+ * The generator BODY lane is unaffected either way (the native lowering compiles
+ * it into a resume function whose `fctx.isGenerator` is already false), so
+ * parking these hooks changes only the lanes that were wrong.
+ */
+export interface ParkedReturnProtocol {
+  isGenerator: boolean | undefined;
+  generatorReturnDepth: number | undefined;
+  asyncDriveReturn: FunctionContext["asyncDriveReturn"];
+}
+
+export function parkOuterReturnProtocol(fctx: FunctionContext): ParkedReturnProtocol {
+  const parked: ParkedReturnProtocol = {
+    isGenerator: fctx.isGenerator,
+    generatorReturnDepth: fctx.generatorReturnDepth,
+    asyncDriveReturn: fctx.asyncDriveReturn,
+  };
+  fctx.isGenerator = false;
+  fctx.generatorReturnDepth = undefined;
+  fctx.asyncDriveReturn = undefined;
+  return parked;
+}
+
+export function restoreOuterReturnProtocol(fctx: FunctionContext, parked: ParkedReturnProtocol): void {
+  fctx.isGenerator = parked.isGenerator;
+  fctx.generatorReturnDepth = parked.generatorReturnDepth;
+  fctx.asyncDriveReturn = parked.asyncDriveReturn;
 }

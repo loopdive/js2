@@ -94,6 +94,33 @@ export function recordCallableOwner(callable: Function, owner: CallbackState | u
   if (owner) callableOwners.set(callable, owner);
 }
 
+/**
+ * (#6651) The sandbox's constructor bindings as they were when the instance's
+ * imports were built — i.e. its realm INTRINSICS, before the test ran.
+ *
+ * `normalizeSandboxValue` maps a host-realm constructor read off `x.constructor`
+ * onto the sandbox realm's counterpart. It used to read the sandbox's LIVE
+ * global binding, so a test that replaces the binding
+ * (`fnGlobalObject().Promise = function () {…}`, dynamic-import/returns-promise)
+ * got the replacement back from `p.constructor` instead of %Promise%. The
+ * spec's `constructor` is the intrinsic, whatever the global binding says now.
+ */
+const sandboxIntrinsics = new WeakMap<object, Map<string, unknown>>();
+
+/** Record `sandbox`'s function-valued bindings once, before any compiled code writes to it. */
+export function snapshotSandboxIntrinsics<T extends Record<string, any> | undefined>(sandbox: T): T {
+  if (!sandbox || sandboxIntrinsics.has(sandbox)) return sandbox;
+  const intrinsics = new Map<string, unknown>();
+  for (const name of Object.getOwnPropertyNames(sandbox)) {
+    const descriptor = Object.getOwnPropertyDescriptor(sandbox, name);
+    if (descriptor && "value" in descriptor && typeof descriptor.value === "function") {
+      intrinsics.set(name, descriptor.value);
+    }
+  }
+  sandboxIntrinsics.set(sandbox, intrinsics);
+  return sandbox;
+}
+
 /** Preserve cross-module facades and normalize values returning to their owning module. */
 export function normalizeSandboxValue(
   receiver: unknown,
@@ -115,7 +142,11 @@ export function normalizeSandboxValue(
   const normalized = unwrap(value, owner);
   if (sandbox && key === "constructor" && typeof normalized === "function") {
     const name = normalized.name;
-    if (name && normalized === (globalThis as any)[name] && sandbox[name] !== undefined) return sandbox[name];
+    if (name && normalized === (globalThis as any)[name]) {
+      const intrinsics = sandboxIntrinsics.get(sandbox);
+      const mapped = intrinsics?.has(name) ? intrinsics.get(name) : sandbox[name];
+      if (mapped !== undefined) return mapped;
+    }
   }
   return normalized;
 }

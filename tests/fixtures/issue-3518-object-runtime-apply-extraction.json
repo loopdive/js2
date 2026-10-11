@@ -1,0 +1,69 @@
+{
+  "schema": 1,
+  "kind": "signed-closure-apply-extraction",
+  "path": "src/codegen/object-runtime.ts",
+  "before": {
+    "commit": "fdaa94315aeeeab5dc85a3596f2b4997b388ac76",
+    "blob": "1e349e320e46273f1dcc35116856040e65eb5772",
+    "sha256": "c511036fa9b5a106e5c9a14d435a822114528b95eb10a039ce8cd13b4f7d91ac"
+  },
+  "after": {
+    "commit": "cb64af7b0315d59d08809e404c1216c846270654",
+    "blob": "7582c4f7555b73b55aa8ffbc6699c172519ce162",
+    "sha256": "410927928f52e2fcf60ae415f22ee3cbdb5ab7a8478c280780c239309a11cc30"
+  },
+  "builder": {
+    "path": "src/runtime/wasmgc/values/closure-apply-body.ts",
+    "commit": "cb64af7b0315d59d08809e404c1216c846270654",
+    "blob": "012a36b10b4258573652056a9c9696228129fa12",
+    "sha256": "d1040a5f6649abd38c0c8a7040fcb8c15bbf450da151d6401535bf29ef00e29b"
+  },
+  "scope": "Five extraction spans only; already-landed 6643 import and peer-arm changes remain untouched. No original donor hash is replaced.",
+  "spans": [
+    {
+      "id": "import",
+      "before": "import { ensureProxyRuntime } from \"./object-runtime-proxy.js\";\nimport { ensureArgcGlobal } from \"./statements/nested-declarations.js\";\nimport { buildLazyNativeProtoGetInstrs, flushPendingNativeProtoSeeders, getBuiltinBrand } from \"./native-proto.js\";\nimport { applyUndefinedInstrs, guardNullableApplyArguments } from \"./apply-closure-args.js\";\nimport { vecConstructorArmInstrs } from \"./vec-constructor-carrier.js\"; // (#4220) runtime `<array>.constructor`\nimport {\n  registerStringExoticHasOwn,\n",
+      "after": "import { ensureProxyRuntime } from \"./object-runtime-proxy.js\";\nimport { ensureArgcGlobal } from \"./statements/nested-declarations.js\";\nimport { buildLazyNativeProtoGetInstrs, flushPendingNativeProtoSeeders, getBuiltinBrand } from \"./native-proto.js\";\nimport { applyUndefinedInstrs } from \"./apply-closure-args.js\";\nimport {\n  buildClosureApplyArgument,\n  buildClosureApplyCallArm,\n  buildClosureApplyLength,\n  buildClosureApplyProxyGuard,\n} from \"../runtime/wasmgc/values/closure-apply-body.js\";\nimport { vecConstructorArmInstrs } from \"./vec-constructor-carrier.js\"; // (#4220) runtime `<array>.constructor`\nimport {\n  registerStringExoticHasOwn,\n",
+      "beforeSha256": "0cc9772ac54a793b97452e5732dc9fe5f2214a9fd007e0dd8512f0cde7893394",
+      "afterSha256": "5a48a27c1f138c1a4bacaa99e2235085f7f5501742e43100a3adc372b1372048",
+      "beforeStartLine": 248,
+      "afterStartLine": 249
+    },
+    {
+      "id": "argument-read",
+      "before": "\n  // Locals: 0=fn 1=recv 2=args; 3=n, then widening/result/carrier locals.\n  const ARG_OF = (k: number): Instr[] => {\n    let fallback: Instr[] = hasGenericArgsReader\n      ? [\n          { op: \"local.get\", index: 2 },\n          { op: \"f64.const\", value: k },\n          { op: \"call\", funcIdx: externGetIdxArr! },\n        ]\n      : applyUndefinedInstrs(ctx, getUndefinedIdx);\n    // Under-applied widening reads out-of-bounds as undefined (#3592).\n    const oob = (): Instr[] => applyUndefinedInstrs(ctx, getUndefinedIdx);\n    const fastRead = (dataLocal: number, lenLocal: number, arrTypeIdx: number, prior: Instr[]): Instr[] => [\n      { op: \"local.get\", index: dataLocal },\n      { op: \"ref.is_null\" },\n      {\n        op: \"if\",\n        blockType: { kind: \"val\", type: { kind: \"externref\" } },\n        then: prior,\n        else: [\n          { op: \"i32.const\", value: k },\n          { op: \"local.get\", index: lenLocal },\n          { op: \"i32.lt_s\" },\n          {\n            op: \"if\",\n            blockType: { kind: \"val\", type: { kind: \"externref\" } },\n            then: [\n              { op: \"local.get\", index: dataLocal },\n              { op: \"ref.as_non_null\" },\n              { op: \"i32.const\", value: k },\n              { op: \"array.get\", typeIdx: arrTypeIdx },\n            ],\n            else: oob(),\n          },\n        ],\n      },\n    ];\n    if (fastObjArgs) fallback = fastRead(objArgDataLocal, objArgLenLocal, objVecArrTypeIdx, fallback);\n    if (fastDirectArgs) {\n      fallback = fastRead(directArgDataLocal, directArgLenLocal, directVecArrTypeIdx, fallback);\n    }\n    return guardNullableApplyArguments(oob(), fallback);\n  };\n\n  const buildArm = (n: number): Instr[] => {\n",
+      "after": "\n  // Locals: 0=fn 1=recv 2=args; 3=n, then widening/result/carrier locals.\n  const ARG_OF = (k: number): Instr[] => {\n    const fallbackUndefined = hasGenericArgsReader ? [] : applyUndefinedInstrs(ctx, getUndefinedIdx);\n    const object = fastObjArgs\n      ? {\n          carrier: {\n            typeIdx: objVecTypeIdx,\n            arrayTypeIdx: objVecArrTypeIdx,\n            dataLocal: objArgDataLocal,\n            lengthLocal: objArgLenLocal,\n          },\n          undefinedValue: applyUndefinedInstrs(ctx, getUndefinedIdx),\n        }\n      : undefined;\n    const direct = fastDirectArgs\n      ? {\n          carrier: {\n            typeIdx: directVecTypeIdx,\n            arrayTypeIdx: directVecArrTypeIdx,\n            dataLocal: directArgDataLocal,\n            lengthLocal: directArgLenLocal,\n          },\n          undefinedValue: applyUndefinedInstrs(ctx, getUndefinedIdx),\n        }\n      : undefined;\n    return buildClosureApplyArgument(k, {\n      genericIndex: hasGenericArgsReader ? externGetIdxArr : undefined,\n      fallbackUndefined,\n      object,\n      direct,\n      nullishUndefined: applyUndefinedInstrs(ctx, getUndefinedIdx),\n    });\n  };\n\n  const buildArm = (n: number): Instr[] => {\n",
+      "beforeSha256": "cc69768397c6f1fd2f7968d995547fa9600cb08dfe75e4e869c6c7f8eaecb481",
+      "afterSha256": "84a5ecc3803dc5cdbfe7b7dbda6a7536aa28f8854872407339568eb8e0ecca17",
+      "beforeStartLine": 6891,
+      "afterStartLine": 6898
+    },
+    {
+      "id": "call-arm",
+      "before": "      // a valid body: return the undefined sentinel.\n      return linkedFallback();\n    }\n    // __call_fn_method_N(recv, fn, arg0..arg{N-1})\n    const ops: Instr[] = [\n      { op: \"local.get\", index: 1 },\n      { op: \"local.get\", index: 0 },\n    ];\n    for (let k = 0; k < n; k++) ops.push(...ARG_OF(k));\n    ops.push({ op: \"call\", funcIdx: idx });\n    return ops;\n  };\n\n  // if n==0 .. n==APPLY_CLOSURE_MAX_ARITY else undefined. Nest as if/else chain.\n",
+      "after": "      // a valid body: return the undefined sentinel.\n      return linkedFallback();\n    }\n    const argumentsBody: Instr[][] = [];\n    for (let k = 0; k < n; k++) argumentsBody.push(ARG_OF(k));\n    return buildClosureApplyCallArm(idx, argumentsBody);\n  };\n\n  // if n==0 .. n==APPLY_CLOSURE_MAX_ARITY else undefined. Nest as if/else chain.\n",
+      "beforeSha256": "9b33c31871d5c2c6dd3ae335fba3ef9c2c8aab9c2903900c6a1e40a8ec2c7d8a",
+      "afterSha256": "ecede6b57ed56523dd4f403ca700440e5fffb377255166279178034d39782cd4",
+      "beforeStartLine": 6940,
+      "afterStartLine": 6938
+    },
+    {
+      "id": "length-read",
+      "before": "\n  // n = args.len. Prefer a native carrier read, then retain the historical\n  // generic array-like reader for other callers of __apply_closure.\n  let computeN: Instr[] = hasGenericArgsReader\n    ? [{ op: \"local.get\", index: 2 }, { op: \"call\", funcIdx: externLengthIdx! }, { op: \"i32.trunc_f64_s\" }]\n    : [{ op: \"i32.const\", value: 0 }];\n  const fastLength = (carrierTypeIdx: number, dataLocal: number, lenLocal: number, prior: Instr[]): Instr[] => [\n    { op: \"local.get\", index: 2 },\n    { op: \"any.convert_extern\" },\n    { op: \"ref.test\", typeIdx: carrierTypeIdx },\n    {\n      op: \"if\",\n      blockType: { kind: \"val\", type: { kind: \"i32\" } },\n      then: [\n        { op: \"local.get\", index: 2 },\n        { op: \"any.convert_extern\" },\n        { op: \"ref.cast\", typeIdx: carrierTypeIdx },\n        { op: \"struct.get\", typeIdx: carrierTypeIdx, fieldIdx: 1 },\n        { op: \"local.set\", index: dataLocal },\n        { op: \"local.get\", index: 2 },\n        { op: \"any.convert_extern\" },\n        { op: \"ref.cast\", typeIdx: carrierTypeIdx },\n        { op: \"struct.get\", typeIdx: carrierTypeIdx, fieldIdx: 0 },\n        { op: \"local.tee\", index: lenLocal },\n      ],\n      else: prior,\n    },\n  ];\n  if (fastObjArgs) computeN = fastLength(objVecTypeIdx, objArgDataLocal, objArgLenLocal, computeN);\n  if (fastDirectArgs) {\n    computeN = fastLength(directVecTypeIdx, directArgDataLocal, directArgLenLocal, computeN);\n  }\n\n  // Preserve the raw call-site count in `__argc` before widening only the\n  // dispatcher selector. This keeps omitted formals undefined without turning\n",
+      "after": "\n  // n = args.len. Prefer a native carrier read, then retain the historical\n  // generic array-like reader for other callers of __apply_closure.\n  const computeN = buildClosureApplyLength({\n    genericLength: hasGenericArgsReader ? externLengthIdx : undefined,\n    object: fastObjArgs\n      ? {\n          typeIdx: objVecTypeIdx,\n          arrayTypeIdx: objVecArrTypeIdx,\n          dataLocal: objArgDataLocal,\n          lengthLocal: objArgLenLocal,\n        }\n      : undefined,\n    direct: fastDirectArgs\n      ? {\n          typeIdx: directVecTypeIdx,\n          arrayTypeIdx: directVecArrTypeIdx,\n          dataLocal: directArgDataLocal,\n          lengthLocal: directArgLenLocal,\n        }\n      : undefined,\n  });\n\n  // Preserve the raw call-site count in `__argc` before widening only the\n  // dispatcher selector. This keeps omitted formals undefined without turning\n",
+      "beforeSha256": "0f12b66fb1acc16da931cac5b627f660f54180b2442b70866e17ed99cd5958cd",
+      "afterSha256": "a42f203806b8eb662705a22206aaea8eb6d4eacdc24371ae9ee18d0ce878a694",
+      "beforeStartLine": 6968,
+      "afterStartLine": 6961
+    },
+    {
+      "id": "proxy-guard",
+      "before": "  const proxyApplyIdx = ctx.funcMap.get(\"__proxy_apply_dispatch\");\n  const proxyGuardTypeIdx = ctx.objectRuntimeTypes?.proxyTypeIdx;\n  if (proxyApplyIdx !== undefined && proxyGuardTypeIdx !== undefined) {\n    body.unshift(\n      { op: \"local.get\", index: 0 },\n      { op: \"any.convert_extern\" },\n      { op: \"ref.test\", typeIdx: proxyGuardTypeIdx },\n      {\n        op: \"if\",\n        blockType: { kind: \"empty\" },\n        then: [\n          { op: \"local.get\", index: 0 },\n          { op: \"local.get\", index: 1 },\n          { op: \"local.get\", index: 2 },\n          { op: \"call\", funcIdx: proxyApplyIdx },\n          { op: \"return\" },\n        ],\n      },\n    );\n  }\n\n  // Native-first keeps a caller-owned JavaScript function as that exact\n",
+      "after": "  const proxyApplyIdx = ctx.funcMap.get(\"__proxy_apply_dispatch\");\n  const proxyGuardTypeIdx = ctx.objectRuntimeTypes?.proxyTypeIdx;\n  if (proxyApplyIdx !== undefined && proxyGuardTypeIdx !== undefined) {\n    body.unshift(...buildClosureApplyProxyGuard(proxyGuardTypeIdx, proxyApplyIdx));\n  }\n\n  // Native-first keeps a caller-owned JavaScript function as that exact\n",
+      "beforeSha256": "a55a5333253b2fabccb7cd442728f70fb037ec9df840a358058c43421341ce5e",
+      "afterSha256": "586bd63b561c04f56e2dbbd78e0e83adc0ad97266b17e06f1d1aa6ae07c67a2a",
+      "beforeStartLine": 7043,
+      "afterStartLine": 7026
+    }
+  ]
+}

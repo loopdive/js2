@@ -46,10 +46,10 @@ classic endpoint (`gh api repos/loopdive/js2wasm/branches/main/protection`) answ
 | Check name                          | Workflow file                           | What it gates                                                                                                                                                                                                                                                                                |
 | ----------------------------------- | --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `cheap gate (main-ancestor + lint)` | `.github/workflows/test262-sharded.yml` | fast pre-flight: lint + typecheck on the PR branch (cheap reject before running the test262 matrix)                                                                                                                                                                                          |
-| `merge shard reports`               | `.github/workflows/test262-sharded.yml` | aggregates the 57 test262 shards into a single pass/fail signal — the authoritative aggregate conformance gate. Hosts the HARD inline guards: the host catastrophic-regression guard (#1668), the **standalone net-regression guard (#1897)**, and the stale-baseline guard (#1668) — see §3 |
+| `merge shard reports`               | `.github/workflows/test262-sharded.yml` | aggregates the 57 test262 shards into a single pass/fail signal — the authoritative aggregate conformance gate. Hosts the HARD inline guards: the host catastrophic-regression guard (#1668), the **standalone net-regression guard (#1897)**, the stale-baseline guard (#1668), and the **completed-edition per-row gates on both lanes** (per-edition ratchet; js-host #6786) — see §3 |
 | `quality`                           | `.github/workflows/ci.yml`              | lint, format check, typecheck, IR fallback budget (#1376), planning-artifact regen, issue integrity (#1616) **incl. the stale-base dup-ID gate against a simulated merge with `main` (#2530)**                                                                                               |
 | `equivalence-gate`                  | `.github/workflows/ci.yml`              | merges the equivalence shards and fails if the shard baseline regresses                                                                                                                                                                                                                      |
-| `check for test262 regressions`     | `.github/workflows/test262-sharded.yml` | full rolling-baseline test262 diff; required so pass→fail regressions cannot merge just because the aggregate hard guards stayed below threshold                                                                                                                                             |
+| `check for test262 regressions`     | `.github/workflows/test262-sharded.yml` | js-host rolling-baseline diff (`scripts/diff-test262.ts`). A **net** gate, not a per-row one: fails when net (improvements − wasm-change regressions) < 0, when any path bucket has > 50 regressions, when the ratio is ≥ 10 % with net < 0 and ≥ 10 regressions, or on any uncatchable-trap growth (#3189). A +5 / −4 diff passes it. Pass→fail rows of a **completed** edition are blocked by `merge shard reports` instead — see "What blocks a pass→fail row" in §3 |
 | `cla-check`                         | `.github/workflows/cla-check.yml`       | self-hosted CLA-acceptance gate (#1660): internal authors and bots are exempt; external humans must have affirmative CLA acceptance recorded                                                                                                                                                 |
 
 ### Optional / informational checks (NOT required to merge)
@@ -60,7 +60,8 @@ A failure here surfaces in the PR Checks tab but does not block merge.
 | Check name                                                 | Workflow file                                 | Why it isn't required                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | ---------------------------------------------------------- | --------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `linear-tests`                                             | `.github/workflows/ci.yml`                    | Runs the linear-backend (`tests/linear-*.test.ts`), C-ABI (`tests/c-abi.test.ts`) and SIMD (`tests/simd*.test.ts`) suites — the 20 files that had no CI job before #2139. **Documented as required until 2026-08-01 while never being in the ruleset (#3934).** `ci.yml`'s own `changes` job already treats it as optional (it skips it on docs-only PRs). If it should gate, promote it deliberately — ruleset and this document together.                                                                                          |
-| `issue-tests`                                              | `.github/workflows/ci.yml`                    | #4448 — runs the `tests/issue-*.test.ts` and `tests/ir/*.test.ts` files the PR itself touches, plus the pinned set in `scripts/select-changed-issue-tests.mjs`. Until this existed, NO check ran that suite at all: `equivalence-gate` runs `tests/equivalence/`, `quality` runs lint/ratchets/named files, the test262 jobs run conformance, `linear-tests` runs the linear subset. A file could therefore be **born red** (#4430's `issue-3529-selector-preclaim` was) or go red later (`6203320a` reddened three of its tests, invisibly, for two days). Not required, and split in two: the **pinned** step is fatal (those files are verified green on main, so a failure is a real regression), the **changed** step is `continue-on-error` because the suite is **not clean on main today** (a #4448 sample found 8 pre-existing failures across `issue-3522-ir-class-compile-once`, `issue-3529-dataflow-outcomes`, `issue-3529-integration-preflight`) and a red non-required check makes the PR `UNSTABLE`, which `auto-enqueue` skips outright (#3878/#3904) — stranding a PR behind an already-red test would be worse than the gap being closed. Grow the pinned list as files are verified green; promote the job to required once the suite is clean. **#3521 R2-T1** added `tests/ir/*.test.ts` to the advisory selector and pinned six R2-named files there (`fnctor-abi`, `fnctor-admission`, `fnctor-argument-projection`, `fnctor-producer`, `inline-small`, `phase3c` — 44.8 s together, measured 2026-09-02); the directory had no selector match at all, which is how `cb733cde37` and `0f42c1fde4` reddened two files unseen. Both of those commits are src-only, so it is the **pinned** half that catches that shape; the advisory half selects on changed *test* paths, so a src-only PR that reddens one of the 13 unpinned green files is still invisible. It stays non-required: `tests/ir/counted-string-append-provenance.test.ts` (13/29, #3518) is still red on main.                                     |
+| `issue-tests`                                              | `.github/workflows/ci.yml`                    | #4448 — runs the `tests/issue-*.test.ts` and `tests/ir/*.test.ts` files the PR itself touches, plus the pinned set in `scripts/select-changed-issue-tests.mjs`. Until this existed, NO check ran that suite at all: `equivalence-gate` runs `tests/equivalence/`, `quality` runs lint/ratchets/named files, the test262 jobs run conformance, `linear-tests` runs the linear subset. A file could therefore be **born red** (#4430's `issue-3529-selector-preclaim` was) or go red later (`6203320a` reddened three of its tests, invisibly, for two days). Not required, and split in two: the **pinned** step is fatal (those files are verified green on main, so a failure is a real regression), the **changed** step is `continue-on-error` because the suite is **not clean on main today** (a #4448 sample found 8 pre-existing failures across `issue-3522-ir-class-compile-once`, `issue-3529-dataflow-outcomes`, `issue-3529-integration-preflight`) and a red non-required check makes the PR `UNSTABLE`, which `auto-enqueue` skips outright (#3878/#3904) — stranding a PR behind an already-red test would be worse than the gap being closed. Grow the pinned list as files are verified green; promote the job to required once the suite is clean. **#3521 R2-T1** added `tests/ir/*.test.ts` to the advisory selector and pinned six R2-named files there (`fnctor-abi`, `fnctor-admission`, `fnctor-argument-projection`, `fnctor-producer`, `inline-small`, `phase3c` — 44.8 s together, measured 2026-09-02); the directory had no selector match at all, which is how `cb733cde37` and `0f42c1fde4` reddened two files unseen. Both of those commits are src-only, so it is the **pinned** half that catches that shape; the advisory half selects on changed *test* paths, so a src-only PR that reddens one of the 13 unpinned green files is still invisible. It stays non-required: `tests/ir/counted-string-append-provenance.test.ts` (13/29, #3518) is still red on main. **#6783** supersedes both halves once `scripts/issue-tests-baseline.json` is seeded: `issue-tests-gate` (next row) runs every one of these files fatally; until then the changed step stays advisory.                                     |
+| `issue-tests-gate` (+ `issue-tests-shard (1..8)`)          | `.github/workflows/ci.yml`                    | #6783 — the **whole** root suite (`tests/*.test.ts` minus `linear-*`/`c-abi`/`simd*` and the test262 chunk/shard runners, plus `tests/ir/*.test.ts`; ~4,400 files) as a per-file known-failures ratchet, `scripts/known-failures-gate.mjs` against `scripts/issue-tests-baseline.json`. Sharded 8 ways like `equivalence-gate` (#6785); a missing, duplicated or cross-commit partial, or a file that reached no report, fails it. **REQUIRED-AFTER-SEEDING** — see §7: until the post-merge bank seeds the baseline it runs in seed mode (prints the proposed red list, exits 0, both gate steps `continue-on-error`), so it cannot make a PR `UNSTABLE`; from the first seeded commit it enforces. |
 | `test262 PR stub — detect relevance`                       | `.github/workflows/test262-pr-stub.yml`       | Decides which workflow owns the three test262-sharded context names on this PR. Not required — but note a non-green NON-required check still blocks merge indirectly by making the PR `UNSTABLE`; see §1's "Reading a PR's check state".                                                                                                                                                                                                                                                                                          |
 | `test262 js-host/standalone shard 1..57` (114 matrix jobs) | `.github/workflows/test262-sharded.yml`       | Individual shard results feed into `merge shard reports`, which is the required check. Individual shard failures are visible for diagnosis but the aggregated signal is what gates.                                                                                                                                                                                                                                                                                                                                               |
 | `differential gate (branch vs main)`                       | `.github/workflows/test262-differential.yml`  | Branch-vs-main HEAD comparison with src-tree-hash caching (#1246). Useful diagnostic signal, but the sharded `merge shard reports` is the authoritative gate. Kept running for visibility into per-PR deltas.                                                                                                                                                                                                                                                                                                                     |
@@ -152,8 +153,10 @@ labelled PRs for misuse.
 
 Permitted bypass scopes:
 
-1. **`ci-status` bot commits** — automated SHA-correlation feed writes
-   under `.claude/ci-status/`. See `.github/workflows/ci-status-feed.yml`.
+1. **`ci-status` bot commits** — _retired._ The SHA-correlation feed under
+   `.claude/ci-status/` and its `ci-status-*.yml` writer workflows were
+   deleted in #6796 (the writers had been `workflow_dispatch`-only stubs
+   since 2026-07); no such commits occur any more.
 2. **Planning artifact regen** — paths under `dashboard/data*`,
    `dashboard/data.js`, `public/graph-data.json`, and `plan/goals/`,
    `plan/issues/sprints/**` when the only diff is the output of
@@ -349,11 +352,12 @@ Two test262 workflows currently run on PRs:
     nothing links the two, so an untested recovery path is indistinguishable
     from a working one until the moment it is needed. When disabling a
     workflow, grep the docs for its name **in the same change**.
-  - The `check for test262 regressions` job is also required. It compares
-    the merged PR report against the baseline and catches full pass→fail
-    regressions even when the inline hard guards inside `merge shard reports`
-    do not trip. It always publishes a context: on the intentional no-shards
-    path it exits cleanly without looking for artifacts.
+  - The `check for test262 regressions` job is also required. It diffs the
+    merged js-host report against the baseline and fails on the **net** rule
+    (thresholds in "What blocks a pass→fail row" below), which is tighter
+    than the inline catastrophic guard's 200. It does not fail on individual
+    pass→fail rows while net ≥ 0. It always publishes a context: on the
+    intentional no-shards path it exits cleanly without looking for artifacts.
 - **`test262-differential.yml` runs in parallel** as a diagnostic signal
   (#1246). Compares branch tip vs. main HEAD with src-tree-hash caching.
   Useful for triaging "which exact tests flipped on my branch?" but the
@@ -481,6 +485,12 @@ Two design points that are easy to get wrong:
   indefinitely on a flaky API — silently, because a skipped push looks exactly
   like a no-op one. The gate still _reports_ that it could not see, via a
   `::warning::` and an explicit `queue=UNKNOWN` in the verdict line.
+- **A gate that did not RUN is not an unknown reading — callers fail CLOSED
+  (#6799).** The script handles its own unknowns and exits `0` (proceed) or
+  `10` (defer). Any other exit is a crash or a missing script, and the calling
+  step fails with an `::error::` and writes `decision=error`; the push step runs
+  only on `decision == 'proceed'`. Until #6799 the callers wrote `proceed` on
+  any non-zero exit, so a broken gate pushed as if it had approved.
 - **Read freshness from the artifact, never from `git log`.** Every promote job
   here is `fetch-depth: 1`, where `git log -1 --format=%ct -- <path>` returns
   **empty rather than erroring**. Empty parses as "unknown age", which fails
@@ -491,7 +501,7 @@ Two design points that are easy to get wrong:
 **Better still: do not push to `main` at all — promote through a PR.** The gate
 above is damage control, and it is damage control with two deliberate holes: the
 staleness floor _overrides_ the queue check once the artifact is old enough, and
-a malfunctioning gate fails open. Both are the right call for a direct push, and
+an unreadable queue fails open. Both are the right call for a direct push, and
 both mean that on a busy day the deferrals accumulate until something forces a
 push into a live merge group anyway. Routing the artifact through a PR removes
 the class instead of bounding it: `main` then only ever advances via the queue,
@@ -625,22 +635,81 @@ Fork-head alone and workflow-touching alone both auto-enqueue fine. The
 underlying cause is **not** established; do not act on a mechanism story.
 See #3584 and the follow-up experiment in #3906.
 
+### The authoritative host oracle is the LINKED harness (#3451 slice 6, oracle v14)
+
+Since 2026-09-17 the host (`gc`) cells of `test262-shard` / `test262-shard-mg`
+run with `TEST262_ORACLE_MODE: linked`, so **every published host verdict comes
+from the linked-harness oracle**: the literal upstream harness prefix is
+compiled once per include-set into a reusable provider module and each test body
+is compiled and statically linked against it, instead of re-compiling the whole
+assembly per row (2.1× faster shard median). Rows are stamped `oracle_lane:
+linked-harness` (or `linked-harness-fallback` when a body could not be linked
+and the honest assembly scored it). `TEST262_RESULT_PREFIX` is unchanged, so
+merge-report, the regression gate, `promote-baseline`, the edition ratchet and
+Pages are wired exactly as before.
+
+- **The honest whole-assembly lane is retained as the scheduled AUDIT lane** —
+  job `test262-honest-audit` (+ `merge honest-audit evidence`), nightly cron or
+  `workflow_dispatch` with `honest_audit=true`. It is never required, never
+  reachable from `merge_group`, and has no `needs:` path into any required check
+  or into `promote-baseline`. Its output is the parity report
+  (`scripts/test262-linked-parity.mjs`), which names which lane is authoritative
+  and which is the audit.
+- **Standalone / linear / wasi are untouched.** The linked oracle is host-only by
+  construction (`ORACLE_LANE === "linked-harness"` requires `IS_HOST_LANE`), so
+  the standalone floor (#1897), the high-water mark (#2097) and the per-edition
+  ratchet (#5314, standalone-only) score the same rows they always did.
+- **Measured before flipping**, five full-corpus two-lane runs (#6486 P3…P3e).
+  The flip is declared on P3e (run 35178155322): 98.15 % verdict agreement,
+  422 pass→fail and 365 fail→pass, **net −57** on the published host number,
+  no uncatchable-trap bucket. The 422 are declared as a #3303
+  `regressions-allow` ceiling in
+  `plan/issues/3451-linked-harness-wasm-separate-compilation.md`, readable only in
+  rebase mode, and still a hard failure if reality exceeds them.
+- **Oracle version 14** is what makes the first post-flip run on `main` a
+  forward re-baseline instead of a cross-lane refusal; `promote-baseline` then
+  re-seeds `loopdive/js2wasm-baselines` at v14 with `oracle_lane:
+  linked-harness`, and every run after that is an ordinary same-lane diff.
+  `scripts/diff-test262.ts` no longer refuses the linked lane unconditionally;
+  it applies the ordinary cross-lane rule (same lane compares; `honest ↔
+  linked-harness` needs a forward bump or `ORACLE_REBASE=1`).
+
+**Local runs stay HONEST.** `scripts/run-test262-vitest.sh` deliberately does
+not set `TEST262_ORACLE_MODE`, so `pnpm run test:262` measures the audit lane.
+To reproduce a CI verdict locally:
+
+```bash
+TEST262_ORACLE_MODE=linked pnpm run test:262        # host lane only; standalone ignores it
+```
+
+Two consequences worth knowing. A local honest verdict that disagrees with CI is
+expected on ~1.85 % of rows and is not automatically a bug — check the parity
+report's buckets (#6492 / #6491 / #6482) before filing. And
+`scripts/validate-test262-baseline.ts` (`pnpm run test:262:validate-baseline`)
+still re-runs sampled rows through the **in-process honest** lane, which has no
+linked mode, so after the flip it will report the flip rows as drift; it is a
+manual tool, not a required check, and closing that gap needs the in-process
+lane to learn the linked oracle.
+
 ### Both lanes are gated — host AND standalone (#1897)
 
 The 57-shard matrix runs **two** test262 targets per chunk: `js-host` (the
 default WasmGC/gc lane) and `standalone` (`--target standalone
 --no-host-imports nativeStrings`, the pure-Wasm lane). `merge shard reports`
 merges **both** sets of shard artifacts and builds both reports, then runs
-three HARD inline guards. Because a failing step inside `merge shard reports`
-fails the required check, all three guards gate the merge queue **without
-any additional required-check name** — no branch-protection change is needed
-to enforce them.
+the HARD inline guards below. Because a failing step inside `merge shard
+reports` fails the required check, every one of them gates the merge queue
+**without any additional required-check name** — no branch-protection change
+is needed to enforce them. (Not listed: the #2097 standalone high-water floor
+and the #1942 compile-time guard.)
 
 | Inline guard                            | Lane           | Fails when                                                                                 | Tolerance                                                |
 | --------------------------------------- | -------------- | ------------------------------------------------------------------------------------------ | -------------------------------------------------------- |
 | Catastrophic regression guard (#1668)   | host           | `Regressions with wasm-hash change` > 200 vs `test262-current.jsonl`                       | high (200) — only a codegen/harness catastrophe trips it |
 | **Standalone regression guard (#1897)** | **standalone** | net (`improvements − wasm-change regressions`) < −15 vs `test262-standalone-current.jsonl` | tight (15) — holds the current standalone floor          |
 | Stale-baseline guard (#1668)            | both           | baselines JSONL > 50 commits behind main HEAD (promotion pipeline broken)                  | n/a                                                      |
+| Per-edition ratchet, completed edition  | standalone     | any non-passing row of a `completed` edition (ES5), minus its `exceptions`                 | none                                                     |
+| Host completed-edition gate (#6786)     | host           | any pass→not-pass row of a `completed` edition vs `test262-current.jsonl`, any net         | none (quarantine + `compile_timeout` not counted)        |
 
 **Why the standalone guard is separate and tighter.** Before #1897 the merge
 queue gated only the host lane. The standalone lane runs in the same matrix
@@ -671,6 +740,40 @@ baseline drift (corpus-version skew, `env::`-import nondeterminism); measured
 real run-to-run standalone drift was 0 regressions / +3 improvements, so 15
 sits well above the noise floor. The threshold is tunable via the
 `STANDALONE_REGRESSION_TOLERANCE` env on the guard step.
+
+### What blocks a pass→fail row (#6786)
+
+Two rules, depending on whether the row's ES edition is **completed**
+(`completed: true` in `scripts/test262-edition-ratchet-baseline.json`; ES5
+today, the only one).
+
+| Row's edition                 | Lane       | Rule                                                                                                                                                                                                                                                 | Where                                                                                                            |
+| ----------------------------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| not completed (ES2015 onward) | js-host    | **net ≥ 0**: fail when improvements − wasm-change regressions < 0; when one path bucket (first 5 segments) has > 50 regressions; when the ratio is ≥ 10 % with net < 0 and ≥ 10 regressions; on any uncatchable-trap growth (#3189). +5 / −4 passes. | `check for test262 regressions`                                                                                  |
+| not completed                 | standalone | net ≥ −15 (#1897), plus the per-edition count ratchet: a ratcheted edition's pass count may not fall                                                                                                                                                 | `merge shard reports`                                                                                            |
+| **completed**                 | standalone | **every row passes**, except the edition's `exceptions` (each with a reason)                                                                                                                                                                         | `merge shard reports` — per-edition ratchet                                                                      |
+| **completed**                 | js-host    | **zero pass→not-pass rows** vs the host baseline, whatever the net, except the edition's `host_exceptions` (each with a reason). The host lane is not at 100 % in ES5, so it holds what passed rather than requiring every row.                      | `merge shard reports` — `Host completed-edition per-row gate (#6786)` (`test262-edition-ratchet.ts --host-lane`) |
+
+What the js-host rules do **not** count:
+
+- **The noise quarantine.** `scripts/test262-host-noise-quarantine.json` lists
+  932 exact paths that changed status between two same-SHA, pool-4 canary
+  runs of the host lane (#3426; 109 of them changed in both). Their
+  transitions are excluded from the net gate's arithmetic and from the
+  completed-edition gate, and are still printed as QUARANTINED. 150 of the 932
+  are ES5. The standalone lane never reads this file.
+- **pass → compile_timeout**, the runner-load flake (#1192). The compile-time
+  guard (#1942) owns real compile slowdowns.
+- The net gate also drops wasm-identical flips (same `wasm_sha`) and rows a
+  PR names under `regressions-allow: tests:` (#3649). The completed-edition
+  gate honours neither.
+
+Both completed-edition gates **refuse (exit 2) rather than check nothing**: no
+test262 checkout to classify rows, a missing or empty results or baseline
+JSONL, or a run with no row of a completed edition all fail the required check.
+Neither banks a baseline from a partial run, and neither can lower a floor;
+adding an exception or clearing `completed` is a reviewed hand edit to the
+baseline JSON.
 
 ### Uncatchable-trap growth ratchet (#3189)
 
@@ -865,11 +968,69 @@ gh api repos/loopdive/js2wasm/rules/branches/main \
 | `merge shard reports`               | `test262-sharded.yml` | semantic conformance, **both lanes**: aggregates the 57 sharded test262 runs (host + standalone) into a single pass/fail. Authoritative gate via the merge queue (build/merge up to 5 concurrently since #1956; predecessor-group diffing preserves per-PR attribution, so no ALLGREEN hiding) — each PR validated on its own merge_group ref. Hosts the host catastrophic guard (#1668), the standalone net-regression guard (#1897), and the stale-baseline guard (#1668) — see §3. |
 | `quality`                           | `ci.yml`              | source quality regressions: lint, formatting, typecheck failures, IR fallback budget exceeded (#1376), planning-artifact regeneration, **and the dogfood emitted-binary validation floor (#5336)**. Also runs the "origin/main is merged into branch" pre-check that catches stale PR branches.                                                                                                                                                                                       |
 | `equivalence-gate`                  | `ci.yml`              | semantic equivalence regressions across the sharded equivalence suite after the shard partials are merged.                                                                                                                                                                                                                                                                                                                                                                            |
-| `check for test262 regressions`     | `test262-sharded.yml` | full rolling-baseline test262 diff, including pass→fail changes that stay below the inline catastrophic thresholds.                                                                                                                                                                                                                                                                                                                                                                   |
+| `check for test262 regressions`     | `test262-sharded.yml` | js-host net gate (net ≥ 0, ≤ 50 per bucket, ratio, trap growth) below the inline catastrophic threshold. Not per-row: pass→fail rows of a completed edition are blocked by `merge shard reports` (§3, #6786).                                                                                                                                                                                                                                                                         |
 | `cla-check`                         | `cla-check.yml`       | CLA acceptance for external contributors while preserving internal and bot exemptions.                                                                                                                                                                                                                                                                                                                                                                                                |
 
 The CODEOWNERS file gates **who** can approve. The required checks gate
 **what** must pass. Both must clear for a PR to merge.
+
+### REQUIRED-AFTER-SEEDING: `issue-tests-gate` (#6783) — not yet a seventh context
+
+`issue-tests-gate` (`ci.yml`) is the known-failures ratchet over the ~4,400
+root test files no required check ran (`tests/*.test.ts` minus the linear and
+test262-runner files, plus `tests/ir/`). It scores each file red or green
+against `scripts/issue-tests-baseline.json` — the files red on main — so it can
+be required while main still carries red files:
+
+- a file green on the baseline and red now fails it (a test-assertion failure
+  or a file-level one: import, syntax or collect error, a worker that dies even
+  when the file runs alone);
+- a baseline file that passes now is reported **newly fixed** and leaves the
+  baseline post-merge;
+- an `it.fails` test that unexpectedly passes always fails it (#3340);
+- a run it cannot score fails it: a shard partial missing, duplicated or from a
+  different commit, or a file on disk that reached no shard's report.
+
+A status change against the baseline only counts once a serial re-run of that
+file reproduces it, so a flaky file neither fails a PR nor banks a premature
+fix.
+
+**Rollout is two-phase, because nothing can measure the suite before CI does.**
+
+1. **Seed.** With no baseline file the gate runs in seed mode: it prints the
+   full red list as the proposed baseline and exits 0, and both of its gate
+   steps are `continue-on-error`, so a not-yet-required job can never make a PR
+   `UNSTABLE`. The post-merge bank in `test262-sharded.yml` promote-baseline
+   (`known-failures-gate.mjs --update-on-decrease --seed-if-missing`, run on the
+   re-anchored tip like the other banked baselines) writes the file from a
+   complete merged run of the landed commit — and refuses while that run has an
+   integrity failure or an unexpected pass. It needs the merged partials
+   `issue-tests-gate` keeps as `issue-tests-partials-<sha>`; a promote that
+   finds none (the shards are slower than it), or that defers its main commit
+   while the queue is busy (#1951), simply leaves the bank to a later promote.
+2. **Enforce.** From the first seeded commit both gate steps are fatal. An
+   admin then adds the context to the ruleset with
+   `scripts/enable-branch-protection.sh`, which appends its
+   `REQUIRED_AFTER_SEEDING` list only when the baseline file exists. Until that
+   is applied the live ruleset still has the six contexts above; the job's red
+   result keeps a regressing PR out of the queue all the same, because a red
+   check makes it `UNSTABLE`.
+
+**Never edit the baseline in a PR** — main's bank is its only writer. A PR that
+must leave a file red excuses it in its own `plan/issues/*.md` frontmatter, one
+item per file with an ISO date and a reason (items without both grant nothing):
+
+```yaml
+known-failures-allow:
+  - "tests/issue-1234.test.ts 2026-10-02 asserts the pre-#1234 shape; rewritten in #1240"
+```
+
+Because the baseline lags main, the gate honours allowances from every issue
+file changed since the commit the baseline was measured at (`measuredAt`), not
+only the PR's own, and the bank adds an allowed file once a measured run sees
+it red. The same allowance is the recovery path for the one race the bank
+cannot see: a PR that re-breaks a file another PR just fixed, before the fix
+was banked.
 
 ### Dogfood emitted-binary validation floor (#5336) — a step, not a seventh context
 

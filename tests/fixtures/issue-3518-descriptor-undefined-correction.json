@@ -1,0 +1,51 @@
+{
+  "base": "65448565c7358581ca3e229fd3ce7537fae4b41f",
+  "records": [
+    {
+      "path": "src/codegen/object-runtime-descriptors.ts",
+      "beforeSHA256": "c82cf243a37d855eca73738a0b068d01c83c1906489e7bdec903a752f6506030",
+      "beforeGitBlob": "e75d776789790b55971e1b3ebd50ac26b3983327",
+      "afterSHA256": "a79690dd2afa20c837c7e94ed9fd19e119bc497c9dcc0b6cd091552a62881590",
+      "spans": [
+        {
+          "before": "import { emitWasiErrorConstructor } from \"./registry/error-types.js\";\nimport { addStringConstantGlobal, ensureExnTag } from \"./registry/imports.js\";\nimport { addUnionImportsViaRegistry } from \"./shared.js\";\nimport { ensureAnyValueType, undefinedExternInstrs, undefinedSingletonActive } from \"./any-helpers.js\";\nimport { emitSelfHostedFunc } from \"./stdlib-selfhost.js\";\nimport { SELF_HOSTED_OBJECT_RUNTIME } from \"../stdlib/object-runtime.js\";\nimport { getOrRegisterVecBaseType } from \"./registry/types.js\";\n",
+          "after": "import { emitWasiErrorConstructor } from \"./registry/error-types.js\";\nimport { addStringConstantGlobal, ensureExnTag } from \"./registry/imports.js\";\nimport { addUnionImportsViaRegistry } from \"./shared.js\";\nimport {\n  canonicalUndefinedExternInstrs,\n  ensureAnyValueType,\n  undefinedExternInstrs,\n  undefinedSingletonActive,\n} from \"./any-helpers.js\";\nimport { emitSelfHostedFunc } from \"./stdlib-selfhost.js\";\nimport { SELF_HOSTED_OBJECT_RUNTIME } from \"../stdlib/object-runtime.js\";\nimport { getOrRegisterVecBaseType } from \"./registry/types.js\";\n",
+          "beforeOffset": 2381,
+          "afterOffset": 2381
+        },
+        {
+          "before": "          ...(dpValueClosureArm ?? [{ op: \"local.get\", index: 0 }, { op: \"return\" }]),\n        ],\n      },\n      ...buildOrdinaryObjectDataDescriptorBody(s4DescriptorResources),\n    ];\n    registerNative(\n      \"__defineProperty_value\",\n",
+          "after": "          ...(dpValueClosureArm ?? [{ op: \"local.get\", index: 0 }, { op: \"return\" }]),\n        ],\n      },\n      ...buildOrdinaryObjectDataDescriptorBody(s4DescriptorResources, [\n        ...canonicalUndefinedExternInstrs(ctx),\n        { op: \"any.convert_extern\" },\n      ]),\n    ];\n    registerNative(\n      \"__defineProperty_value\",\n",
+          "beforeOffset": 18323,
+          "afterOffset": 18364
+        }
+      ]
+    },
+    {
+      "path": "src/runtime/wasmgc/values/ordinary-object-descriptor-data.ts",
+      "beforeSHA256": "0a3efa064d7aeb9114254cdbde2c5e0b595b6dba0846657fba00714fe81258da",
+      "beforeGitBlob": "27215b7c452008a068c407055061ec24b9881d64",
+      "afterSHA256": "e25ec3e181dea073b505498fb8a85ddd573c0f478b84affbce9ce737b0dc35a8",
+      "spans": [
+        {
+          "before": "}\n\n/** Ordinary arm only. The caller has put the real object/bag in local 5. */\nexport function buildOrdinaryObjectDataDescriptorBody(d: OrdinaryDescriptorResources): Instr[] {\n  const { objectTypeIdx, propEntryTypeIdx, objFindIdx, objInsertIdx, objGrowIdx } = d;\n  const {\n    writable: FLAG_WRITABLE,\n",
+          "after": "}\n\n/** Ordinary arm only. The caller has put the real object/bag in local 5. */\nexport function buildOrdinaryObjectDataDescriptorBody(\n  d: OrdinaryDescriptorResources,\n  undefinedAnyValue: readonly Instr[],\n): Instr[] {\n  const { objectTypeIdx, propEntryTypeIdx, objFindIdx, objInsertIdx, objGrowIdx } = d;\n  const {\n    writable: FLAG_WRITABLE,\n",
+          "beforeOffset": 7533,
+          "afterOffset": 7533
+        },
+        {
+          "before": "            { op: \"local.get\", index: 8 },\n            { op: \"struct.set\", typeIdx: propEntryTypeIdx, fieldIdx: 2 },\n            // [[Value]]: specified → overwrite; converting accessor→data →\n            // undefined (null slot); otherwise PRESERVE the current value.\n            ...descriptorFlagBit(9, HOST_HAS_VALUE),\n            {\n              op: \"if\",\n",
+          "after": "            { op: \"local.get\", index: 8 },\n            { op: \"struct.set\", typeIdx: propEntryTypeIdx, fieldIdx: 2 },\n            // [[Value]]: specified → overwrite; converting accessor→data →\n            // canonical undefined; otherwise PRESERVE the current value.\n            ...descriptorFlagBit(9, HOST_HAS_VALUE),\n            {\n              op: \"if\",\n",
+          "beforeOffset": 12056,
+          "afterOffset": 12100
+        },
+        {
+          "before": "                  then: [\n                    { op: \"local.get\", index: 11 },\n                    { op: \"ref.as_non_null\" },\n                    { op: \"ref.null\", typeIdx: NONE_HEAP },\n                    { op: \"struct.set\", typeIdx: propEntryTypeIdx, fieldIdx: 1 },\n                  ],\n                },\n",
+          "after": "                  then: [\n                    { op: \"local.get\", index: 11 },\n                    { op: \"ref.as_non_null\" },\n                    ...structuredClone(undefinedAnyValue),\n                    { op: \"struct.set\", typeIdx: propEntryTypeIdx, fieldIdx: 1 },\n                  ],\n                },\n",
+          "beforeOffset": 12934,
+          "afterOffset": 12976
+        }
+      ]
+    }
+  ]
+}

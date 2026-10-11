@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Copies the measurement scripts into raw/ as .txt receipts.
+cd "$(dirname "$0")/.."
+for f in probe-boundary probe-native probe-wat probe-trap probe-6931 sha-corpus wat-funcs; do
+  cp ".tmp/$f.mts" ".tmp/6931-out/raw/script-$f.mts.txt"
+done
+for f in ab run-related run-heavy run-gates related-tests copy-scripts; do
+  cp ".tmp/$f.sh" ".tmp/6931-out/raw/script-$f.sh.txt"
+done
+cp .tmp/sha-compare.mjs .tmp/6931-out/raw/script-sha-compare.mjs.txt
+ls .tmp/6931-out .tmp/6931-out/raw | wc -l

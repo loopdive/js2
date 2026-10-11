@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { ts } from "../../ts-api.js";
 import type { CodegenContext } from "../context/types.js";
+import { readEnv } from "../../env.js";
 
 function isIgnoredArgumentsIdentifier(node: ts.Identifier): boolean {
   const parent = node.parent;
@@ -170,7 +171,7 @@ export function shouldRegisterArgumentsWithHost(
 ): boolean {
   return (
     reachesDirectEval ||
-    process.env.JS2WASM_ELIDE_PRIVATE_ARGUMENTS_REGISTRATION === "0" ||
+    readEnv("JS2WASM_ELIDE_PRIVATE_ARGUMENTS_REGISTRATION") === "0" ||
     bodyRequiresArgumentsHostRegistration(ctx, body)
   );
 }

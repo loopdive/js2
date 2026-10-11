@@ -32,7 +32,10 @@
 ## Lint suppressions — this project uses BIOME, not ESLint
 
 10. [ ] If you suppressed a lint rule, verify the suppression actually works:
-        `npx biome lint src tests scripts --diagnostic-level=error`
+        `pnpm run lint` (it passes `--max-diagnostics=none`; a bare
+        `biome lint … --diagnostic-level=error` without that flag can hide every
+        error behind Biome's 20-diagnostic cap, which the repo's thousands of
+        `noExplicitAny` warnings always fill — #6784)
 
 Two ways a suppression silently does nothing (both cost a CI cycle on #3603):
 

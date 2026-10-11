@@ -8,6 +8,7 @@ import {
   emitBuiltinNamespaceObject,
   isSupportedBuiltinNamespace,
 } from "./builtin-static-globals.js";
+import { isRuntimeEvalProviderAbsent } from "./expressions/standalone-dynamic-code.js";
 import { emitStandaloneFunctionIntrinsicValue } from "./function-intrinsic-carrier.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
@@ -48,6 +49,14 @@ const STANDALONE_GLOBAL_CONSTRUCTOR_NAMES = [
   "Number",
   "Date",
   "RegExp",
+  // (#6642 S61 link 4 / S62) `globalThis.BigInt` was absent, so the
+  // `void 0 !== globalThis.BigInt` guard every BigInt-polyfilling library uses
+  // took the fallback branch and a JSBI carrier reached user code as an Array
+  // subclass. Seeded together with its `[[Call]]` arm
+  // (`CALLABLE_WRAPPER_CTORS`) and the §21.2.3.3 `toString` route
+  // (`bigint-primitive-to-string.ts`) — alone, any one of the three turns a
+  // wrong value into a thrown TypeError, which is why S60/S61 held them back.
+  "BigInt",
   "Error",
   "EvalError",
   "RangeError",
@@ -55,6 +64,47 @@ const STANDALONE_GLOBAL_CONSTRUCTOR_NAMES = [
   "SyntaxError",
   "TypeError",
   "URIError",
+  "Map",
+  "Set",
+  "WeakMap",
+  "WeakSet",
+] as const;
+
+/**
+ * (#6651 lane X1) The four names whose realm-global property was MISSING while
+ * their bare-identifier read already answered a real carrier.
+ *
+ * Probed on `origin/main` @ `0d119cbcfb`, one standalone module reading
+ * `{ X: globalThis.X }` for 21 builtin names: 17 answered a real carrier and
+ * exactly `Symbol` / `ArrayBuffer` / `DataView` / `Promise` answered null,
+ * while `Symbol`, `{ S: Symbol }.S` and `{ S: Symbol }.S.iterator ===
+ * Symbol.iterator` all already worked. So the carrier was never missing — only
+ * the realm-object property was. All four are in
+ * `BUILTIN_CONSTRUCTOR_IDENTITY_NAMES`, so the value seeded is the SAME
+ * `__builtin_ctor_<Name>` singleton the bare read produces: this closes a split
+ * between two spellings of one intrinsic, it does not mint a second.
+ *
+ * Kept in a SEPARATE list because it is seeded even in a runtime-eval module,
+ * which the list above is not — see `appendStandaloneGlobalConstructorSeeds`.
+ */
+const STANDALONE_GLOBAL_EVAL_SAFE_CONSTRUCTOR_NAMES = ["Symbol", "ArrayBuffer", "DataView", "Promise"] as const;
+
+/**
+ * (#6651 U1) Names from the gated list that are ALSO seeded in a runtime-eval
+ * module. None is `%Function%` or reachable from its carrier, and each already
+ * resolves to its `__builtin_ctor_<Name>` singleton through a bare read; the
+ * gate only left `$262.createRealm().global.<Name>` `undefined` in every
+ * test262 module (all are eval modules), hiding the `proto-from-ctor-realm`
+ * rows behind an early TypeError (lane S1, 2026-09-26: 23 rows unblocked, 0
+ * status changes). Appended after the four above, so a non-eval module's seed
+ * order — and bytes — are unchanged.
+ */
+const STANDALONE_GLOBAL_EVAL_MODULE_EXTRA_NAMES = [
+  "String",
+  "Boolean",
+  "Number",
+  "Date",
+  "RegExp",
   "Map",
   "Set",
   "WeakMap",
@@ -72,8 +122,27 @@ export function appendStandaloneGlobalConstructorSeeds(
   // native global object is itself being built recursively expands Function
   // parity modules and can exhaust codegen's stack. The ES5 reflection row is
   // eval-free, so its concrete constructor-name carriers still take this path.
-  if ((ctx.runtimeEvalBoundaryPlan?.sites.length ?? 0) > 0) return;
-  for (const name of STANDALONE_GLOBAL_CONSTRUCTOR_NAMES) {
+  //
+  // (#6651 lane X1) That hazard is about `%Function%` parity and the callable
+  // wrapper ctors the eval boundary re-mints; it does not reach the four names
+  // below, which the boundary never builds and which are not reachable from
+  // `%Function%`'s carrier. They are therefore seeded on BOTH sides of this
+  // gate — the test262 corpus needs exactly that, since every module carrying
+  // the `$262` host-object shim also carries its `evalScript`, so it is
+  // always a runtime-eval module and the early return below always fires.
+  //
+  // (#6711) With NO provider linked (`runtimeEvalProvider: false`, the
+  // zero-import npm-compat lane) the boundary builds nothing: every
+  // `%Function%` read already takes the self-contained carrier (#6683), and
+  // `Function('return this')()` is lodash's realm-object idiom. Gating the seed
+  // there left `globalThis.Function` / `.TypeError` / `.Date` / ... undefined,
+  // so lodash's `var Function = context.Function; Function.prototype` threw
+  // during module init.
+  const evalModule = (ctx.runtimeEvalBoundaryPlan?.sites.length ?? 0) > 0 && !isRuntimeEvalProviderAbsent(ctx);
+  const names: readonly string[] = evalModule
+    ? [...STANDALONE_GLOBAL_EVAL_SAFE_CONSTRUCTOR_NAMES, ...STANDALONE_GLOBAL_EVAL_MODULE_EXTRA_NAMES]
+    : [...STANDALONE_GLOBAL_CONSTRUCTOR_NAMES, ...STANDALONE_GLOBAL_EVAL_SAFE_CONSTRUCTOR_NAMES];
+  for (const name of names) {
     fctx.body.push({ op: "local.get", index: objectLocal });
     addStringConstantGlobal(ctx, name);
     fctx.body.push(...stringConstantExternrefInstrs(ctx, name));

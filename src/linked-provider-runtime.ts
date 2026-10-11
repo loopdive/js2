@@ -13,16 +13,45 @@ import {
   type ProviderManifestV1,
 } from "./provider-manifest.js";
 import {
+  beginLinkedProject,
   buildCompiledImports as buildCompiledImportsRuntime,
   registerLinkedConsumerModule,
   registerLinkedProviderModule,
   wrapLinkedProviderValue,
+  type BuildImportsOptions,
 } from "./runtime.js";
+
+/**
+ * (#6475) The embedder's host context for a provider's own adapter.
+ *
+ * A provider's `env` is rebuilt rather than inherited, because the adapter
+ * carries per-instance callback/host state that must not be shared with the
+ * consumer. But "rebuild the wrappers" was implemented as "rebuild them with NO
+ * host context", which silently also discarded the two things that are properly
+ * the EMBEDDER's, not the instance's: the host dependencies (`console`) and the
+ * realm the wrappers resolve intrinsics from (`options.globalSandbox`). In the
+ * test262 runner, which installs a fresh per-row realm, that made the provider's
+ * `TypeError` a different constructor object than the consumer's — same name,
+ * not `===`, so `assert.throws(TypeError, …)` evaluated inside the provider
+ * rejected a genuine consumer-thrown native error — and sent the provider's
+ * `print` to the real console instead of the row's capturing proxy, which is
+ * why the `$DONE` async completion marker was never observed (#6476).
+ *
+ * Precedence is unchanged: provider-built `env` still wins over the inherited
+ * root `env`. This supplies the INPUTS that build it.
+ */
+export interface LinkedProviderHost {
+  /** Host dependencies, as passed to `buildImports` (e.g. `{ console }`). */
+  deps?: Record<string, unknown>;
+  /** Import-build options, notably `globalSandbox` (the embedder's realm). */
+  options?: BuildImportsOptions;
+}
 
 // (#5364) Re-exported so the ONE test262 instantiate seam
 // (`scripts/test262-import-object.mjs`) can retire the previous row's project
 // through the SAME runtime copy that `instantiateLinkedProviders` registers
-// into. The in-process lanes reach that copy by dynamically importing THIS
+// into. (#6790) No other caller needs it: each `instantiateLinkedProviders`
+// call opens its own project. The in-process lanes reach that copy by dynamically importing THIS
 // module; the sharded worker passes `scripts/runtime-bundle.mjs` instead. Both
 // therefore need the reset on the same object as the wiring — a reset in the
 // other copy is the silent-wrong-copy bug #5353 finding 3 describes.
@@ -142,6 +171,7 @@ function decodeLinkedProviderManifest(artifact: LinkedModuleArtifact): ProviderM
 function buildProviderImportObject(
   artifact: LinkedModuleArtifact,
   overrides?: WebAssembly.Imports,
+  host?: LinkedProviderHost,
 ): WebAssembly.Imports {
   const manifest = decodeLinkedProviderManifest(artifact);
   const metadata = manifest.providerMetadata;
@@ -162,7 +192,7 @@ function buildProviderImportObject(
     capabilityProviderDiagnostics: metadata.capabilityProviderDiagnostics,
     exportBoundaryPolicies: metadata.exportBoundaryPolicies,
   } as CompileResult;
-  const built = buildCompiledImportsRuntime(providerResult);
+  const built = buildCompiledImportsRuntime(providerResult, host?.deps, host?.options);
   const imports = {
     // Provider-owned wrappers must win over inherited root wrappers: the
     // adapter carries per-instance callback/host state.
@@ -216,7 +246,53 @@ function wireProviderInstance(
     if (typeof init !== "function") {
       throw new Error(`Linked provider ${artifact.namespace} is missing ${manifest.initExport}`);
     }
-    (init as () => void)();
+    try {
+      (init as () => void)();
+    } catch (error) {
+      throw renderedProviderInitError(artifact, providerImports, instance, error) ?? error;
+    }
+  }
+}
+
+/**
+ * (#6748) Name a provider's module-init throw. It escapes before the CONSUMER
+ * instance exists, so an embedder holding only the consumer cannot read a
+ * natively-thrown payload (a WasmGC struct no host can stringify): every
+ * regime Temporal row collapsed onto "wasm exception during module init".
+ * The PROVIDER's own `__exn_render_*` exports (#2962) can read it; when they
+ * render something, the throw becomes an `Error` naming the provider and the
+ * rendered text, with the original exception as `cause`. A payload the
+ * provider cannot render (no exports — e.g. a host-lane provider, whose
+ * payloads are real JS values — or an empty render) rethrows unchanged.
+ */
+interface WasmException {
+  getArg(tag: unknown, index: number): unknown;
+}
+
+function renderedProviderInitError(
+  artifact: LinkedModuleArtifact,
+  providerImports: WebAssembly.Imports,
+  instance: WebAssembly.Instance,
+  error: unknown,
+): Error | undefined {
+  const Exception = (WebAssembly as unknown as { Exception?: abstract new (...args: never[]) => WasmException })
+    .Exception;
+  if (!Exception || !(error instanceof Exception)) return undefined;
+  const exports = instance.exports as Record<string, unknown>;
+  const prepare = exports.__exn_render_prepare;
+  const char = exports.__exn_render_char;
+  if (typeof prepare !== "function" || typeof char !== "function") return undefined;
+  const tag = (providerImports as Record<string, Record<string, unknown> | undefined>).env?.__exn ?? exports.__exn_tag;
+  if (!tag) return undefined;
+  try {
+    const payload = error.getArg(tag, 0);
+    const length = (prepare as (value: unknown) => number)(payload);
+    if (typeof length !== "number" || length <= 0 || length > 65536) return undefined;
+    let text = "";
+    for (let i = 0; i < length; i++) text += String.fromCharCode((char as (index: number) => number)(i));
+    return new Error(`Linked provider ${artifact.namespace} threw during module init: ${text}`, { cause: error });
+  } catch {
+    return undefined;
   }
 }
 
@@ -229,13 +305,21 @@ function wireProviderInstance(
 export function instantiateLinkedProviders(
   artifacts: readonly LinkedModuleArtifact[],
   rootImports: WebAssembly.Imports,
+  // (#6475) Absent for every embedder that has no realm of its own; the
+  // provider then builds against the ambient one exactly as before.
+  host?: LinkedProviderHost,
 ): ReadonlyMap<string, WebAssembly.Exports> {
   const providerExports = new Map<string, WebAssembly.Exports>();
   // (#5226) The consumer's own import object needs the tag too — it is the
-  // module that CATCHES what a provider throws.
-  if (artifacts.length > 0) installSharedExceptionTag(rootImports);
+  // module that CATCHES what a provider throws. (#6790) And this call is one
+  // linked project: its modules decode only each other's structs, so a second
+  // project in the same process needs no registry reset from its caller.
+  if (artifacts.length > 0) {
+    installSharedExceptionTag(rootImports);
+    beginLinkedProject(rootImports);
+  }
   for (const artifact of artifacts) {
-    const providerImports = buildProviderImportObject(artifact, rootImports);
+    const providerImports = buildProviderImportObject(artifact, rootImports, host);
     installSharedExceptionTag(providerImports);
     for (const dependency of artifact.dependencies) {
       const exports = providerExports.get(dependency);
@@ -250,7 +334,7 @@ export function instantiateLinkedProviders(
     // plain FUNCTIONS never reaches `wrapLinkedProviderValue` (the loop below
     // skips `kind === "function"`), yet its `__extern_get` is exactly where a
     // consumer-minted argument arrives undecodable.
-    registerLinkedProviderModule(rawExports);
+    registerLinkedProviderModule(rawExports, rootImports);
     const exposedExports: Record<string, any> = { ...rawExports };
     // (#5383 S2d) A provider compiled for a NON-JavaScript environment
     // (`--target standalone`) hands its values to a WASM consumer, not to a
@@ -262,7 +346,18 @@ export function instantiateLinkedProviders(
     // Measured: with the mirror in place the consumer sees an object with zero
     // own keys and every read `undefined`. Passing the raw struct through is
     // what lets the #5383 S2d boundary terminals decode it.
-    const noHostMirror = manifest.providerMetadata.targetProfile?.environment !== "javascript";
+    //
+    // (#6748) A provider lowered with the native REGIME in a JavaScript
+    // environment is the same case: its consumer is a regime module too (the
+    // linker compiles every provider with the consumer's options), whose
+    // dynamic reads already route a missed receiver to the provider's
+    // `__js2wasm_link_*` terminals — both halves are `ctx.standalone` and the
+    // provider is `exportsConsumedByWasm`. A host mirror there handed the
+    // consumer a JS proxy its native MOP could only treat as an unadmitted
+    // foreign object: `new Temporal.PlainTime()` read "value is not a
+    // constructor" on every regime row.
+    const profile = manifest.providerMetadata.targetProfile;
+    const noHostMirror = profile?.environment !== "javascript" || profile?.nativeRegime === true;
     for (const boundary of Object.values(manifest.exportBoundaries)) {
       if (boundary.kind === "function" || noHostMirror) continue;
       const getter = rawExports[boundary.field];
@@ -285,7 +380,18 @@ export function wireCompiledInstance(
   // lone module must keep the registry empty so every read stays byte-identical.
   linked = false,
 ): void {
-  const setInstance = (imports as { __setInstance?: (instance: WebAssembly.Instance) => void }).__setInstance;
-  setInstance?.(instance);
-  if (linked) registerLinkedConsumerModule(instance.exports as Record<string, Function>);
+  // (#6482) `buildImports` publishes the consumer's lifecycle hook as
+  // `setInstance`; only provider import objects carry the `__setInstance`
+  // alias (see `buildProviderImportObject`). Reading the alias alone left every
+  // in-process linked lane (smoke script, issue-3451/6475/6476/6477 suites)
+  // running `__module_init` with `getExports()` undefined — the vec
+  // defineProperty path then bailed to the sidecar and the provider read the
+  // stale element. The sharded worker was unaffected because it calls
+  // `importObj.setInstance` itself before `__module_init`.
+  const hooks = imports as {
+    __setInstance?: (instance: WebAssembly.Instance) => void;
+    setInstance?: (instance: WebAssembly.Instance) => void;
+  };
+  (hooks.__setInstance ?? hooks.setInstance)?.(instance);
+  if (linked) registerLinkedConsumerModule(instance.exports as Record<string, Function>, imports);
 }

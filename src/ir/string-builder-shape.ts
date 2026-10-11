@@ -26,6 +26,7 @@
  */
 import { forEachChild, ts } from "../ts-api.js";
 import { countedStringAppendCandidateLoops, type IrCountedStringAppendPlan } from "./analysis/counted-string-append.js";
+import { readEnv } from "../env.js";
 
 function isFunctionScopeBoundary(node: ts.Node): boolean {
   return (
@@ -110,7 +111,7 @@ export function stringBuilderForcedLegacy(
   const compatibilityCandidates = countedStringAppendCandidateLoops(body);
   if (!planCountedAppend) {
     return (
-      (process.env.JS2WASM_IR_STRING_BUILDER === "0" && containsStringBuilderLoopShape(body)) ||
+      (readEnv("JS2WASM_IR_STRING_BUILDER") === "0" && containsStringBuilderLoopShape(body)) ||
       compatibilityCandidates.length > 0
     );
   }
@@ -126,7 +127,7 @@ export function stringBuilderForcedLegacy(
   };
   visit(body);
 
-  if (process.env.JS2WASM_IR_STRING_BUILDER === "0") {
+  if (readEnv("JS2WASM_IR_STRING_BUILDER") === "0") {
     return containsStringBuilderLoopShape(body) || compatibilityCandidates.length > 0 || exactPlans.size > 0;
   }
 

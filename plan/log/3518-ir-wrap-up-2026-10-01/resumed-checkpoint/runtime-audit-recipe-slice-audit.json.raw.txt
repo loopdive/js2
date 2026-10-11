@@ -1,0 +1,1485 @@
+{
+  "status": "Independent static implementability audit; no tests/compiler/checker",
+  "writerReceipt": {
+    "path": "/private/tmp/js2-ir-source-contracts-writer-20261001/tests/helpers/ir-runtime-contract-evolution.json",
+    "sha256Before": "5fa8434031d44258392be13d31067829cb954b8bd8d1e5cc69a8b8ae039864c5",
+    "sha256After": "5fa8434031d44258392be13d31067829cb954b8bd8d1e5cc69a8b8ae039864c5",
+    "drift": false
+  },
+  "closedRawInputs": 27,
+  "spans": 34,
+  "liveSlices": 84,
+  "abiFunctionSlices": 1,
+  "literalScaffoldPieces": 187,
+  "fullInversePinsAndSyntax": true,
+  "fullForwardBytes": true,
+  "rawDrift": [],
+  "errors": [],
+  "rows": [
+    {
+      "path": "src/runtime/contracts/provider-policy.ts",
+      "ordinal": 0,
+      "currentStart": 683,
+      "currentEnd": 1029,
+      "currentStartLine": 14,
+      "replacementSha256": "67f25d2e242f8d570f2a15d9b53b513a78817521ee05b5ac197c28f1bc5c282c",
+      "literalKinds": [
+        "whitespace",
+        "comment"
+      ],
+      "live": [
+        {
+          "path": "src/runtime/contracts/provider-policy.ts",
+          "start": 699,
+          "end": 738,
+          "bytes": 39,
+          "sha256": "e7b832be6f597be44912ae22b545532300eadd3612ff31cd709be32cf971c4ad",
+          "gitBlob": "90526d91439fa1a1e933437a10ea6e4939b26da9",
+          "startLine": 16,
+          "endLine": 16,
+          "text": "export interface NumberBoundaryPolicy {",
+          "owner": null
+        },
+        {
+          "path": "src/runtime/contracts/provider-policy.ts",
+          "start": 843,
+          "end": 865,
+          "bytes": 22,
+          "sha256": "1202db19e3ef3372839fe32cb68fb52fa5a97473b8377a3aee6c613ece73d53b",
+          "gitBlob": "a370a49af3add96f1d2f4e9785a30d24209332b6",
+          "startLine": 18,
+          "endLine": 18,
+          "text": "readonly box: \"host\" |",
+          "owner": null
+        },
+        {
+          "path": "src/runtime/contracts/provider-policy.ts",
+          "start": 877,
+          "end": 1028,
+          "bytes": 151,
+          "sha256": "a14107e376b05a4e892b6fe4f9558da94f7a54e1e1456c767b359f44e71e992d",
+          "gitBlob": "e0012feda0695e90473ed58ee6dba757df2c492b",
+          "startLine": 18,
+          "endLine": 21,
+          "text": "\"unsupported\";\n  /** `host` selects `env.__unbox_number`; `native` the union-native function. */\n  readonly unbox: \"host\" | \"native\" | \"unsupported\";\n}",
+          "owner": null
+        }
+      ]
+    },
+    {
+      "path": "src/runtime/contracts/provider-policy.ts",
+      "ordinal": 1,
+      "currentStart": 1211,
+      "currentEnd": 1652,
+      "currentStartLine": 26,
+      "replacementSha256": "a4cca2c031c2881e96723c2f0378b7cac0cafd4d400e51e95bf7df5078defc6c",
+      "literalKinds": [
+        "whitespace",
+        "comment"
+      ],
+      "live": [
+        {
+          "path": "src/runtime/contracts/provider-policy.ts",
+          "start": 1213,
+          "end": 1238,
+          "bytes": 25,
+          "sha256": "95c16ab6b67438d0ed4d172bd4f4ec9322c6e97ab7d6fa304c0f3ed0dbcd262f",
+          "gitBlob": "8515903ab51c90b17eb9e281ffe4277da5414035",
+          "startLine": 26,
+          "endLine": 27,
+          "text": "unbox: \"unsupported\",\n});",
+          "owner": null
+        },
+        {
+          "path": "src/runtime/contracts/provider-policy.ts",
+          "start": 1340,
+          "end": 1380,
+          "bytes": 40,
+          "sha256": "e17164baf082094f3f0719696c88d86bf997adf5139fe199575aa69defc9d9c5",
+          "gitBlob": "c5a5afe265294894d1a9ac1590f6d463b85da2a8",
+          "startLine": 30,
+          "endLine": 30,
+          "text": "export interface BooleanBoundaryPolicy {",
+          "owner": null
+        },
+        {
+          "path": "src/runtime/contracts/provider-policy.ts",
+          "start": 1383,
+          "end": 1405,
+          "bytes": 22,
+          "sha256": "1202db19e3ef3372839fe32cb68fb52fa5a97473b8377a3aee6c613ece73d53b",
+          "gitBlob": "a370a49af3add96f1d2f4e9785a30d24209332b6",
+          "startLine": 31,
+          "endLine": 31,
+          "text": "readonly box: \"host\" |",
+          "owner": null
+        },
+        {
+          "path": "src/runtime/contracts/provider-policy.ts",
+          "start": 1557,
+          "end": 1651,
+          "bytes": 94,
+          "sha256": "258657b801e8383f78711a13f447aa516a39cee57880de987d0961e19640c8fc",
+          "gitBlob": "3a3ac879071948223ebb5494606db470f6cadc1e",
+          "startLine": 33,
+          "endLine": 36,
+          "text": "\"unsupported\";\n}\n\n/** Adapters that expose no boolean boundary resolve the box arm to this. */",
+          "owner": null
+        }
+      ]
+    },
+    {
+      "path": "src/runtime/contracts/provider-policy.ts",
+      "ordinal": 2,
+      "currentStart": 3007,
+      "currentEnd": 3384,
+      "currentStartLine": 69,
+      "replacementSha256": "3523225f7ed9eff263473c1eb4efa08c4eceacc18e3bc6cfc071b30f0a2e85a2",
+      "literalKinds": [
+        "whitespace",
+        "comment"
+      ],
+      "live": [
+        {
+          "path": "src/runtime/contracts/provider-policy.ts",
+          "start": 3334,
+          "end": 3377,
+          "bytes": 43,
+          "sha256": "eaf04ea4574d1b3a1f786cde745dc649153f011ce1d9a3e8d4e806cf9c840dc4",
+          "gitBlob": "46ee08b476aff0b557a8efd2111d53bb3b281655",
+          "startLine": 76,
+          "endLine": 76,
+          "text": "export interface GeneratorNumberBoxPolicy {",
+          "owner": null
+        }
+      ]
+    },
+    {
+      "path": "src/ir/runtime/contracts/manifest.ts",
+      "ordinal": 0,
+      "currentStart": 1210,
+      "currentEnd": 1588,
+      "currentStartLine": 35,
+      "replacementSha256": "184e503ead23fe3231064c2b30b82c5bdbbcaf6d57675c5194c6463a330b970a",
+      "literalKinds": [
+        "whitespace"
+      ],
+      "live": [
+        {
+          "path": "src/ir/runtime/contracts/manifest.ts",
+          "start": 1212,
+          "end": 1326,
+          "bytes": 114,
+          "sha256": "56ade8fbf55d5b7b014cb226abf9880295130432f1cfe7e9151d33df3e6fac5d",
+          "gitBlob": "3fe5e144baa461bc7f2009905ea7bf34f74b6ee8",
+          "startLine": 35,
+          "endLine": 38,
+          "text": "| HostCallbackWrapRuntimeFeature\n  | FunctionPrototypeCallRuntimeFeature\n  | NativeAsyncCallableRuntimeFeature\n  |",
+          "owner": null
+        },
+        {
+          "path": "src/ir/runtime/contracts/manifest.ts",
+          "start": 1408,
+          "end": 1440,
+          "bytes": 32,
+          "sha256": "19783109242f990bc8fdbda7c893665ba8da52844e50efd6bcf82977f57a5afd",
+          "gitBlob": "a9a98e96ad6d965d6ef891a65d7146039aae3f7c",
+          "startLine": 41,
+          "endLine": 42,
+          "text": "VectorCallableRuntimeFeature\n  |",
+          "owner": null
+        },
+        {
+          "path": "src/ir/runtime/contracts/manifest.ts",
+          "start": 1501,
+          "end": 1587,
+          "bytes": 86,
+          "sha256": "064bed7144a99ee040cc501c5f31d8c9ac48ddb39baf165aefd4a60d266a087a",
+          "gitBlob": "bb50af492af3764e2ffc758e47f38c95cd8dcc95",
+          "startLine": 44,
+          "endLine": 46,
+          "text": "ReferenceErrorRuntimeFeature;\n\nexport type HostCapabilityId = RuntimeHostCapabilityId;",
+          "owner": null
+        }
+      ]
+    },
+    {
+      "path": "src/ir/runtime/contracts/manifest.ts",
+      "ordinal": 1,
+      "currentStart": 3018,
+      "currentEnd": 3715,
+      "currentStartLine": 99,
+      "replacementSha256": "349022b1411d97da646ae9387e20b9efc5844ca74af458ab6aafb903c85ea149",
+      "literalKinds": [
+        "comment",
+        "whitespace"
+      ],
+      "live": [
+        {
+          "path": "src/ir/runtime/contracts/manifest.ts",
+          "start": 3093,
+          "end": 3184,
+          "bytes": 91,
+          "sha256": "130f7ec388002d20135b2139674c86105aa8e5e7cd3138bb87fcf587368da724",
+          "gitBlob": "ffd3a8ab8133ec627257273e41f8718b79f5ca98",
+          "startLine": 100,
+          "endLine": 101,
+          "text": "export const NUMBER_BOUNDARY_RUNTIME_PROVIDER_IDS = Object.freeze([\n  \"host.js.number.box\",",
+          "owner": null
+        },
+        {
+          "path": "src/ir/runtime/contracts/manifest.ts",
+          "start": 3213,
+          "end": 3379,
+          "bytes": 166,
+          "sha256": "4e32a4d824dc61c2dbc8d2a9032d77342b4d619c3912075a4b054955f365c6e1",
+          "gitBlob": "38f055a52ba37dd734997fb0c92f1242155fae01",
+          "startLine": 103,
+          "endLine": 107,
+          "text": "\"host.js.number.unbox\",\n  \"native.js.number.unbox\",\n] as const);\n\nexport type NumberBoundaryRuntimeProviderId = (typeof NUMBER_BOUNDARY_RUNTIME_PROVIDER_IDS)[number];",
+          "owner": null
+        },
+        {
+          "path": "src/ir/runtime/contracts/manifest.ts",
+          "start": 3447,
+          "end": 3515,
+          "bytes": 68,
+          "sha256": "5ed3a3d4ffb1e89a61691dba53dbe78b91764030f719fa0bd45a093f67424760",
+          "gitBlob": "ac919194001b4c288d362c153869cc6850744616",
+          "startLine": 110,
+          "endLine": 110,
+          "text": "export const BOOLEAN_BOUNDARY_RUNTIME_PROVIDER_IDS = Object.freeze([",
+          "owner": null
+        },
+        {
+          "path": "src/ir/runtime/contracts/manifest.ts",
+          "start": 3518,
+          "end": 3539,
+          "bytes": 21,
+          "sha256": "de5d960bf9fbafac3e78f6dee184cb35df0b5683100ddf95223b7419c7939bee",
+          "gitBlob": "73ab73b60227195c9c7c18bb50d050690f28fa04",
+          "startLine": 111,
+          "endLine": 111,
+          "text": "\"host.js.boolean.box\"",
+          "owner": null
+        },
+        {
+          "path": "src/ir/runtime/contracts/manifest.ts",
+          "start": 3597,
+          "end": 3713,
+          "bytes": 116,
+          "sha256": "c8371abd7f9d18a24acc1132fc662c24828cd1ebdd540ffaa1b5057aba56e41d",
+          "gitBlob": "02702be2d34380aef9cd10241d803038f575cb13",
+          "startLine": 114,
+          "endLine": 116,
+          "text": "] as const);\n\nexport type BooleanBoundaryRuntimeProviderId = (typeof BOOLEAN_BOUNDARY_RUNTIME_PROVIDER_IDS)[number];",
+          "owner": null
+        }
+      ]
+    },
+    {
+      "path": "src/ir/runtime/contracts/manifest.ts",
+      "ordinal": 2,
+      "currentStart": 17137,
+      "currentEnd": 18393,
+      "currentStartLine": 399,
+      "replacementSha256": "ff9cf5115f48ba61f53546d9431a090ee14bdbf680845c7b678147317152fd3d",
+      "literalKinds": [
+        "whitespace"
+      ],
+      "live": [
+        {
+          "path": "src/ir/runtime/contracts/manifest.ts",
+          "start": 17137,
+          "end": 17354,
+          "bytes": 217,
+          "sha256": "20db3d2e86f554fa3b120c2cbc2a0109e97a06faa94d7cdc1f707f1339138fb3",
+          "gitBlob": "55f9586ec8889f42083adec52c41250d0d22f73e",
+          "startLine": 399,
+          "endLine": 400,
+          "text": "export const VECTOR_CALLABLE_RUNTIME_PROVIDER_IDS = Object.freeze([\"native.js.vector.elem-set.externref\"] as const);\nexport type VectorCallableRuntimeProviderId = (typeof VECTOR_CALLABLE_RUNTIME_PROVIDER_IDS)[number];",
+          "owner": null
+        },
+        {
+          "path": "src/ir/runtime/contracts/manifest.ts",
+          "start": 18298,
+          "end": 18392,
+          "bytes": 94,
+          "sha256": "e9a1c9e72d01534224da41fbc4478d140af856643e0a91c8f3182a7453cf951a",
+          "gitBlob": "a06b88bf24f253522bce1f5d213217ef51621823",
+          "startLine": 426,
+          "endLine": 428,
+          "text": "export type RuntimeProviderId =\n  | MathRuntimeProviderId\n  | NumericCoercionRuntimeProviderId",
+          "owner": null
+        }
+      ]
+    },
+    {
+      "path": "src/ir/runtime/contracts/manifest.ts",
+      "ordinal": 3,
+      "currentStart": 18819,
+      "currentEnd": 19040,
+      "currentStartLine": 441,
+      "replacementSha256": "f685ffb0b69ba8f5ffcd9a1af2b844910fd12fcd1346385629d20709715e5217",
+      "literalKinds": [
+        "whitespace"
+      ],
+      "live": [
+        {
+          "path": "src/ir/runtime/contracts/manifest.ts",
+          "start": 18821,
+          "end": 18942,
+          "bytes": 121,
+          "sha256": "d03be77f5c47a2ced833ec229eff21b1f235e3b63e44ce4e3e3ec1695b6bd195",
+          "gitBlob": "4e36c70abd8f0d686ff74186bae38bc250f9efcf",
+          "startLine": 441,
+          "endLine": 444,
+          "text": "| FunctionPrototypeCallRuntimeProviderId\n  | ReferenceErrorRuntimeProviderId\n  | NativeAsyncCallableRuntimeProviderId\n  |",
+          "owner": null
+        },
+        {
+          "path": "src/ir/runtime/contracts/manifest.ts",
+          "start": 18979,
+          "end": 19038,
+          "bytes": 59,
+          "sha256": "1a959629619270ad468f3225fc44ef70f958a9f428bdce393efe436a29c0f53c",
+          "gitBlob": "06d124bd2010d87d1af8b114b3371c7bcafcf991",
+          "startLine": 445,
+          "endLine": 446,
+          "text": "VectorCallableRuntimeProviderId\n  | AsyncRuntimeProviderId;",
+          "owner": null
+        }
+      ]
+    },
+    {
+      "path": "src/ir/intrinsics.ts",
+      "ordinal": 0,
+      "currentStart": 1460,
+      "currentEnd": 1718,
+      "currentStartLine": 46,
+      "replacementSha256": "2e7d140aa9ffed26a5c488cef020ed8fca9bbc50de3db57a3813751a65325481",
+      "literalKinds": [
+        "module-link"
+      ],
+      "live": []
+    },
+    {
+      "path": "src/ir/core/intrinsic-vocabulary.ts",
+      "ordinal": 0,
+      "currentStart": 1695,
+      "currentEnd": 2089,
+      "currentStartLine": 59,
+      "replacementSha256": "c9f4742320c527803282168dea1ed4ccd76f5fbdc9449b67dbd0884dfa044cb2",
+      "literalKinds": [
+        "whitespace",
+        "comment"
+      ],
+      "live": [
+        {
+          "path": "src/ir/core/intrinsic-vocabulary.ts",
+          "start": 1696,
+          "end": 1783,
+          "bytes": 87,
+          "sha256": "49e0a693007df8b9c7db3877b65dbef4cfe4fdb3ad49088b5b6bace6be97de5f",
+          "gitBlob": "998a2d696eab2d04d26a424d65b1278c2c5d04c7",
+          "startLine": 60,
+          "endLine": 60,
+          "text": "export type NumberBoundaryIntrinsicId = (typeof NUMBER_BOUNDARY_INTRINSIC_IDS)[number];",
+          "owner": null
+        },
+        {
+          "path": "src/ir/core/intrinsic-vocabulary.ts",
+          "start": 1887,
+          "end": 1964,
+          "bytes": 77,
+          "sha256": "c8bb65730010eb0440a773b0fb7750de4a9cd49610798e3b40e8c9f59b69c0f5",
+          "gitBlob": "f3cf553da50061fa050b55d5653027a1ad7ca33d",
+          "startLine": 63,
+          "endLine": 63,
+          "text": "export const BOOLEAN_BOUNDARY_INTRINSIC_IDS = Object.freeze([\"js.boolean.box\"",
+          "owner": null
+        },
+        {
+          "path": "src/ir/core/intrinsic-vocabulary.ts",
+          "start": 1984,
+          "end": 2087,
+          "bytes": 103,
+          "sha256": "80ae7dc7d54ba603c1f4ad6d1d88156ec80010c177e0844eb6c8826b64b32336",
+          "gitBlob": "4e022c60199f0ce8505d967b91d18a361a560dfb",
+          "startLine": 63,
+          "endLine": 65,
+          "text": "] as const);\n\nexport type BooleanBoundaryIntrinsicId = (typeof BOOLEAN_BOUNDARY_INTRINSIC_IDS)[number];",
+          "owner": null
+        }
+      ]
+    },
+    {
+      "path": "src/ir/runtime/contracts/intrinsics.ts",
+      "ordinal": 0,
+      "currentStart": 1223,
+      "currentEnd": 1763,
+      "currentStartLine": 55,
+      "replacementSha256": "242b69c5b8c3275121cb2cafcd8c3cfb77736fe28abf3b78899dcf40a480cd4f",
+      "literalKinds": [
+        "comment",
+        "whitespace"
+      ],
+      "live": [
+        {
+          "path": "src/ir/runtime/contracts/intrinsics.ts",
+          "start": 1289,
+          "end": 1398,
+          "bytes": 109,
+          "sha256": "149f4e2ad43757bfe758f042047c40f96fbbb5a774e3bfdddb6a05d673dabd0b",
+          "gitBlob": "66d01da86fb39d5ba68b0aebecb1b9d25ebc6133",
+          "startLine": 56,
+          "endLine": 56,
+          "text": "export const NUMBER_BOUNDARY_RUNTIME_FEATURES = Object.freeze([\"js.number.box\", \"js.number.unbox\"] as const);",
+          "owner": null
+        },
+        {
+          "path": "src/ir/runtime/contracts/intrinsics.ts",
+          "start": 1467,
+          "end": 1547,
+          "bytes": 80,
+          "sha256": "e04ec779291064b82470b0e16947276a891d51d377d5358300db0e4d14c98df4",
+          "gitBlob": "f165ecb99c3d4e493dd626fbbd8166721a15088a",
+          "startLine": 59,
+          "endLine": 59,
+          "text": "export const BOOLEAN_BOUNDARY_RUNTIME_FEATURES = Object.freeze([\"js.boolean.box\"",
+          "owner": null
+        },
+        {
+          "path": "src/ir/runtime/contracts/intrinsics.ts",
+          "start": 1567,
+          "end": 1762,
+          "bytes": 195,
+          "sha256": "4f261373e1a18dd3fee62e1979683d529ae30bcc598c3aa57a53ab04860682b6",
+          "gitBlob": "82c282e094b7cf473008c258d43d6e1a7134d45b",
+          "startLine": 59,
+          "endLine": 62,
+          "text": "] as const);\n\n/** (#3526 F1-S4) The extern undefined-probe feature row, 1:1 with its one ID. */\nexport const EXTERN_BOUNDARY_RUNTIME_FEATURES = Object.freeze([\"js.extern.is_undefined\"] as const);",
+          "owner": null
+        }
+      ]
+    },
+    {
+      "path": "src/ir/core/intrinsics.ts",
+      "ordinal": 0,
+      "currentStart": 2270,
+      "currentEnd": 2773,
+      "currentStartLine": 66,
+      "replacementSha256": "fe9bd2660daa5da5c7226b0b79943c2eb01a9640aef19f67eb98d150b0b64c85",
+      "literalKinds": [
+        "whitespace",
+        "comment"
+      ],
+      "live": [
+        {
+          "path": "src/ir/core/intrinsics.ts",
+          "start": 2272,
+          "end": 2376,
+          "bytes": 104,
+          "sha256": "fbd0c41cbbc60a4cef7f13fdb87065080270bf02b262a476cbf2e647d8935233",
+          "gitBlob": "00ec88c0185c5be4a5ef170450073549600a69fd",
+          "startLine": 66,
+          "endLine": 69,
+          "text": "version: INTRINSIC_SIGNATURE_VERSION,\n  params: Object.freeze([I32_TYPE]),\n  result: EXTERNREF_TYPE,\n});",
+          "owner": null
+        }
+      ]
+    },
+    {
+      "path": "src/ir/core/intrinsics.ts",
+      "ordinal": 1,
+      "currentStart": 8011,
+      "currentEnd": 8615,
+      "currentStartLine": 197,
+      "replacementSha256": "17c4a3073cbff65a4d6f46b24b3efc19885b0d11abd21c79370d8b738e1272be",
+      "literalKinds": [
+        "whitespace"
+      ],
+      "live": [
+        {
+          "path": "src/ir/core/intrinsics.ts",
+          "start": 8013,
+          "end": 8274,
+          "bytes": 261,
+          "sha256": "b3e6473f6e630c57009a85cf5aaae6d2371106582fa0864f3e7f2e0ecf8cd2f6",
+          "gitBlob": "9822461edc45e362a53bd1a32f10b5924a6c790f",
+          "startLine": 197,
+          "endLine": 199,
+          "text": "\"js.number.box\": definition(\"js.number.box\", F64_TO_EXTERNREF_INTRINSIC_SIGNATURE),\n  \"js.number.unbox\": definition(\"js.number.unbox\", EXTERNREF_TO_F64_INTRINSIC_SIGNATURE),\n  \"js.boolean.box\": definition(\"js.boolean.box\", I32_TO_EXTERNREF_INTRINSIC_SIGNATURE),",
+          "owner": null
+        },
+        {
+          "path": "src/ir/core/intrinsics.ts",
+          "start": 8373,
+          "end": 8614,
+          "bytes": 241,
+          "sha256": "614f2de59858fe920b85cf1504d9f1cf4ebe36c34a0ba0d7fa03f8b98fc1e028",
+          "gitBlob": "f6a6a74076062edf500a495757e2f6bdabd56968",
+          "startLine": 201,
+          "endLine": 203,
+          "text": "\"js.extern.is_undefined\": definition(\"js.extern.is_undefined\", EXTERNREF_TO_I32_INTRINSIC_SIGNATURE),\n  \"math.abs\": definition(\"math.abs\", F64_UNARY_INTRINSIC_SIGNATURE),\n  \"math.acos\": definition(\"math.acos\", F64_UNARY_INTRINSIC_SIGNATURE),",
+          "owner": null
+        }
+      ]
+    },
+    {
+      "path": "src/ir/analysis/intrinsics.ts",
+      "ordinal": 0,
+      "currentStart": 1681,
+      "currentEnd": 2160,
+      "currentStartLine": 41,
+      "replacementSha256": "63e18800279885c15385a40d3dba1ec5d1fcffd3aa917f473c16273596fc95df",
+      "literalKinds": [
+        "whitespace"
+      ],
+      "live": [
+        {
+          "path": "src/ir/analysis/intrinsics.ts",
+          "start": 1687,
+          "end": 1792,
+          "bytes": 105,
+          "sha256": "1bd7433672fc09d369af7ed922ed9e23ebc4af40980ac648ace778ee43bcb8b2",
+          "gitBlob": "2d0d404c392cd1e386ef463acf600657fa86be2f",
+          "startLine": 41,
+          "endLine": 44,
+          "text": "return `${use.id} argument ${index} does not match its v${signature.version} signature`;\n    }\n  }\n  if (",
+          "owner": null
+        },
+        {
+          "path": "src/ir/analysis/intrinsics.ts",
+          "start": 2023,
+          "end": 2159,
+          "bytes": 136,
+          "sha256": "fac1f1fef226530c80118d41548e2bd86139f04f275b2beec1c5a631b89e256c",
+          "gitBlob": "7dc24e0973fe36f24bf2480a1a6a85e56d99141e",
+          "startLine": 49,
+          "endLine": 51,
+          "text": "!irTypeEquals(use.resultType, signature.result)) {\n    return `${use.id} result does not match its v${signature.version} signature`;\n  }",
+          "owner": null
+        }
+      ]
+    },
+    {
+      "path": "src/ir/runtime/callable-declarations.ts",
+      "ordinal": 0,
+      "currentStart": 269,
+      "currentEnd": 1646,
+      "currentStartLine": 7,
+      "replacementSha256": "389bba9b85d23aa62ca62bb4a857566d7a205df7e683460769d354fd73a40205",
+      "literalKinds": [
+        "whitespace",
+        "module-link",
+        "comment"
+      ],
+      "live": [
+        {
+          "path": "src/ir/runtime/callable-declarations.ts",
+          "start": 1562,
+          "end": 1645,
+          "bytes": 83,
+          "sha256": "122d32c1a813b4c793582d4969425f53452d974fec2a87f1a84dbf8a16741bd9",
+          "gitBlob": "b7b2ae94492a677be3e262c90f2ec5968df27bfe",
+          "startLine": 41,
+          "endLine": 42,
+          "text": "export interface IrRuntimeCallableDeclaration {\n  readonly feature: RuntimeFeature;",
+          "owner": null
+        }
+      ]
+    },
+    {
+      "path": "src/ir/runtime/callable-declarations.ts",
+      "ordinal": 1,
+      "currentStart": 4088,
+      "currentEnd": 5642,
+      "currentStartLine": 98,
+      "replacementSha256": "ed59b91ef433cee8a18d434bc2e259e8111d3a88b20d75a82096fb81644e4884",
+      "literalKinds": [
+        "comment",
+        "whitespace"
+      ],
+      "live": [
+        {
+          "path": "src/ir/runtime/callable-declarations.ts",
+          "start": 4179,
+          "end": 4454,
+          "bytes": 275,
+          "sha256": "3bad36f5b5a5337544a617865d118613a4c07c6e512a6ed7c961b0dc88c40db5",
+          "gitBlob": "ad1f7d97d92cb8002ea7c6d7bf9e2b3df4cb01fa",
+          "startLine": 99,
+          "endLine": 102,
+          "text": "export function irRuntimeCallableDeclaration(ref: IrFuncRef): IrRuntimeCallableDeclaration | undefined {\n  return ref.binding.kind === \"runtime\" && ref.binding.symbol === \"__new_ReferenceError\"\n    ? REFERENCE_ERROR_DECLARATION\n    : (irNativeAsyncCallableDeclaration(ref) ??",
+          "owner": null
+        },
+        {
+          "path": "src/ir/runtime/callable-declarations.ts",
+          "start": 4463,
+          "end": 4495,
+          "bytes": 32,
+          "sha256": "010039a05c0c522ec969e16e6e839101a91e7f606be509abe7133c979e4a154f",
+          "gitBlob": "c78b66dc10a52512fed2f69b0b8c5f320c1b4339",
+          "startLine": 103,
+          "endLine": 103,
+          "text": "irVectorCallableDeclaration(ref)",
+          "owner": null
+        },
+        {
+          "path": "src/ir/runtime/callable-declarations.ts",
+          "start": 4656,
+          "end": 4660,
+          "bytes": 4,
+          "sha256": "a2d0828ab6e1f1583be4e2374894bd3199c33ead09388dd551c177aa90b2214b",
+          "gitBlob": "9558aa93ca5256293324ca75de1feaed7065fe20",
+          "startLine": 106,
+          "endLine": 107,
+          "text": ");\n}",
+          "owner": null
+        }
+      ]
+    },
+    {
+      "path": "src/ir/runtime/manifest.ts",
+      "ordinal": 0,
+      "currentStart": 3565,
+      "currentEnd": 3977,
+      "currentStartLine": 106,
+      "replacementSha256": "7f6a1c17f061e192c318c563bf3dbabc20ec3b913832c0a731067f007693cb42",
+      "literalKinds": [
+        "whitespace",
+        "module-link"
+      ],
+      "live": []
+    },
+    {
+      "path": "src/ir/runtime/manifest.ts",
+      "ordinal": 1,
+      "currentStart": 7593,
+      "currentEnd": 8100,
+      "currentStartLine": 220,
+      "replacementSha256": "151c0c55c3c9ac93b44075a619c4f974f27520ec256ca3fdd957723aa62b024e",
+      "literalKinds": [
+        "whitespace",
+        "module-link"
+      ],
+      "live": []
+    },
+    {
+      "path": "src/ir/runtime/manifest.ts",
+      "ordinal": 2,
+      "currentStart": 8884,
+      "currentEnd": 9166,
+      "currentStartLine": 259,
+      "replacementSha256": "0279da7a0ce14ac3e333c94195b157156fbf8239076001873423597869f4d999",
+      "literalKinds": [
+        "whitespace",
+        "module-link"
+      ],
+      "live": []
+    },
+    {
+      "path": "src/ir/runtime/manifest.ts",
+      "ordinal": 3,
+      "currentStart": 17738,
+      "currentEnd": 18143,
+      "currentStartLine": 485,
+      "replacementSha256": "babfc12277bc8e749b6557540b782423c6c3326822c85b5ce4d79e9b94ae7204",
+      "literalKinds": [
+        "whitespace",
+        "comment"
+      ],
+      "live": [
+        {
+          "path": "src/ir/runtime/manifest.ts",
+          "start": 17740,
+          "end": 17745,
+          "bytes": 5,
+          "sha256": "6bc48b75ef4b2240d19be00bd17e9eeac7a9e07f4380fb36788399c059b21d7a",
+          "gitBlob": "53de3b3a5289ac545a2255866ad32fb9d4e6ead7",
+          "startLine": 485,
+          "endLine": 486,
+          "text": "});\n}",
+          "owner": null
+        },
+        {
+          "path": "src/ir/runtime/manifest.ts",
+          "start": 17988,
+          "end": 18142,
+          "bytes": 154,
+          "sha256": "300afaa6f2edd63dc130eb610868814958205ee58fb943591b39c75e686f173d",
+          "gitBlob": "9b41078318f160e28a438ae9e6f51127dd98788b",
+          "startLine": 493,
+          "endLine": 495,
+          "text": "export const NUMBER_BOUNDARY_RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.freeze([\n  numberBoundaryProvider(\n    \"host.js.number.box\",",
+          "owner": null
+        }
+      ]
+    },
+    {
+      "path": "src/ir/runtime/manifest.ts",
+      "ordinal": 4,
+      "currentStart": 18164,
+      "currentEnd": 18757,
+      "currentStartLine": 497,
+      "replacementSha256": "1e0d8889c1b6c0864c63815dee97861856016589ab4f8be955d771e96af5f0e5",
+      "literalKinds": [
+        "whitespace"
+      ],
+      "live": [
+        {
+          "path": "src/ir/runtime/manifest.ts",
+          "start": 18168,
+          "end": 18287,
+          "bytes": 119,
+          "sha256": "b5d89b9964d525eea0bcac629ba2dc6a9b2c569f3fa7f29bc220e9410b70776a",
+          "gitBlob": "b2405372f7601b50bf79eb58af67a1834d047e07",
+          "startLine": 497,
+          "endLine": 500,
+          "text": "F64_TO_EXTERNREF_INTRINSIC_SIGNATURE,\n    { kind: \"host-callable\", capability: \"number.box\" },\n    [\"number.box\"],\n  ),",
+          "owner": null
+        },
+        {
+          "path": "src/ir/runtime/manifest.ts",
+          "start": 18640,
+          "end": 18756,
+          "bytes": 116,
+          "sha256": "48ff812b156e96eb2c72ad3f8cc8db2f2008311dd9bfadfe69ace581bdeefac9",
+          "gitBlob": "53db463a359c536b54b0005943a1675fe2472dbb",
+          "startLine": 512,
+          "endLine": 515,
+          "text": "numberBoundaryProvider(\n    \"host.js.number.unbox\",\n    \"js.number.unbox\",\n    EXTERNREF_TO_F64_INTRINSIC_SIGNATURE,",
+          "owner": null
+        }
+      ]
+    },
+    {
+      "path": "src/ir/runtime/manifest.ts",
+      "ordinal": 5,
+      "currentStart": 19024,
+      "currentEnd": 20128,
+      "currentStartLine": 524,
+      "replacementSha256": "57184f00ebea0ab5310660496b875abef4121460f6a83c0d3f411503b8ef65eb",
+      "literalKinds": [
+        "whitespace",
+        "comment"
+      ],
+      "live": [
+        {
+          "path": "src/ir/runtime/manifest.ts",
+          "start": 19028,
+          "end": 19040,
+          "bytes": 12,
+          "sha256": "f0956c54ff4fa9f201ac6ebdbc542946e90be70ecd3349f050a823df58841042",
+          "gitBlob": "2bb0a74ec91c2f67ad75eef20ec446c5af9eda8d",
+          "startLine": 524,
+          "endLine": 526,
+          "text": "[],\n  ),\n]);",
+          "owner": null
+        },
+        {
+          "path": "src/ir/runtime/manifest.ts",
+          "start": 19144,
+          "end": 19448,
+          "bytes": 304,
+          "sha256": "790e7673294fb7bb4b051f11a9a501f3bfa24e669a656f2e934d3bb62b270c88",
+          "gitBlob": "04837a615c2654cf5b055a3bfe542037a7f300bd",
+          "startLine": 529,
+          "endLine": 536,
+          "text": "export const BOOLEAN_BOUNDARY_RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.freeze([\n  numberBoundaryProvider(\n    \"host.js.boolean.box\",\n    \"js.boolean.box\",\n    I32_TO_EXTERNREF_INTRINSIC_SIGNATURE,\n    { kind: \"host-callable\", capability: \"boolean.box\" },\n    [\"boolean.box\"],\n  ),",
+          "owner": null
+        },
+        {
+          "path": "src/ir/runtime/manifest.ts",
+          "start": 19037,
+          "end": 19040,
+          "bytes": 3,
+          "sha256": "0ae47a13980fb259002db6257e354e5c8994a535462bf8ac0c952fcdf5444e69",
+          "gitBlob": "02b7594124fdc3d010d36df5c6f3c63be5635515",
+          "startLine": 526,
+          "endLine": 526,
+          "text": "]);",
+          "owner": null
+        }
+      ]
+    },
+    {
+      "path": "src/ir/runtime/manifest.ts",
+      "ordinal": 6,
+      "currentStart": 40064,
+      "currentEnd": 40668,
+      "currentStartLine": 1022,
+      "replacementSha256": "283c5bdbbb6c68fc216b67a0be4f51fe56282711716ac98b7502479edfd97375",
+      "literalKinds": [
+        "whitespace"
+      ],
+      "live": [
+        {
+          "path": "src/ir/runtime/manifest.ts",
+          "start": 40064,
+          "end": 40219,
+          "bytes": 155,
+          "sha256": "62297d3e8fec48599d775fc4b2721d1a385b408deba077b4a3f6de50d6260580",
+          "gitBlob": "bcb902d83d8dc43af85b9c1cc41e0cef81ed76b0",
+          "startLine": 1022,
+          "endLine": 1026,
+          "text": "}\n\n/** The exact provider the admitted boolean arm selects, or `null` when the\n * caller resolved it to unsupported. */\nfunction booleanBoundaryProviderId(",
+          "owner": null
+        },
+        {
+          "path": "src/ir/runtime/manifest.ts",
+          "start": 40264,
+          "end": 40293,
+          "bytes": 29,
+          "sha256": "fcb2f62e913a046e31431d8850fff822f1023e2f48dd2b756295d8fc41a660a2",
+          "gitBlob": "c41531ad58361af9de0b3373bf17742e943fa9d8",
+          "startLine": 1028,
+          "endLine": 1028,
+          "text": "policy: BooleanBoundaryPolicy",
+          "owner": null
+        },
+        {
+          "path": "src/ir/runtime/manifest.ts",
+          "start": 40295,
+          "end": 40339,
+          "bytes": 44,
+          "sha256": "3820aa55a37c130ecf19664901ecf25f63711df17c953cbd1d5c39f148ebbe7b",
+          "gitBlob": "1d0a666f3bd8acd51d194c78994b864bcf3bee5b",
+          "startLine": 1029,
+          "endLine": 1029,
+          "text": "): BooleanBoundaryRuntimeProviderId | null {",
+          "owner": null
+        },
+        {
+          "path": "src/ir/runtime/manifest.ts",
+          "start": 40449,
+          "end": 40503,
+          "bytes": 54,
+          "sha256": "d939b7b1bed3f60b8dddf3a7e3eb8667d65746a40f8be6e7b8c074d1fe80130b",
+          "gitBlob": "f6407acafddde2d708cbb3bf6e147eda07e996de",
+          "startLine": 1031,
+          "endLine": 1031,
+          "text": "return policy.box === \"host\" ? \"host.js.boolean.box\" :",
+          "owner": null
+        },
+        {
+          "path": "src/ir/runtime/manifest.ts",
+          "start": 40556,
+          "end": 40666,
+          "bytes": 110,
+          "sha256": "0da4532d2e2ec9e20c1e9de0e92e0549c953998de31d9d5a5901dd97e8e22b33",
+          "gitBlob": "f0e9a5b688b03fe4c7a00fbab14795fe9cea0ba3",
+          "startLine": 1031,
+          "endLine": 1034,
+          "text": "null;\n}\n\nconst BOOLEAN_BOUNDARY_FEATURE_SET: ReadonlySet<string> = new Set(BOOLEAN_BOUNDARY_RUNTIME_FEATURES);",
+          "owner": null
+        }
+      ]
+    },
+    {
+      "path": "src/ir/runtime/manifest.ts",
+      "ordinal": 7,
+      "currentStart": 41580,
+      "currentEnd": 42017,
+      "currentStartLine": 1055,
+      "replacementSha256": "ffdfd3bceea173fde9fd20cd3b617060aff27ab4cd31cde2ff8256d3a3d5bf78",
+      "literalKinds": [
+        "whitespace"
+      ],
+      "live": [
+        {
+          "path": "src/ir/runtime/manifest.ts",
+          "start": 41580,
+          "end": 41766,
+          "bytes": 186,
+          "sha256": "965c347fd3fdfecb1fe6f80fc2b47323b83d742fa4b0c4e51e4af822e48481e8",
+          "gitBlob": "2e9fabda8f2d32141df39c27df9438a0c3cad312",
+          "startLine": 1055,
+          "endLine": 1059,
+          "text": "function numberBoundaryProviderId(\n  feature: NumberBoundaryRuntimeFeature,\n  policy: NumberBoundaryPolicy,\n): NumberBoundaryRuntimeProviderId | null {\n  if (feature === \"js.number.box\")",
+          "owner": null
+        },
+        {
+          "path": "src/ir/runtime/manifest.ts",
+          "start": 41771,
+          "end": 41824,
+          "bytes": 53,
+          "sha256": "11f7273b1388bbe98066f1345bfbb2453521c733f0737dd84c884245577487a0",
+          "gitBlob": "956003f83cb891731a63af994909d354a52ff825",
+          "startLine": 1060,
+          "endLine": 1060,
+          "text": "return policy.box === \"host\" ? \"host.js.number.box\" :",
+          "owner": null
+        },
+        {
+          "path": "src/ir/runtime/manifest.ts",
+          "start": 41876,
+          "end": 42015,
+          "bytes": 139,
+          "sha256": "7a94d381aaf240ef64e3e31cc93ce1e63e82d6e9d59e86aef1fc2cc492e3089d",
+          "gitBlob": "b3077b54a90b249d5fe7cc8f5d94a8afd453ec68",
+          "startLine": 1060,
+          "endLine": 1063,
+          "text": "null;\n  if (policy.unbox === \"host\") return \"host.js.number.unbox\";\n  return policy.unbox === \"native\" ? \"native.js.number.unbox\" : null;\n}",
+          "owner": null
+        }
+      ]
+    },
+    {
+      "path": "src/ir/runtime/manifest.ts",
+      "ordinal": 8,
+      "currentStart": 53243,
+      "currentEnd": 53559,
+      "currentStartLine": 1370,
+      "replacementSha256": "50cb532d651093ea29f1ab876e747016abe12acd36ac3f0e3084d3c1b4f022f1",
+      "literalKinds": [
+        "whitespace"
+      ],
+      "live": [
+        {
+          "path": "src/ir/runtime/manifest.ts",
+          "start": 53247,
+          "end": 53426,
+          "bytes": 179,
+          "sha256": "2c9172e39e8f66bebd301a27aad90c985e6570818f4cc1cacb69898f33f100ea",
+          "gitBlob": "f96f17e372b2c8768d8e6490f695a100908be655",
+          "startLine": 1370,
+          "endLine": 1374,
+          "text": "...STRING_CONST_RUNTIME_PROVIDERS,\n    ...HOST_CALLBACK_WRAP_RUNTIME_PROVIDERS,\n    ...FUNCTION_PROTOTYPE_CALL_RUNTIME_PROVIDERS,\n    ...REFERENCE_ERROR_RUNTIME_PROVIDERS,\n    ...",
+          "owner": null
+        },
+        {
+          "path": "src/ir/runtime/callable-declarations.ts",
+          "start": 4873,
+          "end": 4913,
+          "bytes": 40,
+          "sha256": "9e299593647d098b50da7802a74ca0579c6b722676dcb3c7e0826bf4bcf2b357",
+          "gitBlob": "b7b048d07b3eff0da5c8d9f20be9ef904970ec1b",
+          "startLine": 111,
+          "endLine": 111,
+          "text": "NATIVE_ASYNC_CALLABLE_RUNTIME_PROVIDERS,",
+          "owner": "SEMANTIC_CALLABLE_RUNTIME_PROVIDERS"
+        },
+        {
+          "path": "src/ir/runtime/callable-declarations.ts",
+          "start": 4916,
+          "end": 4953,
+          "bytes": 37,
+          "sha256": "aad1aa13578960c79614cacb56a6088ba152b7c4bc2462f09ffd44db642f8112",
+          "gitBlob": "6ad774088b6e138a1cd0abfb6d4def6099b0722f",
+          "startLine": 112,
+          "endLine": 112,
+          "text": "...VECTOR_CALLABLE_RUNTIME_PROVIDERS,",
+          "owner": "SEMANTIC_CALLABLE_RUNTIME_PROVIDERS"
+        },
+        {
+          "path": "src/ir/runtime/manifest.ts",
+          "start": 53467,
+          "end": 53557,
+          "bytes": 90,
+          "sha256": "ec440f6c1a225f1391979fea2b1eaf142934347d39d501935d8a44c66aef1bce",
+          "gitBlob": "65dbc937f8aa689b8b564d4e781f2ff2a4fde009",
+          "startLine": 1375,
+          "endLine": 1377,
+          "text": "...ASYNC_RUNTIME_PROVIDERS,\n  ].sort((left, right) => left.id.localeCompare(right.id)),\n);",
+          "owner": null
+        }
+      ]
+    },
+    {
+      "path": "src/ir/runtime/manifest.ts",
+      "ordinal": 9,
+      "currentStart": 54164,
+      "currentEnd": 54511,
+      "currentStartLine": 1394,
+      "replacementSha256": "2c706ebd06b0ffc7bc60534cda9733da8ea2b76946186f60a959e0e8701d26c7",
+      "literalKinds": [
+        "whitespace"
+      ],
+      "live": [
+        {
+          "path": "src/ir/runtime/manifest.ts",
+          "start": 54166,
+          "end": 54325,
+          "bytes": 159,
+          "sha256": "7625be623b3ba47631e50010c2415e6321c10b1d1d604c5de956a9b79d9dc9cc",
+          "gitBlob": "dfe7bac41b2353fd5ef80d5c3a0520209bbc3f35",
+          "startLine": 1394,
+          "endLine": 1398,
+          "text": "...REFERENCE_ERROR_RUNTIME_FEATURES,\n  ...PURE_MATH_RUNTIME_FEATURES,\n  ...NATIVE_ASYNC_CALLABLE_RUNTIME_FEATURES,\n  ...VECTOR_CALLABLE_RUNTIME_FEATURES,\n  ...",
+          "owner": null
+        },
+        {
+          "path": "src/ir/runtime/manifest.ts",
+          "start": 54390,
+          "end": 54510,
+          "bytes": 120,
+          "sha256": "e7ac9a736105ad1d7bea4abb9d7774474f432783ae441c8942448c4a27126173",
+          "gitBlob": "0a3540f56f0e7d833dc1fe94f689559d8831d3bf",
+          "startLine": 1400,
+          "endLine": 1403,
+          "text": "ASYNC_RUNTIME_FEATURES,\n  ...ASYNC_OPTIONAL_RUNTIME_FEATURES,\n]);\nconst PROVIDER_ID_SET: ReadonlySet<string> = new Set([",
+          "owner": null
+        }
+      ]
+    },
+    {
+      "path": "src/ir/runtime/manifest.ts",
+      "ordinal": 10,
+      "currentStart": 55121,
+      "currentEnd": 55525,
+      "currentStartLine": 1418,
+      "replacementSha256": "f6c317a3ff293a97025dd2fab5de69f14bac0b0d6c497d4d8d215ecd92d9960f",
+      "literalKinds": [
+        "whitespace"
+      ],
+      "live": [
+        {
+          "path": "src/ir/runtime/manifest.ts",
+          "start": 55123,
+          "end": 55298,
+          "bytes": 175,
+          "sha256": "9a1124ddcecccfee6a1c4a5ffff805c89e014c203541540f96bb8cb88cb42fd9",
+          "gitBlob": "1162d10c86e5db8ca7a51de941564a9702500b38",
+          "startLine": 1418,
+          "endLine": 1422,
+          "text": "...REFERENCE_ERROR_RUNTIME_PROVIDER_IDS,\n  ...PURE_MATH_RUNTIME_PROVIDER_IDS,\n  ...NATIVE_ASYNC_CALLABLE_RUNTIME_PROVIDER_IDS,\n  ...VECTOR_CALLABLE_RUNTIME_PROVIDER_IDS,\n  ...",
+          "owner": null
+        },
+        {
+          "path": "src/ir/runtime/manifest.ts",
+          "start": 55341,
+          "end": 55524,
+          "bytes": 183,
+          "sha256": "9aeb3ab6c4c5512a2b18b7c3581b4e59fb8f615ce0c98979df6030c8a2d8caa6",
+          "gitBlob": "1b8c62ac4ae38c553d3e902c6f567b73c784ddc1",
+          "startLine": 1423,
+          "endLine": 1426,
+          "text": "ASYNC_RUNTIME_PROVIDER_IDS,\n]);\nconst HOST_CAPABILITY_ID_SET: ReadonlySet<string> = new Set(RUNTIME_HOST_CAPABILITY_IDS);\nconst TARGET_SET: ReadonlySet<string> = new Set(ALL_TARGETS);",
+          "owner": null
+        }
+      ]
+    },
+    {
+      "path": "src/ir/runtime/manifest.ts",
+      "ordinal": 11,
+      "currentStart": 65787,
+      "currentEnd": 66387,
+      "currentStartLine": 1650,
+      "replacementSha256": "c2ec4ece44740f52e23a01b741538f7a54185f07be19af58c6f7d08311983423",
+      "literalKinds": [
+        "whitespace"
+      ],
+      "live": [
+        {
+          "path": "src/ir/runtime/manifest.ts",
+          "start": 65791,
+          "end": 65978,
+          "bytes": 187,
+          "sha256": "ecff907031aa6ac47ea9d49274c2bf88055d1254aae0f70e86a5cb44a2d31e0f",
+          "gitBlob": "7ba1fbf1db332e6233b7dad0c570a3040a2b5cf0",
+          "startLine": 1650,
+          "endLine": 1654,
+          "text": "}\n    this.#policy = Object.freeze({\n      ...policy,\n      numberBoundary: Object.freeze({ box: numberBoundary.box, unbox: numberBoundary.unbox }),\n      booleanBoundary: Object.freeze({",
+          "owner": null
+        },
+        {
+          "path": "src/ir/runtime/manifest.ts",
+          "start": 65987,
+          "end": 66011,
+          "bytes": 24,
+          "sha256": "25231a9a3d15a11584f2c57956aea015994ff00735b07a4333cd361ec61ec9bd",
+          "gitBlob": "37285f8124244bed4eeceae51e65038bc8164f19",
+          "startLine": 1655,
+          "endLine": 1655,
+          "text": "box: booleanBoundary.box",
+          "owner": null
+        },
+        {
+          "path": "src/ir/runtime/manifest.ts",
+          "start": 66109,
+          "end": 66386,
+          "bytes": 277,
+          "sha256": "b822e7d524c8df3e1daded2d4a77f46169659bf306fe87c793812c0204536c4d",
+          "gitBlob": "9108502a7e40fa2f3ac020e7c4e2944228b26966",
+          "startLine": 1657,
+          "endLine": 1661,
+          "text": "}),\n      externIsUndefined: Object.freeze({ probe: externIsUndefined.probe }),\n      generatorNumberBox: Object.freeze({ box: generatorNumberBox.box }),\n      stringCompare: Object.freeze({ compare: stringCompare.compare }),\n      stringEq: Object.freeze({ eq: stringEq.eq }),",
+          "owner": null
+        }
+      ]
+    },
+    {
+      "path": "src/ir/runtime/manifest.ts",
+      "ordinal": 12,
+      "currentStart": 75568,
+      "currentEnd": 76042,
+      "currentStartLine": 1894,
+      "replacementSha256": "e03de0895aa164e5d2266b955b376fd7f780e2b35c6431e9bee48a6dfffdc657",
+      "literalKinds": [
+        "whitespace"
+      ],
+      "live": [
+        {
+          "path": "src/ir/runtime/manifest.ts",
+          "start": 75570,
+          "end": 75855,
+          "bytes": 285,
+          "sha256": "422e44437270ddb705f4546073ba176d9bad3643c2218b6828bd16837ec5168d",
+          "gitBlob": "fa9bccbec10d8fb5888aea29df5da8f1a978954d",
+          "startLine": 1894,
+          "endLine": 1898,
+          "text": "#indexProviders(): ReadonlyMap<RuntimeFeature, readonly RuntimeProviderDefinition[]> {\n    const ids = new Set<RuntimeProviderId>();\n    const byFeature = new Map<RuntimeFeature, RuntimeProviderDefinition[]>();\n    for (const provider of this.#providers) {\n      const nativeMismatch =",
+          "owner": null
+        },
+        {
+          "path": "src/ir/runtime/callable-declarations.ts",
+          "start": 5122,
+          "end": 5162,
+          "bytes": 40,
+          "sha256": "b206d0062026d92e3b83dfc33468e6c3da90d00775f9c9a15032aa5a6ec96550",
+          "gitBlob": "f84e703d686ca708afa5c9f194b921ee712717cf",
+          "startLine": 118,
+          "endLine": 118,
+          "text": "nativeAsyncProviderMismatch(provider) ??",
+          "owner": "semanticCallableProviderMismatch"
+        },
+        {
+          "path": "src/ir/runtime/callable-declarations.ts",
+          "start": 5167,
+          "end": 5199,
+          "bytes": 32,
+          "sha256": "4356b2e4dc07fde153ff2d3fa871243ae53ebc430f43414f678f97e147ed9138",
+          "gitBlob": "cd3d214aa9e1be8d0169ee8dc7e8e739f461774a",
+          "startLine": 119,
+          "endLine": 119,
+          "text": "vectorProviderMismatch(provider)",
+          "owner": "semanticCallableProviderMismatch"
+        },
+        {
+          "path": "src/ir/runtime/manifest.ts",
+          "start": 75898,
+          "end": 76041,
+          "bytes": 143,
+          "sha256": "412a33d700d954726adaad20920e04f6e2a88bbf1c18056cf46c6227432369ff",
+          "gitBlob": "b597e1d8b22965a0b5097433a3a6b748401919f5",
+          "startLine": 1898,
+          "endLine": 1902,
+          "text": ";\n      if (nativeMismatch)\n        throw new RuntimeManifestInvariantError(\n          \"provider-signature-mismatch\",\n          nativeMismatch,",
+          "owner": null
+        }
+      ]
+    },
+    {
+      "path": "src/ir/runtime/manifest.ts",
+      "ordinal": 13,
+      "currentStart": 87033,
+      "currentEnd": 87604,
+      "currentStartLine": 2119,
+      "replacementSha256": "81f604c1dcef28249244e11cf334397222ded05404a007352f89c68409eb2e1a",
+      "literalKinds": [
+        "whitespace"
+      ],
+      "live": [
+        {
+          "path": "src/ir/runtime/manifest.ts",
+          "start": 87037,
+          "end": 87262,
+          "bytes": 225,
+          "sha256": "e19960b968d91646803338e937152d2d8d735cc96b2ed52220adaadd0357bcbe",
+          "gitBlob": "7d68b5c946be61a71dd7a672d01b402f6d8fa236",
+          "startLine": 2119,
+          "endLine": 2123,
+          "text": "feature: RuntimeFeature,\n    providers: ReadonlyMap<RuntimeFeature, readonly RuntimeProviderDefinition[]>,\n  ): RuntimeProviderDefinition {\n    const candidates = providers.get(feature) ?? [];\n    const nativePolicyMismatch =",
+          "owner": null
+        },
+        {
+          "path": "src/ir/runtime/callable-declarations.ts",
+          "start": 5397,
+          "end": 5470,
+          "bytes": 73,
+          "sha256": "aba613354b413b98ddae71621c1114df437f62d4b057a96851fb61decb33a82e",
+          "gitBlob": "fe44cab894073371e828ed687655de5a33dd4d52",
+          "startLine": 128,
+          "endLine": 128,
+          "text": "NATIVE_ASYNC_CALLABLE_RUNTIME_FEATURES.some((entry) => entry === feature)",
+          "owner": "semanticCallablePolicyMismatch"
+        },
+        {
+          "path": "src/ir/runtime/callable-declarations.ts",
+          "start": 5475,
+          "end": 5519,
+          "bytes": 44,
+          "sha256": "ac0934103387aee9b464f06229e48636300527ba40fb812db1934afbe7d01f58",
+          "gitBlob": "2c773f842b0a5bb1b076106703544f0137cd28ba",
+          "startLine": 129,
+          "endLine": 129,
+          "text": "? nativeAsyncCallablePolicyMismatch(feature,",
+          "owner": "semanticCallablePolicyMismatch"
+        },
+        {
+          "path": "src/ir/runtime/manifest.ts",
+          "start": 87303,
+          "end": 87316,
+          "bytes": 13,
+          "sha256": "f64fc2bc2bf1d8abc336ff3bc2af403a5d24c07ed375c907f547870d4e3cb500",
+          "gitBlob": "af7154908bf7bf9e61c9156f54a3efde632b8dbc",
+          "startLine": 2123,
+          "endLine": 2123,
+          "text": "this.#policy)",
+          "owner": null
+        },
+        {
+          "path": "src/ir/runtime/manifest.ts",
+          "start": 87044,
+          "end": 87045,
+          "bytes": 1,
+          "sha256": "e7ac0786668e0ff0f02b62bd04f45ff636fd82db63b1104601c975dc005f3a67",
+          "gitBlob": "22ded55aa2c14af167996451c06c190f270e78a9",
+          "startLine": 2119,
+          "endLine": 2119,
+          "text": ":",
+          "owner": null
+        },
+        {
+          "path": "src/ir/runtime/callable-declarations.ts",
+          "start": 5535,
+          "end": 5572,
+          "bytes": 37,
+          "sha256": "f40fdcf0b59633bd83c37afe7444f6035497e15d72bca7707a3663a6e3444903",
+          "gitBlob": "a17ffb50b235b294106370915087fbdc37c82342",
+          "startLine": 130,
+          "endLine": 130,
+          "text": "vectorCallablePolicyMismatch(feature,",
+          "owner": "semanticCallablePolicyMismatch"
+        },
+        {
+          "path": "src/ir/runtime/manifest.ts",
+          "start": 87303,
+          "end": 87603,
+          "bytes": 300,
+          "sha256": "5164c001a815bd5c872ffc2c8dd81bef787304d4e3a5139e4de8ffb73db1e606",
+          "gitBlob": "e6adf43a5f29499ee7778ab7073cd301847ff4c7",
+          "startLine": 2123,
+          "endLine": 2127,
+          "text": "this.#policy);\n    if (nativePolicyMismatch)\n      throw new RuntimeManifestInvariantError(\"provider-target-unavailable\", nativePolicyMismatch);\n    if (candidates.length === 0) {\n      throw new RuntimeManifestInvariantError(\"missing-runtime-provider\", `runtime feature ${feature} has no provider`);",
+          "owner": null
+        }
+      ]
+    },
+    {
+      "path": "src/ir/runtime/manifest.ts",
+      "ordinal": 14,
+      "currentStart": 88718,
+      "currentEnd": 89515,
+      "currentStartLine": 2147,
+      "replacementSha256": "8a9bc898eca52667cf35a3ea5364273b6c7998816c6a49ddf02c815173823108",
+      "literalKinds": [
+        "whitespace",
+        "comment"
+      ],
+      "live": [
+        {
+          "path": "src/ir/runtime/manifest.ts",
+          "start": 88840,
+          "end": 88988,
+          "bytes": 148,
+          "sha256": "8d933c26013f4e7a1f1594cd24dd6bfd530e82893a26b6dd5741152fe22e141c",
+          "gitBlob": "391f961a7a2b72b78cad6ca64f6e9721cea93956",
+          "startLine": 2149,
+          "endLine": 2151,
+          "text": "isBooleanBoundaryFeature(feature)\n        ? ((): readonly RuntimeProviderDefinition[] => {\n            const selectedId = booleanBoundaryProviderId(",
+          "owner": null
+        },
+        {
+          "path": "src/ir/runtime/manifest.ts",
+          "start": 88997,
+          "end": 89322,
+          "bytes": 325,
+          "sha256": "8b29f53d8d2921b82c6b8713cf14e99da5609f962f08a64011e31bacae487776",
+          "gitBlob": "fd38216d9cd1c6661aed41d6d5e3818981156e61",
+          "startLine": 2151,
+          "endLine": 2156,
+          "text": "this.#policy.booleanBoundary);\n            if (selectedId === null) {\n              throw new RuntimeManifestInvariantError(\n                \"provider-target-unavailable\",\n                `semantic intrinsic ${feature} is unavailable under boolean-boundary policy ` +\n                  `box=${this.#policy.booleanBoundary.box",
+          "owner": null
+        },
+        {
+          "path": "src/ir/runtime/manifest.ts",
+          "start": 89383,
+          "end": 89514,
+          "bytes": 131,
+          "sha256": "cdf9c90afde0b14355377e42bedf8adb252eb17b968af4841a5706e5eb6618c5",
+          "gitBlob": "bf1291e47806948641f4a072f7e7afa4aaf8ba55",
+          "startLine": 2156,
+          "endLine": 2160,
+          "text": "}`,\n              );\n            }\n            return candidates.filter((candidate) => candidate.id === selectedId);\n          })()",
+          "owner": null
+        }
+      ]
+    },
+    {
+      "path": "src/ir/intrinsic-support.ts",
+      "ordinal": 0,
+      "currentStart": 951,
+      "currentEnd": 1399,
+      "currentStartLine": 26,
+      "replacementSha256": "2cd0aa228b19f1d84e07d005b588a91434e40bf6f165dd142c9bad20b0314d86",
+      "literalKinds": [
+        "whitespace",
+        "module-link"
+      ],
+      "live": []
+    },
+    {
+      "path": "src/ir/intrinsic-support.ts",
+      "ordinal": 1,
+      "currentStart": 39031,
+      "currentEnd": 39822,
+      "currentStartLine": 823,
+      "replacementSha256": "ea3bbc1dbf9449c714f5833cbff299b4449c267d53ebd041db796335370e43b7",
+      "literalKinds": [
+        "whitespace"
+      ],
+      "live": [
+        {
+          "path": "src/ir/intrinsic-support.ts",
+          "start": 39039,
+          "end": 39326,
+          "bytes": 287,
+          "sha256": "91f8f762cf55f7a15b782b37fed712bf7ef07aba2e9c274c52db95469b7d8406",
+          "gitBlob": "b4d9b0aabacdf7753b014f34cb4fa2eb7ab1d287",
+          "startLine": 823,
+          "endLine": 827,
+          "text": "for (const root of buffer) {\n          forEachInstrDeep(root, (instr) => {\n            if (instr.kind === \"call\" || instr.kind === \"closure.new\") {\n              const declaration = irRuntimeCallableDeclaration(instr.kind === \"call\" ? instr.target : instr.liftedFunc);\n              if (",
+          "owner": null
+        },
+        {
+          "path": "src/ir/intrinsic-support.ts",
+          "start": 39207,
+          "end": 39218,
+          "bytes": 11,
+          "sha256": "abcd0ee1fc2cdf511d8a85bd020c5f2f18468d6c442f5506fec7d859b8fea335",
+          "gitBlob": "ea2f9ad0be2902d19171803602465e07204bab4e",
+          "startLine": 826,
+          "endLine": 826,
+          "text": "declaration",
+          "owner": null
+        },
+        {
+          "path": "src/ir/intrinsic-support.ts",
+          "start": 38185,
+          "end": 38187,
+          "bytes": 2,
+          "sha256": "c8f0829ff9d76fbc05883f2cad0a81bc279b117f2db1420605e930fa544176d3",
+          "gitBlob": "794db8759d135803379e293cb79ede1c50e612f6",
+          "startLine": 806,
+          "endLine": 806,
+          "text": "?.",
+          "owner": "prepareIrRuntimeManifest"
+        },
+        {
+          "path": "src/ir/intrinsic-support.ts",
+          "start": 39387,
+          "end": 39426,
+          "bytes": 39,
+          "sha256": "133ce5830fd9ce22c6d2a423140ce8a9dd88f01016bff16667bc39352a81dc0d",
+          "gitBlob": "e6dee98e29dcd3f3c7c40535af4bd93913c4d2d2",
+          "startLine": 829,
+          "endLine": 829,
+          "text": "feature === \"error.reference.construct\"",
+          "owner": null
+        },
+        {
+          "path": "src/ir/intrinsic-support.ts",
+          "start": 39064,
+          "end": 39065,
+          "bytes": 1,
+          "sha256": "ba5ec51d07a4ac0e951608704431d59a02b21a4e951acc10505a8dc407c501ee",
+          "gitBlob": "e8a0f87653d8b78789cb183ba19f357c636ad33f",
+          "startLine": 823,
+          "endLine": 823,
+          "text": ")",
+          "owner": null
+        },
+        {
+          "path": "src/ir/intrinsic-support.ts",
+          "start": 39602,
+          "end": 39821,
+          "bytes": 219,
+          "sha256": "ee362b34aa36d3591242f2502682dd304dcb23a654ceb17d74822b505a0bd783",
+          "gitBlob": "112b7c519fdbdd00045866cad058f37cb73407db",
+          "startLine": 833,
+          "endLine": 837,
+          "text": "runtimeCallFeatures.add(declaration.feature);\n            }\n            if (instr.kind !== \"intrinsic\") return;\n            const argumentTypes = instr.args.map((arg) => {\n              const type = valueTypes.get(arg);",
+          "owner": null
+        }
+      ]
+    },
+    {
+      "path": "src/ir/program-runtime-abi.ts",
+      "ordinal": 0,
+      "currentStart": 0,
+      "currentEnd": 615,
+      "currentStartLine": 1,
+      "replacementSha256": "ed4a4db12598aed01be6a6c06dfeec51108bcc84e0da5866bd82aa37b8475414",
+      "literalKinds": [
+        "comment",
+        "whitespace",
+        "module-link"
+      ],
+      "live": []
+    },
+    {
+      "path": "src/ir/program-runtime-abi.ts",
+      "ordinal": 1,
+      "currentStart": 732,
+      "currentEnd": 1318,
+      "currentStartLine": 10,
+      "replacementSha256": "7e2dc0329babb1f4c64407f3d94b0883fd1facd517aa61f0cb691f639226b10c",
+      "literalKinds": [
+        "module-link",
+        "whitespace",
+        "comment"
+      ],
+      "live": [
+        {
+          "path": "src/ir/program-runtime-abi.ts",
+          "start": 834,
+          "end": 936,
+          "bytes": 102,
+          "sha256": "184c1869e5e6af9e37da4bf80b8580216f7ead361a71c6d63e17bbadbe31910d",
+          "gitBlob": "1049a7a63d6b16d93ea0e60f544423b2a1e079a8",
+          "startLine": 12,
+          "endLine": 12,
+          "text": "type RuntimeCallableInput = Pick<PreparedIrProgramProducerInput, \"inventory\" | \"ir\" | \"derivedUnits\">;",
+          "owner": null
+        },
+        {
+          "path": "src/ir/program/runtime-abi-identity.ts",
+          "start": 533,
+          "end": 1241,
+          "bytes": 708,
+          "sha256": "65ad7dc823971758260724cf73816a9095b10b5be31b6e453c717b98bedf1990",
+          "gitBlob": "dc84d9c8f3d545bf476ed8211fa0c83b03fa4c0a",
+          "startLine": 10,
+          "endLine": 24,
+          "text": "/** Shared ABI identity is anchored at the entry source, never at a guessed requesting unit. */\nexport function preparedIrRuntimeAbiAnchor(inventory: IrUnitInventory): IrSourceRecord {\n  const entries = inventory.sources.filter((source) => source.kind === \"entry\");\n  if (entries.length !== 1)\n    throw new PreparedIrProgramInvariantError(\"invalid-prepared-data\", \"runtime ABI requires one exact entry source\");\n  return entries[0]!;\n}\n\nexport function preparedIrRuntimeCallableBindingId(inventory: IrUnitInventory, ref: IrFuncRef): IrBindingId {\n  return createIrBindingId({\n    ownerId: preparedIrRuntimeAbiAnchor(inventory).id,\n    domain: \"callable\",\n    role: irCallableBindingKey(ref.binding),\n  });\n}",
+          "owner": null
+        },
+        {
+          "path": "src/ir/program-runtime-abi.ts",
+          "start": 1141,
+          "end": 1317,
+          "bytes": 176,
+          "sha256": "c68a02a19faad2719ecf60795122ad9c47ab99b06ecd66e8d6471715d7a4c5c1",
+          "gitBlob": "7706a981d7db62aa2654c6536932ac8df5f91fef",
+          "startLine": 17,
+          "endLine": 18,
+          "text": "export function assertPreparedIrRuntimeCallableDeclaration(declaration: IrRuntimeCallableDeclaration): void {\n  const canonical = irRuntimeCallableDeclaration(declaration.ref);",
+          "owner": null
+        }
+      ]
+    }
+  ]
+}

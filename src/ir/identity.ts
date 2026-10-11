@@ -6,8 +6,9 @@ import type {
   IrClassId,
   IrBindingId,
   IrLexicalOwnerId,
-  IrFunctionIdentity,
   IrSyntheticUnitRole,
+  IrLiftedFunctionArtifactIdentity,
+  IrLiftedSourceUnitProvenance,
 } from "../shared/contracts/ir-identity.js";
 export type {
   IrSourceId,
@@ -17,6 +18,8 @@ export type {
   IrLexicalOwnerId,
   IrFunctionIdentity,
   IrSyntheticUnitRole,
+  IrLiftedFunctionArtifactIdentity,
+  IrLiftedSourceUnitProvenance,
   CreateDerivedIrUnitIdInput,
   CreateIrBindingIdInput,
 } from "../shared/contracts/ir-identity.js";
@@ -67,14 +70,6 @@ export type {
   IrUnitInventory,
 } from "../shared/contracts/ir-unit-inventory.js";
 
-export interface IrLiftedFunctionArtifactIdentity extends IrFunctionIdentity {
-  readonly parentId: IrUnitId;
-  readonly role: "lifted-closure";
-  readonly ordinal: number;
-  /** Present when the lifted artifact is an inventoried source body, not a pass-created unit. */
-  readonly sourceUnit?: true;
-}
-
 export interface IrLiftedFunctionArtifactOwner {
   readonly ownerUnitId: IrUnitId;
   readonly liftedCounter: { value: number };
@@ -86,15 +81,6 @@ export interface IrSyntheticUnitProvenance {
   readonly parentId: IrUnitId;
   readonly role: IrSyntheticUnitRole;
   readonly ordinal: number;
-}
-
-/** Exact lowering-side provenance for an inventoried nested source body. */
-export interface IrLiftedSourceUnitProvenance {
-  readonly id: IrUnitId;
-  readonly parentId: IrUnitId;
-  readonly role: "lifted-closure";
-  readonly ordinal: number;
-  readonly sourceUnit: true;
 }
 
 export type IrDerivedUnitProvenance = IrSyntheticUnitProvenance | IrLiftedSourceUnitProvenance;

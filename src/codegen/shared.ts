@@ -773,6 +773,7 @@ type EmitArgumentsObjectFn = (
   paramTypes: ValType[],
   paramOffset: number,
   unmapped?: boolean,
+  formals?: readonly ts.ParameterDeclaration[],
 ) => void;
 
 let _emitArgumentsObject: EmitArgumentsObjectFn = () => {
@@ -788,6 +789,7 @@ export function registerEmitArgumentsObject(fn: EmitArgumentsObjectFn): void {
  * `unmapped`: when true (strict-mode functions, §10.4.4) the param↔arguments
  * sync is suppressed so writes to `arguments[i]` do not flow back into the
  * named parameter (#779e). Defaults to false (sloppy, mapped).
+ * `formals`: the source parameters, so a trailing rest is read as its elements (#6651 I7).
  */
 export function emitArgumentsObject(
   ctx: CodegenContext,
@@ -795,8 +797,9 @@ export function emitArgumentsObject(
   paramTypes: ValType[],
   paramOffset: number,
   unmapped = false,
+  formals?: readonly ts.ParameterDeclaration[],
 ): void {
-  _emitArgumentsObject(ctx, fctx, paramTypes, paramOffset, unmapped);
+  _emitArgumentsObject(ctx, fctx, paramTypes, paramOffset, unmapped, formals);
 }
 
 // ── compileStringLiteral ──────────────────────────────────────────────

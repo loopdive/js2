@@ -154,10 +154,40 @@ function classifyBuiltin(name: string): HostImportPolicy {
       "explicit exceptional host engine with a native or linked-provider path",
     );
   }
+  if (name === "__crypto_random_uuid" || name === "__crypto_get_random_values") {
+    // (#6749) Web Crypto is entropy, not ECMAScript semantics: the same
+    // `randomness` capability as `Math.random` / WASI `random_get`. No native
+    // fallback by design — a host-free build throws rather than degrade to a
+    // PRNG (#1503/#6659).
+    return policy("platform-capability", "randomness", 4398, false, "Web Crypto entropy capability");
+  }
+  if (name === "__get_process" || name.startsWith("__get_process_")) {
+    // (#1490, #6910) The live Node `process` (and its env/argv/platform/…
+    // members): an environment capability, not ECMAScript semantics. A
+    // host-free build substitutes its stand-in at compile time.
+    return policy("platform-capability", "node", 1490, false, "Node process capability");
+  }
   if (LEGACY_SEMANTIC_BUILTIN_PREFIXES.some((prefix) => name.startsWith(prefix))) {
     return policy("legacy-semantic", "ecmascript-runtime", 4397, false, "implicit JavaScript semantic fallback");
   }
   return policy("unknown", "unclassified", 4401, false, `unclassified env builtin '${name}'`);
+}
+
+/**
+ * #6707: `env.__exn` is the one `WebAssembly.Tag` the JS embedder hands to
+ * every module of a linked graph (`sharedExceptionTag`, package linker) so a
+ * provider's throw is catchable in its consumer. It is instance/link wiring,
+ * not an ECMAScript semantic fallback; a host-free build keeps a module-local
+ * tag, so the native fallback is real. Environment-shaped, so it classifies
+ * identically with or without the native regime.
+ *
+ * Keyed on the non-`func` kind as well as the name: the import manifest records
+ * a wasm `tag` import as `kind: "global"` with an untyped `builtin` intent, and
+ * both the compile-time publication gate and the native-first runtime adapter
+ * gate classify that manifest descriptor, so this is the one place both see.
+ */
+function isSharedExceptionTag(descriptor: ImportDescriptor): boolean {
+  return descriptor.module === "env" && descriptor.kind !== "func" && descriptor.name === "__exn";
 }
 
 /**
@@ -171,6 +201,15 @@ export function classifyHostImport(descriptor: ImportDescriptor, environment?: C
   }
   if (environment === "none" && isDomCapabilityImportDescriptor(descriptor)) {
     return policy("platform-capability", "dom", 4576, false, "explicit bounded DOM subtree capability");
+  }
+  if (isSharedExceptionTag(descriptor)) {
+    return policy(
+      "instance-lifecycle",
+      "shared-exception-tag",
+      5226,
+      true,
+      "linker-owned shared exception tag; a host-free build keeps a module-local tag",
+    );
   }
   const intent = descriptor.intent;
   switch (intent.type) {
@@ -252,7 +291,10 @@ export function classifyHostImport(descriptor: ImportDescriptor, environment?: C
         ? policy("platform-capability", "clock", 4577, false, "explicit standalone embedder clock capability")
         : policy("platform-capability", "clock", 4398, true, "wall-clock capability");
     case "declared_global":
-      return policy("platform-capability", `global:${intent.name}`, 4398, false, "declared ambient host capability");
+      // (#6890) `global_console` is the console capability read as a VALUE.
+      return intent.name === "console"
+        ? policy("platform-capability", "console", 4398, false, "explicit host console object capability")
+        : policy("platform-capability", `global:${intent.name}`, 4398, false, "declared ambient host capability");
     case "dynamic_import":
       return policy("platform-capability", "module-loader", 4398, false, "dynamic module loading capability");
     case "node_builtin":

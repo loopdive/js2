@@ -1,0 +1,15 @@
+# Frozen core vocabulary historical reader
+
+Only the three files in freeze.json are new. All 32 previously frozen current paths remain exact. No compiler, tests, Git or network ran. Model: Codex GPT-6 Astra Max.
+
+The helper obtains the closed 51-file raw population once per operation, verifies complete byte length/SHA256/Git blob, calls the unchanged Phase A reconstruction once using this private captured map, and requires exact returned Phase A entries for every applicable donor. It then verifies all fifteen staged current declaration populations and thirteen direct dependencies, reconstructs all eight original files through 164 live declaration transfers, retains four explicit current-only residues, and replays all fifteen complete current files. No successful proof is cached across calls.
+
+Only comments/import/export links are stored as recipe scaffold. Six finite authenticated declaration edits contain body-free type/signature fragments or empty text; current executable bodies, removed table/condition spans and all four residues are taken from freshly authenticated actual current source. Full original/current hashes and exact declarations/order/span/occurrence prevent a matching-count substitute.
+
+The authoring static proof independently reaches the unchanged moved/retained populations 12/44, 3/36, 2/31 and 4/32, with all original hashes. It also proves the Phase A counted ordering stage unchanged. Static drafted test count: 132; actual tests NOT RUN.
+
+Integration: root owns changing only the three initial historical reads inside the old core receipt rows. Use readCoreVocabularyReceiptSource directly on raw source, because the helper itself performs Phase A once. Do not first normalize the input elsewhere, substitute the compiler reader, or normalize existing historical mutation overrides. Unknown paths pass through raw.
+
+The string-types and counted-identity canonical files have identical historical/current bytes. A textual reader cannot identify whether unchanged bytes have passed through earlier; the tests explicitly retain that limit. Every changed historical output and every mutated input fails the current input pins.
+
+Root validation remains required: repository TS7, strict single-fork new suite with parent/fork4096 and maxfork1, then the original core20 and root-selected Phase A/program preservation suites. Never infer those runtime outcomes from this static proof.

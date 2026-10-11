@@ -1,0 +1,9 @@
+{
+  "source_base": "1265c47d6fc41300a380ef7e4abc45fdfcfd2c61",
+  "fixture_sha256": "c0550b99175c0eb61afa7d5d110a287f3fe90e9fc8e581c6d58a19fe0a971ba9",
+  "test_sha256": "afc3885f51522cec10d5eccac536636b104b9a01b8c5e5c139b8dbd5fef35d37",
+  "test_archive": "plan/log/3518-native-realm-checkpoint-2026-10-01/issue-3518-public-number-object-712.test.ts.txt",
+  "fixture_altered": false,
+  "test_altered": false,
+  "configuration": "merge existing vitest config with exact original test include only; existing timeouts retained"
+}

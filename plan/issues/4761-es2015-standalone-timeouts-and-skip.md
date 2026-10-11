@@ -1,7 +1,8 @@
 ---
 id: 4761
 title: "ES2015 standalone Test262 compile timeouts and compiler-hang skip"
-status: complete
+status: done
+completed: 2026-08-27
 created: 2026-08-26
 updated: 2026-08-27
 priority: critical

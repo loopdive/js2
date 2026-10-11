@@ -1,0 +1,502 @@
+{
+  "kind": "core-vocabulary-live-evolution-test-reader-draft",
+  "state": "frozen-unvalidated",
+  "model": "Codex GPT-6 Astra Max",
+  "worktree": "/private/tmp/js2-ir-source-contracts-writer-20261001",
+  "branch": "codex/3518-source-contracts-writer-20261001",
+  "writerBase": "a8cd258d553278d8e5f908878f56a81377ba8e40",
+  "sourceProvenance": "1265c47d6fc41300a380ef7e4abc45fdfcfd2c61",
+  "historicalSplitEpoch": "8429806b2abb6a9f04160471170a0659c94bd335",
+  "oldReceiptDonorEpoch": "acfd3e37b8765c4c4788c1fa94718d62c60e473c",
+  "files": {
+    "tests/helpers/ir-core-vocabulary-evolution.ts": {
+      "sha256": "1ab93a024b314803e542f69f871011a8d7127f3b8b5337e6f3eaeb14e8fc203d",
+      "bytes": 18208,
+      "lines": 455
+    },
+    "tests/helpers/ir-core-vocabulary-evolution.json": {
+      "sha256": "61f152a65510005ad6110dc180662ad1d450c3cc2c710d1c8e89ed9fc70f5a9a",
+      "bytes": 589415,
+      "lines": 16939
+    },
+    "tests/issue-3518-core-vocabulary-evolution.test.ts": {
+      "sha256": "1b4942b32f428689b85836379b81fce8c63fabb25e7cccceafe28b6684c5d6dd",
+      "bytes": 20293,
+      "lines": 488
+    }
+  },
+  "protected": {
+    "manifests": [
+      {
+        "path": ".tmp/source-contracts-writer/phase-a-role-correction-qktlatcg/freeze.json",
+        "sha256": "58de81f1ec29953d2e50166132286bf163bf1626b90062509104aab46c85670f"
+      },
+      {
+        "path": ".tmp/source-contracts-writer/relocation-freeze-ngavd5/freeze.json",
+        "sha256": "4dc180501a2cd1b184aacc329591aa9add6fab255588d275e38ef6fbede616e4"
+      },
+      {
+        "path": ".tmp/source-contracts-writer/pre-a-freeze-ObLzMk/freeze.json",
+        "sha256": "13dec7ca04ddda2c23270edf4c9851a23abb7ceafddc37d5220f7937acdc7343"
+      }
+    ],
+    "currentFiles": 32,
+    "drift": []
+  },
+  "population": {
+    "rawOwners": 51,
+    "phaseAInverse": 13,
+    "phaseAForward": 25,
+    "coreOriginals": 8,
+    "coreCurrent": 15,
+    "transfers": 164,
+    "currentResidues": 4,
+    "editedRoles": 6
+  },
+  "rawInputs": [
+    {
+      "path": "src/ir/outcomes.ts",
+      "bytes": 9287,
+      "sha256": "93f3f441f104cbadc366ee5f884b465f398931da5bdf95e8d689f79038030b9e",
+      "gitBlob": "d85f82cd94071a20c3da543c5d7431136ceff2a0"
+    },
+    {
+      "path": "src/ir/abi-bindings.ts",
+      "bytes": 11312,
+      "sha256": "e13e7e5b6fdfb9ed487c4e6cf9b8fcfbde95ef4d6472a3d274621a80b768aadb",
+      "gitBlob": "1c395f380c04f8e18e3264b5e210050755053d61"
+    },
+    {
+      "path": "src/ir/declared-types.ts",
+      "bytes": 218,
+      "sha256": "f281af0bc46bc85cfb79679c15ef969a15aea1256395c60c48b629c613af29d6",
+      "gitBlob": "8ea5200dda809d056b1b66c4f406dbd7de4270d4"
+    },
+    {
+      "path": "src/ir/fnctor-abi.ts",
+      "bytes": 341,
+      "sha256": "afd17658edbbe323c13b4bb3c861e3dfb6eba07311e3afcc6b761904e5c26973",
+      "gitBlob": "c45b22ab0df300e9110d7ffd847b22fa59b5c63c"
+    },
+    {
+      "path": "src/ir/tag-domain.ts",
+      "bytes": 348,
+      "sha256": "e2fb240ab8b0bb4b23e45c82ddd6c3d3b4a2fb46e1ecf83db7539ac92d28d275",
+      "gitBlob": "28d926edba76af1df4bc46dcd815b71beabdc4e2"
+    },
+    {
+      "path": "src/ir/js-tag-domain.ts",
+      "bytes": 180,
+      "sha256": "810b9e6ad30b740dd0089aff9d211e7cef0511173c5dd985d6af326908f6bfef",
+      "gitBlob": "15f1a5a6b1ad3d2237a87434fb710e54216bbc88"
+    },
+    {
+      "path": "src/ir/producer.ts",
+      "bytes": 245,
+      "sha256": "9b8361c1334cbf45e1b7f1dfebe1e3b4d3d55336f9c19d4ac3722b3de86a0a75",
+      "gitBlob": "2941be28bf6e0b1575264078795e4518f740db4a"
+    },
+    {
+      "path": "src/ir/string-runtime.ts",
+      "bytes": 1007,
+      "sha256": "a5fa89cf7560a631f3dea63d1c5948c68befe7900095319702772e4cf650630b",
+      "gitBlob": "95755a6eb5bffa94107b812a44cf7554b0de5abc"
+    },
+    {
+      "path": "src/ir/counted-string-append-provenance.ts",
+      "bytes": 9915,
+      "sha256": "1e1de4d0fe1ffafc6dae1eab0a63ecd18ad34d61237f79b856ff1cf7291865a2",
+      "gitBlob": "cfe3fc20e6162b70d35660fbfb4521fcfb132c84"
+    },
+    {
+      "path": "src/string-surrogate.ts",
+      "bytes": 197,
+      "sha256": "5b47fdef3d69a4409ed05726f524ca0739ed391f926728b9a8777de1785e0bc1",
+      "gitBlob": "6698fcdc70f375709dc597c170cf2e6c465dc76f"
+    },
+    {
+      "path": "src/ir/runtime-symbols.ts",
+      "bytes": 235,
+      "sha256": "b25ecf5d68f1bb4e4e2cf49d2ab51473053b74d0b85a43aedabf0d4d1d41e2ff",
+      "gitBlob": "9e51d916ffddde1c3401a9bcf03aef4e9e1f1a0a"
+    },
+    {
+      "path": "src/ir/date-runtime.ts",
+      "bytes": 222,
+      "sha256": "908101fcb3e308dcf51e1ea3878792253a301247cfde3d40c6b565568bc86ec3",
+      "gitBlob": "1889c0b530871f12daa5e9bf4f4efdc5d953493c"
+    },
+    {
+      "path": "src/ir/ast-lowering-plans.ts",
+      "bytes": 19104,
+      "sha256": "f261a63bc2e5e4c28e724ef93f97321568e78d87a2bac78736856507bb59e829",
+      "gitBlob": "d8cf9db0dfff83374d58e9d204f724190237fe88"
+    },
+    {
+      "path": "src/shared/contracts/ir-preparation-errors.ts",
+      "bytes": 3391,
+      "sha256": "b19a1971c578cf72d73e6d26d78f02e6e946b670bdcb69399b870543e14cbbf7",
+      "gitBlob": "0673767d18df9bcae3b17fa0ec1d32fc84f566d9"
+    },
+    {
+      "path": "src/ir/core/global-binding-keys.ts",
+      "bytes": 1570,
+      "sha256": "bfbcb9e5c0f929b7bf2c509c654cc88cd58b8c453a74744cf561c4bc430c4bbb",
+      "gitBlob": "14e62f08b7c73577404d3ad834093a28719af8d1"
+    },
+    {
+      "path": "src/ir/core/declared-types.ts",
+      "bytes": 7078,
+      "sha256": "f167423631f7e856102a532db9392f6d3d3538b68c8c4be5d1e123518353bbcc",
+      "gitBlob": "9f8b8c1e26f546d370a822136c5ab05fd98361dc"
+    },
+    {
+      "path": "src/ir/core/fnctor-abi.ts",
+      "bytes": 12944,
+      "sha256": "0fca9decc63f7daad9332b58e3e810cecb55cd620e74166bd20e65d34f3431eb",
+      "gitBlob": "cfbd94c96d785538b5662cc820c61e1d7bfd8bea"
+    },
+    {
+      "path": "src/ir/core/tag-domain.ts",
+      "bytes": 11303,
+      "sha256": "479aeeaacd739699cd66137b21335cae7205db01b9950b8eeaaac65b07634e20",
+      "gitBlob": "5b446c95b5475e621dc9b0da3b58265ca881cb74"
+    },
+    {
+      "path": "src/ir/runtime/js-tag-domain.ts",
+      "bytes": 13605,
+      "sha256": "638c06163bcab51c2982103d869c199feccc438e5e5cddfc6b2ef2503ec60a5c",
+      "gitBlob": "a6e804504790c0eb80ec04bab78be9672e3989ed"
+    },
+    {
+      "path": "src/ir/runtime/producer.ts",
+      "bytes": 2648,
+      "sha256": "3cee19f99b1d64d4c355841b95434135d9fa3e0633fc51129e6e49ee202c5d90",
+      "gitBlob": "b820def25b21e0716b090057c32ac39425857b19"
+    },
+    {
+      "path": "src/ir/core/string-runtime.ts",
+      "bytes": 7599,
+      "sha256": "632e60dc92a6145b74f33a2434eb2b24f461e2a83d888354f03e02ecc4d92a3c",
+      "gitBlob": "aae4702b8e27f8099d953fd67ce2bad8e90e83ab"
+    },
+    {
+      "path": "src/shared/contracts/ir-counted-string-site-id.ts",
+      "bytes": 7802,
+      "sha256": "398bcf62a3c6c1002a9728460654384410db93f120eeffb2da435c02ed5e3fcb",
+      "gitBlob": "11565b21d8a9bf4bb3b578ae1ed1fcc3089fdfdd"
+    },
+    {
+      "path": "src/shared/contracts/string-surrogate.ts",
+      "bytes": 2435,
+      "sha256": "782969df8b156eec18455d8e7f33acd1902cfa1b8d1e3f2e94dbb494a5ff49a4",
+      "gitBlob": "72c214269243a8abd22cad433768a6280588f633"
+    },
+    {
+      "path": "src/ir/core/runtime-symbols.ts",
+      "bytes": 418,
+      "sha256": "840622cc672ccb7a0e7ccb5bc5e7e5e5846205a837a12637835424fa244bd6e1",
+      "gitBlob": "cf31cd311fed238984b399ee140e22c81a1de112"
+    },
+    {
+      "path": "src/ir/core/date-callables.ts",
+      "bytes": 730,
+      "sha256": "4cef6c7ca2b22967092651e3c3c0bf2c00e75f4d4b2f8cc38618e657285935f2",
+      "gitBlob": "1dcd60af884b36b21f8647b510188fef486f7476"
+    },
+    {
+      "path": "src/ir/intrinsics.ts",
+      "bytes": 2316,
+      "sha256": "1e037410c4702272ae7f16a3b20b2a352f4c31525feb20419428399dac20e091",
+      "gitBlob": "5e3a09f86e5743867318740e4706607eb0ea30bb"
+    },
+    {
+      "path": "src/ir/core/intrinsic-vocabulary.ts",
+      "bytes": 3446,
+      "sha256": "2aa5c040d09473d683daace9007c4d483cfc76f45eef707b50c7205c7c86854d",
+      "gitBlob": "6e837f8b8b19626a71b13df0f0401921fac073ae"
+    },
+    {
+      "path": "src/ir/async-runtime-providers.ts",
+      "bytes": 1066,
+      "sha256": "5e107a0acdd0475e05ab111fe210ced35a0ceba5e0b2d78604559d13c55d3a1a",
+      "gitBlob": "0d4d4ad72e3622adbb0918cab628c2b49c056653"
+    },
+    {
+      "path": "src/ir/core/async-intents.ts",
+      "bytes": 1159,
+      "sha256": "411d7ae2cbfcae0da9c00f2a53e04be4a80ed45906c063c9f9b9ca1692909d0b",
+      "gitBlob": "573dd721ad90c6d3f49df6c1ae86b60ef67a4ccc"
+    },
+    {
+      "path": "src/ir/core/string-types.ts",
+      "bytes": 288,
+      "sha256": "93c2ea34a82e81e89482b88d61dc61ccfdb5edeb3484c510ef24779fac9612bc",
+      "gitBlob": "134319e1bcd5e8a5bc827f7d1843bfd554f8752d"
+    },
+    {
+      "path": "src/shared/contracts/ir-counted-string-identity.ts",
+      "bytes": 905,
+      "sha256": "e16f8fcf14d10685e96982a320448ba407b02fd26a35e2122fbdade2258cefd5",
+      "gitBlob": "0906250623854e0e307ea3e1cda76724b737819a"
+    },
+    {
+      "path": "src/ir/runtime/contracts/intrinsics.ts",
+      "bytes": 3101,
+      "sha256": "0392774476fc5beb79f6c0ac22e610fb098c3687e80d653a2aa468f85ef25ed2",
+      "gitBlob": "04e452f4a7041ddd094fa3cac9d579d4280febe7"
+    },
+    {
+      "path": "src/ir/core/intrinsic-contracts.ts",
+      "bytes": 1210,
+      "sha256": "ece37f6c4f48129187e326cdad4fd6207217e50c5078739acae1cf5393aa3932",
+      "gitBlob": "177f7aaf3163c4eb47866ae2a226001795745891"
+    },
+    {
+      "path": "src/ir/core/intrinsics.ts",
+      "bytes": 11038,
+      "sha256": "96b3368af4b8777f19abd9a0aa7ebf0a25f102075c1ca0db6504a8ec81aa569f",
+      "gitBlob": "a8d550388b00f810017a5e28213480063c70f014"
+    },
+    {
+      "path": "src/ir/analysis/intrinsics.ts",
+      "bytes": 4751,
+      "sha256": "57af60dfaf3f4b8fe5845b053442aab3863383519db48bc705e6dfb89caeba5d",
+      "gitBlob": "1a86a55e9ac08764d0105c288a68147915b4a786"
+    },
+    {
+      "path": "src/ir/runtime/async-providers.ts",
+      "bytes": 9201,
+      "sha256": "8bbbe1f71ccc3a234d9bd894173829fb285fd39cb637c617aeea90dc6d3b0100",
+      "gitBlob": "ae8a6f9a76a509be854fee396bd7d068d9d344e3"
+    },
+    {
+      "path": "src/runtime/contracts/async-provider-schema.ts",
+      "bytes": 3057,
+      "sha256": "5c40a91d9c21a96292a58cfe7d61d87e83ec0b6db916b2c9f714d60c5c93499a",
+      "gitBlob": "28ac7d2773d3b556c935ae3bf4e431d24657a7fd"
+    },
+    {
+      "path": "src/ir/core/string-callables.ts",
+      "bytes": 633,
+      "sha256": "c6c182926a84343afa2a4fd5e28140529034e16bf372f5ca3acd32eb709df709",
+      "gitBlob": "fb7862c97b93fd4e892729523af3e7f74edc73d9"
+    },
+    {
+      "path": "src/ir/analysis/effects.ts",
+      "bytes": 25469,
+      "sha256": "b9ea0dfc036a4da09742974011dd98a51aa471a7a2650ebed303f3937e04412d",
+      "gitBlob": "674dba188c5f1d805c7675bac0211ef844655a12"
+    },
+    {
+      "path": "src/ir/callable-bindings.ts",
+      "bytes": 435,
+      "sha256": "ae63a4d142cec4cbd39dc3cc14022bf73c28fb7e3818b7d26c726c9ac8d46742",
+      "gitBlob": "0c9137e2c28a75f4a5cb3667d608523b44736a0b"
+    },
+    {
+      "path": "src/ir/core/nodes.ts",
+      "bytes": 96066,
+      "sha256": "ad0aa4b2aa29cb030a5f46dc29ec71d8a336e76e12737c78afe6bb5d9732fd77",
+      "gitBlob": "3554d930c5873b9133666b32a14b34ef30df1d81"
+    },
+    {
+      "path": "src/ir/core/types.ts",
+      "bytes": 32296,
+      "sha256": "58d3795e4f38002798fbdb93c7599f74cb422555ba0ed84f160a51aec52543a2",
+      "gitBlob": "db0b740a300009d035b7af28377bf0333e023105"
+    },
+    {
+      "path": "src/ir/identity.ts",
+      "bytes": 61452,
+      "sha256": "ac9bcf913f1bbe4358f020307b3fd25b47c0fac26be88dfde449ba1d33694e44",
+      "gitBlob": "4a47d555bb511e921e2e9fd70902fa9275d3329a"
+    },
+    {
+      "path": "src/ir/instruction-digest.ts",
+      "bytes": 2523,
+      "sha256": "ddfd65fb4946341c77613819db5b485b2b2ecc51534c0eefd38d32b55ff33299",
+      "gitBlob": "acbf5e177257fe3cc3a14161c11c071a4060d282"
+    },
+    {
+      "path": "src/ir/nodes.ts",
+      "bytes": 4701,
+      "sha256": "84fb3dccdca95ea0f9f192206488b9f644c4a74b487c375aeae855e3b0b3ee99",
+      "gitBlob": "3a1162a5287a34492500d90909f2cb53e2d6cbc1"
+    },
+    {
+      "path": "src/ir/runtime/contracts/manifest.ts",
+      "bytes": 28324,
+      "sha256": "048358db8d8deeee38bb6d49e9fe9be41189441f6b26221733c832f16ce02cd1",
+      "gitBlob": "a9b945e529e106f61089a29440ae73d114d5d2c0"
+    },
+    {
+      "path": "src/ir/runtime/host-capabilities.ts",
+      "bytes": 46206,
+      "sha256": "68b4cb798181bfefccf63a3ac301d5e008157414ef740f41339ba873e85d7b14",
+      "gitBlob": "3c1cb5c5a5a265443c034807b0d84b8d68be1c4d"
+    },
+    {
+      "path": "src/runtime/contracts/host-capability-schema.ts",
+      "bytes": 16626,
+      "sha256": "132ecd9d326571d37b56f64fc74f7bf5d6878bf5874416b2aa900ace9851e390",
+      "gitBlob": "b6806719418d8e17e3b0498070502e231549eb05"
+    },
+    {
+      "path": "src/shared/contracts/ir-identity.ts",
+      "bytes": 2741,
+      "sha256": "ef9427c37f81455e06b81cf4f2599601d50e80f0d83abcacda447c9048fa4d0f",
+      "gitBlob": "07f882159a6e688c1ed30c2965a36699d21a0b85"
+    },
+    {
+      "path": "tests/helpers/ir-source-contract-relocation.ts",
+      "bytes": 11262,
+      "sha256": "b8437b4b95231f06d4ad73c5130b76bf573d8b3a976b99c8b061979adafa90b6",
+      "gitBlob": "da28e69f4795a165ccad1ccb89c8da001383500a"
+    },
+    {
+      "path": "tests/helpers/ir-source-contract-relocation.json",
+      "bytes": 494067,
+      "sha256": "0b8fefeeae71e66e2b95726320609d60427cbc7ef4f7ce53a8c094d8a971940b",
+      "gitBlob": "07d8638868b34086bb9b083c47842082481bf517"
+    }
+  ],
+  "originals": [
+    {
+      "path": "src/ir/intrinsics.ts",
+      "sha256": "b716f8a9d0a3cc5ca1ac8b218e34340e152c5a6ea6ca1468420570632682a7ea",
+      "gitBlob": "4270884f541f52e5860a47300d72d77c1f47d577",
+      "bytes": 16988
+    },
+    {
+      "path": "src/ir/core/intrinsic-vocabulary.ts",
+      "sha256": "276b890af04a1c5f4f96c2764f7cbd7dcd5d3d12a8951c08c290e3577b9a7ef3",
+      "gitBlob": "528bebdab2e8b74d5b6d85584b1e8a325c097cdc",
+      "bytes": 3859
+    },
+    {
+      "path": "src/ir/async-runtime-providers.ts",
+      "sha256": "0ff5f25d360d64f266a7c450cbe8b375360e29908b734c7acab8c7c224380027",
+      "gitBlob": "a12e7be5d5ea9fbd47793bb8133775868364f81b",
+      "bytes": 11705
+    },
+    {
+      "path": "src/ir/core/async-intents.ts",
+      "sha256": "0d52edfc3d7fcd19a443de1ba98d5e082fcc34f06f0f52be725458419b2be7bb",
+      "gitBlob": "380e15841bedd36dbb9992f0d3babdd16ecf97bc",
+      "bytes": 887
+    },
+    {
+      "path": "src/ir/string-runtime.ts",
+      "sha256": "f616268aee313cca222e50bc5471c73976e44b3cf115231fda82432223833388",
+      "gitBlob": "02df44f170972d8cf484e8e2ce996897a750721d",
+      "bytes": 7884
+    },
+    {
+      "path": "src/ir/core/string-types.ts",
+      "sha256": "93c2ea34a82e81e89482b88d61dc61ccfdb5edeb3484c510ef24779fac9612bc",
+      "gitBlob": "134319e1bcd5e8a5bc827f7d1843bfd554f8752d",
+      "bytes": 288
+    },
+    {
+      "path": "src/ir/counted-string-append-provenance.ts",
+      "sha256": "a0d595166b0a209e17d6b2b59caf66f4a30e9f2d4b17051d14cda07cc57b4d0e",
+      "gitBlob": "9b55b342e0a7e06b6f7ac1e147bdd5cf7612177b",
+      "bytes": 17037
+    },
+    {
+      "path": "src/shared/contracts/ir-counted-string-identity.ts",
+      "sha256": "e16f8fcf14d10685e96982a320448ba407b02fd26a35e2122fbdade2258cefd5",
+      "gitBlob": "0906250623854e0e307ea3e1cda76724b737819a",
+      "bytes": 905
+    }
+  ],
+  "staticTestRows": 132,
+  "testGroups": [
+    {
+      "name": "reconstructs complete original $path from actual current owners",
+      "rows": 8
+    },
+    {
+      "name": "retains every original and current role with exactly four explicit current-only residues",
+      "rows": 1
+    },
+    {
+      "name": "preserves the original moved and retained receipts for $old",
+      "rows": 4
+    },
+    {
+      "name": "stores no executable declaration in scaffold and no old body in bounded edit literals",
+      "rows": 1
+    },
+    {
+      "name": "preserves the actual definition body and the real async interleaving",
+      "rows": 1
+    },
+    {
+      "name": "requires genuine raw $path before reconstructing any requested output",
+      "rows": 51
+    },
+    {
+      "name": "rejects %s after a genuine complete positive",
+      "rows": 26
+    },
+    {
+      "name": "refuses altered edited role $current.path/$current.name",
+      "rows": 6
+    },
+    {
+      "name": "rejects missing current-only $path/$name instead of ignoring it",
+      "rows": 4
+    },
+    {
+      "name": "authenticates the actual Boolean hunk at $path:$start",
+      "rows": 6
+    },
+    {
+      "name": "checks Git blob independently of a correct full SHA and length",
+      "rows": 1
+    },
+    {
+      "name": "rejects changed fixed receipt authority: %s",
+      "rows": 12
+    },
+    {
+      "name": "captures each raw owner once per operation and audits fresh after warm reads",
+      "rows": 1
+    },
+    {
+      "name": "refuses noncurrent historical mutation input for $path",
+      "rows": 8
+    },
+    {
+      "name": "keeps source and compiler-facing readers current after historical reconstruction",
+      "rows": 1
+    },
+    {
+      "name": "passes unknown paths through without capturing or normalizing other files",
+      "rows": 1
+    }
+  ],
+  "unknownTestGroups": [],
+  "checks": {
+    "format": "scoped Prettier only",
+    "metadataProof": "TypeScript syntax parsing; original whole-file pins and complete reciprocal source replay, not test execution",
+    "syntaxDiagnostics": 0,
+    "compiler": "NOT RUN",
+    "tests": "NOT RUN",
+    "Git": "NOT RUN",
+    "network": "NOT USED"
+  },
+  "interfaces": [
+    "readCoreVocabularyReceiptSource(path, rawReader?)",
+    "beforeCoreVocabularyReceiptSource(path, rawSource, rawReader?)",
+    "reconstructCoreVocabularyReceiptSources(rawReader?, receiptText?)"
+  ],
+  "limits": [
+    "Actual TS7 and all focused test assertions unexecuted.",
+    "Root must compose only initial receipt reads; actual runtime/compiler/type-fixture inputs remain raw.",
+    "Two canonical identity-stage output files are byte-identical to current raw input; bytes alone cannot distinguish prior passage, so exact identical input remains valid while mutations reject.",
+    "No source behavior, native provider, public readiness or IR retirement is certified."
+  ]
+}

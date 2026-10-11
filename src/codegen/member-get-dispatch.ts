@@ -41,16 +41,17 @@
  * hazard is mode-independent — acorn dogfoods in gc/host mode).
  */
 import type { Instr, ValType } from "../ir/types.js";
-import { classMemberFuncKey, resolveMethodOwnerClass } from "./class-member-keys.js"; // (#2963) method-arm candidates
+import { classMemberFuncKey, isInstanceAccessorKey, resolveMethodOwnerClass } from "./class-member-keys.js"; // (#2963) method-arm candidates
 import { ensureMethodClosureSingleton } from "./closures.js"; // (#2963) canonical method-value singleton
 import { closureBagInitInstr } from "./closures/funcref-wrapper-types.js"; // (#4241) $bag header operand
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { isNativeGeneratorResultStruct, sentinelAwareF64BoxInstrs } from "./generators-native.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
+import { registerHostPropertyKey, staticHostPropertyKeyInstrs } from "./host-property-key.js";
 import { findAlternateStructsForField } from "./property-access.js";
 import { FLAG_ACCESSOR, FLAG_TOMBSTONE } from "./object-runtime.js"; // (#4157)
 import { nativeStringLiteralInstrs } from "./native-string-literals.js"; // (#4157)
-import { addStringConstantGlobal } from "./registry/imports.js";
+import { addStringConstantGlobal, registerLateReadStringConstant } from "./registry/imports.js";
 import { addFuncType } from "./registry/types.js";
 import {
   addUnionImportsViaRegistry,
@@ -74,10 +75,61 @@ import {
   residFieldReadInstrs,
   residMatchTestInstrs,
 } from "./fnctor-layout-emit.js"; // (#3927) per-type layouts
+import { readEnv } from "../env.js";
 
 /** Mangle a property name into the reserved member-get dispatcher name. */
 function dispatcherName(propName: string): string {
   return `__get_member_${propName}`;
+}
+
+/**
+ * (#6632) Box a field's already-on-the-stack value to externref, resurrecting
+ * a null `$AnyString` slot as the canonical `undefined` extern instead of
+ * host `null`. Mirrors the #4741 arm in `coerceType` (type-coercion.ts), which
+ * this dispatcher's box step could not reach: `coercionInstrs(ctx, from, to)`
+ * is called here with NO `FunctionContext` (this fill runs once at finalize
+ * over hand-tracked locals, not through the push-style engine that owns the
+ * #4741 arm), so the generic ref/ref_null → externref row's bare
+ * `extern.convert_any` ran instead and republished the slot's "absent" null as
+ * JS `null`. A `string | undefined` field read through this GENERIC dynamic
+ * dispatcher (the route a computed-key read like `obj[key]` takes, as
+ * opposed to a statically-typed direct member access) therefore observed
+ * `null` where the static field-access route (already fixed) observes
+ * `undefined` — this is the `TemporalHelpers.canonicalizeCalendarEra`
+ * reduction: the polyfill's `isoToDate(date, {[key]: true})` reads `era` via
+ * exactly this computed-key path.
+ *
+ * `scratchLocalIdx` must name a local that (a) already holds an `anyref`-or-
+ * wider value at this point in THIS arm's instruction sequence and (b) is
+ * dead for the rest of the arm once its held value has been consumed (true of
+ * the shared `__any` cast-receiver local 1 in every dispatcher arm here: by
+ * the time `box` runs, the receiver has already been `ref.cast`/`struct.get`
+ * past, and each arm is a mutually-exclusive `if`/`else` leaf, so no sibling
+ * arm can observe the overwrite). Returns `undefined` (never emits) for any
+ * other field type — this box is deliberately scoped to the ONE representation
+ * that is ambiguous at the value level (see `resolveWasmType`'s single-kind
+ * nullable-union collapse: `T | undefined` and `T | null` both lower to a
+ * bare `ref_null $T`, and only the STATIC declared type at the read site can
+ * tell them apart).
+ */
+function nullableAnyStringResurrectionBox(
+  ctx: CodegenContext,
+  fieldType: ValType,
+  scratchLocalIdx: number,
+): Instr[] | undefined {
+  if (fieldType.kind !== "ref_null" || !ctx.nativeStrings || ctx.anyStrTypeIdx < 0) return undefined;
+  if (fieldType.typeIdx !== ctx.anyStrTypeIdx) return undefined;
+  return [
+    { op: "local.set", index: scratchLocalIdx },
+    { op: "local.get", index: scratchLocalIdx },
+    { op: "ref.is_null" },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "externref" } },
+      then: canonicalUndefinedExternInstrs(ctx),
+      else: [{ op: "local.get", index: scratchLocalIdx }, { op: "extern.convert_any" }],
+    },
+  ];
 }
 
 /** (#3673) Mangle a property name into the TYPED f64 dispatcher name. */
@@ -166,7 +218,7 @@ export function classMethodCandidatesForProp(
     if (receiverStructTypeIdx === undefined) continue;
     const owner = resolveMethodOwnerClass(ctx, className, propName);
     const methodFullName = `${owner}_${propName}`;
-    const methodFuncIdx = ctx.funcMap.get(classMemberFuncKey(ctx, methodFullName));
+    const methodFuncIdx = ctx.funcMap.get(classMemberFuncKey(ctx, methodFullName, "instance"));
     if (methodFuncIdx === undefined) continue;
     const ownerStructTypeIdx = ctx.structMap.get(owner) ?? receiverStructTypeIdx;
     // Inheritance depth (for children-first arm ordering under subtyping).
@@ -229,8 +281,7 @@ export function classAccessorCandidatesForProp(ctx: CodegenContext, propName: st
     if (seenCanonical.has(className)) continue;
     seenCanonical.add(className);
     const accessorKey = `${className}_${propName}`;
-    if (!ctx.classAccessorSet.has(accessorKey)) continue;
-    if (ctx.staticAccessorSet.has(accessorKey)) continue; // static accessor — off the constructor, not an instance
+    if (!isInstanceAccessorKey(ctx, accessorKey)) continue; // static accessor — off the constructor, not an instance (#6772 S12)
     const structTypeIdx = ctx.structMap.get(className);
     if (structTypeIdx === undefined || seenStructs.has(structTypeIdx)) continue;
     // Inherited getters register a per-child funcMap entry pointing at the
@@ -372,7 +423,8 @@ export function reserveMemberGetDispatch(
     [{ kind: "externref" }],
   );
   if (getIdx === undefined) return undefined;
-  addStringConstantGlobal(ctx, propName);
+  registerLateReadStringConstant(ctx, propName);
+  registerHostPropertyKey(ctx, propName);
   addUnionImportsViaRegistry(ctx);
   // (#3032 W6) A `value` dispatcher may grow a sentinel-canonicalizing arm for
   // the native-generator IteratorResult structs at fill time; under a JS host
@@ -535,7 +587,7 @@ export function fillMemberGetDispatch(ctx: CodegenContext): void {
         getIdx !== undefined
           ? [
               { op: "local.get", index: 0 }, // recv
-              ...stringConstantExternrefInstrs(ctx, propName),
+              ...staticHostPropertyKeyInstrs(ctx, propName),
               { op: "call", funcIdx: getIdx },
             ]
           : [{ op: "ref.null.extern" }];
@@ -577,7 +629,7 @@ export function fillMemberGetDispatch(ctx: CodegenContext): void {
         : getIdx !== undefined
           ? [
               { op: "local.get", index: 0 }, // recv
-              ...stringConstantExternrefInstrs(ctx, propName),
+              ...staticHostPropertyKeyInstrs(ctx, propName),
               { op: "call", funcIdx: getIdx },
             ]
           : [{ op: "ref.null.extern" }];
@@ -715,7 +767,8 @@ export function fillMemberGetDispatch(ctx: CodegenContext): void {
         ? sentinelAwareF64BoxInstrs(f64ScratchIdx, boxNumIdx, sentinelUndefInstrs)
         : boxBoolIdx !== undefined
           ? [{ op: "call", funcIdx: boxBoolIdx }]
-          : coercionInstrs(ctx, cand.fieldType, { kind: "externref" });
+          : (nullableAnyStringResurrectionBox(ctx, cand.fieldType, 1) ??
+            coercionInstrs(ctx, cand.fieldType, { kind: "externref" }));
       const readValueInstrs: Instr[] = [
         { op: "local.get", index: 1 }, // __any
         { op: "ref.cast", typeIdx: cand.structTypeIdx },
@@ -1031,7 +1084,7 @@ function buildMemberGetInlineCacheArm(
     findColdStructsForField(ctx, propName).length === 0 &&
     findFnctorLayoutStructsForField(ctx, propName).length === 0;
   if (
-    process.env.JS2WASM_MEMBER_GET_IC !== "1" ||
+    readEnv("JS2WASM_MEMBER_GET_IC") !== "1" ||
     !eligible ||
     !ctx.standalone ||
     !ctx.nativeStrings ||

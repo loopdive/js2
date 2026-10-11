@@ -1,0 +1,53 @@
+{
+  "mode": "static syntax parsing and source arithmetic only",
+  "compilerOrTestExecution": false,
+  "rawInputs": 27,
+  "modifiedFiles": 11,
+  "spans": 34,
+  "liveSlices": 84,
+  "literalCategories": [
+    "whitespace",
+    "comment",
+    "module-link"
+  ],
+  "abiLiveBodies": 2,
+  "currentResidues": [
+    {
+      "path": "src/ir/runtime/contracts/manifest.ts",
+      "name": "ORDINARY_OBJECT_RUNTIME_FEATURES"
+    },
+    {
+      "path": "src/ir/runtime/contracts/manifest.ts",
+      "name": "OrdinaryObjectRuntimeFeature"
+    },
+    {
+      "path": "src/ir/runtime/contracts/manifest.ts",
+      "name": "ORDINARY_OBJECT_RUNTIME_PROVIDER_IDS"
+    },
+    {
+      "path": "src/ir/runtime/contracts/manifest.ts",
+      "name": "OrdinaryObjectRuntimeProviderId"
+    },
+    {
+      "path": "src/ir/core/intrinsics.ts",
+      "name": "EXTERNREF_TO_BOOLEAN_INTRINSIC_SIGNATURE"
+    },
+    {
+      "path": "src/ir/runtime/callable-declarations.ts",
+      "name": "SEMANTIC_CALLABLE_RUNTIME_PROVIDERS"
+    },
+    {
+      "path": "src/ir/runtime/callable-declarations.ts",
+      "name": "semanticCallableProviderMismatch"
+    },
+    {
+      "path": "src/ir/runtime/callable-declarations.ts",
+      "name": "semanticCallablePolicyMismatch"
+    }
+  ],
+  "inverseWholePinsAll": true,
+  "forwardWholeBytesAll": true,
+  "unavailableFragments": [],
+  "currentManifestCount": 79,
+  "currentCallableCount": 10
+}

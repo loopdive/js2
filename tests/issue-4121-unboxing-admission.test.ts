@@ -17,6 +17,10 @@
 import { describe, expect, it } from "vitest";
 
 import { compile } from "../src/index.js";
+// (#6768) These cases inspect the emitted body of a function that is dead in
+// the test program (never called, or inlined away); the standalone reachability
+// sweep would stub it to `unreachable`.
+process.env.JS2WASM_FUNC_SWEEP = "0";
 
 async function build(source: string, env?: Record<string, string>) {
   const saved: Record<string, string | undefined> = {};
@@ -66,8 +70,10 @@ async function run(source: string, env?: Record<string, string>): Promise<unknow
  * so the old gate never collected it. `s.next()` is genuinely cross-domain —
  * string from one receiver, number from the other — so the mixed-assignment
  * carrier widens the slot to `externref` and the #3765 definition-site fixpoint
- * cannot ground it either. Every USE of `acc` is ToNumber-invariant, so route 1
- * (#684) proves the f64 slot — once admission lets it look.
+ * cannot ground it either. Numeric USES alone cannot prove that a dynamic
+ * s.next() result has inert conversion: another receiver can return an object
+ * with observable valueOf. Without a grounded primitive-write proof, retain
+ * the boxed slot and convert at the arithmetic read.
  */
 const WIDENED_ACCUMULATOR = `
 function A(){} A.prototype.next = function(){ return "7"; };
@@ -82,9 +88,9 @@ export function main(){ return f(new A()) * 1000 + f(new B()); }
 `;
 
 describe("#4121 — admission keys on the emitted representation, not the declared type", () => {
-  it("unboxes a declared-`number` binding whose slot codegen widens", async () => {
+  it("keeps a widened binding boxed when its dynamic writes lack a primitive proof", async () => {
     const { wat } = await build(WIDENED_ACCUMULATOR);
-    expect(localType(bodyOf(wat!, "f"), "acc")).toBe("f64");
+    expect(localType(bodyOf(wat!, "f"), "acc")).toBe("externref");
   });
 
   it("is off under the kill switch, restoring the boxed carrier exactly", async () => {

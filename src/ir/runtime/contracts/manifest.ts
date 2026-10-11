@@ -34,6 +34,14 @@ export type RuntimeFeature =
   | StringConstRuntimeFeature
   | HostCallbackWrapRuntimeFeature
   | FunctionPrototypeCallRuntimeFeature
+  | NativeAsyncCallableRuntimeFeature
+  | "js.closure.method"
+  | "js.closure.apply-vector"
+  | "js.closure.undefined"
+  | VectorCallableRuntimeFeature
+  | OrdinaryObjectRuntimeFeature
+  | NumberRemainderRuntimeFeature
+  | "js.number.from-value"
   | ReferenceErrorRuntimeFeature;
 
 export type HostCapabilityId = RuntimeHostCapabilityId;
@@ -92,14 +100,19 @@ export type NumericCoercionRuntimeProviderId = (typeof NUMERIC_COERCION_RUNTIME_
 /** (#3526 F1-S1) One provider per admitted number-boundary policy arm. */
 export const NUMBER_BOUNDARY_RUNTIME_PROVIDER_IDS = Object.freeze([
   "host.js.number.box",
+  "native.js.number.box",
   "host.js.number.unbox",
   "native.js.number.unbox",
 ] as const);
 
 export type NumberBoundaryRuntimeProviderId = (typeof NUMBER_BOUNDARY_RUNTIME_PROVIDER_IDS)[number];
 
-/** (#3526 F1-S2) The one admitted boolean-boundary policy arm. */
-export const BOOLEAN_BOUNDARY_RUNTIME_PROVIDER_IDS = Object.freeze(["host.js.boolean.box"] as const);
+/** Explicit host boxing and native Boolean carrier providers. */
+export const BOOLEAN_BOUNDARY_RUNTIME_PROVIDER_IDS = Object.freeze([
+  "host.js.boolean.box",
+  "native.js.boolean.box",
+  "native.js.boolean.unbox",
+] as const);
 
 export type BooleanBoundaryRuntimeProviderId = (typeof BOOLEAN_BOUNDARY_RUNTIME_PROVIDER_IDS)[number];
 
@@ -360,6 +373,69 @@ export const REFERENCE_ERROR_RUNTIME_PROVIDER_IDS = Object.freeze([
 
 export type ReferenceErrorRuntimeProviderId = (typeof REFERENCE_ERROR_RUNTIME_PROVIDER_IDS)[number];
 
+/** Whole-program builtin demands; deliberately not async frame runtime intents. */
+export const NATIVE_ASYNC_CALLABLE_RUNTIME_FEATURES = Object.freeze([
+  "async.native.delay",
+  "async.native.all",
+  "async.native.clock-zero",
+  "async.native.number-to-string",
+  "async.native.console-append",
+] as const);
+
+export type NativeAsyncCallableRuntimeFeature = (typeof NATIVE_ASYNC_CALLABLE_RUNTIME_FEATURES)[number];
+
+export const NATIVE_ASYNC_CALLABLE_RUNTIME_PROVIDER_IDS = Object.freeze([
+  "native.async.delay",
+  "native.async.all",
+  "native.async.clock-zero",
+  "native.async.number-to-string",
+  "native.async.console-append",
+] as const);
+
+export type NativeAsyncCallableRuntimeProviderId = (typeof NATIVE_ASYNC_CALLABLE_RUNTIME_PROVIDER_IDS)[number];
+
+/** One measured grow/store callable; not a prefix registry or async frame intent. */
+export const VECTOR_CALLABLE_RUNTIME_FEATURES = Object.freeze(["js.vector.elem-set.externref"] as const);
+export type VectorCallableRuntimeFeature = (typeof VECTOR_CALLABLE_RUNTIME_FEATURES)[number];
+export const VECTOR_CALLABLE_RUNTIME_PROVIDER_IDS = Object.freeze(["native.js.vector.elem-set.externref"] as const);
+export type VectorCallableRuntimeProviderId = (typeof VECTOR_CALLABLE_RUNTIME_PROVIDER_IDS)[number];
+
+/** Semantic declarations only; no physical provider is granted by this catalogue. */
+export const ORDINARY_OBJECT_RUNTIME_FEATURES = Object.freeze([
+  "js.object.create-default",
+  "js.object.create-null",
+  "js.object.create-with-prototype",
+  "js.object.define-data",
+  "js.object.define-accessor",
+  "js.object.define-attributes",
+  "js.object.get",
+  "js.object.has",
+] as const);
+export type OrdinaryObjectRuntimeFeature = (typeof ORDINARY_OBJECT_RUNTIME_FEATURES)[number];
+export const ORDINARY_OBJECT_RUNTIME_PROVIDER_IDS = Object.freeze([
+  "native.js.object.create-default",
+  "native.js.object.create-null",
+  "native.js.object.create-with-prototype",
+  "native.js.object.define-data",
+  "native.js.object.define-accessor",
+  "native.js.object.define-attributes",
+  "native.js.object.get",
+  "native.js.object.has",
+] as const);
+export type OrdinaryObjectRuntimeProviderId = (typeof ORDINARY_OBJECT_RUNTIME_PROVIDER_IDS)[number];
+
+/** The two existing numeric remainder recipes; not an open symbol family. */
+export const NUMBER_REMAINDER_RUNTIME_FEATURES = Object.freeze([
+  "js.number.remainder",
+  "js.number.remainder.early-magnitude",
+] as const);
+export type NumberRemainderRuntimeFeature = (typeof NUMBER_REMAINDER_RUNTIME_FEATURES)[number];
+export const NUMBER_REMAINDER_RUNTIME_PROVIDER_IDS = Object.freeze([
+  "backend.js.number.remainder",
+  "backend.js.number.remainder.early-magnitude",
+] as const);
+export type NumberRemainderRuntimeProviderId = (typeof NUMBER_REMAINDER_RUNTIME_PROVIDER_IDS)[number];
+
 export type RuntimeProviderId =
   | MathRuntimeProviderId
   | NumericCoercionRuntimeProviderId
@@ -377,9 +453,17 @@ export type RuntimeProviderId =
   | HostCallbackWrapRuntimeProviderId
   | FunctionPrototypeCallRuntimeProviderId
   | ReferenceErrorRuntimeProviderId
+  | NativeAsyncCallableRuntimeProviderId
+  | OrdinaryObjectRuntimeProviderId
+  | NumberRemainderRuntimeProviderId
+  | VectorCallableRuntimeProviderId
   | AsyncRuntimeProviderId;
 
 export type RuntimeProviderImplementation =
+  | {
+      /** Authenticated standalone constant projection; never a callable or frame service. */
+      readonly kind: "standalone-clock-zero";
+    }
   | {
       readonly kind: "backend-op";
       readonly opcode: IrIntrinsicBackendOp;

@@ -19,6 +19,7 @@ import { execFileSync } from "node:child_process";
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, basename, resolve, relative, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseSchemaStatuses } from "./lib/issue-status-schema.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const ISSUE_ROOT = join(ROOT, "plan", "issues");
@@ -78,6 +79,7 @@ const DROPPED_KEYS = new Set();
 const STATUS_ALIASES = {
   backlog: "backlog",
   blocked: "blocked",
+  complete: "done",
   done: "done",
   "in-progress": "in-progress",
   in_progress: "in-progress",
@@ -87,9 +89,18 @@ const STATUS_ALIASES = {
   review: "in-review",
   "in-review": "in-review",
   in_review: "in-review",
+  // `suspended` is the SUSPEND protocol's state (CLAUDE.md, developer.md); it
+  // used to fall through to "ready" here and lose the resume signal.
+  suspended: "suspended",
   "wont-fix": "wont-fix",
   wont_fix: "wont-fix",
 };
+
+// #6799 — the ONE status vocabulary is the list in plan/issues/SCHEMA.md
+// (parsed by scripts/lib/issue-status-schema.mjs). `--check` rejects any raw
+// frontmatter status outside it; the aliases above only drive the rewriting
+// pass. A new status is added to SCHEMA.md, in a reviewed diff, and nowhere else.
+const SCHEMA_PATH = join(ISSUE_ROOT, "SCHEMA.md");
 
 const TASK_TYPE_ALIASES = {
   analysis: "analysis",
@@ -374,7 +385,7 @@ function processAllIssues() {
     const sprint = fields.sprint;
     const sprintNum = /^\d+$/.test(sprint) ? parseInt(sprint, 10) : null;
 
-    const record = { file, originalText, blocks, body, fields, sprint, sprintNum };
+    const record = { file, originalText, blocks, body, fields, sprint, sprintNum, rawStatus };
     records.push(record);
 
     const key = id.toLowerCase();
@@ -683,6 +694,21 @@ for (const [, rec] of byId) {
   }
 }
 
+// Off-schema statuses (#6799): judged on the RAW frontmatter value, before the
+// alias normalisation, because `--check` never writes — a file reading
+// `in_progress` would otherwise pass the check and stay off-schema forever.
+let schemaStatuses = [];
+try {
+  schemaStatuses = parseSchemaStatuses(readFileSync(SCHEMA_PATH, "utf8"));
+} catch {}
+const schemaStatusSet = new Set(schemaStatuses);
+const offSchema = [];
+if (schemaStatuses.length > 0) {
+  for (const rec of records) {
+    if (!schemaStatusSet.has(rec.rawStatus)) offSchema.push({ file: relPath(rec.file), status: rec.rawStatus });
+  }
+}
+
 // Generate indexes
 const sprintsIndexContent = generateSprintsIndex(allRecords);
 const backlogIndexContent = generateBacklogIndex(allRecords);
@@ -755,8 +781,17 @@ if (brokenLinks.length) {
   for (const { from, target } of brokenLinks) console.log(`  ${from} → ${target} (no such issue file)`);
 }
 
+if (schemaStatuses.length === 0) {
+  console.log(`\nSTATUS VOCABULARY: could not read the status list from ${relPath(SCHEMA_PATH)}`);
+} else if (offSchema.length) {
+  console.log(`\nOFF-SCHEMA status (${offSchema.length}) — allowed: ${schemaStatuses.join(", ")}:`);
+  for (const { file, status } of offSchema) console.log(`  ${file}: status: ${status || "(missing)"}`);
+}
+
 if (CHECK) {
   const failures = [];
+  if (schemaStatuses.length === 0) failures.push("unreadable status vocabulary in plan/issues/SCHEMA.md");
+  if (offSchema.length) failures.push(`${offSchema.length} off-schema statuses`);
   if (duplicates.length) failures.push(`${duplicates.length} duplicate IDs`);
   if (idMismatches.length) failures.push(`${idMismatches.length} filename/frontmatter ID mismatches`);
   if (dangling.length) failures.push(`${dangling.length} dangling depends_on`);

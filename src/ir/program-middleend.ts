@@ -13,6 +13,7 @@ import {
   type IrPreparationControls,
   type IrProgramOptimizationResult,
 } from "./program-middleend-ir.js";
+import { readEnv } from "../env.js";
 
 /** The existing hygiene round, shared by historical and whole-program integration. */
 export function runHygienePasses(fn: IrFunction, registry?: AllocSiteRegistry): IrFunction {
@@ -27,13 +28,13 @@ export function runHygienePasses(fn: IrFunction, registry?: AllocSiteRegistry): 
 
 /** Resolve legacy environment switches once, before entering typed preparation. */
 export function resolveIrPreparationControlsFromEnv(): IrPreparationControls {
-  const mode = process.env.JS2WASM_IR_GVN;
+  const mode = readEnv("JS2WASM_IR_GVN");
   return Object.freeze({
     gvnMode: mode === "poison" ? "poison" : mode === "1" || mode === "true" ? "on" : "off",
-    ownership: process.env.JS2WASM_IR_OWNERSHIP === "1" || process.env.JS2WASM_IR_OWNERSHIP === "true",
-    escape: process.env.JS2WASM_IR_ESCAPE === "1" || process.env.JS2WASM_IR_ESCAPE === "true",
-    verifyIntermediateAllocations: process.env.IR_VERIFY_ALLOC === "1" || process.env.IR_VERIFY_ALLOC === "true",
-    verifyDominanceNaive: process.env.JS2WASM_IR_VERIFY_DOMINANCE_NAIVE === "1",
+    ownership: readEnv("JS2WASM_IR_OWNERSHIP") === "1" || readEnv("JS2WASM_IR_OWNERSHIP") === "true",
+    escape: readEnv("JS2WASM_IR_ESCAPE") === "1" || readEnv("JS2WASM_IR_ESCAPE") === "true",
+    verifyIntermediateAllocations: readEnv("IR_VERIFY_ALLOC") === "1" || readEnv("IR_VERIFY_ALLOC") === "true",
+    verifyDominanceNaive: readEnv("JS2WASM_IR_VERIFY_DOMINANCE_NAIVE") === "1",
   });
 }
 

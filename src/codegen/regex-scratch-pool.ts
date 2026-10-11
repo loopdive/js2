@@ -54,6 +54,7 @@
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { allocLocal } from "./context/locals.js";
+import { readEnv } from "../env.js";
 
 /** Module global holding the pooled `.test` capture-slot array (null = empty). */
 const TEST_CAPS_POOL_GLOBAL = "__re_test_caps_pool";
@@ -63,7 +64,7 @@ const TEST_CAPS_POOL_GLOBAL = "__re_test_caps_pool";
  * per-call `array.new_default`.
  */
 export function regexTestCapsPoolEnabled(): boolean {
-  return process.env.JS2WASM_REGEXP_TEST_CAPS_POOL !== "0";
+  return readEnv("JS2WASM_REGEXP_TEST_CAPS_POOL") !== "0";
 }
 
 /**
@@ -71,7 +72,7 @@ export function regexTestCapsPoolEnabled(): boolean {
  * of allocating a fresh one per push. `=0` restores the per-push `struct.new`.
  */
 export function regexFrameReuseEnabled(): boolean {
-  return process.env.JS2WASM_REGEXP_FRAME_REUSE !== "0";
+  return readEnv("JS2WASM_REGEXP_FRAME_REUSE") !== "0";
 }
 
 /** Index of a module global, creating it on first use. Idempotent by name. */

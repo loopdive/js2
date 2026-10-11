@@ -1215,6 +1215,29 @@ export class ProgramAbiSession {
     this.callableTypeContracts.set(id, contract);
   }
 
+  /**
+   * (#6733) Re-type one slotless callable alias after its canonical function
+   * was legitimately re-typed (class-body compilation re-resolves a member
+   * whose collection-time type saw a forward class reference as externref).
+   * Only an unsealed, locator-free alias may move; its draft and structured
+   * contract move together so they can never describe two signatures.
+   */
+  retypeCallableAlias(id: IrBindingId, signature: Pick<FuncTypeDef, "params" | "results">): void {
+    this.assertPlanning(`retype callable alias ${id}`);
+    const draft = this.drafts.get(id);
+    if (!draft || draft.slotPolicy !== "alias" || draft.intent.kind !== "callable" || this.locators.has(id)) {
+      throw new ProgramAbiInvariantError("invalid-binding-reference", `${id} is not a slotless callable alias`);
+    }
+    const preparedScopeId = this.preparedScopeAffectedByDraft(draft);
+    if (preparedScopeId !== undefined) {
+      throw new ProgramAbiInvariantError("planning-sealed", `alias ${id} is sealed in scope ${preparedScopeId}`);
+    }
+    const contract = cloneProgramAbiCallableTypeContract(signature);
+    const intent = { ...draft.intent, signature: canonicalProgramAbiCallableTypeContract(contract) };
+    this.drafts.set(id, cloneDraft({ ...draft, intent }));
+    this.callableTypeContracts.set(id, contract);
+  }
+
   /** Retain one structured global storage contract through type compaction. */
   registerGlobalTypeContract(id: IrBindingId, type: ValType, mutable: boolean): void {
     this.assertPlanning(`register global type contract for ${id}`);

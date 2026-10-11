@@ -1,0 +1,97 @@
+{
+  "path": "src/ir/program/input.ts",
+  "current": {
+    "bytes": 6763,
+    "sha256": "3c9da679634f7fcb8fee9a8e5664cc752ee1e6a370148d4d375e56f6462afbda",
+    "gitBlob": "07e2f9c4ec8b24f94028f76ba0ac7daebd963fb7"
+  },
+  "original": {
+    "bytes": 6441,
+    "sha256": "fc6d92f559b3a46e203ca5f8b1cf92ddf41cdc56d7f6ae326207b6596fcc6994",
+    "gitBlob": "a84b348e02b789c42efdc1343c5695eccfb02b65"
+  },
+  "completeReciprocalBytes": true,
+  "currentOperands": [
+    {
+      "path": "src/ir/program/input.ts",
+      "kind": "Identifier",
+      "name": null,
+      "startByte": 3942,
+      "endByte": 3948,
+      "bytes": 6,
+      "sha256": "bfe5d697162d90298c67c1933908741be8395838aa230408e04710909c576806",
+      "gitBlob": "7ba9aebd1d338c4813edf31960b778752324054c"
+    },
+    {
+      "path": "src/ir/program/input.ts",
+      "kind": "Identifier",
+      "name": null,
+      "startByte": 3954,
+      "endByte": 3962,
+      "bytes": 8,
+      "sha256": "b737815f5ca9697f685dfe2b5fe1f7b12a180562f97da5a72e90eaedd9890876",
+      "gitBlob": "7c0582a8cf83e80b2f94396dafd6b97adbeccd23"
+    },
+    {
+      "path": "src/ir/program/input.ts",
+      "kind": "ArrayLiteralExpression",
+      "name": null,
+      "startByte": 3968,
+      "endByte": 4053,
+      "bytes": 85,
+      "sha256": "9e28ea3755ec36a2f2eb5ff3094241bfeab15bc7cdd6419047613c7ebfa1f6e5",
+      "gitBlob": "ecc6bfe8d3fa7b869ec213388c5080d660aaaff3"
+    }
+  ],
+  "edits": [
+    {
+      "role": "later import deletion",
+      "startByte": 378,
+      "endByte": 441,
+      "currentSpan": {
+        "bytes": 63,
+        "sha256": "cc6a831aa4185ac24694cf385e2955902ee0897b061a486634d29ca4a14f72e3",
+        "gitBlob": "968fa0d5b214895daf130093a5aec1d7d0dd3925"
+      },
+      "projectedStartByte": 378,
+      "projectedSpan": {
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "gitBlob": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+      }
+    },
+    {
+      "role": "first two current arguments and current callee with punctuation/whitespace scaffold",
+      "startByte": 3940,
+      "endByte": 4083,
+      "currentSpan": {
+        "bytes": 143,
+        "sha256": "cc139555f85cfd7f235838ae7477624dfece0316dcfc8d64a2431a6c12416f9b",
+        "gitBlob": "32fecd47e72c7e89516a710655a35243e8189fed"
+      },
+      "projectedStartByte": 3877,
+      "projectedSpan": {
+        "bytes": 106,
+        "sha256": "9b3b250a4cea8d6aaacb518f0901434940c788eef218cc31c6deb1565e248dcc",
+        "gitBlob": "063990a6424577108f08a964bb0134c766e24f97"
+      }
+    },
+    {
+      "role": "later runtime-support validation deletion",
+      "startByte": 5186,
+      "endByte": 5408,
+      "currentSpan": {
+        "bytes": 222,
+        "sha256": "810e9c2f0cef5097780b7232827e8471ab1c308bc4ed05a744ae6463fa5a9cc1",
+        "gitBlob": "cbec11f78a90cf7d9849ca9227941e76e88102b2"
+      },
+      "projectedStartByte": 5086,
+      "projectedSpan": {
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "gitBlob": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+      }
+    }
+  ],
+  "noExecutableLiteralFallback": true
+}

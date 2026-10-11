@@ -1,0 +1,285 @@
+{
+  "controller": 94830,
+  "exitCode": 0,
+  "reportPath": ".tmp/promise-repair-public-r1/comparison.json",
+  "reportSha256": "a3882321c170416f581e2e076831737a922749114ea45f437db6bc08c7d49ea7",
+  "preservationOK": false,
+  "semanticOK": false,
+  "candidateSemanticsOK": true,
+  "baselineDefectObserved": true,
+  "repairAcceptanceOK": true,
+  "denominator": {
+    "recipes": 12,
+    "modes": 2,
+    "pairs": 24,
+    "rows": 48,
+    "compiles": 48,
+    "instances": 96,
+    "exportObservations": 184
+  },
+  "baseline": {
+    "executed": 24,
+    "requiredRows": 24,
+    "compileAttempts": 24,
+    "completedCompilationRecords": 24,
+    "instances": 48,
+    "observations": 92,
+    "gaps": [
+      {
+        "id": "callable-getter-capture-trace-legacy",
+        "repetition": 0,
+        "export": "getGets",
+        "ordinal": 3,
+        "actual": 2,
+        "expected": 1
+      },
+      {
+        "id": "callable-getter-capture-trace-legacy",
+        "repetition": 0,
+        "export": "getCalls",
+        "ordinal": 4,
+        "actual": 0,
+        "expected": 1
+      },
+      {
+        "id": "callable-getter-capture-trace-legacy",
+        "repetition": 0,
+        "export": "getWrongCalls",
+        "ordinal": 5,
+        "actual": 1,
+        "expected": 0
+      },
+      {
+        "id": "callable-getter-capture-trace-legacy",
+        "repetition": 0,
+        "export": "getValue",
+        "ordinal": 6,
+        "actual": 99,
+        "expected": 42
+      },
+      {
+        "id": "callable-getter-capture-trace-legacy",
+        "repetition": 0,
+        "export": "getTrace",
+        "ordinal": 7,
+        "actual": 13184,
+        "expected": 1324
+      },
+      {
+        "id": "callable-getter-capture-trace-legacy",
+        "repetition": 1,
+        "export": "getGets",
+        "ordinal": 3,
+        "actual": 2,
+        "expected": 1
+      },
+      {
+        "id": "callable-getter-capture-trace-legacy",
+        "repetition": 1,
+        "export": "getCalls",
+        "ordinal": 4,
+        "actual": 0,
+        "expected": 1
+      },
+      {
+        "id": "callable-getter-capture-trace-legacy",
+        "repetition": 1,
+        "export": "getWrongCalls",
+        "ordinal": 5,
+        "actual": 1,
+        "expected": 0
+      },
+      {
+        "id": "callable-getter-capture-trace-legacy",
+        "repetition": 1,
+        "export": "getValue",
+        "ordinal": 6,
+        "actual": 99,
+        "expected": 42
+      },
+      {
+        "id": "callable-getter-capture-trace-legacy",
+        "repetition": 1,
+        "export": "getTrace",
+        "ordinal": 7,
+        "actual": 13184,
+        "expected": 1324
+      },
+      {
+        "id": "callable-getter-capture-trace-ir",
+        "repetition": 0,
+        "export": "getGets",
+        "ordinal": 3,
+        "actual": 2,
+        "expected": 1
+      },
+      {
+        "id": "callable-getter-capture-trace-ir",
+        "repetition": 0,
+        "export": "getCalls",
+        "ordinal": 4,
+        "actual": 0,
+        "expected": 1
+      },
+      {
+        "id": "callable-getter-capture-trace-ir",
+        "repetition": 0,
+        "export": "getWrongCalls",
+        "ordinal": 5,
+        "actual": 1,
+        "expected": 0
+      },
+      {
+        "id": "callable-getter-capture-trace-ir",
+        "repetition": 0,
+        "export": "getValue",
+        "ordinal": 6,
+        "actual": 99,
+        "expected": 42
+      },
+      {
+        "id": "callable-getter-capture-trace-ir",
+        "repetition": 0,
+        "export": "getTrace",
+        "ordinal": 7,
+        "actual": 13184,
+        "expected": 1324
+      },
+      {
+        "id": "callable-getter-capture-trace-ir",
+        "repetition": 1,
+        "export": "getGets",
+        "ordinal": 3,
+        "actual": 2,
+        "expected": 1
+      },
+      {
+        "id": "callable-getter-capture-trace-ir",
+        "repetition": 1,
+        "export": "getCalls",
+        "ordinal": 4,
+        "actual": 0,
+        "expected": 1
+      },
+      {
+        "id": "callable-getter-capture-trace-ir",
+        "repetition": 1,
+        "export": "getWrongCalls",
+        "ordinal": 5,
+        "actual": 1,
+        "expected": 0
+      },
+      {
+        "id": "callable-getter-capture-trace-ir",
+        "repetition": 1,
+        "export": "getValue",
+        "ordinal": 6,
+        "actual": 99,
+        "expected": 42
+      },
+      {
+        "id": "callable-getter-capture-trace-ir",
+        "repetition": 1,
+        "export": "getTrace",
+        "ordinal": 7,
+        "actual": 13184,
+        "expected": 1324
+      }
+    ],
+    "ok": false
+  },
+  "candidate": {
+    "executed": 24,
+    "requiredRows": 24,
+    "compileAttempts": 24,
+    "completedCompilationRecords": 24,
+    "instances": 48,
+    "observations": 92,
+    "gaps": [],
+    "ok": true
+  },
+  "negativeControls": [
+    {
+      "name": "drop-row",
+      "rejected": true
+    },
+    {
+      "name": "wrong-root",
+      "rejected": true
+    },
+    {
+      "name": "changed-provenance",
+      "rejected": true
+    },
+    {
+      "name": "changed-instantiation-byte",
+      "rejected": true
+    },
+    {
+      "name": "wrong-value-cannot-pass-semantic-acceptance",
+      "rejected": true
+    },
+    {
+      "name": "changed-outcome-not-equal",
+      "rejected": true
+    },
+    {
+      "name": "stale-manifest-digest",
+      "rejected": true
+    },
+    {
+      "name": "changed-candidate-census",
+      "rejected": true
+    },
+    {
+      "name": "missing-source-difference",
+      "rejected": true
+    },
+    {
+      "name": "changed-producer-freeze",
+      "rejected": true
+    },
+    {
+      "name": "missing-terminal",
+      "rejected": true
+    },
+    {
+      "name": "nonzero-terminal",
+      "rejected": true
+    },
+    {
+      "name": "signalled-terminal",
+      "rejected": true
+    },
+    {
+      "name": "missing-historical-defect-not-repair-evidence",
+      "rejected": true
+    }
+  ],
+  "negativeControlsComplete": true,
+  "rawDifferenceCount": 4790,
+  "terminals": [
+    {
+      "code": 0,
+      "signal": null,
+      "error": null,
+      "pid": 20322,
+      "root": "/private/tmp/js2-3518-explicit-rec-integration-20260908",
+      "label": "baseline",
+      "output": "/private/tmp/js2-3518-promise-repair-public-20260908/.tmp/promise-repair-public-r1/baseline.json",
+      "reportSha256": "1b5637685f789d8d1385f6a704b12a68ac81ff35d0937f97d25e370352cea51e",
+      "launchSha256": "ce6787fa0a64776b5f3728cc53d619897c3581bee0ae512e026299d7cacc7d24"
+    },
+    {
+      "code": 0,
+      "signal": null,
+      "error": null,
+      "pid": 20505,
+      "root": "/private/tmp/js2-3518-promise-getter-capture-20260908",
+      "label": "candidate",
+      "output": "/private/tmp/js2-3518-promise-repair-public-20260908/.tmp/promise-repair-public-r1/candidate.json",
+      "reportSha256": "332964cfffb4824dd6647e9d89450caf9fe5e41db7181ac424243dccf34c0e42",
+      "launchSha256": "b71d567288d8f2b8354d4bff0e61780d087682bc2d615ff30d54c3f882c418bb"
+    }
+  ]
+}

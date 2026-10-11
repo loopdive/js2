@@ -3,8 +3,8 @@ id: 1599
 title: "host-indep: JSON.parse / JSON.stringify in standalone mode"
 status: done
 created: 2026-05-24
-updated: 2026-06-03
-completed: 2026-06-03
+updated: 2026-09-28
+completed: 2026-09-28
 priority: high
 feasibility: hard
 reasoning_effort: max
@@ -13,9 +13,18 @@ area: codegen, runtime
 language_feature: json
 goal: standalone-wasm
 sprint: 58
-related: [1474, 1539]
+related: [1474, 1539, 4085, 6667, 6733, 6734]
 claimed_by: codex-developer
 claimed_at: 2026-06-02T11:02:41.061Z
+# (2026-09-28, Phase 2 carriers) The closed-struct arm, the cycle-stack entry
+# and the root re-scoping are cases of `emitJsonStringifyValue`'s own receiver
+# ladder: they re-use its locals (L_ANY / P_DEPTH) and its proxy object walk
+# verbatim. Their builders live in the new json-stringify-carriers.ts; only the
+# call sites (+26 lines) land in the codec.
+loc-budget-allow:
+  - src/codegen/json-codec-native.ts
+func-budget-allow:
+  - src/codegen/json-codec-native.ts::emitJsonStringifyValue
 ---
 # #1599 — JSON standalone: refuse-and-document then pure-Wasm implementation
 
@@ -425,3 +434,72 @@ runtime string value holding a JSON **primitive** — number / `true` / `false`
 
 - `pnpm exec vitest run tests/issue-1599-runtime.test.ts tests/issue-1599.test.ts tests/issue-1599-json-standalone-refuse.test.ts`
   — 34 tests passed.
+
+## Implementation Plan — Phase 2 carriers (2026-09-28, executed)
+
+Measured first (branch base `2e23e49fb1`, `--target standalone`, results
+compared in-Wasm): every statically array-typed value (`number[]`, `T[]`,
+`any[]`) hit the #1599 refusal, and every closed struct (class instance, typed
+object literal, a literal with a `toJSON` method) serialised as `null`. The
+codec already walked `$Object`, `$ObjVec`, `$__vec_base` (#4085) and `$Proxy`;
+what was missing was routing and two carriers.
+
+1. **Routing** (`call-namespace-static.ts`): refuse only a TUPLE (a positional
+   closed struct no arm reads); every other array value goes to the codec, whose
+   vec arm (#4085) already normalises it. The static type test moves from the
+   raw checker to `ctx.oracle.typeFactOf` (oracle ratchet −1 `getTypeAtLocation`).
+2. **Closed user structs** (`json-stringify-carriers.ts`, one arm in the codec):
+   screened by the finalize-time `__object_assign_closed_struct_source`
+   classifier (user-declared shapes only — builtins, vecs, strings, proxies and
+   closures stay out) and walked by the codec's existing MOP object walk
+   (`__object_keys` + `__extern_get`, the proxy object arm) — §25.5.2.5.
+3. **toJSON on closed structs**: the toJSON gate admits the same classifier; a
+   class-prototype `toJSON` is found through a `__get_member_toJSON`
+   dispatcher reserved at the call site when some class declares `toJSON`.
+4. **Cycles → TypeError** (§25.5.2.5/6 step 1): a depth-indexed stack
+   (`__json_cycle_stack`, an `$ObjVecArr`) — the value at depth `d` is stored in
+   slot `d` and compared (`ref.eq`) with slots `[0, d)`, which are exactly its
+   ancestors because every value is entered and every recursion passes
+   `depth + 1`. Each root saves/restores the stack so a re-entrant stringify
+   from `toJSON`/a replacer cannot clobber its caller's chain.
+5. **Function replacer on a primitive root** (§25.5.2 step 12): skip the
+   primitive fold under a native callable replacer (except a statically
+   `undefined` root, whose `undefined` result the codec root cannot yet return)
+   and box the primitive as externref for the replacer root. Needed so that
+   `replacer-function-result.js` does not flip: on the parent it passed only
+   because both sides of its `sameValue` were the same wrong `"null"`.
+
+JSON.parse already has the full pure-Wasm grammar (#2166 PR-C); no parse work
+was needed for this slice.
+
+## Resolution (2026-09-28)
+
+- `tests/issue-1599-stringify-carriers.test.ts` — 10 tests, all zero-import
+  standalone, compared in-Wasm against Node's answer: 10/10 with the fix,
+  1/10 on the parent (the tuple-still-refuses control passes on both).
+- Scoped standalone test262 `built-ins/JSON` (165 files,
+  `scripts/run-test262-paths.mts --standalone`): parent 107 pass / 51 fail / 7
+  CE → fix 113 / 49 / 3. Gains: `replacer-array-number`,
+  `replacer-function-array-circular`, `replacer-function-object-circular`,
+  `space-string`, `value-array-circular`, `value-tojson-object-circular`.
+  Losses: none.
+- three 0.185.1 standalone-dynamic lane: parent stops at
+  `JSON.stringify of this value is not yet supported by the native JSON provider (#1599)`;
+  fix compiles past it and stops at a program-ABI invariant filed as
+  [#6733](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6733-standalone-three-inherited-getter-alias-signature)
+  (A/B: identical with the `toJSON` reservation disabled). The #6667 regex
+  replace refusal no longer occurs on this base.
+- Sampled standalone test262 outside JSON (268 files: every 60th of
+  `built-ins/{Array,Object,Map}` and `language/{expressions,statements}/class`,
+  plus the 16 non-JSON files that call `JSON.stringify`): 215 pass on both
+  parent and fix; three Temporal files move compile_error → fail (they now
+  compile and fail on Temporal, not JSON).
+- Existing tests updated to the new contract: the #1599 refusal suite now
+  refuses a tuple instead of `number[]`; #5269 F1 r6 expects Node's
+  `"wrapped:1"` (it pinned the old ignored-replacer `1`). Three failures in the
+  JSON test files (`json.test.ts` host-import, `issue-1599.test.ts` dynamic
+  parse refusal, `issue-1599-runtime.test.ts` true/false) fail identically on
+  the parent.
+- Remaining stringify gaps (top-level `undefined`, wrapper objects, `$Object`
+  getters, dynamic `space`, empty/builtin structs, BigInt, tuples) are
+  [#6734](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6734-standalone-json-stringify-carrier-residuals).

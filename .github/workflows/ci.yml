@@ -198,6 +198,33 @@ jobs:
         # reachable invariant is "no growth, ratchet toward zero".
         run: pnpm run check:ir-layering
 
+      - name: Import-cycle ratchet (#6797)
+        if: steps.npm_compat.outputs.only != 'true'
+        # codegen, ir and frontend form one ~700-file strongly-connected
+        # component of the value-import graph, so the layers cannot be
+        # retired one at a time. CHANGE-SCOPED like check:loc-budget: fails when
+        # the largest SCC, the number of multi-file SCCs, or any two-way
+        # directory edge count (e.g. ir->codegen) is higher at HEAD than at this
+        # change-set's own base (HEAD^1 of the synthetic merge). Intended growth
+        # is granted by an `import-cycles-allow:` frontmatter entry in the PR's
+        # own plan/issues/*.md (`- largestSccSize: 699 # <date> (#N): <why>`);
+        # PRs never edit scripts/import-cycles-baseline.json, which is the
+        # post-merge low-water mark and the no-git fallback only. The fetch
+        # feeds the merge-base fallback for non-synthetic checkouts.
+        run: |
+          git fetch --no-tags --depth=200 origin main 2>/dev/null || true
+          pnpm run check:import-cycles
+
+      - name: src/codegen flat-directory budget (#6797)
+        if: steps.npm_compat.outputs.only != 'true'
+        # Fails when this change-set adds top-level .ts files to src/codegen/
+        # (824 when #6797 was filed) beyond those it lists under
+        # `flat-dir-budget-allow:` in its own plan/issues/*.md. New files go
+        # into the existing sub-directories. Same change-scoping as above.
+        run: |
+          git fetch --no-tags --depth=200 origin main 2>/dev/null || true
+          pnpm run check:flat-dir-budget
+
       - name: IR fallback gate (#1376)
         if: steps.npm_compat.outputs.only != 'true'
         run: pnpm run check:ir-fallbacks
@@ -236,6 +263,21 @@ jobs:
         # --update with a PR note. Delete-list + method:
         # plan/log/3090-phase0-legacy-delete-list.md.
         run: pnpm run check:dead-exports
+
+      - name: Orphaned-script ratchet (#6799)
+        if: steps.npm_compat.outputs.only != 'true'
+        # Fails when a top-level scripts/ file is referenced by nothing that
+        # runs or documents it (package.json, root configs, .github/, .husky/,
+        # .claude/, docs/, plan/method/, other scripts/) and is not already in
+        # scripts/orphaned-scripts-baseline.json. Wire it up, delete it, or
+        # document it; bank a deletion with `-- --update-on-decrease`.
+        run: pnpm run check:orphaned-scripts
+      - name: No tracked file matches .gitignore (#6796)
+        if: steps.npm_compat.outputs.only != 'true'
+        # `git ls-files | git check-ignore --stdin --no-index` must be empty
+        # apart from the dated allow-list in the script; a stale allow-list
+        # entry fails too. Untrack an offender with `git rm --cached <path>`.
+        run: pnpm run check:tracked-ignored
 
       - name: Oracle ratchet (#1930/#3273)
         if: steps.npm_compat.outputs.only != 'true'
@@ -396,6 +438,17 @@ jobs:
         # Fails on duplicate IDs, filename/frontmatter ID mismatch, dangling
         # depends_on, or broken plan/issues/<id>-<slug>.md links in tracked *.md.
         run: pnpm run check:issues
+
+      - name: CLAUDE.md names only paths and CLI flags that exist (#6795)
+        if: steps.npm_compat.outputs.only != 'true'
+        # CLAUDE.md is the first file every agent reads. It named a test file
+        # that did not exist, a workflow that had been deleted, and a CLI flag
+        # src/cli.ts does not parse. Fails on any repo path (src/ scripts/
+        # tests/ plan/ docs/ .github/ .husky/ ...) that is not tracked, and on
+        # any `--flag` in the "CLI Flags" section that cli.ts does not parse.
+        # A line that deliberately names something gone ends in
+        # `<!-- historical -->`; see the script header.
+        run: pnpm run check:claude-md-paths
 
       - name: Issue-ID fresh-claim gate (#2531)
         if: steps.npm_compat.outputs.only != 'true'
@@ -568,8 +621,9 @@ jobs:
         # born broken (and touching a rotted one means fixing it — the
         # fix-on-touch ratchet). Root files only; tests/equivalence/ has its
         # own gate (#1659) and linear-*/c-abi/simd* run in `linear-tests`.
-        # Mass edits (>20 files, e.g. a repo-wide reformat) skip with a
-        # warning — the post-merge detector covers them.
+        # Mass edits (>20 files, e.g. a repo-wide reformat) run the first 20
+        # and list the rest as not run (#6783 — they used to skip outright);
+        # `issue-tests-gate` runs every root file once its baseline is seeded.
         if: steps.npm_compat.outputs.only != 'true' && github.event_name == 'pull_request'
         env:
           # Keep this broad, toolchain-light gate on the native engine. The
@@ -579,6 +633,16 @@ jobs:
         run: |
           git fetch --no-tags --depth=200 origin main 2>/dev/null || true
           pnpm run test:changed-root
+
+      - name: Archive Linear append parent evidence (quality)
+        if: always() && hashFiles('.tmp/6915-ci/run-*/**') != ''
+        uses: actions/upload-artifact@v6
+        with:
+          name: linear-append-quality-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .tmp/6915-ci/run-*/
+          include-hidden-files: true
+          if-no-files-found: error
+          overwrite: false
 
       - name: Required guard suite (#3552)
         if: steps.npm_compat.outputs.only != 'true'
@@ -761,13 +825,23 @@ jobs:
   # required once the suite is clean.
   # Measured 2026-08-15 on the 4-core dev box: ~45 s of vitest for the first
   # pinned file; #3521's six tests/ir pins add 44.8 s (measured 2026-09-02,
-  # same flags), so a typical PR (pinned + 1-2 touched files) stays far under
-  # the cap.
-  issue-tests:
+  # same flags). Full native resource suites now also exercise source preparation,
+  # so each changed-file job budget includes setup and that file.
+  # Each changed file gets its own checkout and 120-minute job budget. Source
+  # proof tests can mutate files temporarily, so separate runners are required.
+  issue-tests-pinned:
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Keep the pinned population, heap, worker flags and fatal policy unchanged.
+    timeout-minutes: 40
+    env:
+      # The pinned suite's single fork peaks above vitest.config.ts's 512 MB
+      # default heap on main itself (OOM ~20 s in, before any assertion),
+      # which marks unrelated PRs unstable and keeps them out of the queue.
+      # 1 GB matches the single-fork peak noted below and the other CI
+      # vitest jobs (test262-sharded.yml, refresh-baseline.yml).
+      VITEST_FORK_MAX_OLD_SPACE_SIZE: "1024"
     steps:
       - uses: actions/checkout@v5
         with:
@@ -791,25 +865,305 @@ jobs:
           # Single-fork keeps peak RAM ~1 GB, matching the equivalence shards.
           pnpm exec vitest run "${FILES[@]}" \
             --pool=forks --poolOptions.forks.singleFork=true --no-file-parallelism
-      - name: Run issue tests this PR touched (advisory)
-        continue-on-error: true
+
+  issue-tests-select:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    outputs:
+      files: ${{ steps.select.outputs.files }}
+      count: ${{ steps.select.outputs.count }}
+      matrix: ${{ steps.select.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Verify issue-test scheduling controls
+        run: node --test scripts/select-changed-issue-tests.test.mjs
+      - name: Select changed issue test files
+        id: select
         env:
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           MERGE_GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
         run: |
-          set -uo pipefail
-          node scripts/select-changed-issue-tests.mjs --changed > /tmp/issue-tests-changed.txt || {
-            echo "::warning::could not select changed issue tests"
-            exit 0
+          set -euo pipefail
+          node scripts/select-changed-issue-tests.mjs --changed --strict --json > /tmp/issue-tests-changed.json
+          node --input-type=module <<'NODE'
+          import { appendFileSync, readFileSync, statSync } from "node:fs";
+          const files = JSON.parse(readFileSync("/tmp/issue-tests-changed.json", "utf8"));
+          if (!Array.isArray(files) || files.length > 15 || new Set(files).size !== files.length ||
+              files.some((file) => typeof file !== "string" || /[\r\n\0]/.test(file) ||
+                !/^tests\/(issue-[^/]*|ir\/[^/]*)\.test\.ts$/.test(file) || !statSync(file).isFile()) ||
+              JSON.stringify(files) !== JSON.stringify([...files].sort())) {
+            throw new Error("Invalid changed issue-test selection");
           }
-          if [ ! -s /tmp/issue-tests-changed.txt ]; then
-            echo "This PR touches no tests/issue-*.test.ts file."
-            exit 0
+          console.log(`Selected ${files.length} changed issue test file(s):`, files);
+          const matrix = { include: files.map((file, ordinal) => ({ ordinal, file })) };
+          appendFileSync(process.env.GITHUB_OUTPUT, `files=${JSON.stringify(files)}\ncount=${files.length}\nmatrix=${JSON.stringify(matrix)}\n`);
+          NODE
+
+  issue-tests-changed:
+    needs: [changes, issue-tests-select]
+    if: needs.changes.outputs.code == 'true' && needs.issue-tests-select.result == 'success' && needs.issue-tests-select.outputs.count != '0'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      max-parallel: 15
+      matrix: ${{ fromJSON(needs.issue-tests-select.outputs.matrix) }}
+    env:
+      VITEST_FORK_MAX_OLD_SPACE_SIZE: "4096"
+    steps:
+      - uses: actions/checkout@v5
+      - name: Setup Node and pnpm (cached)
+        uses: ./.github/actions/setup-node-pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Validate selected file manifest
+        env:
+          SELECTED_FILES: ${{ needs.issue-tests-select.outputs.files }}
+          ISSUE_TEST_FILE: ${{ matrix.file }}
+          ISSUE_TEST_ORDINAL: ${{ matrix.ordinal }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { statSync } from "node:fs";
+          const { SELECTED_FILES, ISSUE_TEST_FILE, ISSUE_TEST_ORDINAL } = process.env;
+          const files = JSON.parse(SELECTED_FILES);
+          if (!Array.isArray(files) || files.length === 0 || files.length > 15 ||
+              !/^(0|[1-9][0-9]*)$/.test(ISSUE_TEST_ORDINAL) ||
+              files[Number(ISSUE_TEST_ORDINAL)] !== ISSUE_TEST_FILE ||
+              !statSync(ISSUE_TEST_FILE).isFile()) {
+            throw new Error("Changed issue-test runner is outside the selected manifest");
+          }
+          console.log(`Running selected file ${ISSUE_TEST_ORDINAL}: ${ISSUE_TEST_FILE}`);
+          NODE
+      - name: Run changed issue test file (advisory)
+        id: tests
+        continue-on-error: true
+        env:
+          ISSUE_TEST_FILE: ${{ matrix.file }}
+        run: |
+          # One selected file per isolated runner; preserve the worker flags.
+          if [ "$ISSUE_TEST_FILE" = "tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts" ]; then
+            node scripts/hooks/run-linear-append-provenance.mjs
+          else
+            pnpm exec vitest run "$ISSUE_TEST_FILE" \
+              --pool=forks --poolOptions.forks.singleFork=false \
+              --poolOptions.forks.maxForks=1 --no-file-parallelism
           fi
-          cat /tmp/issue-tests-changed.txt
-          mapfile -t FILES < /tmp/issue-tests-changed.txt
-          pnpm exec vitest run "${FILES[@]}" \
-            --pool=forks --poolOptions.forks.singleFork=true --no-file-parallelism
+
+      - name: Archive Linear append parent evidence (advisory)
+        if: always() && matrix.file == 'tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts' && hashFiles('.tmp/6915-ci/run-*/**') != ''
+        uses: actions/upload-artifact@v6
+        with:
+          name: linear-append-advisory-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.ordinal }}
+          path: .tmp/6915-ci/run-*/
+          include-hidden-files: true
+          if-no-files-found: error
+          overwrite: false
+
+      - name: Report changed issue-test outcome
+        if: always() && !cancelled()
+        env:
+          TEST_OUTCOME: ${{ steps.tests.outcome }}
+          ISSUE_TEST_FILE: ${{ matrix.file }}
+        run: |
+          echo "Changed issue-test outcome: $TEST_OUTCOME ($ISSUE_TEST_FILE)"
+          case "$TEST_OUTCOME" in
+            success) ;;
+            failure) echo "::warning::Changed issue test failed (advisory): $ISSUE_TEST_FILE" ;;
+            *) echo "::error::Changed issue test did not execute"; exit 1 ;;
+          esac
+
+  # Keep the existing check name. An empty successful discovery may skip the
+  # matrix; selector/setup failures and cancellations must remain visible.
+  issue-tests:
+    needs: [changes, issue-tests-pinned, issue-tests-select, issue-tests-changed]
+    if: always() && (needs.changes.result != 'success' || needs.changes.outputs.code != 'false')
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Verify issue-test jobs completed
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          CHANGES_CODE: ${{ needs.changes.outputs.code }}
+          PINNED_RESULT: ${{ needs.issue-tests-pinned.result }}
+          DISCOVERY_RESULT: ${{ needs.issue-tests-select.result }}
+          CHANGED_RESULT: ${{ needs.issue-tests-changed.result }}
+          SELECTED_FILES: ${{ needs.issue-tests-select.outputs.files }}
+          SELECTED_COUNT: ${{ needs.issue-tests-select.outputs.count }}
+        run: |
+          node --input-type=module <<'NODE'
+          const { CHANGES_RESULT, CHANGES_CODE, PINNED_RESULT, DISCOVERY_RESULT, CHANGED_RESULT, SELECTED_FILES, SELECTED_COUNT } = process.env;
+          if (CHANGES_RESULT !== "success" || CHANGES_CODE !== "true" || PINNED_RESULT !== "success" || DISCOVERY_RESULT !== "success") {
+            throw new Error(`Issue-test infrastructure failed: changes=${CHANGES_RESULT}, pinned=${PINNED_RESULT}, discovery=${DISCOVERY_RESULT}`);
+          }
+          const files = JSON.parse(SELECTED_FILES);
+          if (!Array.isArray(files) || !/^(0|[1-9][0-9]*)$/.test(SELECTED_COUNT) ||
+              files.length !== Number(SELECTED_COUNT) || files.length > 15 ||
+              new Set(files).size !== files.length || files.some((file) => typeof file !== "string" ||
+                /[\r\n\0]/.test(file) || !/^tests\/(issue-[^/]*|ir\/[^/]*)\.test\.ts$/.test(file)) ||
+              JSON.stringify(files) !== JSON.stringify([...files].sort())) {
+            throw new Error("Missing or invalid changed issue-test discovery outputs");
+          }
+          const expected = files.length === 0 ? "skipped" : "success";
+          if (CHANGED_RESULT !== expected) {
+            throw new Error(`Changed issue-test jobs: expected ${expected} for ${files.length} selected file(s), received ${CHANGED_RESULT}`);
+          }
+          console.log(`Pinned issue tests completed; ${files.length} changed file job(s) completed with advisory assertion policy.`);
+          NODE
+
+  # #6783 — the WHOLE root suite as a known-failures ratchet: every
+  # tests/*.test.ts (minus linear/c-abi/simd, which `linear-tests` runs, and
+  # the test262 chunk/shard runners) plus tests/ir/*.test.ts — ~4,400 files
+  # that no required check ran. `scripts/known-failures-gate.mjs` scores each
+  # FILE red or green against scripts/issue-tests-baseline.json (the files
+  # red on main): green → red fails, a baseline file gone green is reported
+  # "newly fixed" and banked post-merge (test262-sharded.yml promote-baseline).
+  #
+  # Sharded exactly like equivalence-shard / equivalence-gate (#6785): each
+  # shard gates its own files and uploads a partial; `issue-tests-gate`
+  # merges the eight, and a missing, duplicated or cross-commit partial — or a
+  # file on disk that reached no report — fails it. Each shard runs vitest's
+  # default fork count (3 on a 4-vCPU runner) with a crash-safe reporter: a
+  # worker that dies of OOM no longer erases the shard (it did on 4 of 12
+  # shards of issue-tests.yml run 36962288398); the files it was running are
+  # re-run alone and are red only if they die alone too. A status change
+  # against the baseline is confirmed by a serial re-run before it counts.
+  #
+  # TWO-PHASE ROLLOUT. Until the post-merge bank seeds the baseline from a
+  # complete run on main, the gate is in SEED mode: it prints the proposed
+  # red list and exits 0, and both gate steps are continue-on-error, so a
+  # not-yet-required job can never make a PR UNSTABLE (which `auto-enqueue`
+  # skips, #3878/#3904). From the first seeded commit on, both steps are
+  # fatal, and `issue-tests-gate` is ready to be added to the main ruleset
+  # (scripts/enable-branch-protection.sh REQUIRED_AFTER_SEEDING,
+  # docs/ci-policy.md §7). A PR excuses a file it must leave red with
+  # `known-failures-allow:` in its own issue frontmatter — never by editing
+  # the baseline, which main's bank alone writes.
+  issue-tests-shard:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+    env:
+      # Same toolchain-light engine as the changed-root gate in `quality`.
+      JS2WASM_EVAL_ENGINE: interpreter
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # HEAD^1 is the change-set's base: allowances are read from the
+          # issue files this change-set touches (scripts/lib/change-scope.mjs).
+          fetch-depth: 2
+      - name: Setup Node and pnpm (cached)
+        uses: ./.github/actions/setup-node-pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Prepare the Test262 harness inputs and bundles root tests read
+        run: |
+          # Same preparation as the changed-root gate in `quality`: some root
+          # files execute pinned test262 inputs, the compiler/runtime bundles,
+          # or the runtime-eval refusal provider (#4234).
+          git submodule update --init --checkout test262
+          git submodule update --init --checkout test262-fyi/data
+          pnpm run build:compiler-bundle
+          pnpm exec esbuild scripts/runtime-bundle-entry.ts --bundle --platform=node --format=esm --outfile=scripts/runtime-bundle.mjs --external:typescript --external:binaryen
+          node scripts/build-runtime-eval-provider.mjs --refusal-only
+      - name: Seed mode or enforce mode
+        id: mode
+        run: |
+          if [ -f scripts/issue-tests-baseline.json ]; then
+            echo "seeded=true" >> "$GITHUB_OUTPUT"
+            echo "Baseline present — enforcing."
+          else
+            echo "seeded=false" >> "$GITHUB_OUTPUT"
+            echo "No scripts/issue-tests-baseline.json yet — seed mode (advisory, #6783)."
+          fi
+      - name: Run and gate root-suite shard ${{ matrix.shard }}/8
+        continue-on-error: ${{ steps.mode.outputs.seeded != 'true' }}
+        # Below the job budget, so a stuck shard fails THIS step — which seed
+        # mode tolerates — instead of timing out the whole job.
+        timeout-minutes: 100
+        env:
+          SHARD: ${{ matrix.shard }}/8
+          PARTIAL_OUT: issue-tests-partial-${{ matrix.shard }}.json
+          KNOWN_FAILURES_FETCH_BASE: "1"
+        run: node scripts/known-failures-gate.mjs --suite issue-tests
+      - name: Upload shard partial for the merged gate (#6783)
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: issue-tests-partial-${{ matrix.shard }}
+          path: issue-tests-partial-${{ matrix.shard }}.json
+          if-no-files-found: ignore
+          overwrite: true
+          retention-days: 1
+
+  issue-tests-gate:
+    needs: [changes, issue-tests-shard]
+    if: always() && needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      # The gate needs only node builtins: its own scripts, the baseline, the
+      # test-file population (to name a file that reached no shard's report)
+      # and the issue files (allowances).
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 2
+          sparse-checkout: |
+            scripts/known-failures-gate.mjs
+            scripts/equivalence-gate.mjs
+            scripts/lib/change-scope.mjs
+            scripts/lib/known-failures-reporter.mjs
+            scripts/issue-tests-baseline.json
+            tests/*.test.ts
+            tests/ir/*.test.ts
+            plan/issues/
+          sparse-checkout-cone-mode: false
+      - name: Seed mode or enforce mode
+        id: mode
+        run: |
+          if [ -f scripts/issue-tests-baseline.json ]; then
+            echo "seeded=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "seeded=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Verify every issue-tests shard passed its baseline gate
+        if: steps.mode.outputs.seeded == 'true'
+        env:
+          SHARD_RESULT: ${{ needs.issue-tests-shard.result }}
+        run: |
+          if [ "$SHARD_RESULT" != "success" ]; then
+            echo "::error::one or more issue-tests shards failed their local baseline gate (matrix result: $SHARD_RESULT)"
+            exit 1
+          fi
+          echo "All issue-tests shards passed their local baseline gates."
+      - uses: actions/download-artifact@v7
+        continue-on-error: true
+        with:
+          pattern: issue-tests-partial-*
+          path: issue-tests-partials
+          merge-multiple: true
+      - name: Gate the merged root suite (#6783)
+        continue-on-error: ${{ steps.mode.outputs.seeded != 'true' }}
+        env:
+          MERGE_PARTIALS_DIR: issue-tests-partials
+          KNOWN_FAILURES_FETCH_BASE: "1"
+        run: node scripts/known-failures-gate.mjs --suite issue-tests
+      # The post-merge bank (test262-sharded.yml promote-baseline) downloads
+      # this by name for the SHA that landed on main — the merge_group run's
+      # or the push run's, whichever finished. PR runs keep nothing.
+      - name: Keep the merged partials for the post-merge bank (#6783)
+        if: always() && github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v6
+        with:
+          name: issue-tests-partials-${{ github.sha }}
+          path: issue-tests-partials/
+          if-no-files-found: ignore
+          retention-days: 3
 
   # #2139 — Execute the linear-backend (linear-memory lowering), C-ABI, and
   # SIMD test suites in CI. These 20 files (tests/linear-*.test.ts,
@@ -842,9 +1196,15 @@ jobs:
   # #1659 — Run tests/equivalence/ in CI. Previously skipped because the full
   # suite OOMed under file-parallelism. Each shard runs single-fork (peak
   # ~1 GB RAM, ~1-3 min) and gates its own failures against
-  # scripts/equivalence-baseline.json. The final required context is only a
-  # status fan-in: regression membership is independent per test, so shipping
-  # eight partial artifacts to repeat the same set comparison adds no safety.
+  # scripts/equivalence-baseline.json — per-test regressions and file-level
+  # failures (import/syntax/collect errors, unfinished tests) are per-file
+  # facts, so each shard names them in its own log.
+  #
+  # #6785 — the passing-test floor and the test-file count are WHOLE-SUITE
+  # properties no single shard can check: a file that vanishes from every
+  # shard (deleted, or a crashed worker) leaves each shard locally green. So
+  # every shard uploads its partial, and the required `equivalence-gate` job
+  # merges the eight and applies `passingFloor` / `fileCount` to the sum.
   equivalence-shard:
     needs: changes
     if: needs.changes.outputs.code == 'true'
@@ -861,7 +1221,17 @@ jobs:
       - name: Run and gate equivalence shard ${{ matrix.shard }}/8
         env:
           SHARD: ${{ matrix.shard }}/8
+          PARTIAL_OUT: equivalence-partial-${{ matrix.shard }}.json
         run: node scripts/equivalence-gate.mjs
+      - name: Upload shard partial for the merged floor check (#6785)
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: equivalence-partial-${{ matrix.shard }}
+          path: equivalence-partial-${{ matrix.shard }}.json
+          if-no-files-found: ignore
+          overwrite: true
+          retention-days: 1
 
   equivalence-gate:
     needs: [changes, equivalence-shard]
@@ -877,3 +1247,22 @@ jobs:
             exit 1
           fi
           echo "All equivalence shards passed their local baseline gates."
+      # #6785 — the gate script and baseline need only node builtins; the
+      # equivalence directory lets the merge name a test file that exists but
+      # reached no shard's report.
+      - uses: actions/checkout@v5
+        with:
+          sparse-checkout: |
+            scripts/equivalence-gate.mjs
+            scripts/equivalence-baseline.json
+            tests/equivalence/
+          sparse-checkout-cone-mode: false
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: equivalence-partial-*
+          path: equivalence-partials
+          merge-multiple: true
+      - name: Gate the merged suite (passing floor + file count, #6785)
+        env:
+          MERGE_PARTIALS_DIR: equivalence-partials
+        run: node scripts/equivalence-gate.mjs

@@ -32,6 +32,18 @@ import {
 import { assertCodegenRegistrationsComplete } from "./codegen/shared.js";
 import { isFatalCodegenDiagnostic } from "./codegen/context/errors.js";
 import type { WasmModule } from "./ir/types.js";
+import {
+  prepareIrProgramPresentation,
+  beginPreparedPresentationFinalization,
+  completePreparedPresentationFinalization,
+  preparedPresentationWitView,
+  type PreparedPresentationFinalization,
+  type PreparedPresentationFinalizationReceipt,
+  type IrProgramPresentationResult,
+  type IrProgramPresentationGap,
+  type PreparedIrPipelinePresentationResult,
+} from "./compiler/ir-program-presentation.js";
+import { freezePreparedIrValue, PreparedIrProgramInvariantError, type PreparedIrBackendOptions } from "./ir/program.js";
 import { buildHostImportInventory, summarizeHostImportInventory } from "./host-import-policy.js";
 import { buildCapabilityRequirements, validatePlatformCapabilityRequirements } from "./capability-registry.js";
 import { createJavaScriptAdapterManifest } from "./adapter-manifest.js";
@@ -58,8 +70,10 @@ import {
   widenNonDefaultableTypes,
   type FailureTelemetry,
 } from "./compiler/output.js";
+import { stampAllocationOwners } from "./wasm/physical/allocation-owner.js";
 import {
   detectEarlyErrors,
+  gateEmittedModule,
   pushSourceAnchoredDiagnostic,
   rewriteEvalSuperCallWithMap,
   validateHardenedMode,
@@ -85,16 +99,19 @@ import { profileCount, profilePhase } from "./compile-profile.js";
 import { resolveCompileTargetProfile } from "./target-profile.js";
 import { injectProcessStdinPrelude } from "./process-stdin-prelude.js";
 import { injectIteratorStaticsPrelude } from "./iterator-statics-prelude.js";
+import { applyIntlListFormatPrelude, applyIntlListFormatPreludeToFiles } from "./intl-listformat-prelude.js";
 import { normalizeScriptHtmlLikeComments } from "./compiler/html-like-comments.js";
+import { normalizeForHeadParserCompat } from "./compiler/for-head-parser-compat.js";
 import * as irIds from "./compiler/ir-outcome-inventory.js";
 import { buildLinearOptions } from "./compiler/linear-options.js";
 import type { CompileError, CompileOptions, CompileResult } from "./index.js";
-import { optimizeBinaryAsync, validateEmittedBinary } from "./optimize.js";
-import { generateWit } from "./wit-generator.js";
+import { optimizeBinaryAsync } from "./optimize.js";
+import { generateWit, renderPreparedWit } from "./wit-generator.js";
 import {
   foldGroundCallsInMultiFilesForCompile as foldGroundCallsInMulti,
   foldGroundExportCallsForCompile as foldGroundCalls,
 } from "./compiler/ground-call-fold.js";
+import { readEnv } from "./env.js";
 export { compileToObjectSource } from "./compiler/output.js";
 export type { ObjectCompileResult } from "./compiler/output.js";
 
@@ -796,7 +813,14 @@ function buildCodegenOptions(
         `target: "${options.target}" does not use that cell bridge.`,
     );
   }
+  if (options.runtimeEvalProvider === false && options.target !== "standalone") {
+    throw new Error('Compile option runtimeEvalProvider: false requires target: "standalone".');
+  }
   if (options.standaloneGlobalThisImport !== undefined) {
+    const { owns, get } = options.standaloneGlobalThisImport;
+    if ((owns !== undefined || get !== undefined) && (!owns || !get)) {
+      throw new Error("standaloneGlobalThisImport.owns and get must be provided together and non-empty.");
+    }
     if (options.target !== "standalone") {
       throw new Error('Compile option standaloneGlobalThisImport requires target: "standalone".');
     }
@@ -809,8 +833,40 @@ function buildCodegenOptions(
     if (options.standaloneGlobalThisImport.call !== undefined && !options.standaloneGlobalThisImport.call) {
       throw new Error("Compile option standaloneGlobalThisImport.call must be non-empty when provided.");
     }
+    if (
+      options.standaloneGlobalThisImport.exceptionTag !== undefined &&
+      !options.standaloneGlobalThisImport.exceptionTag
+    ) {
+      throw new Error("Compile option standaloneGlobalThisImport.exceptionTag must be non-empty when provided.");
+    }
+  }
+  if (
+    options.standaloneAllocationOwnerExport !== undefined &&
+    (options.target !== "standalone" || !options.standaloneAllocationOwnerExport)
+  ) {
+    throw new Error("standaloneAllocationOwnerExport requires standalone and a non-empty export name.");
   }
   const targetProfile = resolveCompileTargetProfile(options);
+  if (
+    options.standaloneScriptVarBindings &&
+    (options.target !== "standalone" ||
+      !options.scriptGoal ||
+      !options.standaloneGlobalThisImport?.owns ||
+      !options.standaloneGlobalThisImport.get ||
+      !options.standaloneGlobalThisImport.exceptionTag)
+  ) {
+    throw new Error(
+      "standaloneScriptVarBindings requires standalone, scriptGoal, ownership-aware shared realm reads and a shared exception tag",
+    );
+  }
+  if (options.standaloneMicrotaskNotifyImport !== undefined) {
+    const { module, name } = options.standaloneMicrotaskNotifyImport;
+    if (options.target !== "standalone" || !module || !name || !options.link?.includes(module)) {
+      throw new Error(
+        "standaloneMicrotaskNotifyImport requires standalone, non-empty module/name, and its namespace in link.",
+      );
+    }
+  }
   return {
     irCutoverRoute: readIrCompileRoute(options, "compileSourceSync"),
     sourceMap: emitSourceMap,
@@ -829,7 +885,9 @@ function buildCodegenOptions(
     linkedPackageBindings: options.linkedPackageBindings,
     standalone: targetProfile.target === "standalone",
     standaloneGlobalThisImport: options.standaloneGlobalThisImport,
+    standaloneMicrotaskNotifyImport: options.standaloneMicrotaskNotifyImport,
     directEval: options.directEval,
+    runtimeEvalProvider: options.runtimeEvalProvider,
     // (#2141 S1) honest any-boxing regime flag (default off = legacy tag-5 ABI).
     honestAnyBoxing: options.honestAnyBoxing,
     unionAnyRep: options.unionAnyRep,
@@ -846,9 +904,12 @@ function buildCodegenOptions(
     // (#2796) Diff-test-harness fidelity — defer top-level init to an export so
     // the host runs it after setExports (symmetric with standalone `_start`).
     deferTopLevelInit: options.deferTopLevelInit,
+    standaloneScriptVarBindings: options.standaloneScriptVarBindings,
     strictNoHostImports: targetProfile.strictEnvImportGate,
     // (#2119) thread module-strictness inference uniformly across all drivers.
     inferModuleStrictArguments: options.inferModuleStrictArguments,
+    // (#6474) opt-in: let the multi-file path read the entry's own source goal.
+    entryScriptGoal: options.entryScriptGoal,
     // Phase 2 (#1131): default experimentalIR to on so recursive numeric
     // kernels (fib, factorial, etc.) compile without the boxing roundtrip the
     // legacy path emits for untyped JS parameters. Pass `experimentalIR: false`
@@ -915,76 +976,18 @@ interface PipelineInput {
   options: CompileOptions;
 }
 
-function isWasmException(e: unknown): boolean {
-  return (
-    typeof WebAssembly !== "undefined" &&
-    !!(WebAssembly as unknown as { Exception?: Function }).Exception &&
-    e instanceof (WebAssembly as unknown as { Exception: Function }).Exception
-  );
-}
+/** Frontend presentation facts only; body generation never consumes this context. */
+export type PipelineOutputContext = Pick<
+  PipelineInput,
+  "errors" | "options" | "entryAst" | "diagnosticAnchor" | "sourcesContent"
+> & {
+  readonly codegenOptions: Pick<CodegenOptions, "link">;
+  readonly preparedStartup?: Extract<IrProgramPresentationResult, { kind: "prepared-presentation" }>["startup"];
+};
 
-const STANDALONE_DYNAMIC_IMPORT_ERROR =
-  "Standalone dynamic import is unsupported until compileMulti provides internal module records and namespace objects";
-
-/**
- * #3494 — catch eager import() before codegen, including top-level await paths
- * that the flattened module initializer may not lower through
- * compileCallExpression. A standalone binary cannot satisfy the host loader,
- * and compileMulti has no honest internal module-record substitute yet.
- *
- * #3509 — ordinary arrow/function-expression bodies are runtime-trap eligible:
- * creating one needs no loader, and calls.ts emits a host-free TypeError if its
- * import executes. Async/generator functions stay fatal here because a direct
- * synchronous throw would not preserve their rejection/lazy-throw semantics.
- */
-function detectStandaloneDynamicImports(sourceFile: ts.SourceFile): CompileError[] {
-  const errors: CompileError[] = [];
-  const canTrapAtRuntime = (call: ts.CallExpression): boolean => {
-    for (let parent: ts.Node | undefined = call.parent; parent; parent = parent.parent) {
-      if (!ts.isFunctionLike(parent)) continue;
-      if (!ts.isArrowFunction(parent) && !ts.isFunctionExpression(parent)) return false;
-      const isAsync = parent.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) ?? false;
-      const isGenerator = ts.isFunctionExpression(parent) && parent.asteriskToken !== undefined;
-      return !isAsync && !isGenerator;
-    }
-    return false;
-  };
-  const visit = (node: ts.Node): void => {
-    if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) {
-      if (canTrapAtRuntime(node)) return;
-      const { line, character } = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile));
-      errors.push({
-        message: STANDALONE_DYNAMIC_IMPORT_ERROR,
-        line: line + 1,
-        column: character + 1,
-        severity: "error",
-        file: sourceFile.fileName,
-      });
-      return;
-    }
-    ts.forEachChild(node, visit);
-  };
-  visit(sourceFile);
-  return errors;
-}
-
-/**
- * #1927 — the single, shared front-end pipeline core. Owns everything from ES
- * early-error detection down through binary/WAT/dts/WIT emit. It is SYNCHRONOUS
- * and STOPS before the optional wasm-opt pass — the async entry points apply
- * {@link applyOptimize} over its result. This preserves the asymmetry that
- * `compileSourceSync` (the `eval` host shim's entry) must stay synchronous and
- * ignore `optimize`, while the multi entry points are async.
- *
- * The three entry adapters differ ONLY in how they build the AST(s) and collect
- * the leading TS-diagnostic `errors` (region A); everything below the
- * parse/check split is identical and lives here.
- */
-function runPipeline(input: PipelineInput): CompileResult {
-  const { errors, options, entryAst, multiAst, diagnosticAnchor, userSourceFiles } = input;
-  const targetProfile = resolveCompileTargetProfile(options);
-  const emitWatOutput = options.emitWat !== false;
-
+/** The existing pre-generation validation, shared by both internal routes. */
+function validatePipelineSource(input: PipelineInput): CompileResult | undefined {
+  const { errors, options, entryAst, userSourceFiles } = input;
   // Each validation pass below gates on the errors IT produced, NOT on the whole
   // accumulated `errors` array. This is load-bearing (#1927 regression fix): the
   // pre-collected `errors` may already hold non-fatal TS diagnostics of severity
@@ -1012,23 +1015,16 @@ function runPipeline(input: PipelineInput): CompileResult {
     // for script tests. Product compiles leave it undefined and are covered by
     // the real `ts.isExternalModule` indicator inside the rule.
     const moduleGoal = options.inferModuleStrictArguments === true;
+    // (#6491 r3) Script goal is an EXPLICIT opt-in, never `!moduleGoal` — see
+    // the `scriptGoal` doc comment in index.ts for why the negation is unsafe.
+    const scriptGoal = options.scriptGoal === true;
     for (const sf of userSourceFiles) {
-      earlyErrors.push(...detectEarlyErrors(sf, { moduleGoal }));
+      earlyErrors.push(...detectEarlyErrors(sf, { moduleGoal, scriptGoal }));
     }
     errors.push(...earlyErrors);
     if (hasNewError(earlyErrors)) {
       return failResult(errors);
     }
-  }
-
-  // Step 1a-ii: target-capability validation. This is deliberately independent
-  // of allowJs: Test262 module fixtures use JavaScript source, and silently
-  // skipping this gate there produced a success result with no runnable import
-  // semantics for top-level `await import(...)`.
-  if (targetProfile.target === "standalone") {
-    const dynamicImportErrors = userSourceFiles.flatMap(detectStandaloneDynamicImports);
-    errors.push(...dynamicImportErrors);
-    if (dynamicImportErrors.length > 0) return failResult(errors);
   }
 
   // Step 1b: Safe mode validation for all user source files.
@@ -1056,6 +1052,42 @@ function runPipeline(input: PipelineInput): CompileResult {
       return failResult(errors);
     }
   }
+
+  return undefined;
+}
+
+function isWasmException(e: unknown): boolean {
+  return (
+    typeof WebAssembly !== "undefined" &&
+    !!(WebAssembly as unknown as { Exception?: Function }).Exception &&
+    e instanceof (WebAssembly as unknown as { Exception: Function }).Exception
+  );
+}
+
+/**
+ * #1927 — the single, shared front-end pipeline core. Owns everything from ES
+ * early-error detection down through binary/WAT/dts/WIT emit. It is SYNCHRONOUS
+ * and STOPS before the optional wasm-opt pass — the async entry points apply
+ * {@link applyOptimize} over its result. This preserves the asymmetry that
+ * `compileSourceSync` (the `eval` host shim's entry) must stay synchronous and
+ * ignore `optimize`, while the multi entry points are async.
+ *
+ * The three entry adapters differ ONLY in how they build the AST(s) and collect
+ * the leading TS-diagnostic `errors` (region A); everything below the
+ * parse/check split is identical and lives here.
+ */
+function runPipeline(input: PipelineInput): CompileResult {
+  const { errors, options, entryAst, multiAst, diagnosticAnchor } = input;
+  if (options.standaloneScriptVarBindings && multiAst) {
+    throw new Error(
+      "standaloneScriptVarBindings requires independent single-source Scripts, not a flattened module graph",
+    );
+  }
+  const targetProfile = resolveCompileTargetProfile(options);
+  const emitWatOutput = options.emitWat !== false;
+
+  const sourceFailure = validatePipelineSource(input);
+  if (sourceFailure) return sourceFailure;
 
   const emitSourceMap = options.sourceMap === true;
   const useLinear = targetProfile.backend === "linear";
@@ -1094,7 +1126,8 @@ function runPipeline(input: PipelineInput): CompileResult {
       // exactly the #3143 IR-first divergence population) so a whole test-suite
       // run doubles as an empirical throw-site meter. Same env-gated telemetry
       // pattern as JS2WASM_LOG_IR_FALLBACKS; inert (no fs touch) when unset.
-      if (process.env.JS2WASM_IR_POSTCLAIM_LOG && result.irPostClaimErrors?.length) {
+      const postClaimLog = readEnv("JS2WASM_IR_POSTCLAIM_LOG");
+      if (postClaimLog && result.irPostClaimErrors?.length) {
         try {
           // Dynamic import kept out of the module graph on purpose: this is
           // node-only telemetry and `compiler.ts` is also bundled for the
@@ -1110,7 +1143,7 @@ function runPipeline(input: PipelineInput): CompileResult {
           const lines = result.irPostClaimErrors
             .map((e) => JSON.stringify({ file, func: e.func, kind: e.kind, message: e.message }))
             .join("\n");
-          appendFileSync(process.env.JS2WASM_IR_POSTCLAIM_LOG, lines + "\n");
+          appendFileSync(postClaimLog, lines + "\n");
         } catch {
           // Telemetry must never fail a compile.
         }
@@ -1148,16 +1181,137 @@ function runPipeline(input: PipelineInput): CompileResult {
   return finalizePipelineModule(input, mod, telemetry, { targetProfile, emitWatOutput, emitSourceMap });
 }
 
+/** Internal productive checkpoint; public entry points keep their existing route. */
+export function runPreparedIrPipelinePresentation(input: PipelineInput): PreparedIrPipelinePresentationResult {
+  const snapshot = { ...input, options: freezePreparedIrValue(input.options) as CompileOptions };
+  const { options, entryAst, multiAst, errors } = snapshot;
+  const diagnostics = multiAst ?? {
+    entryFile: entryAst.sourceFile,
+    sourceFiles: [entryAst.sourceFile],
+    checker: entryAst.checker,
+    diagnostics: entryAst.diagnostics,
+    syntacticDiagnostics: entryAst.syntacticDiagnostics,
+  };
+  if (collectMultiDiagnostics(diagnostics, options, errors))
+    return { kind: "output-failed", errors, artifacts: preparedPipelineArtifacts(failResult(errors)) };
+  const targetProfile = resolveCompileTargetProfile(options);
+  const sourceFailure = validatePipelineSource(snapshot);
+  if (sourceFailure) return { kind: "output-failed", errors, artifacts: preparedPipelineArtifacts(sourceFailure) };
+  const target = options.target === "standalone" ? "standalone" : options.target === "wasi" ? "wasi" : "host";
+  const backendOptions: PreparedIrBackendOptions = {
+    backend: targetProfile.backend,
+    target,
+    sharedExceptionTag: options.sharedExceptionTag === true,
+    utf8Storage: options.utf8Storage === true,
+    sourceMap: options.sourceMap === true,
+    moduleName: options.moduleName ?? "module",
+    ...(targetProfile.backend === "linear" ? { linear: buildLinearOptions(options, undefined) } : {}),
+  };
+  const prepared = prepareIrProgramPresentation({
+    preparation: {
+      sourceFiles: multiAst?.sourceFiles ?? [entryAst.sourceFile],
+      entrySource: entryAst.sourceFile,
+      checker: entryAst.checker,
+      policy: { backend: backendOptions.backend, target },
+      deferTopLevelInit: options.deferTopLevelInit === true,
+    },
+    backendOptions,
+    output: {
+      errors,
+      options,
+      entryAst,
+      diagnosticAnchor: snapshot.diagnosticAnchor,
+      sourcesContent: snapshot.sourcesContent,
+      codegenOptions: Object.freeze({ link: snapshot.codegenOptions.link }),
+    },
+  });
+  if (prepared.kind !== "prepared-presentation") return prepared;
+  const finalization: PreparedMixedFinalization | undefined = prepared.requiresDetachedFinalization
+    ? { token: beginPreparedPresentationFinalization(prepared) }
+    : undefined;
+  const wit: PreparedWitFinalization | undefined = options.wit ? { presentation: prepared } : undefined;
+  const finalized = finalizePipelineModule(
+    { ...prepared.output, preparedStartup: prepared.startup },
+    finalization?.token.outputModule ?? prepared.emission.module,
+    undefined,
+    { targetProfile, emitWatOutput: options.emitWat !== false, emitSourceMap: options.sourceMap === true },
+    finalization,
+    wit,
+  );
+  if (wit?.gaps) return { kind: "presentation-unsupported", gaps: wit.gaps };
+  if (finalized.success && finalization && !finalization.receipt)
+    throw new PreparedIrProgramInvariantError(
+      "invalid-transaction-capability",
+      "mixed prepared output lacks completed finalization evidence",
+    );
+  const artifacts = preparedPipelineArtifacts(finalized);
+  if (!finalized.success) return { kind: "output-failed", errors: finalized.errors, artifacts };
+  return {
+    kind: "artifacts",
+    program: prepared.program,
+    emission: prepared.emission,
+    startup: prepared.startup,
+    artifacts,
+    ...(finalization ? { finalization: finalization.receipt! } : {}),
+  };
+}
+
+/** Preserve produced artifact fields without inventing legacy route telemetry. */
+function preparedPipelineArtifacts(
+  result: CompileResult,
+): Extract<PreparedIrPipelinePresentationResult, { kind: "artifacts" }>["artifacts"] {
+  return {
+    binary: result.binary,
+    wat: result.wat,
+    dts: result.dts,
+    importsHelper: result.importsHelper,
+    success: result.success,
+    errors: result.errors,
+    stringPool: result.stringPool,
+    sourceMap: result.sourceMap,
+    imports: result.imports,
+    runtimeRecGroupFingerprint: result.runtimeRecGroupFingerprint,
+    targetProfile: result.targetProfile,
+    hostImportInventory: result.hostImportInventory,
+    hostImportSummary: result.hostImportSummary,
+    capabilityRequirements: result.capabilityRequirements,
+    capabilityProviderDiagnostics: result.capabilityProviderDiagnostics,
+    cHeader: result.cHeader,
+    wit: result.wit,
+    hasMain: result.hasMain,
+    hasTopLevelStatements: result.hasTopLevelStatements,
+    exportSignatures: result.exportSignatures,
+    exportBoundaryPolicies: result.exportBoundaryPolicies,
+    adapterManifest: result.adapterManifest,
+    explanation: result.explanation,
+  };
+}
+
+/** Private holder; only genuine mixed presentation creates a finalization token. */
+interface PreparedMixedFinalization {
+  readonly token: PreparedPresentationFinalization;
+  receipt?: PreparedPresentationFinalizationReceipt;
+}
+
+/** Only the private prepared entry supplies a genuine presentation here. */
+interface PreparedWitFinalization {
+  readonly presentation: Extract<IrProgramPresentationResult, { kind: "prepared-presentation" }>;
+  text?: string;
+  gaps?: readonly IrProgramPresentationGap[];
+}
+
 /** Shared output contract; generation and its diagnostics finish before entry. */
 function finalizePipelineModule(
-  input: PipelineInput,
+  input: PipelineOutputContext,
   mod: WasmModule,
-  telemetry: Partial<FailureTelemetry>,
+  telemetry: Partial<FailureTelemetry> | undefined,
   output: {
     targetProfile: ReturnType<typeof resolveCompileTargetProfile>;
     emitWatOutput: boolean;
     emitSourceMap: boolean;
   },
+  finalization?: PreparedMixedFinalization,
+  wit?: PreparedWitFinalization,
 ): CompileResult {
   const { errors, options, entryAst, diagnosticAnchor } = input;
   const { targetProfile, emitWatOutput, emitSourceMap } = output;
@@ -1173,7 +1327,21 @@ function finalizePipelineModule(
   // Step 2c: Widen non-defaultable ref types to ref_null in locals, params, and
   // results. Avoids "uninitialized non-defaultable local" and struct.get/set
   // type errors.
+  if (options.standaloneAllocationOwnerExport !== undefined) {
+    try {
+      stampAllocationOwners(mod, options.standaloneAllocationOwnerExport);
+    } catch (error) {
+      pushSourceAnchoredDiagnostic(
+        errors,
+        diagnosticAnchor,
+        `Allocation provenance: ${error instanceof Error ? error.message : String(error)}`,
+        "error",
+      );
+      return failResult(errors, telemetry);
+    }
+  }
   widenNonDefaultableTypes(mod);
+  if (finalization) finalization.receipt = completePreparedPresentationFinalization(finalization.token);
 
   // #4401 — An explicitly selected native-first profile is a
   // semantic-provider contract, not a best-effort hint. Never publish a module
@@ -1208,6 +1376,24 @@ function finalizePipelineModule(
       );
       return failResult(errors, telemetry);
     }
+  }
+
+  // Requested prepared WIT must be complete before any final artifacts are emitted.
+  let preparedCapabilities: ReturnType<typeof buildCapabilityRequirements> | undefined;
+  if (wit) {
+    const view = preparedPresentationWitView(wit.presentation, mod);
+    preparedCapabilities = buildCapabilityRequirements(mod, hostImportInventory, targetEnvironment);
+    const rendered = renderPreparedWit(view, {
+      ...(typeof options.wit === "object" ? options.wit : {}),
+      imports: mod.imports,
+      types: mod.types,
+      capabilities: preparedCapabilities,
+    });
+    if (rendered.kind === "unsupported") {
+      wit.gaps = rendered.gaps;
+      return failResult(errors, telemetry);
+    }
+    wit.text = rendered.text;
   }
 
   // Step 3: Emit binary (with source map collection if enabled).
@@ -1295,7 +1481,8 @@ function finalizePipelineModule(
   const dts = profilePhase("emit-dts", () => generateDts(entryAst, mod));
 
   const hostImportSummary = summarizeHostImportInventory(hostImportInventory);
-  const capabilityRequirements = buildCapabilityRequirements(mod, hostImportInventory, targetEnvironment);
+  const capabilityRequirements =
+    preparedCapabilities ?? buildCapabilityRequirements(mod, hostImportInventory, targetEnvironment);
   const capabilityProviderDiagnostics = validatePlatformCapabilityRequirements(
     capabilityRequirements,
     targetEnvironment,
@@ -1304,7 +1491,14 @@ function finalizePipelineModule(
   // Step 6: Generate WIT from the same frozen capability requirements used by
   // explain output and adapter validation, never from a parallel authority map.
   let witOutput: string | undefined;
-  if (options.wit) {
+  if (wit) {
+    if (wit.text === undefined)
+      throw new PreparedIrProgramInvariantError(
+        "invalid-transaction-capability",
+        "prepared WIT lacks preflighted text",
+      );
+    witOutput = wit.text;
+  } else if (options.wit) {
     const witOpts = typeof options.wit === "object" ? options.wit : undefined;
     witOutput = generateWit(entryAst, {
       ...witOpts,
@@ -1326,31 +1520,15 @@ function finalizePipelineModule(
   // low-level buildImports compatibility defaults.
   const importsHelper = generateImportsHelper(adapterManifest);
 
-  // Step 8 (#4420): opt-in engine validation. `success: true` above only says
-  // codegen finished — it is NOT a claim that the bytes form a module, and a
-  // miscompile therefore escaped as a green result (`compileFiles` on
-  // `src/emit/binary.ts` returned success with 268 KB the engine rejected).
+  // Step 8 (#4420, #6776): engine validation, ON unless `validate: false`.
   // Wired HERE, at the one exit every driver funnels through (compileSourceSync
   // / compileSource / compileMultiSource / compileFilesSource all return
   // runPipeline's result), so no caller can be validated while another is not.
-  // Runs BEFORE the async wasm-opt pass, which is deliberate: the optimizer
-  // validates its own output already (#1941, and it refuses to ship bytes it
-  // broke), so this gate answers for what CODEGEN produced. The binary is
+  // Runs BEFORE the async wasm-opt pass, which validates its own output
+  // (#1941), so this gate answers for what CODEGEN produced. The binary is
   // still returned on failure — a caller that just learned its module is
   // invalid needs the bytes to dump or diff.
-  let emittedBinaryAccepted = true;
-  if (options.validate === true && binary.length > 0) {
-    const validation = validateEmittedBinary(binary);
-    if (!validation.valid) {
-      emittedBinaryAccepted = false;
-      pushSourceAnchoredDiagnostic(
-        errors,
-        diagnosticAnchor,
-        `emitted WebAssembly failed validation${validation.detail ? ` — ${validation.detail}` : ""}`,
-        "error",
-      );
-    }
-  }
+  const emittedBinaryAccepted = gateEmittedModule(binary, options, errors, diagnosticAnchor);
 
   return {
     binary,
@@ -1371,7 +1549,7 @@ function finalizePipelineModule(
     cHeader,
     wit: witOutput,
     hasMain: mod.exports.some((e) => e.name === "main" && e.desc.kind === "func"),
-    hasTopLevelStatements: mod.hasTopLevelStatements === true,
+    hasTopLevelStatements: input.preparedStartup?.hasTopLevelStatements ?? mod.hasTopLevelStatements === true,
     exportSignatures: mod.exportSignatures,
     exportBoundaryPolicies,
     adapterManifest,
@@ -1394,6 +1572,61 @@ function finalizePipelineModule(
  * wasm-opt is requested (#1757 / GH #986), so normal compilation and
  * standalone bundles do not need to embed Binaryen.
  */
+/**
+ * Syntactic diagnostics that must NOT reject a compile.
+ *
+ * (#3451) Module-scope so the MULTI-file gate can apply the same allowlist the
+ * single-file gate does. Every entry is a TypeScript diagnostic for source that
+ * is valid JavaScript (sloppy-mode octals, `yield` as an identifier, decorators,
+ * `1109 Expression expected` on test262's error-recovery patterns), so a gate
+ * that omits the list is not "stricter" — it is wrong, and it was measurably so
+ * for the linked test262 lane, which needs BOTH a real syntax gate and exactly
+ * the honest lane's tolerances.
+ */
+// Don't stop on type errors – the compiler can still generate code for many cases
+// Only stop on syntax errors (parsing failures), except tolerated ones
+const TOLERATED_SYNTAX_CODES = new Set([
+  1156, // "'let' declarations can only be declared inside a block"
+  1313, // "The body of an 'if' statement cannot be the empty statement"
+  1344, // "A label is not allowed here"
+  1182, // "A destructuring declaration must have an initializer"
+  1228, // "A type predicate is only allowed in return type position"
+  1163, // "A 'yield' expression is only allowed in a generator body" — syntactic diagnostic (#267)
+  1206, // "Decorators are not valid here" — decorator syntax tolerated, decorators ignored (#376)
+  1207, // "Decorators cannot be applied to multiple get/set accessors" (#376)
+  1436, // "Decorators must precede the name and all keywords of property declarations" (#376)
+  1486, // "Decorator used before 'export' here" (#376)
+  1497, // "Expression must be enclosed in parentheses to be used as a decorator" (#376)
+  1498, // "Invalid syntax in decorator" (#376)
+  8038, // "Decorators may not appear after 'export' or 'export default'" (#376)
+  1184, // "Modifiers cannot appear here" — valid JS patterns in test262 (#537)
+  1109, // "Expression expected" — valid JS patterns in test262 (#537)
+  1135, // "Argument expression expected" — valid JS patterns in test262 (#537)
+  1262, // "Identifier expected. 'X' is a reserved word at the top-level of a module" — await as identifier (#537)
+  1435, // "Unknown keyword or identifier. Did you mean 'X'?" — yield in nested generator contexts (#521)
+  1503, // "This regular expression flag is only available when targeting 'es2024'" (#654)
+  1232, // "An import declaration can only be used at the top level of a namespace or module" (#654)
+  1102, // "'delete' cannot be called on an identifier in strict mode" — valid sloppy-mode JS (#535)
+  1100, // "Invalid use of 'X' in strict mode" — sloppy-mode JS allows eval/arguments (#331)
+  1121, // "Octal literals are not allowed in strict mode" — valid sloppy-mode JS
+  1489, // "Decimals with leading zeros are not allowed" — valid sloppy-mode JS octal literals
+  // #2708 — legacy string-literal escapes (Annex B §12.9.4) are valid in sloppy
+  // mode. Don't let the TS scanner errors block compilation; node-checks.ts
+  // re-raises them as a hard early error in strict mode (mirrors 1121/1489).
+  1487, // "Octal escape sequences are not allowed." — sloppy-mode legacy octal in string
+  1488, // "Escape sequence '\\8'/'\\9' is not allowed." — sloppy-mode NonOctalDecimalEscape
+  // #2631/#1768 — "Signature declarations can only be used in TypeScript files."
+  // Fires under checkJs at the import site when a `.js` file imports a value
+  // whose synthetic `.d.ts` typing is a callable/overloaded declaration (e.g.
+  // `import { readSync, writeSync } from "node:fs"` resolving to the node-emu
+  // typings). Benign for codegen — the import resolves and lowers regardless.
+  // Scoped to this exact code so it does NOT relax the gate for genuine
+  // strict-mode SyntaxErrors (e.g. duplicate params), which the eval shim
+  // (src/runtime-eval.ts) relies on `compileSourceSync(...).success === false`
+  // to surface as a thrown SyntaxError (the 17 strict-eval test262 cases).
+  8017,
+]);
+
 export async function compileSource(
   source: string,
   options: CompileOptions = {},
@@ -1486,7 +1719,11 @@ export function compileSourceSync(
   const defineResult = options.define
     ? applyDefineSubstitutionsWithMap(lexScriptSource(source, options), options.define)
     : { source: lexScriptSource(source, options), positionMap: PositionMap.identity() };
-  const definedSource = defineResult.source;
+  // #6836 — `for (let; ;)` / `for ([x = 'x' in o] of …)` heads TypeScript misparses.
+  const forHeadResult = normalizeForHeadParserCompat(defineResult.source, {
+    scriptGoal: options.inferModuleStrictArguments === false,
+  });
+  const definedSource = forHeadResult.source;
 
   // Step 0a.4: #2632 Phase 3 — inject the faithful `process.stdin` Node `Readable`
   // source-prelude (string/Buffer chunks over the fd0 reactor substrate) and
@@ -1513,7 +1750,9 @@ export function compileSourceSync(
     targetProfile.environment === "none" || targetProfile.environment === "wasi"
       ? injectIteratorStaticsPrelude(stdinInjectedSource)
       : { source: stdinInjectedSource, positionMap: PositionMap.identity(), injected: false };
-  const iterStaticsSource = iterStaticsResult.source;
+  // Step 0a.46: #6839 — Wasm-native `Intl.ListFormat` prelude (host-free targets only).
+  const listFormatResult = applyIntlListFormatPrelude(targetProfile.environment, iterStaticsResult.source, options);
+  const iterStaticsSource = listFormatResult.source;
 
   // Step 0a.5: Rewrite CommonJS `const X = require('Y')` patterns to ESM `import`
   // declarations (#1279). This must run before preprocessImports so the resulting
@@ -1543,12 +1782,14 @@ export function compileSourceSync(
   const { rawWasi: wasiRawImports, memAccessors: wasiMemAccessors } = detectRawWasiImports(cjsRewritten);
   const preprocessed = preprocessImports(cjsRewritten2, { wasi: targetProfile.target === "wasi" });
   let processedSource = preprocessed.source;
-  // Compose imports → eval/super → CJS → Iterator → stdin → define back to the original source.
+  // Compose imports → eval/super → CJS → ListFormat → Iterator → stdin → for-head → define back to the original source.
   const positionMap = preprocessed.positionMap
     .compose(evalResult.positionMap)
     .compose(cjsResult.positionMap)
+    .compose(listFormatResult.positionMap)
     .compose(iterStaticsResult.positionMap)
     .compose(stdinResult.positionMap)
+    .compose(forHeadResult.positionMap)
     .compose(defineResult.positionMap);
 
   // Step 1: Parse and type-check
@@ -1576,8 +1817,18 @@ export function compileSourceSync(
   processedSource = foldGroundCalls(processedSource, effectiveFileName, options.optimize, isJsMode && !forceTsGrammar);
 
   // Step 1a: #3418 — host-free targets elide dead pure top-level bindings before
-  // parsing so unreachable bodies do not register host imports.
-  if (targetProfile.environment === "none" || targetProfile.environment === "wasi") {
+  // parsing so unreachable bodies do not register host imports. (#6898) The
+  // native regime in a JS environment elides too: which bindings are dead is a
+  // question of the implementation (`nativeRegime` ≡ `ctx.standalone`), not of
+  // the embedder. Without it the unused test262 `$262.evalScript` shim kept a
+  // live direct `eval` and put every regime row into runtime-eval mode.
+  // Context-owned declarations remain observable from later Scripts even when
+  // this source never reads them. Private-program dead-binding proofs do not
+  // apply; keep their original source and stable IR inventory intact.
+  if (
+    !options.standaloneScriptVarBindings &&
+    (targetProfile.environment === "none" || targetProfile.environment === "wasi" || targetProfile.nativeRegime)
+  ) {
     const scriptKind = isJsMode && !forceTsGrammar ? ts.ScriptKind.JS : ts.ScriptKind.TS;
     const elision = irIds.elideWithIrIds(processedSource, effectiveFileName, scriptKind, irInventory);
     processedSource = elision.source;
@@ -1679,49 +1930,6 @@ export function compileSourceSync(
     }
   }
 
-  // Don't stop on type errors – the compiler can still generate code for many cases
-  // Only stop on syntax errors (parsing failures), except tolerated ones
-  const TOLERATED_SYNTAX_CODES = new Set([
-    1156, // "'let' declarations can only be declared inside a block"
-    1313, // "The body of an 'if' statement cannot be the empty statement"
-    1344, // "A label is not allowed here"
-    1182, // "A destructuring declaration must have an initializer"
-    1228, // "A type predicate is only allowed in return type position"
-    1163, // "A 'yield' expression is only allowed in a generator body" — syntactic diagnostic (#267)
-    1206, // "Decorators are not valid here" — decorator syntax tolerated, decorators ignored (#376)
-    1207, // "Decorators cannot be applied to multiple get/set accessors" (#376)
-    1436, // "Decorators must precede the name and all keywords of property declarations" (#376)
-    1486, // "Decorator used before 'export' here" (#376)
-    1497, // "Expression must be enclosed in parentheses to be used as a decorator" (#376)
-    1498, // "Invalid syntax in decorator" (#376)
-    8038, // "Decorators may not appear after 'export' or 'export default'" (#376)
-    1184, // "Modifiers cannot appear here" — valid JS patterns in test262 (#537)
-    1109, // "Expression expected" — valid JS patterns in test262 (#537)
-    1135, // "Argument expression expected" — valid JS patterns in test262 (#537)
-    1262, // "Identifier expected. 'X' is a reserved word at the top-level of a module" — await as identifier (#537)
-    1435, // "Unknown keyword or identifier. Did you mean 'X'?" — yield in nested generator contexts (#521)
-    1503, // "This regular expression flag is only available when targeting 'es2024'" (#654)
-    1232, // "An import declaration can only be used at the top level of a namespace or module" (#654)
-    1102, // "'delete' cannot be called on an identifier in strict mode" — valid sloppy-mode JS (#535)
-    1100, // "Invalid use of 'X' in strict mode" — sloppy-mode JS allows eval/arguments (#331)
-    1121, // "Octal literals are not allowed in strict mode" — valid sloppy-mode JS
-    1489, // "Decimals with leading zeros are not allowed" — valid sloppy-mode JS octal literals
-    // #2708 — legacy string-literal escapes (Annex B §12.9.4) are valid in sloppy
-    // mode. Don't let the TS scanner errors block compilation; node-checks.ts
-    // re-raises them as a hard early error in strict mode (mirrors 1121/1489).
-    1487, // "Octal escape sequences are not allowed." — sloppy-mode legacy octal in string
-    1488, // "Escape sequence '\\8'/'\\9' is not allowed." — sloppy-mode NonOctalDecimalEscape
-    // #2631/#1768 — "Signature declarations can only be used in TypeScript files."
-    // Fires under checkJs at the import site when a `.js` file imports a value
-    // whose synthetic `.d.ts` typing is a callable/overloaded declaration (e.g.
-    // `import { readSync, writeSync } from "node:fs"` resolving to the node-emu
-    // typings). Benign for codegen — the import resolves and lowers regardless.
-    // Scoped to this exact code so it does NOT relax the gate for genuine
-    // strict-mode SyntaxErrors (e.g. duplicate params), which the eval shim
-    // (src/runtime-eval.ts) relies on `compileSourceSync(...).success === false`
-    // to surface as a thrown SyntaxError (the 17 strict-eval test262 cases).
-    8017,
-  ]);
   const hasSyntaxErrors = ast.syntacticDiagnostics.some(
     (d) => d.category === 1 && d.file === ast.sourceFile && !TOLERATED_SYNTAX_CODES.has(d.code),
   );
@@ -1807,8 +2015,10 @@ export async function compileMultiSource(
       ]),
     ),
   );
+  // #6839 — per-file Wasm-native `Intl.ListFormat` prelude (host-free targets only).
+  const listFormatFiles = applyIntlListFormatPreludeToFiles(multiTargetProfile.environment, timerShimmedFiles);
   const processedFiles = profilePhase("ground-call-fold", () =>
-    foldGroundCallsInMulti(timerShimmedFiles, entryFile, options.optimize),
+    foldGroundCallsInMulti(listFormatFiles, entryFile, options.optimize),
   );
   profileCount("input-files", Object.keys(processedFiles).length);
 
@@ -1830,48 +2040,7 @@ export async function compileMultiSource(
   profileCount("source-files", multiAst.sourceFiles.length);
   profileCount("program-files", multiAst.program.getSourceFiles().length);
 
-  // When allowJs is set (e.g. compiling npm packages like lodash-es), only report
-  // diagnostics from the entry file — dependency files may have TS errors we can't
-  // control (missing globals, JSDoc param issues, etc.). strictJsSyntax is the
-  // explicit exception for syntax-test graphs whose complete literal JavaScript
-  // input is owned by the caller (#3506).
-  const isEntryDiag = (diag: { file?: { fileName: string } }) =>
-    !options.allowJs || options.strictJsSyntax === true || !diag.file || diag.file === multiAst.entryFile;
-
-  for (const diag of multiAst.diagnostics) {
-    if (diag.category === 1 && isEntryDiag(diag)) {
-      const pos = diag.file ? diag.file.getLineAndCharacterOfPosition(diag.start ?? 0) : { line: 0, character: 0 };
-      const severity = diagnosticSeverity(diag, multiAst.checker);
-      errors.push({
-        // #1929 — flatten the full DiagnosticMessageChain (keeps the "because…"
-        // elaboration) and attribute the source file for multi-file compiles.
-        message: ts.flattenDiagnosticMessageText(diag.messageText, "\n"),
-        line: pos.line + 1,
-        column: pos.character + 1,
-        severity,
-        code: diag.code,
-        ...(diag.file ? { file: diag.file.fileName } : {}),
-      });
-    }
-  }
-
-  // When allowJs is set, don't bail on TS diagnostics — JS packages with JSDoc
-  // annotations produce many false-positive errors (TS1016 optional params,
-  // TS2322 type mismatches, TS8017 signature-in-JS, etc.). Codegen handles it
-  // fine. strictJsSyntax restores only the syntactic rejection gate; semantic
-  // JavaScript diagnostics retain the existing allowJs policy.
-  const hasSyntaxErrors =
-    (!options.allowJs || options.strictJsSyntax === true) &&
-    multiAst.syntacticDiagnostics.some(
-      (d) => d.category === 1 && isEntryDiag(d) && multiAst.sourceFiles.some((sf) => d.file === sf),
-    );
-  const hasHardTypeErrors =
-    !options.allowJs &&
-    multiAst.diagnostics.some((d) => isHardTypeScriptDiagnostic(d, multiAst.checker) && isEntryDiag(d));
-
-  if ((hasSyntaxErrors || hasHardTypeErrors) && errors.length > 0) {
-    return failResult(errors);
-  }
+  if (collectMultiDiagnostics(multiAst, options, errors)) return failResult(errors);
 
   // #1927 — early-errors / safe / hardened validation + codegen + emit are the
   // shared pipeline core (runPipeline). The multi path runs hardened mode now
@@ -1945,6 +2114,68 @@ export async function compileMultiSource(
 }
 
 /**
+ * #1927/#6794 — the TS-diagnostic gate shared by both multi-file adapters
+ * (`compileMultiSource` and `compileFilesSource`). Pushes the reportable
+ * diagnostics into `errors`; returns true when a syntax or hard type error
+ * must abort the compile.
+ */
+function collectMultiDiagnostics(
+  multiAst: Pick<MultiTypedAST, "entryFile" | "sourceFiles" | "checker" | "diagnostics" | "syntacticDiagnostics">,
+  options: CompileOptions,
+  errors: CompileError[],
+): boolean {
+  // When allowJs is set (e.g. compiling npm packages like lodash-es), only report
+  // diagnostics from the entry file — dependency files may have TS errors we can't
+  // control (missing globals, JSDoc param issues, etc.). strictJsSyntax is the
+  // explicit exception for syntax-test graphs whose complete literal JavaScript
+  // input is owned by the caller (#3506).
+  const isEntryDiag = (diag: { file?: { fileName: string } }) =>
+    !options.allowJs || options.strictJsSyntax === true || !diag.file || diag.file === multiAst.entryFile;
+
+  for (const diag of multiAst.diagnostics) {
+    if (diag.category === 1 && isEntryDiag(diag)) {
+      const pos = diag.file ? diag.file.getLineAndCharacterOfPosition(diag.start ?? 0) : { line: 0, character: 0 };
+      const severity = diagnosticSeverity(diag, multiAst.checker);
+      errors.push({
+        // #1929 — flatten the full DiagnosticMessageChain (keeps the "because…"
+        // elaboration) and attribute the source file for multi-file compiles.
+        message: ts.flattenDiagnosticMessageText(diag.messageText, "\n"),
+        line: pos.line + 1,
+        column: pos.character + 1,
+        severity,
+        code: diag.code,
+        ...(diag.file ? { file: diag.file.fileName } : {}),
+      });
+    }
+  }
+
+  // When allowJs is set, don't bail on TS diagnostics — JS packages with JSDoc
+  // annotations produce many false-positive errors (TS1016 optional params,
+  // TS2322 type mismatches, TS8017 signature-in-JS, etc.). Codegen handles it
+  // fine. strictJsSyntax restores only the syntactic rejection gate; semantic
+  // JavaScript diagnostics retain the existing allowJs policy.
+  const hasSyntaxErrors =
+    (!options.allowJs || options.strictJsSyntax === true) &&
+    multiAst.syntacticDiagnostics.some(
+      (d) =>
+        d.category === 1 &&
+        isEntryDiag(d) &&
+        multiAst.sourceFiles.some((sf) => d.file === sf) &&
+        // (#3451) Apply the SAME tolerance list the single-file gate applies.
+        // Without it `strictJsSyntax` is not "the single-file gate for a
+        // graph" but a stricter one, and every entry in that list names source
+        // that is valid JavaScript — so the linked test262 lane rejected rows
+        // the authoritative single-module lane compiles and runs.
+        !TOLERATED_SYNTAX_CODES.has(d.code),
+    );
+  const hasHardTypeErrors =
+    !options.allowJs &&
+    multiAst.diagnostics.some((d) => isHardTypeScriptDiagnostic(d, multiAst.checker) && isEntryDiag(d));
+
+  return (hasSyntaxErrors || hasHardTypeErrors) && errors.length > 0;
+}
+
+/**
  * Compile a TypeScript project from an entry file on disk.
  * Uses ts.createProgram with real filesystem access -- TypeScript resolves
  * all imports automatically via standard module resolution.
@@ -1967,31 +2198,10 @@ export async function compileFilesSource(entryPath: string, options: CompileOpti
     ...(options.tsconfig !== undefined ? { tsconfig: options.tsconfig } : {}),
   });
 
-  for (const diag of multiAst.diagnostics) {
-    if (diag.category === 1) {
-      const pos = diag.file ? diag.file.getLineAndCharacterOfPosition(diag.start ?? 0) : { line: 0, character: 0 };
-      const severity = diagnosticSeverity(diag, multiAst.checker);
-      errors.push({
-        // #1929 — flatten the full DiagnosticMessageChain (keeps the "because…"
-        // elaboration) and attribute the source file for multi-file compiles.
-        message: ts.flattenDiagnosticMessageText(diag.messageText, "\n"),
-        line: pos.line + 1,
-        column: pos.character + 1,
-        severity,
-        code: diag.code,
-        ...(diag.file ? { file: diag.file.fileName } : {}),
-      });
-    }
-  }
-
-  const hasSyntaxErrors = multiAst.syntacticDiagnostics.some(
-    (d) => d.category === 1 && multiAst.sourceFiles.some((sf) => d.file === sf),
-  );
-  const hasHardTypeErrors = multiAst.diagnostics.some((d) => isHardTypeScriptDiagnostic(d, multiAst.checker));
-
-  if ((hasSyntaxErrors || hasHardTypeErrors) && errors.length > 0) {
-    return failResult(errors);
-  }
+  // #6794 — the SAME gate as compileMulti: tolerated syntax codes, and the
+  // allowJs entry-only / no-semantic-bail policy. This path used to fail a JS
+  // project on sloppy octals or decorators that compileProject accepts.
+  if (collectMultiDiagnostics(multiAst, options, errors)) return failResult(errors);
 
   // #1927 — early-errors / safe / hardened validation + codegen + emit are the
   // shared pipeline core (runPipeline). This path gains hardened-mode parity

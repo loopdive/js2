@@ -5,6 +5,7 @@
 import type { Instr, ValType } from "../ir/types.js";
 import { ensureAnyFromExternHelper, ensureAnyHelpers, ensureAnyToExternHelper } from "./any-helpers.js";
 import type { CodegenContext } from "./context/types.js";
+import { jsValueBoundary } from "./context/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import {
   ensureNativeStringHelpers,
@@ -293,6 +294,27 @@ function ensureDynamicCallBoundaryExtern(ctx: CodegenContext): number {
         op: "if",
         blockType: { kind: "empty" },
         then: [
+          // (#6686) With a JS value boundary a JS-owned object reaches tag 6
+          // as a non-eq host ref parked in the externval slot (refval null);
+          // hand that externref back instead of a null receiver.
+          ...(jsValueBoundary(ctx)
+            ? ([
+                { op: "local.get", index: 0 },
+                { op: "ref.as_non_null" },
+                { op: "struct.get", typeIdx: ctx.anyValueTypeIdx, fieldIdx: 3 },
+                { op: "ref.is_null" },
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  then: [
+                    { op: "local.get", index: 0 },
+                    { op: "ref.as_non_null" },
+                    { op: "struct.get", typeIdx: ctx.anyValueTypeIdx, fieldIdx: 4 },
+                    { op: "return" },
+                  ],
+                },
+              ] satisfies Instr[])
+            : []),
           { op: "local.get", index: 0 },
           { op: "ref.as_non_null" },
           { op: "struct.get", typeIdx: ctx.anyValueTypeIdx, fieldIdx: 3 },
@@ -449,8 +471,10 @@ function ensureDynamicStringReplace(ctx: CodegenContext, carrier: ValType): void
       { op: "f64.const", value: 0 },
       // Deferred `lastIndex` storage was added to the standalone RegExp
       // carrier after this helper was introduced. Keep the dynamic literal
-      // constructor in lockstep with `emitStandaloneRegExpStruct`.
+      // constructor in lockstep with `emitStandaloneRegExpStruct`; the last
+      // field is (#6651 B6) `$lastIndexNonWritable`, 0 = writable.
       { op: "ref.null.extern" },
+      { op: "i32.const", value: 0 },
       { op: "i32.const", value: 0 },
       { op: "struct.new", typeIdx: regexpTypeIdx },
       { op: "extern.convert_any" },

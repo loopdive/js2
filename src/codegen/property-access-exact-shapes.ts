@@ -11,7 +11,7 @@ import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { ensureExternrefToNumberProvider } from "./coercion-engine.js";
 import { allocLocal } from "./context/locals.js";
 import { emitPrivateBrandPredicate } from "./expressions/helpers.js";
-import { stringConstantExternrefInstrs } from "./native-strings.js";
+import { staticHostPropertyKeyInstrs } from "./host-property-key.js";
 import {
   emitExternrefToStructGet,
   emitNullCheckThrow,
@@ -19,7 +19,7 @@ import {
   isProvablyNonNull,
   typeErrorThrowInstrs,
 } from "./property-access.js";
-import { addStringConstantGlobal } from "./registry/imports.js";
+import { registerLateReadStringConstant } from "./registry/imports.js";
 import { compileExpression, ensureLateImport, flushLateImportShifts } from "./shared.js";
 import { emitRuntimeEvalSharedValueUnwrap } from "./global-environment.js";
 
@@ -80,8 +80,8 @@ function emitStructuralExternrefFieldGet(
   flushLateImportShifts(ctx, fctx);
   if (getIdx === undefined) return undefined;
   if (!receiverAlreadyNullChecked) emitNullCheckThrow(ctx, fctx, { kind: "externref" }, expr);
-  addStringConstantGlobal(ctx, propName);
-  fctx.body.push(...stringConstantExternrefInstrs(ctx, propName));
+  registerLateReadStringConstant(ctx, propName);
+  fctx.body.push(...staticHostPropertyKeyInstrs(ctx, propName));
   fctx.body.push({ op: "call", funcIdx: getIdx });
   if (ctx.runtimeEvalGlobalFunctionBindings === true) {
     emitRuntimeEvalSharedValueUnwrap(ctx, fctx);
@@ -143,6 +143,7 @@ export function tryEmitExactStructFieldGet(
   structTypeIdx: number,
   fields: FieldDef[],
 ): ValType | undefined {
+  if (typeName === "$Promise" && propName === "$handled") return undefined;
   const fieldIdx = fields.findIndex((field) => field.name === propName);
   if (fieldIdx === -1) return undefined;
   const objResult = compileExpression(ctx, fctx, expr.expression);

@@ -1,0 +1,174 @@
+{
+  "beforeHead": "0e4638afc9b475cc90a3aa36c74307b7a6a9a26b",
+  "beforePhaseB": {
+    "nominal index-free support references retains the exact old factory identity and complete two-body relocation receipt": {
+      "status": "failed",
+      "firstError": "AssertionError: expected '32421c36a56ab3483c3838e7465524cd767ae\u2026' to be '9324caf316c596019beab1007c7e602263ae2\u2026' // Object.is equality"
+    },
+    "nominal index-free support references rejects a body relocation mutation after the original positive": {
+      "status": "failed",
+      "firstError": "AssertionError: expected '32421c36a56ab3483c3838e7465524cd767ae\u2026' to be '9324caf316c596019beab1007c7e602263ae2\u2026' // Object.is equality"
+    },
+    "nominal index-free support references rejects a extra relocation mutation after the original positive": {
+      "status": "failed",
+      "firstError": "AssertionError: expected '32421c36a56ab3483c3838e7465524cd767ae\u2026' to be '9324caf316c596019beab1007c7e602263ae2\u2026' // Object.is equality"
+    },
+    "nominal index-free support references rejects a route relocation mutation after the original positive": {
+      "status": "failed",
+      "firstError": "AssertionError: expected '32421c36a56ab3483c3838e7465524cd767ae\u2026' to be '9324caf316c596019beab1007c7e602263ae2\u2026' // Object.is equality"
+    },
+    "nominal index-free support references rejects a export relocation mutation after the original positive": {
+      "status": "failed",
+      "firstError": "AssertionError: expected '32421c36a56ab3483c3838e7465524cd767ae\u2026' to be '9324caf316c596019beab1007c7e602263ae2\u2026' // Object.is equality"
+    },
+    "nominal index-free support references keys identity and nullability, never the compatibility name or physical fields": {
+      "status": "passed",
+      "firstError": null
+    },
+    "nominal index-free support references rejects invalid constructor kind": {
+      "status": "passed",
+      "firstError": null
+    },
+    "nominal index-free support references rejects invalid constructor binding": {
+      "status": "passed",
+      "firstError": null
+    },
+    "nominal index-free support references rejects invalid constructor domain": {
+      "status": "passed",
+      "firstError": null
+    },
+    "nominal index-free support references rejects invalid constructor empty": {
+      "status": "passed",
+      "firstError": null
+    },
+    "nominal index-free support references rejects invalid constructor nullable": {
+      "status": "passed",
+      "firstError": null
+    },
+    "nominal index-free support references checks exact argument flow": {
+      "status": "passed",
+      "firstError": null
+    },
+    "nominal index-free support references checks exact result flow": {
+      "status": "passed",
+      "firstError": null
+    },
+    "nominal index-free support references checks exact return flow": {
+      "status": "passed",
+      "firstError": null
+    },
+    "nominal index-free support references checks exact nullability flow": {
+      "status": "passed",
+      "firstError": null
+    },
+    "nominal index-free support references checks exact missing-declaration flow": {
+      "status": "passed",
+      "firstError": null
+    },
+    "nominal index-free support references checks branch identities and rejects physical slot storage": {
+      "status": "passed",
+      "firstError": null
+    },
+    "nominal index-free support references preserves the leaf without calling a physical attachment allocator": {
+      "status": "passed",
+      "firstError": null
+    },
+    "nominal index-free support references resolves through two real ABI/ledger layouts without index-bearing source types": {
+      "status": "passed",
+      "firstError": null
+    },
+    "nominal index-free support references lowers the unchanged original radix through the genuine frontend kernel (mandatory R+F join)": {
+      "status": "passed",
+      "firstError": null
+    }
+  },
+  "afterPhaseB": {
+    "nominal index-free support references retains the exact old factory identity and complete two-body relocation receipt": {
+      "status": "failed",
+      "firstError": "AssertionError: expected '32421c36a56ab3483c3838e7465524cd767ae\u2026' to be '9324caf316c596019beab1007c7e602263ae2\u2026' // Object.is equality"
+    },
+    "nominal index-free support references rejects a body relocation mutation after the original positive": {
+      "status": "failed",
+      "firstError": "AssertionError: expected '32421c36a56ab3483c3838e7465524cd767ae\u2026' to be '9324caf316c596019beab1007c7e602263ae2\u2026' // Object.is equality"
+    },
+    "nominal index-free support references rejects a extra relocation mutation after the original positive": {
+      "status": "failed",
+      "firstError": "AssertionError: expected '32421c36a56ab3483c3838e7465524cd767ae\u2026' to be '9324caf316c596019beab1007c7e602263ae2\u2026' // Object.is equality"
+    },
+    "nominal index-free support references rejects a route relocation mutation after the original positive": {
+      "status": "failed",
+      "firstError": "AssertionError: expected '32421c36a56ab3483c3838e7465524cd767ae\u2026' to be '9324caf316c596019beab1007c7e602263ae2\u2026' // Object.is equality"
+    },
+    "nominal index-free support references rejects a export relocation mutation after the original positive": {
+      "status": "failed",
+      "firstError": "AssertionError: expected '32421c36a56ab3483c3838e7465524cd767ae\u2026' to be '9324caf316c596019beab1007c7e602263ae2\u2026' // Object.is equality"
+    },
+    "nominal index-free support references keys identity and nullability, never the compatibility name or physical fields": {
+      "status": "passed",
+      "firstError": null
+    },
+    "nominal index-free support references rejects invalid constructor kind": {
+      "status": "passed",
+      "firstError": null
+    },
+    "nominal index-free support references rejects invalid constructor binding": {
+      "status": "passed",
+      "firstError": null
+    },
+    "nominal index-free support references rejects invalid constructor domain": {
+      "status": "passed",
+      "firstError": null
+    },
+    "nominal index-free support references rejects invalid constructor empty": {
+      "status": "passed",
+      "firstError": null
+    },
+    "nominal index-free support references rejects invalid constructor nullable": {
+      "status": "passed",
+      "firstError": null
+    },
+    "nominal index-free support references checks exact argument flow": {
+      "status": "passed",
+      "firstError": null
+    },
+    "nominal index-free support references checks exact result flow": {
+      "status": "passed",
+      "firstError": null
+    },
+    "nominal index-free support references checks exact return flow": {
+      "status": "passed",
+      "firstError": null
+    },
+    "nominal index-free support references checks exact nullability flow": {
+      "status": "passed",
+      "firstError": null
+    },
+    "nominal index-free support references checks exact missing-declaration flow": {
+      "status": "passed",
+      "firstError": null
+    },
+    "nominal index-free support references checks branch identities and rejects physical slot storage": {
+      "status": "passed",
+      "firstError": null
+    },
+    "nominal index-free support references preserves the leaf without calling a physical attachment allocator": {
+      "status": "passed",
+      "firstError": null
+    },
+    "nominal index-free support references resolves through two real ABI/ledger layouts without index-bearing source types": {
+      "status": "passed",
+      "firstError": null
+    },
+    "nominal index-free support references lowers the unchanged original radix through the genuine frontend kernel (mandatory R+F join)": {
+      "status": "passed",
+      "firstError": null
+    }
+  },
+  "newFailingRows": [],
+  "resolvedRows": [],
+  "exactFirstErrors": true,
+  "providerControls": {
+    "passed": 352,
+    "total": 352
+  }
+}

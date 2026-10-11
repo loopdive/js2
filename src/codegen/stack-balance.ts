@@ -29,8 +29,10 @@ import { coercionPlan } from "./coercion-plan.js";
 import type { BlockType, FuncTypeDef, Instr, TypeDef, ValType, WasmFunction, WasmModule } from "../ir/types.js";
 import { STABLE_FUNC_BASE, absoluteFuncIndexCached } from "../emit/resolve-layout.js"; // (#1916 S3)
 import { walkInstructionDag } from "./walk-instructions.js";
+import { type InstrArraySharing, TREE_VISITED, visitedFor } from "./call-arg-producers.js";
 import type { CodegenError } from "./context/types.js";
 import { profileCount, profilePhase } from "../compile-profile.js";
+import { readEnv } from "../env.js";
 
 /**
  * (#2934) Widen a packed i8/i16 STORAGE type to the i32 that actually lives on
@@ -214,7 +216,7 @@ export interface StrictBalanceDiagnostic {
  * pass refusals are written to that same sink directly by `stackBalance`.
  */
 export function strictBalanceDiagnostics(events: readonly FixupEvent[]): StrictBalanceDiagnostic[] {
-  const mode = (process.env.JS2WASM_STRICT_BALANCE ?? "").toLowerCase();
+  const mode = (readEnv("JS2WASM_STRICT_BALANCE") ?? "").toLowerCase();
   const enabled = mode === "1" || mode === "true" || mode === "warn" || mode === "error" || mode === "strict";
   if (!enabled || events.length === 0) return [];
   const severity: "error" | "warning" = mode === "error" || mode === "strict" ? "error" : "warning";
@@ -346,6 +348,100 @@ function assertLocalRefsInRange(func: WasmFunction, ft: FuncTypeDef | null, stag
  */
 function instrDelta(instr: Instr, types: TypeDef[], funcSigs: FuncSigInfo): number {
   const op = instr.op;
+  if (OPERAND_DEPENDENT_DELTA_OPS.has(op)) return computeInstrDelta(instr, types, funcSigs);
+  // (#6759) Every other op's delta is a function of the opcode alone: run the
+  // comparison ladder once per distinct opcode per process, not per instruction.
+  // `computeInstrDelta` tests the operand-dependent ops first (exact opcode
+  // matches, so the order changes no result) to keep the uncached path short.
+  let delta = OPCODE_DELTA_CACHE.get(op);
+  if (delta === undefined) {
+    delta = computeInstrDelta(instr, types, funcSigs);
+    OPCODE_DELTA_CACHE.set(op, delta);
+  }
+  return delta;
+}
+
+/** Ops whose delta reads an immediate, the type table or the signature table. */
+const OPERAND_DEPENDENT_DELTA_OPS: ReadonlySet<string> = new Set([
+  "struct.new",
+  "array.new_fixed",
+  "call",
+  "call_ref",
+  "call_indirect",
+  "if",
+  "block",
+  "loop",
+  "try",
+  "try_table",
+]);
+const OPCODE_DELTA_CACHE = new Map<string, number>();
+
+function computeInstrDelta(instr: Instr, types: TypeDef[], funcSigs: FuncSigInfo): number {
+  const op = instr.op;
+  // struct.new: pop N fields, push 1
+  if (op === "struct.new") {
+    const typeIdx = (instr as any).typeIdx;
+    const t = types[typeIdx];
+    if (t && t.kind === "struct") {
+      return -t.fields.length + 1;
+    }
+    return 0; // fallback
+  }
+
+  // array.new_fixed: pop N elements, push 1
+  if (op === "array.new_fixed") {
+    return -((instr as any).length || 0) + 1;
+  }
+
+  // call: pop params, push results
+  if (op === "call") {
+    const funcIdx = (instr as any).funcIdx;
+    const sig = funcSigs.get(funcIdx);
+    if (sig) {
+      return -sig.params + sig.results;
+    }
+    return 0; // fallback: assume balanced
+  }
+
+  // call_ref: pop params + 1 (funcref), push results
+  if (op === "call_ref") {
+    const typeIdx = (instr as any).typeIdx;
+    const ft = resolveFuncType(types, typeIdx);
+    if (ft) {
+      return -(ft.params.length + 1) + ft.results.length;
+    }
+    return 0;
+  }
+
+  // call_indirect: pop params + 1 (table index), push results
+  if (op === "call_indirect") {
+    const typeIdx = (instr as any).typeIdx;
+    const ft = resolveFuncType(types, typeIdx);
+    if (ft) {
+      return -(ft.params.length + 1) + ft.results.length;
+    }
+    return 0;
+  }
+
+  // Structured blocks: their external stack effect is determined by blockType
+  if (op === "if" || op === "block" || op === "loop" || op === "try" || op === "try_table") {
+    const bt = (instr as any).blockType as BlockType;
+    if (!bt || bt.kind === "empty") {
+      // if also pops the condition (1 value)
+      return op === "if" ? -1 : 0;
+    }
+    if (bt.kind === "val") {
+      return op === "if" ? 0 : 1; // if pops 1 (condition), pushes 1 (result)
+    }
+    if (bt.kind === "type") {
+      const ft = resolveFuncType(types, bt.typeIdx);
+      if (ft) {
+        const netBlock = -ft.params.length + ft.results.length;
+        return op === "if" ? netBlock - 1 : netBlock;
+      }
+    }
+    return op === "if" ? -1 : 0;
+  }
 
   // Terminators -- make subsequent code unreachable
   if (
@@ -512,16 +608,6 @@ function instrDelta(instr: Instr, types: TypeDef[], funcSigs: FuncSigInfo): numb
   // select: pop 3, push 1 (net -2)
   if (op === "select") return -2;
 
-  // struct.new: pop N fields, push 1
-  if (op === "struct.new") {
-    const typeIdx = (instr as any).typeIdx;
-    const t = types[typeIdx];
-    if (t && t.kind === "struct") {
-      return -t.fields.length + 1;
-    }
-    return 0; // fallback
-  }
-
   // struct.get: pop 1, push 1 (net 0)
   if (op === "struct.get") return 0;
 
@@ -534,11 +620,6 @@ function instrDelta(instr: Instr, types: TypeDef[], funcSigs: FuncSigInfo): numb
   // array.new_default: pop 1 (length), push 1 (net 0)
   if (op === "array.new_default") return 0;
 
-  // array.new_fixed: pop N elements, push 1
-  if (op === "array.new_fixed") {
-    return -((instr as any).length || 0) + 1;
-  }
-
   // array.get/get_s/get_u: pop 2 (array + index), push 1 (net -1)
   if (op === "array.get" || op === "array.get_s" || op === "array.get_u") return -1;
 
@@ -550,56 +631,6 @@ function instrDelta(instr: Instr, types: TypeDef[], funcSigs: FuncSigInfo): numb
 
   // array.fill: pop 4, push 0
   if (op === "array.fill") return -4;
-
-  // call: pop params, push results
-  if (op === "call") {
-    const funcIdx = (instr as any).funcIdx;
-    const sig = funcSigs.get(funcIdx);
-    if (sig) {
-      return -sig.params + sig.results;
-    }
-    return 0; // fallback: assume balanced
-  }
-
-  // call_ref: pop params + 1 (funcref), push results
-  if (op === "call_ref") {
-    const typeIdx = (instr as any).typeIdx;
-    const ft = resolveFuncType(types, typeIdx);
-    if (ft) {
-      return -(ft.params.length + 1) + ft.results.length;
-    }
-    return 0;
-  }
-
-  // call_indirect: pop params + 1 (table index), push results
-  if (op === "call_indirect") {
-    const typeIdx = (instr as any).typeIdx;
-    const ft = resolveFuncType(types, typeIdx);
-    if (ft) {
-      return -(ft.params.length + 1) + ft.results.length;
-    }
-    return 0;
-  }
-
-  // Structured blocks: their external stack effect is determined by blockType
-  if (op === "if" || op === "block" || op === "loop" || op === "try" || op === "try_table") {
-    const bt = (instr as any).blockType as BlockType;
-    if (!bt || bt.kind === "empty") {
-      // if also pops the condition (1 value)
-      return op === "if" ? -1 : 0;
-    }
-    if (bt.kind === "val") {
-      return op === "if" ? 0 : 1; // if pops 1 (condition), pushes 1 (result)
-    }
-    if (bt.kind === "type") {
-      const ft = resolveFuncType(types, bt.typeIdx);
-      if (ft) {
-        const netBlock = -ft.params.length + ft.results.length;
-        return op === "if" ? netBlock - 1 : netBlock;
-      }
-    }
-    return op === "if" ? -1 : 0;
-  }
 
   // Memory loads: pop 1 (address), push 1 (value) -- net 0
   if (
@@ -2235,9 +2266,9 @@ function fixStructNewFieldCoercion(
   globalTypes: ValType[],
   boxNumberIdx: number | null,
   unboxNumberIdx: number | null,
+  visitedBodies: WeakSet<Instr[]> = new WeakSet<Instr[]>(),
 ): number {
   let fixups = 0;
-  const visitedBodies = new WeakSet<Instr[]>();
   const paramCount = resolveFuncType(types, func.typeIdx)?.params.length ?? 0;
 
   function processBody(body: Instr[]): void {
@@ -2265,6 +2296,11 @@ function fixStructNewFieldCoercion(
     }
 
     // Forward type-stack simulation
+    // (#6759) The simulation below only ever acts at a `struct.new` in THIS
+    // list (nested lists were handled above); `updateTypeStack` touches
+    // nothing but the local stack, so a list without one is a no-op.
+    if (!body.some((instr) => instr.op === "struct.new")) return;
+
     const typeStack: (ValType | null)[] = []; // null = unknown type
 
     for (let ci = 0; ci < body.length; ci++) {
@@ -2774,8 +2810,23 @@ function updateTypeStack(
   // delta === 0: pass-through, no stack change
 }
 
-function branchContextKey(expected: number, blockType: BlockType): string {
-  return `${expected}:${JSON.stringify(blockType)}`;
+/**
+ * The incoming block context of an instruction array: how many values it must
+ * leave and under which block type. (#6759) Two contexts are the same exactly
+ * when the former `${expected}:${JSON.stringify(blockType)}` keys were equal;
+ * the serialization is now only paid when one array is reached twice by the
+ * same function with distinct block-type objects, instead of for every array.
+ */
+interface BranchContext {
+  readonly expected: number;
+  readonly blockType: BlockType;
+}
+
+function sameBranchContext(a: BranchContext, b: BranchContext): boolean {
+  return (
+    a.expected === b.expected &&
+    (a.blockType === b.blockType || JSON.stringify(a.blockType) === JSON.stringify(b.blockType))
+  );
 }
 
 /**
@@ -2797,6 +2848,12 @@ interface StackBalanceFeatures {
   call: boolean;
   structNew: boolean;
   structured: boolean;
+  /**
+   * (#6759) Some instruction array of this function is reached by more than one
+   * edge. When false the function is a tree, so the repairs below — which only
+   * insert leaf instructions — never revisit an array and need no visited-set.
+   */
+  revisits: boolean;
 }
 
 /**
@@ -2838,12 +2895,10 @@ function isContextInvariantBody(body: Instr[]): boolean {
 function contextAmbiguousFunctions(
   mod: WasmModule,
   tags: Array<{ typeIdx: number }>,
+  sharing: InstrArraySharing | undefined,
 ): { blocked: Set<WasmFunction>; features: Map<WasmFunction, StackBalanceFeatures> } {
+  // First function to reach each physical array (the cross-function refusal).
   const firstOwner = new WeakMap<Instr[], WasmFunction>();
-  // (#5186) Memoized `isContextInvariantBody`. A shared array is reached once
-  // per incoming edge, so answering from the map keeps the walk linear in
-  // instructions rather than in edges.
-  const contextInvariant = new WeakMap<Instr[], boolean>();
   const blocked = new Set<WasmFunction>();
   const invalidLocalRefFunctions = new Set<WasmFunction>();
   const features = new Map<WasmFunction, StackBalanceFeatures>();
@@ -2855,10 +2910,9 @@ function contextAmbiguousFunctions(
       call: false,
       structNew: false,
       structured: false,
+      revisits: false,
     };
     features.set(func, functionFeatures);
-    const contexts = new WeakMap<Instr[], string>();
-    const expanded = new WeakSet<Instr[]>();
     const ft = resolveFuncType(mod.types, func.typeIdx);
     const localLimit = (ft?.params.length ?? 0) + func.locals.length;
     const rootType: BlockType =
@@ -2867,36 +2921,41 @@ function contextAmbiguousFunctions(
         : ft.results.length === 1
           ? { kind: "val", type: ft.results[0]! }
           : { kind: "type", typeIdx: func.typeIdx };
-    const pending: Array<{ body: Instr[]; context: string }> = [
-      { body: func.body, context: branchContextKey(ft?.results.length ?? 0, rootType) },
+    const pending: Array<{ body: Instr[]; context: BranchContext }> = [
+      { body: func.body, context: { expected: ft?.results.length ?? 0, blockType: rootType } },
     ];
 
+    // (#6759) This function's visits: array -> its first incoming context, or
+    // null when the array is stack-polymorphic (#5186, context-invariant). An
+    // entry doubles as the "already expanded" mark, so one table replaces the
+    // former contexts/expanded pair.
+    const visits = new Map<Instr[], BranchContext | null>();
     while (pending.length > 0) {
       const { body, context } = pending.pop()!;
-      const owner = firstOwner.get(body);
-      if (owner && owner !== func) {
-        blocked.add(owner);
-        blocked.add(func);
-      } else if (!owner) {
-        firstOwner.set(body, func);
-      }
+      // (#6759) An array with one incoming edge in the whole module (the
+      // caller's sharing analysis says which have more) has no second owner
+      // and no second incoming context, so this bookkeeping can neither block
+      // nor mark a revisit for it.
+      if (!sharing || sharing.multiParent.has(body)) {
+        const owner = firstOwner.get(body);
+        if (owner === undefined) firstOwner.set(body, func);
+        else if (owner !== func) {
+          blocked.add(owner);
+          blocked.add(func);
+        }
 
-      // (#5186) Only bodies whose repair actually depends on the incoming
-      // block context can be in conflict about it. A stack-polymorphic body is
-      // left untouched by `fixBranch` under every context, so differing
-      // contexts there are not a disagreement and must not fail the compile.
-      let invariant = contextInvariant.get(body);
-      if (invariant === undefined) {
-        invariant = isContextInvariantBody(body);
-        contextInvariant.set(body, invariant);
+        // (#5186) Only bodies whose repair actually depends on the incoming
+        // block context can be in conflict about it. A stack-polymorphic body is
+        // left untouched by `fixBranch` under every context, so differing
+        // contexts there are not a disagreement and must not fail the compile.
+        const prior = visits.get(body);
+        if (prior !== undefined) {
+          functionFeatures.revisits = true;
+          if (prior !== null && !sameBranchContext(prior, context)) blocked.add(func);
+          continue;
+        }
+        visits.set(body, isContextInvariantBody(body) ? null : context);
       }
-      if (!invariant) {
-        const prior = contexts.get(body);
-        if (prior !== undefined && prior !== context) blocked.add(func);
-        else if (prior === undefined) contexts.set(body, context);
-      }
-      if (expanded.has(body)) continue;
-      expanded.add(body);
 
       for (let index = 0; index < body.length; index++) {
         const instr = body[index]!;
@@ -2915,22 +2974,22 @@ function contextAmbiguousFunctions(
         if (instr.op === "if") {
           functionFeatures.structured = true;
           const expected = blockTypeExpected(instr.blockType, mod.types);
-          const key = branchContextKey(expected, instr.blockType);
+          const key: BranchContext = { expected, blockType: instr.blockType };
           pending.push({ body: instr.then, context: key });
           if (instr.else) pending.push({ body: instr.else, context: key });
         } else if (instr.op === "block" || instr.op === "loop" || instr.op === "try_table") {
           functionFeatures.structured = true;
           const expected = blockTypeExpected(instr.blockType, mod.types);
-          pending.push({ body: instr.body, context: branchContextKey(expected, instr.blockType) });
+          pending.push({ body: instr.body, context: { expected, blockType: instr.blockType } });
         } else if (instr.op === "try") {
           functionFeatures.structured = true;
           const expected = blockTypeExpected(instr.blockType, mod.types);
-          const key = branchContextKey(expected, instr.blockType);
+          const key: BranchContext = { expected, blockType: instr.blockType };
           pending.push({ body: instr.body, context: key });
           for (const c of instr.catches || []) {
             pending.push({
               body: c.body,
-              context: branchContextKey(expected - getTagArity(c.tagIdx, tags, mod.types), instr.blockType),
+              context: { expected: expected - getTagArity(c.tagIdx, tags, mod.types), blockType: instr.blockType },
             });
           }
           if (instr.catchAll) pending.push({ body: instr.catchAll, context: key });
@@ -2957,9 +3016,9 @@ function recordHardStackBalanceError(mod: WasmModule, diagnostics: CodegenError[
   diagnostics?.push(diagnostic);
 }
 
-export function stackBalance(mod: WasmModule, diagnostics?: CodegenError[]): number {
+export function stackBalance(mod: WasmModule, diagnostics?: CodegenError[], sharing?: InstrArraySharing): number {
   const tags = mod.tags || [];
-  const preflight = profilePhase("preflight", () => contextAmbiguousFunctions(mod, tags));
+  const preflight = profilePhase("preflight", () => contextAmbiguousFunctions(mod, tags, sharing));
   const contextBlocked = preflight.blocked;
   const sigs = profilePhase("signatures", () => buildFuncSigs(mod));
   let deadTailFunctions = 0;
@@ -3061,7 +3120,11 @@ export function stackBalance(mod: WasmModule, diagnostics?: CodegenError[]): num
     // Eliminate dead code after terminators (throw/return/br/unreachable)
     // V8 tracks stack values even in unreachable code, so dead code that pushes
     // values causes "expected N elements on the stack for fallthru" errors.
-    if (features.deadTail) eliminateDeadCode(func.body);
+    // (#6759) Each repair walk below gets its own visited-set, or none for a
+    // tree-shaped function (see `StackBalanceFeatures.revisits`).
+    const repairVisited = (): WeakSet<Instr[]> =>
+      !features.revisits ? TREE_VISITED : sharing ? visitedFor(sharing) : new WeakSet<Instr[]>();
+    if (features.deadTail) eliminateDeadCode(func.body, repairVisited());
 
     // Fix local.set type mismatches (e.g., f64 → externref, ref → externref)
     if (features.localWrite) {
@@ -3075,6 +3138,7 @@ export function stackBalance(mod: WasmModule, diagnostics?: CodegenError[]): num
         sigs,
         boxNumberIdx,
         unboxNumberIdx,
+        repairVisited(),
       );
     }
 
@@ -3090,6 +3154,7 @@ export function stackBalance(mod: WasmModule, diagnostics?: CodegenError[]): num
         sigs,
         boxNumberIdx,
         unboxNumberIdx,
+        repairVisited(),
       );
     }
 
@@ -3106,6 +3171,7 @@ export function stackBalance(mod: WasmModule, diagnostics?: CodegenError[]): num
         globalTypes,
         boxNumberIdx,
         unboxNumberIdx,
+        repairVisited(),
       );
       totalFixups += structNewFixups;
     }
@@ -3119,7 +3185,7 @@ export function stackBalance(mod: WasmModule, diagnostics?: CodegenError[]): num
         tags,
         boxNumberIdx,
         unboxNumberIdx,
-        new WeakSet<Instr[]>(),
+        repairVisited(),
         diagnosticPath,
       );
     }

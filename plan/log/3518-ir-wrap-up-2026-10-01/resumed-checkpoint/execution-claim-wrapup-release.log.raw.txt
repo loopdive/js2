@@ -1,0 +1,3 @@
+Released #3518:source-validation-contracts-20261001 (was ttraenkler/codex-source-validation-contracts-20261001).
+(pushed to https://github.com/loopdive/js2.git/issue-assignments; main untouched, no CI triggered)
+claim-issue: OK — release #3518:source-validation-contracts-20261001 verified on https://github.com/loopdive/js2.git/issue-assignments (exit 0)

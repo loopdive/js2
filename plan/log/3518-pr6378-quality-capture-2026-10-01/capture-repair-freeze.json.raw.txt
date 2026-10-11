@@ -1,0 +1,181 @@
+{
+  "configuredProvenance": "Codex GPT-6.1 Sol Medium",
+  "canonicalClaim": "3518:pr6378-historical-capture-20261001",
+  "path": "tests/issue-3518-historical-runtime-reconstruction.test.ts",
+  "proof": "pins explicit intermediate views, overload ordinals and exact historical denominators",
+  "original": {
+    "sha256": "85964883d10eee56f6108d2f9463d9fc67e3c341a4fa1b1302956be8c2a38e34",
+    "bytes": 56488
+  },
+  "current": {
+    "sha256": "938e34d0b892fcaf7f0a9f7aa0f468c1ececc659a351fcd8e10ca2d0214f65e5",
+    "bytes": 56594
+  },
+  "preservation": {
+    "outsideProofByteIdentical": true,
+    "residueSha256": "68850182009435e5198d4cc1ec8d08d6e2f4a13d8e8c8070ed20f6dcd931fa4f",
+    "residueBytes": 53251,
+    "remainingRuntimeTests": 630,
+    "remainingRuntimeTestsEvidence": "Parent CI log denominator 631; entire file outside the one proof is byte-identical.",
+    "reverseOnlyReaderEditsEqualsOriginal": true,
+    "assertionCount": 18,
+    "assertionsEquivalent": true,
+    "literalCount": 41,
+    "literalsByteIdentical": true
+  },
+  "freshCaptureCount": 1,
+  "sourceOperands": [
+    {
+      "callee": "acceptedCallablePositive",
+      "args": [
+        "historical"
+      ]
+    },
+    {
+      "callee": "callableSourceView",
+      "args": [
+        "historical",
+        "\"pre-vector-clock\""
+      ]
+    },
+    {
+      "callee": "callableSourceView",
+      "args": [
+        "historical",
+        "\"pre-clock-callable\""
+      ]
+    },
+    {
+      "callee": "parseLive",
+      "args": [
+        "manifestContract",
+        "source"
+      ]
+    },
+    {
+      "callee": "census",
+      "args": [
+        "historical"
+      ]
+    },
+    {
+      "callee": "census",
+      "args": [
+        "middle"
+      ]
+    },
+    {
+      "callee": "census",
+      "args": [
+        "preClockView"
+      ]
+    },
+    {
+      "callee": "parseLive",
+      "args": [
+        "manifest",
+        "source"
+      ]
+    },
+    {
+      "callee": "builderCensus",
+      "args": [
+        "historical"
+      ]
+    },
+    {
+      "callee": "builderCensus",
+      "args": [
+        "middle"
+      ]
+    },
+    {
+      "callee": "builderCensus",
+      "args": [
+        "preClockView"
+      ]
+    },
+    {
+      "callee": "parseLive",
+      "args": [
+        "support",
+        "source"
+      ]
+    },
+    {
+      "callee": "currentDeclarations",
+      "args": [
+        "support",
+        "historical"
+      ]
+    },
+    {
+      "callee": "currentDeclarations",
+      "args": [
+        "path",
+        "historical"
+      ]
+    },
+    {
+      "callee": "currentDeclarations",
+      "args": [
+        "vector",
+        "historical"
+      ]
+    },
+    {
+      "callee": "parseLive",
+      "args": [
+        "vectorFacade",
+        "historical"
+      ]
+    }
+  ],
+  "originalAssertions": [
+    "expect(census(read)).toEqual([75, 42])",
+    "expect(census(middle)).toEqual([71, 40])",
+    "expect(census(preClockView)).toEqual([71, 40])",
+    "expect(middle(support)).toContain('Object.hasOwn(nested, \"alloc\")')",
+    "expect(preClockView(support)).not.toContain('Object.hasOwn(nested, \"alloc\")')",
+    "expect(middle(support)).not.toContain(\"vectorDemands\")",
+    "expect(preClockView(support)).toContain(\"builtinDemands\")",
+    "expect(builderCensus(read)).toEqual([37, 6])",
+    "expect(builderCensus(middle)).toEqual([36, 5])",
+    "expect(builderCensus(preClockView)).toEqual([36, 5])",
+    "expect(overloads).toHaveLength(3)",
+    "expect(overloads.slice(0, 2).map((node) => node.getText())).toEqual(live.slice(0, 2).map((row) => row.text))",
+    "expect(rows).toHaveLength(count)",
+    "expect(rows.filter((row) => row.kind === \"function\")).toHaveLength(functions)",
+    "expect(error.node.members.filter(ts.isConstructorDeclaration)).toHaveLength(1)",
+    "expect(exports).toHaveLength(2)",
+    "expect(\n      exports.map((node) =>\n        node.exportClause && ts.isNamedExports(node.exportClause) ? node.exportClause.elements.length : -1,\n      ),\n    ).toEqual([8, 1])",
+    "expect(exports.map((node) => node.isTypeOnly)).toEqual([false, true])"
+  ],
+  "currentAssertions": [
+    "expect(census(historical)).toEqual([75, 42])",
+    "expect(census(middle)).toEqual([71, 40])",
+    "expect(census(preClockView)).toEqual([71, 40])",
+    "expect(middle(support)).toContain('Object.hasOwn(nested, \"alloc\")')",
+    "expect(preClockView(support)).not.toContain('Object.hasOwn(nested, \"alloc\")')",
+    "expect(middle(support)).not.toContain(\"vectorDemands\")",
+    "expect(preClockView(support)).toContain(\"builtinDemands\")",
+    "expect(builderCensus(historical)).toEqual([37, 6])",
+    "expect(builderCensus(middle)).toEqual([36, 5])",
+    "expect(builderCensus(preClockView)).toEqual([36, 5])",
+    "expect(overloads).toHaveLength(3)",
+    "expect(overloads.slice(0, 2).map((node) => node.getText())).toEqual(live.slice(0, 2).map((row) => row.text))",
+    "expect(rows).toHaveLength(count)",
+    "expect(rows.filter((row) => row.kind === \"function\")).toHaveLength(functions)",
+    "expect(error.node.members.filter(ts.isConstructorDeclaration)).toHaveLength(1)",
+    "expect(exports).toHaveLength(2)",
+    "expect(\n      exports.map((node) =>\n        node.exportClause && ts.isNamedExports(node.exportClause) ? node.exportClause.elements.length : -1,\n      ),\n    ).toEqual([8, 1])",
+    "expect(exports.map((node) => node.isTypeOnly)).toEqual([false, true])"
+  ],
+  "syntaxParseDiagnostics": 0,
+  "validation": "Light createSourceFile/fs/crypto/text only. Runtime tests and gates reserved for root.",
+  "exactDiff": {
+    "path": ".tmp/capture-repair.diff",
+    "sha256": "a3e50dcaca4b15c0b9a40942780f1e6c23620d8bbd0f076fc11926569eb0be35",
+    "bytes": 3258
+  }
+}

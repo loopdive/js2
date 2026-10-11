@@ -169,6 +169,24 @@ export function sourceFunctionHandleForDeclaration(
 }
 
 /**
+ * (#6877) The `ctx.mod.functions` position of one exact source declaration's
+ * own slot. Top-level body emission resolves through this, not the bare name:
+ * the multi-source driver re-binds `funcMap` only for names two TOP-LEVEL
+ * declarations share, so a same-named NESTED declaration of another module
+ * (react.development.js's IIFE vs react.production.js) used to receive the
+ * top-level body. Undefined when no handle was recorded.
+ */
+export function sourceFunctionPositionForDeclaration(
+  ctx: CodegenContext,
+  declaration: ts.FunctionDeclaration,
+): number | undefined {
+  const handle = ctx.sourceFunctionHandleByDeclaration.get(declaration);
+  const fn = handle === undefined ? undefined : definedFuncAt(ctx, handle);
+  const position = fn === undefined ? -1 : ctx.mod.functions.indexOf(fn);
+  return position >= 0 ? position : undefined;
+}
+
+/**
  * Structurally observe one retained direct function-value trampoline and its
  * optional singleton cache.
  *
@@ -232,6 +250,9 @@ export class ProgramAbiSourceCallableRegistry {
   private readonly observations = new Map<IrUnitId, SourceCallableObservation[]>();
   private readonly supports = new Map<IrBindingId, SourceSupportCallableObservation[]>();
   private readonly functionValues = new Map<IrUnitId, SourceFunctionValueObservation[]>();
+  // (#1058) Resolved owner units. Every function-value read asks, and each
+  // ask scanned every unit: quadratic in TypeScript's checker.
+  private readonly unitByFunction = new Map<WasmFunction, IrUnitId>();
   private planned = false;
 
   constructor(
@@ -390,6 +411,10 @@ export class ProgramAbiSourceCallableRegistry {
     if (previous?.funcIdx !== funcIdx || previous.displayName !== func.name) {
       observations.push(Object.freeze({ unitId, displayName: func.name, funcIdx, func }));
       this.observations.set(unitId, observations);
+      // Only answers for the function this observation names can change.
+      this.unitByFunction.delete(func);
+      const current = definedFuncAt(this.ctx, funcIdx);
+      if (current) this.unitByFunction.delete(current);
     }
     return unitId;
   }
@@ -434,6 +459,8 @@ export class ProgramAbiSourceCallableRegistry {
   }
 
   private unitForFunction(func: WasmFunction): IrUnitId | undefined {
+    const known = this.unitByFunction.get(func);
+    if (known !== undefined) return known;
     let match: IrUnitId | undefined;
     for (const [unitId, observations] of this.observations) {
       if (
@@ -451,6 +478,7 @@ export class ProgramAbiSourceCallableRegistry {
       }
       match = unitId;
     }
+    if (match !== undefined) this.unitByFunction.set(func, match);
     return match;
   }
 

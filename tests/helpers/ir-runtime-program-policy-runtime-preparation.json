@@ -1,0 +1,114 @@
+{
+  "schema": "ir-runtime-program-policy-runtime-preparation-v1",
+  "baseMain": "3444df3d6d355aa745301ee248ce8f7ea2a80be7",
+  "before": {
+    "source": {
+      "bytes": 567166,
+      "sha256": "8213f6d2d3bf112544ca2aa50b68e585f4ba2c1f9795acc240c9e8495712e7df",
+      "gitBlob": "0d90f336925232fd22c98c438121b93e7e5bcf52"
+    },
+    "dataSha256": "5dea4a676b8ddbc6fc50c7c77446e799ee4db12f4113c1fdf4edff33de848b21",
+    "fileCount": 1775,
+    "filesSha256": "82448a8b5bf6373b7ef203924f3ac4f0d33e69ca1df77b322812b63613fe8bec",
+    "activationCount": 100,
+    "activationHistorySha256": "f6716a46656b3e4e7292e6d6c2cfdb5681becc9fb0e688ebad01a49c48d044ab",
+    "layersSha256": "ab456c917964e4e4d51c7110ce854e8c8648827a72eb4e6e61e2d74dc7f08a05"
+  },
+  "current": {
+    "source": {
+      "bytes": 567465,
+      "sha256": "92d653aff02d823339071f24721b803d88da4f31bdbd721859b0ac48b6c9c7f7",
+      "gitBlob": "70b280c7cf2a56cbd5cbfa88b484b57414d2ef7c"
+    },
+    "dataSha256": "28ae111b7b9f0f6eda144d5d57beaf76fd5c7617b474846d39409a56cc196e08",
+    "fileCount": 1776,
+    "filesSha256": "ca4d9d7d5c999a4e742abd7773d847f1652ca8fe995a491a594fca1e5cf37a1a",
+    "activationCount": 101,
+    "activationHistorySha256": "9629c457a160096e70c35fc3a986abbd8eca145ac4eb688995194d6c29c83650",
+    "layersSha256": "3f66bbff64c157092a04740c644ae17d476d7d168faa1bd23629f97492e0c4f7"
+  },
+  "allowedEdgesSha256": "efe7e7ed8dee1a009d2bef3ff36dba80df1a805cd3f5b7b472e62ec6dcff64c7",
+  "helperPrefix": {
+    "bytes": 40368,
+    "sha256": "2b6358379b9f9145b54a5287b6a74f61a89ef9deff215ce6fb21a2174ee1845e"
+  },
+  "numberReceipt": {
+    "path": "tests/helpers/ir-runtime-program-policy-number-prerequisites.json",
+    "bytes": 12726,
+    "sha256": "92c0539b00d3b8ba5bb58951c1612f62fa334627f2b928e6ff1485ae9cd25845"
+  },
+  "sourceInputs": [
+    {
+      "path": "src/ir/intrinsic-support.ts",
+      "bytes": 850,
+      "sha256": "584322a7384556a6f3b82dc85cc30c2213510fe70f2cd437ccbef97826156351"
+    },
+    {
+      "path": "src/ir/runtime/intrinsic-preparation.ts",
+      "bytes": 49541,
+      "sha256": "bd27170fd1df4a9bbad2874e5f2db34bc455fb6807b26523da4be8c182f3622b"
+    },
+    {
+      "path": "tests/helpers/ir-runtime-preparation-relocation.json",
+      "bytes": 19505,
+      "sha256": "226efc69784e601980b4285fb0e562aed23f225be4d8735c233ecc6070000458"
+    },
+    {
+      "path": "tests/helpers/ir-runtime-preparation-relocation.ts",
+      "bytes": 7007,
+      "sha256": "8adf44a0f063d8b7fb7ed413a37e693c2c3e420b5a52cf6f9161cfceb9a901df"
+    }
+  ],
+  "runtimeLayer": {
+    "index": 8,
+    "id": "ir-runtime",
+    "beforeEntries": 19,
+    "currentEntries": 20,
+    "beforeMinModules": 19,
+    "currentMinModules": 20,
+    "beforeClassified": 19,
+    "currentClassified": 20
+  },
+  "fileAppend": {
+    "path": "src/ir/runtime/intrinsic-preparation.ts",
+    "state": "clean",
+    "layer": "ir-runtime"
+  },
+  "activationAppend": {
+    "layer": "ir-runtime",
+    "entries": ["src/ir/runtime/intrinsic-preparation.ts"],
+    "minModules": 1
+  },
+  "raw": {
+    "offsetUnit": "utf16-code-unit",
+    "spans": [
+      {
+        "role": "runtime-layer-tail",
+        "beforeOffset": 6444,
+        "afterOffset": 6444,
+        "before": "        \"src/ir/runtime/generator-support.ts\"\n      ],\n      \"minModules\": 19\n",
+        "after": "        \"src/ir/runtime/generator-support.ts\",\n        \"src/ir/runtime/intrinsic-preparation.ts\"\n      ],\n      \"minModules\": 20\n",
+        "beforeSha256": "30d6b3d2844adec2c20019162f41b792554a8318ffaf593562dfe64a9b2984db",
+        "afterSha256": "0fb91016dca1d3ba652a1e1c1622f4a486292e82384be2e46a08a01dfc86d058"
+      },
+      {
+        "role": "activation-history-tail",
+        "beforeOffset": 65731,
+        "afterOffset": 65782,
+        "before": "        \"src/runtime/wasmgc/values/bigint-to-number-body.ts\",\n        \"src/runtime/wasmgc/values/number-from-value-body.ts\"\n      ],\n      \"minModules\": 2\n    },\n    {\n      \"layer\": \"backend-wasmgc\",\n      \"entries\": [\n        \"src/backend/wasmgc/resources/native-bigint-number.ts\",\n        \"src/backend/wasmgc/resources/native-number-primitive-classifier.ts\"\n      ],\n      \"minModules\": 2\n",
+        "after": "        \"src/runtime/wasmgc/values/bigint-to-number-body.ts\",\n        \"src/runtime/wasmgc/values/number-from-value-body.ts\"\n      ],\n      \"minModules\": 2\n    },\n    {\n      \"layer\": \"backend-wasmgc\",\n      \"entries\": [\n        \"src/backend/wasmgc/resources/native-bigint-number.ts\",\n        \"src/backend/wasmgc/resources/native-number-primitive-classifier.ts\"\n      ],\n      \"minModules\": 2\n    },\n    {\n      \"layer\": \"ir-runtime\",\n      \"entries\": [\"src/ir/runtime/intrinsic-preparation.ts\"],\n      \"minModules\": 1\n",
+        "beforeSha256": "0e51cdca0a46e556233d7346ebbcbe9d8c6013789926f4392698734146ecc610",
+        "afterSha256": "a014b410b320473b7b40780c7b6b88ecd10c39bdbdfaf1fffb89af040add274f"
+      },
+      {
+        "role": "files-tail",
+        "beforeOffset": 566806,
+        "afterOffset": 566983,
+        "before": "      \"state\": \"clean\",\n      \"layer\": \"native-runtime\"\n    },\n    {\n      \"path\": \"src/backend/wasmgc/resources/native-bigint-number.ts\",\n      \"state\": \"clean\",\n      \"layer\": \"backend-wasmgc\"\n    },\n    {\n      \"path\": \"src/backend/wasmgc/resources/native-number-primitive-classifier.ts\",\n      \"state\": \"clean\",\n      \"layer\": \"backend-wasmgc\"\n",
+        "after": "      \"state\": \"clean\",\n      \"layer\": \"native-runtime\"\n    },\n    {\n      \"path\": \"src/backend/wasmgc/resources/native-bigint-number.ts\",\n      \"state\": \"clean\",\n      \"layer\": \"backend-wasmgc\"\n    },\n    {\n      \"path\": \"src/backend/wasmgc/resources/native-number-primitive-classifier.ts\",\n      \"state\": \"clean\",\n      \"layer\": \"backend-wasmgc\"\n    },\n    {\n      \"path\": \"src/ir/runtime/intrinsic-preparation.ts\",\n      \"state\": \"clean\",\n      \"layer\": \"ir-runtime\"\n",
+        "beforeSha256": "690dc5485a5f7cabaf4cc1cbdca969dfafd96a79976728b6e4a1eacbddfb244c",
+        "afterSha256": "5b58f77c2d14008613ef192e5ed99eda9e3c4d414e6f8b9cb7f2a9e9e0ccfd4c"
+      }
+    ]
+  }
+}

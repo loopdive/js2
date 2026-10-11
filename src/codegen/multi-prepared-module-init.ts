@@ -21,6 +21,7 @@ import type {
   MultiPreparedModuleInitCensus,
   MultiPreparedModuleInitSourceCensus,
 } from "./multi-prepared-module-init-census.js";
+import { readEnv } from "../env.js";
 
 export type MultiPreparedModuleInitSourcePlan = MultiPreparedModuleInitSourceCensus & {
   readonly planning: IrModuleInitPlanningEvidence;
@@ -116,7 +117,7 @@ function hasForbiddenModuleInitSyntax(sourceFile: ts.SourceFile, checker: ts.Typ
 function rejectBeforeReservation(input: MultiPreparedModuleInitPlanningInput): boolean {
   const { ctx, multiAst, options } = input;
   if (
-    process.env.JS2WASM_MULTI_PREPARED_MODULE_INIT_CUTOVER !== "1" ||
+    readEnv("JS2WASM_MULTI_PREPARED_MODULE_INIT_CUTOVER") !== "1" ||
     !options?.experimentalIR ||
     options.disableIrFirst ||
     multiAst.sourceFiles.length <= 1 ||

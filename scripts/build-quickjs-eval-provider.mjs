@@ -9,9 +9,11 @@
 //     akey = sha256(quickjs-ng ref ∥ wasi-libc ref ∥ builtins url ∥ OPT ∥
 //                   sha256(qjs_shim.c) ∥ sha256(build.sh))
 //   quickjs-eval-adapter-<key>.wasm
-//     key = runtimeEvalProviderCacheKey(adapterSource, compilerBundleHash);
+//     key = runtimeEvalProviderCacheKey(adapterSource, computeCompilerBundleHash());
 //     the adapter source bakes in the artifact's own qjs-abi.json constants, so
-//     re-pinning the artifact invalidates the adapter automatically.
+//     re-pinning the artifact invalidates the adapter automatically, and the
+//     compiler hash covers src/ + pnpm-lock.yaml + the bundle (if any), so a
+//     compiler change does too (scripts/compiler-inputs-hash.mjs).
 //
 // Acquisition order:
 //   1. JS2WASM_QUICKJS_ARTIFACT_DIR — a prebuilt dir, verified then copied into
@@ -48,6 +50,7 @@ import {
 import {
   assertQuickjsArtifactExports,
   assertQuickjsArtifactStandalone,
+  assertQuickjsScriptPlanCapability,
   buildQuickjsAdapterSource,
   QUICKJS_ADAPTER_CANARY_EXPECTATIONS,
   QUICKJS_ADAPTER_CANARY_SOURCE,
@@ -140,6 +143,7 @@ function acquireArtifact(cacheDir) {
       );
     }
     assertQuickjsArtifactStandalone(supplied.binary);
+    assertQuickjsScriptPlanCapability(supplied, 0);
     if (from !== keyedDir) {
       mkdirSync(keyedDir, { recursive: true });
       for (const name of ["libquickjs.wasm", "qjs-abi.json", "build-info.json"]) {
@@ -156,6 +160,7 @@ function acquireArtifact(cacheDir) {
   const cached = readQuickjsArtifact(keyedDir);
   if (cached) {
     assertQuickjsArtifactStandalone(cached.binary);
+    assertQuickjsScriptPlanCapability(cached, 0);
     console.log(
       `[quickjs-eval-provider] artifact cache HIT — key ${akey}, sha256 ${cached.sha256.slice(0, 16)} at ${keyedDir}`,
     );
@@ -180,6 +185,7 @@ function acquireArtifact(cacheDir) {
   const fresh = readQuickjsArtifact(keyedDir);
   if (!fresh) throw new Error(`build.sh reported success but ${keyedDir} has no libquickjs.wasm + qjs-abi.json`);
   assertQuickjsArtifactStandalone(fresh.binary);
+  assertQuickjsScriptPlanCapability(fresh, 0);
   console.log(
     `[quickjs-eval-provider] artifact built in ${Date.now() - started}ms — ` +
       `sha256 ${fresh.sha256.slice(0, 16)}, ${fresh.binary.length} bytes`,
@@ -212,6 +218,7 @@ function verifyQuickjsPair(adapterBinary, artifact) {
     }
   }
   const quickjsModule = assertQuickjsArtifactStandalone(artifact.binary);
+  assertQuickjsScriptPlanCapability(artifact, 0);
   // A cached artifact that predates the current qjs_shim.c would otherwise fail
   // as a bare LinkError inside the canary, with nothing pointing at the shim.
   assertQuickjsArtifactExports(quickjsModule);

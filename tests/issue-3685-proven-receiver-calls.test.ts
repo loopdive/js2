@@ -13,7 +13,7 @@
  * a receiver-flow verdict is an inference, so a wrong one must degrade to the
  * dispatcher rather than trap.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { compile } from "../src/index.ts";
 
 async function build(source: string) {
@@ -47,8 +47,13 @@ export function test() { var p = new P(0); var s = 0;
   });
 
   it("the guarded trampoline ref.tests before casting", async () => {
+    // (#6768) Here the IR inliner folds the trampoline into its only caller,
+    // and the post-inline reachability sweep then stubs the now-unreferenced
+    // helper. This test inspects the helper's OWN emitted body, so keep it.
+    vi.stubEnv("JS2WASM_FUNC_SWEEP", "0");
     const { wat } = await build(`${P_CLASS}
 export function test() { var p = new P(1); return p.inc(); }`);
+    vi.unstubAllEnvs();
     const i = wat.indexOf("(func $__dc_P_inc_0_g");
     expect(i).toBeGreaterThan(-1);
     const body = wat.slice(i, i + 600);

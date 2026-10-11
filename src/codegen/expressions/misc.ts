@@ -19,7 +19,7 @@ import {
   resolveStructNameForExpr,
 } from "../property-access.js";
 import type { InnerResult } from "../shared.js";
-import { coerceType, compileExpression, valTypesMatch } from "../shared.js";
+import { coerceType, compileExpression, ensureLateImport, flushLateImportShifts, valTypesMatch } from "../shared.js";
 import { evaluateConstantCondition } from "../statements/control-flow.js";
 import { usesHostBigIntCarrier } from "../host-bigint-carrier.js";
 import { nearestDeclaredStructCommonAncestor } from "../struct-hierarchy-layout.js";
@@ -297,8 +297,15 @@ function compileYieldExpression(ctx: CodegenContext, fctx: FunctionContext, expr
     if (yieldStarIdx !== undefined) {
       fctx.body.push({ op: "call", funcIdx: yieldStarIdx });
     }
-    // yield* evaluates to undefined in our eager model
-    fctx.body.push({ op: "ref.null.extern" });
+    // (#6798) The value of `yield*` is the delegate's terminal `{done: true,
+    // value}` (§15.5.5 yield* step 7.a.v) — the runtime keeps it on the buffer.
+    // A statement-position `yield*` discards it, so it keeps the bare null.
+    const resultIdx = ts.isExpressionStatement(expr.parent)
+      ? undefined
+      : ensureLateImport(ctx, "__gen_yield_star_result", [{ kind: "externref" }], [{ kind: "externref" }]);
+    flushLateImportShifts(ctx, fctx);
+    if (resultIdx === undefined) fctx.body.push({ op: "ref.null.extern" });
+    else fctx.body.push({ op: "local.get", index: bufferIdx }, { op: "call", funcIdx: resultIdx });
     return { kind: "externref" } as ValType;
   }
 

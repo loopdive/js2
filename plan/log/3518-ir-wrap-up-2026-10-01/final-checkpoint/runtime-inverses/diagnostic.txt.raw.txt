@@ -1,0 +1,1 @@
+First attempted inventory script failed locally because an input options object was accidentally passed as a git hash-object filename argument. No mutation flag or network fetch was used. Retried with local SHA1 Git blob calculation. Syntax parsing only; no tests/compiler.

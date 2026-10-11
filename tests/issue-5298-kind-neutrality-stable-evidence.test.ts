@@ -39,7 +39,7 @@ const TMP_ROOT = path.join(REPO, ".tmp");
 
 /** One kind whose evidence spans two files; the exact pair that broke on #5525. */
 const KIND = "forof.string";
-const QUOTE_FILE = "src/ir/dialect/js.ts";
+const QUOTE_FILE = "src/ir/core/dialect/js.ts";
 const QUOTE = "Code-point extraction intent";
 const DRIFT_FILE = "src/ir/integration.ts";
 const DRIFT_QUOTE = "__str_charAt_cp";

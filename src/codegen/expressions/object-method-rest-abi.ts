@@ -3,6 +3,7 @@
 import { ts } from "../../ts-api.js";
 import type { ValType } from "../../ir/types.js";
 import type { CodegenContext, FunctionContext, RestParamInfo } from "../context/types.js";
+import { classMemberRestParamKey } from "../class-member-keys.js";
 import { getArrTypeIdxFromVec } from "../registry/types.js";
 import { skipTransparentExpressions } from "../shared.js";
 import { bindingIsSingleAssignment } from "../single-assignment-binding.js";
@@ -49,11 +50,14 @@ export function directObjectMethodFuncIdx(
   const declaration = objectLiteralMethodDeclaration(ctx, expr);
   const literalFuncIdx = declaration ? ctx.objectLiteralMethodFuncIdx.get(declaration) : undefined;
   if (literalFuncIdx !== undefined) funcIdx = literalFuncIdx;
-  const hasRestBinding = declaration?.parameters.some(
-    (parameter) =>
-      parameter.dotDotDotToken !== undefined &&
-      (ts.isArrayBindingPattern(parameter.name) || ts.isObjectBindingPattern(parameter.name)),
-  );
+  // (#6774 S7) Standalone lowers a pattern rest to the vec ABI (restPatternParamSlot).
+  const hasRestBinding =
+    !ctx.standalone &&
+    declaration?.parameters.some(
+      (parameter) =>
+        parameter.dotDotDotToken !== undefined &&
+        (ts.isArrayBindingPattern(parameter.name) || ts.isObjectBindingPattern(parameter.name)),
+    );
   return hasRestBinding ? undefined : funcIdx;
 }
 
@@ -73,7 +77,7 @@ export function knownMethodRestInfo(
   if (registered) return registered;
   const declaration = objectLiteralMethodDeclaration(ctx, expr);
   const restIndex = declaration?.parameters.findIndex(
-    (parameter) => parameter.dotDotDotToken !== undefined && ts.isIdentifier(parameter.name),
+    (parameter) => parameter.dotDotDotToken !== undefined && (ctx.standalone || ts.isIdentifier(parameter.name)),
   );
   if (restIndex === undefined || restIndex < 0) return undefined;
   const restType = paramTypes?.[selfOffset + restIndex];
@@ -84,6 +88,20 @@ export function knownMethodRestInfo(
   const arrayType = ctx.mod.types[arrayTypeIdx];
   if (!arrayType || arrayType.kind !== "array") return undefined;
   return { restIndex, elemType: arrayType.element, arrayTypeIdx, vecTypeIdx };
+}
+
+/**
+ * (#6699) `knownMethodRestInfo` for a STATIC class member call: a static member
+ * whose name collides with an instance member keeps its rest ABI under its own
+ * key (`classMemberRestParamKey`), not the shared legacy `fullName`.
+ */
+export function knownStaticMethodRestInfo(
+  ctx: CodegenContext,
+  expr: ts.CallExpression,
+  fullName: string,
+  paramTypes: ValType[] | undefined,
+): RestParamInfo | undefined {
+  return knownMethodRestInfo(ctx, expr, classMemberRestParamKey(ctx, fullName, "static"), paramTypes, 0);
 }
 
 /** Materialize the hidden vec argument for a known JavaScript rest method. */

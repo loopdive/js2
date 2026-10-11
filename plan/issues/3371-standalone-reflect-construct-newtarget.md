@@ -3,7 +3,7 @@ id: 3371
 title: "standalone: Reflect.construct arbitrary distinct NewTarget still refuses 33 ES2015 rows"
 status: in-progress
 created: 2026-07-17
-updated: 2026-09-04
+updated: 2026-09-28
 reopened: 2026-09-01
 sprint: current
 priority: high
@@ -1774,3 +1774,117 @@ not re-export it (`error TS2339: Property 'isInJSFile' does not exist on type
 'typeof ts'`), and `npx tsc` alone would not have caught it. Replaced with a
 local file-name predicate matching `src/checker/multi-file-paths.ts`'s existing
 convention.
+
+## 2026-09-28 source-only handoff — actual ArrayLike argumentsList (HOLD)
+
+This is a narrow audit and proof plan, **not an implementation claim or a
+measured fix**. #3371 remains in progress under its existing ownership. The
+user decision on the `call-namespace-static.ts` / construction-runtime boundary
+is pending; #2046 is also in progress on that shared file. A clean or stale
+local worktree is not ownership clearance.
+
+### Frozen observation and unchanged original
+
+Frozen census commit `f924650c6c26237f62b08a362d7003d4d2b1e12d`, chunk 015,
+recorded `compile_error` with `reached_test: false` at original lines 35 and 39
+for `test/built-ins/Reflect/construct/arguments-list-is-not-array-like.js`.
+The row's SHA-256 is
+`2d6ffccd1b7fbd9efe6d37bfd90174898def15df0a6d7503678969f313f24373`; its
+test262 gitlink is `b363f29d3c43c626dc852744ad64a0b48a003693`.
+
+The original must remain byte-identical. It requires an abrupt completion from
+an object `length` getter to propagate as `Test262Error`, then independently
+requires `Reflect.construct(fn, 1)` to throw `TypeError`. This is not merely an
+array acceptance case: it is `CreateListFromArrayLike`'s object check, one
+observable `Get(list, "length")`, and abrupt-completion behavior.
+
+### Current-source boundary (hypothesis, not runtime proof)
+
+At audited source `732d9f75e671237c3cdf3abf6ba848bedada9185`,
+`src/codegen/expressions/call-namespace-static.ts::compileNamespaceStaticCall`
+enters the `Reflect.construct` branch at line 2316. After the static
+definitely-non-constructor guard, lines 2358–2370 reject every argument-list
+form other than a non-elided array literal with the #3371 compile error. The
+original object list and primitive therefore never reach their intended runtime
+checks on that path. This source reading is consistent with the frozen
+`reached_test: false` record, but no current compiler, WAT, or runtime run was
+performed for this handoff.
+
+The runtime-argv machinery in
+`src/codegen/expressions/new-super.ts::buildRuntimeConstructArgvVec` is not a
+one-line replacement. It accepts syntax-level `rawArgs` for a `new` call and
+materializes positional expressions/spreads; it does not accept an already
+evaluated Reflect `argumentsList` object or establish Reflect's target/list/
+NewTarget operation ordering. Likewise,
+`reflect-construct-newtarget.ts::classifyRuntimeNewTargetSite` accepts a
+syntax-level argument array and is deliberately constrained by the existing
+NewTarget proof. The nearby standalone `Reflect.apply` materializer in
+`call-namespace-static.ts` is useful source context for vector construction and
+indexed reads, but it ends in an apply bridge and is not proof that its control
+flow can be transplanted to construction.
+
+### Required implementation design after ownership clearance
+
+Do not relax the array-literal refusal or delegate this row to `new-super.ts`
+without a new semantic path. The first implementation slice must model the
+actual ArrayLike operation and preserve the broader #3371 NewTarget contract:
+
+1. Stage `target`, `argumentsList`, and optional `newTarget` into distinct
+   locals exactly once in JavaScript call-argument evaluation order. Keep this
+   separate from the later builtin-algorithm checks, so a static target guard
+   cannot accidentally suppress an argument expression's side effect.
+2. After staging, perform `IsConstructor(target)`, then default `newTarget`
+   only when the third argument is absent or validate the supplied
+   `newTarget` with `IsConstructor`. These checks precede every argument-list
+   read. Then require an object `argumentsList`, read its `length` once, apply the relevant length conversion,
+   and read indexed elements in ascending order into an internal argument
+   vector. Every getter/index/read conversion abrupt completion must propagate;
+   a primitive list must throw `TypeError`, not become an empty vector.
+3. Only then route the materialized vector through a construction mechanism
+   that preserves the existing default-vs-distinct NewTarget behavior,
+   already-validated `newTarget`, target construction, and returned-object rules.
+   A temporary implementation limited to the two-argument/default-NewTarget
+   form would be an explicitly incomplete slice, not a completion boundary for
+   general Reflect.construct or the remaining #3371 carriers. The ordering
+   follows [Reflect.construct](https://tc39.es/ecma262/multipage/reflection.html#sec-reflect.construct):
+   validate constructors before `CreateListFromArrayLike`, then construct.
+4. Establish the narrow source ownership and interface boundary first:
+   `call-namespace-static.ts::compileNamespaceStaticCall` owns the current
+   refusal and once-evaluation staging; any new runtime-vector construct
+   interface would need coordination with `new-super.ts` and
+   `reflect-construct-newtarget.ts`. Do not modify shared construction/runtime
+   helpers, IR, or #2046's Reflect.set area until that coordination is explicit.
+
+### Required future original-harness A/B proof
+
+No validation in this section has run. After ownership clearance and a
+candidate design review, use direct maintained test262 execution — not a
+wrapper — on a small exact manifest containing the unchanged original plus
+`test/built-ins/Reflect/construct/return-without-newtarget-argument.js` and
+`test/built-ins/Reflect/construct/target-is-not-constructor-throws.js`.
+Run matched clean-baseline and candidate arms with the same compiler/runtime/
+provider configuration. Record the corpus gitlink, all source and fixture
+hashes, manifests, JSONL/completeness artifacts, terminal codes, and each row
+transition; require complete registration, start, and settlement with no
+exclusions.
+
+Before or alongside that maintained pair, add an approved focused JavaScript
+control matrix whose Node oracle is recorded before implementation: a successful
+object list; a length getter read exactly once; a length getter that throws; a
+primitive-list `TypeError`; and distinct target/list/NewTarget side effects that
+prove each expression is evaluated once and in the observed order. Include an
+invalid explicit `newTarget` with a throwing list-length getter: `TypeError`
+must win and the getter must not run. Explicit `undefined` as the third
+argument must not be confused with an omitted third argument. Preserve the
+original's `Test262Error` path rather than replacing it with a synthetic
+success-only case. Candidate WAT must show the staged operands and actual
+length/index materialization before a claim that this row exercises the new
+path.
+
+Root's Node 24.19.0 oracle check passed three ordering controls (terminal
+exit 0): explicit `undefined` and object `newTarget` both throw `TypeError`
+without reading list length; omitted `newTarget` reaches the throwing getter
+exactly once. This is a native oracle observation, not compiler validation.
+
+This handoff makes no source edit, test edit, ownership/status change, or claim
+that the current refusal is the sole remaining Reflect.construct defect.

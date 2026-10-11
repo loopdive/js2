@@ -1,0 +1,158 @@
+
+ RUN  v3.2.4 /private/tmp/js2-ir-validation-lowering-b-resume-20261001
+
+ ❯ tests/issue-3518-program-initial-graph-evolution.test.ts (129 tests | 1 failed) 989ms
+   ✓ authenticated initial program graph evolution > fixes four outputs and seventeen actual source inputs without adding graph modules 49ms
+   ✓ authenticated initial program graph evolution > reconstructs the fixed full prior 'src/ir/program/input-contracts.ts' from current inputs 14ms
+   ✓ authenticated initial program graph evolution > reconstructs the fixed full prior 'src/ir/program/prepared-contracts.ts' from current inputs 12ms
+   ✓ authenticated initial program graph evolution > reconstructs the fixed full prior 'src/ir/program/input.ts' from current inputs 14ms
+   ✓ authenticated initial program graph evolution > reconstructs the fixed full prior 'src/wasm/physical/function-handles.ts' from current inputs 13ms
+   ✓ authenticated initial program graph evolution > uses the existing complete pre-A owner rather than a second contract recipe 18ms
+   ✓ authenticated initial program graph evolution > keeps both original physical declarations and their bodies as exact live AST text 9ms
+   ✓ authenticated initial program graph evolution > authenticates every full current 'src/ir/identity.ts' after a genuine paired positive 10ms
+   ✓ authenticated initial program graph evolution > authenticates every full current 'src/ir/prepared-component-dependencie…' after a genuine paired positive 10ms
+   ✓ authenticated initial program graph evolution > authenticates every full current 'src/ir/program/input-contracts.ts' after a genuine paired positive 10ms
+   ✓ authenticated initial program graph evolution > authenticates every full current 'src/ir/program/prepared-contracts.ts' after a genuine paired positive 10ms
+   ✓ authenticated initial program graph evolution > authenticates every full current 'src/shared/contracts/ir-identity.ts' after a genuine paired positive 10ms
+   ✓ authenticated initial program graph evolution > authenticates every full current 'src/shared/contracts/identity-values.…' after a genuine paired positive 10ms
+   ✓ authenticated initial program graph evolution > authenticates every full current 'src/ir/identity-values.ts' after a genuine paired positive 11ms
+   ✓ authenticated initial program graph evolution > authenticates every full current 'src/shared/contracts/ir-unit-inventor…' after a genuine paired positive 10ms
+   ✓ authenticated initial program graph evolution > authenticates every full current 'src/ir/program/abi-lookup.ts' after a genuine paired positive 10ms
+   ✓ authenticated initial program graph evolution > authenticates every full current 'src/ir/program/runtime-support.ts' after a genuine paired positive 10ms
+   ✓ authenticated initial program graph evolution > authenticates every full current 'src/ir/program/formatter-support.ts' after a genuine paired positive 9ms
+   ✓ authenticated initial program graph evolution > authenticates every full current 'src/ir/program/errors.ts' after a genuine paired positive 10ms
+   ✓ authenticated initial program graph evolution > authenticates every full current 'src/ir/core/types.ts' after a genuine paired positive 11ms
+   ✓ authenticated initial program graph evolution > authenticates every full current 'src/ir/program/input.ts' after a genuine paired positive 10ms
+   ✓ authenticated initial program graph evolution > authenticates every full current 'src/wasm/physical/function-handles.ts' after a genuine paired positive 10ms
+   ✓ authenticated initial program graph evolution > authenticates every full current 'src/wasm/model/instructions.ts' after a genuine paired positive 10ms
+   ✓ authenticated initial program graph evolution > authenticates every full current 'src/wasm/model/module-records.ts' after a genuine paired positive 12ms
+   ✓ authenticated initial program graph evolution > requires the actual live 'src/ir/identity.ts' rather than an empty or historical substitute 9ms
+   ✓ authenticated initial program graph evolution > requires the actual live 'src/ir/prepared-component-dependencie…' rather than an empty or historical substitute 9ms
+   ✓ authenticated initial program graph evolution > requires the actual live 'src/ir/program/input-contracts.ts' rather than an empty or historical substitute 10ms
+   ✓ authenticated initial program graph evolution > requires the actual live 'src/ir/program/prepared-contracts.ts' rather than an empty or historical substitute 10ms
+   ✓ authenticated initial program graph evolution > requires the actual live 'src/shared/contracts/ir-identity.ts' rather than an empty or historical substitute 10ms
+   ✓ authenticated initial program graph evolution > requires the actual live 'src/shared/contracts/identity-values.…' rather than an empty or historical substitute 10ms
+   ✓ authenticated initial program graph evolution > requires the actual live 'src/ir/identity-values.ts' rather than an empty or historical substitute 10ms
+   ✓ authenticated initial program graph evolution > requires the actual live 'src/shared/contracts/ir-unit-inventor…' rather than an empty or historical substitute 10ms
+   ✓ authenticated initial program graph evolution > requires the actual live 'src/ir/program/abi-lookup.ts' rather than an empty or historical substitute 10ms
+   ✓ authenticated initial program graph evolution > requires the actual live 'src/ir/program/runtime-support.ts' rather than an empty or historical substitute 11ms
+   ✓ authenticated initial program graph evolution > requires the actual live 'src/ir/program/formatter-support.ts' rather than an empty or historical substitute 10ms
+   ✓ authenticated initial program graph evolution > requires the actual live 'src/ir/program/errors.ts' rather than an empty or historical substitute 10ms
+   ✓ authenticated initial program graph evolution > requires the actual live 'src/ir/core/types.ts' rather than an empty or historical substitute 11ms
+   ✓ authenticated initial program graph evolution > requires the actual live 'src/ir/program/input.ts' rather than an empty or historical substitute 12ms
+   ✓ authenticated initial program graph evolution > requires the actual live 'src/wasm/physical/function-handles.ts' rather than an empty or historical substitute 10ms
+   ✓ authenticated initial program graph evolution > requires the actual live 'src/wasm/model/instructions.ts' rather than an empty or historical substitute 10ms
+   ✓ authenticated initial program graph evolution > requires the actual live 'src/wasm/model/module-records.ts' rather than an empty or historical substitute 11ms
+   × authenticated initial program graph evolution > refuses retained kernel initializer even when projection would remove or rewrite the changed bytes 10ms
+     → control requires exactly one changed span
+   ✓ authenticated initial program graph evolution > refuses retained predicate body even when projection would remove or rewrite the changed bytes 10ms
+   ✓ authenticated initial program graph evolution > refuses kernel documentation even when projection would remove or rewrite the changed bytes 10ms
+   ✓ authenticated initial program graph evolution > refuses removed ordinal mint body even when projection would remove or rewrite the changed bytes 11ms
+   ✓ authenticated initial program graph evolution > refuses removed commit body even when projection would remove or rewrite the changed bytes 10ms
+   ✓ authenticated initial program graph evolution > refuses removed append body even when projection would remove or rewrite the changed bytes 9ms
+   ✓ authenticated initial program graph evolution > refuses removed storage data type even when projection would remove or rewrite the changed bytes 11ms
+   ✓ authenticated initial program graph evolution > refuses removed declaration deletion even when projection would remove or rewrite the changed bytes 10ms
+   ✓ authenticated initial program graph evolution > refuses removed declaration duplication even when projection would remove or rewrite the changed bytes 10ms
+   ✓ authenticated initial program graph evolution > refuses retained predicate deletion even when projection would remove or rewrite the changed bytes 13ms
+   ✓ authenticated initial program graph evolution > refuses allocator declaration order even when projection would remove or rewrite the changed bytes 11ms
+   ✓ authenticated initial program graph evolution > refuses allocator import order even when projection would remove or rewrite the changed bytes 10ms
+   ✓ authenticated initial program graph evolution > refuses allocator import target even when projection would remove or rewrite the changed bytes 9ms
+   ✓ authenticated initial program graph evolution > refuses allocator import deletion even when projection would remove or rewrite the changed bytes 10ms
+   ✓ authenticated initial program graph evolution > refuses allocator import runtime promotion even when projection would remove or rewrite the changed bytes 9ms
+   ✓ authenticated initial program graph evolution > refuses callee live operand even when projection would remove or rewrite the changed bytes 9ms
+   ✓ authenticated initial program graph evolution > refuses receiver live operand even when projection would remove or rewrite the changed bytes 10ms
+   ✓ authenticated initial program graph evolution > refuses required field live operand even when projection would remove or rewrite the changed bytes 9ms
+   ✓ authenticated initial program graph evolution > refuses later optional operand even when projection would remove or rewrite the changed bytes 10ms
+   ✓ authenticated initial program graph evolution > refuses later validation body even when projection would remove or rewrite the changed bytes 9ms
+   ✓ authenticated initial program graph evolution > refuses retained input body even when projection would remove or rewrite the changed bytes 11ms
+   ✓ authenticated initial program graph evolution > refuses later validation deletion even when projection would remove or rewrite the changed bytes 10ms
+   ✓ authenticated initial program graph evolution > refuses input runtime-support import even when projection would remove or rewrite the changed bytes 10ms
+   ✓ authenticated initial program graph evolution > refuses input readonly member even when projection would remove or rewrite the changed bytes 11ms
+   ✓ authenticated initial program graph evolution > refuses input optional member even when projection would remove or rewrite the changed bytes 9ms
+   ✓ authenticated initial program graph evolution > refuses prepared readonly member even when projection would remove or rewrite the changed bytes 9ms
+   ✓ authenticated initial program graph evolution > refuses prepared optional member even when projection would remove or rewrite the changed bytes 9ms
+   ✓ authenticated initial program graph evolution > refuses retained contract member even when projection would remove or rewrite the changed bytes 9ms
+   ✓ authenticated initial program graph evolution > refuses foreign appended executable even when projection would remove or rewrite the changed bytes 9ms
+   ✓ authenticated initial program graph evolution > refuses shifted allocator coordinates even when projection would remove or rewrite the changed bytes 9ms
+   ✓ authenticated initial program graph evolution > refuses prior and mutated prior 'src/ir/program/input-contracts.ts' as current-source operands 10ms
+   ✓ authenticated initial program graph evolution > refuses prior and mutated prior 'src/ir/program/prepared-contracts.ts' as current-source operands 9ms
+   ✓ authenticated initial program graph evolution > refuses prior and mutated prior 'src/ir/program/input.ts' as current-source operands 10ms
+   ✓ authenticated initial program graph evolution > refuses prior and mutated prior 'src/wasm/physical/function-handles.ts' as current-source operands 10ms
+   ✓ authenticated initial program graph evolution > validates both complete reciprocal sides for 'src/ir/program/input.ts' 12ms
+   ✓ authenticated initial program graph evolution > validates both complete reciprocal sides for 'src/wasm/physical/function-handles.ts' 11ms
+   ✓ authenticated initial program graph evolution > captures exactly seventeen sources and one nested receipt per fresh operation 25ms
+   ✓ authenticated initial program graph evolution > does not retain successful source authority after a caller changes its backing map 17ms
+   ✓ authenticated initial program graph evolution > keeps unowned reader paths raw, including appended back edges, and fails on missing paths 23ms
+   ✓ authenticated initial program graph evolution > leaves copied fixture mutations raw after initial construction 9ms
+   ✓ authenticated initial program graph evolution > preserves caller missing-read diagnostics as a typed fail-closed cause 12ms
+   ✓ authenticated initial program graph evolution > requires the missing nested pre-A receipt 9ms
+   ✓ authenticated initial program graph evolution > requires the changed nested pre-A receipt 9ms
+   ✓ authenticated initial program graph evolution > refuses an unknown reciprocal record instead of using a name-shaped fallback 17ms
+   ✓ authenticated initial program graph evolution > independently authenticates the Git blob for 'src/ir/identity.ts' 1ms
+   ✓ authenticated initial program graph evolution > independently authenticates the Git blob for 'src/ir/prepared-component-dependencie…' 1ms
+   ✓ authenticated initial program graph evolution > independently authenticates the Git blob for 'src/ir/program/input-contracts.ts' 0ms
+   ✓ authenticated initial program graph evolution > independently authenticates the Git blob for 'src/ir/program/prepared-contracts.ts' 0ms
+   ✓ authenticated initial program graph evolution > independently authenticates the Git blob for 'src/shared/contracts/ir-identity.ts' 0ms
+   ✓ authenticated initial program graph evolution > independently authenticates the Git blob for 'src/shared/contracts/identity-values.…' 0ms
+   ✓ authenticated initial program graph evolution > independently authenticates the Git blob for 'src/ir/identity-values.ts' 0ms
+   ✓ authenticated initial program graph evolution > independently authenticates the Git blob for 'src/shared/contracts/ir-unit-inventor…' 0ms
+   ✓ authenticated initial program graph evolution > independently authenticates the Git blob for 'src/ir/program/abi-lookup.ts' 0ms
+   ✓ authenticated initial program graph evolution > independently authenticates the Git blob for 'src/ir/program/runtime-support.ts' 0ms
+   ✓ authenticated initial program graph evolution > independently authenticates the Git blob for 'src/ir/program/formatter-support.ts' 0ms
+   ✓ authenticated initial program graph evolution > independently authenticates the Git blob for 'src/ir/program/errors.ts' 0ms
+   ✓ authenticated initial program graph evolution > independently authenticates the Git blob for 'src/ir/core/types.ts' 0ms
+   ✓ authenticated initial program graph evolution > independently authenticates the Git blob for 'src/ir/program/input.ts' 0ms
+   ✓ authenticated initial program graph evolution > independently authenticates the Git blob for 'src/wasm/physical/function-handles.ts' 0ms
+   ✓ authenticated initial program graph evolution > independently authenticates the Git blob for 'src/wasm/model/instructions.ts' 0ms
+   ✓ authenticated initial program graph evolution > independently authenticates the Git blob for 'src/wasm/model/module-records.ts' 0ms
+   ✓ authenticated initial program graph evolution > rejects negative start through the independent live-span guard 0ms
+   ✓ authenticated initial program graph evolution > rejects beyond source through the independent live-span guard 0ms
+   ✓ authenticated initial program graph evolution > rejects length mismatch through the independent live-span guard 0ms
+   ✓ authenticated initial program graph evolution > rejects partial UTF8 through the independent live-span guard 0ms
+   ✓ authenticated initial program graph evolution > rejects span SHA through the independent live-span guard 0ms
+   ✓ authenticated initial program graph evolution > rejects span blob through the independent live-span guard 0ms
+   ✓ authenticated initial program graph evolution > independently refuses malformed schema recipe before fixed digest authority 0ms
+   ✓ authenticated initial program graph evolution > independently refuses malformed provenance recipe before fixed digest authority 0ms
+   ✓ authenticated initial program graph evolution > independently refuses malformed input order recipe before fixed digest authority 0ms
+   ✓ authenticated initial program graph evolution > independently refuses malformed missing input recipe before fixed digest authority 0ms
+   ✓ authenticated initial program graph evolution > independently refuses malformed duplicate input recipe before fixed digest authority 0ms
+   ✓ authenticated initial program graph evolution > independently refuses malformed unknown output recipe before fixed digest authority 0ms
+   ✓ authenticated initial program graph evolution > independently refuses malformed current full pin recipe before fixed digest authority 0ms
+   ✓ authenticated initial program graph evolution > independently refuses malformed prior full pin recipe before fixed digest authority 0ms
+   ✓ authenticated initial program graph evolution > independently refuses malformed declaration order recipe before fixed digest authority 0ms
+   ✓ authenticated initial program graph evolution > independently refuses malformed missing declaration recipe before fixed digest authority 0ms
+   ✓ authenticated initial program graph evolution > independently refuses malformed operand kind recipe before fixed digest authority 0ms
+   ✓ authenticated initial program graph evolution > independently refuses malformed operand owner recipe before fixed digest authority 0ms
+   ✓ authenticated initial program graph evolution > independently refuses malformed operand order recipe before fixed digest authority 0ms
+   ✓ authenticated initial program graph evolution > independently refuses malformed change order recipe before fixed digest authority 0ms
+   ✓ authenticated initial program graph evolution > independently refuses malformed unknown replacement recipe before fixed digest authority 0ms
+   ✓ authenticated initial program graph evolution > independently refuses malformed missing original anchor recipe before fixed digest authority 0ms
+   ✓ authenticated initial program graph evolution > independently refuses malformed shifted reciprocal coordinate recipe before fixed digest authority 0ms
+   ✓ authenticated initial program graph evolution > rejects malformed receipt operand 0 9ms
+   ✓ authenticated initial program graph evolution > rejects malformed receipt operand 1 8ms
+   ✓ authenticated initial program graph evolution > rejects malformed receipt operand 2 8ms
+   ✓ authenticated initial program graph evolution > rejects malformed receipt operand 3 8ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/issue-3518-program-initial-graph-evolution.test.ts > authenticated initial program graph evolution > refuses retained kernel initializer even when projection would remove or rewrite the changed bytes
+Error: control requires exactly one changed span
+ ❯ replaceOnce tests/issue-3518-program-initial-graph-evolution.test.ts:40:11
+     38|   const at = source.indexOf(before);
+     39|   if (at < 0 || source.indexOf(before, at + 1) !== -1 || before === af…
+     40|     throw new Error("control requires exactly one changed span");
+       |           ^
+     41|   return source.slice(0, at) + after + source.slice(at + before.length…
+     42| }
+ ❯ tests/issue-3518-program-initial-graph-evolution.test.ts:98:50
+ ❯ tests/issue-3518-program-initial-graph-evolution.test.ts:318:19
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 128 passed (129)
+   Start at  08:38:28
+   Duration  1.35s (transform 37ms, setup 0ms, collect 207ms, tests 989ms, environment 0ms, prepare 37ms)
+
+JSON report written to /private/tmp/js2-ir-validation-lowering-b-resume-20261001/.tmp/validation-lowering-b-resume/first-integration/graph-controls.json

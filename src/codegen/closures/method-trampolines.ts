@@ -25,6 +25,12 @@ import { emitWasiErrorConstructor } from "../registry/error-types.js";
 import { allocTempLocal } from "../context/locals.js";
 import { ensureExnTag } from "../index.js";
 import { coercionInstrs } from "../type-coercion.js";
+import {
+  bodyReadsReceiver,
+  classGeneratorMethodReadsReceiver,
+  methodValueWrapperResults,
+  objectLiteralMethodDefersReceiver,
+} from "../method-receiver-this.js"; // (#6651 A11, #6789)
 import { ensureCurrentThisGlobal } from "../statements/nested-declarations.js";
 import {
   ensureLateImport as ensureLateImportShared,
@@ -36,6 +42,7 @@ import {
   getFuncSignature,
   getOrCreateConstructibleFuncRefWrapperTypes,
   getOrCreateFuncRefWrapperTypes,
+  peekFuncRefWrapperTypes,
 } from "./funcref-wrapper-types.js";
 import { emitFuncRefAsClosure } from "./funcref-as-closure.js";
 import { normalizeOrdinaryFunctionConstructibility } from "./ordinary-fn-constructibility.js";
@@ -53,6 +60,7 @@ import {
 import { ensureFnMetaSubtype, fnMetaSlot } from "../function-instance-meta.js";
 // (#4440) the METHOD half of the same carrier — class/object-literal members
 import { fnMetaSlotForMemberDecl, fnMetaSlotForMemberName } from "../function-instance-meta-methods.js";
+import { noteFunctionValueInhabitant } from "./closure-type-sources.js"; // (#6913)
 
 /**
  * (#2015) Build the `this`-slot prologue for an object-method trampoline.
@@ -129,26 +137,16 @@ function buildNullThisTypeErrorThrow(ctx: CodegenContext): Instr[] | null {
  * (no struct.get on null), so the trampoline must NOT throw for it. We detect a
  * `local.get 0` anywhere in the body (including nested blocks). Conservative:
  * if the body isn't available yet (idx out of range), assume it does use `this`
- * so we don't silently regress the trap→TypeError fix.
+ * so we don't silently regress the trap→TypeError fix. (#6789) For the
+ * trampoline (`guardedReadsAreSafe`), a null-tested read does not count — see
+ * {@link bodyReadsReceiver}.
  */
-function methodBodyReadsThis(ctx: CodegenContext, methodFuncIdx: number): boolean {
+function methodBodyReadsThis(ctx: CodegenContext, methodFuncIdx: number, guardedReadsAreSafe = true): boolean {
   const fn = definedFuncAt(ctx, methodFuncIdx);
   if (!fn || !Array.isArray(fn.body)) return true;
-  const walk = (instrs: Instr[]): boolean => {
-    for (const instr of instrs) {
-      if (instr.op === "local.get" && (instr as { index?: number }).index === 0) return true;
-      for (const key of ["body", "then", "else", "catchAll"] as const) {
-        const nested = (instr as Record<string, unknown>)[key];
-        if (Array.isArray(nested) && walk(nested)) return true;
-      }
-      const catches = (instr as { catches?: { body?: Instr[] }[] }).catches;
-      if (Array.isArray(catches)) {
-        for (const c of catches) if (Array.isArray(c.body) && walk(c.body)) return true;
-      }
-    }
-    return false;
-  };
-  return walk(fn.body);
+  const generatorBody = classGeneratorMethodReadsReceiver(ctx, fn.name); // (#6651 A11)
+  if (generatorBody !== undefined) return generatorBody;
+  return bodyReadsReceiver(fn.body, guardedReadsAreSafe);
 }
 
 /**
@@ -159,13 +157,17 @@ function methodBodyReadsThis(ctx: CodegenContext, methodFuncIdx: number): boolea
  * default; a caller that must DECLINE on doubt (the static sidecar) treats both
  * `true` and `undefined` as a refusal.
  */
-export function compiledBodyReadsThis(ctx: CodegenContext, methodFuncIdx: number): boolean | undefined {
+export function compiledBodyReadsThis(
+  ctx: CodegenContext,
+  methodFuncIdx: number,
+  guardedReadsAreSafe = false, // (#6789) only the trampoline passes `true`
+): boolean | undefined {
   const fn = definedFuncAt(ctx, methodFuncIdx);
   // An EMPTY body is "not compiled yet", not "reads nothing" — a minted-but-
   // unfilled function would otherwise read as receiver-free, which is exactly
   // the wrong answer a caller gating an install on this must not be given.
   if (!fn || !Array.isArray(fn.body) || fn.body.length === 0) return undefined;
-  return methodBodyReadsThis(ctx, methodFuncIdx);
+  return methodBodyReadsThis(ctx, methodFuncIdx, guardedReadsAreSafe);
 }
 
 /**
@@ -409,6 +411,7 @@ export function emitObjectMethodAsClosure(
   const wrapperTypes = getOrCreateFuncRefWrapperTypes(ctx, userParams, results);
   if (!wrapperTypes) return null;
   const { structTypeIdx, liftedFuncTypeIdx } = wrapperTypes;
+  noteFunctionValueInhabitant(ctx, structTypeIdx, memberDecl); // (#6913)
   // Object-literal methods share the signature wrapper with ordinary
   // functions. A rest method with a simple identifier rest parameter needs an
   // allocation-specific discriminator so `__call_fn_method_N` can materialize
@@ -448,19 +451,22 @@ export function emitObjectMethodAsClosure(
   const trampolineName = `__obj_meth_tramp_${methodName}_${ctx.closureCounter++}`;
   // anyref temp at the first slot past the params (closure_self + userParams).
   const anyTempLocalIdx = 1 + userParams.length;
-  // (#2025) Decide whether the method reads `this` BEFORE registering the
-  // TypeError helpers — `ensureNullThisTypeError` adds a late import that shifts
-  // defined-function indices, which would make `methodFuncIdx` stale for the
-  // body lookup. Then register the helpers (with a live fctx so the import-index
-  // flush lands here) so the null-`this` arm throws instead of trapping and
-  // finalize never registers an import mid-rebuild.
+  // (#6789) The method body is usually compiled AFTER this first value read, so
+  // it is still empty here, and an empty body reads as "never touches `this`".
+  // Record the answer only once the body is compiled (`undefined` ⇒ finalize
+  // rescans): the stale `false` dropped the TypeError arm, so `const m = obj.m;
+  // m()` trapped inside the method. The emit-time body keeps the old answer. An
+  // async/generator method's body only stores the receiver: always `false`.
   // (#2025) Capture this-usage, then register the TypeError throw helpers. The
   // registration may add a late import that shifts every DEFINED function index
   // up by `ntShift`; the forwarding `call methodFuncIdx` we emit just below is in
   // a body not yet attached to `ctx.mod.functions`, so the import-shift walker
   // can't reach it — bump the captured index by the delta ourselves (import
   // targets, < the pre-shift import count, are never shifted).
-  const methodUsesThis = methodBodyReadsThis(ctx, methodFuncIdx);
+  const methodUsesThisKnown = objectLiteralMethodDefersReceiver(memberDecl)
+    ? false
+    : compiledBodyReadsThis(ctx, methodFuncIdx, true);
+  const methodUsesThis = methodUsesThisKnown ?? methodBodyReadsThis(ctx, methodFuncIdx);
   const importsBeforeNT = ctx.numImportFuncs;
   ensureNullThisTypeError(ctx, fctx);
   const ntShift = ctx.numImportFuncs - importsBeforeNT;
@@ -504,7 +510,7 @@ export function emitObjectMethodAsClosure(
     userParamCount: userParams.length,
     wrapperUserParams: userParams,
     wrapperResult: results[0],
-    methodUsesThis, // (#2025) captured pre-shift; finalize reuses it
+    methodUsesThis: methodUsesThisKnown, // (#2025) captured pre-shift; (#6789) undefined ⇒ finalize rescans
     // (#1809) Record whether the target is already an import at registration.
     // Import indices stay stable across late-import batches (new imports append
     // at the end, so indices < importsBefore are never shifted), so an import
@@ -530,7 +536,8 @@ export function emitObjectMethodAsClosure(
     typeIdx: allocTypeIdx !== undefined && metaSlot ? allocTypeIdx : allocationStructTypeIdx,
   });
 
-  return { kind: "ref", typeIdx: structTypeIdx };
+  // (#6651 A8) A generator METHOD's value carries its own `prototype` (§15.5.4).
+  return initializeNativeGeneratorFunctionValue(ctx, fctx, memberDecl, { kind: "ref", typeIdx: structTypeIdx });
 }
 
 /**
@@ -650,9 +657,49 @@ export function finalizeMethodTrampolines(ctx: CodegenContext): void {
     // from `t.trampolineFuncIdx` is unsafe: late-import shifting can move that
     // index relative to the recorded value, returning a different function's
     // signature (observed for async methods).
-    const wrapperUserParams = t.wrapperUserParams;
-    const wrapperResult = t.wrapperResult;
+    // (#6492) …and when the drift NARROWED the wrapper, rebuilding the body is
+    // not enough — the wrapper type is what CALLERS see.
+    //
+    // The trap: the canonical singleton trampoline is minted at the FIRST
+    // access, from whatever signature the method had then. In a multi-file
+    // graph (which is what the #3451 linked lane compiles a test262 body as)
+    // the member-get dispatcher reserves the singleton before the method body
+    // has resolved its parameter ABI, so the wrapper can capture a
+    // module-internal struct param — e.g. `class C { m([a]) {} }` captured
+    // `(ref $tuple)` where the method finally accepts `externref`. The dynamic
+    // closure-call site dispatches on the funcref's TYPE and, having matched
+    // that struct-param arm, emits an UNGUARDED `ref.cast (ref $tuple)` of the
+    // caller's argument: `C.prototype.m([1, 2])` passes a vec and the module
+    // TRAPS with `illegal cast`. A wasm trap is not catchable, so one such row
+    // kills the whole program rather than failing one assertion.
+    //
+    // Repair it by widening the trampoline's own func type back to the ABI the
+    // method actually accepts. Deliberately narrow:
+    //   * only the NARROWING direction (wrapper wants a GC struct ref, method
+    //     accepts `externref`) — widening can never invalidate a caller that
+    //     already matched, because every dispatch arm is `ref.test`-guarded and
+    //     a miss falls through to the next arm;
+    //   * only when that wider wrapper ALREADY exists (`peek…`), so the value
+    //     stays dispatchable at call sites already emitted;
+    //   * result type untouched (a result drift is handled below as before).
+    let wrapperUserParams = t.wrapperUserParams;
+    let wrapperResult = t.wrapperResult;
     const methodResult = sig.results[0];
+    const narrowedParam = wrapperUserParams.some(
+      (from, i) =>
+        (from?.kind === "ref" || from?.kind === "ref_null") &&
+        (from as { typeIdx?: number }).typeIdx !== undefined &&
+        methodUserParams[i]?.kind === "externref",
+    );
+    if (narrowedParam && wrapperResult?.kind === methodResult?.kind) {
+      const widened = peekFuncRefWrapperTypes(ctx, methodUserParams, sig.results);
+      const func = widened ? ctx.mod.functions.find((f) => f.body === t.trampolineBody) : undefined;
+      if (widened && func) {
+        func.typeIdx = widened.funcTypeIdx;
+        wrapperUserParams = methodUserParams;
+        wrapperResult = methodResult;
+      }
+    }
 
     // Build a minimal FunctionContext so coercions that need a scratch local
     // (externref → ref/ref_null) can allocate one. Its `params` mirror the
@@ -689,8 +736,8 @@ export function finalizeMethodTrampolines(ctx: CodegenContext): void {
       const anyTempLocalIdx = allocTempLocal(tFctx, { kind: "anyref" });
       // (#2025) Reuse the registration-time `methodUsesThis` (captured before
       // the TypeError-helper import shifted function indices, so it is reliable
-      // here where `t.methodFuncIdx` may be stale). Fall back to a fresh body
-      // scan only when it wasn't recorded.
+      // here where `t.methodFuncIdx` may be stale). Rescan only when it wasn't
+      // recorded — (#6789) incl. a body not yet compiled at registration.
       const usesThis = t.methodUsesThis ?? methodBodyReadsThis(ctx, t.methodFuncIdx);
       newBody = buildTrampolineThisSlot(ctx, t.objStructTypeIdx, anyTempLocalIdx, usesThis, sig.params[0]);
       // (#4466) Do NOT re-coerce the receiver here, and do NOT alias
@@ -936,7 +983,7 @@ export function ensureMethodClosureSingleton(
   const sig = getFuncSignature(ctx, methodFuncIdx);
   if (!sig || sig.params.length === 0) return null;
   const userParams = sig.params.slice(1);
-  const results = sig.results;
+  const { results, resultBridge } = methodValueWrapperResults(ctx, sig.results); // (#6651 A11)
 
   const wrapperTypes = getOrCreateFuncRefWrapperTypes(ctx, userParams, results);
   if (!wrapperTypes) return null;
@@ -956,8 +1003,9 @@ export function ensureMethodClosureSingleton(
     const anyTempLocalIdx = 1 + userParams.length;
     // (#2025) Capture this-usage, register the throw helpers, then adjust the
     // forwarding index by any import-shift the registration caused (see the
-    // matching note in emitObjectMethodAsClosure).
-    const methodUsesThisCached = methodBodyReadsThis(ctx, methodFuncIdx);
+    // matching notes, incl. #6789's not-yet-compiled body, in emitObjectMethodAsClosure).
+    const usesThisKnownCached = compiledBodyReadsThis(ctx, methodFuncIdx, true);
+    const methodUsesThisCached = usesThisKnownCached ?? methodBodyReadsThis(ctx, methodFuncIdx);
     const importsBeforeNT = ctx.numImportFuncs;
     ensureNullThisTypeError(ctx, fctx);
     const ntShift = ctx.numImportFuncs - importsBeforeNT;
@@ -976,6 +1024,7 @@ export function ensureMethodClosureSingleton(
       trampolineBody.push({ op: "local.get", index: i + 1 });
     }
     trampolineBody.push({ op: "call", funcIdx: methodFuncIdx });
+    if (resultBridge) trampolineBody.push({ op: "extern.convert_any" }); // (#6651 A11)
     trampolineFuncIdx = mintDefinedFunc(ctx);
     pushDefinedFunc(ctx, trampolineFuncIdx, {
       name: trampolineName,
@@ -1006,7 +1055,7 @@ export function ensureMethodClosureSingleton(
       userParamCount: userParams.length,
       wrapperUserParams: userParams,
       wrapperResult: results[0],
-      methodUsesThis: methodUsesThisCached, // (#2025) captured pre-shift
+      methodUsesThis: usesThisKnownCached, // (#2025) captured pre-shift; (#6789) undefined ⇒ rescan
       // (#1809) See the per-call-site push for rationale.
       methodTargetsImport: methodFuncIdx < ctx.numImportFuncs,
     });
@@ -1127,14 +1176,34 @@ export function ensureFuncClosureSingleton(
   // answer) is left untouched. See `parkedAsyncDeclarationWrapsPromise`.
   const eagerAsyncPromiseWrap = parkedAsyncDeclarationWrapsPromise(ctx, ownerDeclaration, sig.results);
   const nativeGeneratorResultBridge = nativeGeneratorFunctionValueNeedsResultBridge(ctx, sig.results);
-  const results: ValType[] = eagerAsyncPromiseWrap
-    ? [{ kind: "externref" }]
-    : nativeGeneratorFunctionValueWrapperResults(ctx, sig.results);
+  // (#6647) When `eval` is reachable, a top-level function DECLARATION gets a
+  // live global binding, and `compileIdentifierCall` routes every call of it
+  // through the generic dynamic dispatcher instead of a direct `call`. That
+  // dispatcher can only produce an `externref`, so a wrapper whose funcref
+  // type returns a CONCRETE struct (an object/array literal result) has no
+  // arm it can match and the call answers `null` — measured: `function g(){
+  // return {a:1}; } g()` is `null` under the linked standalone Temporal
+  // provider, while `g.apply(undefined, [])` and `new g()` are correct.
+  // Promote the WRAPPER's result the same way the parked-async and
+  // native-generator bridges above already do; the declaration's own signature
+  // and every direct call site are untouched.
+  const liveGlobalBindingResultBridge =
+    !eagerAsyncPromiseWrap &&
+    !nativeGeneratorResultBridge &&
+    (ctx.standalone === true || ctx.wasi === true) &&
+    ctx.runtimeEvalGlobalFunctionBindings === true &&
+    sig.results.length === 1 &&
+    (sig.results[0]!.kind === "ref" || sig.results[0]!.kind === "ref_null");
+  const results: ValType[] =
+    eagerAsyncPromiseWrap || liveGlobalBindingResultBridge
+      ? [{ kind: "externref" }]
+      : nativeGeneratorFunctionValueWrapperResults(ctx, sig.results);
   const wrapperTypes = constructible
     ? getOrCreateConstructibleFuncRefWrapperTypes(ctx, userParams, results)
     : getOrCreateFuncRefWrapperTypes(ctx, userParams, results);
   if (!wrapperTypes) return null;
   const { structTypeIdx, liftedFuncTypeIdx } = wrapperTypes;
+  noteFunctionValueInhabitant(ctx, structTypeIdx, ownerDeclaration); // (#6913) shared wrapper source
 
   // (#4133) The trampoline and cache were keyed by the BARE function name, so
   // two modules declaring the same top-level name shared one singleton. The
@@ -1229,7 +1298,9 @@ export function ensureFuncClosureSingleton(
     // A direct native-generator call yields its private state struct.  Its
     // first-class function value is JavaScript-visible, so the wrapper's
     // checker-facing callable ABI returns the exported externref carrier.
-    if (nativeGeneratorResultBridge) trampolineBody.push({ op: "extern.convert_any" });
+    if (nativeGeneratorResultBridge || liveGlobalBindingResultBridge) {
+      trampolineBody.push({ op: "extern.convert_any" });
+    }
     // (#4630) Settle the void async completion into the promoted `externref`
     // result. `finalizeMethodTrampolines` rebuilds this body from the (possibly
     // re-resolved) callee signature, but it can also decline to rebuild, so the

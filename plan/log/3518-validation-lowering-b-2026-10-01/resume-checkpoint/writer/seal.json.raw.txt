@@ -1,0 +1,16 @@
+{
+  "manifest": {
+    "bytes": 8871,
+    "sha256": "de4e96c0281846e6f62d2bae7814d2e3ddced012de8d23c6613284e765eba39d",
+    "gitBlob": "4fcd02c2ac19e4417b6c9fdd8b17bb600544cdd0",
+    "lines": 275
+  },
+  "handoff": {
+    "bytes": 4700,
+    "sha256": "d4bdf485322fa572e9de8f392b363a49d5aa27db613e4602544fb8b573013eb1",
+    "gitBlob": "3631843476ddd816719a346d4918a4460f1fc877",
+    "lines": 22
+  },
+  "currentMatchesFrozen": true,
+  "beforeArchiveMatchesInitial": true
+}

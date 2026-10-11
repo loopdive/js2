@@ -1,7 +1,7 @@
 ---
 id: 4760
 title: "ES2015 Promise.prototype.then Test262 residuals"
-status: in_progress
+status: in-progress
 created: 2026-08-26
 updated: 2026-08-26
 priority: critical

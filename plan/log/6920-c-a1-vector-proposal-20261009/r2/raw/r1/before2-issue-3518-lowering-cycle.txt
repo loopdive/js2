@@ -1,0 +1,12 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/issue-3518-lowering-cycle.test.ts (25 tests) 1878ms
+   ✓ lowering cycle separation > lowers a nonempty body in a fresh process that refuses every concrete/wrapper import  361ms
+   ✓ lowering cycle separation > executes standalone scalar branches and loops through the unchanged public compiler  701ms
+
+ Test Files  1 passed (1)
+      Tests  25 passed (25)
+   Start at  23:09:53
+   Duration  27.65s (transform 18.01s, setup 0ms, collect 25.35s, tests 1.88s, environment 0ms, prepare 73ms)
+

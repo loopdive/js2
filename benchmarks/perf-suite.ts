@@ -346,7 +346,8 @@ function fmtSpeedup(ratio: number): string {
 
 async function compileWorkload(source: string): Promise<{ run: () => number; binarySize: number; compileMs: number }> {
   const t0 = performance.now();
-  const result = await compile(source, { fast: false });
+  // #6776: `validate: false` keeps compileMs comparable with pre-validation runs.
+  const result = await compile(source, { fast: false, validate: false });
   const compileMs = performance.now() - t0;
 
   if (!result.success) {

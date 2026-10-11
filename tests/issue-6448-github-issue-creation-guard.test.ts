@@ -150,4 +150,28 @@ describe("local-only issue creation policy", () => {
       expect(readFileSync(marker, "utf8")).toBe("pr create\n");
     },
   );
+
+  it("resolves the Claude hook from the project dir when cwd is a nested git checkout", () => {
+    const entry = JSON.parse(readFileSync(join(root, ".claude/settings.json"), "utf8")).hooks.PreToolUse.find(
+      (e: { hooks: { command: string }[] }) => e.hooks.some((h) => h.command.includes("block-github-issue-create.py")),
+    );
+    // A nested repo (like the vendored test262 corpus) has no .claude/hooks; the
+    // hook must not resolve its path from the shell's cwd.
+    const nested = join(scratch, "nested-repo");
+    expect(spawnSync("git", ["init", "-q", nested]).status).toBe(0);
+    const env = { ...process.env, CLAUDE_PROJECT_DIR: root, GH_REPO: "loopdive/js2" };
+    const run = (command: string) =>
+      spawnSync("/bin/sh", ["-c", entry.hooks[0].command], {
+        cwd: nested,
+        env,
+        input: JSON.stringify({ tool_name: "Bash", tool_input: { command } }),
+        encoding: "utf8",
+      });
+    const denied = run("gh issue create");
+    expect(denied.status).toBe(2);
+    expect(denied.stderr).toContain("GitHub issue creation is disabled");
+    const allowed = run("gh pr create");
+    expect(allowed.stderr).toBe("");
+    expect(allowed.status).toBe(0);
+  });
 });

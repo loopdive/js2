@@ -1,0 +1,161 @@
+{
+  "mode": "syntax parsing and source arithmetic only; no helper/test/compiler execution",
+  "receiptSha256": "f7c21adce97a49db5b05106e8da21217be8c96c70133bf8d425054e38b7adafc",
+  "rawCurrentInputs": 27,
+  "modifiedFiles": 11,
+  "contextualSpans": 34,
+  "liveSlices": 84,
+  "literalKinds": [
+    "whitespace",
+    "comment",
+    "module-link"
+  ],
+  "inverseWholePins": [
+    {
+      "path": "src/runtime/contracts/provider-policy.ts",
+      "target": "655e93317a2c15170f5bf63d12a494d8f9d3ae02f3a17aea216356a538e226f5",
+      "exactForward": true
+    },
+    {
+      "path": "src/ir/runtime/contracts/manifest.ts",
+      "target": "e4d48e76ea52bc2385dab915c6360be5ce31cc77041331c943521ecfc9e83cf0",
+      "exactForward": true
+    },
+    {
+      "path": "src/ir/intrinsics.ts",
+      "target": "c39593810291752471e1f7c513b4e6e7b254d28aa236c0122a4587ab7a71f2b7",
+      "exactForward": true
+    },
+    {
+      "path": "src/ir/core/intrinsic-vocabulary.ts",
+      "target": "276b890af04a1c5f4f96c2764f7cbd7dcd5d3d12a8951c08c290e3577b9a7ef3",
+      "exactForward": true
+    },
+    {
+      "path": "src/ir/runtime/contracts/intrinsics.ts",
+      "target": "401d18d79bb03d25924fb5f25de22209667067657e36861087be981230357f1f",
+      "exactForward": true
+    },
+    {
+      "path": "src/ir/core/intrinsics.ts",
+      "target": "dd020e9d33602174b4f1e60329e385f20fbb4bbd0eb2c87ab1ac2d5955ae0262",
+      "exactForward": true
+    },
+    {
+      "path": "src/ir/analysis/intrinsics.ts",
+      "target": "58d4a7fdc7d374c838ebeb07744c5f8bae543573e5142bfab6bed7846f408651",
+      "exactForward": true
+    },
+    {
+      "path": "src/ir/runtime/callable-declarations.ts",
+      "target": "db70bc14602f360179ac787c902af82476ffff5297993ba87d7f99be5d348e10",
+      "exactForward": true
+    },
+    {
+      "path": "src/ir/runtime/manifest.ts",
+      "target": "d30bb0352b9ce81845f091d3c366297c40e7f9909fa969540711832c04b178c7",
+      "exactForward": true
+    },
+    {
+      "path": "src/ir/intrinsic-support.ts",
+      "target": "6d404c97436249e65be69d40dc961e284eb2f4900ec184e645aa45486ea0a1d6",
+      "exactForward": true
+    },
+    {
+      "path": "src/ir/program-runtime-abi.ts",
+      "target": "2d38d6471fa3004ad0e63edc2cbf6d84ee455bb2227de00d5684be496aed7bb5",
+      "exactForward": true
+    },
+    {
+      "path": "src/ir/program/runtime-abi-identity.ts",
+      "target": "a3d26cbc0e6b8f084825d83786c7c7b2e45714e2335c6c87b8b427c64476dd7f",
+      "exactForward": true
+    },
+    {
+      "path": "src/ir/runtime-program-manifest.ts",
+      "target": "d9698e66ad1d048e51dd58f6a5b47b2adf65a61da1787c5d543b1ac6437036a9",
+      "exactForward": true
+    },
+    {
+      "path": "src/ir/core/vector-runtime.ts",
+      "target": "936219b3246105de0222c65d06b2503d4f016795eb3a570e7a6e9ad5ffa657a9",
+      "exactForward": true
+    },
+    {
+      "path": "src/ir/vector-runtime.ts",
+      "target": "3c55a99f4ded681cb44da3baec4939b80fd958770d966a047d20ec6d87e79c96",
+      "exactForward": true
+    },
+    {
+      "path": "src/ir/runtime/vector-callables.ts",
+      "target": "b594f734f6126f5c449b7facef61418f9df7eacce8ebd5bf84560e97eec4d04f",
+      "exactForward": true
+    },
+    {
+      "path": "src/ir/program-runtime-validation.ts",
+      "target": "bb4006f9bcdf641f665b6b1ee10ea6fd8ced30e168d09faf8439358d574f2b0c",
+      "exactForward": true
+    },
+    {
+      "path": "src/ir/core/async-callables.ts",
+      "target": "147ae75a6c8a58f25344d96958ef8261af7b06589e4e499d43aa47a9dc98ba95",
+      "exactForward": true
+    },
+    {
+      "path": "src/ir/runtime/native-async-callables.ts",
+      "target": "31b3cb6ab351fe33e543d2b95a1b8bac24d920f788b460153decfc8b750d5d27",
+      "exactForward": true
+    },
+    {
+      "path": "src/ir/core/intrinsic-contracts.ts",
+      "target": "ece37f6c4f48129187e326cdad4fd6207217e50c5078739acae1cf5393aa3932",
+      "exactForward": true
+    },
+    {
+      "path": "src/ir/core/async-intents.ts",
+      "target": "411d7ae2cbfcae0da9c00f2a53e04be4a80ed45906c063c9f9b9ca1692909d0b",
+      "exactForward": true
+    },
+    {
+      "path": "src/ir/runtime/async-providers.ts",
+      "target": "8bbbe1f71ccc3a234d9bd894173829fb285fd39cb637c617aeea90dc6d3b0100",
+      "exactForward": true
+    },
+    {
+      "path": "src/ir/analysis/async-plan.ts",
+      "target": "0589c846108f32bc41835f533fc7ef36f4373039849c92d237e2fdcc6483fa93",
+      "exactForward": true
+    },
+    {
+      "path": "src/ir/runtime/async-attachment.ts",
+      "target": "d85bb938c33068cafb05f29f5e8c30040ec85f168a616e74fefcfa3d48ff8818",
+      "exactForward": true
+    },
+    {
+      "path": "src/ir/runtime/intrinsic-verification.ts",
+      "target": "2fbc05033b8f62c71f0053ac439590b7f3183701bf855a621027b4ff818bdfbd",
+      "exactForward": true
+    },
+    {
+      "path": "src/runtime/contracts/async-provider-schema.ts",
+      "target": "5c40a91d9c21a96292a58cfe7d61d87e83ec0b6db916b2c9f714d60c5c93499a",
+      "exactForward": true
+    },
+    {
+      "path": "src/ir/runtime/contracts/prepared.ts",
+      "target": "5ad34666195a78cdca49005de505e8cd468af8b04b40d8ff5de88347489515e9",
+      "exactForward": true
+    }
+  ],
+  "syntax": [
+    {
+      "path": "tests/helpers/ir-runtime-contract-evolution.ts",
+      "parseDiagnostics": 0
+    },
+    {
+      "path": "tests/issue-3518-runtime-contract-evolution.test.ts",
+      "parseDiagnostics": 0
+    }
+  ],
+  "protectedDrift": []
+}

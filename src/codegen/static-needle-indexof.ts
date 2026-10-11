@@ -6,6 +6,7 @@ import { allocLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { flatStringType } from "./native-strings.js";
 import { emitFlattenWithInlineFlatFastPath } from "./string-materialize.js";
+import { readEnv } from "../env.js";
 
 interface StaticNeedleIndexOfInputs {
   ctx: CodegenContext;
@@ -63,7 +64,7 @@ export function tryEmitStaticNeedleIndexOf(inputs: StaticNeedleIndexOfInputs): b
   const { ctx, fctx, expr, receiverOverridePresent } = inputs;
   const [compileReceiverToLocal, compileStringValueToLocal, compileIntegerValueToLocal] = inputs.emit;
   if (receiverOverridePresent || expr.arguments.length < 1 || expr.arguments.length > 2) return false;
-  if (typeof process !== "undefined" && process.env.JS2WASM_NATIVE_CONST_NEEDLE_INDEXOF === "0") return false;
+  if (readEnv("JS2WASM_NATIVE_CONST_NEEDLE_INDEXOF") === "0") return false;
   const needle = staticConstStringLiteralAlias(ctx, expr.arguments[0]!);
   if (needle === undefined || needle.length < 2 || needle.length > 8) return false;
 

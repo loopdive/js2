@@ -8,8 +8,11 @@
  * widened and closed-struct object carriers.
  */
 
+import { restPatternParamSlot } from "./resolved-rest-param.js"; // (#6774 S7)
+import { hoistParameterEvalVars } from "./expressions/eval-param-scope-hoist.js"; // (#6774 S7)
 import ts from "typescript";
 import { hoistFunctionDeclarations } from "./statements/nested-declarations.js";
+import { objectLiteralReadsAmbientRedeclaredVar } from "./module-global-registration.js"; // (#6651 V10b)
 import { isStringType, isVoidType, unwrapPromiseType } from "../checker/type-mapper.js";
 import type { FieldDef, Instr, StructTypeDef, ValType, WasmFunction } from "../ir/types.js";
 import {
@@ -28,13 +31,15 @@ import { emitAsyncGenerator, isAsyncGenDriveCandidate } from "./async-frame.js";
 import { addFunctionOwnLocals } from "../ir/analysis/binding-info.js";
 import { exactClassExpressionTypeName } from "./class-expression-identity.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
+import { staticHostPropertyKeyInstrs } from "./host-property-key.js";
 import { emitHoleSentinel } from "./array-holes.js"; // (#2001 S1)
+import { holeFilledArrayNewInstrs } from "./array/array-length-holes.js"; // (#6771 S3)
 import { objectLiteralTakesToPrimitiveOpenPath } from "./to-primitive-open-object.js"; // (#5269 R3-2) shared with the type-level twin in index.ts
 import { bareAnyArrayLiteralNeedsExternref } from "./array-literal-any-carrier.js";
-import { hasIncompatibleElementCarrier } from "./struct-carrier-inhabits.js"; // (#5327) array-literal element-carrier compatibility proof
+import { hasIncompatibleElementCarrier, hasNonStructElementForStructCarrier } from "./struct-carrier-inhabits.js"; // (#5327 / #6613) array-literal element-carrier compatibility proofs
 import { f64HolesActive } from "./vec-f64-hole-presence.js"; // (#4491 T11)
 import { HOLE_F64_BITS, UNDEF_F64_BITS } from "./value-tags.js"; // (#4491 T11)
-import { ensureStrToCharVecHelper, stringConstantExternrefInstrs } from "./native-strings.js";
+import { ensureAnyToStringHelper, ensureStrToCharVecHelper, stringConstantExternrefInstrs } from "./native-strings.js";
 import { emitStandaloneIterableMaterialize, recordStrictMethodLiteralAllocation } from "./iterator-native.js"; // (#3100 S5, #5131 provenance)
 import { popBody, pushBody } from "./context/bodies.js";
 import { reportError } from "./context/errors.js";
@@ -49,7 +54,7 @@ import { resolveStructName } from "./expressions/misc.js";
 import { arrayIteratorOverrideGlobalIdx, emitArrayProtoIteratorDrive } from "./expressions/proto-override.js";
 import { sourceOverridesBuiltinPrototypeMember } from "./builtin-proto-member-override.js";
 import { isSealedNominalStructParent } from "./struct-hierarchy-layout.js";
-import { ensureObjVecBuilders } from "./object-runtime.js";
+import { ensureObjectRuntime, ensureObjVecBuilders } from "./object-runtime.js";
 import {
   OBJLIT_ACCESSOR_FLAGS,
   collectDynamicAccessorHalves,
@@ -60,6 +65,7 @@ import {
 import type { ObjLitDefineCopyHelpers } from "./objlit-dynamic-accessors.js";
 import { bodyNeedsArgumentsObject, needsImplicitArgumentsObject } from "./helpers/body-uses-arguments.js";
 import { widenedVarKeyFromDecl } from "./widened-var-key.js";
+import { argumentsBeforeDefaults, endArgumentsBeforeDefaults } from "./object-method-arguments-first.js"; // (#6651 A11)
 import { isStrictFunction, isSimpleParameterList } from "./helpers/is-strict-function.js";
 import { initializeFunctionPoisonPillContext } from "./function-poison-pill.js";
 import { collectInstrs } from "./statements/shared.js";
@@ -86,7 +92,12 @@ import {
   registerNativeGenerator,
 } from "./generators-native.js";
 import { emitCollectionIteratorVec } from "./map-runtime.js";
-import { emitSymbolDescStore, ensureNativeSymbolBoundaryBridge, usesNativeSymbolProvider } from "./symbol-native.js";
+import {
+  emitSymbolDescStore,
+  ensureNativeSymbolBoundaryBridge,
+  ensureSymbolCarrier,
+  usesNativeSymbolProvider,
+} from "./symbol-native.js";
 import { addFuncType, getArrTypeIdxFromVec, getOrRegisterVecType } from "./registry/types.js";
 import {
   coerceType,
@@ -113,11 +124,15 @@ import {
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2 read chokepoint / S3b stable-regime minting)
 import { registerCountedPushArray } from "./array-indexof-scan.js";
 import { ensureRuntimeEvalCallableWrapHelper } from "./runtime-eval-callable.js";
+import { foldedComputedMethodKey } from "./single-assignment-binding.js"; // (#6651 A7)
 import { emitSymbolOperandCoercionThrow } from "./tonumber-symbol-throw.js"; // (#3481)
+import { getToPrimitiveProvider } from "./coercion-engine.js";
+import { buildThrowJsErrorInstrs } from "./js-errors.js";
 import { resolveObjectLiteralCarrier } from "./object-literal-carrier.js";
 import { tagAccessorObjectLiteralReceiver } from "./accessor-object-literal.js";
 import { widenUndefinedDefaultParamSlot } from "./destructuring-params.js";
 import { widenAsyncThenableResults } from "./async-thenable-return.js"; // (#5371)
+import { readEnv } from "../env.js";
 /**
  * Check if a TS expression is "undefined-like" — OmittedExpression (array hole),
  * undefined keyword, identifier `undefined`, void expression, or any of the
@@ -630,10 +645,8 @@ export function compileObjectLiteralAsExternref(
     // and `Object.keys`/`o[k]` missed the method. Mirrors the MethodDeclaration
     // arm in `compileObjectLiteralWithAccessors` (below): compile the method as a
     // closure via `emitObjectLiteralMethodFn` (standalone → host-free closure;
-    // gc/host → `__make_*_callback` bridge) and store it with `__extern_set`. Only
-    // PLAIN identifier/string/numeric names are handled here — computed/symbol
-    // method keys route to the accessor/host path upstream, matching the
-    // data-property arm above (which skips `keyText === undefined`).
+    // gc/host → `__make_*_callback` bridge) and store it with `__extern_set`.
+    // Symbol and runtime-only keys route upstream (`foldedComputedMethodKey`).
     else if (ts.isMethodDeclaration(prop)) {
       let methodName: string | undefined;
       if (ts.isIdentifier(prop.name)) methodName = prop.name.text;
@@ -641,7 +654,8 @@ export function compileObjectLiteralAsExternref(
       // Canonicalize a numeric method key (`{ 0x10() {} }` → "16") to match the
       // data-property arm's `resolvePropertyNameText`, so store and read agree.
       else if (ts.isNumericLiteral(prop.name)) methodName = String(Number(prop.name.text));
-      if (methodName === undefined) continue; // computed/symbol key — handled upstream
+      else methodName = foldedComputedMethodKey(ctx, prop.name, resolveComputedKeyExpression); // (#6651 A7)
+      if (methodName === undefined) continue; // symbol / runtime key — handled upstream
       const setIdx = ensureLateImport(
         ctx,
         "__extern_set",
@@ -1363,18 +1377,8 @@ function compileObjectLiteralWithAccessors(
         compileRuntimeComputedPropertyKey(ctx, fctx, prop.name.expression);
       } else {
         if (propName === undefined) continue;
-        // (#51) Materialize the data-property key via the dual-mode helper, not a
-        // bare `global.get <stringGlobalMap.get(propName)>`. Under
-        // standalone/nativeStrings `addStringConstantGlobal` records the `-1`
-        // sentinel (there is no host string-constant global), so a bare
-        // `global.get -1` reaches binary emit as "global index out of range — -1".
-        // `stringConstantExternrefInstrs` emits the NativeString inline (externref)
-        // path under standalone and the host `global.get` only when a real import
-        // global exists — exactly the fix already applied to the accessor-key path
-        // below (#1888 S5c).
-        addStringConstantGlobal(ctx, propName);
         fctx.body.push({ op: "local.get", index: objLocal });
-        for (const instr of stringConstantExternrefInstrs(ctx, propName)) {
+        for (const instr of staticHostPropertyKeyInstrs(ctx, propName)) {
           fctx.body.push(instr);
         }
       }
@@ -1459,13 +1463,8 @@ function compileObjectLiteralWithAccessors(
         continue;
       }
       if (methodName === undefined) continue;
-      // (#2194) Same dual-mode key fix as the data-property arm above: the raw
-      // `global.get <stringGlobalMap.get(method)>` baked `global.get -1` in
-      // standalone for a method key on a literal that also takes the accessor
-      // path. Route through the guarded helper.
-      addStringConstantGlobal(ctx, methodName);
       fctx.body.push({ op: "local.get", index: objLocal });
-      for (const instr of stringConstantExternrefInstrs(ctx, methodName)) {
+      for (const instr of staticHostPropertyKeyInstrs(ctx, methodName)) {
         fctx.body.push(instr);
       }
       const ok = emitObjectLiteralMethodFn(ctx, fctx, prop as unknown as ts.FunctionExpression, objLocal);
@@ -1489,11 +1488,17 @@ function compileObjectLiteralWithAccessors(
           currentAccIdx,
           (expression) => compileRuntimeComputedPropertyKey(ctx, fctx, expression),
           (half, isGetter) =>
-            emitObjectLiteralAccessorFn(ctx, fctx, half as unknown as ts.FunctionExpression, {
-              forceMutableCaptures: accessorForceMutable,
-              sharedRefCells: accessorSharedRefCells,
-              ...(isGetter ? {} : { forceExternrefParams: true }),
-            }),
+            emitObjectLiteralAccessorFn(
+              ctx,
+              fctx,
+              half as unknown as ts.FunctionExpression,
+              {
+                forceMutableCaptures: accessorForceMutable,
+                sharedRefCells: accessorSharedRefCells,
+                ...(isGetter ? {} : { forceExternrefParams: true }),
+              },
+              objLocal,
+            ), // (#6774 S1) [[HomeObject]] for a runtime key too
         );
         continue;
       }
@@ -1505,16 +1510,28 @@ function compileObjectLiteralWithAccessors(
 
       // Stack: [obj, key, getterCb | null, setterCb | null, flags]
       fctx.body.push({ op: "local.get", index: objLocal });
-      // (#1888 S5c / C5) Materialize the accessor key via the dual-mode helper.
-      // Under standalone/nativeStrings, `addStringConstantGlobal` records the
-      // `-1` sentinel (no host string-constant global), so the old
-      // `global.get <stringGlobalMap.get(prop)>` emitted `global.get -1` →
-      // "u32 out of range: -1" at serialize time (the objlit-accessor standalone
-      // defect). `stringConstantExternrefInstrs` emits the native-string inline
-      // path under standalone and the host `global.get` under GC.
-      addStringConstantGlobal(ctx, propName);
-      for (const instr of stringConstantExternrefInstrs(ctx, propName)) {
-        fctx.body.push(instr);
+      // Host imports require real String keys even with native string storage.
+      // Native targets retain their existing native key representation.
+      // (#6774 S15) A well-known-symbol key (`get [Symbol.unscopables]()`) is
+      // the interned symbol carrier, not the "@@name" spelling.
+      // Only @@unscopables: the iterator-protocol readers still look the other
+      // well-known accessors up under their "@@name" key.
+      const wkSymId =
+        ctx.standalone && propName === "@@unscopables" ? getWellKnownSymbolId(propName.slice(2)) : undefined;
+      const boxSymIdx =
+        wkSymId !== undefined
+          ? ensureLateImport(ctx, "__box_symbol", [{ kind: "i32" }], [{ kind: "externref" }])
+          : undefined;
+      if (wkSymId !== undefined && boxSymIdx !== undefined) {
+        flushLateImportShifts(ctx, fctx);
+        fctx.body.push(
+          { op: "i32.const", value: wkSymId },
+          { op: "call", funcIdx: ctx.funcMap.get("__box_symbol") ?? boxSymIdx },
+        );
+      } else {
+        for (const instr of staticHostPropertyKeyInstrs(ctx, propName)) {
+          fctx.body.push(instr);
+        }
       }
 
       // Getter (or ref.null.extern when only setter is defined).
@@ -2255,6 +2272,11 @@ export function compileObjectLiteral(
   }
   // (#3633) Foreign eval literals lack checker types and require the open representation.
   if (isForeignEvalNode(expr)) return compileObjectLiteralAsExternref(ctx, fctx, expr);
+  // (#6651 V10b) A literal reading an ambient-redeclaring script var takes the open path.
+  if (objectLiteralReadsAmbientRedeclaredVar(ctx, expr)) {
+    const open = compileObjectLiteralAsExternref(ctx, fctx, expr);
+    if (open !== null) return open;
+  }
   // (#2714) A spread-containing literal evaluated in a NON-SPECIFIC contextual
   // type (`any`/`unknown`/`object`, or no contextual type) must take the host
   // plain-object path, like the empty-`{}` any-context arm below. The struct
@@ -2846,10 +2868,206 @@ export function ensureSymbolCounter(ctx: CodegenContext): number {
 }
 
 /**
+ * Native-provider half of `Symbol(description)`.  The host lane deliberately
+ * remains in `compileSymbolCall`: its description registration ABI is a real
+ * host boundary, while standalone owns both the `$Symbol` carrier and the
+ * description table.
+ *
+ * §20.4.1.1 converts the raw description before creating the new symbol.  That
+ * order is observable when `ToString` throws or re-enters `Symbol`, so retain
+ * the converted native string in locals, allocate the counter only afterwards,
+ * then store the description under that captured id.
+ */
+function compileNativeSymbolCall(ctx: CodegenContext, fctx: FunctionContext, args: readonly ts.Expression[]): ValType {
+  const nativeSymbol: ValType = { kind: "i32", symbol: true };
+  if (args.length === 0) {
+    const counterIdx = ensureSymbolCounter(ctx);
+    fctx.body.push(
+      { op: "global.get", index: counterIdx },
+      { op: "i32.const", value: 1 },
+      { op: "i32.add" },
+      { op: "global.set", index: counterIdx },
+      { op: "global.get", index: counterIdx },
+    );
+    return nativeSymbol;
+  }
+
+  // The canonical standalone providers are a required trio here: raw-argument
+  // undefined detection, the native Symbol carrier for the dynamic TypeError,
+  // and the split ToPrimitive(string) / primitive-ToString path required by
+  // §7.1.17. A reduced build must fail the compilation rather than silently
+  // selecting the old, semantically incorrect native lowering.
+  const failClosed = (message: string): ValType => {
+    reportError(ctx, args[0]!, message);
+    // Keep the expression stack-balanced while the fatal diagnostic prevents
+    // this placeholder from becoming observable output.
+    fctx.body.push({ op: "i32.const", value: 0 });
+    return nativeSymbol;
+  };
+  ensureSymbolCarrier(ctx);
+  const anyStrTypeIdx = ctx.anyStrTypeIdx;
+  if (anyStrTypeIdx < 0) return failClosed("Symbol(description) requires native string and Symbol carriers");
+  // Own the object runtime explicitly instead of routing through
+  // `__extern_toString`: Symbol must inspect the result of ToPrimitive before
+  // primitive stringification, since ToString(Symbol) is abrupt.
+  ensureObjectRuntime(ctx);
+  const requestedUndefined = ensureLateImport(ctx, "__typeof_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
+  flushLateImportShifts(ctx, fctx);
+  if (requestedUndefined === undefined) {
+    return failClosed("Symbol(description) requires native ToPrimitive and typeof-undefined providers");
+  }
+
+  const rawDescription = allocLocal(fctx, `__symdesc_raw_${fctx.locals.length}`, { kind: "externref" });
+  const description = allocLocal(fctx, `__symdesc_text_${fctx.locals.length}`, {
+    kind: "ref_null",
+    typeIdx: anyStrTypeIdx,
+  });
+  const primitiveDescription = allocLocal(fctx, `__symdesc_primitive_${fctx.locals.length}`, { kind: "externref" });
+  const hasDescription = allocLocal(fctx, `__symdesc_has_${fctx.locals.length}`, { kind: "i32" });
+  const symbolId = allocLocal(fctx, `__symdesc_symbol_${fctx.locals.length}`, { kind: "i32" });
+  fctx.body.push({ op: "i32.const", value: 0 }, { op: "local.set", index: hasDescription });
+
+  // Evaluate precisely once.  Request an externref rather than a native string
+  // so the raw undefined test precedes ToString; in particular an object's
+  // toString() returning undefined must store the literal text "undefined".
+  const rawType = compileExpression(ctx, fctx, args[0]!, { kind: "externref" });
+  if (rawType === null) {
+    return failClosed("Symbol(description) did not produce a value");
+  }
+  if (rawType.kind !== "externref") {
+    coerceType(ctx, fctx, rawType, { kind: "externref" });
+  }
+  fctx.body.push({ op: "local.set", index: rawDescription });
+
+  // ArgumentListEvaluation precedes the constructor body. Symbol ignores
+  // trailing values, but their effects (and abrupt completion) must occur
+  // after the raw description is evaluated and before its ToPrimitive call.
+  for (const extra of args.slice(1)) {
+    const extraType = compileExpression(ctx, fctx, extra);
+    if (extraType !== null) fctx.body.push({ op: "drop" });
+    flushLateImportShifts(ctx, fctx);
+  }
+
+  // Build the local/global/array-only store template before taking any numeric
+  // function, type, or global index into a JavaScript variable. It contains no
+  // calls, so once its construction-time shifts are flushed below it cannot
+  // invalidate the detached TypeError template built afterwards.
+  const storeDescription = collectInstrs(fctx, () => {
+    fctx.body.push({ op: "local.get", index: symbolId }, { op: "local.get", index: description });
+    emitSymbolDescStore(ctx, fctx);
+    flushLateImportShifts(ctx, fctx);
+  });
+  // The primitive stringifier may provision native types/functions. Make that
+  // happen before capturing its funcIdx below.
+  ensureAnyToStringHelper(ctx);
+  addStringConstantGlobal(ctx, "string");
+  // Each TypeError template may mint its constructor and string constant. Keep
+  // the two arrays distinct: a later late-import shift walks emitted bodies,
+  // and sharing one mutable instruction array between both `if` arms would
+  // apply that repair twice.
+  const rawSymbolThrow = buildThrowJsErrorInstrs(ctx, "TypeError", "Cannot convert a Symbol value to a string", {
+    forceInModuleCtor: true,
+    flush: fctx,
+  });
+  const primitiveSymbolThrow = buildThrowJsErrorInstrs(ctx, "TypeError", "Cannot convert a Symbol value to a string", {
+    forceInModuleCtor: true,
+    flush: fctx,
+  });
+  // The table setup is the last possible global producer. Allocate the counter
+  // afterwards, then resolve every emitted function/type index from the settled
+  // registries rather than retaining a pre-template numeric snapshot.
+  const counterIdx = ensureSymbolCounter(ctx);
+  flushLateImportShifts(ctx, fctx);
+  const finalToPrimitiveIdx = getToPrimitiveProvider(ctx);
+  const finalAnyToStringIdx = ctx.nativeStrHelpers.get("__any_to_string");
+  const finalUndefinedIdx = ctx.funcMap.get("__typeof_undefined");
+  const finalSymbolTypeIdx = ctx.symbolTypeIdx;
+  const finalAnyStrTypeIdx = ctx.anyStrTypeIdx;
+  if (
+    finalToPrimitiveIdx === undefined ||
+    finalAnyToStringIdx === undefined ||
+    finalUndefinedIdx === undefined ||
+    finalSymbolTypeIdx < 0 ||
+    finalAnyStrTypeIdx < 0
+  ) {
+    return failClosed("Symbol(description) ToPrimitive/ToString provider setup did not complete");
+  }
+
+  fctx.body.push(
+    { op: "local.get", index: rawDescription },
+    { op: "call", funcIdx: finalUndefinedIdx },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      // `description === undefined` means no [[Description]], not the string
+      // "undefined". This predicate runs before ToString by specification.
+      then: [],
+      else: [
+        { op: "local.get", index: rawDescription },
+        { op: "any.convert_extern" },
+        { op: "ref.test", typeIdx: finalSymbolTypeIdx },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: rawSymbolThrow,
+          else: [],
+        },
+        // Preserve the one observable ToPrimitive result. `__extern_toString`
+        // would invoke ToPrimitive again and let a Symbol result reach the
+        // native renderer, which is wrong here: §7.1.17 rejects that Symbol.
+        { op: "local.get", index: rawDescription },
+        ...stringConstantExternrefInstrs(ctx, "string"),
+        { op: "call", funcIdx: finalToPrimitiveIdx },
+        { op: "local.tee", index: primitiveDescription },
+        { op: "any.convert_extern" },
+        { op: "ref.test", typeIdx: finalSymbolTypeIdx },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: primitiveSymbolThrow,
+          else: [],
+        },
+        { op: "local.get", index: primitiveDescription },
+        { op: "any.convert_extern" },
+        { op: "call", funcIdx: finalAnyToStringIdx },
+        { op: "local.set", index: description },
+        { op: "i32.const", value: 1 },
+        { op: "local.set", index: hasDescription },
+      ],
+    },
+    // Now, and only now, allocate the outer identity. A callback's nested
+    // Symbol() has already committed its own id and description.
+    { op: "global.get", index: counterIdx },
+    { op: "i32.const", value: 1 },
+    { op: "i32.add" },
+    { op: "local.tee", index: symbolId },
+    { op: "global.set", index: counterIdx },
+    { op: "local.get", index: hasDescription },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: storeDescription,
+      else: [],
+    },
+    { op: "local.get", index: symbolId },
+  );
+  return nativeSymbol;
+}
+
+/**
  * Compile a Symbol() call — returns a unique i32 by incrementing a global counter.
- * The description argument (if any) is evaluated for side effects but discarded.
+ * The native provider converts and records a description before the increment;
+ * the host provider retains its existing registration boundary below.
  */
 export function compileSymbolCall(ctx: CodegenContext, fctx: FunctionContext, args: readonly ts.Expression[]): ValType {
+  const nativeSymbolProvider = usesNativeSymbolProvider(ctx);
+  if (nativeSymbolProvider) {
+    // Native lowering evaluates the whole argument list into its own raw
+    // description/trailing-effect sequence before doing the §7.1.17 check.
+    // The host lane retains its existing registration ABI below.
+    ensureNativeSymbolBoundaryBridge(ctx);
+    return compileNativeSymbolCall(ctx, fctx, args);
+  }
   // (#3481) §20.4.1.1 step 2: a description that is not `undefined` goes
   // through `? ToString(description)`, and ToString(Symbol) throws (§7.1.17
   // step 3). `Symbol(anotherSymbol)` used to succeed — the description
@@ -2858,9 +3076,8 @@ export function compileSymbolCall(ctx: CodegenContext, fctx: FunctionContext, ar
   // (built-ins/Symbol/desc-to-string-symbol.js). Guarded before the counter is
   // bumped so a throwing call reserves no id.
   if (args.length > 0 && emitSymbolOperandCoercionThrow(ctx, fctx, args[0]!, "string")) {
-    return usesNativeSymbolProvider(ctx) ? { kind: "i32", symbol: true } : { kind: "i32" };
+    return { kind: "i32" };
   }
-  if (usesNativeSymbolProvider(ctx)) ensureNativeSymbolBoundaryBridge(ctx);
   const counterIdx = ensureSymbolCounter(ctx);
   // Increment counter first so the new id is reserved before we register a
   // description for it: `++counter; register_desc(counter, desc); return counter`.
@@ -2871,22 +3088,9 @@ export function compileSymbolCall(ctx: CodegenContext, fctx: FunctionContext, ar
   // (#1467) Pre-register the description so `__box_symbol(id)` later returns
   // `Symbol(desc)` instead of `Symbol("wasm_<id>")`. This preserves
   // `Symbol(s).description === s` and `Symbol().description === undefined`.
-  // Standalone-mode fallback: if the host import isn't available, the symbol
-  // is still constructed (with the legacy `wasm_<id>` description); only the
-  // `.description` accessor in JS-host mode benefits.
-  //
-  // (#2163) In no-JS-host mode (`--target standalone` / `--target wasi`) there
-  // is no host to register the description with, so emitting the
-  // `env::__symbol_register_desc` import leaves it unsatisfiable and the module
-  // fails to instantiate — making EVERY `Symbol()` call a runtime failure
-  // standalone. The symbol value itself is just the i32 counter id (which is
-  // all `typeof s === "symbol"` and symbol identity/distinctness need), so the
-  // host registration is a pure JS-host fast path. Skip it standalone and only
-  // evaluate the description argument for side effects.
-  const nativeSymbolProvider = usesNativeSymbolProvider(ctx);
-  const regIdx = nativeSymbolProvider
-    ? undefined
-    : ensureLateImport(ctx, "__symbol_register_desc", [{ kind: "i32" }, { kind: "externref" }], []);
+  // The native provider returned above; this host lane preserves its existing
+  // description-registration boundary and associated import contract.
+  const regIdx = ensureLateImport(ctx, "__symbol_register_desc", [{ kind: "i32" }, { kind: "externref" }], []);
   if (regIdx !== undefined) {
     fctx.body.push({ op: "global.get", index: counterIdx });
     if (args.length > 0) {
@@ -2901,58 +3105,9 @@ export function compileSymbolCall(ctx: CodegenContext, fctx: FunctionContext, ar
     }
     flushLateImportShifts(ctx, fctx);
     fctx.body.push({ op: "call", funcIdx: regIdx });
-  } else if (args.length > 0) {
-    // (#2163) Standalone / no-JS-host mode: store the description in the native
-    // id→string side table so `sym.description` can read it back without a host
-    // import. §20.4.1.1: if the description argument is `undefined`, the symbol
-    // has NO description (`.description === undefined`), so a literal
-    // `Symbol(undefined)` must NOT register a description — but it still
-    // evaluates the argument for side effects.
-    const argExpr = args[0]!;
-    const isUndefinedLiteral =
-      ts.isIdentifier(argExpr) &&
-      argExpr.text === "undefined" &&
-      ctx.checker.getSymbolAtLocation(argExpr) === undefined;
-    const argType = compileExpression(ctx, fctx, argExpr, { kind: "ref_null", typeIdx: ctx.anyStrTypeIdx });
-    if (argType === null) {
-      // expression produced no value — nothing to store.
-    } else if (isUndefinedLiteral) {
-      // Per spec, no description; discard the evaluated value.
-      if (argType.kind !== "ref_null" || argType.typeIdx !== ctx.anyStrTypeIdx) {
-        // value left on stack in some other type — drop it directly.
-      }
-      fctx.body.push({ op: "drop" });
-    } else {
-      // Coerce the description to a `ref_null $AnyString` and store it at the
-      // reserved id: `store(id, desc)` consumes both off the stack.
-      if (argType.kind !== "ref_null" || argType.typeIdx !== ctx.anyStrTypeIdx) {
-        coerceType(ctx, fctx, argType, { kind: "ref_null", typeIdx: ctx.anyStrTypeIdx });
-      }
-      // emitSymbolDescStore wants `[id, desc]`; the desc is on top, so push id
-      // BELOW it via a temp.
-      const descTmp = allocLocal(fctx, `__symdesc_arg_${fctx.locals.length}`, {
-        kind: "ref_null",
-        typeIdx: ctx.anyStrTypeIdx,
-      });
-      fctx.body.push({ op: "local.set", index: descTmp });
-      fctx.body.push({ op: "global.get", index: counterIdx });
-      fctx.body.push({ op: "local.get", index: descTmp });
-      emitSymbolDescStore(ctx, fctx);
-    }
   }
   // Push the symbol id (the counter) as the result.
   fctx.body.push({ op: "global.get", index: counterIdx });
-  // (#4626) Carry the symbol BRAND on the i32 id ONLY in the native-symbol
-  // lanes (standalone/wasi), so any-channel coercions box via __box_symbol
-  // (interned $Symbol carrier), not __box_number — unbranded, `typeof
-  // t(Symbol())` through an any param answered "number" and defineProperty/
-  // sameValue treated symbols as numbers whenever the checker type was not
-  // consulted. The js-host lane MUST stay unbranded: branding it routed
-  // mid-emission coercions through the `ensureLateImport(__box_symbol)` arm,
-  // whose late host-import insertion shifted baked function indices (#608/
-  // #794) — 216 "invalid Wasm binary" regressions in the 2026-08-23
-  // merge_group (Temporal/JSON/Array buckets).
-  if (nativeSymbolProvider) return { kind: "i32", symbol: true };
   return { kind: "i32" };
 }
 
@@ -3607,7 +3762,7 @@ export function compileObjectLiteralForStruct(
       if (hasBindingPattern && !param.type && !param.dotDotDotToken && wasmType.kind !== "externref") {
         wasmType = { kind: "externref" };
       }
-      newParams.push(wasmType);
+      newParams.push(restPatternParamSlot(ctx, param, wasmType)); // (#6774 S7)
     }
 
     // Compare against the existing function's signature. A mismatched param
@@ -4273,7 +4428,7 @@ export function compileObjectLiteralForStruct(
         if (hasBindingPattern && !param.type && !param.dotDotDotToken && wasmType.kind !== "externref") {
           wasmType = { kind: "externref" };
         }
-        methodParams.push(wasmType);
+        methodParams.push(restPatternParamSlot(ctx, param, wasmType)); // (#6774 S7)
       }
 
       const sig = ctx.checker.getSignatureFromDeclaration(prop);
@@ -4410,8 +4565,8 @@ export function compileObjectLiteralForStruct(
       // The class-method / getter-setter paths already pass these `extraNodes`
       // (#1161, nested-declarations.ts:128-133); mirror it here for plain object
       // methods (the object-method variants of the `ary-init-iter-close` cluster).
-      const objMethodParamInits = prop.parameters.map((p) => p.initializer).filter((e): e is ts.Expression => !!e);
-      promoteAccessorCapturesToGlobals(ctx, fctx, prop.body, objMethodParamInits);
+      const methodParamInits = prop.parameters.map((p) => p.initializer).filter((e): e is ts.Expression => !!e);
+      promoteAccessorCapturesToGlobals(ctx, fctx, prop.body, methodParamInits, undefined, undefined, undefined, prop);
 
       // Compile method body
       const methodFctxParams: { name: string; type: ValType }[] = [
@@ -4436,7 +4591,7 @@ export function compileObjectLiteralForStruct(
         if (hasBindingPattern && !param.type && !param.dotDotDotToken && wasmType.kind !== "externref") {
           wasmType = { kind: "externref" };
         }
-        methodFctxParams.push({ name: paramName, type: wasmType });
+        methodFctxParams.push({ name: paramName, type: restPatternParamSlot(ctx, param, wasmType) }); // (#6774 S7)
       }
 
       const methodFctx: FunctionContext = {
@@ -4463,7 +4618,9 @@ export function compileObjectLiteralForStruct(
       if (savedFunc) ctx.funcStack.push(savedFunc);
       ctx.currentFunc = methodFctx;
 
+      const argumentsFirst = argumentsBeforeDefaults(ctx, methodFctx, prop, methodFctxParams); // (#6651 A11)
       // Emit default-value initialization for parameters with initializers
+      hoistParameterEvalVars(ctx, methodFctx, prop); // (#6774 S7)
       emitMethodParamDefaults(ctx, methodFctx, prop.parameters, 1); // 1 to skip 'this'
 
       // Destructure parameters with binding patterns (e.g. method([...x]) or method({a, b}))
@@ -4480,14 +4637,14 @@ export function compileObjectLiteralForStruct(
       // Set up `arguments` object if the method body references it (#820).
       // Object literal methods need an arguments vec struct so that
       // `arguments.length` and `arguments[n]` work at runtime.
-      if (needsImplicitArgumentsObject(prop)) {
+      if (!endArgumentsBeforeDefaults(methodFctx, prop, argumentsFirst) && needsImplicitArgumentsObject(prop)) {
         const methodParamTypes = methodFctxParams.slice(1).map((p) => p.type); // skip 'this'
         // Object-literal methods inherit the surrounding code's strictness (#779e).
         // (#2743) Also unmapped when the parameter list is non-simple
         // (rest/default/destructuring) — §10.2.11 step 22.a.
         const unmapped =
           isStrictFunction(prop, ctx.inferModuleStrictArguments) || !isSimpleParameterList(prop.parameters);
-        emitArgumentsObject(ctx, methodFctx, methodParamTypes, 1, unmapped); // paramOffset 1 to skip 'this'
+        emitArgumentsObject(ctx, methodFctx, methodParamTypes, /* skip 'this' */ 1, unmapped, prop.parameters);
       }
 
       if (isGeneratorMethod && prop.body && objMethNativeGen) {
@@ -5517,6 +5674,20 @@ export function compileArrayLiteral(
       const innerType = typeArgs[0];
       elemWasm = innerType ? resolveWasmType(ctx, innerType) : { kind: "f64" };
     }
+    // (#6651 V6) `[...strings, Symbol.toStringTag]`: the spread source picked a
+    // native-string vec, and the later non-string element was coerced to it as
+    // `ref.null; ref.as_non_null` — a null-deref trap at construction. Widen to
+    // the universal carrier when any fixed element is not a string.
+    if (
+      ctx.nativeStrings &&
+      (elemWasm.kind === "ref" || elemWasm.kind === "ref_null") &&
+      (elemWasm.typeIdx === ctx.anyStrTypeIdx || elemWasm.typeIdx === ctx.nativeStrTypeIdx) &&
+      expr.elements.some(
+        (el) => !ts.isSpreadElement(el) && !ts.isOmittedExpression(el) && ctx.oracle.staticJsTypeOf(el) !== "string",
+      )
+    ) {
+      elemWasm = { kind: "externref" };
+    }
   } else if (ts.isOmittedExpression(firstElem) || _isUndefinedLike(firstElem)) {
     // All elements are omitted or undefined-like — consult the contextual type
     // to choose an element kind so destructuring defaults fire correctly (#1553e).
@@ -5556,7 +5727,7 @@ export function compileArrayLiteral(
     // reflective reader (String, typeof, sameValue, symbol-keying) already
     // understands. Native-symbol lanes only; the js-host lane keeps its vec
     // selection byte-identical (the 2026-08-23 park precedent for brand leaks).
-    if (process.env.JS2_SYM_DEBUG)
+    if (readEnv("JS2_SYM_DEBUG"))
       console.error(
         "[arr-lit]",
         expr.getText().slice(0, 30),
@@ -5616,6 +5787,32 @@ export function compileArrayLiteral(
       !hasContextualRefCarrier &&
       (elemWasm.kind === "ref" || elemWasm.kind === "ref_null") &&
       hasIncompatibleElementCarrier(ctx, expr, firstElem)
+    ) {
+      elemWasm = { kind: "externref" };
+    }
+    // (#6613) The sibling case #4289's proof names and declines: an element
+    // that is not a struct AT ALL — a number, a boolean, a native string, a
+    // nested vec — cannot inhabit element zero's closed struct either, and the
+    // guard cast answers null, so `ref.as_non_null` TRAPS while the literal is
+    // still being constructed. Measured standalone on this tree:
+    // `const obj = {year:1,month:2,day:3}; [obj, "str"].length` →
+    // "dereferencing a null pointer". That is the shape test262's wrong-type
+    // tables are written in (`[tooEarly, "-271821-04-18"]` in
+    // `Temporal/PlainDate/from/limits.js`), and the inline spelling
+    // `[{year:1}, "str"]` already widened — only the BINDING spelling reached
+    // the hole, because `unwrapObjectLiteralElement` does not resolve an
+    // identifier to its initializer.
+    //
+    // (#6885) Every lane. #6613 gated this on standalone/WASI believing the
+    // JS-host lane kept a string sibling; it kept the LENGTH but stored the
+    // string as null (`[obj, "s"]` → `[{…}, null]`) and trapped on a number
+    // sibling (`[obj, 5]`). The predicate now also counts a primitive-typed
+    // `externref` element, which is what a host-lane string is.
+    if (
+      !hasSpread &&
+      !hasContextualRefCarrier &&
+      (elemWasm.kind === "ref" || elemWasm.kind === "ref_null") &&
+      hasNonStructElementForStructCarrier(ctx, expr, elemWasm)
     ) {
       elemWasm = { kind: "externref" };
     }
@@ -6711,7 +6908,7 @@ export function compileArrayConstructorCall(
     const sizeLocal = allocLocal(fctx, `__arr_size_${fctx.locals.length}`, { kind: "i32" });
     fctx.body.push({ op: "local.tee", index: sizeLocal });
     fctx.body.push({ op: "local.get", index: sizeLocal });
-    fctx.body.push({ op: "array.new_default", typeIdx: arrTypeIdx });
+    fctx.body.push(...holeFilledArrayNewInstrs(ctx, fctx, arrTypeIdx)); // (#6771 S3)
     fctx.body.push({ op: "struct.new", typeIdx: vecTypeIdx });
     return { kind: "ref_null", typeIdx: vecTypeIdx };
   }

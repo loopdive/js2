@@ -13,6 +13,7 @@ import { findConstructorImplementation, hasStaticModifier } from "./ast-modifier
 import { classMemberFuncKey } from "./class-member-keys.js";
 import type { CodegenContext } from "./context/types.js";
 import { definedFuncAt } from "./func-space.js";
+import { retypeProgramAbiClassCallable } from "./program-abi-class-callable-planning.js";
 import { addFuncType } from "./registry/types.js";
 
 function hasFixedForwardClassAbiParameters(parameters: readonly ts.ParameterDeclaration[]): boolean {
@@ -60,8 +61,9 @@ function forwardLocalClassRef(
 function classCallable(
   ctx: CodegenContext,
   fullName: string,
+  kind?: "instance", // (#6772 S4) a MEMBER slot, never the allocator / `_init`
 ): { readonly func: WasmFunction; readonly signature: FuncTypeDef } | undefined {
-  const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName));
+  const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName, kind));
   const func = funcIdx === undefined ? undefined : definedFuncAt(ctx, funcIdx);
   const signature = func === undefined ? undefined : ctx.mod.types[func.typeIdx];
   return func && signature?.kind === "func" ? { func, signature } : undefined;
@@ -74,7 +76,8 @@ function setFinalClassCallableType(
   params: readonly ValType[],
   results: readonly ValType[],
 ): void {
-  func.typeIdx = addFuncType(ctx, [...params], [...results], `${fullName}_type`);
+  // (#6733) Inherited child aliases raised at collection must follow the retype.
+  retypeProgramAbiClassCallable(ctx, func, addFuncType(ctx, [...params], [...results], `${fullName}_type`));
 }
 
 function replaceForwardParameters(
@@ -145,7 +148,7 @@ export function finalizeForwardClassCallableAbis(ctx: CodegenContext, sourceFile
         hasFixedForwardClassAbiParameters(member.parameters)
       ) {
         const fullName = `${className}_${member.name.text}`;
-        const callable = classCallable(ctx, fullName);
+        const callable = classCallable(ctx, fullName, "instance");
         if (!callable) continue;
         const replacement = replaceForwardParameters(
           ctx,

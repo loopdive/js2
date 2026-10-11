@@ -518,13 +518,13 @@ async function child(root: string, directory: string, label: string) {
   root = realpathSync(root);
   const output = join(directory, label + ".json"),
     env = envFor(root),
-    args = ["--import", "tsx", instrument, "--settlement-arm", root, output];
+    args = ["--experimental-wasm-exnref", "--import", "tsx", instrument, "--settlement-arm", root, output];
   const expected = {
     snapshot: snapshot(root),
     identity: runtime(root),
     matrix: fixtures(root),
     launch: {
-      argv: ["--import", "tsx"],
+      argv: ["--experimental-wasm-exnref", "--import", "tsx"],
       env: Object.fromEntries(
         Object.entries(env)
           .filter(([key]) =>

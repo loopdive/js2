@@ -1,8 +1,9 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 //
 // #3509 — standalone may compile an ordinary deferred function containing
-// import() without a host loader. Reaching the import still throws; executable
-// dynamic module evaluation remains #3494.
+// import() without a host loader. Since #3494 reaching the import no longer
+// throws synchronously: it returns a native Promise (rejected with a TypeError
+// here, because the target is not in the compiled module graph).
 import { describe, expect, it } from "vitest";
 import { compile, compileMulti } from "../src/index.js";
 
@@ -69,7 +70,8 @@ describe("#3509 standalone deferred dynamic import", () => {
   it.each([
     { kind: "ordinary arrow", callee: `() => { import("./empty_FIXTURE.js"); return 1; }` },
     { kind: "ordinary function expression", callee: `function () { import("./empty_FIXTURE.js"); return 1; }` },
-  ])("throws deterministically when an equivalent $kind is invoked", async ({ callee }) => {
+    { kind: "async IIFE", callee: `() => { (async () => { await import("./empty_FIXTURE.js"); })(); return 1; }` },
+  ])("returns a Promise instead of throwing when an equivalent $kind is invoked", async ({ callee }) => {
     const result = await compile(
       `export function test() {
          return (${callee})();
@@ -80,31 +82,10 @@ describe("#3509 standalone deferred dynamic import", () => {
     expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
     expectNoDynamicImportHost(result);
     const { instance } = await WebAssembly.instantiate(result.binary, {});
-    const noResult = Symbol("dynamic import did not return");
-    let returned: unknown = noResult;
-    expect(() => {
-      returned = (instance.exports.test as () => unknown)();
-    }).toThrow();
-    expect(returned, "unsupported import returned a false Promise/namespace value").toBe(noResult);
+    expect((instance.exports.test as () => number)()).toBe(1);
   });
 
-  it("keeps an executed async IIFE on the explicit unsupported path", async () => {
-    const result = await compile(
-      `export function test() {
-         (async () => { await import("./empty_FIXTURE.js"); })();
-         return 1;
-       }`,
-      { skipSemanticDiagnostics: true, target: "standalone" },
-    );
-
-    expect(result.success).toBe(false);
-    expect(result.errors.some((error) => error.message.includes("Standalone dynamic import is unsupported"))).toBe(
-      true,
-    );
-    expectNoDynamicImportHost(result);
-  });
-
-  it("keeps an executed with-body import on the explicit unsupported path", async () => {
+  it("compiles a with-body import without a host loader", async () => {
     const result = await compile(
       `export function test() {
          with ({}) { import("./empty_FIXTURE.js"); }
@@ -119,14 +100,11 @@ describe("#3509 standalone deferred dynamic import", () => {
       },
     );
 
-    expect(result.success).toBe(false);
-    expect(result.errors.some((error) => error.message.includes("Standalone dynamic import is unsupported"))).toBe(
-      true,
-    );
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
     expectNoDynamicImportHost(result);
   });
 
-  it("keeps the executable top-level-await module graph on #3494", async () => {
+  it("rejects (at runtime, not compile time) an import whose graph uses top-level await", async () => {
     const result = await compileMulti(
       {
         "./module-graphs-does-not-hang.js": `
@@ -143,10 +121,7 @@ describe("#3509 standalone deferred dynamic import", () => {
       { allowJs: true, target: "standalone" },
     );
 
-    expect(result.success).toBe(false);
-    expect(result.errors.some((error) => error.message.includes("Standalone dynamic import is unsupported"))).toBe(
-      true,
-    );
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
     expectNoDynamicImportHost(result);
   });
 

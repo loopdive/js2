@@ -127,7 +127,7 @@ async function build(reuse: string | undefined): Promise<Built> {
   const saved = { ic: process.env.JS2WASM_INLINE_PROP_IC, reuse: process.env.JS2WASM_IC_GUARD_REUSE };
   const set = (key: string, value: string | undefined): void => {
     // `= undefined` coerces to the STRING "undefined", which reads as "set".
-    // biome-ignore lint/performance/noDelete: only `delete` truly unsets an env var
+    // Only `delete` truly unsets an env var
     if (value === undefined) delete process.env[key];
     else process.env[key] = value;
   };

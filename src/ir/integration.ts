@@ -75,7 +75,11 @@ import {
   type IrDynamicRuntimeNeed,
 } from "../codegen/dyn-ops.js";
 import { ensureLateImport, flushLateImportShifts } from "../codegen/shared.js"; // (#2949 S5.2) host __host_eq / __host_loose_eq registration; (#3143) flush the __extern_is_undefined batch pre-Phase-3
-import { getOrRegisterPromiseType, isStandalonePromiseActive } from "../codegen/async-scheduler.js";
+import {
+  getOrRegisterPromiseType,
+  isStandalonePromiseActive,
+  createPromiseRejectionEmissionBindings,
+} from "../codegen/async-scheduler.js";
 import {
   addGeneratorImports,
   addForInImports,
@@ -491,6 +495,7 @@ import {
   IR_STRING_REPEAT_COUNTED_NATIVE_FN,
   IR_STRING_REPEAT_FN,
 } from "./string-runtime.js";
+import { readEnv } from "../env.js";
 export {
   buildIrIntegrationReport,
   caughtIntegrationFailure,
@@ -955,7 +960,7 @@ function prepareClassAccessorWritebackEvidence(
     }
     candidates.set(entry.terminalOwnerUnitId, writeback);
   }
-  if (process.env.JS2WASM_TEST_MUTATE_IR_ACCESSOR_TDZ_VALUE_PAIR === "1") {
+  if (readEnv("JS2WASM_TEST_MUTATE_IR_ACCESSOR_TDZ_VALUE_PAIR") === "1") {
     const tdzCandidates = [...candidates].filter(([, evidence]) => evidence.tdzGlobalBindingId !== undefined);
     const first = tdzCandidates[0];
     const second = tdzCandidates[1];
@@ -2162,7 +2167,7 @@ function injectFinalAllocProvenanceFailure(
   compatibilityName: string,
   artifactKind: "ordinary" | "synthetic" | "monomorphized",
 ): IrFunction {
-  const selector = process.env.JS2WASM_TEST_INJECT_IR_FINAL_ALLOC_FAILURE;
+  const selector = readEnv("JS2WASM_TEST_INJECT_IR_FINAL_ALLOC_FAILURE");
   if (selector === undefined || (selector !== "1" && selector !== compatibilityName && selector !== artifactKind)) {
     return fn;
   }
@@ -2324,7 +2329,7 @@ export function compileIrPathFunctions(
 ): IrIntegrationReport {
   const integrationSourceFiles = resolveIntegrationSourceFiles(sourceFile, options?.integrationSourceFiles);
   const callableBoundaryRequested = (options?.preparedCallableBoundaryCandidates?.size ?? 0) > 0;
-  const inlineOptions = parseInlineOptions(process.env.JS2WASM_IR_INLINE);
+  const inlineOptions = parseInlineOptions(readEnv("JS2WASM_IR_INLINE"));
   const fuseNativeNumberFormatCarriers =
     inlineOptions.adapters && !inlineOptions.report && !inlineOptions.count && inlineOptions.poison === "off";
   const irTargetProfile = projectIrBackendTargetProfile(ctx.targetProfile, { fast: ctx.fast });
@@ -2596,7 +2601,7 @@ export function compileIrPathFunctions(
   // every file the census is about. Surveying there would report an empty
   // multiset for exactly the population being measured. Here both the resolver
   // and the population are in scope whether or not the unit was claimed.
-  if (ctx.irOutcomes !== undefined && process.env.JS2WASM_IR_SHAPE_DIAG === "1") {
+  if (ctx.irOutcomes !== undefined && readEnv("JS2WASM_IR_SHAPE_DIAG") === "1") {
     const refusals = surveyModuleBindingRefusals(
       integrationPopulation?.moduleInitPopulation ?? collectModuleInitPopulation(sourceFile),
       moduleBindingResolver,
@@ -3036,7 +3041,7 @@ export function compileIrPathFunctions(
   // UnionStructRegistry, the from-AST resolver, and every AST-to-IR build.
   // The post-build IR whitelist below remains independent and intentionally
   // stays in place as a second defence.
-  const pendingLateImportShiftInjection = process.env.JS2WASM_TEST_ARM_MULTI_PREPARED_PENDING_LATE_IMPORT_SHIFT;
+  const pendingLateImportShiftInjection = readEnv("JS2WASM_TEST_ARM_MULTI_PREPARED_PENDING_LATE_IMPORT_SHIFT");
   if (pendingLateImportShiftInjection !== undefined) {
     if (!options?.atomicComponent || !options.deferPreparedPublication || pendingLateImportShiftInjection !== "1") {
       throw new IrInvariantError(
@@ -3064,7 +3069,7 @@ export function compileIrPathFunctions(
   atomicPreflightSnapshot.value =
     options?.atomicComponent &&
     options.deferPreparedPublication &&
-    process.env.JS2WASM_TEST_ASSERT_MULTI_PREPARED_PREFLIGHT_READ_ONLY === "1"
+    readEnv("JS2WASM_TEST_ASSERT_MULTI_PREPARED_PREFLIGHT_READ_ONLY") === "1"
       ? snapshotAtomicDeferredPreflightState(ctx)
       : undefined;
   if (options?.atomicComponent && options.deferPreparedPublication && !options.preparedModuleInitBatch) {
@@ -3160,7 +3165,7 @@ export function compileIrPathFunctions(
     ownerName: string,
     synthesized: boolean,
   ): ReturnType<typeof verifyIrFunction> => {
-    const injection = process.env.JS2WASM_TEST_INJECT_IR_VERIFY_FAILURE;
+    const injection = readEnv("JS2WASM_TEST_INJECT_IR_VERIFY_FAILURE");
     const inject = injection === "1" || injection === ownerName || (injection === "synthetic" && synthesized);
     if (!inject || fn.blocks.length === 0) return verifyIrFunction(fn);
     const first = fn.blocks[0]!;
@@ -3186,7 +3191,7 @@ export function compileIrPathFunctions(
         // #1923 — test-only seam: simulate a build-time demotion on a CLAIMED
         // function so the post-claim metering + gate can be exercised without a
         // real compiler regression in the corpus. Off in every normal build.
-        if (process.env.JS2WASM_TEST_INJECT_IR_BUILD_THROW) {
+        if (readEnv("JS2WASM_TEST_INJECT_IR_BUILD_THROW")) {
           throw new Error(`ir/from-ast: injected test build failure (${name})`);
         }
         const ownerUnitId = requireArtifactUnitId(stmt, name);
@@ -3968,7 +3973,7 @@ export function compileIrPathFunctions(
   const hygieneCandidates: BuiltFn[] = [];
   for (const entry of built) {
     try {
-      if (process.env.JS2WASM_TEST_INJECT_IR_PHASE_THROW === "hygiene-synthetic" && entry.synthesized) {
+      if (readEnv("JS2WASM_TEST_INJECT_IR_PHASE_THROW") === "hygiene-synthetic" && entry.synthesized) {
         throw new Error("injected synthetic hygiene failure");
       }
       const optimized = runHygienePasses(entry.fn, allocRegistry);
@@ -4011,7 +4016,7 @@ export function compileIrPathFunctions(
   const modIn: IrModule = { functions: afterHygiene.map((e) => e.fn) };
   let modOut: IrModule;
   try {
-    if (process.env.JS2WASM_TEST_INJECT_IR_PHASE_THROW === "inline") {
+    if (readEnv("JS2WASM_TEST_INJECT_IR_PHASE_THROW") === "inline") {
       throw new Error("injected module inline failure");
     }
     modOut = inlineSmall(modIn, allocRegistry);
@@ -4059,7 +4064,7 @@ export function compileIrPathFunctions(
           verifyErrors,
         );
       }
-      if (process.env.JS2WASM_TEST_INJECT_IR_PHASE_THROW === "provenance-synthetic" && before.synthesized) {
+      if (readEnv("JS2WASM_TEST_INJECT_IR_PHASE_THROW") === "provenance-synthetic" && before.synthesized) {
         throw new IrInvariantError(
           "allocation-provenance-failure",
           "verify",
@@ -4088,7 +4093,7 @@ export function compileIrPathFunctions(
   const monoIn: IrModule = { functions: healthyAfterInline.map((e) => e.fn) };
   let monoResult: ReturnType<typeof monomorphize>;
   try {
-    if (process.env.JS2WASM_TEST_INJECT_IR_PHASE_THROW === "monomorphize") {
+    if (readEnv("JS2WASM_TEST_INJECT_IR_PHASE_THROW") === "monomorphize") {
       throw new Error("injected module monomorphize failure");
     }
     monoResult = monomorphize(monoIn, allocRegistry);
@@ -4257,7 +4262,7 @@ export function compileIrPathFunctions(
   // -------------------------------------------------------------------------
   let taggedResult: ReturnType<typeof runTaggedUnions>;
   try {
-    if (process.env.JS2WASM_TEST_INJECT_IR_PHASE_THROW === "tagged-union") {
+    if (readEnv("JS2WASM_TEST_INJECT_IR_PHASE_THROW") === "tagged-union") {
       throw new Error("injected tagged-union pass failure");
     }
     taggedResult = runTaggedUnions(monoResult.module);
@@ -5174,7 +5179,7 @@ export function compileIrPathFunctions(
       loweringPlans?.fnctorParameterPreselectionIsCurrent,
       preparedClosure?.preparedScopeLookup,
     );
-    const resolverInjection = process.env.JS2WASM_TEST_INJECT_IR_RESOLVER_FAILURE;
+    const resolverInjection = readEnv("JS2WASM_TEST_INJECT_IR_RESOLVER_FAILURE");
     if (resolverInjection === "function") resolver.resolveFunc(irIntrinsicFuncRef("__injected_missing_func"));
     if (resolverInjection === "planned-support") {
       const valuePlan = loweringPlans?.topLevelFunctionValues.values().next().value;
@@ -5400,7 +5405,7 @@ export function compileIrPathFunctions(
     const owner = terminalOwnerOf(entry);
     try {
       if (!timerLoweringBoundary.prepare(entry)) continue;
-      if (process.env.JS2WASM_TEST_INJECT_IR_PHASE_THROW === "lower-synthetic" && entry.synthesized) {
+      if (readEnv("JS2WASM_TEST_INJECT_IR_PHASE_THROW") === "lower-synthetic" && entry.synthesized) {
         throw new Error("injected synthetic lower failure");
       }
       // (#3142 Slice 2) The module-init unit's slot is its exact legacy
@@ -5471,7 +5476,7 @@ export function compileIrPathFunctions(
       // dedups on shape, so the IR-lowered void unit lands on the same
       // index; a mismatch means the lowering went wrong — keep legacy.
       if (wasmFunc.typeIdx !== existing.typeIdx) {
-        if (process.env.JS2WASM_DEBUG_ABI_PARITY === "1") {
+        if (readEnv("JS2WASM_DEBUG_ABI_PARITY") === "1") {
           console.error(
             `[abi-parity-debug] ${name}: IR=${wasmFunc.typeIdx} ${JSON.stringify(ctx.mod.types[wasmFunc.typeIdx])} legacy=${existing.typeIdx} ${JSON.stringify(ctx.mod.types[existing.typeIdx])}`,
           );
@@ -5790,7 +5795,7 @@ export function compileIrPathFunctions(
       }
     }
 
-    const dropTerminal = process.env.JS2WASM_TEST_DROP_IR_TERMINAL;
+    const dropTerminal = readEnv("JS2WASM_TEST_DROP_IR_TERMINAL");
     if (dropTerminal) {
       const owner =
         dropTerminal === "1"
@@ -6345,7 +6350,7 @@ function moduleBindingPatternLabel(pattern: ts.BindingPattern): string {
  * nothing and emitted Wasm is unchanged until a consumer opts in.
  */
 function ownershipAnalysisEnabled(): boolean {
-  return process.env.JS2WASM_IR_OWNERSHIP === "1" || process.env.JS2WASM_IR_OWNERSHIP === "true";
+  return readEnv("JS2WASM_IR_OWNERSHIP") === "1" || readEnv("JS2WASM_IR_OWNERSHIP") === "true";
 }
 
 /**
@@ -6354,7 +6359,7 @@ function ownershipAnalysisEnabled(): boolean {
  * consuming the classification is a follow-up — Phase 1 only annotates.
  */
 function escapeAnalysisEnabled(): boolean {
-  return process.env.JS2WASM_IR_ESCAPE === "1" || process.env.JS2WASM_IR_ESCAPE === "true";
+  return readEnv("JS2WASM_IR_ESCAPE") === "1" || readEnv("JS2WASM_IR_ESCAPE") === "true";
 }
 
 /**
@@ -6992,7 +6997,7 @@ function makeFromAstResolver(
       const provenAsciiCaseHelper =
         native &&
         receiverEncoding === "ascii" &&
-        process.env.JS2WASM_NATIVE_PROVEN_ASCII_CASE !== "0" &&
+        readEnv("JS2WASM_NATIVE_PROVEN_ASCII_CASE") !== "0" &&
         (method === "toUpperCase" || method === "toLowerCase");
       return {
         funcName: native ? `__str_${method}${provenAsciiCaseHelper ? "_ascii" : ""}` : `string_${method}`,
@@ -7811,7 +7816,7 @@ function makeResolver(
   let dynamicLoweringMemo: IrDynamicLowering | null | undefined;
   const resolver: IrLowerResolver = {
     resolveFunc(ref: IrFuncRef): number {
-      if (process.env.JS2WASM_TEST_INJECT_IR_RESOLVER_FAILURE === "function") {
+      if (readEnv("JS2WASM_TEST_INJECT_IR_RESOLVER_FAILURE") === "function") {
         throw new IrInvariantError(
           "unknown-function-ref",
           "lower",
@@ -7860,7 +7865,7 @@ function makeResolver(
         : undefined;
     },
     resolveGlobal(ref: IrGlobalRef): number {
-      if (process.env.JS2WASM_TEST_INJECT_IR_RESOLVER_FAILURE === "global") {
+      if (readEnv("JS2WASM_TEST_INJECT_IR_RESOLVER_FAILURE") === "global") {
         throw new IrInvariantError(
           "unknown-global-ref",
           "lower",
@@ -7879,7 +7884,7 @@ function makeResolver(
         : ctx.programAbiSession.resolveCurrentIndex(ref.binding.bindingId, "global", irGlobalBindingKey(ref.binding));
     },
     resolveType(ref: IrTypeRef): number {
-      if (process.env.JS2WASM_TEST_INJECT_IR_RESOLVER_FAILURE === "type") {
+      if (readEnv("JS2WASM_TEST_INJECT_IR_RESOLVER_FAILURE") === "type") {
         throw new IrInvariantError(
           "unknown-type-ref",
           "lower",
@@ -8152,6 +8157,7 @@ function makeResolver(
     resolvePromiseType(): number {
       return getOrRegisterPromiseType(ctx);
     },
+    ...createPromiseRejectionEmissionBindings(ctx),
     // (#1373b C-1) Lane discriminator for the `await` lowering: native
     // `$Promise` carrier (wasi) → one-level unwrap; JS-host → identity.
     nativePromiseCarrierActive(): boolean {
@@ -8632,7 +8638,7 @@ function preregisterIteratorSupport(
     return failures;
   }
   try {
-    if (process.env.JS2WASM_TEST_INJECT_IR_ITERATOR_REGISTRATION_THROW === "1") {
+    if (readEnv("JS2WASM_TEST_INJECT_IR_ITERATOR_REGISTRATION_THROW") === "1") {
       throw new Error("injected iterator registration failure");
     }
     addIteratorImports(ctx);
@@ -10282,7 +10288,7 @@ class ClassRegistry {
         if (preparedTarget) return preparedTarget;
         const suffix = memberKind === "getter" ? `get_${name}` : memberKind === "setter" ? `set_${name}` : name;
         const legacyName = `${shape.className}_${suffix}`;
-        const physicalName = classMemberFuncKey(ctx, legacyName);
+        const physicalName = classMemberFuncKey(ctx, legacyName, "instance"); // (#6772 S4) never the allocator
         const exact =
           this.memberRef(classId, memberKind, legacyName, physicalName) ??
           this.inheritedMemberRef(shape, classId, memberKind, name, physicalName);

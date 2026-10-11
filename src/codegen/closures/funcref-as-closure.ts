@@ -1,3 +1,4 @@
+import { localGlobalIdx } from "../registry/imports.js";
 import {
   initializeNativeGeneratorFunctionValue,
   nativeGeneratorFunctionValueNeedsResultBridge,
@@ -23,6 +24,7 @@ import { popBody, pushBody } from "../context/bodies.js";
 import { getOrRegisterRefCellType } from "../index.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "../func-space.js";
 import { valTypesMatch } from "../shared.js";
+import { promotedCaptureValueInstrs } from "./promoted-capture-value.js";
 import {
   observeProgramAbiFunctionValue,
   sourceFunctionDeclarationForHandle,
@@ -42,12 +44,8 @@ import {
   getOrCreateConstructibleFuncRefWrapperTypes,
   getOrCreateFuncRefWrapperTypes,
 } from "./funcref-wrapper-types.js";
-
-function hasExplicitThisParameter(declaration: ts.Node | undefined): declaration is ts.FunctionDeclaration {
-  if (!declaration || !ts.isFunctionDeclaration(declaration)) return false;
-  const first = declaration.parameters[0];
-  return first !== undefined && ts.isIdentifier(first.name) && first.name.text === "this";
-}
+import { hasExplicitThisParameter } from "./func-value-callable-signature.js";
+import { noteFunctionValueInhabitant } from "./closure-type-sources.js"; // (#6913)
 
 /**
  * (#5270 step 1.3) A `__fn_tramp_*` body is a PURE FORWARDER — it re-pushes the
@@ -164,6 +162,19 @@ function emitMemoizedNestedFnClosure(
     (fctx.nestedFnClosureMemos ??= new Map()).set(funcName, memoLocal);
   }
 
+  const isSelfRef = fctx.name === funcName;
+  // An identity-observed FunctionDeclaration has one stable lexical value,
+  // materialized at its first dynamic use. A sibling closure that captures
+  // that binding is itself such a use: reading the preallocated externref
+  // local directly would otherwise snapshot its initial null value. Fill the
+  // bindings BEFORE the guard, straight-line with this site: inside the
+  // then-arm, each capture's own build nested the same fill for its captures,
+  // so one reference emitted a copy per dependency path (#1058 — the checker's
+  // mutually-referencing inner functions ran out of memory on this).
+  if (!isSelfRef) {
+    for (const cap of nestedCaptures) materializeHoistedFunctionValueBinding(ctx, fctx, cap.name, cap.mutable !== true);
+  }
+
   fctx.body.push({ op: "local.get", index: memoLocal });
   fctx.body.push({ op: "ref.is_null" });
 
@@ -182,7 +193,6 @@ function emitMemoizedNestedFnClosure(
   // dereference `cap.outerLocalIdx`, which points into a different
   // (outer) scope and yields garbage / null when reused inside the
   // current lifted body.
-  const isSelfRef = fctx.name === funcName;
   for (let i = 0; i < nestedCaptures.length; i++) {
     const cap = nestedCaptures[i]!;
     if (isSelfRef) {
@@ -190,13 +200,6 @@ function emitMemoizedNestedFnClosure(
       fctx.body.push({ op: "local.get", index: i });
       continue;
     }
-    // An identity-observed FunctionDeclaration has one stable lexical value,
-    // materialized at its first dynamic use. A sibling closure that captures
-    // that binding is itself such a use: reading the preallocated externref
-    // local directly would otherwise snapshot its initial null value. Keep the
-    // lazy timing (important when the function captures later initializers),
-    // but fill the binding immediately before this closure copies it.
-    materializeHoistedFunctionValueBinding(ctx, fctx, cap.name, cap.mutable !== true);
     // (#2029 family A) Cross-fctx capture sourcing. `cap.outerLocalIdx` is a
     // slot in the function that DECLARED the nested fn; when this
     // materialization runs inside a DIFFERENT function (an object-literal
@@ -252,9 +255,13 @@ function emitMemoizedNestedFnClosure(
     if (cap.mutable && cap.valType) {
       const refCellTypeIdx = getOrRegisterRefCellType(ctx, cap.valType);
       const boxGlobal = capUnresolvedHere ? ctx.capturedBoxGlobals?.get(cap.name) : undefined;
-      if (fctx.boxedCaptures?.has(cap.name)) {
-        const currentLocalIdx = fctx.localMap.get(cap.name)!;
-        fctx.body.push({ op: "local.get", index: currentLocalIdx });
+      if (
+        liveBoxLocalIdx !== undefined &&
+        liveBox !== undefined &&
+        (liveBoxType?.kind === "ref" || liveBoxType?.kind === "ref_null") &&
+        liveBoxType.typeIdx === liveBox.refCellTypeIdx
+      ) {
+        fctx.body.push({ op: "local.get", index: liveBoxLocalIdx });
       } else if (boxGlobal !== undefined) {
         // Shared ref-cell box promoted to a module global — live
         // write-through semantics with the declaring function.
@@ -302,10 +309,7 @@ function emitMemoizedNestedFnClosure(
       // (#2029 family A) Immutable capture promoted to a value global by
       // the accessor-capture pass — read it instead of the out-of-scope
       // declaring-function local slot.
-      fctx.body.push({ op: "global.get", index: ctx.capturedGlobals.get(cap.name)! });
-      if (ctx.capturedGlobalsWidened.has(cap.name)) {
-        fctx.body.push({ op: "ref.as_non_null" });
-      }
+      fctx.body.push(...promotedCaptureValueInstrs(ctx, cap.name, cap.valType, localGlobalIdx));
     } else {
       const capSourceIdx = captureSourceSlot(fctx, cap);
       const sourceType = getLocalType(fctx, capSourceIdx);
@@ -622,6 +626,7 @@ export function emitFuncRefAsClosure(
       ...(ownerHasRest ? { hasRestParam: true } : {}),
     };
     ctx.closureInfoByTypeIdx.set(structTypeIdx, closureInfo);
+    noteFunctionValueInhabitant(ctx, structTypeIdx, ownerDecl); // (#6913) read via the shared base wrapper
 
     // (#2976) Register the module-level artifacts so every later reference —
     // in this or any other fctx — reuses this ONE struct type + trampoline
@@ -655,6 +660,7 @@ export function emitFuncRefAsClosure(
   if (!wrapperTypes) return null;
 
   const { structTypeIdx, liftedFuncTypeIdx, closureInfo } = wrapperTypes;
+  noteFunctionValueInhabitant(ctx, structTypeIdx, metaDecl); // (#6913)
 
   // Create a trampoline function for THIS specific function.
   // The trampoline takes (self, ...userParams) and calls the original function.
@@ -705,6 +711,21 @@ export function emitFuncRefAsClosure(
 }
 
 /**
+ * (#1058) Where each binding was last published in a straight-line body: the
+ * store instruction and its index. A re-emit is redundant while that store is
+ * still in place earlier in the same body array, because it then runs before
+ * any later instruction of the array. A rollback that truncates the body, or
+ * an insert before the store, moves or replaces the recorded instruction, so
+ * the check fails and the value is published again.
+ */
+const publishedBindings = new WeakMap<Instr[], Map<string, { index: number; instr: Instr }>>();
+
+function publishedEarlierInBody(body: Instr[], name: string): boolean {
+  const mark = publishedBindings.get(body)?.get(name);
+  return mark !== undefined && body[mark.index] === mark.instr;
+}
+
+/**
  * Materialize the stable lexical value of a hoisted FunctionDeclaration at
  * its first dynamic value use. Returns true when the binding is already ready
  * or was filled by this call.
@@ -720,7 +741,8 @@ export function materializeHoistedFunctionValueBinding(
     !fctx.hoistedFunctionValueBindings?.has(name) ||
     fctx.liftedCaptureNames?.has(name) ||
     (alreadyMaterialized && !reemitForImmutableCapture) ||
-    fctx.materializingHoistedFunctionValueBindings?.has(name)
+    fctx.materializingHoistedFunctionValueBindings?.has(name) ||
+    (alreadyMaterialized && publishedEarlierInBody(fctx.body, name))
   ) {
     return alreadyMaterialized || fctx.materializingHoistedFunctionValueBindings?.has(name) || false;
   }
@@ -785,5 +807,8 @@ export function materializeHoistedFunctionValueBinding(
   }
   fctx.materializingHoistedFunctionValueBindings.delete(name);
   (fctx.materializedHoistedFunctionValueBindings ??= new Set()).add(name);
+  let published = publishedBindings.get(fctx.body);
+  if (!published) publishedBindings.set(fctx.body, (published = new Map()));
+  published.set(name, { index: fctx.body.length - 1, instr: fctx.body[fctx.body.length - 1]! });
   return true;
 }

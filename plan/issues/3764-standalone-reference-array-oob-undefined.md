@@ -1,7 +1,8 @@
 ---
 id: 3764
 title: "Standalone reference-array OOB reads expose null instead of undefined"
-status: complete
+status: done
+completed: 2026-07-28
 assignee: ttraenkler/codex-es5-array-oob
 sprint: current
 created: 2026-07-28

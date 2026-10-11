@@ -49,6 +49,7 @@ import { ts } from "../ts-api.js";
 import type { TypeFact } from "../checker/oracle.js";
 import type { CodegenContext } from "./context/types.js";
 import { bindingIsSingleAssignment } from "./single-assignment-binding.js";
+import { objectAssignPrimitiveTargetOf } from "./object-model/object-assign-primitive-operands.js";
 
 /**
  * Names that are ASSIGNED, updated, or bound more than once anywhere in a
@@ -160,7 +161,8 @@ function objectCoercionArgument(ctx: CodegenContext, expr: ts.Expression): ts.Ex
 }
 
 function isPrimitiveObjectCoercionCall(ctx: CodegenContext, expr: ts.Expression): boolean {
-  const arg = objectCoercionArgument(ctx, expr);
+  // (#6770 S1) `Object.assign(<primitive>, …)` returns ToObject(target) too.
+  const arg = objectCoercionArgument(ctx, expr) ?? objectAssignPrimitiveTargetOf(ctx, expr);
   if (arg === undefined) return false;
   const tag = ctx.oracle.staticJsTypeOf(arg);
   return tag === "string" || tag === "number" || tag === "boolean";

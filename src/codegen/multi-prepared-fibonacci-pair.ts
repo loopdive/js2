@@ -34,6 +34,7 @@ import {
   multiPreparedRouteClaimsOverlap,
   type MultiPreparedRouteClaimSnapshot,
 } from "./multi-prepared-scalar-leaf.js";
+import { readEnv } from "../env.js";
 
 interface ExactFibonacciPairSyntax {
   readonly sourceFile: ts.SourceFile;
@@ -84,7 +85,7 @@ function invariant(stage: "resolve" | "patch", detail: string): never {
 }
 
 function rejectRequired(detail: string): undefined {
-  if (process.env.JS2WASM_TEST_REQUIRE_MULTI_PREPARED_FIB_PAIR === "1") {
+  if (readEnv("JS2WASM_TEST_REQUIRE_MULTI_PREPARED_FIB_PAIR") === "1") {
     invariant("resolve", `required multi-source Fibonacci pair rejected: ${detail}`);
   }
   return undefined;
@@ -661,7 +662,7 @@ export function assertMultiPreparedFibonacciPairRouteCurrent(input: {
   readonly safety: MultiPreparedScalarLeafGraphSafety;
 }): void {
   const { ctx, finalSelection, route, safety } = input;
-  const tamper = process.env.JS2WASM_TEST_TAMPER_MULTI_PREPARED_FIB_PAIR;
+  const tamper = readEnv("JS2WASM_TEST_TAMPER_MULTI_PREPARED_FIB_PAIR");
   if (tamper && tamper !== "0" && tamper !== "false") {
     route.support.trampolineFunction.name = `${route.support.trampolineFunction.name}$tampered`;
   }
@@ -782,14 +783,14 @@ export function planEarlyMultiPreparedFunctionValueRoutes<Plan extends MultiPrep
   if (leafStates.size !== 0) return leafStates;
   const states = new Map<ts.SourceFile, EarlyMultiPreparedScalarLeafState<Plan>>();
   if (!input.active || collectMultiPreparedScalarLeafCandidates(input.sourceFiles).length !== 0) {
-    if (process.env.JS2WASM_TEST_REQUIRE_MULTI_PREPARED_FIB_PAIR === "1") {
+    if (readEnv("JS2WASM_TEST_REQUIRE_MULTI_PREPARED_FIB_PAIR") === "1") {
       invariant("resolve", "required multi-source Fibonacci pair failed its active/competing-route gate");
     }
     return states;
   }
   const syntax = collectExactFibonacciPairSyntax(input.ctx, input.sourceFiles);
   if (syntax.recurrences.length !== 1 || syntax.pairs.length !== 1) {
-    if (process.env.JS2WASM_TEST_REQUIRE_MULTI_PREPARED_FIB_PAIR === "1") {
+    if (readEnv("JS2WASM_TEST_REQUIRE_MULTI_PREPARED_FIB_PAIR") === "1") {
       invariant(
         "resolve",
         `required multi-source Fibonacci pair found ${syntax.recurrences.length} recurrences/${syntax.pairs.length} wrappers`,

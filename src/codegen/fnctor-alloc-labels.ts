@@ -67,6 +67,7 @@
  * prints the plan.
  */
 import { ts, forEachChild } from "../ts-api.js";
+import { readEnv } from "../env.js";
 
 /** One abstract allocation point of a fnctor's instances. */
 export interface AllocLabel {
@@ -140,7 +141,7 @@ const MAX_ROUNDS = 40;
 const IDENTITY_DEPTH = 4;
 
 export function fnctorLayoutsEnabled(): boolean {
-  const raw = process.env.JS2WASM_FNCTOR_LAYOUTS;
+  const raw = readEnv("JS2WASM_FNCTOR_LAYOUTS");
   return raw !== undefined && raw !== "" && raw !== "0";
 }
 
@@ -614,7 +615,7 @@ export function analyzeFnctorAllocLabels(
   }
   for (const c of calls) publish(c);
 
-  if (process.env.JS2WASM_FNCTOR_LAYOUT_DIAG === "1") {
+  if (readEnv("JS2WASM_FNCTOR_LAYOUT_DIAG") === "1") {
     writeLayoutDiag(plans, rounds, compilePath, sourceFiles.length);
   }
 

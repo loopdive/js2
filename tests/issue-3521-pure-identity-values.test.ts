@@ -5,6 +5,20 @@ import * as frontend from "../src/ir/identity.js";
 import * as data from "../src/ir/identity-values.js";
 
 describe("source-free canonical identity factories", () => {
+  it("gives the closed formatter support role a real source-parent identity", () => {
+    const parentId = frontend.createIrSourceId({ kind: "entry", order: 0, sourceKey: "formatter/source.ts" });
+    const role: frontend.CreateDerivedIrUnitIdInput["role"] = "runtime-support:number-format-radix";
+    expect(data.createDerivedIrUnitId({ parentId, role, ordinal: 0 })).toBe(
+      `ir-unit:v1:derived:${encodeURIComponent(parentId)}:runtime-support%3Anumber-format-radix:0000000000000000`,
+    );
+    // @ts-expect-error The role is closed, not a family-wide support escape hatch.
+    const misspelled: frontend.CreateDerivedIrUnitIdInput["role"] = "runtime-support:number-format-radiks";
+    // @ts-expect-error An arbitrary support role requires its own reviewed contract.
+    const general: frontend.CreateDerivedIrUnitIdInput["role"] = "runtime-support:other";
+    expect(misspelled).not.toBe(role);
+    expect(general).not.toBe(role);
+  });
+
   it("retains identical public re-exports and canonical escaped output", () => {
     expect(frontend.createIrBindingId).toBe(data.createIrBindingId);
     expect(frontend.createDerivedIrUnitId).toBe(data.createDerivedIrUnitId);

@@ -8,6 +8,8 @@
 // the compileCallExpression scope.
 import { ts } from "../../ts-api.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
+import { ensureSymbolNativeProtoGlue } from "../array-object-proto.js"; // (#6775 S5)
+import { buildLazyNativeProtoGetInstrs } from "../native-proto.js"; // (#6775 S5)
 import { compileExpression } from "../shared.js";
 import type { InnerResult } from "../shared.js";
 import { emitThrowTypeError } from "./helpers.js";
@@ -17,6 +19,7 @@ import { isBigIntType, isBooleanType, isNumberType, isStringType, isSymbolType }
 import { noJsHost } from "../js-errors.js";
 import { coerceType, pushDefaultValue } from "../type-coercion.js";
 import { compileStandaloneRegExpConstructor, isGlobalRegExpIdentifier } from "../regexp-standalone.js";
+import { tryCompileBuiltinCtorAliasInvoke } from "../builtin-ctor-value-invoke.js"; // (#6713)
 import { foreignReturnFunctionNames } from "../fnctor-foreign-return.js"; // (#4637 A2) §10.2.1.3 step 13
 import { isFreshOrdinaryObjectExpression } from "../native-ordinary-instanceof.js";
 import { isObjectLikeFact } from "../object-ctor-primitive-receiver.js";
@@ -598,6 +601,10 @@ export function tryRegExpConstructorCall(
   ) {
     return compileStandaloneRegExpConstructor(ctx, fctx, expr.arguments ?? [], expr);
   }
+  // (#6713) …and a typed ALIAS of the RegExp / Error-family constructor
+  // carriers (`var R = globalThis.RegExp; R(p)`), standalone only.
+  const alias = tryCompileBuiltinCtorAliasInvoke(ctx, fctx, expr);
+  if (alias !== undefined) return alias;
 
   if (
     !expr.questionDotToken &&
@@ -770,21 +777,32 @@ export function emitObjectCoercion(
       fctx.body.push({ op: "call", funcIdx: finalBigIntIdx });
       return { kind: "externref" };
     }
-  } else if (isSymbolType(argTsType) && !noJsHost(ctx)) {
+  } else if (isSymbolType(argTsType)) {
     // (#2728) Object(sym) → Symbol-wrapper object (§7.1.18 ToObject, Table 13),
     // whose `typeof` is "object". Symbol is NOT a constructor, so the generic
     // `__new_<Ctor>` (`new Symbol(id)`) path throws — mirror the `__new_BigInt`
-    // (#1568) approach with a dedicated `__new_Symbol` host helper that boxes
-    // the i32 symbol id to the real JS Symbol (reusing the same per-instance
-    // id→Symbol cache as `__box_symbol`, so identity/description round-trip) and
-    // returns `Object(sym)`. Symbols compile to a bare i32 counter id.
-    // Standalone / no-JS-host: no host wrapper — fall through to identity below.
-    compileExpression(ctx, fctx, args[0]!, { kind: "i32" });
-    const newSymIdx = ensureLateImport(ctx, "__new_Symbol", [{ kind: "i32" }], [{ kind: "externref" }]);
+    // (#1568) approach with a dedicated `__new_Symbol` helper. Symbols compile
+    // to a bare i32 counter id.
+    //
+    // (#6651 I4) The carrier the helper takes differs by lane, exactly as the
+    // BigInt arm above splits: the JS-host helper takes the raw i32 id and
+    // re-boxes it to the real JS Symbol through the same per-instance
+    // id→Symbol cache as `__box_symbol` (so identity/description round-trip),
+    // while the host-free helper is the native `[[PrimitiveValue]]` wrapper
+    // builder and wants the value ALREADY boxed — the `$Symbol` GC carrier
+    // externref from `__box_symbol` (#2866).
+    //
+    // Until #6651 the host-free lane had no arm at all and fell through to the
+    // identity tail below, so `Object(Symbol())` evaluated to the symbol
+    // itself and `typeof Object(Symbol())` read "symbol" (typeof/symbol.js).
+    const symCarrier: ValType = noJsHost(ctx) ? { kind: "externref" } : { kind: "i32" };
+    compileExpression(ctx, fctx, args[0]!, symCarrier);
+    const newSymIdx = ensureLateImport(ctx, "__new_Symbol", [symCarrier], [{ kind: "externref" }]);
     flushLateImportShifts(ctx, fctx);
     const finalSymIdx = ctx.funcMap.get("__new_Symbol") ?? newSymIdx;
     if (finalSymIdx !== undefined) {
       fctx.body.push({ op: "call", funcIdx: finalSymIdx });
+      if (noJsHost(ctx)) linkSymbolWrapperPrototype(ctx, fctx);
       return { kind: "externref" };
     }
   }
@@ -804,4 +822,19 @@ export function emitObjectCoercion(
     }
   }
   return { kind: "externref" };
+}
+
+/**
+ * (#6775 S5) §7.1.18 ToObject, Table 13: a Symbol wrapper's [[Prototype]] is
+ * %Symbol.prototype%. The host-free builder mints the `$Object` with a null
+ * `$proto` (read as `Object.prototype`), so neither
+ * `Object.getPrototypeOf(Object(sym))` nor an inherited `w[Symbol.toPrimitive]`
+ * found the Symbol glue. Link it at the site: wrapper on the stack in and out.
+ */
+export function linkSymbolWrapperPrototype(ctx: CodegenContext, fctx: FunctionContext): void {
+  const brand = ensureSymbolNativeProtoGlue(ctx);
+  const read = brand === undefined ? null : buildLazyNativeProtoGetInstrs(ctx, brand);
+  const setProtoIdx = ctx.funcMap.get("__object_setPrototypeOf");
+  if (!read || setProtoIdx === undefined) return;
+  fctx.body.push(...read, { op: "call", funcIdx: setProtoIdx });
 }

@@ -58,6 +58,7 @@
 import { forEachChild, ts } from "../ts-api.js";
 import type { CodegenContext } from "./context/types.js";
 import { retUnboxAbiEnabled } from "./ret-unbox-abi.js";
+import { readEnv } from "../env.js";
 
 /**
  * Is the PARAMETER half of the ABI on? It rides the same
@@ -82,7 +83,7 @@ export function paramUnboxAbiEnabled(): boolean {
  * the main flag is on.
  */
 export function paramUnboxAbiPoisoned(): boolean {
-  return paramUnboxAbiEnabled() && process.env.JS2WASM_PARAM_UNBOX_ABI_POISON === "1";
+  return paramUnboxAbiEnabled() && readEnv("JS2WASM_PARAM_UNBOX_ABI_POISON") === "1";
 }
 
 /** `runtimeParameters` (closures.ts), duplicated to keep this module acyclic. */
@@ -249,7 +250,7 @@ export function noteShimSuppressed(): void {
 }
 
 export function noteParamUnboxStats(ctx: CodegenContext): void {
-  if (process.env.JS2WASM_PARAM_UNBOX_STATS !== "1") return;
+  if (readEnv("JS2WASM_PARAM_UNBOX_STATS") !== "1") return;
   const slots = ctx.booleanParamSlots ?? new Map<string, ReadonlySet<number>>();
   let slotCount = 0;
   for (const set of slots.values()) slotCount += set.size;

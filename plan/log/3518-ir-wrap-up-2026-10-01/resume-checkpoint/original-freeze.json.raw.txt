@@ -1,0 +1,281 @@
+{
+  "worktree": "/private/tmp/js2-ir-source-contracts-writer-20261001",
+  "branch": "codex/3518-source-contracts-writer-20261001",
+  "base": "a8cd258d553278d8e5f908878f56a81377ba8e40",
+  "model": "Codex GPT-6 Astra Max",
+  "state": "frozen-unvalidated",
+  "scope": "Phase A contracts only",
+  "files": {
+    "src/ir/outcomes.ts": {
+      "before": {
+        "sha256": "d2d6e6ca0603e936901f31d875cb6474748f56b42b2e398e6cccedf0f25256be",
+        "bytes": 12354
+      },
+      "after": {
+        "sha256": "93f3f441f104cbadc366ee5f884b465f398931da5bdf95e8d689f79038030b9e",
+        "bytes": 9287,
+        "lines": 200
+      }
+    },
+    "src/ir/abi-bindings.ts": {
+      "before": {
+        "sha256": "66ed6871b28bad9610053cb56ac30a3bbd99abb6a28e55b87f83a1e0c43cc65b",
+        "bytes": 12506
+      },
+      "after": {
+        "sha256": "e13e7e5b6fdfb9ed487c4e6cf9b8fcfbde95ef4d6472a3d274621a80b768aadb",
+        "bytes": 11312,
+        "lines": 309
+      }
+    },
+    "src/ir/declared-types.ts": {
+      "before": {
+        "sha256": "d3f0575647d597c6a5f3f309e9da1d3dccf640756b524c2f6fade3a5f17118e3",
+        "bytes": 7022
+      },
+      "after": {
+        "sha256": "f281af0bc46bc85cfb79679c15ef969a15aea1256395c60c48b629c613af29d6",
+        "bytes": 218,
+        "lines": 8
+      }
+    },
+    "src/ir/fnctor-abi.ts": {
+      "before": {
+        "sha256": "e72be1d68751ec3554a71937c95628459d1cc1be6a38b6afb484c5c6e7227dbe",
+        "bytes": 12964
+      },
+      "after": {
+        "sha256": "afd17658edbbe323c13b4bb3c861e3dfb6eba07311e3afcc6b761904e5c26973",
+        "bytes": 341,
+        "lines": 10
+      }
+    },
+    "src/ir/tag-domain.ts": {
+      "before": {
+        "sha256": "4fc990305f5e6e3da738e8750caa32c27244098ef599d9f60e276ca712da24d8",
+        "bytes": 11318
+      },
+      "after": {
+        "sha256": "e2fb240ab8b0bb4b23e45c82ddd6c3d3b4a2fb46e1ecf83db7539ac92d28d275",
+        "bytes": 348,
+        "lines": 11
+      }
+    },
+    "src/ir/js-tag-domain.ts": {
+      "before": {
+        "sha256": "46623e973ed0450476d648ae6931612c0b1cd9b63e8ed1decf48a6cded3d2fc5",
+        "bytes": 13570
+      },
+      "after": {
+        "sha256": "810b9e6ad30b740dd0089aff9d211e7cef0511173c5dd985d6af326908f6bfef",
+        "bytes": 180,
+        "lines": 3
+      }
+    },
+    "src/ir/producer.ts": {
+      "before": {
+        "sha256": "655233a5ac2a8a8c975e1eebe948524daeeb7a1281f5c743f7e8bb2ab2ae2032",
+        "bytes": 2642
+      },
+      "after": {
+        "sha256": "9b8361c1334cbf45e1b7f1dfebe1e3b4d3d55336f9c19d4ac3722b3de86a0a75",
+        "bytes": 245,
+        "lines": 4
+      }
+    },
+    "src/ir/string-runtime.ts": {
+      "before": {
+        "sha256": "647e05b78186d63ab65bc2047500cc8a6e23102a408c1506e81c4a92b6861748",
+        "bytes": 7621
+      },
+      "after": {
+        "sha256": "a5fa89cf7560a631f3dea63d1c5948c68befe7900095319702772e4cf650630b",
+        "bytes": 1007,
+        "lines": 36
+      }
+    },
+    "src/ir/counted-string-append-provenance.ts": {
+      "before": {
+        "sha256": "a0d595166b0a209e17d6b2b59caf66f4a30e9f2d4b17051d14cda07cc57b4d0e",
+        "bytes": 17037
+      },
+      "after": {
+        "sha256": "1e1de4d0fe1ffafc6dae1eab0a63ecd18ad34d61237f79b856ff1cf7291865a2",
+        "bytes": 9915,
+        "lines": 209
+      }
+    },
+    "src/string-surrogate.ts": {
+      "before": {
+        "sha256": "782969df8b156eec18455d8e7f33acd1902cfa1b8d1e3f2e94dbb494a5ff49a4",
+        "bytes": 2435
+      },
+      "after": {
+        "sha256": "5b47fdef3d69a4409ed05726f524ca0739ed391f926728b9a8777de1785e0bc1",
+        "bytes": 197,
+        "lines": 3
+      }
+    },
+    "src/ir/runtime-symbols.ts": {
+      "before": {
+        "sha256": "840622cc672ccb7a0e7ccb5bc5e7e5e5846205a837a12637835424fa244bd6e1",
+        "bytes": 418
+      },
+      "after": {
+        "sha256": "b25ecf5d68f1bb4e4e2cf49d2ab51473053b74d0b85a43aedabf0d4d1d41e2ff",
+        "bytes": 235,
+        "lines": 8
+      }
+    },
+    "src/ir/date-runtime.ts": {
+      "before": {
+        "sha256": "a78f87a50815e36c24509b63ef8d1fba4e58725bbd069d85460c523a727893f0",
+        "bytes": 724
+      },
+      "after": {
+        "sha256": "908101fcb3e308dcf51e1ea3878792253a301247cfde3d40c6b565568bc86ec3",
+        "bytes": 222,
+        "lines": 7
+      }
+    },
+    "src/ir/ast-lowering-plans.ts": {
+      "before": {
+        "sha256": "23fe4760963926f2666fae5388fc623b6a664a903e2cb21264c25694090b1580",
+        "bytes": 19035
+      },
+      "after": {
+        "sha256": "f261a63bc2e5e4c28e724ef93f97321568e78d87a2bac78736856507bb59e829",
+        "bytes": 19104,
+        "lines": 448
+      }
+    },
+    "src/shared/contracts/ir-preparation-errors.ts": {
+      "before": null,
+      "after": {
+        "sha256": "b19a1971c578cf72d73e6d26d78f02e6e946b670bdcb69399b870543e14cbbf7",
+        "bytes": 3391,
+        "lines": 94
+      }
+    },
+    "src/ir/core/global-binding-keys.ts": {
+      "before": null,
+      "after": {
+        "sha256": "bfbcb9e5c0f929b7bf2c509c654cc88cd58b8c453a74744cf561c4bc430c4bbb",
+        "bytes": 1570,
+        "lines": 37
+      }
+    },
+    "src/ir/core/declared-types.ts": {
+      "before": null,
+      "after": {
+        "sha256": "f167423631f7e856102a532db9392f6d3d3538b68c8c4be5d1e123518353bbcc",
+        "bytes": 7078,
+        "lines": 151
+      }
+    },
+    "src/ir/core/fnctor-abi.ts": {
+      "before": null,
+      "after": {
+        "sha256": "0fca9decc63f7daad9332b58e3e810cecb55cd620e74166bd20e65d34f3431eb",
+        "bytes": 12944,
+        "lines": 283
+      }
+    },
+    "src/ir/core/tag-domain.ts": {
+      "before": null,
+      "after": {
+        "sha256": "479aeeaacd739699cd66137b21335cae7205db01b9950b8eeaaac65b07634e20",
+        "bytes": 11303,
+        "lines": 231
+      }
+    },
+    "src/ir/runtime/js-tag-domain.ts": {
+      "before": null,
+      "after": {
+        "sha256": "638c06163bcab51c2982103d869c199feccc438e5e5cddfc6b2ef2503ec60a5c",
+        "bytes": 13605,
+        "lines": 316
+      }
+    },
+    "src/ir/runtime/producer.ts": {
+      "before": null,
+      "after": {
+        "sha256": "3cee19f99b1d64d4c355841b95434135d9fa3e0633fc51129e6e49ee202c5d90",
+        "bytes": 2648,
+        "lines": 60
+      }
+    },
+    "src/ir/core/string-runtime.ts": {
+      "before": null,
+      "after": {
+        "sha256": "632e60dc92a6145b74f33a2434eb2b24f461e2a83d888354f03e02ecc4d92a3c",
+        "bytes": 7599,
+        "lines": 187
+      }
+    },
+    "src/shared/contracts/ir-counted-string-site-id.ts": {
+      "before": null,
+      "after": {
+        "sha256": "398bcf62a3c6c1002a9728460654384410db93f120eeffb2da435c02ed5e3fcb",
+        "bytes": 7802,
+        "lines": 200
+      }
+    },
+    "src/shared/contracts/string-surrogate.ts": {
+      "before": null,
+      "after": {
+        "sha256": "782969df8b156eec18455d8e7f33acd1902cfa1b8d1e3f2e94dbb494a5ff49a4",
+        "bytes": 2435,
+        "lines": 57
+      }
+    },
+    "src/ir/core/runtime-symbols.ts": {
+      "before": null,
+      "after": {
+        "sha256": "840622cc672ccb7a0e7ccb5bc5e7e5e5846205a837a12637835424fa244bd6e1",
+        "bytes": 418,
+        "lines": 7
+      }
+    },
+    "src/ir/core/date-callables.ts": {
+      "before": null,
+      "after": {
+        "sha256": "4cef6c7ca2b22967092651e3c3c0bf2c00e75f4d4b2f8cc38618e657285935f2",
+        "bytes": 730,
+        "lines": 15
+      }
+    },
+    "tests/issue-3518-source-validation-contracts.test.ts": {
+      "before": null,
+      "after": {
+        "sha256": "505386df804919af395189c9c89cb59fa37cdc9fe8fd5d4fb008347cf6df89b6",
+        "bytes": 21168,
+        "lines": 437
+      }
+    }
+  },
+  "validation": {
+    "formatter": "scoped Prettier only",
+    "compiler": "NOT RUN",
+    "tests": "NOT RUN",
+    "heavyProcesses": "NONE",
+    "gitMutations": "NONE"
+  },
+  "completedDraft": [
+    "12 real canonical body owners",
+    "13 exact donor facade/span changes",
+    "one shared requireString authority",
+    "semantic core IrFunction read surface retained",
+    "closed counted-site grammar only",
+    "single JS_TAG_DOMAIN and JS_TAG_IDS authority",
+    "new behavioral/negative/alias suite"
+  ],
+  "incomplete": [
+    "independent source review",
+    "TS7 and focused runtime tests",
+    "all historical receipt composition and prior-test validation (root owned)",
+    "inventory registration and full dependency gate (root owned)",
+    "Phase B and later full validation/lowering extraction",
+    "source Call/Construct/general Get/full realm/public nine/retirement obligations"
+  ]
+}

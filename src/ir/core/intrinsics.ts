@@ -68,6 +68,13 @@ export const I32_TO_EXTERNREF_INTRINSIC_SIGNATURE: IntrinsicSignature = Object.f
   result: EXTERNREF_TYPE,
 });
 
+/** Exact Boolean carrier extraction. The logical brand survives the physical i32 ABI. */
+export const EXTERNREF_TO_BOOLEAN_INTRINSIC_SIGNATURE: IntrinsicSignature = Object.freeze({
+  version: INTRINSIC_SIGNATURE_VERSION,
+  params: Object.freeze([EXTERNREF_TYPE]),
+  result: Object.freeze({ kind: "val" as const, val: Object.freeze({ kind: "i32" as const, boolean: true as const }) }),
+});
+
 /**
  * `(externref) -> i32` — the exact ABI of the `__extern_is_undefined` probe,
  * shared by its host import and its host-free Wasm function (#4461 registered
@@ -190,6 +197,7 @@ export const INTRINSIC_DEFINITIONS: Readonly<Record<IntrinsicId, IntrinsicDefini
   "js.number.box": definition("js.number.box", F64_TO_EXTERNREF_INTRINSIC_SIGNATURE),
   "js.number.unbox": definition("js.number.unbox", EXTERNREF_TO_F64_INTRINSIC_SIGNATURE),
   "js.boolean.box": definition("js.boolean.box", I32_TO_EXTERNREF_INTRINSIC_SIGNATURE),
+  "js.boolean.unbox": definition("js.boolean.unbox", EXTERNREF_TO_BOOLEAN_INTRINSIC_SIGNATURE),
   "js.extern.is_undefined": definition("js.extern.is_undefined", EXTERNREF_TO_I32_INTRINSIC_SIGNATURE),
   "math.abs": definition("math.abs", F64_UNARY_INTRINSIC_SIGNATURE),
   "math.acos": definition("math.acos", F64_UNARY_INTRINSIC_SIGNATURE),

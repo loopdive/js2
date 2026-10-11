@@ -2,10 +2,9 @@
 //
 // TypeScript API shim — single import boundary for the parser/checker frontend.
 //
-// All `src/**/*.ts` modules import the TypeScript namespace through this file
-// (as `import * as ts from "./ts-api.js"`) instead of directly from
-// `"typescript"`. This centralizes the dependency and gives us a place to swap
-// implementations at module-load time.
+// Legacy modules use this runtime-selection shim. Clean frontend modules use
+// `frontend/typescript.ts`, which owns the shared static parser/checker namespace.
+// Runtime backend selection remains here and does not change that static binding.
 //
 // Default: `typescript@^5.7` (the canonical Microsoft TypeScript compiler).
 //
@@ -54,12 +53,10 @@ import { createRequire } from "node:module";
 // importing from `"typescript"` directly. This export is static and always
 // resolves to typescript@5; runtime swap happens via `tsRuntime` (below).
 //
-// We can't use `export * as ts from "typescript"` because typescript ships a
-// `export = ts` declaration. The pattern below — default-import + named
-// re-export — is the documented workaround and preserves both the value and
-// the namespace at the type level (TS treats the typescript default import as
-// both a value and a namespace via `export as namespace ts`).
-import ts from "typescript";
+// The frontend leaf uses default-import + named-export because TypeScript
+// ships an `export = ts` declaration. Re-export its exact binding here to retain
+// both value and namespace access for existing callers.
+import { ts } from "./frontend/typescript.js";
 export { ts };
 
 type CjsRequire = (id: string) => unknown;

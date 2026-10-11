@@ -98,9 +98,12 @@ import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { allocLocal } from "../context/locals.js";
 import { stringConstantExternrefInstrs } from "../native-strings.js";
 import { ensureObjectRuntime } from "../object-runtime.js";
+import { buildThrowJsErrorInstrs } from "../js-errors.js";
 import { MAX_NATIVE_CONSTRUCT_ARITY, reserveNativeConstructDriver } from "../native-construct.js";
 import { coerceType, compileExpression } from "../shared.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
+import { constructorProtoNullToDefaultInstrs } from "../object-model/construct-default-proto.js"; // (#6651 W2b)
+import { isUncalledPropertyShim } from "./uncalled-shim-eval.js"; // (#6651 W2b)
 
 const EXTERNREF: ValType = { kind: "externref" };
 
@@ -139,7 +142,71 @@ export function emitRuntimeNewTargetPrototype(ctx: CodegenContext, fctx: Functio
   const key = stringConstantExternrefInstrs(ctx, "prototype");
   for (let i = 0; i < key.length; i++) fctx.body.push(key[i]!);
   fctx.body.push({ op: "call", funcIdx: getIdx });
+  // (#6651 W2b) A null result must not reach the construct driver as null —
+  // that is its "no NewTarget prototype supplied" signal, which reads the
+  // TARGET's `prototype` instead. §10.1.14 step 4 wants %Object.prototype%.
+  if (constructorProtoNullToDefaultInstrs(ctx, 0).length === 0) return true;
+  const protoLocal = allocLocal(fctx, `__nt_proto_${fctx.locals.length}`, EXTERNREF);
+  fctx.body.push({ op: "local.set", index: protoLocal }, ...constructorProtoNullToDefaultInstrs(ctx, protoLocal), {
+    op: "local.get",
+    index: protoLocal,
+  });
   return true;
+}
+
+/**
+ * (#6775 S6) §25.1.3.1 for `Reflect.construct(ArrayBuffer, [len], NT)`:
+ * `ToIndex(len)` (step 2), then AllocateArrayBuffer's
+ * OrdinaryCreateFromConstructor — `? Get(NT, "prototype")` — and only THEN
+ * CreateByteDataBlock (the RangeError for an unallocatable size). The post-
+ * construction read above has the getter run after the allocation, so a
+ * throwing `prototype` getter lost to the RangeError
+ * (`data-allocation-after-object-creation.js`).
+ *
+ * Taken only when every argument is a numeric constant ToIndex accepts, so
+ * hoisting the read past the argument list and ToIndex is unobservable. The
+ * value is dropped: the byte vec has no prototype slot, so the post-write was
+ * already a no-op (`newtarget-prototype-is-not-object.js` passes through the
+ * intrinsic default) — the caller then skips the post-read entirely, keeping
+ * the getter to exactly one call.
+ */
+export function tryEmitArrayBufferNewTargetPreRead(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  args: readonly ts.Expression[],
+  ntLocal: number,
+): boolean {
+  const MAX_INDEX = 2 ** 53 - 1;
+  for (const arg of args) {
+    const v = numericConstant(arg);
+    if (v === undefined || !(v > -1) || v > MAX_INDEX) return false;
+  }
+  if (!emitRuntimeNewTargetPrototype(ctx, fctx, ntLocal)) return false;
+  fctx.body.push({ op: "drop" });
+  return true;
+}
+
+function numericConstant(expr: ts.Expression): number | undefined {
+  if (ts.isParenthesizedExpression(expr)) return numericConstant(expr.expression);
+  if (ts.isNumericLiteral(expr)) return Number(expr.text);
+  if (ts.isPrefixUnaryExpression(expr) && expr.operator === ts.SyntaxKind.MinusToken) {
+    const v = numericConstant(expr.operand);
+    return v === undefined ? undefined : -v;
+  }
+  if (ts.isBinaryExpression(expr)) {
+    const l = numericConstant(expr.left);
+    const r = numericConstant(expr.right);
+    if (l === undefined || r === undefined) return undefined;
+    switch (expr.operatorToken.kind) {
+      case ts.SyntaxKind.AsteriskToken:
+        return l * r;
+      case ts.SyntaxKind.PlusToken:
+        return l + r;
+      case ts.SyntaxKind.MinusToken:
+        return l - r;
+    }
+  }
+  return undefined;
 }
 
 /**
@@ -212,6 +279,7 @@ export function applyRuntimeNewTargetPrototype(
     apply.push({ op: "i32.eqz" });
     apply.push({ op: "if", blockType: { kind: "empty" }, then: generic });
   }
+  fctx.body.push(...dataViewDetachedAfterProtoReadInstrs(ctx, resultAny));
   const guard = protoIsObjectInstrs(ctx, protoLocal);
   // No Type(V) predicates ⇒ the §10.1.14 step-3 gate cannot be emitted, and an
   // ungated write is the defect this guard exists to remove. Decline; the
@@ -220,6 +288,55 @@ export function applyRuntimeNewTargetPrototype(
   fctx.body.push(...guard);
   fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: apply });
   return true;
+}
+
+/**
+ * (#6775 S7) §25.3.2.1 DataView step 11: "If IsDetachedBuffer(buffer) is true,
+ * throw a TypeError" runs AFTER OrdinaryCreateFromConstructor (step 10), so a
+ * `NewTarget.prototype` getter that detaches the buffer must make the
+ * construction throw (`custom-proto-access-detaches-buffer.js`). The view
+ * carrier is either the `$__dv_window` (its `buf`) or, for an offset-0
+ * default-length view, the bare byte vec itself; detachment is the shared
+ * buffer's negative length. Any other result carries no buffer and passes.
+ */
+function dataViewDetachedAfterProtoReadInstrs(ctx: CodegenContext, resultAny: number): Instr[] {
+  const dvIdx = ctx.dvWindowTypeIdx;
+  const vecIdx = ctx.vecTypeMap.get("i32_byte");
+  if (dvIdx < 0 || vecIdx === undefined) return [];
+  const throwInstrs = buildThrowJsErrorInstrs(ctx, "TypeError", "TypeError: DataView: buffer is detached");
+  const lengthIsNegative = (bufInstrs: Instr[]): Instr[] => [
+    ...bufInstrs,
+    { op: "struct.get", typeIdx: vecIdx, fieldIdx: 0 },
+    { op: "i32.const", value: 0 },
+    { op: "i32.lt_s" },
+    { op: "if", blockType: { kind: "empty" }, then: throwInstrs },
+  ];
+  return [
+    { op: "local.get", index: resultAny },
+    { op: "ref.test", typeIdx: dvIdx },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: lengthIsNegative([
+        { op: "local.get", index: resultAny },
+        { op: "ref.cast", typeIdx: dvIdx },
+        { op: "struct.get", typeIdx: dvIdx, fieldIdx: 0 },
+        { op: "ref.as_non_null" },
+      ]),
+      else: [
+        { op: "local.get", index: resultAny },
+        { op: "ref.test", typeIdx: vecIdx },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: lengthIsNegative([
+            { op: "local.get", index: resultAny },
+            { op: "ref.cast", typeIdx: vecIdx },
+          ]),
+        },
+      ],
+    },
+  ];
 }
 
 /**
@@ -271,7 +388,7 @@ export function isUnreassignedOrdinaryFunction(ctx: CodegenContext, value: ts.Ex
   return !isRebound(value.getSourceFile(), value.text);
 }
 
-function isPlainFunctionLike(node: ts.FunctionDeclaration | ts.FunctionExpression): boolean {
+export function isPlainFunctionLike(node: ts.FunctionDeclaration | ts.FunctionExpression): boolean {
   return (
     node.asteriskToken === undefined &&
     !(node.modifiers?.some((m: ts.ModifierLike) => m.kind === ts.SyntaxKind.AsyncKeyword) ?? false)
@@ -461,7 +578,7 @@ function isInJSFile(node: ts.Node): boolean {
  * per-annotation measurement that does not generalise, and the refusal costs
  * only an answer this arm never owed.
  */
-function hasDeclaredType(declaration: ts.VariableDeclaration): boolean {
+export function hasDeclaredType(declaration: ts.VariableDeclaration): boolean {
   if (declaration.type !== undefined) return true;
   if (!isInJSFile(declaration)) return false;
   if (ts.getJSDocType(declaration) !== undefined) return true;
@@ -490,7 +607,7 @@ function mentions(node: ts.Node, name: string): boolean {
   return found;
 }
 
-function isRebound(source: ts.SourceFile, name: string): boolean {
+export function isRebound(source: ts.SourceFile, name: string, allowUncalledShimEval = false): boolean {
   let rebound = false;
   const visit = (node: ts.Node): void => {
     if (rebound) return;
@@ -528,7 +645,7 @@ function isRebound(source: ts.SourceFile, name: string): boolean {
     } else if (ts.isWithStatement(node)) {
       rebound = true;
     } else if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "eval") {
-      rebound = true;
+      rebound = !(allowUncalledShimEval && isUncalledPropertyShim(source, node));
     }
     if (!rebound) forEachChild(node, visit);
   };
@@ -597,6 +714,207 @@ export function tryEmitOrdinaryConstructWithNewTarget(
   fctx.body.push({ op: "local.get", index: protoLocal });
   for (let i = 0; i < argLocals.length; i++) fctx.body.push({ op: "local.get", index: argLocals[i]! });
   fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get(`__native_construct_${args.length}`) ?? driverIdx });
+  return true;
+}
+
+/**
+ * Is `name` ever WRITTEN after its declaration?
+ *
+ * `isRebound` cannot answer this for a `var`/`let`/`const` binding: it counts
+ * the binding's own `VariableDeclaration` as a rebind, which is right for the
+ * function-declaration callers above (a variable of the same name shadows the
+ * function) and wrong here, where the declaration IS the thing being trusted.
+ * This scan looks only at writes, and refuses on any construct whose write set
+ * is not enumerable (`with`, direct `eval`, a destructuring or loop target).
+ */
+export function isWrittenAfterDeclaration(source: ts.SourceFile, name: string, allowUncalledShimEval = false): boolean {
+  let written = false;
+  const visit = (node: ts.Node): void => {
+    if (written) return;
+    if (ts.isBinaryExpression(node)) {
+      const op = node.operatorToken.kind;
+      if (op >= ts.SyntaxKind.FirstAssignment && op <= ts.SyntaxKind.LastAssignment && mentions(node.left, name)) {
+        written = true;
+      }
+    } else if ((ts.isForInStatement(node) || ts.isForOfStatement(node)) && mentions(node.initializer, name)) {
+      written = true;
+    } else if (
+      (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
+      ts.isIdentifier(node.operand) &&
+      node.operand.text === name &&
+      (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken)
+    ) {
+      written = true;
+    } else if (ts.isBindingElement(node) && node.name !== undefined && isNamed(node.name, name)) {
+      written = true;
+    } else if (ts.isWithStatement(node)) {
+      written = true;
+    } else if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "eval") {
+      written = !(allowUncalledShimEval && isUncalledPropertyShim(source, node));
+    }
+    if (!written) forEachChild(node, visit);
+  };
+  visit(source);
+  return written;
+}
+
+/** `new Proxy(<anything>)`, with `Proxy` not shadowed or reassigned in the file. */
+export function isNewProxyExpression(value: ts.Expression, allowUncalledShimEval = false): boolean {
+  if (!ts.isNewExpression(value)) return false;
+  if (!ts.isIdentifier(value.expression) || value.expression.text !== "Proxy") return false;
+  return !isRebound(value.getSourceFile(), "Proxy", allowUncalledShimEval);
+}
+
+/**
+ * Does `target` provably denote a Proxy exotic object?
+ *
+ * Deliberately narrow, and narrow in the same way as
+ * `isUnreassignedOrdinaryFunction`: the literal `new Proxy(…)` expression, or a
+ * single-declaration binding whose initializer is one and which the file never
+ * rewrites. Anything else keeps the pre-existing lowering, so the arm below can
+ * only ever fire where the callee IS a proxy — which is what lets it skip the
+ * general construct-then-patch-prototype fallback with its carrier-specific
+ * arms.
+ */
+function isUnreassignedProxyValue(ctx: CodegenContext, target: ts.Expression): boolean {
+  if (isNewProxyExpression(target)) return true;
+  if (!ts.isIdentifier(target)) return false;
+  const declarations = ctx.oracle.declarationsOf(target);
+  if (declarations.length !== 1) return false;
+  if (!ts.isVariableDeclaration(declarations[0]!)) return false;
+  const initializer = ctx.oracle.variableInitializerOf(target);
+  if (initializer === undefined || !isNewProxyExpression(initializer)) return false;
+  return !isWrittenAfterDeclaration(target.getSourceFile(), target.text);
+}
+
+/**
+ * (#6651 RF1) `Construct(proxy, args, NewTarget)` — §10.5.13 with an ARBITRARY
+ * NewTarget.
+ *
+ * The general `Reflect.construct` lowering performs the ordinary
+ * `new target(...)` and then patches the result's prototype to
+ * `NewTarget.prototype`. For a proxy target that is observably wrong in a way
+ * no prototype patch can repair: the `construct` trap takes newTarget as its
+ * THIRD argument, and the ordinary lowering hands it the proxy itself
+ * (`native-construct.ts`: "Ordinary `new proxy(...)` uses the proxy itself as
+ * NewTarget" — correct for `new P()`, wrong for `Reflect.construct(P, a, NT)`).
+ * With the trap absent the driver forwards to `[[ProxyTarget]]` and derives
+ * newTarget afresh from the INNER proxy, so a nested proxy loses it twice.
+ *
+ * This arm calls `__proxy_construct_chain`, which walks the [[ProxyTarget]]
+ * chain with the caller's newTarget held INVARIANT, and falls back to the
+ * ordinary [[Construct]] driver on `__proxy_ultimate_target` only when no proxy
+ * in the chain trapped — the same shape `tryEmitOrdinaryConstructWithNewTarget`
+ * uses, so `Object.getPrototypeOf(result)` still answers `NewTarget.prototype`.
+ *
+ * Standalone only: the JS-host lane delegates [[Construct]] to the host, which
+ * already threads newTarget. Returns false (emitting nothing) when the site
+ * does not qualify.
+ */
+export function tryEmitProxyConstructWithNewTarget(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  targetArg: ts.Expression,
+  args: readonly ts.Expression[],
+  /** The once-evaluated NewTarget value; `undefined` when the site has none. */
+  ntLocal: number | undefined,
+): boolean {
+  if (ntLocal === undefined) return false;
+  if (!ctx.standalone) return false;
+  if (args.length > MAX_NATIVE_CONSTRUCT_ARITY) return false;
+  if (args.some((a) => ts.isSpreadElement(a))) return false;
+  let target = targetArg;
+  while (
+    ts.isParenthesizedExpression(target) ||
+    ts.isAsExpression(target) ||
+    ts.isNonNullExpression(target) ||
+    ts.isTypeAssertionExpression(target)
+  ) {
+    target = target.expression;
+  }
+  if (!isUnreassignedProxyValue(ctx, target)) return false;
+
+  // Every index this arm bakes must be read AFTER the late-import registration
+  // that can shift them, and every precondition must be checked BEFORE the
+  // first byte is emitted — a bail-out mid-emission would leave the caller's
+  // fallback to evaluate the callee and arguments a second time.
+  prepareRuntimeNewTargetProto(ctx, fctx);
+  const driverIdx = reserveNativeConstructDriver(ctx, args.length, stringConstantExternrefInstrs(ctx, "prototype"));
+  const chainIdx = ctx.funcMap.get("__proxy_construct_chain");
+  const ultimateIdx = ctx.funcMap.get("__proxy_ultimate_target");
+  const vecNewIdx = ctx.funcMap.get("__objvec_new");
+  const vecPushIdx = ctx.funcMap.get("__objvec_push");
+  if (chainIdx === undefined || ultimateIdx === undefined) return false;
+  if (vecNewIdx === undefined || vecPushIdx === undefined) return false;
+  if (ctx.funcMap.get("__extern_get") === undefined) return false;
+
+  const calleeTy = compileExpression(ctx, fctx, target, EXTERNREF);
+  if (calleeTy && calleeTy.kind !== "externref") coerceType(ctx, fctx, calleeTy, EXTERNREF);
+  else if (calleeTy === null) fctx.body.push({ op: "ref.null.extern" });
+  const calleeLocal = allocLocal(fctx, `__pc_callee_${fctx.locals.length}`, EXTERNREF);
+  fctx.body.push({ op: "local.set", index: calleeLocal });
+
+  const argLocals: number[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const argTy = compileExpression(ctx, fctx, args[i]!, EXTERNREF);
+    if (argTy && argTy.kind !== "externref") coerceType(ctx, fctx, argTy, EXTERNREF);
+    else if (argTy === null) fctx.body.push({ op: "ref.null.extern" });
+    const argLocal = allocLocal(fctx, `__pc_arg${i}_${fctx.locals.length}`, EXTERNREF);
+    fctx.body.push({ op: "local.set", index: argLocal });
+    argLocals.push(argLocal);
+  }
+
+  // §10.5.13 step 8 builds the argumentsList array the trap receives.
+  const argsVecLocal = allocLocal(fctx, `__pc_args_${fctx.locals.length}`, EXTERNREF);
+  fctx.body.push({ op: "call", funcIdx: vecNewIdx }, { op: "local.set", index: argsVecLocal });
+  for (const argLocal of argLocals) {
+    fctx.body.push(
+      { op: "local.get", index: argsVecLocal },
+      { op: "local.get", index: argLocal },
+      { op: "call", funcIdx: vecPushIdx },
+    );
+  }
+
+  const resultLocal = allocLocal(fctx, `__pc_result_${fctx.locals.length}`, EXTERNREF);
+  fctx.body.push(
+    { op: "local.get", index: calleeLocal },
+    { op: "local.get", index: argsVecLocal },
+    { op: "local.get", index: ntLocal },
+    { op: "call", funcIdx: chainIdx },
+    { op: "local.set", index: resultLocal },
+  );
+
+  // No trap anywhere in the chain → ordinary Construct(ultimate target, args,
+  // NewTarget), built from `? Get(NewTarget, "prototype")` exactly as the
+  // ordinary-function arm does. The prototype read happens only on this arm, so
+  // a NewTarget with a `prototype` GETTER is not read when a trap answered.
+  const fallback: Instr[] = [];
+  const savedBody = fctx.body;
+  fctx.body = fallback;
+  fctx.body.push({ op: "local.get", index: calleeLocal }, { op: "call", funcIdx: ultimateIdx });
+  const ultimateLocal = allocLocal(fctx, `__pc_ultimate_${fctx.locals.length}`, EXTERNREF);
+  fctx.body.push({ op: "local.set", index: ultimateLocal });
+  emitRuntimeNewTargetPrototype(ctx, fctx, ntLocal);
+  const protoLocal = allocLocal(fctx, `__pc_proto_${fctx.locals.length}`, EXTERNREF);
+  fctx.body.push({ op: "local.set", index: protoLocal });
+  fctx.body.push({ op: "local.get", index: ultimateLocal }, { op: "local.get", index: protoLocal });
+  for (const argLocal of argLocals) fctx.body.push({ op: "local.get", index: argLocal });
+  fctx.body.push({
+    op: "call",
+    funcIdx: ctx.funcMap.get(`__native_construct_${args.length}`) ?? driverIdx,
+  });
+  fctx.body = savedBody;
+
+  fctx.body.push(
+    { op: "local.get", index: resultLocal },
+    { op: "ref.is_null" },
+    {
+      op: "if",
+      blockType: { kind: "val", type: EXTERNREF },
+      then: fallback,
+      else: [{ op: "local.get", index: resultLocal }],
+    },
+  );
   return true;
 }
 

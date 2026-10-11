@@ -35,6 +35,7 @@ import {
   standaloneClockCapabilityImport,
 } from "./standalone-clock-capability.js";
 import { ensureLateImport, flushLateImportShifts } from "./shared.js";
+import { readEnv } from "../env.js";
 
 function planningInvariant(code: IrPlanningIdentityInvariantCode, message: string): never {
   throw new IrPlanningIdentityInvariantError(code, message);
@@ -195,7 +196,7 @@ function closeRetainedIrOwnersByIdentity(
  * admits.
  */
 export function hasExactHostVoidCallbackMakerImport(ctx: CodegenContext): boolean {
-  if (process.env.JS2WASM_TEST_INJECT_IR_PREPARED_IMPORT_COLLISION === "callback") return false;
+  if (readEnv("JS2WASM_TEST_INJECT_IR_PREPARED_IMPORT_COLLISION") === "callback") return false;
   const record = HOST_CALLBACK_WRAP_CAPABILITY_RECORD;
   const makerIdx = ctx.funcMap.get(record.field);
   if (makerIdx === undefined || makerIdx < 0 || makerIdx >= ctx.numImportFuncs) return false;
@@ -224,7 +225,7 @@ export function hasExactHostVoidCallbackMakerImport(ctx: CodegenContext): boolea
  * before it freezes TDZ globals or publishes any Program ABI state.
  */
 export function hasExactCurrentEnvFunctionImportManifest(ctx: CodegenContext): boolean {
-  if (process.env.JS2WASM_TEST_INJECT_IR_PREPARED_IMPORT_COLLISION === "dom") return false;
+  if (readEnv("JS2WASM_TEST_INJECT_IR_PREPARED_IMPORT_COLLISION") === "dom") return false;
   const checked = new Set<string>();
   for (const imported of ctx.mod.imports) {
     if (imported.desc.kind !== "func" || imported.module !== "env" || checked.has(imported.name)) continue;
@@ -637,7 +638,7 @@ export function preparePromiseDelayLoweringByIdentity(
 
   let registrationFailure: IrPreparationFailure | undefined;
   try {
-    if (process.env.JS2WASM_TEST_INJECT_IR_PROMISE_REGISTRATION_THROW === "1") {
+    if (readEnv("JS2WASM_TEST_INJECT_IR_PROMISE_REGISTRATION_THROW") === "1") {
       throw new Error("injected Promise late-registration failure");
     }
     if (standaloneNative) {

@@ -129,6 +129,11 @@
       "path": "tests/issue-3754-numeric-return-twin.test.ts",
       "guards": "the numeric-return twin ABI: a definitely-numeric prototype method's twin is declared results:[f64] with no exit box, the __dc_* trampoline's result FOLLOWS the twin's (else every devirtualized site silently degrades to the legacy dispatcher), the call site consumes the f64 without __to_primitive/__unbox_number, and five negative cases (mixed returns, bare `return;`, fall-off-the-end, string return, a same-named non-numeric method elsewhere) keep the boxed ABI",
       "broken_by": "ad543a660e \u2014 9 of its 10 tests were red on main 2026-08-24 to 2026-08-27 and nobody saw it, because this file is in no gating lane (it lives under tests/, not tests/equivalence/, so equivalence-gate does not run it). Not one assertion was wrong: with the offending lowering disabled it was 10/10 unmodified. Listing it here is the half of #4780 that #4775 asked for \u2014 promoting the shape suite that DID catch the regression into a lane where a red run is visible"
+    },
+    {
+      "path": "tests/issue-6789-trampoline-null-this.test.ts",
+      "guards": "an extracted method called with no receiver (`const m = obj.m; m()`, object-literal at function and module scope, and class) throws a CATCHABLE TypeError instead of trapping inside __obj_meth_tramp_*, the instance survives, and a method that never reads `this` (or an empty one) still runs without a spurious throw",
+      "broken_by": "#2025's fix regressed silently: the trampoline's this-usage was captured while the method body was still empty (not yet compiled) and that stale `false` was reused by the finalize rebuild, dropping the TypeError arm. tests/issue-2025.test.ts went red on main (1 of 6) without any PR touching it, because it is in no gating lane (#6783)"
     }
   ]
 }

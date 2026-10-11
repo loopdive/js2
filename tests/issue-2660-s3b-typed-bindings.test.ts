@@ -44,7 +44,7 @@ async function compileStandaloneJs(src: string, flagsOn: boolean): Promise<{ wat
       [READS, saved.r],
     ] as const) {
       if (v === undefined) {
-        // biome-ignore lint/performance/noDelete: only `delete` truly unsets an env var
+        // Only `delete` truly unsets an env var
         delete process.env[k];
       } else {
         process.env[k] = v;

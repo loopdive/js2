@@ -126,6 +126,7 @@ interface ShadowedFuncBinding {
   hadNestedArtifacts: boolean;
   nestedArtifacts: { structTypeIdx: number; trampolineName: string } | undefined;
   usedArguments: boolean;
+  readOwnThis: boolean;
   wasAsync: boolean;
   wasGenerator: boolean;
   wasPreRegistered: boolean;
@@ -400,6 +401,7 @@ export function shadowNestedFuncName(ctx: CodegenContext, funcName: string): voi
     hadNestedArtifacts: ctx.nestedFnClosureArtifacts?.has(funcName) ?? false,
     nestedArtifacts: ctx.nestedFnClosureArtifacts?.get(funcName),
     usedArguments: ctx.funcUsesArguments.has(funcName),
+    readOwnThis: ctx.funcReadsOwnThis.has(funcName),
     wasAsync: ctx.asyncFunctions.has(funcName),
     wasGenerator: ctx.generatorFunctions.has(funcName),
     wasPreRegistered: ctx.preRegisteredBodyless?.has(funcName) ?? false,
@@ -419,6 +421,7 @@ export function shadowNestedFuncName(ctx: CodegenContext, funcName: string): voi
   // one's capture layout.
   ctx.nestedFnClosureArtifacts?.delete(funcName);
   ctx.funcUsesArguments.delete(funcName);
+  ctx.funcReadsOwnThis.delete(funcName);
   ctx.asyncFunctions.delete(funcName);
   ctx.generatorFunctions.delete(funcName);
   ctx.preRegisteredBodyless?.delete(funcName);
@@ -454,6 +457,7 @@ export function endNestedFunctionNameScope(ctx: CodegenContext, scope: NestedFun
     if (saved.hadNestedArtifacts) (ctx.nestedFnClosureArtifacts ??= new Map()).set(name, saved.nestedArtifacts!);
     else ctx.nestedFnClosureArtifacts?.delete(name);
     toggle(ctx.funcUsesArguments, name, saved.usedArguments);
+    toggle(ctx.funcReadsOwnThis, name, saved.readOwnThis);
     toggle(ctx.asyncFunctions, name, saved.wasAsync);
     toggle(ctx.generatorFunctions, name, saved.wasGenerator);
     if (saved.wasPreRegistered) (ctx.preRegisteredBodyless ??= new Set()).add(name);
@@ -471,4 +475,65 @@ function restore<K, V>(map: Map<K, V>, key: K, had: boolean, value: V | undefine
 function toggle<K>(set: Set<K>, key: K, present: boolean): void {
   if (present) set.add(key);
   else set.delete(key);
+}
+
+// ── (#6877) Read-side guard for the bare-name capture table ─────────────────
+//
+// The shadow stack above restores a name when its enclosing body closes, but a
+// body whose nested closures compile LATER (an IIFE flattened into the
+// graph-wide `__module_init`, react.development.js's shape) keeps its nested
+// registrations live for the rest of the compile. A same-named top-level
+// function in ANOTHER module (react.production.js) then reads that nested
+// function's capture plan — outer local indices of a frame it cannot address —
+// and bakes them into its own body (`references out-of-range local(s)`). The
+// two readers below decline a capture plan that provably belongs to a
+// different binding than the one being resolved.
+
+type NestedCapturePlan = ReturnType<CodegenContext["nestedFuncCaptures"]["get"]>;
+
+/**
+ * The capture plan for a DIRECT CALL whose target handle is `funcIdx`.
+ *
+ * `nestedFuncCaptures[name]` describes the function owned by
+ * `funcMapOwnerDecl[name]`. When `funcMap[name]` currently resolves to a
+ * different source declaration — the call-site rebind to the checker's own
+ * declaration (`withDeclarationBoundCallee`, #1058) — the plan is not this
+ * callee's and must not be prepended. Unknown handles keep the plan.
+ */
+export function nestedCapturesForCallee(
+  ctx: CodegenContext,
+  name: string,
+  funcIdx: number | undefined,
+): NestedCapturePlan {
+  const captures = ctx.nestedFuncCaptures.get(name);
+  if (captures === undefined || funcIdx === undefined) return captures;
+  const owner = ctx.funcMapOwnerDecl.get(name);
+  if (owner === undefined) return captures;
+  const target = ctx.sourceFunctionDeclarationByHandle.get(funcIdx);
+  return target === undefined || target === owner ? captures : undefined;
+}
+
+/**
+ * Is the nested function that owns `name` lexically invisible from `site`
+ * because it lives in a different source module?
+ *
+ * Deliberately cross-FILE only: same-file shadowing is the shadow stack's job,
+ * and eval code is parsed into its own synthetic `SourceFile` whose
+ * declarations are reified into the host frame (see {@link sameFrame}), so an
+ * eval file on either side is never evidence of invisibility. A node with no
+ * reachable `SourceFile` (synthesized) is treated as visible — the historical
+ * lowering.
+ */
+export function nestedFuncOwnerIsForeignTo(ctx: CodegenContext, name: string, site: ts.Node): boolean {
+  const owner = ctx.funcMapOwnerDecl.get(name);
+  if (owner === undefined) return false;
+  const ownerFile = owner.getSourceFile() as ts.SourceFile | undefined;
+  const siteFile = site.getSourceFile() as ts.SourceFile | undefined;
+  if (ownerFile === undefined || siteFile === undefined || ownerFile === siteFile) return false;
+  return !isEvalSourceFile(ownerFile) && !isEvalSourceFile(siteFile);
+}
+
+/** The capture plan recorded under `name`, or `undefined` when its owner is foreign to `site`. */
+export function nestedCapturesVisibleFrom(ctx: CodegenContext, name: string, site: ts.Node): NestedCapturePlan {
+  return nestedFuncOwnerIsForeignTo(ctx, name, site) ? undefined : ctx.nestedFuncCaptures.get(name);
 }

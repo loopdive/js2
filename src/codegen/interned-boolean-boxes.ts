@@ -1,7 +1,9 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
+import { buildBoxBooleanBody, buildBooleanBoxInitializer } from "../runtime/wasmgc/values/boolean-bodies.js";
 import type { Instr } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
+import { readEnv } from "../env.js";
 
 /**
  * (#3780) `__box_boolean`'s body, with the two carriers INTERNED rather than
@@ -28,35 +30,20 @@ import type { CodegenContext } from "./context/types.js";
  * control the measurement above was taken against.
  */
 export function boxBooleanBody(ctx: CodegenContext, boxBoolStructIdx: number): Instr[] {
-  const allocating: Instr[] = [
-    { op: "local.get", index: 0 },
-    { op: "struct.new", typeIdx: boxBoolStructIdx },
-    { op: "extern.convert_any" },
-  ];
-  if (process.env.JS2WASM_INTERNED_BOOL_BOXES === "0") return allocating;
+  if (readEnv("JS2WASM_INTERNED_BOOL_BOXES") === "0")
+    return buildBoxBooleanBody({ mode: "allocating", typeIndex: boxBoolStructIdx });
 
-  const carrier = (value: number): number => {
+  const carrier = (value: 0 | 1): number => {
     const globalIdx = ctx.numImportGlobals + ctx.mod.globals.length;
     ctx.mod.globals.push({
       name: value === 1 ? "__box_boolean_true" : "__box_boolean_false",
       type: { kind: "ref", typeIdx: boxBoolStructIdx },
       mutable: false,
-      init: [
-        { op: "i32.const", value },
-        { op: "struct.new", typeIdx: boxBoolStructIdx },
-      ],
+      init: buildBooleanBoxInitializer(boxBoolStructIdx, value),
     });
     return globalIdx;
   };
   const trueIdx = carrier(1);
   const falseIdx = carrier(0);
-  return [
-    { op: "local.get", index: 0 },
-    {
-      op: "if",
-      blockType: { kind: "val", type: { kind: "externref" } },
-      then: [{ op: "global.get", index: trueIdx }, { op: "extern.convert_any" }],
-      else: [{ op: "global.get", index: falseIdx }, { op: "extern.convert_any" }],
-    },
-  ];
+  return buildBoxBooleanBody({ mode: "interned", trueGlobalIndex: trueIdx, falseGlobalIndex: falseIdx });
 }

@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "parentCommit": "36f92e89171e7f0735e8ab59a71bd9c8757302d9",
+  "mainCommit": "e765c7fb29449ffefa99784b78db766c8555c936",
+  "record": {
+    "path": "src/codegen/builtin-fn-meta.ts",
+    "before": {
+      "gitBlob": "ca008873b1a7e9d85c9107876720c93890350a84",
+      "sha256": "433155d07adba216ef8e61e9897ffe0c3935d7fe659a2555a7bf59064340c0b2"
+    },
+    "after": {
+      "gitBlob": "a898c6e57391ad2f6aee3bd694462eab721e4808",
+      "sha256": "61a65b087cd30897debcc79e60640656bba990ef4452dc67fd6631d9cf0c1755"
+    },
+    "span": {
+      "before": "  \"Object.keys\": { name: \"keys\", length: 1 },\n  \"Object.getOwnPropertyDescriptor\": { name: \"getOwnPropertyDescriptor\", length: 2 },\n",
+      "after": "  \"Object.keys\": { name: \"keys\", length: 1 },\n  // (#6684) One-slot closure ABI (see the builtin-value-read case); spec `.length` 2.\n  \"Object.create\": { name: \"create\", length: 2 },\n  \"Object.getOwnPropertyDescriptor\": { name: \"getOwnPropertyDescriptor\", length: 2 },\n",
+      "beforeSha256": "74b6b96b5b706b708ff9b0e52c902216b0df44b78d2b200c03268428c1f567aa",
+      "afterSha256": "c2984fe9960720df671a2df9c195e398d5b9105dfde86b02268fcc51b4031a1f",
+      "beforeOffset": 3462,
+      "afterOffset": 3462
+    }
+  }
+}

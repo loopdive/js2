@@ -52,9 +52,11 @@ import { applyColdTailSplit } from "./fnctor-cold-tail.js";
 import { fnctorBodyMayReturnForeignObject, foreignReturnFunctionNames } from "./fnctor-foreign-return.js"; // (#2071)
 import { applyFnctorLayoutSplit, fnctorLayoutEmitEnabled } from "./fnctor-layout-emit.js"; // (#3927) per-type layout EMISSION
 import { recordFnctorFieldProvenance } from "./fnctor-field-provenance.js";
+import { fnctorCtorCallsInheritedThisMethod } from "./analysis/fnctor-ctor-self-dynamic.js"; // (#6861)
 import { fnctorFieldNumericWriteViolation, inferFnctorFieldTypeFromCtorParam } from "./fnctor-ctor-param-types.js";
 import { fnctorDeclFromSymbol, lateAssignedFunctionExpression } from "./fnctor-ctor-decl.js"; // (#4653)
 import { resolveWasmType } from "./index.js";
+import { readEnv } from "../env.js";
 
 /** Classification of a `new F()` fnctor allocation site. */
 export type FnctorGateClass =
@@ -1630,7 +1632,7 @@ export function analyzeFnctorEscapeGate(
     // zero unreadable: no output was produced BOTH when a package genuinely had
     // no fnctors and when the path never ran the analysis at all, and those are
     // the two hypotheses a reader most needs to tell apart.
-    if (process.env.JS2WASM_FNCTOR_LAYOUT_DIAG === "1") {
+    if (readEnv("JS2WASM_FNCTOR_LAYOUT_DIAG") === "1") {
       process.stderr.write(
         `[alloc-labels] path=${compilePath} files=${sourceFiles.length} ` +
           `families=0 with-labels=0 rounds=0 (no fnctor new-sites in this graph)\n`,
@@ -1722,8 +1724,8 @@ export function analyzeFnctorEscapeGate(
     // `sites` keeps it off every downstream path.
     if (refusedNames.has(ctorSym.name)) continue;
     const { names: ownFields, borrowedStringMethods } = collectFnctorOwnFields(ctorSym);
-    let sawDynamic = false;
     let sawTyped = false;
+    let sawDynamic = standalone === true && fnctorCtorCallsInheritedThisMethod(ctorSym, ownFields); // (#6861)
 
     const bind = bindingOf(newExpr);
     if (bind) {
@@ -1827,7 +1829,7 @@ export function analyzeFnctorEscapeGate(
   };
 
   // 5. Optional inert logging (no effect on output).
-  if (process.env.JS2WASM_LOG_FNCTOR_GATE === "1" && (sites.size > 0 || receiverStruct.size > 0)) {
+  if (readEnv("JS2WASM_LOG_FNCTOR_GATE") === "1" && (sites.size > 0 || receiverStruct.size > 0)) {
     const counts = { reconstruct: 0, "keep-typed": 0, "keep-static": 0 };
     for (const c of sites.values()) counts[c]++;
     const declined =
@@ -2300,7 +2302,7 @@ export function deriveFnctorFields(
   // `JS2WASM_STRING_FIELDS=0` reproduces the pre-#3753 field shapes exactly,
   // which is what makes a same-container A/B possible (mirrors S4a's
   // `JS2WASM_NUMERIC_FIELDS=0`).
-  if (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0 && process.env.JS2WASM_STRING_FIELDS !== "0") {
+  if (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0 && readEnv("JS2WASM_STRING_FIELDS") !== "0") {
     for (const field of fields) {
       if (field.type.kind !== "externref") continue;
       if (onlyConditional.get(field.name) === true) continue;

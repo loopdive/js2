@@ -36,6 +36,7 @@
 // codegen side records one contiguous group for native-string modules, and the
 // shared runtime provider exports the first helper family that consumes it.
 
+import { indexPhysicalTypes } from "../wasm/physical/type-layout.js";
 import type {
   ArrayTypeDef,
   FieldDef,
@@ -89,9 +90,10 @@ export const RUNTIME_RECGROUP_TYPE_NAMES: readonly string[] = [
   "HashedString",
 ];
 
-/** ABI version of the canonical runtime rec group. Bump on any membership,
- *  order, or structural change to a type in {@link RUNTIME_RECGROUP_TYPE_NAMES}. */
-export const RUNTIME_RECGROUP_ABI_VERSION = 2;
+/** ABI version of the canonical runtime rec group and its structural fingerprint.
+ * Bump on membership, order, shape, or fingerprint-encoding changes. Version 3
+ * distinguishes extensible roots from final roots, which version 2 conflated. */
+export const RUNTIME_RECGROUP_ABI_VERSION = 3;
 
 const RUNTIME_NAME_SET = new Set(RUNTIME_RECGROUP_TYPE_NAMES);
 
@@ -160,7 +162,12 @@ function structuralToken(t: FlatTypeDef, localOf: (absIdx: number) => number | u
               const local = localOf(t.superTypeIdx);
               return local !== undefined ? `sub r${local}${t.final ? "!" : ""} ` : `sub x${t.final ? "!" : ""} `;
             })()
-          : "";
+          : // An omitted superTypeIdx emits a plain (implicitly final) struct,
+            // even if unused final metadata is present. Explicit roots follow
+            // the subtype header's finality, just like the binary parser below.
+            t.superTypeIdx !== undefined && !t.final
+            ? "open "
+            : "";
       const fields = t.fields.map((f) => fieldToken(f, localOf)).join(";");
       return `${sup}struct{${fields}}`;
     }
@@ -173,9 +180,11 @@ function structuralToken(t: FlatTypeDef, localOf: (absIdx: number) => number | u
               const local = localOf(t.superType);
               return local !== undefined ? `sub r${local}${t.final ? "!" : ""} ` : `sub x${t.final ? "!" : ""} `;
             })()
-          : t.final
-            ? "final "
-            : "";
+          : // A final parentless subtype has the same binary meaning as its
+            // plain composite type; only a nonfinal root needs a token prefix.
+            t.final
+            ? ""
+            : "open ";
       return `${sup}${structuralToken(t.type, localOf)}`;
     }
   }
@@ -234,16 +243,11 @@ export interface RuntimeGroupMember {
  * {@link RUNTIME_RECGROUP_TYPE_NAMES} are returned (a module that doesn't use
  * strings/vecs simply yields a subset, or none).
  *
- * Requires a *flat* type table (no nested `rec` wrappers), which is the shape
- * codegen produces today (`computeRecGroups` derives groups at emit time, the
- * `mod.types` array itself is flat).
+ * Explicit recursive members retain their original definitions and flattened indices.
  */
 export function extractRuntimeGroup(mod: WasmModule): RuntimeGroupMember[] {
   const out: RuntimeGroupMember[] = [];
-  const types = mod.types;
-  for (let i = 0; i < types.length; i++) {
-    const t = types[i]!;
-    if (t.kind === "rec") continue; // not expected in the flat table; skip defensively
+  for (const { definition: t, typeIndex: i } of indexPhysicalTypes(mod.types).entries) {
     const name = typeDefName(t);
     if (name !== undefined && RUNTIME_NAME_SET.has(name)) {
       out.push({ name, absIndex: i, def: t });

@@ -49,6 +49,12 @@ import {
   ensureGlobalEnvironmentOperation,
 } from "../global-environment.js";
 import { arrayIteratorOverrideGlobalIdx } from "../expressions/proto-override.js";
+import {
+  evaluateForOfPatternKey,
+  objectPatternHasRuntimeKey,
+  tryEmitSpecOrderedArrayAssignDrive,
+} from "../dstr-assign-iterator-drive.js"; // (#6651 G1 lazy drive, U4 computed keys)
+import { emitHoleToUndefined } from "../array-holes.js"; // (#6651 G2) hole read boundary before a default
 import { reportSilentFallback } from "../fallback-telemetry.js";
 import { resolveWasmType } from "../index.js";
 import { resolveComputedKeyExpression } from "../literals.js";
@@ -75,6 +81,7 @@ import {
 } from "./destructuring.js";
 import { collectInstrs } from "./shared.js";
 import { emitForOfRestObjectCarrier } from "./for-of-rest-object-default.js";
+import { emitSymbolNotIterableGuard } from "../dstr-non-iterable-guard.js"; // (#6651 G4)
 
 /**
  * Preserve §13.15.5 PutValue errors for identifier targets in an assignment
@@ -958,6 +965,23 @@ export function compileForOfDestructuring(
  * Captured-mutable names live in a cell, never a module global, so there is no
  * global-sync to emit. Consumes exactly one stack value.
  */
+/**
+ * (#6651 G2) The #2001 read-boundary invariant for a DEFAULTED slot of an
+ * `any[]` vec: `$Hole → undefined` before the default's `__extern_is_undefined`
+ * test sees the value. Without it the elision in
+ * `for ([a = 1, b = 2, c = 3] of [[2, null, , undefined]])` failed the test and
+ * bound the raw sentinel (`c` read back as an object). Mirrors the assignment
+ * lowering's two vec-read sites (`assignment.ts`, #2001).
+ */
+function emitHoleBoundaryBeforeDefault(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  elemType: ValType,
+  defaultInit: ts.Expression | undefined,
+): void {
+  if (defaultInit && ctx.usesArrayHoles && elemType.kind === "externref") emitHoleToUndefined(ctx, fctx);
+}
+
 function emitBoxedForOfAssignStore(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -1092,6 +1116,15 @@ export function compileForOfAssignDestructuring(
           fctx.body.push(...instrs);
         }
       }
+      return;
+    }
+
+    // (#6651 U4) A runtime-only key has no field: the extern-get arm evaluates it.
+    if (objectPatternHasRuntimeKey(ctx, expr)) {
+      const externElem = allocLocal(fctx, `__forof_objkey_elem_${fctx.locals.length}`, { kind: "externref" });
+      fctx.body.push({ op: "local.get", index: elemLocal }, { op: "extern.convert_any" });
+      fctx.body.push({ op: "local.set", index: externElem });
+      compileForOfIteratorAssignDestructuring(ctx, fctx, expr, externElem, stmt);
       return;
     }
 
@@ -1694,6 +1727,7 @@ export function compileForOfAssignDestructuring(
             ctx,
             innerElemType.kind === "externref" || innerElemType.kind === "ref_extern",
           );
+          emitHoleBoundaryBeforeDefault(ctx, fctx, innerElemType, defaultInit);
           if (defaultInit) {
             emitDefaultValueCheck(ctx, fctx, memElemVT, tmpV, defaultInit, memElemVT);
           } else {
@@ -1713,6 +1747,7 @@ export function compileForOfAssignDestructuring(
           fctx.body.push({ op: "struct.get", typeIdx: innerVecTypeIdx, fieldIdx: 1 });
           fctx.body.push({ op: "i32.const", value: i });
           emitBoundsCheckedArrayGet(fctx, innerArrTypeIdx, innerElemType, ctx, true);
+          emitHoleBoundaryBeforeDefault(ctx, fctx, innerElemType, defaultInit);
           if (defaultInit) {
             emitDefaultValueCheck(ctx, fctx, unresolvableElemType, valueLocal, defaultInit, unresolvableElemType);
           } else {
@@ -1763,6 +1798,7 @@ export function compileForOfAssignDestructuring(
             ctx,
             innerElemType.kind === "externref" || innerElemType.kind === "ref_extern",
           );
+          emitHoleBoundaryBeforeDefault(ctx, fctx, innerElemType, defaultInit);
           // Now stack: [box-ref, value:innerElemType]. Apply default-on-undefined
           // and coerce to valType before struct.set.
           // For f64: check sNaN sentinel; for ref/null: check ref.is_null;
@@ -1847,6 +1883,7 @@ export function compileForOfAssignDestructuring(
               op: "array.get",
               typeIdx: innerArrTypeIdx,
             });
+            emitHoleBoundaryBeforeDefault(ctx, fctx, innerElemType, defaultInit);
             emitDefaultValueCheck(ctx, fctx, innerElemType, targetLocal!, defaultInit!, targetType ?? undefined);
           });
           // Else branch: OOB — apply default directly
@@ -2244,10 +2281,19 @@ function compileForOfAssignDestructuringExternref(
   /** (#4447) Enclosing for-of — needed to recurse into nested patterns. */
   stmtForNested: ts.ForOfStatement,
 ): void {
+  // (#6651 cluster G, G1) The twin of the plain-assignment hook: a pattern with
+  // a MEMBER target has an OBSERVABLE reference evaluation that §13.15.5.5
+  // orders BEFORE the IteratorStep, which the `__array_from_iter_n` drain below
+  // cannot express (it steps first, by construction). The drive refuses —
+  // emitting nothing — for every shape it does not model, so all-identifier
+  // heads keep the lowering below byte-for-byte.
+  if (tryEmitSpecOrderedArrayAssignDrive(ctx, fctx, expr, elemLocal)) return;
+
   // (#4447) GetIterator materialisation — must run BEFORE the readers are
   // resolved, since `ensureLateImport` can shift function indices.
   let srcLocal = elemLocal;
   if (expr.elements.length > 0) {
+    emitSymbolNotIterableGuard(ctx, fctx, elemLocal, expr); // (#6651 G4) GetIterator(Symbol) throws
     const matStepCount = patternIteratorStepCount(expr.elements);
     const matIterIdx = ensureLateImport(
       ctx,
@@ -2588,14 +2634,18 @@ export function compileForOfIteratorAssignDestructuring(
       // (#4447) Numeric-literal keys count: `for ([...{ 1: x }] of [[1,2,3]])`
       // reads index 1 of the rest slice. §13.2.5.5 canonicalises a numeric
       // PropertyName to its string form, which `prop.name.text` already is.
-      const propName = ts.isShorthandPropertyAssignment(prop)
+      const staticName = ts.isShorthandPropertyAssignment(prop)
         ? prop.name.text
         : ts.isIdentifier(prop.name)
           ? prop.name.text
           : ts.isStringLiteral(prop.name) || ts.isNumericLiteral(prop.name)
             ? prop.name.text
             : undefined;
-      if (!propName) continue;
+      // (#6651 U4) a computed key is evaluated HERE, in source order.
+      const computed =
+        !staticName && ts.isPropertyAssignment(prop) ? evaluateForOfPatternKey(ctx, fctx, prop) : undefined;
+      const propName = staticName || computed?.name;
+      if (propName === undefined) continue;
 
       // (#4447) Same (target, default) split as the struct path — `{ k: t = d }`
       // is a PropertyAssignment over the AssignmentExpression `t = d`, and
@@ -2617,6 +2667,13 @@ export function compileForOfIteratorAssignDestructuring(
 
       /** Push `__extern_get(elem, "propName")` — the read shared by every arm. */
       const pushPropRead = (): boolean => {
+        if (computed?.keyLocal !== undefined) {
+          getIdx = ctx.funcMap.get("__extern_get");
+          if (getIdx === undefined) return false;
+          fctx.body.push({ op: "local.get", index: elemLocal }, { op: "local.get", index: computed.keyLocal });
+          fctx.body.push({ op: "call", funcIdx: getIdx });
+          return true;
+        }
         // Register string constant for property name.
         addStringConstantGlobal(ctx, propName);
         // Refresh getIdx in case addStringConstantGlobal shifted indices.

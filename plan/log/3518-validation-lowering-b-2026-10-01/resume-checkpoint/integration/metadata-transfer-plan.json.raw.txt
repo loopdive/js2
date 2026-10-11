@@ -1,0 +1,66 @@
+{
+  "activate": {
+    "src/ir/analysis/lattice.ts": "ir-analysis",
+    "src/ir/analysis/ownership.ts": "ir-analysis",
+    "src/ir/analysis/encoding.ts": "ir-analysis",
+    "src/ir/analysis/escape.ts": "ir-analysis",
+    "src/ir/analysis/dominance.ts": "ir-analysis"
+  },
+  "new": {
+    "src/ir/analysis/alloc-verification.ts": "ir-analysis",
+    "src/ir/runtime/verify.ts": "ir-runtime",
+    "src/ir/program/allocations.ts": "ir-program",
+    "src/ir/program/class-layouts.ts": "ir-program"
+  },
+  "old_facades": [
+    "src/ir/verify.ts",
+    "src/ir/verify-alloc.ts",
+    "src/ir/program-allocations.ts",
+    "src/ir/program-class-layouts.ts"
+  ],
+  "existing_states": {
+    "src/ir/analysis/lattice.ts": {
+      "path": "src/ir/analysis/lattice.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+    },
+    "src/ir/analysis/ownership.ts": {
+      "path": "src/ir/analysis/ownership.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+    },
+    "src/ir/analysis/encoding.ts": {
+      "path": "src/ir/analysis/encoding.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+    },
+    "src/ir/analysis/escape.ts": {
+      "path": "src/ir/analysis/escape.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+    },
+    "src/ir/analysis/dominance.ts": {
+      "path": "src/ir/analysis/dominance.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-analysis",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Move the complete dominance implementation into the clean ir-analysis layer; the contract-only subroot does not complete src/ir/analysis."
+    }
+  },
+  "allowed_edges_unchanged": true,
+  "analysis_root_activation": "five existing paths plus alloc-verification only; whole analysis remains incomplete until remaining modules are clean",
+  "budgets": "measure frozen actual declaration spans; old verifyInstrStructure is381lines, verifyBlock200. Transfer only runtime/verify.ts file and runtime/verify.ts::verifyInstrStructure allowance in touchedissue, preserve sharedbaseline andremove old verify path allowance. Historicalbaseline verifyBlock379 is not current span authority."
+}

@@ -7,8 +7,9 @@ import { ts } from "../../ts-api.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import type { InnerResult } from "../shared.js";
 import { coerceType, compileExpression } from "../shared.js";
-import { emitLazyNativeProtoGet } from "../native-proto.js";
+import { buildLazyNativeProtoGetInstrs, emitLazyNativeProtoGet } from "../native-proto.js";
 import {
+  ensureArrayBufferNativeProtoGlue,
   ensureTypedArrayIntrinsicNativeProtoGlue,
   ensureTypedArrayViewNativeProtoGlue,
   isTypedArrayViewProtoName,
@@ -20,6 +21,16 @@ import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { integrityVarKey } from "../widened-var-key.js";
 import { objectLiteralHasColonProto } from "../literals.js"; // (#5270 step 2)
 import { sourceShadowsGlobalName } from "../source-function-members.js"; // (#5194 review F1)
+import { allocLocal } from "../context/locals.js"; // (#6609)
+import { popBody, pushBody } from "../context/bodies.js"; // (#6630 fallback)
+import { isStandaloneBaseClassOrPrototype } from "../class-proto-object.js"; // (#6767 step 2)
+import { tryEmitOverrideBindingGetPrototypeOf } from "../classes/ctor-return-override.js"; // (#6772 S2)
+import { classIdentityFromExpression } from "../class-static-metadata.js"; // (#6772 S6)
+import { bindingIsUniqueAndNeverWritten } from "../class-heritage-check.js"; // (#6772 S6)
+import { heritageBindsParentClass } from "../classes/class-heritage-comma.js"; // (#6772 S6)
+import { emitLazyClassObjectGet } from "./extern.js"; // (#6772 S6)
+import { arrayTypedValueMayNotBeArray } from "../proxy-array-like.js"; // (#6651 H6)
+import { reparentGetPrototypeOfHelper, withReparentFold } from "../object-model/native-proto-reparent.js"; // (#6651 V11)
 
 const NATIVE_COLLECTION_NAMES = new Set(["Map", "Set", "WeakMap", "WeakSet"]);
 
@@ -84,6 +95,64 @@ const ES5_OBJECT_PROTOTYPES = new Map([
   ["URIError", "URIError"],
   ["IArguments", "Object"],
 ]);
+
+/**
+ * (#6651 cluster F, slice F2) Does this binding's DECLARATION give it a
+ * prototype other than the implicit `%Object.prototype%`?
+ *
+ * The integrity arm in `tryCompileEs5GetPrototypeOfEarly` answers
+ * `Object.getPrototypeOf(<integrity-marked id>)` with the compiler-owned
+ * `%Object.prototype%` singleton, on the reasoning in its own comment: "closed
+ * standalone plain objects keep their ordinary prototype implicit". That is
+ * exact for `var o = {}` — and simply WRONG for a binding whose prototype was
+ * chosen at creation. Measured on this branch's base, one module, standalone:
+ *
+ *     var proto = { tag: 1 };
+ *     var a = Object.create(proto);
+ *     Object.getPrototypeOf(a) === proto;   // true
+ *     Object.preventExtensions(a);
+ *     Object.getPrototypeOf(a) === proto;   // FALSE — answers %Object.prototype%
+ *
+ * The read before the integrity call is right and the read after is wrong,
+ * because `ctx.nonExtensibleVars` is filled as statements are COMPILED, so the
+ * mark only exists for later-compiled sites. The runtime link is untouched
+ * throughout: the same query through a helper (`function gp(o) { return
+ * Object.getPrototypeOf(o); }`) answers `proto` both before and after, and so
+ * do `Reflect.getPrototypeOf(a)`, `proto.isPrototypeOf(a)` and an alias
+ * `var z = a`. Only the folded spelling is wrong — a silent wrong answer, and
+ * the one §10.5.1 step-10 SameValue comparison
+ * `Proxy/getPrototypeOf/not-extensible-same-proto.js` depends on.
+ *
+ * So the arm is kept, narrowed to the carrier class it describes. A binding
+ * whose initializer is `Object.create(…)` (including `Object.create(null)`,
+ * whose prototype is explicitly null) or `Object.setPrototypeOf(o, p)` /
+ * `Reflect.setPrototypeOf(o, p)` — both of which answer their receiver — or an
+ * object literal with a colon-form `__proto__`, is excluded and falls through
+ * to the ordinary path, whose generic `__getPrototypeOf` read is the answer the
+ * probes above verified.
+ *
+ * Deliberately NOT widened past the declaration: a binding whose prototype is
+ * written LATER by a `setPrototypeOf` STATEMENT keeps the fold, because
+ * `Reflect/setPrototypeOf/return-false-*` asserts exactly this singleton after
+ * a REFUSED set on a `var o = {}` carrier.
+ */
+function bindingHasExplicitPrototype(ctx: CodegenContext, id: ts.Identifier): boolean {
+  const initializer = ctx.oracle.variableInitializerOf(id);
+  if (initializer === undefined) return false;
+  if (ts.isObjectLiteralExpression(initializer)) return objectLiteralHasColonProto(ctx, initializer);
+  if (
+    !ts.isCallExpression(initializer) ||
+    !ts.isPropertyAccessExpression(initializer.expression) ||
+    !ts.isIdentifier(initializer.expression.expression)
+  ) {
+    return false;
+  }
+  const namespace = initializer.expression.expression.text;
+  const method = initializer.expression.name.text;
+  if (namespace !== "Object" && namespace !== "Reflect") return false;
+  if (method === "create") return namespace === "Object" && initializer.arguments.length >= 1;
+  return method === "setPrototypeOf" && initializer.arguments.length >= 2;
+}
 
 function isTopLevelThis(expr: ts.Expression): boolean {
   if (expr.kind !== ts.SyntaxKind.ThisKeyword) return false;
@@ -161,7 +230,7 @@ function isJsonObjectParseCall(ctx: CodegenContext, fctx: FunctionContext, expr:
  * Emit the compiler-owned intrinsic prototype singleton rather than asking the
  * host MOP for the prototype of an opaque Wasm closure/struct.
  */
-function emitEs5IntrinsicPrototype(
+export function emitEs5IntrinsicPrototype(
   ctx: CodegenContext,
   fctx: FunctionContext,
   anchor: ts.Node,
@@ -189,6 +258,86 @@ function emitEs5IntrinsicConstructor(
 }
 
 /**
+ * (#6767 step 2) `Object.getPrototypeOf(C.prototype)` / `Object.getPrototypeOf(C)`
+ * for a standalone BASE class read the real [[Prototype]] at runtime.
+ *
+ * The class folds in `call-builtin-static.ts` predate the prototype `$Object`
+ * (#3976): `C.prototype` folded to `null` ("Object.prototype not modeled") and
+ * the class OBJECT took the class-INSTANCE arm and answered `C.prototype`
+ * (`definition/basics.js`; p11 bits 8/16). The runtime already answers both —
+ * the native `__getPrototypeOf` gives `%Object.prototype%` for the null-`$proto`
+ * prototype object, and the #6609 callable arm gives `%Function.prototype%` for
+ * the class-object carrier (measured through an untyped parameter,
+ * `.tmp/6767/q2.js`) — so this is the generic fallback's own lowering minus its
+ * iterator-record branch and its all-classes demand record, neither of which a
+ * class operand needs. A later `Object.setPrototypeOf(C.prototype, …)` stays
+ * observable, which no fold could.
+ *
+ * DERIVED classes keep their folds: `D.prototype` already answers the parent
+ * prototype, and the runtime answers the class object `D` wrongly too (neither
+ * the parent class nor `%Function.prototype%`, `.tmp/6767/q3.js`).
+ */
+function tryEmitStandaloneBaseClassGetPrototypeOf(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  arg0: ts.Expression,
+): InnerResult | null {
+  if (!isStandaloneBaseClassOrPrototype(ctx, arg0)) return null;
+  const argType = compileExpression(ctx, fctx, arg0, { kind: "externref" });
+  if (!argType) {
+    fctx.body.push({ op: "ref.null.extern" });
+    return { kind: "externref" };
+  }
+  if (argType.kind !== "externref") coerceType(ctx, fctx, argType, { kind: "externref" });
+  if (tryEmitDynamicCallableGetPrototypeOf(ctx, fctx, arg0)) return { kind: "externref" };
+  // Declined: the receiver is still on the stack.
+  const gpoIdx = ensureLateImport(ctx, "__getPrototypeOf", [{ kind: "externref" }], [{ kind: "externref" }]);
+  flushLateImportShifts(ctx, fctx);
+  if (gpoIdx === undefined) fctx.body.push({ op: "drop" }, { op: "ref.null.extern" });
+  else fctx.body.push({ op: "call", funcIdx: gpoIdx });
+  return { kind: "externref" };
+}
+
+/**
+ * (#6772 S6, #6767 R4) `Object.getPrototypeOf(D)` for a standalone DERIVED class
+ * spelled by an unwritten binding: §15.7.14 step 8 made the superclass the
+ * constructor's [[Prototype]], so when the heritage provably names a class of
+ * this program (`heritageBindsParentClass`) the answer is that parent's class
+ * object — the same singleton the parent's own name reads. Anything else (a
+ * parameter heritage, a rewritten binding, a parent with no class object)
+ * declines to the folds below.
+ */
+function tryEmitStandaloneDerivedClassGetPrototypeOf(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  arg0: ts.Expression,
+): InnerResult | null {
+  if (!ctx.standalone) return null;
+  let bare = arg0;
+  while (ts.isParenthesizedExpression(bare)) bare = bare.expression;
+  const className = classIdentityFromExpression(ctx, bare);
+  const declaredParent = className === undefined ? undefined : ctx.classParentMap.get(className);
+  const parent =
+    declaredParent === undefined ? undefined : (ctx.classExprNameMap.get(declaredParent) ?? declaredParent);
+  if (
+    parent === undefined ||
+    !ctx.classSet.has(parent) ||
+    !ctx.classObjectGlobals?.has(parent) ||
+    !ctx.structMap.has(parent) ||
+    !ctx.structFields.has(parent)
+  ) {
+    return null;
+  }
+  if (!heritageBindsParentClass(ctx, className!, parent)) return null;
+  const declaration = ts.isIdentifier(bare) ? ctx.oracle.valueDeclarationOf(bare) : undefined;
+  if (declaration === undefined || !bindingIsUniqueAndNeverWritten(bare as ts.Identifier, declaration)) return null;
+  const argType = compileExpression(ctx, fctx, arg0);
+  if (argType) fctx.body.push({ op: "drop" });
+  if (!emitLazyClassObjectGet(ctx, fctx, parent)) fctx.body.push({ op: "ref.null.extern" });
+  return { kind: "externref" };
+}
+
+/**
  * Handle ES5 errors and intrinsic constructor/namespace relations before the
  * specialized generator, class, and typed-array getPrototypeOf cases.
  */
@@ -199,6 +348,17 @@ export function tryCompileEs5GetPrototypeOfEarly(
 ): InnerResult | null {
   if (expr.arguments.length === 0) {
     emitThrowTypeError(ctx, fctx, "Object.getPrototypeOf requires an object");
+    return { kind: "externref" };
+  }
+  // (#6651 V11) A re-parenting module: the fold below answers only the default.
+  if (reparentGetPrototypeOfHelper(ctx, expr) !== undefined) {
+    const toExtern = (type: InnerResult | null | undefined): void => {
+      if (!type || typeof type !== "object") fctx.body.push({ op: "ref.null.extern" });
+      else if (type.kind !== "externref") coerceType(ctx, fctx, type, { kind: "externref" });
+    };
+    toExtern(compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "externref" }));
+    toExtern(withReparentFold(expr, () => compileExpression(ctx, fctx, expr, { kind: "externref" })));
+    fctx.body.push({ op: "call", funcIdx: reparentGetPrototypeOfHelper(ctx, expr)! });
     return { kind: "externref" };
   }
 
@@ -221,12 +381,27 @@ export function tryCompileEs5GetPrototypeOfEarly(
     ctx.standalone &&
     ts.isIdentifier(arg0) &&
     ctx.nonExtensibleVars.has(integrityVarKey(ctx, arg0)) &&
-    !isNativeGeneratorInstance(ctx, arg0)
+    !isNativeGeneratorInstance(ctx, arg0) &&
+    !bindingHasExplicitPrototype(ctx, arg0)
   ) {
     const argType = compileExpression(ctx, fctx, arg0);
     if (argType) fctx.body.push({ op: "drop" });
     return emitEs5IntrinsicPrototype(ctx, fctx, expr, "Object");
   }
+
+  // (#6651 cluster F) A binding whose [[Prototype]] this module writes must be
+  // READ, not folded — see `tryEmitDynamicProtoRuntimeRead`.
+  const dynamicProtoRead = tryEmitDynamicProtoRuntimeRead(ctx, fctx, arg0);
+  if (dynamicProtoRead) return dynamicProtoRead;
+  const overrideProto = tryEmitOverrideBindingGetPrototypeOf(ctx, fctx, arg0); // (#6772 S2)
+  if (overrideProto) return overrideProto;
+
+  // (#6767 step 2) A standalone BASE class and its prototype read their real
+  // [[Prototype]] instead of the class folds below — see the helper.
+  const baseClassProto = tryEmitStandaloneBaseClassGetPrototypeOf(ctx, fctx, arg0);
+  if (baseClassProto) return baseClassProto;
+  const derivedClassProto = tryEmitStandaloneDerivedClassGetPrototypeOf(ctx, fctx, arg0); // (#6772 S6)
+  if (derivedClassProto) return derivedClassProto;
 
   if (ts.isIdentifier(arg0) && isGlobalBuiltinIdentifier(ctx, fctx, arg0)) {
     if (ES5_FUNCTION_PROTOTYPE_CTORS.has(arg0.text)) {
@@ -394,7 +569,8 @@ export function tryCompileEs5GetPrototypeOfValue(
   if (staticType === "symbol") return emitEs5IntrinsicPrototype(ctx, fctx, expr, "Symbol");
 
   const knownPrototypeName = ES5_OBJECT_PROTOTYPES.get(ctx.oracle.declaredNameOf(arg0) ?? "");
-  if (knownPrototypeName) {
+  // (#6651 H6) An Array-typed value may be a species result or a Proxy here.
+  if (knownPrototypeName && !(knownPrototypeName === "Array" && arrayTypedValueMayNotBeArray(ctx))) {
     return emitEs5IntrinsicPrototype(ctx, fctx, expr, knownPrototypeName);
   }
   if (ctx.oracle.signatureOf(arg0) !== undefined || ts.isFunctionExpression(arg0) || ts.isArrowFunction(arg0)) {
@@ -429,6 +605,144 @@ export function tryCompileEs5GetPrototypeOfValue(
     return emitEs5IntrinsicPrototype(ctx, fctx, expr, "Object");
   }
   return null;
+}
+
+/**
+ * (#6609/#6625) `Object.getPrototypeOf(<value that is CALLABLE, or a CLASS
+ * OBJECT, only at RUNTIME>)` → `%Function.prototype%` (§10.3.1: every
+ * built-in function object's [[Prototype]] is %Function.prototype%; §15.7.14
+ * step 4: an ordinary class with no heritage clause is the same).
+ *
+ * The arm above answers `Function` whenever the CHECKER can prove the argument
+ * callable (`signatureOf`, a function expression, an arrow). A value that
+ * arrives through an `any` binding — every member of a linked standalone
+ * provider's namespace, by construction — carries no signature, so it fell to
+ * the generic `__getPrototypeOf`, whose `$proto` walk only knows `$Object`
+ * receivers. A closure carrier is not one, so the walk answered `null`:
+ * `Object.getPrototypeOf(Temporal.PlainDate.compare)` was `null` where the spec
+ * (and the other three assertions of test262's `builtin.js` rows, which already
+ * pass) say `Function.prototype`. The class-VALUE case (`Object.getPrototypeOf
+ * (Temporal.PlainDate)`) has the identical gap and the identical answer, so it
+ * shares this arm rather than a separate one (#6625; originally split, folded
+ * back after measuring that `tryEmitDynamicCallableGetPrototypeOf`'s "return
+ * true whenever the runtime dispatch was emitted" contract means a SECOND,
+ * sequential all-or-nothing arm can never run — the first arm's `if/else`
+ * always wins the caller's early return, regardless of which side of it fires).
+ *
+ * TWO predicates, ORed, not one relaxed predicate: `__is_callable`, NOT
+ * `__typeof_function`, and the difference is load-bearing across the link —
+ * the boundary's `callable_kind` terminal sets bit 1 ([[Construct]]) for a
+ * provider-owned INSTANCE as well, which is why `typeof <provider instance>`
+ * currently answers `"function"` (a documented #5383 residual); `__is_callable`
+ * masks bit 0 only, so an instance keeps its existing answer instead of
+ * acquiring a wrong one. `__is_class_object` is a SEPARATE identity ladder
+ * (never a `ref.test`: a class object and its own instances share one struct
+ * type AND `__tag`, #3976, so only identity tells "this IS the class C" apart
+ * from "this is merely an instance of C") — reusing `__is_callable`'s bit
+ * scheme would have required overloading a bit that a provider-owned INSTANCE
+ * already sets (same #5383 residual), silently claiming every foreign
+ * instance too. Across a linked standalone provider each predicate independently
+ * asks the owner (`standalone-link-boundary.ts`) for a BOOLEAN only — the VALUE
+ * this function answers is always produced by compiling `Function.prototype`
+ * HERE, on the caller's own side, so its identity matches the caller's own
+ * later read of it (S22's rule).
+ *
+ * Class scope: base classes only (no `extends`). A class with a heritage
+ * clause keeps today's answer (typically `null`) — DOCUMENTED RESIDUAL, not
+ * reduced here; see plan/issues/6625-*.md.
+ *
+ * Standalone/WASI only; the JS-host lane's `__getPrototypeOf` import already
+ * answers correctly and stays byte-identical. The argument is already compiled
+ * and coerced to externref on the stack when this runs; returns true when it
+ * consumed it.
+ */
+export function tryEmitDynamicCallableGetPrototypeOf(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  anchor: ts.Node,
+): boolean {
+  if (!ctx.standalone && !ctx.wasi) return false;
+  if (ensureLateImport(ctx, "__is_callable", [{ kind: "externref" }], [{ kind: "i32" }]) === undefined) return false;
+  if (ensureLateImport(ctx, "__is_class_object", [{ kind: "externref" }], [{ kind: "i32" }]) === undefined) {
+    return false;
+  }
+  if (ensureLateImport(ctx, "__getPrototypeOf", [{ kind: "externref" }], [{ kind: "externref" }]) === undefined) {
+    return false;
+  }
+  flushLateImportShifts(ctx, fctx);
+
+  const valueLocal = allocLocal(fctx, `__gpo_dyn_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push({ op: "local.set", index: valueLocal });
+
+  const isCallableIdx = ctx.funcMap.get("__is_callable");
+  const isClassObjectIdx = ctx.funcMap.get("__is_class_object");
+  const getPrototypeIdx = ctx.funcMap.get("__getPrototypeOf");
+  if (isCallableIdx === undefined || isClassObjectIdx === undefined || getPrototypeIdx === undefined) {
+    // Degrade to the pre-#6609 answer rather than to a broken call.
+    fctx.body.push({ op: "local.get", index: valueLocal });
+    return false;
+  }
+
+  // (#6630 fallback, 2026-09-17) %Function.prototype% is a lazily-materialised
+  // singleton, and materialising it has a module-wide side effect the comment
+  // this replaces called "free": it triggers `ensureObjectRuntime`'s bootstrap
+  // (`emitFunctionPrototypeObjectSingleton` → `ensureObjectRuntime`), which
+  // bakes `__extern_method_call`'s body — including its `.call`/`.apply`
+  // dispatch — against whatever helpers are registered AT THAT MOMENT. A
+  // pre-existing (merge-independent) defect in that bootstrap, #6630, means a
+  // module that materialises %Function.prototype% BEFORE its first `.call`/
+  // `.apply` on an ordinary closure can misdispatch that call at runtime
+  // ("Function.prototype.call is not yet implemented in --target standalone").
+  // #6609/#6625 previously materialised it EAGERLY for every dynamic
+  // `Object.getPrototypeOf(<any-typed value>)`, regardless of whether the
+  // value actually turned out to be callable — so a module doing nothing more
+  // exotic than `Object.getPrototypeOf(<some object>)` followed by an ordinary
+  // `fn.call(...)` could trip #6630 even though the getPrototypeOf receiver
+  // was never callable (measured: `tests/issue-6484-iterator-prototypes
+  // .test.ts`'s "%IteratorPrototype% is the shared parent" case regressed
+  // exactly this way once #6629 restored this arm's reachability).
+  //
+  // Fix at the call site, not at #6630's architecture-level root cause (out of
+  // scope here — see #6630): materialise %Function.prototype% LAZILY, inside
+  // the `then:` arm, so it is only built (and #6630's bootstrap only triggers)
+  // when `__is_callable`/`__is_class_object` have ALREADY proven the value is
+  // one of the two cases that need it. A non-callable, non-class-object value
+  // — the common case for a bare `Object.getPrototypeOf` probe — never
+  // reaches `emitEs5IntrinsicPrototype` at all. #6609/#6625's own witnesses
+  // (a genuinely callable/class-object receiver) still take the `then:` arm
+  // and get the identical answer; only the ORDER changed (predicate first,
+  // materialisation second), not the result.
+  const savedThenBody = pushBody(fctx);
+  const fnProtoType = emitEs5IntrinsicPrototype(ctx, fctx, anchor, "Function");
+  if (fnProtoType !== null && typeof fnProtoType === "object" && fnProtoType.kind !== "externref") {
+    coerceType(ctx, fctx, fnProtoType, { kind: "externref" });
+  }
+  const thenArm = fctx.body;
+  popBody(fctx, savedThenBody);
+
+  // Re-read every index AFTER building the then-arm: compiling
+  // `Function.prototype` inside it may itself add a late import, which shifts
+  // everything emitted before it (mirrors the eager version's own re-read).
+  const isCallableIdxFinal = ctx.funcMap.get("__is_callable") ?? isCallableIdx;
+  const isClassObjectIdxFinal = ctx.funcMap.get("__is_class_object") ?? isClassObjectIdx;
+  const getPrototypeIdxFinal = ctx.funcMap.get("__getPrototypeOf") ?? getPrototypeIdx;
+  fctx.body.push(
+    { op: "local.get", index: valueLocal },
+    { op: "call", funcIdx: isCallableIdxFinal },
+    { op: "local.get", index: valueLocal },
+    { op: "call", funcIdx: isClassObjectIdxFinal },
+    { op: "i32.or" },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "externref" } },
+      then: thenArm,
+      else: [
+        { op: "local.get", index: valueLocal },
+        { op: "call", funcIdx: getPrototypeIdxFinal },
+      ],
+    },
+  );
+  return true;
 }
 
 function objectGetPrototypeOfSource(
@@ -469,6 +783,201 @@ function isEmptyReconstructedConstructor(ctx: CodegenContext, expr: ts.NewExpres
   const gate = ctx.fnctorEscapeGate;
   if (!gate?.approved.has(expr) || !ts.isIdentifier(expr.expression)) return false;
   return gate.ctorDeclByName.get(expr.expression.text)?.body?.statements.length === 0;
+}
+
+/**
+ * (#6651 cluster F) Per-source-file set of identifier NAMES that appear as the
+ * `[[Prototype]]`-mutation RECEIVER of a `{Object,Reflect}.setPrototypeOf(x, …)`
+ * call or an `x.__proto__ = …` assignment.
+ *
+ * Why this is scanned here rather than read off `ctx.dynamicProtoLiteralNodes`,
+ * which `scanForDynamicProto` already maintains: that set is populated by
+ * `markReceiver`, whose FIRST branch is `ctx.oracle.typeFactOf(recv).kind ===
+ * "class"` — and test262 rows are **JS**, where TypeScript's expando inference
+ * gives `var o = {}` an anonymous type whose symbol carries the VARIABLE's
+ * name, so the fact reads `{kind:"class", name:"o"}` and the function returns
+ * before it ever records the literal. (Cluster B hit the identical trap from
+ * the other side: a gate that admitted only `{kind:"object"}` compiled, fired
+ * under a hand-written `.ts` probe, and never fired under the runner.)
+ * Measured: for `var o = {}; Reflect.setPrototypeOf(o, proto)` the literal is
+ * NOT in `dynamicProtoLiteralNodes`, yet the write lands — so that set is not
+ * the fact this reader needs.
+ *
+ * Cached per `SourceFile`; the walk is structural and runs at most once.
+ */
+const dynamicProtoReceiverNamesBySource = new WeakMap<ts.SourceFile, Set<string>>();
+
+/** `Object.getOwnPropertyDescriptor(<x>, "__proto__")`. */
+function isProtoDescriptorCall(e: ts.Expression): boolean {
+  return (
+    ts.isCallExpression(e) &&
+    ts.isPropertyAccessExpression(e.expression) &&
+    e.expression.name.text === "getOwnPropertyDescriptor" &&
+    e.arguments.length >= 2 &&
+    ts.isStringLiteralLike(e.arguments[1]!) &&
+    e.arguments[1].text === "__proto__"
+  );
+}
+
+/**
+ * Is `e` the Annex B `__proto__` SETTER — `gOPD(<x>, "__proto__").set`, a
+ * `<desc>.set` over a binding of that descriptor, or a binding of either?
+ */
+function protoSetterMatcher(source: ts.SourceFile): ((e: ts.Expression) => boolean) | undefined {
+  const descs = new Set<string>();
+  const setters = new Set<string>();
+  const isSetter = (e: ts.Expression): boolean =>
+    (ts.isIdentifier(e) && setters.has(e.text)) ||
+    (ts.isPropertyAccessExpression(e) &&
+      e.name.text === "set" &&
+      (isProtoDescriptorCall(e.expression) || (ts.isIdentifier(e.expression) && descs.has(e.expression.text))));
+  const visit = (node: ts.Node): void => {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
+      if (isProtoDescriptorCall(node.initializer)) descs.add(node.name.text);
+      else if (isSetter(node.initializer)) setters.add(node.name.text);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return descs.size > 0 || setters.size > 0 ? isSetter : undefined;
+}
+
+function dynamicProtoReceiverNames(source: ts.SourceFile): Set<string> {
+  const cached = dynamicProtoReceiverNamesBySource.get(source);
+  if (cached) return cached;
+  const names = new Set<string>();
+  const unwrap = (e: ts.Expression): ts.Expression => {
+    let cur = e;
+    while (
+      ts.isAsExpression(cur) ||
+      ts.isParenthesizedExpression(cur) ||
+      ts.isNonNullExpression(cur) ||
+      ts.isSatisfiesExpression(cur) ||
+      ts.isTypeAssertionExpression(cur)
+    ) {
+      cur = cur.expression;
+    }
+    return cur;
+  };
+  const mark = (e: ts.Expression | undefined): void => {
+    if (!e) return;
+    const target = unwrap(e);
+    if (ts.isIdentifier(target)) names.add(target.text);
+  };
+  // (#6770 S5) …and the receiver of the REFLECTIVE Annex B setter,
+  // `set.call(o, proto)` / `desc.set.call(o, proto)` over `gOPD(<x>, "__proto__")`.
+  const isProtoSetter = protoSetterMatcher(source);
+  const visit = (node: ts.Node): void => {
+    if (
+      isProtoSetter !== undefined &&
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      (node.expression.name.text === "call" || node.expression.name.text === "apply") &&
+      isProtoSetter(node.expression.expression)
+    ) {
+      mark(node.arguments[0]);
+    }
+    if (
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      ts.isIdentifier(node.expression.expression) &&
+      (node.expression.expression.text === "Object" || node.expression.expression.text === "Reflect") &&
+      node.expression.name.text === "setPrototypeOf" &&
+      node.arguments.length >= 1
+    ) {
+      mark(node.arguments[0]);
+    }
+    // (#6651 U3) A Proxy TARGET's [[Prototype]] is written through the proxy —
+    // the trap-absent §10.5.2 forward, or a trap acting on its `target`
+    // parameter (`Object.setPrototypeOf(t, p)` inside the handler, where `t` is
+    // not this binding's name) — so the declaration fold is unsound for it too.
+    if (
+      (ts.isNewExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "Proxy") ||
+      (ts.isCallExpression(node) &&
+        ts.isPropertyAccessExpression(node.expression) &&
+        ts.isIdentifier(node.expression.expression) &&
+        node.expression.expression.text === "Proxy" &&
+        node.expression.name.text === "revocable")
+    ) {
+      mark(node.arguments?.[0]);
+    }
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isPropertyAccessExpression(node.left) &&
+      !ts.isPrivateIdentifier(node.left.name) &&
+      node.left.name.text === "__proto__"
+    ) {
+      mark(node.left.expression);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  dynamicProtoReceiverNamesBySource.set(source, names);
+  return names;
+}
+
+/**
+ * (#6651 cluster F) `Object.getPrototypeOf(o)` where `o`'s prototype is written
+ * somewhere in this module: read the field, do not fold.
+ *
+ * Several downstream arms answer this query from the binding's DECLARATION — an
+ * object literal with no colon-form `__proto__` folds to `%Object.prototype%`,
+ * and (in the JS shapes test262 is written in) the expando-inferred struct name
+ * lands in `ctx.classSet`, so the class arm answers with the compile-time
+ * prototype singleton instead. Both are exact for a literal whose prototype is
+ * never written and UNSOUND for one whose prototype is written later. Measured
+ * on this branch's base: `var o = {}; Reflect.setPrototypeOf(o, proto)` made the
+ * inherited read `o.tag` resolve through `proto` — the WRITE was already
+ * correct — while `Object.getPrototypeOf(o)` still answered `%Object.prototype%`.
+ * One object, one link, two answers.
+ *
+ * This is the same unsoundness #5270 step 2 recognised for `{ __proto__: v }`;
+ * the only difference is that the write is a statement rather than a property.
+ *
+ * It must ROUTE, not merely decline. A decline in the literal folds below falls
+ * through to the class arm, which re-folds — measured: the decline alone moved
+ * nothing for the JS shape. So this claims the expression here, ahead of every
+ * fold, and emits the generic `__getPrototypeOf` read.
+ *
+ * Deliberately placed AFTER the integrity arm above: a `preventExtensions`-
+ * marked receiver keeps the compiler-owned singleton (its `$proto` field is
+ * never written, and `Reflect/setPrototypeOf/return-false-*` assert exactly
+ * that answer after a REFUSED set).
+ *
+ * An unset `$proto` reads back as `%Object.prototype%` through this native, not
+ * as `null` — verified with a probe before relying on it, because the whole
+ * "refused set leaves Object.prototype" family depends on it.
+ *
+ * Standalone-gated: the fold is wrong in both lanes, but the host lane answers
+ * this query through its own `__getPrototypeOf` import on a real JS object and
+ * is not measured by this cluster.
+ */
+function tryEmitDynamicProtoRuntimeRead(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  arg0: ts.Expression,
+): InnerResult | null {
+  if (!(ctx.standalone || ctx.wasi) || !ts.isIdentifier(arg0)) return null;
+  // Narrow on purpose: only a binding whose declaration is a plain object
+  // literal. That is the one carrier whose runtime `__getPrototypeOf` answer is
+  // verified equivalent to the fold it replaces (an unset `$proto` reads back
+  // as `%Object.prototype%`); a name match alone would also claim arrays, class
+  // instances and builtin carriers, whose folds are the only correct answer.
+  const initializer = ctx.oracle.variableInitializerOf(arg0);
+  if (!initializer || !ts.isObjectLiteralExpression(initializer)) return null;
+  if (!dynamicProtoReceiverNames(arg0.getSourceFile()).has(arg0.text)) return null;
+  const gptIdx = ensureLateImport(ctx, "__getPrototypeOf", [{ kind: "externref" }], [{ kind: "externref" }]);
+  flushLateImportShifts(ctx, fctx);
+  if (gptIdx === undefined) return null;
+  const argType = compileExpression(ctx, fctx, arg0);
+  if (!argType) {
+    fctx.body.push({ op: "ref.null.extern" });
+    return { kind: "externref" };
+  }
+  if (argType.kind !== "externref") coerceType(ctx, fctx, argType, { kind: "externref" });
+  fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__getPrototypeOf") ?? gptIdx });
+  return { kind: "externref" };
 }
 
 function hasProvablyNonNullOrdinaryPrototype(ctx: CodegenContext, expr: ts.Expression): boolean {
@@ -541,4 +1050,37 @@ export function tryCompileGetPrototypeOfIsPrototypeOf(
     fctx.body.push({ op: "drop" }, { op: "drop" }, { op: "i32.const", value: 0 });
   }
   return { kind: "i32", boolean: true };
+}
+
+/**
+ * (#6769 S10) `__getPrototypeOf(<ArrayBuffer carrier>)` is `ArrayBuffer.prototype`.
+ *
+ * An ArrayBuffer is the packed byte vec `$__vec_i32_byte` — a `$__vec_base`
+ * subtype — so the dynamic native answered the vec default, `Array.prototype`,
+ * for every buffer that reached it through a dynamic value: `new
+ * TA(sample).buffer`, `view.buffer`, and a statically created buffer passed
+ * through `any`. §25.1.3.1 AllocateArrayBuffer creates it from
+ * `%ArrayBuffer.prototype%`; the arm answers the same lazily-built glue
+ * singleton `ArrayBuffer.prototype` reads, so the identity holds by `ref.eq`.
+ *
+ * Finalize-time (called from `fillTaDynViewMopArms`, i.e. only in a module that
+ * builds dynamic TypedArray views): prepended, so it precedes the generic vec
+ * answer. Residual: a buffer re-parented with `Object.setPrototypeOf` still
+ * answers `ArrayBuffer.prototype` here (#2917's vec proto link is not
+ * consulted for this carrier).
+ */
+export function fillArrayBufferGetPrototypeOfArm(ctx: CodegenContext): void {
+  if (!ctx.standalone) return;
+  const byteVecIdx = ctx.vecTypeMap.get("i32_byte");
+  const fn = ctx.mod.functions.find((f) => f.name === "__getPrototypeOf");
+  if (byteVecIdx === undefined || !fn) return;
+  const brand = ensureArrayBufferNativeProtoGlue(ctx);
+  const read = brand === undefined ? null : buildLazyNativeProtoGetInstrs(ctx, brand);
+  if (!read) return;
+  fn.body.unshift(
+    { op: "local.get", index: 0 },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx: byteVecIdx },
+    { op: "if", blockType: { kind: "empty" }, then: [...read, { op: "return" }] },
+  );
 }

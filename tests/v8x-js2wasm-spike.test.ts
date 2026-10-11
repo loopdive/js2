@@ -12,101 +12,119 @@ const root = resolve(here, "..");
 const compiler = join(root, "examples/v8x-js2wasm-spike/compile-graph.ts");
 const denoWrapper = join(root, "examples/v8x-js2wasm-spike/deno.ts");
 const wasmtime = process.env.WASMTIME ?? "wasmtime";
+const wasmtimeUnavailable = spawnSync(wasmtime, ["--version"]).error?.message.includes("ENOENT") ?? false;
 
 describe("v8x js2wasm module-backend spike", () => {
-  it("executes an externref-returning trampoline in Wasmtime", () => {
-    const dir = mkdtempSync(join(tmpdir(), "v8x-js2wasm-externref-tail-"));
-    const mainPath = join(dir, "main.ts");
-    const manifestPath = join(dir, "modules.tsv");
-    const wasmPath = join(dir, "module.wasm");
-    writeFileSync(
-      mainPath,
-      `function makeObject(depth: number): any {\n` +
-        `  if (depth <= 0) return { value: 42 };\n` +
-        `  return makeObject(depth - 1);\n` +
-        `}\n` +
-        `function objectTrampoline(depth: number): any { return makeObject(depth); }\n` +
-        `if (objectTrampoline(1).value !== 42) throw new Error("externref tail result corrupted");\n`,
-    );
-    writeFileSync(manifestPath, `${pathToFileURL(mainPath)}\t${mainPath}\n`);
+  it.skipIf(wasmtimeUnavailable).each([42, 41])(
+    "executes an externref-returning trampoline against expected value %i",
+    (expected) => {
+      const dir = mkdtempSync(join(tmpdir(), "v8x-js2wasm-externref-tail-"));
+      const mainPath = join(dir, "main.ts");
+      const manifestPath = join(dir, "modules.tsv");
+      const wasmPath = join(dir, "module.wasm");
+      writeFileSync(
+        mainPath,
+        `function makeObject(depth: number): any {\n` +
+          `  if (depth <= 0) return { value: 42 };\n` +
+          `  return makeObject(depth - 1);\n` +
+          `}\n` +
+          `function objectTrampoline(depth: number): any { return makeObject(depth); }\n` +
+          `if (objectTrampoline(1).value !== ${expected}) throw new Error("externref tail result corrupted");\n`,
+      );
+      writeFileSync(manifestPath, `${pathToFileURL(mainPath)}\t${mainPath}\n`);
 
-    const compiled = spawnSync(
-      process.execPath,
-      [
-        "--import",
-        "tsx",
-        compiler,
-        "--manifest",
+      const compiled = spawnSync(
+        process.execPath,
+        [
+          "--import",
+          "tsx",
+          compiler,
+          "--realm",
+          "isolated",
+          "--manifest",
+          manifestPath,
+          "--entry",
+          pathToFileURL(mainPath).href,
+          "--output",
+          wasmPath,
+        ],
+        { cwd: root, encoding: "utf8" },
+      );
+      expect(compiled.status, compiled.stderr).toBe(0);
+
+      const evaluated = spawnSync(
+        wasmtime,
+        ["run", "-W", "gc=y,function-references=y,tail-call=y,exceptions=y", wasmPath],
+        { encoding: "utf8" },
+      );
+      expect(evaluated.error).toBeUndefined();
+      if (expected === 42) expect(evaluated.status, evaluated.stderr).toBe(0);
+      else {
+        expect(evaluated.status).not.toBeNull();
+        expect(evaluated.status, evaluated.stderr).not.toBe(0);
+        expect(evaluated.stderr).toContain("wasm");
+      }
+    },
+    30_000,
+  );
+
+  it.skipIf(wasmtimeUnavailable)(
+    "compiles an untouched multi-file TypeScript graph and evaluates it in Wasmtime",
+    () => {
+      const dir = mkdtempSync(join(tmpdir(), "v8x-js2wasm-"));
+      const mainPath = join(dir, "main.ts");
+      const mathPath = join(dir, "math.ts");
+      const bootstrapPath = join(dir, "bootstrap.js");
+      const manifestPath = join(dir, "modules.tsv");
+      const wasmPath = join(dir, "module.wasm");
+
+      writeFileSync(mathPath, `export function add(left: number, right: number): number { return left + right; }\n`);
+      writeFileSync(bootstrapPath, `globalThis.__v8xBootstrapValue = 21;\n`);
+      writeFileSync(
+        mainPath,
+        `import "./bootstrap.js";\n` +
+          `import { add } from "./math.ts";\n` +
+          `const answer: number = add((globalThis as any).__v8xBootstrapValue, 21);\n` +
+          `if (answer !== 42) throw new Error("wrong result");\n`,
+      );
+      writeFileSync(
         manifestPath,
-        "--entry",
-        pathToFileURL(mainPath).href,
-        "--output",
-        wasmPath,
-      ],
-      { cwd: root, encoding: "utf8" },
-    );
-    expect(compiled.status, compiled.stderr).toBe(0);
+        `${pathToFileURL(mainPath)}\t${mainPath}\n` +
+          `${pathToFileURL(mathPath)}\t${mathPath}\n` +
+          `${pathToFileURL(bootstrapPath)}\t${bootstrapPath}\n`,
+      );
 
-    const evaluated = spawnSync(
-      wasmtime,
-      ["run", "-W", "gc=y,function-references=y,tail-call=y,exceptions=y", wasmPath],
-      { encoding: "utf8" },
-    );
-    if (evaluated.error && "code" in evaluated.error && evaluated.error.code === "ENOENT") return;
-    expect(evaluated.status, evaluated.stderr).toBe(0);
-  }, 30_000);
+      const compiled = spawnSync(
+        process.execPath,
+        [
+          "--import",
+          "tsx",
+          compiler,
+          "--realm",
+          "isolated",
+          "--manifest",
+          manifestPath,
+          "--entry",
+          pathToFileURL(mainPath).href,
+          "--output",
+          wasmPath,
+        ],
+        { cwd: root, encoding: "utf8" },
+      );
+      expect(compiled.status, compiled.stderr).toBe(0);
+      expect(JSON.parse(compiled.stdout)).toMatchObject({ modules: 3 });
+      expect(readFileSync(wasmPath).byteLength).toBeGreaterThan(8);
 
-  it("compiles an untouched multi-file TypeScript graph and evaluates it in Wasmtime", () => {
-    const dir = mkdtempSync(join(tmpdir(), "v8x-js2wasm-"));
-    const mainPath = join(dir, "main.ts");
-    const mathPath = join(dir, "math.ts");
-    const bootstrapPath = join(dir, "bootstrap.js");
-    const manifestPath = join(dir, "modules.tsv");
-    const wasmPath = join(dir, "module.wasm");
-
-    writeFileSync(mathPath, `export function add(left: number, right: number): number { return left + right; }\n`);
-    writeFileSync(bootstrapPath, `globalThis.__v8xBootstrapValue = 21;\n`);
-    writeFileSync(
-      mainPath,
-      `import "./bootstrap.js";\n` +
-        `import { add } from "./math.ts";\n` +
-        `const answer: number = add((globalThis as any).__v8xBootstrapValue, 21);\n` +
-        `if (answer !== 42) throw new Error("wrong result");\n`,
-    );
-    writeFileSync(
-      manifestPath,
-      `${pathToFileURL(mainPath)}\t${mainPath}\n` +
-        `${pathToFileURL(mathPath)}\t${mathPath}\n` +
-        `${pathToFileURL(bootstrapPath)}\t${bootstrapPath}\n`,
-    );
-
-    const compiled = spawnSync(
-      process.execPath,
-      [
-        "--import",
-        "tsx",
-        compiler,
-        "--manifest",
-        manifestPath,
-        "--entry",
-        pathToFileURL(mainPath).href,
-        "--output",
-        wasmPath,
-      ],
-      { cwd: root, encoding: "utf8" },
-    );
-    expect(compiled.status, compiled.stderr).toBe(0);
-    expect(JSON.parse(compiled.stdout)).toMatchObject({ modules: 3 });
-    expect(readFileSync(wasmPath).byteLength).toBeGreaterThan(8);
-
-    const evaluated = spawnSync(
-      wasmtime,
-      ["run", "-W", "gc=y,function-references=y,tail-call=y,exceptions=y", wasmPath],
-      { encoding: "utf8" },
-    );
-    if (evaluated.error && "code" in evaluated.error && evaluated.error.code === "ENOENT") return;
-    expect(evaluated.status, evaluated.stderr).toBe(0);
-  }, 30_000);
+      const evaluated = spawnSync(
+        wasmtime,
+        ["run", "-W", "gc=y,function-references=y,tail-call=y,exceptions=y", wasmPath],
+        { encoding: "utf8" },
+      );
+      expect(evaluated.error).toBeUndefined();
+      expect(evaluated.status, evaluated.stderr).toBe(0);
+    },
+    30_000,
+  );
 
   it("compiles Deno.cwd() to the explicit typed host-op seam", () => {
     const dir = mkdtempSync(join(tmpdir(), "v8x-js2wasm-deno-"));
@@ -135,6 +153,8 @@ describe("v8x js2wasm module-backend spike", () => {
         "--import",
         "tsx",
         compiler,
+        "--realm",
+        "isolated",
         "--manifest",
         manifestPath,
         "--entry",

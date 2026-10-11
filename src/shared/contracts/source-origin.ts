@@ -7,7 +7,8 @@ export type CompilerSourceProducer =
   | "import-wrapper"
   | "eval-super-rewrite"
   | "process-stdin-prelude"
-  | "iterator-statics-prelude";
+  | "iterator-statics-prelude"
+  | "intl-listformat-prelude";
 
 export interface CompilerSourceOrigin {
   readonly producer: CompilerSourceProducer;

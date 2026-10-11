@@ -1,0 +1,97 @@
+{
+  "schemaVersion": 1,
+  "source": {
+    "name": "Unicode CLDR JSON",
+    "release": "48.2.0",
+    "commit": "bb334e8d6250c9363e957e131bf7e6d08ec72f91",
+    "cldrVersion": "48",
+    "unicodeVersion": "16.0.0",
+    "url": "https://github.com/unicode-org/cldr-json/tree/bb334e8d6250c9363e957e131bf7e6d08ec72f91"
+  },
+  "license": {
+    "path": "license/UNICODE-LICENSE-3.0.txt",
+    "sourcePath": "LICENSE",
+    "url": "https://raw.githubusercontent.com/unicode-org/cldr-json/bb334e8d6250c9363e957e131bf7e6d08ec72f91/LICENSE",
+    "sha256": "220ba0e1c43b99530d2d5bdb892a99dca0989414f51ab695ecd90163eaa1ec3b",
+    "bytes": 2033
+  },
+  "inputs": [
+    {
+      "path": "pinned-input/aliases.json",
+      "sourcePath": "cldr-json/cldr-core/supplemental/aliases.json",
+      "url": "https://raw.githubusercontent.com/unicode-org/cldr-json/bb334e8d6250c9363e957e131bf7e6d08ec72f91/cldr-json/cldr-core/supplemental/aliases.json",
+      "sha256": "b7011c866f27502ed6f160ca83f2a83fa42bce9fdc2176e60e2c6630961d877c",
+      "bytes": 137469
+    },
+    {
+      "path": "pinned-input/availableLocales.json",
+      "sourcePath": "cldr-json/cldr-core/availableLocales.json",
+      "url": "https://raw.githubusercontent.com/unicode-org/cldr-json/bb334e8d6250c9363e957e131bf7e6d08ec72f91/cldr-json/cldr-core/availableLocales.json",
+      "sha256": "2961ccc06b437a732c689ad59e891b563e6618546b4c4cda7216549d8a0b4528",
+      "bytes": 11175
+    },
+    {
+      "path": "pinned-input/likelySubtags.json",
+      "sourcePath": "cldr-json/cldr-core/supplemental/likelySubtags.json",
+      "url": "https://raw.githubusercontent.com/unicode-org/cldr-json/bb334e8d6250c9363e957e131bf7e6d08ec72f91/cldr-json/cldr-core/supplemental/likelySubtags.json",
+      "sha256": "38345946ad457213fb39e9645ab50f36b61681bf674b2eef2979a3b58d04afc8",
+      "bytes": 220093
+    },
+    {
+      "path": "pinned-input/unicode-calendar.json",
+      "sourcePath": "cldr-json/cldr-bcp47/bcp47/calendar.json",
+      "url": "https://raw.githubusercontent.com/unicode-org/cldr-json/bb334e8d6250c9363e957e131bf7e6d08ec72f91/cldr-json/cldr-bcp47/bcp47/calendar.json",
+      "sha256": "bcf1a12f71038aca3716f098c23e23d7125f64df7b7dd9945b29ff682eb5ed17",
+      "bytes": 4101
+    },
+    {
+      "path": "pinned-input/unicode-collation.json",
+      "sourcePath": "cldr-json/cldr-bcp47/bcp47/collation.json",
+      "url": "https://raw.githubusercontent.com/unicode-org/cldr-json/bb334e8d6250c9363e957e131bf7e6d08ec72f91/cldr-json/cldr-bcp47/bcp47/collation.json",
+      "sha256": "fcd5f22d3d3db3bf94becf5d83ce21cdca45f3d8c66babd09e88231039669181",
+      "bytes": 8531
+    },
+    {
+      "path": "pinned-input/unicode-currency.json",
+      "sourcePath": "cldr-json/cldr-bcp47/bcp47/currency.json",
+      "url": "https://raw.githubusercontent.com/unicode-org/cldr-json/bb334e8d6250c9363e957e131bf7e6d08ec72f91/cldr-json/cldr-bcp47/bcp47/currency.json",
+      "sha256": "88228d7c386bdc1cc5ce7d67ae8a149f3eb4cc4f607ecdd4f6c8cefd8c4114d0",
+      "bytes": 27552
+    },
+    {
+      "path": "pinned-input/unicode-measure.json",
+      "sourcePath": "cldr-json/cldr-bcp47/bcp47/measure.json",
+      "url": "https://raw.githubusercontent.com/unicode-org/cldr-json/bb334e8d6250c9363e957e131bf7e6d08ec72f91/cldr-json/cldr-bcp47/bcp47/measure.json",
+      "sha256": "313062c751fcbce1d3027bec924421505f72c0084d8b82ca80f0c8e119ffa2dc",
+      "bytes": 1177
+    },
+    {
+      "path": "pinned-input/unicode-number.json",
+      "sourcePath": "cldr-json/cldr-bcp47/bcp47/number.json",
+      "url": "https://raw.githubusercontent.com/unicode-org/cldr-json/bb334e8d6250c9363e957e131bf7e6d08ec72f91/cldr-json/cldr-bcp47/bcp47/number.json",
+      "sha256": "a8a5d72e55d0bcab49b70887bb69eedbaadc28c7651f6c78661e44e9b28a4cf5",
+      "bytes": 10182
+    },
+    {
+      "path": "pinned-input/unicode-segmentation.json",
+      "sourcePath": "cldr-json/cldr-bcp47/bcp47/segmentation.json",
+      "url": "https://raw.githubusercontent.com/unicode-org/cldr-json/bb334e8d6250c9363e957e131bf7e6d08ec72f91/cldr-json/cldr-bcp47/bcp47/segmentation.json",
+      "sha256": "a373b341a329fa4ef3d2382ed9e2bcca8e17936a81699e580c28f1a98e23a927",
+      "bytes": 2090
+    },
+    {
+      "path": "pinned-input/unicode-timezone.json",
+      "sourcePath": "cldr-json/cldr-bcp47/bcp47/timezone.json",
+      "url": "https://raw.githubusercontent.com/unicode-org/cldr-json/bb334e8d6250c9363e957e131bf7e6d08ec72f91/cldr-json/cldr-bcp47/bcp47/timezone.json",
+      "sha256": "c11423884420f00cf52733c854de5c898ddb6657ce560334c638a2bd994a1448",
+      "bytes": 59702
+    },
+    {
+      "path": "pinned-input/unicode-variant.json",
+      "sourcePath": "cldr-json/cldr-bcp47/bcp47/variant.json",
+      "url": "https://raw.githubusercontent.com/unicode-org/cldr-json/bb334e8d6250c9363e957e131bf7e6d08ec72f91/cldr-json/cldr-bcp47/bcp47/variant.json",
+      "sha256": "d7c128971823aabd0f204349175302608f028e360161f74bfddc25d8e2db2497",
+      "bytes": 1513
+    }
+  ]
+}

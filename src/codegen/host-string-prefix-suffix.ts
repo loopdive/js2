@@ -14,6 +14,7 @@ import { allocLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { addStringImports } from "./registry/imports.js";
 import { coerceType, compileExpression } from "./shared.js";
+import { readEnv } from "../env.js";
 
 export function tryCompileHostStringPredicate(
   ctx: CodegenContext,
@@ -55,7 +56,7 @@ export function tryCompileHostStringPredicate(
   }
   if (
     !eligible ||
-    process.env.JS2WASM_HOST_STRING_PREFIX_SUFFIX === "0" ||
+    readEnv("JS2WASM_HOST_STRING_PREFIX_SUFFIX") === "0" ||
     method === "includes" ||
     !searchValues ||
     new Set(searchValues).size !== 1

@@ -47,7 +47,7 @@
 //     the separate `rawPredecessorCounts` below; the two are different
 //     queries and must not be conflated.
 
-import type { IrBlock, IrFunction } from "../nodes.js";
+import type { IrBlock, IrFunction } from "../core/nodes.js";
 
 /** Successor block ids of a block, derived from its terminator. */
 export function blockSuccessors(block: IrBlock): readonly number[] {

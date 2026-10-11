@@ -15,7 +15,8 @@ import { funcSignatureOf } from "../func-space.js"; // (#1916 S2 read chokepoint
 import { addFuncType } from "../registry/types.js";
 import { closureArityField, closureBagField } from "./closure-header-layout.js";
 
-export type ClosureAllocationMode = "support" | "ordinary" | "host-one-shot";
+import { createSignatureWrapperType, type ClosureAllocationMode } from "../../runtime/wasmgc/values/closure-layouts.js";
+export type { ClosureAllocationMode } from "../../runtime/wasmgc/values/closure-layouts.js";
 
 function observeAllocation(info: ClosureInfo, mode: ClosureAllocationMode): void {
   if (mode === "ordinary") info.hostOneShotOnly = false;
@@ -70,6 +71,31 @@ export function getFuncSignature(
  * across all functions with the same signature, but each function gets its own
  * trampoline.
  */
+function funcRefWrapperSigKey(userParams: readonly ValType[], resultTypes: readonly ValType[]): string {
+  return `${userParams.map((p) => p.kind + ((p as { typeIdx?: number }).typeIdx ?? "")).join(",")}->${resultTypes
+    .map((r) => r.kind + ((r as { typeIdx?: number }).typeIdx ?? ""))
+    .join(",")}`;
+}
+
+/**
+ * (#6492) Look up an EXISTING wrapper for a signature without minting one.
+ *
+ * The distinction matters at finalize time: a call site's closure dispatch
+ * chain enumerates the wrapper func types known when that call site was
+ * emitted. Retyping a trampoline to a signature no call site has ever seen
+ * would make every dynamic call miss every arm; retyping it to a wrapper that
+ * already exists keeps the value dispatchable. So the repair in
+ * `finalizeMethodTrampolines` asks "does this ABI already exist?", never "make
+ * me one".
+ */
+export function peekFuncRefWrapperTypes(
+  ctx: CodegenContext,
+  userParams: readonly ValType[],
+  resultTypes: readonly ValType[],
+): ClosureInfo | null {
+  return ctx.funcRefWrapperCache.get(funcRefWrapperSigKey(userParams, resultTypes)) ?? null;
+}
+
 export function getOrCreateFuncRefWrapperTypes(
   ctx: CodegenContext,
   userParams: ValType[],
@@ -82,7 +108,7 @@ export function getOrCreateFuncRefWrapperTypes(
   closureInfo: ClosureInfo;
 } | null {
   // Build cache key from param types and result types
-  const sigKey = `${userParams.map((p) => p.kind + ((p as any).typeIdx ?? "")).join(",")}->${resultTypes.map((r) => r.kind + ((r as any).typeIdx ?? "")).join(",")}`;
+  const sigKey = funcRefWrapperSigKey(userParams, resultTypes);
 
   const cached = ctx.funcRefWrapperCache.get(sigKey);
   if (cached) {
@@ -104,19 +130,10 @@ export function getOrCreateFuncRefWrapperTypes(
   // Mark as non-final (superTypeIdx = -1) so closures with captures can be
   // subtypes of this wrapper struct, enabling ref.cast to succeed at call sites.
   const closureName = `__fn_wrap_${ctx.closureCounter++}`;
-  const structFields = [
-    { name: "func", type: { kind: "funcref" as const }, mutable: false },
-    closureArityField(),
-    closureBagField(),
-  ];
+
   const structTypeIdx = ctx.mod.types.length;
   const rootWrapperTypeIdx = (ctx as unknown as { __funcRefWrapperRootTypeIdx?: number }).__funcRefWrapperRootTypeIdx;
-  ctx.mod.types.push({
-    kind: "struct",
-    name: `${closureName}_struct`,
-    fields: structFields,
-    superTypeIdx: rootWrapperTypeIdx ?? -1, // first wrapper is the root; later signatures subtype it
-  });
+  ctx.mod.types.push(createSignatureWrapperType(`${closureName}_struct`, rootWrapperTypeIdx ?? -1));
   const liftedSelfTypeIdx = rootWrapperTypeIdx ?? structTypeIdx;
   if (rootWrapperTypeIdx === undefined) {
     (ctx as unknown as { __funcRefWrapperRootTypeIdx?: number }).__funcRefWrapperRootTypeIdx = structTypeIdx;

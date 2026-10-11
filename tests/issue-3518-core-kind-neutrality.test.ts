@@ -196,7 +196,9 @@ describe("#3518 core type relocation preserves kind-neutrality evidence", () => 
     const human = runGate();
     expect(human.code, human.out).toBe(0);
     expect(human.out).toContain("81 IrInstr arms + 4 terminators");
-    expect(human.out).toContain("3 symbolic-reference kinds excluded, 88 `readonly kind:` fields reconciled");
+    expect(human.out).toContain(
+      "3 symbolic-reference kinds and 1 named payload kind excluded, 89 `readonly kind:` fields reconciled",
+    );
   });
 
   it.each([CORE_TYPES, CORE_VALUE_REFERENCES, CORE_NODES, CORE_DIALECT])("requires canonical source %s", (file) => {
@@ -260,5 +262,81 @@ describe("#3518 core type relocation preserves kind-neutrality evidence", () => 
       readIn(CORE_NODES).replace("export type IrInstr =", "export type IrInstr =\n  | IrInstrUnreviewed"),
     );
     expectFailure('UNCLASSIFIED KIND "unreviewed"');
+  });
+
+  it.each(["remove", "rename", "kind", "move", "duplicate"] as const)(
+    "rejects %s of the reviewed canonical named payload",
+    (mutation) => {
+      expect(runGate().code).toBe(0);
+      const original = declaration(CORE_TYPES, "IrSupportRefType");
+      if (mutation === "remove" || mutation === "move") writeIn(CORE_TYPES, readIn(CORE_TYPES).replace(original, ""));
+      if (mutation === "rename")
+        writeIn(
+          CORE_TYPES,
+          readIn(CORE_TYPES).replace("export interface IrSupportRefType", "export interface RenamedSupportRef"),
+        );
+      if (mutation === "kind")
+        writeIn(
+          CORE_TYPES,
+          readIn(CORE_TYPES).replace('readonly kind: "support-ref";', 'readonly kind: "unreviewed-payload";'),
+        );
+      if (mutation === "move" || mutation === "duplicate") writeIn(NODES, `${readIn(NODES)}\n${original}\n`);
+      expectFailure(
+        mutation === "duplicate"
+          ? "duplicate kind-bearing interface `IrSupportRefType`"
+          : "named payload IrSupportRefType requires canonical",
+      );
+    },
+  );
+
+  it.each(["missing", "comment", "nested", "duplicate", "malformed"] as const)(
+    "rejects %s direct payload membership instead of trusting a text mention",
+    (mutation) => {
+      expect(runGate().code).toBe(0);
+      const replacements = {
+        missing: "",
+        comment: "  // | IrSupportRefType",
+        nested: "  | { payload: IrSupportRefType }",
+        duplicate: "  | IrSupportRefType\n  | IrSupportRefType",
+        malformed: "  | IrSupportRefType<",
+      };
+      expect(readIn(CORE_TYPES)).toContain("  | IrSupportRefType\n");
+      writeIn(CORE_TYPES, readIn(CORE_TYPES).replace("  | IrSupportRefType\n", replacements[mutation] + "\n"));
+      expectFailure("named payload IrSupportRefType requires exactly one direct IrType union arm");
+    },
+  );
+
+  it.each(["IrInstr", "IrTerminator"])("does not exempt a named payload promoted into %s", (union) => {
+    expect(runGate().code).toBe(0);
+    writeIn(
+      CORE_NODES,
+      readIn(CORE_NODES).replace(
+        new RegExp(`export type ${union} =\\s*\\|?`),
+        `export type ${union} =\n  | IrSupportRefType\n  |`,
+      ),
+    );
+    expectFailure("named payload IrSupportRefType must not be an IrInstr or IrTerminator arm");
+  });
+
+  it("does not automatically admit another named IrType payload", () => {
+    expect(runGate().code).toBe(0);
+    writeIn(
+      CORE_TYPES,
+      readIn(CORE_TYPES).replace("export type IrType =", "export type IrType =\n  | IrUnreviewedPayload") +
+        '\nexport interface IrUnreviewedPayload {\n  readonly kind: "unreviewed-payload";\n}\n',
+    );
+    expectFailure('`IrUnreviewedPayload` declares kind "unreviewed-payload"');
+  });
+
+  it("does not accept a comment as the named payload discriminant", () => {
+    expect(runGate().code).toBe(0);
+    writeIn(
+      CORE_TYPES,
+      readIn(CORE_TYPES).replace(
+        '  readonly kind: "support-ref";',
+        '  /*\n  readonly kind: "support-ref";\n  */\n  readonly kind: "different-payload";',
+      ),
+    );
+    expectFailure("named payload IrSupportRefType requires its exact readonly kind discriminant in canonical syntax");
   });
 });

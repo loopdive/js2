@@ -1,0 +1,37 @@
+[
+  {
+    "path": "after-pins.json",
+    "bytes": 5305,
+    "sha256": "08b2ac30f73c68f48ef63570f94b0cea7061c5a28936fb01cacaac57bf6c273d"
+  },
+  {
+    "path": "before-pins.json",
+    "bytes": 5305,
+    "sha256": "08b2ac30f73c68f48ef63570f94b0cea7061c5a28936fb01cacaac57bf6c273d"
+  },
+  {
+    "path": "contract-static-proof.json",
+    "bytes": 5749,
+    "sha256": "83303754b0361ccece69d9c38473c9b22d13148fb5ef554aa0a0623e50b667cf"
+  },
+  {
+    "path": "findings.md",
+    "bytes": 8343,
+    "sha256": "16e0a3f10c80daff83570a40f3bf9a028e0f812ad8b43672631b7af72aafc439"
+  },
+  {
+    "path": "input-live-static-proof.json",
+    "bytes": 3157,
+    "sha256": "ac676e7df18acba62cef58bdefffafa285905ed07198880b0cd27eb6336101bc"
+  },
+  {
+    "path": "physical-syntax-census.json",
+    "bytes": 15467,
+    "sha256": "5cfdcdc405113a514e2c03ff0a5743a344bc6a1db86703f4c89825de56257e3a"
+  },
+  {
+    "path": "review-drift.json",
+    "bytes": 38,
+    "sha256": "8288c1e84e253b6a0cfe8853c4b1d42912c8e032d54e2df6adb550c0016017f1"
+  }
+]

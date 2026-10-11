@@ -5,12 +5,14 @@
  * codegen/declarations.ts (#3268).
  */
 import type { DtsSeedAtom } from "../../checker/dts-entrypoint-seeds.js";
+import { widenJsDefaultGuessSymbolSlot } from "../js-default-param-type-guess.js";
 import { isVoidType, unwrapPromiseType } from "../../checker/type-mapper.js";
 import { isSyntacticallyBooleanExpr } from "../../checker/oracle.js";
 import { fnctorCtorParamTypesFlagEnabled, numericReturnsFlagEnabled } from "../../derivation-flags.js";
 import { forEachChild, ts } from "../../ts-api.js";
 import { numericAdmissionEnabled } from "../analysis/mixed-assignment-carrier.js";
 import { isStandalonePromiseActive } from "../async-scheduler.js";
+import { isStandaloneClassProtoObjectExpression } from "../class-proto-object.js"; // (#6767) C.prototype is an $Object
 import { hasAsyncModifier, resolveWasmType } from "../index.js";
 import { overlayRouteActive } from "../typed-lane-overlay-route.js";
 import { getVecInfo } from "../type-coercion.js";
@@ -37,7 +39,7 @@ export function resolveGenericCallSiteTypes(
         const sigParams = sig.getParameters();
         for (let i = 0; i < sigParams.length; i++) {
           const paramType = ctx.checker.getTypeOfSymbol(sigParams[i]!);
-          params.push(resolveWasmType(ctx, paramType));
+          params.push(widenJsDefaultGuessSymbolSlot(sigParams[i], resolveWasmType(ctx, paramType)));
         }
         const retType = ctx.checker.getReturnTypeOfSignature(sig);
         // (#2905) Carrier own-return guard. resolveWasmType(Promise<T>) lowers to
@@ -417,6 +419,102 @@ function anyIdentifierHasOpaqueLocalOrigin(
   return (initializerType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
 }
 
+function sameValType(a: ValType, b: ValType): boolean {
+  if (a.kind !== b.kind) return false;
+  if ((a.kind === "ref" || a.kind === "ref_null") && (b.kind === "ref" || b.kind === "ref_null")) {
+    return (a as { typeIdx: number }).typeIdx === (b as { typeIdx: number }).typeIdx;
+  }
+  return true;
+}
+
+/** Parameters whose forwarded ABI type is being computed (cycle guard). */
+const forwardedParamsInProgress = new Set<ts.ParameterDeclaration>();
+
+/**
+ * (#2917) The wasm ABI type of an untyped PARAMETER of a named function
+ * declaration that is forwarded as a call argument (`function nr(n) {
+ * return Vn(…, n); }`). The identifier's checker type is `any`; the value it
+ * holds at runtime is whatever `nr`'s own ABI says — so it is evidence for the
+ * callee only through that type. Treating it as "trusted" (it carries whatever
+ * the OTHER sites agreed on) let the Temporal polyfill's
+ * `Vn(…, cond ? "minute" : "auto")` site pin `Vn`'s precision parameter to a
+ * native string while `nr` forwarded the number 6 into it — the number
+ * coerced to a null string and `slice(0, precision)` answered "".
+ *
+ * A DESTRUCTURED binding (`const { precision: a } = At(o, n)`) whose checker
+ * type is `any` is a property read of an opaque value — the same evidence as
+ * the direct `f(obj.precision)` shape #4530 already treats as opaque.
+ *
+ *  - `undefined`: not a plain forwarded parameter of a function declaration,
+ *    or a cycle — no evidence either way (the pre-#2917 behaviour).
+ *  - `null`: the value is dynamic (`externref`), so it can hold anything.
+ *  - a type: the parameter's inferred ABI type.
+ */
+function forwardedParamAbiType(ctx: CodegenContext, arg: ts.Identifier): ValType | null | undefined {
+  const decl = ctx.oracle.valueDeclarationOf(arg);
+  if (decl && ts.isBindingElement(decl)) return null;
+  if (!decl || !ts.isParameter(decl) || !ts.isIdentifier(decl.name)) return undefined;
+  if (decl.type !== undefined || decl.initializer !== undefined || decl.dotDotDotToken !== undefined) return undefined;
+  const owner = decl.parent;
+  if (!ts.isFunctionDeclaration(owner) || !owner.name || !owner.body) return undefined;
+  if (forwardedParamsInProgress.has(decl)) return undefined;
+  forwardedParamsInProgress.add(decl);
+  try {
+    const index = owner.parameters.indexOf(decl);
+    return inferImplicitAnyParamType(ctx, owner.name.text, index, owner.getSourceFile(), owner);
+  } finally {
+    forwardedParamsInProgress.delete(decl);
+  }
+}
+
+/**
+ * (#5151) Does this call argument compile to the standalone `$NativeProto`
+ * value for a collection prototype, rather than to the shared `$Map` instance
+ * carrier the checker reports? `resolveWasmType` deliberately maps Map, Set,
+ * WeakMap, and WeakSet to `$Map`, which is correct for their real instances but
+ * wrong as evidence for an untyped parameter's ABI: the static receiver read
+ * emits an externref NativeProto and a later `$Map` boundary null-casts it.
+ *
+ * Keep the source proof deliberately exact. A resolved ambient declaration
+ * rejects a local collection-constructor binding, while transparent wrappers
+ * preserve the same runtime value. Identifier aliases are intentionally not
+ * followed: a stable declaration alone does not prove that its own storage ABI
+ * preserved the NativeProto instead of applying the same `$Map` conversion
+ * first.
+ */
+function isKnownAmbientGlobalBinding(ctx: CodegenContext, identifier: ts.Identifier): boolean {
+  // This is a positive representation proof, not the permissive unresolved
+  // global rule used by call dispatch. Require an oracle-resolved, nonempty
+  // declaration population whose entries are all ambient before treating a
+  // collection spelling as a NativeProto producer.
+  const declarations = ctx.oracle.declarationsOf(identifier);
+  return declarations.length > 0 && declarations.every((declaration) => declaration.getSourceFile().isDeclarationFile);
+}
+
+function isStandaloneCollectionNativeProtoArgument(ctx: CodegenContext, expression: ts.Expression): boolean {
+  if (!ctx.standalone) return false;
+  let current = expression;
+  while (
+    ts.isParenthesizedExpression(current) ||
+    ts.isAsExpression(current) ||
+    ts.isTypeAssertionExpression(current) ||
+    ts.isSatisfiesExpression(current) ||
+    ts.isNonNullExpression(current)
+  ) {
+    current = current.expression;
+  }
+  if (!ts.isPropertyAccessExpression(current) || current.name.text !== "prototype") return false;
+  const receiver = current.expression;
+  return (
+    ts.isIdentifier(receiver) &&
+    (receiver.text === "Map" ||
+      receiver.text === "Set" ||
+      receiver.text === "WeakMap" ||
+      receiver.text === "WeakSet") &&
+    isKnownAmbientGlobalBinding(ctx, receiver)
+  );
+}
+
 export function inferParamTypeFromCallSites(
   ctx: CodegenContext,
   funcName: string,
@@ -437,6 +535,11 @@ export function inferParamTypeFromCallSites(
   // See the ref-narrowing withdrawal rule below.
   let sawOpaqueAnyArg = false;
   let sawCatchVarArg = false;
+  // (#5151) A real collection `.prototype` value is `$NativeProto` at runtime
+  // even though its checker type resolves to the shared `$Map` instance
+  // carrier. Record it separately from opaque-any evidence so the withdrawal
+  // stays confined to this representation mismatch.
+  let sawStandaloneCollectionNativeProtoArg = false;
 
   const isRecursiveCall = (call: ts.CallExpression | ts.NewExpression): boolean => {
     const target = ctx.oracle.valueDeclarationOf(call.expression);
@@ -492,6 +595,10 @@ export function inferParamTypeFromCallSites(
       if (!conflict) {
         const arg = callArgs?.[paramIndex];
         if (arg) {
+          if (isStandaloneCollectionNativeProtoArgument(ctx, arg) || isStandaloneClassProtoObjectExpression(ctx, arg)) {
+            sawStandaloneCollectionNativeProtoArg = true;
+            return;
+          }
           const argType = ctx.checker.getTypeAtLocation(arg);
           // Skip if the argument itself is also `any` — no useful info
           if (argType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) {
@@ -591,6 +698,11 @@ export function inferParamTypeFromCallSites(
                   // #4530 withdrawal above (Marked's reference definition
                   // record is the real-world shape).
                   sawOpaqueAnyArg = true;
+                } else {
+                  const forwarded = forwardedParamAbiType(ctx, arg); // (#2917)
+                  if (forwarded === null) sawOpaqueAnyArg = true;
+                  else if (forwarded && agreed && !sameValType(agreed, forwarded)) conflict = true;
+                  else if (forwarded) agreed = forwarded;
                 }
               }
             } else if (isRecursiveCall(node)) {
@@ -607,6 +719,12 @@ export function inferParamTypeFromCallSites(
             // number 0. Record the position; the withdrawal rule below keeps a
             // native scalar from being inferred out of it.
             if ((argType.flags & ~(ts.TypeFlags.Void | ts.TypeFlags.Undefined)) === 0) sawNullishArg = true;
+            // (#6774 S6) A symbol's i32 id is not a number: an untyped param
+            // narrowed to i32 from it re-boxes as a NUMBER. Keep it externref.
+            if (ctx.standalone && (argType.flags & ts.TypeFlags.ESSymbolLike) !== 0) {
+              sawOpaqueAnyArg = true;
+              return;
+            }
             const wasmType = resolveWasmType(ctx, argType);
             // (#4611) A GC-ref claim sourced from a DYNAMIC member read is only
             // as strong as the receiver's DECLARED shape. Acorn's
@@ -657,6 +775,12 @@ export function inferParamTypeFromCallSites(
   // (TS control-flow can't see the closure mutation of `agreed` — assert its
   // declared type so the property narrowing below typechecks.)
   let type: ValType | null = conflict ? null : (agreed as ValType | null);
+  // (#5151) Do not turn a parameter receiving the NativeProto value above into
+  // the physical `$Map` instance ABI inferred from another call site. Leaving
+  // it externref preserves the object identity and lets dynamic descriptor
+  // handling observe the actual prototype. Instance-only Map/Set parameters
+  // never set this flag and retain their existing specialized fast path.
+  if (sawStandaloneCollectionNativeProtoArg) type = null;
   // (#3548) Soundness: if ANY call site under-applies this param, the value can
   // be `undefined` at runtime, so a NON-NULLABLE ref inference has no valid
   // filler — widen to the nullable ref of the same type (NOT all the way to
@@ -699,9 +823,9 @@ export function inferParamTypeFromCallSites(
   // sites is unproven — clsx's `toVal(mix)` had one object-literal site and one
   // `toVal(arguments[i])` site; the literal narrowed `mix` to that struct,
   // `typeof mix` then static-folded to "object", and every string/number/array
-  // argument silently took the object branch with zero enumerable keys. Only
-  // the trapping/misfolding ref narrowing is withdrawn; scalar narrowings keep
-  // their existing coerce-don't-trap risk profile (same split as #2867 S2).
+  // argument silently took the object branch with zero enumerable keys.
+  // (#2917) Scalar narrowings are withdrawn too: an f64 boundary runs ToNumber
+  // on the opaque value (JSBI's `valueOf` throws — 287 Temporal rows).
   // (#4616 smoke regression) The opaque-any withdrawal is scoped to
   // SPECULATIVE narrowings on UNANNOTATED params. A param with an explicit
   // concrete type annotation (`buf: Uint8Array` in the native-messaging
@@ -731,12 +855,7 @@ export function inferParamTypeFromCallSites(
     scan(sourceFile);
     return found;
   };
-  if (
-    sawOpaqueAnyArg &&
-    type !== null &&
-    (type.kind === "ref" || type.kind === "ref_null") &&
-    !paramHasConcreteAnnotation()
-  ) {
+  if (sawOpaqueAnyArg && type !== null && type.kind !== "externref" && !paramHasConcreteAnnotation()) {
     type = null;
   }
   // (#4630) A catch-clause binding withdraws ANY GC-`ref` agreement, not just a
@@ -1095,6 +1214,20 @@ export function inferImplicitAnyParamType(
     const seeded = dtsSeedAtomToValType(ctx, seedAtom);
     if (seeded !== null) return seeded;
   }
+  // (#6487) A function with no internal call site that is nevertheless
+  // referenced as a VALUE (`export const __h_x = verifyEqualTo;`, `export { fn
+  // }`, a callback handed to an API) has callers this file cannot see, exactly
+  // like an inconclusive call site. Body usage is a use-proof, not an ABI
+  // proof: one numeric use (`obj[name] * 2`) narrows the parameter to f64 and
+  // every unseen caller's string argument then arrives as NaN — the #3471
+  // miscompile class, reached through the escape door instead of the call-site
+  // one. `escapesAsValue` already withdraws the native-string `ref` route above
+  // for this same reason (#2867 S2); withdraw the f64 body route too.
+  //
+  // This sits AFTER the `.d.ts` seed (#743) deliberately: a declared type is a
+  // contract about those unseen callers, so it outranks both the escape
+  // heuristic and the body heuristic. Only the unseeded position falls through.
+  if (callSites.escapesAsValue) return null;
   return inferParamTypeFromBody(ctx, decl, paramIndex);
 }
 

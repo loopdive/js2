@@ -44,6 +44,8 @@ import { emitLazyClassObjectGet } from "./extern.js";
 import { compileStringLiteral } from "../string-ops.js";
 import { classMemberFuncKey } from "../class-member-keys.js"; // (#2637 B2.1) onhost-ctor funcMap key
 import { emitFuncRefAsClosure } from "../closures.js"; // (#2637 B2.1) materialize $Class_new__onhost as a no-capture closure
+import { noJsHost } from "../js-errors.js";
+import { markPromiseSubclassValueRead } from "../standalone-class-construct.js"; // (#6651 D4)
 
 /**
  * Returns the resolved class name if `name` (a user-visible identifier or
@@ -69,6 +71,26 @@ export function resolvePromiseSubclassName(ctx: CodegenContext, name: string): s
     seen.add(cursor);
     if (ctx.classBuiltinParentMap.get(cursor) === "Promise") return resolved;
     cursor = ctx.classParentMap.get(cursor);
+  }
+  return undefined;
+}
+
+/**
+ * (#5197 r3) The Promise-subclass class a receiver TYPE denotes: through its symbol name,
+ * its apparent type's, or — for an ANONYMOUS `class extends Promise` instance
+ * (`new class extends Promise {…}(fn)`, whose symbol is the display name `__class`) —
+ * the class expression's synthetic name.
+ */
+export function promiseSubclassNameOfType(
+  ctx: CodegenContext,
+  type: ts.Type,
+  apparent: ts.Type | undefined,
+): string | undefined {
+  const decl = type.getSymbol()?.valueDeclaration;
+  const anon = decl && ts.isClassExpression(decl) ? ctx.anonClassExprNames.get(decl) : undefined;
+  for (const name of [type.getSymbol()?.name, apparent?.getSymbol()?.name, anon]) {
+    const resolved = name === undefined ? undefined : resolvePromiseSubclassName(ctx, name);
+    if (resolved !== undefined) return resolved;
   }
   return undefined;
 }
@@ -185,6 +207,19 @@ export function emitPromiseSubclassCtor(ctx: CodegenContext, fctx: FunctionConte
   }
   fctx.body.push({ op: "call", funcIdx });
   return true;
+}
+
+/**
+ * A Promise-subclass identifier read as a VALUE. With a JS host this is the
+ * cached host constructor ({@link emitPromiseSubclassCtor}). Without one
+ * (#6651 D4) nothing is emitted here — the caller falls through to the class's
+ * own class-object singleton — and the module is recorded so the native
+ * construct dispatcher admits the class (NewPromiseCapability(C) constructs it).
+ */
+export function emitPromiseSubclassValueRead(ctx: CodegenContext, fctx: FunctionContext, resolved: string): boolean {
+  if (!noJsHost(ctx)) return emitPromiseSubclassCtor(ctx, fctx, resolved);
+  markPromiseSubclassValueRead(ctx);
+  return false;
 }
 
 /**

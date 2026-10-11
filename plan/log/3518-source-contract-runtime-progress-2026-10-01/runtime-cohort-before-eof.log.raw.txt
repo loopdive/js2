@@ -1,0 +1,371 @@
+
+ RUN  v3.2.4 /private/tmp/js2-ir-source-contracts-main-20261001
+
+ ✓ tests/issue-3518-runtime-data-contract-seam.test.ts (75 tests) 42253ms
+   ✓ #3518 canonical runtime data-contract seam > checks historical 'src/runtime/contracts/async-provider-…' receipt after checked extension reconstruction  354ms
+   ✓ #3518 canonical runtime data-contract seam > checks historical 'src/runtime/contracts/provider-policy…' receipt after checked extension reconstruction  304ms
+   ✓ #3518 canonical runtime data-contract seam > checks historical 'src/ir/runtime/contracts/intrinsics.ts' receipt after checked extension reconstruction  849ms
+   ✓ #3518 canonical runtime data-contract seam > checks historical 'src/ir/runtime/contracts/manifest.ts' receipt after checked extension reconstruction  12075ms
+   ✓ #3518 canonical runtime data-contract seam > checks historical retained 'src/ir/async-runtime-providers.ts' receipt after checked extension reconstruction  555ms
+   ✓ #3518 canonical runtime data-contract seam > checks historical retained 'src/ir/runtime-manifest.ts' receipt after checked extension reconstruction  12072ms
+   ✓ #3518 canonical runtime data-contract seam > checks historical retained 'src/ir/intrinsics.ts' receipt after checked extension reconstruction  836ms
+   ✓ #3518 canonical runtime data-contract seam > checks historical retained 'src/ir/async-plan.ts' receipt after checked extension reconstruction  558ms
+   ✓ #3518 canonical runtime data-contract seam > checks historical retained 'src/ir/intrinsic-support.ts' receipt after checked extension reconstruction  12920ms
+   ✓ #3518 canonical runtime data-contract seam > keeps the complete moved/retained denominators and the one currentness authority  569ms
+   ✓ #3518 compiled runtime data joins > resolves all 81 public old/new types, canonical joins and eleven negative controls  626ms
+ ❯ tests/issue-3518-runtime-contract-evolution.test.ts (331 tests | 1 failed) 3073ms
+   ✓ issue 3518: runtime contract initial-source evolution > captures exactly 27 production sources once, without reading authoring test provenance 277ms
+   ✓ issue 3518: runtime contract initial-source evolution > recovers exact target and complete reciprocal bytes for 'src/runtime/contracts/provider-policy…' 1ms
+   ✓ issue 3518: runtime contract initial-source evolution > recovers exact target and complete reciprocal bytes for 'src/ir/runtime/contracts/manifest.ts' 0ms
+   ✓ issue 3518: runtime contract initial-source evolution > recovers exact target and complete reciprocal bytes for 'src/ir/intrinsics.ts' 0ms
+   ✓ issue 3518: runtime contract initial-source evolution > recovers exact target and complete reciprocal bytes for 'src/ir/core/intrinsic-vocabulary.ts' 0ms
+   ✓ issue 3518: runtime contract initial-source evolution > recovers exact target and complete reciprocal bytes for 'src/ir/runtime/contracts/intrinsics.ts' 0ms
+   ✓ issue 3518: runtime contract initial-source evolution > recovers exact target and complete reciprocal bytes for 'src/ir/core/intrinsics.ts' 0ms
+   ✓ issue 3518: runtime contract initial-source evolution > recovers exact target and complete reciprocal bytes for 'src/ir/analysis/intrinsics.ts' 0ms
+   ✓ issue 3518: runtime contract initial-source evolution > recovers exact target and complete reciprocal bytes for 'src/ir/runtime/callable-declarations.…' 0ms
+   ✓ issue 3518: runtime contract initial-source evolution > recovers exact target and complete reciprocal bytes for 'src/ir/runtime/manifest.ts' 1ms
+   ✓ issue 3518: runtime contract initial-source evolution > recovers exact target and complete reciprocal bytes for 'src/ir/intrinsic-support.ts' 0ms
+   ✓ issue 3518: runtime contract initial-source evolution > recovers exact target and complete reciprocal bytes for 'src/ir/program-runtime-abi.ts' 0ms
+   ✓ issue 3518: runtime contract initial-source evolution > recovers exact target and complete reciprocal bytes for 'src/ir/program/runtime-abi-identity.ts' 0ms
+   ✓ issue 3518: runtime contract initial-source evolution > recovers exact target and complete reciprocal bytes for 'src/ir/runtime-program-manifest.ts' 0ms
+   ✓ issue 3518: runtime contract initial-source evolution > recovers exact target and complete reciprocal bytes for 'src/ir/core/vector-runtime.ts' 0ms
+   ✓ issue 3518: runtime contract initial-source evolution > recovers exact target and complete reciprocal bytes for 'src/ir/vector-runtime.ts' 0ms
+   ✓ issue 3518: runtime contract initial-source evolution > recovers exact target and complete reciprocal bytes for 'src/ir/runtime/vector-callables.ts' 0ms
+   ✓ issue 3518: runtime contract initial-source evolution > recovers exact target and complete reciprocal bytes for 'src/ir/program-runtime-validation.ts' 0ms
+   ✓ issue 3518: runtime contract initial-source evolution > recovers exact target and complete reciprocal bytes for 'src/ir/core/async-callables.ts' 0ms
+   ✓ issue 3518: runtime contract initial-source evolution > recovers exact target and complete reciprocal bytes for 'src/ir/runtime/native-async-callables…' 0ms
+   ✓ issue 3518: runtime contract initial-source evolution > recovers exact target and complete reciprocal bytes for 'src/ir/core/intrinsic-contracts.ts' 0ms
+   ✓ issue 3518: runtime contract initial-source evolution > recovers exact target and complete reciprocal bytes for 'src/ir/core/async-intents.ts' 0ms
+   ✓ issue 3518: runtime contract initial-source evolution > recovers exact target and complete reciprocal bytes for 'src/ir/runtime/async-providers.ts' 0ms
+   ✓ issue 3518: runtime contract initial-source evolution > recovers exact target and complete reciprocal bytes for 'src/ir/analysis/async-plan.ts' 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > recovers exact target and complete reciprocal bytes for 'src/ir/runtime/async-attachment.ts' 0ms
+   ✓ issue 3518: runtime contract initial-source evolution > recovers exact target and complete reciprocal bytes for 'src/ir/runtime/intrinsic-verification…' 0ms
+   ✓ issue 3518: runtime contract initial-source evolution > recovers exact target and complete reciprocal bytes for 'src/runtime/contracts/async-provider-…' 0ms
+   ✓ issue 3518: runtime contract initial-source evolution > recovers exact target and complete reciprocal bytes for 'src/ir/runtime/contracts/prepared.ts' 0ms
+   ✓ issue 3518: runtime contract initial-source evolution > retains the exact live manifest 79 and callable 10 declaration census 2ms
+   ✓ issue 3518: runtime contract initial-source evolution > retains both actual live ABI function bodies and documentation in the old owner 0ms
+   ✓ issue 3518: runtime contract initial-source evolution > preserves generic runtime specialization and actual core bodies outside the Boolean inverse 1ms
+   ✓ issue 3518: runtime contract initial-source evolution > preserves all old link/owner checks and the pre-vector-clock stage 35ms
+   ✓ issue 3518: runtime contract initial-source evolution > preserves all old link/owner checks and the pre-clock-callable stage 55ms
+   ✓ issue 3518: runtime contract initial-source evolution > preserves the original 20 declaration receipt for 'src/ir/runtime/contracts/intrinsics.ts' 1ms
+   ✓ issue 3518: runtime contract initial-source evolution > preserves the original 26 declaration receipt for 'src/ir/async-runtime-providers.ts' 1ms
+   ✓ issue 3518: runtime contract initial-source evolution > preserves the original 85 declaration receipt for 'src/ir/runtime-manifest.ts' 66ms
+   ✓ issue 3518: runtime contract initial-source evolution > preserves the original 24 declaration receipt for 'src/ir/intrinsics.ts' 1ms
+   ✓ issue 3518: runtime contract initial-source evolution > preserves the original 48 declaration receipt for 'src/ir/async-plan.ts' 2ms
+   ✓ issue 3518: runtime contract initial-source evolution > preserves the original 41 declaration receipt for 'src/ir/intrinsic-support.ts' 64ms
+   ✓ issue 3518: runtime contract initial-source evolution > preserves the original 5 declaration receipt for 'src/ir/runtime/callable-declarations.…' 60ms
+   ✓ issue 3518: runtime contract initial-source evolution > preserves the original 67 declaration receipt for 'src/ir/runtime/contracts/manifest.ts' 61ms
+   ✓ issue 3518: runtime contract initial-source evolution > requires the complete raw owner src/runtime/contracts/provider-policy.ts 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > requires the complete raw owner src/ir/runtime/contracts/manifest.ts 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > requires the complete raw owner src/ir/intrinsics.ts 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > requires the complete raw owner src/ir/core/intrinsic-vocabulary.ts 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > requires the complete raw owner src/ir/runtime/contracts/intrinsics.ts 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > requires the complete raw owner src/ir/core/intrinsics.ts 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > requires the complete raw owner src/ir/analysis/intrinsics.ts 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > requires the complete raw owner src/ir/runtime/callable-declarations.ts 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > requires the complete raw owner src/ir/runtime/manifest.ts 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > requires the complete raw owner src/ir/intrinsic-support.ts 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > requires the complete raw owner src/ir/program-runtime-abi.ts 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > requires the complete raw owner src/ir/program/runtime-abi-identity.ts 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > requires the complete raw owner src/ir/runtime-program-manifest.ts 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > requires the complete raw owner src/ir/core/vector-runtime.ts 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > requires the complete raw owner src/ir/vector-runtime.ts 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > requires the complete raw owner src/ir/runtime/vector-callables.ts 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > requires the complete raw owner src/ir/program-runtime-validation.ts 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > requires the complete raw owner src/ir/core/async-callables.ts 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > requires the complete raw owner src/ir/runtime/native-async-callables.ts 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > requires the complete raw owner src/ir/core/intrinsic-contracts.ts 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > requires the complete raw owner src/ir/core/async-intents.ts 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > requires the complete raw owner src/ir/runtime/async-providers.ts 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > requires the complete raw owner src/ir/analysis/async-plan.ts 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > requires the complete raw owner src/ir/runtime/async-attachment.ts 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > requires the complete raw owner src/ir/runtime/intrinsic-verification.ts 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > requires the complete raw owner src/runtime/contracts/async-provider-schema.ts 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > requires the complete raw owner src/ir/runtime/contracts/prepared.ts 6ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects an outside-span raw edit in src/runtime/contracts/provider-policy.ts 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects an outside-span raw edit in src/ir/runtime/contracts/manifest.ts 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects an outside-span raw edit in src/ir/intrinsics.ts 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects an outside-span raw edit in src/ir/core/intrinsic-vocabulary.ts 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects an outside-span raw edit in src/ir/runtime/contracts/intrinsics.ts 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects an outside-span raw edit in src/ir/core/intrinsics.ts 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects an outside-span raw edit in src/ir/analysis/intrinsics.ts 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects an outside-span raw edit in src/ir/runtime/callable-declarations.ts 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects an outside-span raw edit in src/ir/runtime/manifest.ts 7ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects an outside-span raw edit in src/ir/intrinsic-support.ts 6ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects an outside-span raw edit in src/ir/program-runtime-abi.ts 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects an outside-span raw edit in src/ir/program/runtime-abi-identity.ts 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects an outside-span raw edit in src/ir/runtime-program-manifest.ts 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects an outside-span raw edit in src/ir/core/vector-runtime.ts 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects an outside-span raw edit in src/ir/vector-runtime.ts 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects an outside-span raw edit in src/ir/runtime/vector-callables.ts 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects an outside-span raw edit in src/ir/program-runtime-validation.ts 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects an outside-span raw edit in src/ir/core/async-callables.ts 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects an outside-span raw edit in src/ir/runtime/native-async-callables.ts 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects an outside-span raw edit in src/ir/core/intrinsic-contracts.ts 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects an outside-span raw edit in src/ir/core/async-intents.ts 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects an outside-span raw edit in src/ir/runtime/async-providers.ts 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects an outside-span raw edit in src/ir/analysis/async-plan.ts 6ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects an outside-span raw edit in src/ir/runtime/async-attachment.ts 6ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects an outside-span raw edit in src/ir/runtime/intrinsic-verification.ts 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects an outside-span raw edit in src/runtime/contracts/async-provider-schema.ts 6ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects an outside-span raw edit in src/ir/runtime/contracts/prepared.ts 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects missing raw span +0 in 'src/runtime/contracts/provider-policy…' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects missing raw span 1 in 'src/runtime/contracts/provider-policy…' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects missing raw span 2 in 'src/runtime/contracts/provider-policy…' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects missing raw span +0 in 'src/ir/runtime/contracts/manifest.ts' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects missing raw span 1 in 'src/ir/runtime/contracts/manifest.ts' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects missing raw span 2 in 'src/ir/runtime/contracts/manifest.ts' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects missing raw span 3 in 'src/ir/runtime/contracts/manifest.ts' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects missing raw span +0 in 'src/ir/intrinsics.ts' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects missing raw span +0 in 'src/ir/core/intrinsic-vocabulary.ts' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects missing raw span +0 in 'src/ir/runtime/contracts/intrinsics.ts' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects missing raw span +0 in 'src/ir/core/intrinsics.ts' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects missing raw span 1 in 'src/ir/core/intrinsics.ts' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects missing raw span +0 in 'src/ir/analysis/intrinsics.ts' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects missing raw span +0 in 'src/ir/runtime/callable-declarations.…' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects missing raw span 1 in 'src/ir/runtime/callable-declarations.…' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects missing raw span +0 in 'src/ir/runtime/manifest.ts' 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects missing raw span 1 in 'src/ir/runtime/manifest.ts' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects missing raw span 2 in 'src/ir/runtime/manifest.ts' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects missing raw span 3 in 'src/ir/runtime/manifest.ts' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects missing raw span 4 in 'src/ir/runtime/manifest.ts' 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects missing raw span 5 in 'src/ir/runtime/manifest.ts' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects missing raw span 6 in 'src/ir/runtime/manifest.ts' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects missing raw span 7 in 'src/ir/runtime/manifest.ts' 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects missing raw span 8 in 'src/ir/runtime/manifest.ts' 6ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects missing raw span 9 in 'src/ir/runtime/manifest.ts' 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects missing raw span 10 in 'src/ir/runtime/manifest.ts' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects missing raw span 11 in 'src/ir/runtime/manifest.ts' 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects missing raw span 12 in 'src/ir/runtime/manifest.ts' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects missing raw span 13 in 'src/ir/runtime/manifest.ts' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects missing raw span 14 in 'src/ir/runtime/manifest.ts' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects missing raw span +0 in 'src/ir/intrinsic-support.ts' 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects missing raw span 1 in 'src/ir/intrinsic-support.ts' 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects missing raw span +0 in 'src/ir/program-runtime-abi.ts' 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects missing raw span 1 in 'src/ir/program-runtime-abi.ts' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects duplicated raw span +0 in 'src/runtime/contracts/provider-policy…' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects duplicated raw span 1 in 'src/runtime/contracts/provider-policy…' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects duplicated raw span 2 in 'src/runtime/contracts/provider-policy…' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects duplicated raw span +0 in 'src/ir/runtime/contracts/manifest.ts' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects duplicated raw span 1 in 'src/ir/runtime/contracts/manifest.ts' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects duplicated raw span 2 in 'src/ir/runtime/contracts/manifest.ts' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects duplicated raw span 3 in 'src/ir/runtime/contracts/manifest.ts' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects duplicated raw span +0 in 'src/ir/intrinsics.ts' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects duplicated raw span +0 in 'src/ir/core/intrinsic-vocabulary.ts' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects duplicated raw span +0 in 'src/ir/runtime/contracts/intrinsics.ts' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects duplicated raw span +0 in 'src/ir/core/intrinsics.ts' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects duplicated raw span 1 in 'src/ir/core/intrinsics.ts' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects duplicated raw span +0 in 'src/ir/analysis/intrinsics.ts' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects duplicated raw span +0 in 'src/ir/runtime/callable-declarations.…' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects duplicated raw span 1 in 'src/ir/runtime/callable-declarations.…' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects duplicated raw span +0 in 'src/ir/runtime/manifest.ts' 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects duplicated raw span 1 in 'src/ir/runtime/manifest.ts' 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects duplicated raw span 2 in 'src/ir/runtime/manifest.ts' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects duplicated raw span 3 in 'src/ir/runtime/manifest.ts' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects duplicated raw span 4 in 'src/ir/runtime/manifest.ts' 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects duplicated raw span 5 in 'src/ir/runtime/manifest.ts' 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects duplicated raw span 6 in 'src/ir/runtime/manifest.ts' 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects duplicated raw span 7 in 'src/ir/runtime/manifest.ts' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects duplicated raw span 8 in 'src/ir/runtime/manifest.ts' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects duplicated raw span 9 in 'src/ir/runtime/manifest.ts' 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects duplicated raw span 10 in 'src/ir/runtime/manifest.ts' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects duplicated raw span 11 in 'src/ir/runtime/manifest.ts' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects duplicated raw span 12 in 'src/ir/runtime/manifest.ts' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects duplicated raw span 13 in 'src/ir/runtime/manifest.ts' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects duplicated raw span 14 in 'src/ir/runtime/manifest.ts' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects duplicated raw span +0 in 'src/ir/intrinsic-support.ts' 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects duplicated raw span 1 in 'src/ir/intrinsic-support.ts' 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects duplicated raw span +0 in 'src/ir/program-runtime-abi.ts' 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects duplicated raw span 1 in 'src/ir/program-runtime-abi.ts' 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects changed raw span +0 in 'src/runtime/contracts/provider-policy…' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects changed raw span 1 in 'src/runtime/contracts/provider-policy…' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects changed raw span 2 in 'src/runtime/contracts/provider-policy…' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects changed raw span +0 in 'src/ir/runtime/contracts/manifest.ts' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects changed raw span 1 in 'src/ir/runtime/contracts/manifest.ts' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects changed raw span 2 in 'src/ir/runtime/contracts/manifest.ts' 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects changed raw span 3 in 'src/ir/runtime/contracts/manifest.ts' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects changed raw span +0 in 'src/ir/intrinsics.ts' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects changed raw span +0 in 'src/ir/core/intrinsic-vocabulary.ts' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects changed raw span +0 in 'src/ir/runtime/contracts/intrinsics.ts' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects changed raw span +0 in 'src/ir/core/intrinsics.ts' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects changed raw span 1 in 'src/ir/core/intrinsics.ts' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects changed raw span +0 in 'src/ir/analysis/intrinsics.ts' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects changed raw span +0 in 'src/ir/runtime/callable-declarations.…' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects changed raw span 1 in 'src/ir/runtime/callable-declarations.…' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects changed raw span +0 in 'src/ir/runtime/manifest.ts' 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects changed raw span 1 in 'src/ir/runtime/manifest.ts' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects changed raw span 2 in 'src/ir/runtime/manifest.ts' 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects changed raw span 3 in 'src/ir/runtime/manifest.ts' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects changed raw span 4 in 'src/ir/runtime/manifest.ts' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects changed raw span 5 in 'src/ir/runtime/manifest.ts' 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects changed raw span 6 in 'src/ir/runtime/manifest.ts' 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects changed raw span 7 in 'src/ir/runtime/manifest.ts' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects changed raw span 8 in 'src/ir/runtime/manifest.ts' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects changed raw span 9 in 'src/ir/runtime/manifest.ts' 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects changed raw span 10 in 'src/ir/runtime/manifest.ts' 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects changed raw span 11 in 'src/ir/runtime/manifest.ts' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects changed raw span 12 in 'src/ir/runtime/manifest.ts' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects changed raw span 13 in 'src/ir/runtime/manifest.ts' 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects changed raw span 14 in 'src/ir/runtime/manifest.ts' 6ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects changed raw span +0 in 'src/ir/intrinsic-support.ts' 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects changed raw span 1 in 'src/ir/intrinsic-support.ts' 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects changed raw span +0 in 'src/ir/program-runtime-abi.ts' 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects changed raw span 1 in 'src/ir/program-runtime-abi.ts' 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects shifted raw span +0 in 'src/runtime/contracts/provider-policy…' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects shifted raw span 1 in 'src/runtime/contracts/provider-policy…' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects shifted raw span 2 in 'src/runtime/contracts/provider-policy…' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects shifted raw span +0 in 'src/ir/runtime/contracts/manifest.ts' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects shifted raw span 1 in 'src/ir/runtime/contracts/manifest.ts' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects shifted raw span 2 in 'src/ir/runtime/contracts/manifest.ts' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects shifted raw span 3 in 'src/ir/runtime/contracts/manifest.ts' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects shifted raw span +0 in 'src/ir/intrinsics.ts' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects shifted raw span +0 in 'src/ir/core/intrinsic-vocabulary.ts' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects shifted raw span +0 in 'src/ir/runtime/contracts/intrinsics.ts' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects shifted raw span +0 in 'src/ir/core/intrinsics.ts' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects shifted raw span 1 in 'src/ir/core/intrinsics.ts' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects shifted raw span +0 in 'src/ir/analysis/intrinsics.ts' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects shifted raw span +0 in 'src/ir/runtime/callable-declarations.…' 4ms
+   × issue 3518: runtime contract initial-source evolution > rejects shifted raw span 1 in 'src/ir/runtime/callable-declarations.…' 3ms
+     → expected '// Copyright (c) 2026 Loopdive GmbH. …' not to be '// Copyright (c) 2026 Loopdive GmbH. …' // Object.is equality
+   ✓ issue 3518: runtime contract initial-source evolution > rejects shifted raw span +0 in 'src/ir/runtime/manifest.ts' 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects shifted raw span 1 in 'src/ir/runtime/manifest.ts' 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects shifted raw span 2 in 'src/ir/runtime/manifest.ts' 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects shifted raw span 3 in 'src/ir/runtime/manifest.ts' 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects shifted raw span 4 in 'src/ir/runtime/manifest.ts' 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects shifted raw span 5 in 'src/ir/runtime/manifest.ts' 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects shifted raw span 6 in 'src/ir/runtime/manifest.ts' 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects shifted raw span 7 in 'src/ir/runtime/manifest.ts' 6ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects shifted raw span 8 in 'src/ir/runtime/manifest.ts' 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects shifted raw span 9 in 'src/ir/runtime/manifest.ts' 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects shifted raw span 10 in 'src/ir/runtime/manifest.ts' 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects shifted raw span 11 in 'src/ir/runtime/manifest.ts' 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects shifted raw span 12 in 'src/ir/runtime/manifest.ts' 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects shifted raw span 13 in 'src/ir/runtime/manifest.ts' 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects shifted raw span 14 in 'src/ir/runtime/manifest.ts' 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects shifted raw span +0 in 'src/ir/intrinsic-support.ts' 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects shifted raw span 1 in 'src/ir/intrinsic-support.ts' 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects shifted raw span +0 in 'src/ir/program-runtime-abi.ts' 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects shifted raw span 1 in 'src/ir/program-runtime-abi.ts' 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects reordered reviewed spans in 'src/runtime/contracts/provider-policy…' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects reordered reviewed spans in 'src/ir/runtime/contracts/manifest.ts' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects reordered reviewed spans in 'src/ir/core/intrinsics.ts' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects reordered reviewed spans in 'src/ir/runtime/callable-declarations.…' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects reordered reviewed spans in 'src/ir/runtime/manifest.ts' 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects reordered reviewed spans in 'src/ir/intrinsic-support.ts' 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects reordered reviewed spans in 'src/ir/program-runtime-abi.ts' 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > authenticates the removed live residue 'src/ir/runtime/contracts/manifest.ts'/'ORDINARY_OBJECT_RUNTIME_FEATURES' before removing it 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > authenticates the removed live residue 'src/ir/runtime/contracts/manifest.ts'/'OrdinaryObjectRuntimeFeature' before removing it 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > authenticates the removed live residue 'src/ir/runtime/contracts/manifest.ts'/'ORDINARY_OBJECT_RUNTIME_PROVIDER_IDS' before removing it 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > authenticates the removed live residue 'src/ir/runtime/contracts/manifest.ts'/'OrdinaryObjectRuntimeProviderId' before removing it 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > authenticates the removed live residue 'src/ir/core/intrinsics.ts'/'EXTERNREF_TO_BOOLEAN_INTRINSIC_SIGNAT…' before removing it 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > authenticates the removed live residue 'src/ir/runtime/callable-declarations.…'/'SEMANTIC_CALLABLE_RUNTIME_PROVIDERS' before removing it 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > authenticates the removed live residue 'src/ir/runtime/callable-declarations.…'/'semanticCallableProviderMismatch' before removing it 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > authenticates the removed live residue 'src/ir/runtime/callable-declarations.…'/'semanticCallablePolicyMismatch' before removing it 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects a duplicate current-only residue 'src/ir/runtime/contracts/manifest.ts'/'ORDINARY_OBJECT_RUNTIME_FEATURES' 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects a duplicate current-only residue 'src/ir/runtime/contracts/manifest.ts'/'OrdinaryObjectRuntimeFeature' 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects a duplicate current-only residue 'src/ir/runtime/contracts/manifest.ts'/'ORDINARY_OBJECT_RUNTIME_PROVIDER_IDS' 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects a duplicate current-only residue 'src/ir/runtime/contracts/manifest.ts'/'OrdinaryObjectRuntimeProviderId' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects a duplicate current-only residue 'src/ir/core/intrinsics.ts'/'EXTERNREF_TO_BOOLEAN_INTRINSIC_SIGNAT…' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects a duplicate current-only residue 'src/ir/runtime/callable-declarations.…'/'SEMANTIC_CALLABLE_RUNTIME_PROVIDERS' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects a duplicate current-only residue 'src/ir/runtime/callable-declarations.…'/'semanticCallableProviderMismatch' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects a duplicate current-only residue 'src/ir/runtime/callable-declarations.…'/'semanticCallablePolicyMismatch' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects the valid-syntax mutation: manifest private state 7ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects the valid-syntax mutation: manifest function body 7ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects the valid-syntax mutation: manifest delegated provider operand 7ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects the valid-syntax mutation: manifest delegated policy receiver 7ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects the valid-syntax mutation: manifest native Boolean policy 7ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects the valid-syntax mutation: Number policy readonly 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects the valid-syntax mutation: Boolean policy optionality 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects the valid-syntax mutation: Boolean policy native member 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects the valid-syntax mutation: provider interface readonly 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects the valid-syntax mutation: generic contract parameter 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects the valid-syntax mutation: generic contract readonly 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects the valid-syntax mutation: runtime specialization alias 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects the valid-syntax mutation: generic implementation body 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects the valid-syntax mutation: generic table annotation 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects the valid-syntax mutation: Boolean signature brand 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects the valid-syntax mutation: Boolean table signature 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects the valid-syntax mutation: Boolean result verifier 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects the valid-syntax mutation: semantic provider spread 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects the valid-syntax mutation: semantic provider first call 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects the valid-syntax mutation: semantic policy condition 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects the valid-syntax mutation: semantic policy native argument 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects the valid-syntax mutation: callable lookup vector body 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects the valid-syntax mutation: ABI anchor function body 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects the valid-syntax mutation: ABI callable body 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects the valid-syntax mutation: ABI live documentation 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects the valid-syntax mutation: ABI donor import 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects the valid-syntax mutation: ABI forwarding link 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects the valid-syntax mutation: retained support call body 6ms
+   ✓ issue 3518: runtime contract initial-source evolution > rejects the valid-syntax mutation: support current guarded predicate 7ms
+   ✓ issue 3518: runtime contract initial-source evolution > refuses missing actual ABI function 'preparedIrRuntimeAbiAnchor' 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > refuses missing actual ABI function 'preparedIrRuntimeCallableBindingId' 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > refuses duplicated actual ABI function 'preparedIrRuntimeAbiAnchor' 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > refuses duplicated actual ABI function 'preparedIrRuntimeCallableBindingId' 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > refuses changed order of the two actual ABI functions 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > refuses stale or caller-altered receipt authority: schema 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > refuses stale or caller-altered receipt authority: kind 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > refuses stale or caller-altered receipt authority: current revision 6ms
+   ✓ issue 3518: runtime contract initial-source evolution > refuses stale or caller-altered receipt authority: golden revision 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > refuses stale or caller-altered receipt authority: Boolean predecessor 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > refuses stale or caller-altered receipt authority: authoring requirement pin 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > refuses stale or caller-altered receipt authority: reviewed source specification 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > refuses stale or caller-altered receipt authority: merge parent population 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > refuses stale or caller-altered receipt authority: provenance diff 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > refuses stale or caller-altered receipt authority: source path order 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > refuses stale or caller-altered receipt authority: removed source 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > refuses stale or caller-altered receipt authority: unknown source path 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > refuses stale or caller-altered receipt authority: whole source blob independently 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > refuses stale or caller-altered receipt authority: target whole hash 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > refuses stale or caller-altered receipt authority: declaration role 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > refuses stale or caller-altered receipt authority: declaration occurrence 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > refuses stale or caller-altered receipt authority: doc prefix 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > refuses stale or caller-altered receipt authority: span ordering 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > refuses stale or caller-altered receipt authority: context position 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > refuses stale or caller-altered receipt authority: removed live residue 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > refuses stale or caller-altered receipt authority: ABI donor function order 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > refuses stale or caller-altered receipt authority: ABI donor source link 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > refuses stale or caller-altered receipt authority: original historical hash 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > refuses stale or caller-altered receipt authority: original link hash 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > refuses stale or caller-altered receipt authority: stored executable literal 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > refuses stale or caller-altered receipt authority: live token parent role 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > checks Git blob independently of a correct full SHA256 and byte count 0ms
+   ✓ issue 3518: runtime contract initial-source evolution > performs fresh raw authentication after a warmed successful reconstruction 283ms
+   ✓ issue 3518: runtime contract initial-source evolution > refuses a second normalization of historical 'src/runtime/contracts/provider-policy…' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > refuses a second normalization of historical 'src/ir/runtime/contracts/manifest.ts' 11ms
+   ✓ issue 3518: runtime contract initial-source evolution > refuses a second normalization of historical 'src/ir/intrinsics.ts' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > refuses a second normalization of historical 'src/ir/core/intrinsic-vocabulary.ts' 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > refuses a second normalization of historical 'src/ir/runtime/contracts/intrinsics.ts' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > refuses a second normalization of historical 'src/ir/core/intrinsics.ts' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > refuses a second normalization of historical 'src/ir/analysis/intrinsics.ts' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > refuses a second normalization of historical 'src/ir/runtime/callable-declarations.…' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > refuses a second normalization of historical 'src/ir/runtime/manifest.ts' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > refuses a second normalization of historical 'src/ir/intrinsic-support.ts' 4ms
+   ✓ issue 3518: runtime contract initial-source evolution > refuses a second normalization of historical 'src/ir/program-runtime-abi.ts' 5ms
+   ✓ issue 3518: runtime contract initial-source evolution > normalizes the exact supplied initial source and authenticates the other 26 owners 286ms
+   ✓ issue 3518: runtime contract initial-source evolution > passes an unknown external path through raw without mapping or other reads 0ms
+   ✓ issue 3518: runtime contract initial-source evolution > keeps actual compiler inputs raw while the initial historical reader returns the old view 281ms
+   ✓ issue 3518: runtime contract initial-source evolution > leaves an injected historical body mutant for the unchanged old owner checks 16ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/issue-3518-runtime-contract-evolution.test.ts > issue 3518: runtime contract initial-source evolution > rejects shifted raw span 1 in 'src/ir/runtime/callable-declarations.…'
+AssertionError: expected '// Copyright (c) 2026 Loopdive GmbH. …' not to be '// Copyright (c) 2026 Loopdive GmbH. …' // Object.is equality
+ ❯ refused tests/issue-3518-runtime-contract-evolution.test.ts:109:22
+    107|   expect(runtimeContractSha256(raw)).toBe(row.current.sha256);
+    108|   expect(runtimeContractSha256(required(path))).toBe(row.target.sha256…
+    109|   expect(mutant).not.toBe(raw);
+       |                      ^
+    110|   if (validSyntax) parsed(path, mutant);
+    111|   expect(() => reconstructRuntimeContractReceiptSources(changed(path, …
+ ❯ tests/issue-3518-runtime-contract-evolution.test.ts:646:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed | 1 passed (2)
+      Tests  1 failed | 405 passed (406)
+   Start at  06:23:07
+   Duration  45.91s (transform 149ms, setup 0ms, collect 399ms, tests 45.33s, environment 0ms, prepare 37ms)
+
+JSON report written to /private/tmp/js2-ir-source-contracts-main-20261001/.tmp/source-contracts-main/runtime-resume/runtime-cohort.json

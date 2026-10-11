@@ -1,0 +1,881 @@
+{
+  "basis": "explicit test currentGroups literals at lines16-96; live policy read without modifying either",
+  "policySha256": "2a7222a45a876923e1d6c6de60159a19a870cd44550c32e25d929af47acb29e6",
+  "expectedHistoricalCount": 56,
+  "currentHistoryCount": 91,
+  "currentHistorySha256": "906d96d460433bb445216a2ed6fe10ffd7bf7dbbebbe1a9f557b0f878ad4403f",
+  "allowedEdgesSha256": "efe7e7ed8dee1a009d2bef3ff36dba80df1a805cd3f5b7b472e62ec6dcff64c7",
+  "layers": {
+    "foundation": {
+      "historicalEntries": [
+        "src/shared/contracts/source-origin.ts",
+        "src/shared/contracts/ir-identity.ts",
+        "src/shared/contracts/identity-values.ts",
+        "src/shared/contracts/ir-counted-string-identity.ts",
+        "src/shared/contracts/ir-preparation-failure.ts",
+        "src/shared/contracts/ir-unit-inventory.ts"
+      ],
+      "currentEntries": [
+        "src/shared/contracts/source-origin.ts",
+        "src/shared/contracts/ir-identity.ts",
+        "src/shared/contracts/identity-values.ts",
+        "src/shared/contracts/ir-counted-string-identity.ts",
+        "src/shared/contracts/ir-preparation-failure.ts",
+        "src/shared/contracts/ir-unit-inventory.ts",
+        "src/shared/contracts/ir-preparation-errors.ts",
+        "src/shared/contracts/ir-counted-string-site-id.ts",
+        "src/shared/contracts/string-surrogate.ts"
+      ],
+      "currentMinModules": 9,
+      "currentRoots": [
+        "src/shared/contracts"
+      ],
+      "historicalPositions": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "historicalOrderedPrefix": true,
+      "preBAdditionsInCurrentOrder": [
+        "src/shared/contracts/ir-preparation-errors.ts",
+        "src/shared/contracts/ir-counted-string-site-id.ts",
+        "src/shared/contracts/string-surrogate.ts"
+      ],
+      "phaseBAdditionsProposed": [],
+      "currentEntriesSha256": "90a723d9cd86c9c82f23b401e6e9c699053082dbfd88fcd329ed151095d91524"
+    },
+    "wasm-model": {
+      "historicalEntries": [
+        "src/wasm/model/instructions.ts"
+      ],
+      "currentEntries": [
+        "src/wasm/model/instructions.ts",
+        "src/wasm/model/module-records.ts",
+        "src/wasm/model/instruction-walk.ts"
+      ],
+      "currentMinModules": 3,
+      "currentRoots": [
+        "src/wasm/model"
+      ],
+      "historicalPositions": [
+        0
+      ],
+      "historicalOrderedPrefix": true,
+      "preBAdditionsInCurrentOrder": [
+        "src/wasm/model/module-records.ts",
+        "src/wasm/model/instruction-walk.ts"
+      ],
+      "phaseBAdditionsProposed": [],
+      "currentEntriesSha256": "3d5f9da2f25cea8676407c56c2a2bfbf6496fa96c985fd91a646062f79ba5ef1"
+    },
+    "wasm-physical": {
+      "historicalEntries": [
+        "src/wasm/physical/function-handles.ts"
+      ],
+      "currentEntries": [
+        "src/wasm/physical/function-handles.ts",
+        "src/wasm/physical/function-types.ts",
+        "src/wasm/physical/module-reservations.ts",
+        "src/wasm/physical/exception-control.ts",
+        "src/wasm/physical/type-layout.ts"
+      ],
+      "currentMinModules": 5,
+      "currentRoots": [
+        "src/wasm/physical"
+      ],
+      "historicalPositions": [
+        0
+      ],
+      "historicalOrderedPrefix": true,
+      "preBAdditionsInCurrentOrder": [
+        "src/wasm/physical/function-types.ts",
+        "src/wasm/physical/module-reservations.ts",
+        "src/wasm/physical/exception-control.ts",
+        "src/wasm/physical/type-layout.ts"
+      ],
+      "phaseBAdditionsProposed": [],
+      "currentEntriesSha256": "bedf46dac03a20c813a9484e17c2dcfd9489b284333c3d3edd15c635706f1e7d"
+    },
+    "native-runtime": {
+      "historicalEntries": [
+        "src/runtime/wasmgc/async/microtask-queue-bodies.ts"
+      ],
+      "currentEntries": [
+        "src/runtime/wasmgc/async/microtask-queue-bodies.ts",
+        "src/runtime/wasmgc/promise/settlement-bodies.ts",
+        "src/runtime/wasmgc/async/frame-engine.ts",
+        "src/runtime/wasmgc/async/native-await.ts",
+        "src/runtime/wasmgc/promise/delay-bodies.ts",
+        "src/runtime/wasmgc/promise/combinator-bodies.ts",
+        "src/runtime/wasmgc/values/vector-grow-store.ts",
+        "src/runtime/wasmgc/promise/resolution-bodies.ts",
+        "src/runtime/wasmgc/promise/thenable-bodies.ts",
+        "src/runtime/wasmgc/values/string-layouts.ts",
+        "src/runtime/wasmgc/values/string-literal-bodies.ts",
+        "src/runtime/wasmgc/values/error-bodies.ts",
+        "src/runtime/wasmgc/values/primitive-layouts.ts",
+        "src/runtime/wasmgc/values/number-bodies.ts",
+        "src/runtime/wasmgc/values/string-number-grammar.ts",
+        "src/runtime/wasmgc/values/decimal-scale-bodies.ts",
+        "src/runtime/wasmgc/values/string-number-bodies.ts",
+        "src/runtime/wasmgc/values/string-to-bigint-body.ts",
+        "src/runtime/wasmgc/values/string-flatten-bodies.ts",
+        "src/runtime/wasmgc/values/string-utf8-decode-bodies.ts",
+        "src/runtime/wasmgc/values/argument-vector-bodies.ts",
+        "src/runtime/wasmgc/values/closure-layouts.ts",
+        "src/runtime/wasmgc/values/accessor-call-bodies.ts",
+        "src/runtime/wasmgc/values/object-key-bodies.ts",
+        "src/runtime/wasmgc/values/object-get-arms.ts",
+        "src/runtime/wasmgc/values/object-get-bodies.ts",
+        "src/runtime/wasmgc/values/carrier-bag-read-bodies.ts",
+        "src/runtime/wasmgc/values/native-resource-declaration-types.ts",
+        "src/runtime/wasmgc/values/number-ryu-tables.ts",
+        "src/runtime/wasmgc/values/number-ryu-bodies.ts",
+        "src/runtime/wasmgc/values/number-ryu-digits.ts",
+        "src/runtime/wasmgc/values/number-ryu-to-buffer.ts",
+        "src/runtime/wasmgc/values/number-ryu-signatures.ts",
+        "src/runtime/wasmgc/values/number-format-bodies.ts",
+        "src/runtime/wasmgc/values/number-format-radix-bodies.ts",
+        "src/runtime/wasmgc/values/string-concat-bodies.ts",
+        "src/runtime/wasmgc/values/stdout-bodies.ts",
+        "src/runtime/wasmgc/promise/delay-combinator-layouts.ts",
+        "src/runtime/wasmgc/async/frame-defaults.ts",
+        "src/runtime/wasmgc/async/prepared-async-frame-engine.ts",
+        "src/runtime/wasmgc/async/prepared-async-frame-types.ts",
+        "src/runtime/wasmgc/values/object-layouts.ts",
+        "src/runtime/wasmgc/values/any-to-string-body.ts",
+        "src/runtime/wasmgc/values/any-to-string-object-bodies.ts",
+        "src/runtime/wasmgc/values/any-to-string-recovery-bodies.ts",
+        "src/runtime/wasmgc/values/any-to-string-types.ts",
+        "src/runtime/wasmgc/values/to-primitive-bodies.ts",
+        "src/runtime/wasmgc/values/to-primitive-method-bodies.ts",
+        "src/runtime/wasmgc/values/to-primitive-wrapper-bodies.ts",
+        "src/runtime/wasmgc/values/string-equality-body.ts",
+        "src/runtime/wasmgc/values/symbol-carrier-bodies.ts",
+        "src/runtime/wasmgc/values/boolean-bodies.ts",
+        "src/runtime/wasmgc/values/bigint-primitive-bodies.ts",
+        "src/runtime/wasmgc/values/closure-apply-body.ts",
+        "src/runtime/wasmgc/values/closure-argument-bodies.ts",
+        "src/runtime/wasmgc/values/closure-capture-layouts.ts",
+        "src/runtime/wasmgc/values/closure-invocation-bodies.ts",
+        "src/runtime/wasmgc/values/closure-invocation-types.ts",
+        "src/runtime/wasmgc/values/closure-method-body.ts",
+        "src/runtime/wasmgc/values/closure-receiver-bodies.ts",
+        "src/runtime/wasmgc/values/closure-result-bodies.ts",
+        "src/runtime/wasmgc/values/ref-cell-layouts.ts",
+        "src/runtime/wasmgc/values/closure-vector-apply-body.ts",
+        "src/runtime/wasmgc/values/object-same-value-body.ts",
+        "src/runtime/wasmgc/values/ordinary-object-access-bodies.ts",
+        "src/runtime/wasmgc/values/ordinary-object-descriptor-accessor.ts",
+        "src/runtime/wasmgc/values/ordinary-object-descriptor-common.ts",
+        "src/runtime/wasmgc/values/ordinary-object-descriptor-data.ts",
+        "src/runtime/wasmgc/values/ordinary-object-key-definitions.ts",
+        "src/runtime/wasmgc/values/ordinary-object-storage-bodies.ts",
+        "src/runtime/wasmgc/values/ordinary-object-storage-definitions.ts",
+        "src/runtime/wasmgc/values/prototype-companion-body.ts",
+        "src/runtime/wasmgc/values/prototype-key-normalization-body.ts",
+        "src/runtime/wasmgc/values/prototype-read-bodies.ts",
+        "src/runtime/wasmgc/values/prototype-receiver-bodies.ts",
+        "src/runtime/wasmgc/values/bigint-carrier-body.ts",
+        "src/runtime/wasmgc/values/bigint-carrier-layouts.ts",
+        "src/runtime/wasmgc/values/bigint-finalized-layouts.ts",
+        "src/runtime/wasmgc/values/ordinary-object-descriptor-definitions.ts",
+        "src/runtime/wasmgc/values/prototype-layouts.ts",
+        "src/runtime/wasmgc/values/prototype-singleton-bodies.ts",
+        "src/runtime/wasmgc/values/own-property-bodies.ts",
+        "src/runtime/wasmgc/values/prototype-seeder-bodies.ts",
+        "src/runtime/wasmgc/values/prototype-chain-bodies.ts",
+        "src/runtime/wasmgc/values/primitive-wrapper-layouts.ts",
+        "src/runtime/wasmgc/values/primitive-wrapper-bodies.ts",
+        "src/runtime/wasmgc/values/to-object-body.ts",
+        "src/runtime/wasmgc/values/object-prototype-method-bodies.ts",
+        "src/runtime/wasmgc/values/object-prototype-accessor-bodies.ts",
+        "src/runtime/wasmgc/values/object-constructor-body.ts",
+        "src/runtime/wasmgc/values/builtin-function-layouts.ts",
+        "src/runtime/wasmgc/values/builtin-function-bodies.ts",
+        "src/runtime/wasmgc/values/builtin-function-property-bodies.ts",
+        "src/runtime/wasmgc/values/builtin-function-prototype-bodies.ts",
+        "src/runtime/wasmgc/values/create-list-from-array-like-body.ts",
+        "src/runtime/wasmgc/values/function-prototype-invoker-bodies.ts",
+        "src/runtime/wasmgc/values/realm-object-layouts.ts",
+        "src/runtime/wasmgc/values/mixed-object-access-bodies.ts"
+      ],
+      "currentMinModules": 97,
+      "currentRoots": [
+        "src/runtime/wasmgc"
+      ],
+      "historicalPositions": [
+        0
+      ],
+      "historicalOrderedPrefix": true,
+      "preBAdditionsInCurrentOrder": [
+        "src/runtime/wasmgc/promise/settlement-bodies.ts",
+        "src/runtime/wasmgc/async/frame-engine.ts",
+        "src/runtime/wasmgc/async/native-await.ts",
+        "src/runtime/wasmgc/promise/delay-bodies.ts",
+        "src/runtime/wasmgc/promise/combinator-bodies.ts",
+        "src/runtime/wasmgc/values/vector-grow-store.ts",
+        "src/runtime/wasmgc/promise/resolution-bodies.ts",
+        "src/runtime/wasmgc/promise/thenable-bodies.ts",
+        "src/runtime/wasmgc/values/string-layouts.ts",
+        "src/runtime/wasmgc/values/string-literal-bodies.ts",
+        "src/runtime/wasmgc/values/error-bodies.ts",
+        "src/runtime/wasmgc/values/primitive-layouts.ts",
+        "src/runtime/wasmgc/values/number-bodies.ts",
+        "src/runtime/wasmgc/values/string-number-grammar.ts",
+        "src/runtime/wasmgc/values/decimal-scale-bodies.ts",
+        "src/runtime/wasmgc/values/string-number-bodies.ts",
+        "src/runtime/wasmgc/values/string-to-bigint-body.ts",
+        "src/runtime/wasmgc/values/string-flatten-bodies.ts",
+        "src/runtime/wasmgc/values/string-utf8-decode-bodies.ts",
+        "src/runtime/wasmgc/values/argument-vector-bodies.ts",
+        "src/runtime/wasmgc/values/closure-layouts.ts",
+        "src/runtime/wasmgc/values/accessor-call-bodies.ts",
+        "src/runtime/wasmgc/values/object-key-bodies.ts",
+        "src/runtime/wasmgc/values/object-get-arms.ts",
+        "src/runtime/wasmgc/values/object-get-bodies.ts",
+        "src/runtime/wasmgc/values/carrier-bag-read-bodies.ts",
+        "src/runtime/wasmgc/values/native-resource-declaration-types.ts",
+        "src/runtime/wasmgc/values/number-ryu-tables.ts",
+        "src/runtime/wasmgc/values/number-ryu-bodies.ts",
+        "src/runtime/wasmgc/values/number-ryu-digits.ts",
+        "src/runtime/wasmgc/values/number-ryu-to-buffer.ts",
+        "src/runtime/wasmgc/values/number-ryu-signatures.ts",
+        "src/runtime/wasmgc/values/number-format-bodies.ts",
+        "src/runtime/wasmgc/values/number-format-radix-bodies.ts",
+        "src/runtime/wasmgc/values/string-concat-bodies.ts",
+        "src/runtime/wasmgc/values/stdout-bodies.ts",
+        "src/runtime/wasmgc/promise/delay-combinator-layouts.ts",
+        "src/runtime/wasmgc/async/frame-defaults.ts",
+        "src/runtime/wasmgc/async/prepared-async-frame-engine.ts",
+        "src/runtime/wasmgc/async/prepared-async-frame-types.ts",
+        "src/runtime/wasmgc/values/object-layouts.ts",
+        "src/runtime/wasmgc/values/any-to-string-body.ts",
+        "src/runtime/wasmgc/values/any-to-string-object-bodies.ts",
+        "src/runtime/wasmgc/values/any-to-string-recovery-bodies.ts",
+        "src/runtime/wasmgc/values/any-to-string-types.ts",
+        "src/runtime/wasmgc/values/to-primitive-bodies.ts",
+        "src/runtime/wasmgc/values/to-primitive-method-bodies.ts",
+        "src/runtime/wasmgc/values/to-primitive-wrapper-bodies.ts",
+        "src/runtime/wasmgc/values/string-equality-body.ts",
+        "src/runtime/wasmgc/values/symbol-carrier-bodies.ts",
+        "src/runtime/wasmgc/values/boolean-bodies.ts",
+        "src/runtime/wasmgc/values/bigint-primitive-bodies.ts",
+        "src/runtime/wasmgc/values/closure-apply-body.ts",
+        "src/runtime/wasmgc/values/closure-argument-bodies.ts",
+        "src/runtime/wasmgc/values/closure-capture-layouts.ts",
+        "src/runtime/wasmgc/values/closure-invocation-bodies.ts",
+        "src/runtime/wasmgc/values/closure-invocation-types.ts",
+        "src/runtime/wasmgc/values/closure-method-body.ts",
+        "src/runtime/wasmgc/values/closure-receiver-bodies.ts",
+        "src/runtime/wasmgc/values/closure-result-bodies.ts",
+        "src/runtime/wasmgc/values/ref-cell-layouts.ts",
+        "src/runtime/wasmgc/values/closure-vector-apply-body.ts",
+        "src/runtime/wasmgc/values/object-same-value-body.ts",
+        "src/runtime/wasmgc/values/ordinary-object-access-bodies.ts",
+        "src/runtime/wasmgc/values/ordinary-object-descriptor-accessor.ts",
+        "src/runtime/wasmgc/values/ordinary-object-descriptor-common.ts",
+        "src/runtime/wasmgc/values/ordinary-object-descriptor-data.ts",
+        "src/runtime/wasmgc/values/ordinary-object-key-definitions.ts",
+        "src/runtime/wasmgc/values/ordinary-object-storage-bodies.ts",
+        "src/runtime/wasmgc/values/ordinary-object-storage-definitions.ts",
+        "src/runtime/wasmgc/values/prototype-companion-body.ts",
+        "src/runtime/wasmgc/values/prototype-key-normalization-body.ts",
+        "src/runtime/wasmgc/values/prototype-read-bodies.ts",
+        "src/runtime/wasmgc/values/prototype-receiver-bodies.ts",
+        "src/runtime/wasmgc/values/bigint-carrier-body.ts",
+        "src/runtime/wasmgc/values/bigint-carrier-layouts.ts",
+        "src/runtime/wasmgc/values/bigint-finalized-layouts.ts",
+        "src/runtime/wasmgc/values/ordinary-object-descriptor-definitions.ts",
+        "src/runtime/wasmgc/values/prototype-layouts.ts",
+        "src/runtime/wasmgc/values/prototype-singleton-bodies.ts",
+        "src/runtime/wasmgc/values/own-property-bodies.ts",
+        "src/runtime/wasmgc/values/prototype-seeder-bodies.ts",
+        "src/runtime/wasmgc/values/prototype-chain-bodies.ts",
+        "src/runtime/wasmgc/values/primitive-wrapper-layouts.ts",
+        "src/runtime/wasmgc/values/primitive-wrapper-bodies.ts",
+        "src/runtime/wasmgc/values/to-object-body.ts",
+        "src/runtime/wasmgc/values/object-prototype-method-bodies.ts",
+        "src/runtime/wasmgc/values/object-prototype-accessor-bodies.ts",
+        "src/runtime/wasmgc/values/object-constructor-body.ts",
+        "src/runtime/wasmgc/values/builtin-function-layouts.ts",
+        "src/runtime/wasmgc/values/builtin-function-bodies.ts",
+        "src/runtime/wasmgc/values/builtin-function-property-bodies.ts",
+        "src/runtime/wasmgc/values/builtin-function-prototype-bodies.ts",
+        "src/runtime/wasmgc/values/create-list-from-array-like-body.ts",
+        "src/runtime/wasmgc/values/function-prototype-invoker-bodies.ts",
+        "src/runtime/wasmgc/values/realm-object-layouts.ts",
+        "src/runtime/wasmgc/values/mixed-object-access-bodies.ts"
+      ],
+      "phaseBAdditionsProposed": [],
+      "currentEntriesSha256": "c903103055d4e5e1fe07131f954a788bf633642ffce5f38bf7074e9d30fa9ab6"
+    },
+    "ir-core": {
+      "historicalEntries": [
+        "src/ir/core/types.ts",
+        "src/ir/core/fnctor-shapes.ts",
+        "src/ir/core/value-references.ts",
+        "src/ir/core/capability-provenance.ts",
+        "src/ir/core/tag-refinement.ts",
+        "src/ir/core/nodes.ts",
+        "src/ir/core/dialect/js.ts",
+        "src/ir/core/async-plan.ts",
+        "src/ir/core/intrinsic-vocabulary.ts",
+        "src/ir/core/async-intents.ts",
+        "src/ir/core/string-types.ts",
+        "src/ir/core/binding-key-primitives.ts",
+        "src/ir/core/intrinsic-contracts.ts",
+        "src/ir/core/intrinsics.ts",
+        "src/ir/core/callable-bindings.ts"
+      ],
+      "currentEntries": [
+        "src/ir/core/types.ts",
+        "src/ir/core/fnctor-shapes.ts",
+        "src/ir/core/value-references.ts",
+        "src/ir/core/capability-provenance.ts",
+        "src/ir/core/tag-refinement.ts",
+        "src/ir/core/nodes.ts",
+        "src/ir/core/dialect/js.ts",
+        "src/ir/core/async-plan.ts",
+        "src/ir/core/intrinsic-vocabulary.ts",
+        "src/ir/core/async-intents.ts",
+        "src/ir/core/string-types.ts",
+        "src/ir/core/binding-key-primitives.ts",
+        "src/ir/core/intrinsic-contracts.ts",
+        "src/ir/core/intrinsics.ts",
+        "src/ir/core/callable-bindings.ts",
+        "src/ir/core/async-callables.ts",
+        "src/ir/core/vector-runtime.ts",
+        "src/ir/core/type-references.ts",
+        "src/ir/core/type-binding-keys.ts",
+        "src/ir/core/type-key.ts",
+        "src/ir/core/string-callables.ts",
+        "src/ir/core/closure-invocation-callables.ts",
+        "src/ir/core/global-binding-keys.ts",
+        "src/ir/core/declared-types.ts",
+        "src/ir/core/fnctor-abi.ts",
+        "src/ir/core/tag-domain.ts",
+        "src/ir/core/string-runtime.ts",
+        "src/ir/core/runtime-symbols.ts",
+        "src/ir/core/date-callables.ts"
+      ],
+      "currentMinModules": 29,
+      "currentRoots": [
+        "src/ir/core"
+      ],
+      "historicalPositions": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14
+      ],
+      "historicalOrderedPrefix": true,
+      "preBAdditionsInCurrentOrder": [
+        "src/ir/core/async-callables.ts",
+        "src/ir/core/vector-runtime.ts",
+        "src/ir/core/type-references.ts",
+        "src/ir/core/type-binding-keys.ts",
+        "src/ir/core/type-key.ts",
+        "src/ir/core/string-callables.ts",
+        "src/ir/core/closure-invocation-callables.ts",
+        "src/ir/core/global-binding-keys.ts",
+        "src/ir/core/declared-types.ts",
+        "src/ir/core/fnctor-abi.ts",
+        "src/ir/core/tag-domain.ts",
+        "src/ir/core/string-runtime.ts",
+        "src/ir/core/runtime-symbols.ts",
+        "src/ir/core/date-callables.ts"
+      ],
+      "phaseBAdditionsProposed": [],
+      "currentEntriesSha256": "d075d417dd880474ff77b31f64a04dd21b5234d2a5cdce8b5b285ded92c97edd"
+    },
+    "ir-analysis": {
+      "historicalEntries": [
+        "src/ir/analysis/contracts/allocations.ts",
+        "src/ir/analysis/alloc-registry.ts",
+        "src/ir/analysis/effects.ts",
+        "src/ir/analysis/intrinsics.ts",
+        "src/ir/analysis/async-plan.ts"
+      ],
+      "currentEntries": [
+        "src/ir/analysis/contracts/allocations.ts",
+        "src/ir/analysis/alloc-registry.ts",
+        "src/ir/analysis/effects.ts",
+        "src/ir/analysis/intrinsics.ts",
+        "src/ir/analysis/async-plan.ts"
+      ],
+      "currentMinModules": 5,
+      "currentRoots": [
+        "src/ir/analysis/contracts",
+        "src/ir/analysis/alloc-registry.ts",
+        "src/ir/analysis/effects.ts",
+        "src/ir/analysis/intrinsics.ts",
+        "src/ir/analysis/async-plan.ts"
+      ],
+      "historicalPositions": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ],
+      "historicalOrderedPrefix": true,
+      "preBAdditionsInCurrentOrder": [],
+      "phaseBAdditionsProposed": [
+        "src/ir/analysis/lattice.ts",
+        "src/ir/analysis/ownership.ts",
+        "src/ir/analysis/encoding.ts",
+        "src/ir/analysis/escape.ts",
+        "src/ir/analysis/dominance.ts",
+        "src/ir/analysis/alloc-verification.ts"
+      ],
+      "currentEntriesSha256": "f20e2aaaa3707ddf1213f93be9a36f41704ed01da9324358d99c72b7ac941401"
+    },
+    "ir-passes": {
+      "historicalEntries": [
+        "src/ir/passes/contracts/gvn.ts"
+      ],
+      "currentEntries": [
+        "src/ir/passes/contracts/gvn.ts"
+      ],
+      "currentMinModules": 1,
+      "currentRoots": [
+        "src/ir/passes/contracts"
+      ],
+      "historicalPositions": [
+        0
+      ],
+      "historicalOrderedPrefix": true,
+      "preBAdditionsInCurrentOrder": [],
+      "phaseBAdditionsProposed": [],
+      "currentEntriesSha256": "75104b0b06c8b28202b9495496c29f3218451aeb90bd8568efe7d7ea3f5b3b4d"
+    },
+    "ir-program": {
+      "historicalEntries": [
+        "src/ir/program/abi-inventory.ts",
+        "src/ir/program/abi.ts",
+        "src/ir/program/startup.ts",
+        "src/ir/program/abi-lookup.ts",
+        "src/ir/program/callable-bindings.ts",
+        "src/ir/program/controls.ts",
+        "src/ir/program/index.ts",
+        "src/ir/program/input-contracts.ts",
+        "src/ir/program/prepared-contracts.ts",
+        "src/ir/program/errors.ts",
+        "src/ir/program/data.ts",
+        "src/ir/program/input.ts"
+      ],
+      "currentEntries": [
+        "src/ir/program/abi-inventory.ts",
+        "src/ir/program/abi.ts",
+        "src/ir/program/startup.ts",
+        "src/ir/program/abi-lookup.ts",
+        "src/ir/program/callable-bindings.ts",
+        "src/ir/program/controls.ts",
+        "src/ir/program/index.ts",
+        "src/ir/program/input-contracts.ts",
+        "src/ir/program/prepared-contracts.ts",
+        "src/ir/program/errors.ts",
+        "src/ir/program/data.ts",
+        "src/ir/program/input.ts",
+        "src/ir/program/native-vector-resources.ts",
+        "src/ir/program/native-promise-resources.ts",
+        "src/ir/program/native-value-resources.ts",
+        "src/ir/program/native-string-value-demands.ts",
+        "src/ir/program/runtime-support.ts",
+        "src/ir/program/formatter-support.ts",
+        "src/ir/program/native-number-format-requirements.ts",
+        "src/ir/program/async-frame-setup.ts",
+        "src/ir/program/prepared-async-frame-plan.ts",
+        "src/ir/program/abi-signatures.ts",
+        "src/ir/program/host-async-dynamic.ts",
+        "src/ir/program/host-import-plan.ts",
+        "src/ir/program/host-number-boundary-setup.ts",
+        "src/ir/program/runtime-abi-identity.ts",
+        "src/ir/program/native-string-output-requirements.ts",
+        "src/ir/program/callable-results.ts",
+        "src/ir/program/native-source-closure-requirements.ts",
+        "src/ir/program/population.ts",
+        "src/ir/program/native-ref-cell-requirements.ts",
+        "src/ir/program/native-invocation-requirements.ts",
+        "src/ir/program/native-object-access-requirements.ts",
+        "src/ir/program/native-getter-invocation-requirements.ts",
+        "src/ir/program/native-object-result-requirements.ts",
+        "src/ir/program/native-object-result-values.ts",
+        "src/ir/program/native-prototype-requirements.ts",
+        "src/ir/program/native-realm-requirements.ts"
+      ],
+      "currentMinModules": 38,
+      "currentRoots": [
+        "src/ir/program"
+      ],
+      "historicalPositions": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11
+      ],
+      "historicalOrderedPrefix": true,
+      "preBAdditionsInCurrentOrder": [
+        "src/ir/program/native-vector-resources.ts",
+        "src/ir/program/native-promise-resources.ts",
+        "src/ir/program/native-value-resources.ts",
+        "src/ir/program/native-string-value-demands.ts",
+        "src/ir/program/runtime-support.ts",
+        "src/ir/program/formatter-support.ts",
+        "src/ir/program/native-number-format-requirements.ts",
+        "src/ir/program/async-frame-setup.ts",
+        "src/ir/program/prepared-async-frame-plan.ts",
+        "src/ir/program/abi-signatures.ts",
+        "src/ir/program/host-async-dynamic.ts",
+        "src/ir/program/host-import-plan.ts",
+        "src/ir/program/host-number-boundary-setup.ts",
+        "src/ir/program/runtime-abi-identity.ts",
+        "src/ir/program/native-string-output-requirements.ts",
+        "src/ir/program/callable-results.ts",
+        "src/ir/program/native-source-closure-requirements.ts",
+        "src/ir/program/population.ts",
+        "src/ir/program/native-ref-cell-requirements.ts",
+        "src/ir/program/native-invocation-requirements.ts",
+        "src/ir/program/native-object-access-requirements.ts",
+        "src/ir/program/native-getter-invocation-requirements.ts",
+        "src/ir/program/native-object-result-requirements.ts",
+        "src/ir/program/native-object-result-values.ts",
+        "src/ir/program/native-prototype-requirements.ts",
+        "src/ir/program/native-realm-requirements.ts"
+      ],
+      "phaseBAdditionsProposed": [
+        "src/ir/program/allocations.ts",
+        "src/ir/program/class-layouts.ts"
+      ],
+      "currentEntriesSha256": "a7a45d1f5806e328e056a290d574fa7e9db0e7a143e0639c6640c4b545391c1a"
+    },
+    "runtime-contracts": {
+      "historicalEntries": [
+        "src/runtime/contracts/host-capability-schema.ts",
+        "src/runtime/contracts/async-provider-schema.ts",
+        "src/runtime/contracts/provider-policy.ts",
+        "src/runtime/contracts/index.ts"
+      ],
+      "currentEntries": [
+        "src/runtime/contracts/host-capability-schema.ts",
+        "src/runtime/contracts/async-provider-schema.ts",
+        "src/runtime/contracts/provider-policy.ts",
+        "src/runtime/contracts/index.ts",
+        "src/runtime/contracts/timer-capability.ts",
+        "src/runtime/contracts/builtin-brands.ts",
+        "src/runtime/contracts/collection-kind.ts",
+        "src/runtime/contracts/js-value-tags.ts",
+        "src/runtime/contracts/native-realm-catalog.ts"
+      ],
+      "currentMinModules": 9,
+      "currentRoots": [
+        "src/runtime/contracts"
+      ],
+      "historicalPositions": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "historicalOrderedPrefix": true,
+      "preBAdditionsInCurrentOrder": [
+        "src/runtime/contracts/timer-capability.ts",
+        "src/runtime/contracts/builtin-brands.ts",
+        "src/runtime/contracts/collection-kind.ts",
+        "src/runtime/contracts/js-value-tags.ts",
+        "src/runtime/contracts/native-realm-catalog.ts"
+      ],
+      "phaseBAdditionsProposed": [],
+      "currentEntriesSha256": "fd1198c71ca757444fe195c926e68a28842e5f50ba54cec2a3f7a585a8abfe83"
+    },
+    "ir-runtime": {
+      "historicalEntries": [
+        "src/ir/runtime/index.ts",
+        "src/ir/runtime/contracts/intrinsics.ts",
+        "src/ir/runtime/contracts/manifest.ts",
+        "src/ir/runtime/contracts/prepared.ts",
+        "src/ir/runtime/host-capabilities.ts",
+        "src/ir/runtime/async-providers.ts",
+        "src/ir/runtime/callable-declarations.ts",
+        "src/ir/runtime/manifest.ts",
+        "src/ir/runtime/async-attachment.ts",
+        "src/ir/runtime/intrinsic-verification.ts"
+      ],
+      "currentEntries": [
+        "src/ir/runtime/index.ts",
+        "src/ir/runtime/contracts/intrinsics.ts",
+        "src/ir/runtime/contracts/manifest.ts",
+        "src/ir/runtime/contracts/prepared.ts",
+        "src/ir/runtime/host-capabilities.ts",
+        "src/ir/runtime/async-providers.ts",
+        "src/ir/runtime/callable-declarations.ts",
+        "src/ir/runtime/manifest.ts",
+        "src/ir/runtime/async-attachment.ts",
+        "src/ir/runtime/intrinsic-verification.ts",
+        "src/ir/runtime/native-async-callables.ts",
+        "src/ir/runtime/vector-callables.ts",
+        "src/ir/runtime/number-conversion-callable.ts",
+        "src/ir/runtime/ordinary-object-callables.ts",
+        "src/ir/runtime/closure-invocation-callables.ts",
+        "src/ir/runtime/js-tag-domain.ts",
+        "src/ir/runtime/producer.ts"
+      ],
+      "currentMinModules": 17,
+      "currentRoots": [
+        "src/ir/runtime"
+      ],
+      "historicalPositions": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9
+      ],
+      "historicalOrderedPrefix": true,
+      "preBAdditionsInCurrentOrder": [
+        "src/ir/runtime/native-async-callables.ts",
+        "src/ir/runtime/vector-callables.ts",
+        "src/ir/runtime/number-conversion-callable.ts",
+        "src/ir/runtime/ordinary-object-callables.ts",
+        "src/ir/runtime/closure-invocation-callables.ts",
+        "src/ir/runtime/js-tag-domain.ts",
+        "src/ir/runtime/producer.ts"
+      ],
+      "phaseBAdditionsProposed": [
+        "src/ir/runtime/verify.ts"
+      ],
+      "currentEntriesSha256": "89b628d167a855db0130289850958a6256835aae19d8691931d8b81ecb8dcb21"
+    }
+  },
+  "anomalies": [
+    {
+      "layer": "native-runtime",
+      "kind": "floor-not-exact-population",
+      "floor": 97,
+      "entries": 98
+    }
+  ],
+  "originalNineHistoryKeys": [
+    "ir-program:3",
+    "runtime-contracts:1",
+    "ir-core:11",
+    "foundation:4",
+    "ir-core:5",
+    "foundation:3",
+    "wasm-model:1",
+    "wasm-physical:1",
+    "native-runtime:1"
+  ],
+  "originalNineHistoryPositions": [
+    [
+      66,
+      67,
+      68,
+      69,
+      70,
+      71,
+      72,
+      73,
+      74
+    ]
+  ],
+  "originalNineHistorySha256": "820a39c3d3b05a1a20d030ae10b1e19621802cfed5cf9a29ccb5dccb80b3d6ee",
+  "historical56ActivationPositions": {
+    "foundation": [
+      60
+    ],
+    "wasm-model": [
+      72
+    ],
+    "wasm-physical": [
+      73
+    ],
+    "native-runtime": [
+      74
+    ],
+    "ir-core": [
+      54
+    ],
+    "ir-analysis": [
+      55
+    ],
+    "ir-passes": [
+      62
+    ],
+    "ir-program": [
+      58
+    ],
+    "runtime-contracts": [
+      65
+    ],
+    "ir-runtime": [
+      56
+    ]
+  },
+  "historical56ActivationRecords": {
+    "foundation": [
+      {
+        "layer": "foundation",
+        "entries": [
+          "src/shared/contracts/source-origin.ts",
+          "src/shared/contracts/ir-identity.ts",
+          "src/shared/contracts/identity-values.ts",
+          "src/shared/contracts/ir-counted-string-identity.ts",
+          "src/shared/contracts/ir-preparation-failure.ts",
+          "src/shared/contracts/ir-unit-inventory.ts"
+        ],
+        "minModules": 6
+      }
+    ],
+    "wasm-model": [
+      {
+        "layer": "wasm-model",
+        "entries": [
+          "src/wasm/model/instructions.ts"
+        ],
+        "minModules": 1
+      }
+    ],
+    "wasm-physical": [
+      {
+        "layer": "wasm-physical",
+        "entries": [
+          "src/wasm/physical/function-handles.ts"
+        ],
+        "minModules": 1
+      }
+    ],
+    "native-runtime": [
+      {
+        "layer": "native-runtime",
+        "entries": [
+          "src/runtime/wasmgc/async/microtask-queue-bodies.ts"
+        ],
+        "minModules": 1
+      }
+    ],
+    "ir-core": [
+      {
+        "layer": "ir-core",
+        "entries": [
+          "src/ir/core/types.ts",
+          "src/ir/core/fnctor-shapes.ts",
+          "src/ir/core/value-references.ts",
+          "src/ir/core/capability-provenance.ts",
+          "src/ir/core/tag-refinement.ts",
+          "src/ir/core/nodes.ts",
+          "src/ir/core/dialect/js.ts",
+          "src/ir/core/async-plan.ts",
+          "src/ir/core/intrinsic-vocabulary.ts",
+          "src/ir/core/async-intents.ts",
+          "src/ir/core/string-types.ts",
+          "src/ir/core/binding-key-primitives.ts",
+          "src/ir/core/intrinsic-contracts.ts",
+          "src/ir/core/intrinsics.ts",
+          "src/ir/core/callable-bindings.ts"
+        ],
+        "minModules": 15
+      }
+    ],
+    "ir-analysis": [
+      {
+        "layer": "ir-analysis",
+        "entries": [
+          "src/ir/analysis/contracts/allocations.ts",
+          "src/ir/analysis/alloc-registry.ts",
+          "src/ir/analysis/effects.ts",
+          "src/ir/analysis/intrinsics.ts",
+          "src/ir/analysis/async-plan.ts"
+        ],
+        "minModules": 5
+      }
+    ],
+    "ir-passes": [
+      {
+        "layer": "ir-passes",
+        "entries": [
+          "src/ir/passes/contracts/gvn.ts"
+        ],
+        "minModules": 1
+      }
+    ],
+    "ir-program": [
+      {
+        "layer": "ir-program",
+        "entries": [
+          "src/ir/program/abi-inventory.ts",
+          "src/ir/program/abi.ts",
+          "src/ir/program/startup.ts",
+          "src/ir/program/abi-lookup.ts",
+          "src/ir/program/callable-bindings.ts",
+          "src/ir/program/controls.ts",
+          "src/ir/program/index.ts",
+          "src/ir/program/input-contracts.ts",
+          "src/ir/program/prepared-contracts.ts",
+          "src/ir/program/errors.ts",
+          "src/ir/program/data.ts",
+          "src/ir/program/input.ts"
+        ],
+        "minModules": 12
+      }
+    ],
+    "runtime-contracts": [
+      {
+        "layer": "runtime-contracts",
+        "entries": [
+          "src/runtime/contracts/host-capability-schema.ts",
+          "src/runtime/contracts/async-provider-schema.ts",
+          "src/runtime/contracts/provider-policy.ts",
+          "src/runtime/contracts/index.ts"
+        ],
+        "minModules": 4
+      }
+    ],
+    "ir-runtime": [
+      {
+        "layer": "ir-runtime",
+        "entries": [
+          "src/ir/runtime/index.ts",
+          "src/ir/runtime/contracts/intrinsics.ts",
+          "src/ir/runtime/contracts/manifest.ts",
+          "src/ir/runtime/contracts/prepared.ts",
+          "src/ir/runtime/host-capabilities.ts",
+          "src/ir/runtime/async-providers.ts",
+          "src/ir/runtime/callable-declarations.ts",
+          "src/ir/runtime/manifest.ts",
+          "src/ir/runtime/async-attachment.ts",
+          "src/ir/runtime/intrinsic-verification.ts"
+        ],
+        "minModules": 10
+      }
+    ]
+  }
+}

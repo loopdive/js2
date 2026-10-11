@@ -26,14 +26,61 @@ import type { GeneratorDecl } from "./generators-native.js";
  * deliberately use a DIFFERENT set that OMITS arrows (arrows inherit the
  * enclosing `this`/`super`), so those keep their own inline disjunction and must
  * not be folded into this helper.
+ *
+ * (#6651 A2, 2026-09-21) ACCESSORS, CONSTRUCTORS and class static blocks were
+ * missing from the list, and the omission was not cosmetic: it is a `return`
+ * (or a `this`, or a binding name) inside one of them being attributed to the
+ * ENCLOSING generator. `statementContainsReturn` therefore reported `true` for
+ *
+ *     function* g() { ({ get yield() { return 1 } }); }
+ *
+ * — a statement with no yield and no generator-level return at all — which sent
+ * it down the structural state-graph lowering, where an ExpressionStatement of
+ * that shape is unmodeled, and the whole generator bailed to the host path
+ * (4 rows of the #6651 cluster-A manifest, all named
+ * `yield-as-literal-property-name`, where the point of the test is exactly that
+ * `yield` is a legal PROPERTY name). A getter/setter/constructor/static block is
+ * a function scope by every rule this helper encodes; `ts.isMethodDeclaration`
+ * simply does not answer true for them.
  */
 export function isFunctionLikeScope(node: ts.Node): boolean {
   return (
     ts.isFunctionDeclaration(node) ||
     ts.isFunctionExpression(node) ||
     ts.isArrowFunction(node) ||
-    ts.isMethodDeclaration(node)
+    ts.isMethodDeclaration(node) ||
+    ts.isGetAccessorDeclaration(node) ||
+    ts.isSetAccessorDeclaration(node) ||
+    ts.isConstructorDeclaration(node) ||
+    ts.isClassStaticBlockDeclaration(node)
   );
+}
+
+/**
+ * (#6651 A2) The one child of a function-like scope node that is still
+ * evaluated in the ENCLOSING scope: a COMPUTED PROPERTY NAME. §8.6.1 /
+ * ClassElementEvaluation evaluate `[expr]` where the element is written, so in
+ *
+ *     function* g() { class C { get [yield]() { return 'x' } } }
+ *
+ * the `yield` really does suspend `g` — only the accessor BODY is a new scope.
+ * A scan that stops at the whole node loses that suspension and compiles a
+ * generator that never suspends, which is a silent wrong answer rather than a
+ * loud bail: measured on the five `accessor-name-*computed-yield-expr` rows,
+ * which flip compile_error → `SameValue(«undefined», «"get yield"»)` without
+ * this carve-out. Parameter defaults are NOT in this set — they belong to the
+ * callee's own scope. `statementContainsReturn` deliberately does NOT take this
+ * carve-out: a `return` cannot occur in an expression except inside a nested
+ * arrow/function, which the scan stops at anyway, so it would be dead weight.
+ */
+function enclosingScopedComputedName(node: ts.Node): ts.Expression | undefined {
+  if (
+    (ts.isMethodDeclaration(node) || ts.isGetAccessorDeclaration(node) || ts.isSetAccessorDeclaration(node)) &&
+    ts.isComputedPropertyName(node.name)
+  ) {
+    return node.name.expression;
+  }
+  return undefined;
 }
 
 export function statementContainsYield(stmt: ts.Statement): boolean {
@@ -47,7 +94,7 @@ export function statementContainsYield(stmt: ts.Statement): boolean {
  * produce `{value, done:true}`, NOT a raw wasm `return` (which `compileStatement`
  * would emit, mis-coercing the value to the resume function's result-ref type).
  */
-function statementContainsReturn(stmt: ts.Statement): boolean {
+export function statementContainsReturn(stmt: ts.Statement): boolean {
   let found = false;
   function visit(node: ts.Node): void {
     if (found) return;
@@ -83,14 +130,66 @@ export function nodeContainsYield(root: ts.Node): boolean {
       return;
     }
     // Do not descend into nested function bodies — a `yield` there belongs to
-    // a different (inner) generator and must not split this one.
+    // a different (inner) generator and must not split this one. Its COMPUTED
+    // NAME is the exception: that expression is evaluated here.
     if (isFunctionLikeScope(node)) {
+      const outer = enclosingScopedComputedName(node);
+      if (outer) visit(outer);
       return;
     }
     ts.forEachChild(node, visit);
   }
   ts.forEachChild(root, visit);
   return found;
+}
+
+/**
+ * (#6651 A10) A generator METHOD whose computed key holds a `yield` of the
+ * ENCLOSING generator: `function* g() { ({ *[yield]() {} }); }`. TypeScript's
+ * checker recurses without bound on a signature query for this method
+ * (checkYieldExpression → the method's contextual return type → the literal's
+ * contextual type → the same yield), so its callers must answer it
+ * syntactically instead of asking.
+ */
+export function isGeneratorMethodWithYieldKey(node: ts.Node): boolean {
+  return (
+    ts.isMethodDeclaration(node) &&
+    node.asteriskToken !== undefined &&
+    ts.isComputedPropertyName(node.name) &&
+    nodeContainsYield(node.name)
+  );
+}
+
+/**
+ * (#6651 A5) True when a native inner generator answers a FORWARDED `.throw()`
+ * / `.return()` the way the D2 close (`emitDelegateCloseForward`) models it:
+ * the inner runs its finalizers and then completes (return) or re-throws
+ * (throw). D2 drives the inner once and DISCARDS the result, so an inner that
+ * instead keeps running would be answered silently wrong — §27.5.3.7 7.b/7.c
+ * re-yield a not-done inner result and let a done `.throw()` result complete
+ * the `yield*` NORMALLY. Measured with a `catch` around the inner's yield: the
+ * outer re-threw where the spec yields the catch's value. Such an inner is:
+ * a `catch` whose try block holds a yield (the throw is caught), a `finally`
+ * around a yield that itself yields or returns (it suspends / overrides the
+ * completion), or a nested `yield*` (its own delegate may be either).
+ */
+export function isCloseTransparentGenerator(body: ts.Node): boolean {
+  let transparent = true;
+  const visit = (node: ts.Node): void => {
+    if (!transparent || isFunctionLikeScope(node)) return;
+    if (ts.isYieldExpression(node) && node.asteriskToken) transparent = false;
+    if (ts.isTryStatement(node)) {
+      const caught = !!node.catchClause && nodeContainsYield(node.tryBlock);
+      const suspendsInFinally =
+        !!node.finallyBlock &&
+        (nodeContainsYield(node.tryBlock) || (!!node.catchClause && nodeContainsYield(node.catchClause.block))) &&
+        (nodeContainsYield(node.finallyBlock) || statementContainsReturn(node.finallyBlock));
+      if (caught || suspendsInFinally) transparent = false;
+    }
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(body, visit);
+  return transparent;
 }
 
 /**
@@ -263,4 +362,50 @@ export function bodyReferencesOwnName(body: ts.Node, name: string): boolean {
   }
   ts.forEachChild(body, visit);
   return found;
+}
+
+/**
+ * (#6651 A7) Where a named function expression's own name is SHADOWED. The
+ * name lives in a scope outside the function's own environment (§15.2.5
+ * funcEnv), so any binding the function itself creates wins:
+ *  - `"params"` — a parameter binds the name: every read in the parameters
+ *    and the body sees that parameter;
+ *  - `"body"` — a VarScopedDeclaration (`var` anywhere outside nested function
+ *    scopes, loop heads included) or a top-level `function`/`class`/`let`/
+ *    `const` binds it: the body sees its own binding, while parameter
+ *    expressions still see the function itself (§10.2.11 steps 27–28 put the
+ *    body's variables in an environment BELOW the parameters);
+ *  - `undefined` — not shadowed at function scope. A block-level lexical
+ *    declaration shadows only its block, which the block-scope machinery
+ *    handles, so it is not counted here.
+ */
+export function namedFunctionOwnNameShadow(fn: ts.FunctionExpression): "params" | "body" | undefined {
+  const name = fn.name?.text;
+  if (name === undefined) return undefined;
+  const binds = (binding: ts.BindingName): boolean =>
+    ts.isIdentifier(binding)
+      ? binding.text === name
+      : binding.elements.some((element) => !ts.isOmittedExpression(element) && binds(element.name));
+  if (fn.parameters.some((param) => binds(param.name))) return "params";
+  for (const stmt of fn.body.statements) {
+    if ((ts.isFunctionDeclaration(stmt) || ts.isClassDeclaration(stmt)) && stmt.name?.text === name) return "body";
+    if (ts.isVariableStatement(stmt) && stmt.declarationList.declarations.some((decl) => binds(decl.name))) {
+      return "body";
+    }
+  }
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (found || isFunctionLikeScope(node)) return;
+    if (
+      ts.isVariableDeclarationList(node) &&
+      (node.flags & ts.NodeFlags.BlockScoped) === 0 &&
+      node.declarations.some((decl) => binds(decl.name))
+    ) {
+      found = true;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(fn.body, visit);
+  return found ? "body" : undefined;
 }

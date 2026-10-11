@@ -10,9 +10,11 @@
  */
 import { ts } from "../../ts-api.js";
 import { isBooleanWrapperType, isNumberWrapperType, isStringWrapperType } from "../../checker/type-mapper.js";
-import type { ValType } from "../../ir/types.js";
+import type { Instr, ValType } from "../../ir/types.js";
 import { allocLocal } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
+import { ensureBoxedValueOfHelper } from "../boxed-proto-valueof.js";
+import { emitBrandCheckTypeError } from "../native-proto.js";
 import { ensureObjectRuntime } from "../object-runtime.js";
 import { emitToBoolean, emitToString, runtimeToPrimitiveInstrs } from "../coercion-engine.js";
 import { coerceType, compileExpression } from "../shared.js";
@@ -223,8 +225,31 @@ export function tryCompileStandaloneBooleanToString(
     return emitToString(ctx, fctx, { kind: "i32" }, { kind: "boolean" }, "string");
   }
 
-  const toPrimitive = runtimeToPrimitiveInstrs(ctx, "string");
+  // §20.3.3.3 step 1: `b = ? thisBooleanValue(this)` — the wrapper's
+  // [[BooleanData]], NOT ToPrimitive(this, string). Since #6205 ToPrimitive's
+  // string hint returns the spec'd STRING ("true"), and unboxing that as a
+  // boolean read every `new Boolean(true).toString()` as "false" (3 ES5 rows,
+  // 2026-09-28). A receiver without the brand is the spec's TypeError.
+  const thisBooleanValue = ensureBoxedValueOfHelper(ctx, "Boolean");
   const unboxBoolean = ctx.funcMap.get("__unbox_boolean");
+  if (thisBooleanValue >= 0 && unboxBoolean !== undefined) {
+    const valueLocal = allocLocal(fctx, `__bool_toString_val_${fctx.locals.length}`, { kind: "externref" });
+    const throwInstrs: Instr[] = [];
+    emitBrandCheckTypeError(ctx, throwInstrs, "Boolean.prototype.toString called on incompatible receiver");
+    fctx.body.push(
+      { op: "local.get", index: receiverLocal },
+      { op: "any.convert_extern" },
+      { op: "call", funcIdx: thisBooleanValue },
+      { op: "local.tee", index: valueLocal },
+      { op: "ref.is_null" },
+      { op: "if", blockType: { kind: "empty" }, then: throwInstrs },
+      { op: "local.get", index: valueLocal },
+      { op: "call", funcIdx: unboxBoolean },
+    );
+    return emitToString(ctx, fctx, { kind: "i32" }, { kind: "boolean" }, "string");
+  }
+
+  const toPrimitive = runtimeToPrimitiveInstrs(ctx, "string");
   if (toPrimitive !== null && unboxBoolean !== undefined) {
     fctx.body.push({ op: "local.get", index: receiverLocal }, ...toPrimitive, { op: "call", funcIdx: unboxBoolean });
     return emitToString(ctx, fctx, { kind: "i32" }, { kind: "boolean" }, "string");

@@ -63,13 +63,13 @@
  * the shared `__regex_search` sequence (`emitRegexSearchCall`) — the same
  * helper `.test` and the direct `search` use.
  *
- * `match` → `null` on a miss, else the `exec`-shaped `$__regexp_match_vec`
- * (element 0 + captures, with the `index`/`input`/`groups` own properties
- * `emitRegexExecArrayCall` defines on it), boxed to `externref`. The `g` flag
- * is only known at RUNTIME here, so the global all-matches walk
- * (`__regex_match_all`) is selected by a runtime test on the struct's flags
- * field rather than the static `staticRegExpFlags` the direct path uses. Both
- * arms yield `ref null $__regexp_match_vec`, so they share one block type.
+ * `match` → `null` on a miss, else either the plain native-string vector for a
+ * global result or the metadata-bearing `$__regexp_match_vec` for a single
+ * capture result, boxed to `externref`. The `g` flag is only known at RUNTIME,
+ * so the global all-matches walk (`__regex_match_all`) is selected by a runtime
+ * test on the struct's flags field rather than the static `staticRegExpFlags`
+ * the direct path uses. The capture subtype is a subtype of the plain vector,
+ * so both arms share the latter as their block type.
  * Emitting only the exec arm would have been a SILENT WRONG ANSWER for a
  * borrowed `match` with a `/…/g` argument, which this project rates worse than
  * a refusal.
@@ -98,7 +98,12 @@ import {
   flatStringType,
   nativeStringLiteralInstrs,
 } from "./native-strings.js";
-import { ensureRegexMatchAll, ensureRegexMatchVecType, regexI32ArrayType } from "./native-regex.js";
+import {
+  ensureRegexMatchAll,
+  ensureRegexMatchFlatVecType,
+  ensureRegexMatchVecType,
+  regexI32ArrayType,
+} from "./native-regex.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
 import { RE_FLAG_G, RE_FLAG_Y } from "./regex/bytecode.js";
 import {
@@ -334,9 +339,10 @@ function emitSearchResult(
  *
  * Global: `__regex_match_all` collects every `[0]` substring and `lastIndex`
  * ends at 0 (the net spec effect of the exec loop). Non-global (incl. sticky):
- * the shared `exec` path. Both arms produce `ref null $__regexp_match_vec`, so
- * one `extern.convert_any` boxes either — and a miss (`ref.null`) becomes a
- * null externref, which the standalone value model reads as `null`.
+ * the shared `exec` path. The capture arm subtypes the global arm's plain
+ * native-string vector, so one `extern.convert_any` boxes either — and a miss
+ * (`ref.null`) becomes a null externref, which the standalone value model
+ * reads as `null`.
  */
 function emitMatchResult(
   ctx: CodegenContext,
@@ -346,10 +352,11 @@ function emitMatchResult(
   inputOverride: () => ValType,
 ): ValType | null {
   const { regexpLocal, structTypeIdx } = regexpOverride;
-  const matchVecTypeIdx = ensureRegexMatchVecType(ctx);
+  const flatMatchVecTypeIdx = ensureRegexMatchFlatVecType(ctx);
+  ensureRegexMatchVecType(ctx);
   const matchAllIdx = ensureRegexMatchAll(ctx);
   const strTypeIdx = ctx.nativeStrTypeIdx;
-  const resultType: ValType = { kind: "ref_null", typeIdx: matchVecTypeIdx };
+  const resultType: ValType = { kind: "ref_null", typeIdx: flatMatchVecTypeIdx };
 
   const outer = fctx.body;
   fctx.savedBodies.push(outer);

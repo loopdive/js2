@@ -1,0 +1,877 @@
+
+ RUN  v3.2.4 /private/tmp/js2-ir-validation-lowering-b-20261001
+
+ ✓ tests/issue-3518-semantic-provider-boundary.test.ts (352 tests) 126245ms
+   ✓ semantic verification and provider ownership boundary > loads the complete actual canonical type-and-value closure  375ms
+   ✓ semantic verification and provider ownership boundary > rejects an upward runtime dependency from the native string/value aggregate  368ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/ir/core/intrinsic-contracts.ts and its classification  714ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/ir/core/intrinsics.ts and its classification  714ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/ir/core/callable-bindings.ts and its classification  719ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/ir/analysis/effects.ts and its classification  713ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/ir/analysis/intrinsics.ts and its classification  714ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/ir/analysis/async-plan.ts and its classification  722ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/ir/runtime/host-capabilities.ts and its classification  709ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/ir/runtime/async-providers.ts and its classification  773ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/ir/runtime/callable-declarations.ts and its classification  709ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/ir/runtime/manifest.ts and its classification  709ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/ir/runtime/async-attachment.ts and its classification  712ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/ir/runtime/intrinsic-verification.ts and its classification  711ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/wasm/model/module-records.ts and its classification  707ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/wasm/physical/function-types.ts and its classification  738ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/wasm/physical/module-reservations.ts and its classification  698ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/promise/settlement-bodies.ts and its classification  709ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/async/frame-engine.ts and its classification  703ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/async/native-await.ts and its classification  713ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/wasm/physical/exception-control.ts and its classification  711ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/promise/delay-bodies.ts and its classification  718ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/promise/combinator-bodies.ts and its classification  711ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/wasm/physical/type-layout.ts and its classification  707ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/ir/core/async-callables.ts and its classification  711ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/ir/runtime/native-async-callables.ts and its classification  701ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/ir/core/vector-runtime.ts and its classification  707ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/ir/runtime/vector-callables.ts and its classification  708ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/ir/program/native-vector-resources.ts and its classification  711ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/values/vector-grow-store.ts and its classification  713ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/backend/wasmgc/resources/native-vectors.ts and its classification  713ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/promise/resolution-bodies.ts and its classification  709ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/promise/thenable-bodies.ts and its classification  710ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/ir/program/native-promise-resources.ts and its classification  711ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/backend/wasmgc/resources/native-promises.ts and its classification  707ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/values/string-layouts.ts and its classification  711ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/values/string-literal-bodies.ts and its classification  707ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/values/error-bodies.ts and its classification  710ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/backend/wasmgc/resources/native-string-literals.ts and its classification  709ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/backend/wasmgc/resources/native-errors.ts and its classification  717ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/ir/program/native-value-resources.ts and its classification  707ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/values/primitive-layouts.ts and its classification  715ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/values/number-bodies.ts and its classification  710ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/backend/wasmgc/resources/native-values.ts and its classification  711ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/wasm/model/instruction-walk.ts and its classification  709ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/values/string-number-grammar.ts and its classification  711ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/values/decimal-scale-bodies.ts and its classification  713ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/values/string-number-bodies.ts and its classification  708ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/values/string-flatten-bodies.ts and its classification  720ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/values/string-utf8-decode-bodies.ts and its classification  714ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/backend/wasmgc/resources/native-string-number.ts and its classification  717ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/backend/wasmgc/resources/native-string-flatten.ts and its classification  706ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/ir/program/native-string-value-demands.ts and its classification  712ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/values/argument-vector-bodies.ts and its classification  715ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/backend/wasmgc/resources/native-argument-vectors.ts and its classification  709ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/values/closure-layouts.ts and its classification  708ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/backend/wasmgc/resources/native-closures.ts and its classification  717ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/values/native-resource-declaration-types.ts and its classification  728ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/backend/wasmgc/resources/native-resource-declarations.ts and its classification  708ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/backend/wasmgc/program/native-string-values.ts and its classification  702ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/frontend/builtins/contracts.ts and its classification  712ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/ir/core/type-references.ts and its classification  707ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/ir/program/runtime-support.ts and its classification  712ms
+   ✓ semantic verification and provider ownership boundary > rejects deleting src/ir/program/formatter-support.ts and its classification  712ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/core/intrinsic-contracts.ts  373ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/core/intrinsics.ts  380ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/core/callable-bindings.ts  368ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/analysis/effects.ts  371ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/analysis/intrinsics.ts  371ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/analysis/async-plan.ts  365ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/runtime/host-capabilities.ts  371ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/runtime/async-providers.ts  368ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/runtime/callable-declarations.ts  371ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/runtime/manifest.ts  372ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/runtime/async-attachment.ts  368ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/runtime/intrinsic-verification.ts  372ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/wasm/model/module-records.ts  370ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/wasm/physical/function-types.ts  368ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/wasm/physical/module-reservations.ts  376ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/promise/settlement-bodies.ts  376ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/async/frame-engine.ts  373ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/async/native-await.ts  374ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/wasm/physical/exception-control.ts  375ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/promise/delay-bodies.ts  389ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/promise/combinator-bodies.ts  375ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/wasm/physical/type-layout.ts  367ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/core/async-callables.ts  371ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/runtime/native-async-callables.ts  370ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/core/vector-runtime.ts  368ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/runtime/vector-callables.ts  372ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/program/native-vector-resources.ts  369ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/values/vector-grow-store.ts  371ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/backend/wasmgc/resources/native-vectors.ts  373ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/promise/resolution-bodies.ts  370ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/promise/thenable-bodies.ts  369ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/program/native-promise-resources.ts  372ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/backend/wasmgc/resources/native-promises.ts  370ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/values/string-layouts.ts  367ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/values/string-literal-bodies.ts  371ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/values/error-bodies.ts  371ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/backend/wasmgc/resources/native-string-literals.ts  372ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/backend/wasmgc/resources/native-errors.ts  369ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/program/native-value-resources.ts  371ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/values/primitive-layouts.ts  369ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/values/number-bodies.ts  373ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/backend/wasmgc/resources/native-values.ts  366ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/wasm/model/instruction-walk.ts  372ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/values/string-number-grammar.ts  370ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/values/decimal-scale-bodies.ts  371ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/values/string-number-bodies.ts  391ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/values/string-flatten-bodies.ts  374ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/values/string-utf8-decode-bodies.ts  371ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/backend/wasmgc/resources/native-string-number.ts  367ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/backend/wasmgc/resources/native-string-flatten.ts  374ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/program/native-string-value-demands.ts  369ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/values/argument-vector-bodies.ts  368ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/backend/wasmgc/resources/native-argument-vectors.ts  372ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/values/closure-layouts.ts  371ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/backend/wasmgc/resources/native-closures.ts  381ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/values/native-resource-declaration-types.ts  374ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/backend/wasmgc/resources/native-resource-declarations.ts  375ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/backend/wasmgc/program/native-string-values.ts  368ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/core/type-references.ts  365ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/program/runtime-support.ts  369ms
+   ✓ semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/program/formatter-support.ts  377ms
+   ✓ semantic verification and provider ownership boundary > rejects a backend implementation dependency from the frontend formatter contract  737ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/ir/core/intrinsic-contracts.ts instead of treating it as closed  392ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/ir/core/intrinsics.ts instead of treating it as closed  497ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/ir/core/callable-bindings.ts instead of treating it as closed  397ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/ir/analysis/effects.ts instead of treating it as closed  373ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/ir/analysis/intrinsics.ts instead of treating it as closed  374ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/ir/analysis/async-plan.ts instead of treating it as closed  381ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/ir/runtime/host-capabilities.ts instead of treating it as closed  383ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/ir/runtime/async-providers.ts instead of treating it as closed  370ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/ir/runtime/callable-declarations.ts instead of treating it as closed  374ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/ir/runtime/manifest.ts instead of treating it as closed  369ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/ir/runtime/async-attachment.ts instead of treating it as closed  368ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/ir/runtime/intrinsic-verification.ts instead of treating it as closed  371ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/wasm/model/module-records.ts instead of treating it as closed  371ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/wasm/physical/function-types.ts instead of treating it as closed  374ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/wasm/physical/module-reservations.ts instead of treating it as closed  368ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/promise/settlement-bodies.ts instead of treating it as closed  370ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/async/frame-engine.ts instead of treating it as closed  371ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/async/native-await.ts instead of treating it as closed  370ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/wasm/physical/exception-control.ts instead of treating it as closed  379ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/promise/delay-bodies.ts instead of treating it as closed  369ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/promise/combinator-bodies.ts instead of treating it as closed  380ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/wasm/physical/type-layout.ts instead of treating it as closed  370ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/ir/core/async-callables.ts instead of treating it as closed  368ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/ir/runtime/native-async-callables.ts instead of treating it as closed  372ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/ir/core/vector-runtime.ts instead of treating it as closed  371ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/ir/runtime/vector-callables.ts instead of treating it as closed  365ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/ir/program/native-vector-resources.ts instead of treating it as closed  369ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/values/vector-grow-store.ts instead of treating it as closed  375ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/backend/wasmgc/resources/native-vectors.ts instead of treating it as closed  368ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/promise/resolution-bodies.ts instead of treating it as closed  371ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/promise/thenable-bodies.ts instead of treating it as closed  370ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/ir/program/native-promise-resources.ts instead of treating it as closed  373ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/backend/wasmgc/resources/native-promises.ts instead of treating it as closed  368ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/values/string-layouts.ts instead of treating it as closed  376ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/values/string-literal-bodies.ts instead of treating it as closed  381ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/values/error-bodies.ts instead of treating it as closed  462ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/backend/wasmgc/resources/native-string-literals.ts instead of treating it as closed  460ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/backend/wasmgc/resources/native-errors.ts instead of treating it as closed  454ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/ir/program/native-value-resources.ts instead of treating it as closed  387ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/values/primitive-layouts.ts instead of treating it as closed  376ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/values/number-bodies.ts instead of treating it as closed  375ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/backend/wasmgc/resources/native-values.ts instead of treating it as closed  371ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/wasm/model/instruction-walk.ts instead of treating it as closed  375ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/values/string-number-grammar.ts instead of treating it as closed  373ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/values/decimal-scale-bodies.ts instead of treating it as closed  376ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/values/string-number-bodies.ts instead of treating it as closed  379ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/values/string-flatten-bodies.ts instead of treating it as closed  373ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/values/string-utf8-decode-bodies.ts instead of treating it as closed  379ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/backend/wasmgc/resources/native-string-number.ts instead of treating it as closed  374ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/backend/wasmgc/resources/native-string-flatten.ts instead of treating it as closed  372ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/ir/program/native-string-value-demands.ts instead of treating it as closed  378ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/values/argument-vector-bodies.ts instead of treating it as closed  381ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/backend/wasmgc/resources/native-argument-vectors.ts instead of treating it as closed  376ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/values/closure-layouts.ts instead of treating it as closed  378ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/backend/wasmgc/resources/native-closures.ts instead of treating it as closed  373ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/values/native-resource-declaration-types.ts instead of treating it as closed  375ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/backend/wasmgc/resources/native-resource-declarations.ts instead of treating it as closed  372ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/backend/wasmgc/program/native-string-values.ts instead of treating it as closed  376ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/frontend/builtins/contracts.ts instead of treating it as closed  371ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/ir/core/type-references.ts instead of treating it as closed  372ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/ir/program/runtime-support.ts instead of treating it as closed  378ms
+   ✓ semantic verification and provider ownership boundary > reports unknownEdges from src/ir/program/formatter-support.ts instead of treating it as closed  376ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/core/intrinsic-contracts.ts instead of treating it as closed  376ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/core/intrinsics.ts instead of treating it as closed  373ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/core/callable-bindings.ts instead of treating it as closed  371ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/analysis/effects.ts instead of treating it as closed  373ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/analysis/intrinsics.ts instead of treating it as closed  376ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/analysis/async-plan.ts instead of treating it as closed  372ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/runtime/host-capabilities.ts instead of treating it as closed  378ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/runtime/async-providers.ts instead of treating it as closed  370ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/runtime/callable-declarations.ts instead of treating it as closed  376ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/runtime/manifest.ts instead of treating it as closed  376ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/runtime/async-attachment.ts instead of treating it as closed  373ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/runtime/intrinsic-verification.ts instead of treating it as closed  374ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/wasm/model/module-records.ts instead of treating it as closed  372ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/wasm/physical/function-types.ts instead of treating it as closed  373ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/wasm/physical/module-reservations.ts instead of treating it as closed  375ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/promise/settlement-bodies.ts instead of treating it as closed  379ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/async/frame-engine.ts instead of treating it as closed  374ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/async/native-await.ts instead of treating it as closed  375ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/wasm/physical/exception-control.ts instead of treating it as closed  373ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/promise/delay-bodies.ts instead of treating it as closed  369ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/promise/combinator-bodies.ts instead of treating it as closed  373ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/wasm/physical/type-layout.ts instead of treating it as closed  369ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/core/async-callables.ts instead of treating it as closed  401ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/runtime/native-async-callables.ts instead of treating it as closed  383ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/core/vector-runtime.ts instead of treating it as closed  374ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/runtime/vector-callables.ts instead of treating it as closed  372ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/program/native-vector-resources.ts instead of treating it as closed  374ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/values/vector-grow-store.ts instead of treating it as closed  376ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/backend/wasmgc/resources/native-vectors.ts instead of treating it as closed  371ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/promise/resolution-bodies.ts instead of treating it as closed  372ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/promise/thenable-bodies.ts instead of treating it as closed  372ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/program/native-promise-resources.ts instead of treating it as closed  374ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/backend/wasmgc/resources/native-promises.ts instead of treating it as closed  373ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/values/string-layouts.ts instead of treating it as closed  373ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/values/string-literal-bodies.ts instead of treating it as closed  371ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/values/error-bodies.ts instead of treating it as closed  374ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/backend/wasmgc/resources/native-string-literals.ts instead of treating it as closed  377ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/backend/wasmgc/resources/native-errors.ts instead of treating it as closed  373ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/program/native-value-resources.ts instead of treating it as closed  370ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/values/primitive-layouts.ts instead of treating it as closed  378ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/values/number-bodies.ts instead of treating it as closed  371ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/backend/wasmgc/resources/native-values.ts instead of treating it as closed  374ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/wasm/model/instruction-walk.ts instead of treating it as closed  372ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/values/string-number-grammar.ts instead of treating it as closed  371ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/values/decimal-scale-bodies.ts instead of treating it as closed  372ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/values/string-number-bodies.ts instead of treating it as closed  369ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/values/string-flatten-bodies.ts instead of treating it as closed  373ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/values/string-utf8-decode-bodies.ts instead of treating it as closed  435ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/backend/wasmgc/resources/native-string-number.ts instead of treating it as closed  371ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/backend/wasmgc/resources/native-string-flatten.ts instead of treating it as closed  370ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/program/native-string-value-demands.ts instead of treating it as closed  372ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/values/argument-vector-bodies.ts instead of treating it as closed  369ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/backend/wasmgc/resources/native-argument-vectors.ts instead of treating it as closed  374ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/values/closure-layouts.ts instead of treating it as closed  370ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/backend/wasmgc/resources/native-closures.ts instead of treating it as closed  372ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/values/native-resource-declaration-types.ts instead of treating it as closed  374ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/backend/wasmgc/resources/native-resource-declarations.ts instead of treating it as closed  372ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/backend/wasmgc/program/native-string-values.ts instead of treating it as closed  375ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/frontend/builtins/contracts.ts instead of treating it as closed  370ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/core/type-references.ts instead of treating it as closed  393ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/program/runtime-support.ts instead of treating it as closed  370ms
+   ✓ semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/program/formatter-support.ts instead of treating it as closed  372ms
+   ✓ semantic verification and provider ownership boundary > rejects a runtime dependency on the historical facade from src/ir/core/intrinsic-contracts.ts  376ms
+   ✓ semantic verification and provider ownership boundary > rejects a runtime dependency on the historical facade from src/ir/core/intrinsics.ts  375ms
+   ✓ semantic verification and provider ownership boundary > rejects a runtime dependency on the historical facade from src/ir/core/callable-bindings.ts  374ms
+   ✓ semantic verification and provider ownership boundary > rejects a runtime dependency on the historical facade from src/ir/analysis/effects.ts  373ms
+   ✓ semantic verification and provider ownership boundary > rejects a runtime dependency on the historical facade from src/ir/analysis/intrinsics.ts  370ms
+   ✓ semantic verification and provider ownership boundary > rejects a runtime dependency on the historical facade from src/ir/analysis/async-plan.ts  375ms
+   ✓ semantic verification and provider ownership boundary > rejects a runtime dependency on the historical facade from src/ir/runtime/host-capabilities.ts  377ms
+   ✓ semantic verification and provider ownership boundary > rejects a runtime dependency on the historical facade from src/ir/runtime/async-providers.ts  369ms
+   ✓ semantic verification and provider ownership boundary > rejects a runtime dependency on the historical facade from src/ir/runtime/callable-declarations.ts  376ms
+   ✓ semantic verification and provider ownership boundary > rejects a runtime dependency on the historical facade from src/ir/runtime/manifest.ts  375ms
+   ✓ semantic verification and provider ownership boundary > rejects a runtime dependency on the historical facade from src/ir/runtime/async-attachment.ts  374ms
+   ✓ semantic verification and provider ownership boundary > rejects a runtime dependency on the historical facade from src/ir/runtime/intrinsic-verification.ts  373ms
+   ✓ semantic verification and provider ownership boundary > rejects compiler dependency syntax from src/ir/core/intrinsics.ts  370ms
+   ✓ semantic verification and provider ownership boundary > rejects compiler dependency syntax from src/ir/analysis/intrinsics.ts  371ms
+   ✓ semantic verification and provider ownership boundary > rejects compiler dependency syntax from src/ir/runtime/intrinsic-verification.ts  369ms
+   ✓ semantic verification and provider ownership boundary > rejects backend-wasmgc dependency syntax from src/ir/core/intrinsics.ts  369ms
+   ✓ semantic verification and provider ownership boundary > rejects backend-wasmgc dependency syntax from src/ir/analysis/intrinsics.ts  382ms
+   ✓ semantic verification and provider ownership boundary > rejects backend-wasmgc dependency syntax from src/ir/runtime/intrinsic-verification.ts  376ms
+   ✓ semantic verification and provider ownership boundary > rejects wasm-physical dependency syntax from src/ir/core/intrinsics.ts  372ms
+   ✓ semantic verification and provider ownership boundary > rejects wasm-physical dependency syntax from src/ir/analysis/intrinsics.ts  371ms
+   ✓ semantic verification and provider ownership boundary > rejects wasm-physical dependency syntax from src/ir/runtime/intrinsic-verification.ts  368ms
+   ✓ semantic verification and provider ownership boundary > rejects ir-program dependency syntax from src/ir/core/intrinsics.ts  369ms
+   ✓ semantic verification and provider ownership boundary > rejects ir-program dependency syntax from src/ir/analysis/intrinsics.ts  390ms
+   ✓ semantic verification and provider ownership boundary > rejects ir-program dependency syntax from src/ir/runtime/intrinsic-verification.ts  371ms
+   ✓ semantic verification and provider ownership boundary > rejects runtime provider dependencies from semantic analysis/effects  371ms
+   ✓ semantic verification and provider ownership boundary > rejects runtime provider dependencies from semantic analysis/intrinsics  369ms
+   ✓ semantic verification and provider ownership boundary > rejects runtime provider dependencies from semantic analysis/async-plan  367ms
+ ❯ tests/issue-3518-program-data-contract-boundary.test.ts (105 tests | 104 failed) 819ms
+   ✓ canonical executable ownership boundary > pins the exact four additions independently of discovered imports 0ms
+   × canonical executable ownership boundary > checks the historical forty-four-module graph reconstructed from live declarations 14ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × canonical executable ownership boundary > rejects removal of runtime owner src/ir/analysis/alloc-registry.ts and its classification 10ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × canonical executable ownership boundary > rejects removal of runtime owner src/ir/program/errors.ts and its classification 8ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × canonical executable ownership boundary > rejects removal of runtime owner src/ir/program/data.ts and its classification 9ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × canonical executable ownership boundary > rejects removal of runtime owner src/ir/program/input.ts and its classification 9ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × canonical executable ownership boundary > rejects forbidden dependencies in runtime owner src/ir/analysis/alloc-registry.ts 9ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × canonical executable ownership boundary > rejects forbidden dependencies in runtime owner src/ir/program/errors.ts 8ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × canonical executable ownership boundary > rejects forbidden dependencies in runtime owner src/ir/program/data.ts 8ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × canonical executable ownership boundary > rejects forbidden dependencies in runtime owner src/ir/program/input.ts 8ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × canonical executable ownership boundary > rejects unprovable executable owner dependency import(globalThis.toString()); 8ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × canonical executable ownership boundary > rejects unprovable executable owner dependency export * from "./missing-owner.js"; 8ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > preserves every earlier policy edge and historical activation receipt 2ms
+     → expected [ { layer: 'ir-program', …(2) }, …(2) ] to have a length of 1 but got 3
+   × complete canonical program-data dependency boundary > pins all forty required modules and history floors independently 2ms
+     → expected { id: 'foundation', …(5) } to match object { status: 'active', …(2) }
+(3 matching properties omitted from actual)
+   × complete canonical program-data dependency boundary > checks the historical forty-module graph reconstructed from live declarations 9ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > reproduces the original analysis error without changing source or population 10ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > rejects removal of mandatory module src/shared/contracts/source-origin.ts even with its classification 8ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > rejects removal of mandatory module src/shared/contracts/ir-identity.ts even with its classification 8ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > rejects removal of mandatory module src/shared/contracts/identity-values.ts even with its classification 8ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > rejects removal of mandatory module src/shared/contracts/ir-counted-string-identity.ts even with its classification 9ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > rejects removal of mandatory module src/shared/contracts/ir-preparation-failure.ts even with its classification 8ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > rejects removal of mandatory module src/shared/contracts/ir-unit-inventory.ts even with its classification 8ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > rejects removal of mandatory module src/wasm/model/instructions.ts even with its classification 8ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > rejects removal of mandatory module src/wasm/physical/function-handles.ts even with its classification 9ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > rejects removal of mandatory module src/runtime/wasmgc/async/microtask-queue-bodies.ts even with its classification 8ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > rejects removal of mandatory module src/ir/core/types.ts even with its classification 8ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > rejects removal of mandatory module src/ir/core/fnctor-shapes.ts even with its classification 8ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > rejects removal of mandatory module src/ir/core/value-references.ts even with its classification 8ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > rejects removal of mandatory module src/ir/core/capability-provenance.ts even with its classification 8ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > rejects removal of mandatory module src/ir/core/tag-refinement.ts even with its classification 8ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > rejects removal of mandatory module src/ir/core/nodes.ts even with its classification 8ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > rejects removal of mandatory module src/ir/core/dialect/js.ts even with its classification 9ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > rejects removal of mandatory module src/ir/core/async-plan.ts even with its classification 8ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > rejects removal of mandatory module src/ir/core/intrinsic-vocabulary.ts even with its classification 8ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > rejects removal of mandatory module src/ir/core/async-intents.ts even with its classification 8ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > rejects removal of mandatory module src/ir/core/string-types.ts even with its classification 8ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > rejects removal of mandatory module src/ir/core/binding-key-primitives.ts even with its classification 8ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > rejects removal of mandatory module src/ir/analysis/contracts/allocations.ts even with its classification 7ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > rejects removal of mandatory module src/ir/passes/contracts/gvn.ts even with its classification 8ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > rejects removal of mandatory module src/ir/program/abi-inventory.ts even with its classification 8ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > rejects removal of mandatory module src/ir/program/abi.ts even with its classification 8ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > rejects removal of mandatory module src/ir/program/startup.ts even with its classification 8ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > rejects removal of mandatory module src/ir/program/abi-lookup.ts even with its classification 10ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > rejects removal of mandatory module src/ir/program/callable-bindings.ts even with its classification 8ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > rejects removal of mandatory module src/ir/program/controls.ts even with its classification 9ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > rejects removal of mandatory module src/ir/program/index.ts even with its classification 8ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > rejects removal of mandatory module src/ir/program/input-contracts.ts even with its classification 8ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > rejects removal of mandatory module src/ir/program/prepared-contracts.ts even with its classification 8ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > rejects removal of mandatory module src/runtime/contracts/host-capability-schema.ts even with its classification 8ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > rejects removal of mandatory module src/runtime/contracts/async-provider-schema.ts even with its classification 7ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > rejects removal of mandatory module src/runtime/contracts/provider-policy.ts even with its classification 9ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > rejects removal of mandatory module src/runtime/contracts/index.ts even with its classification 8ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > rejects removal of mandatory module src/ir/runtime/index.ts even with its classification 7ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > rejects removal of mandatory module src/ir/runtime/contracts/intrinsics.ts even with its classification 9ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > rejects removal of mandatory module src/ir/runtime/contracts/manifest.ts even with its classification 9ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > rejects removal of mandatory module src/ir/runtime/contracts/prepared.ts even with its classification 8ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > keeps analysis forbidden from ir-program through a model intermediary 8ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > keeps analysis forbidden from ir-runtime through a model intermediary 8ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > keeps analysis forbidden from backend-wasmgc through a model intermediary 9ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > keeps analysis forbidden from wasm-physical through a model intermediary 8ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > keeps analysis forbidden from wasm-emit through a model intermediary 7ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > keeps analysis forbidden from frontend-ts through a model intermediary 7ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > keeps analysis forbidden from legacy-ir-bridge through a model intermediary 8ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > rejects the actual clean ir-program dependency, independently of migration debt 7ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > rejects the actual clean ir-runtime dependency, independently of migration debt 7ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > rejects the actual clean wasm-physical dependency, independently of migration debt 8ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > resolves and rejects forbidden import syntax: import { hidden } from "@forbidden"; 9ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > resolves and rejects forbidden import syntax: import type { Hidden } from "@forbidden"; 7ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > resolves and rejects forbidden import syntax: import { type Hidden } from "@forbidden"; 7ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > resolves and rejects forbidden import syntax: export type { Hidden } from "@forbidden"; 8ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > resolves and rejects forbidden import syntax: export * from "@forbidden"; 9ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > resolves and rejects forbidden import syntax: type Hidden = import("@forbidden").Hidden; 7ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > resolves and rejects forbidden import syntax: type Hidden = typeof import("@forbidden"); 8ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > resolves and rejects forbidden import syntax: import * as hidden from "@forbidden"; type Hidden = typeof hidden; 7ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > resolves and rejects forbidden import syntax: import hidden = require("@forbidden"); 8ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > resolves and rejects forbidden import syntax: const hidden = require("@forbidden"); 7ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > resolves and rejects forbidden import syntax: const hidden = import("@forbidden"); 7ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > enforces the newly activated owner src/shared/contracts/ir-preparation-failure.ts 7ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > enforces the newly activated owner src/shared/contracts/ir-unit-inventory.ts 8ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > enforces the newly activated owner src/ir/analysis/contracts/allocations.ts 7ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > enforces the newly activated owner src/ir/passes/contracts/gvn.ts 8ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > enforces the newly activated owner src/ir/program/abi-lookup.ts 7ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > enforces the newly activated owner src/ir/program/callable-bindings.ts 9ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > enforces the newly activated owner src/ir/program/controls.ts 8ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > enforces the newly activated owner src/ir/program/index.ts 7ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > enforces the newly activated owner src/ir/program/input-contracts.ts 7ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > enforces the newly activated owner src/ir/program/prepared-contracts.ts 8ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > enforces the newly activated owner src/runtime/contracts/async-provider-schema.ts 8ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > enforces the newly activated owner src/runtime/contracts/provider-policy.ts 7ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > enforces the newly activated owner src/runtime/contracts/index.ts 8ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > enforces the newly activated owner src/ir/runtime/index.ts 9ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > enforces the newly activated owner src/ir/runtime/contracts/intrinsics.ts 8ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > enforces the newly activated owner src/ir/runtime/contracts/manifest.ts 7ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > enforces the newly activated owner src/ir/runtime/contracts/prepared.ts 7ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > rejects unprovable new-owner dependencies: const target = globalThis.toString(); import(target); 8ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > rejects unprovable new-owner dependencies: const target = globalThis.toString(); require(target); 7ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > rejects unprovable new-owner dependencies: export type { Missing } from "./missing.js"; 7ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > rejects malformed new-owner syntax 7ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > rejects whole-group removal of ir-program 9ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > rejects whole-group removal of ir-runtime 7ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > rejects whole-group removal of runtime-contracts 8ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > rejects activation demotion through status 7ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > rejects activation demotion through entries 8ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > rejects activation demotion through minimum 7ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × complete canonical program-data dependency boundary > rejects activation demotion through roots 8ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 104 ⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > canonical executable ownership boundary > checks the historical forty-four-module graph reconstructed from live declarations
+Error: historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+ ❯ requireCondition tests/helpers/ir-historical-runtime-reconstruction.ts:602:25
+    600| 
+    601| function requireCondition(condition: unknown, detail: string): asserts…
+    602|   if (!condition) throw new Error("historical reconstruction: " + deta…
+       |                         ^
+    603| }
+    604| 
+ ❯ acceptedHistoricalDeclarations tests/helpers/ir-historical-runtime-reconstruction.ts:2128:3
+ ❯ historicalIntrinsicSource tests/helpers/ir-historical-runtime-reconstruction.ts:819:16
+ ❯ fixture tests/issue-3518-program-data-contract-boundary.test.ts:152:11
+ ❯ ownershipFixture tests/issue-3518-program-data-contract-boundary.test.ts:196:13
+ ❯ tests/issue-3518-program-data-contract-boundary.test.ts:227:15
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/104]⎯
+
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > canonical executable ownership boundary > rejects removal of runtime owner src/ir/analysis/alloc-registry.ts and its classification
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > canonical executable ownership boundary > rejects removal of runtime owner src/ir/program/errors.ts and its classification
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > canonical executable ownership boundary > rejects removal of runtime owner src/ir/program/data.ts and its classification
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > canonical executable ownership boundary > rejects removal of runtime owner src/ir/program/input.ts and its classification
+Error: historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+ ❯ requireCondition tests/helpers/ir-historical-runtime-reconstruction.ts:602:25
+    600| 
+    601| function requireCondition(condition: unknown, detail: string): asserts…
+    602|   if (!condition) throw new Error("historical reconstruction: " + deta…
+       |                         ^
+    603| }
+    604| 
+ ❯ acceptedHistoricalDeclarations tests/helpers/ir-historical-runtime-reconstruction.ts:2128:3
+ ❯ historicalIntrinsicSource tests/helpers/ir-historical-runtime-reconstruction.ts:819:16
+ ❯ fixture tests/issue-3518-program-data-contract-boundary.test.ts:152:11
+ ❯ ownershipFixture tests/issue-3518-program-data-contract-boundary.test.ts:196:13
+ ❯ tests/issue-3518-program-data-contract-boundary.test.ts:249:15
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/104]⎯
+
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > canonical executable ownership boundary > rejects forbidden dependencies in runtime owner src/ir/analysis/alloc-registry.ts
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > canonical executable ownership boundary > rejects forbidden dependencies in runtime owner src/ir/program/errors.ts
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > canonical executable ownership boundary > rejects forbidden dependencies in runtime owner src/ir/program/data.ts
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > canonical executable ownership boundary > rejects forbidden dependencies in runtime owner src/ir/program/input.ts
+Error: historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+ ❯ requireCondition tests/helpers/ir-historical-runtime-reconstruction.ts:602:25
+    600| 
+    601| function requireCondition(condition: unknown, detail: string): asserts…
+    602|   if (!condition) throw new Error("historical reconstruction: " + deta…
+       |                         ^
+    603| }
+    604| 
+ ❯ acceptedHistoricalDeclarations tests/helpers/ir-historical-runtime-reconstruction.ts:2128:3
+ ❯ historicalIntrinsicSource tests/helpers/ir-historical-runtime-reconstruction.ts:819:16
+ ❯ fixture tests/issue-3518-program-data-contract-boundary.test.ts:152:11
+ ❯ ownershipFixture tests/issue-3518-program-data-contract-boundary.test.ts:196:13
+ ❯ tests/issue-3518-program-data-contract-boundary.test.ts:260:15
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/104]⎯
+
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > canonical executable ownership boundary > rejects unprovable executable owner dependency import(globalThis.toString());
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > canonical executable ownership boundary > rejects unprovable executable owner dependency export * from "./missing-owner.js";
+Error: historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+ ❯ requireCondition tests/helpers/ir-historical-runtime-reconstruction.ts:602:25
+    600| 
+    601| function requireCondition(condition: unknown, detail: string): asserts…
+    602|   if (!condition) throw new Error("historical reconstruction: " + deta…
+       |                         ^
+    603| }
+    604| 
+ ❯ acceptedHistoricalDeclarations tests/helpers/ir-historical-runtime-reconstruction.ts:2128:3
+ ❯ historicalIntrinsicSource tests/helpers/ir-historical-runtime-reconstruction.ts:819:16
+ ❯ fixture tests/issue-3518-program-data-contract-boundary.test.ts:152:11
+ ❯ ownershipFixture tests/issue-3518-program-data-contract-boundary.test.ts:196:13
+ ❯ tests/issue-3518-program-data-contract-boundary.test.ts:274:15
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/104]⎯
+
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > preserves every earlier policy edge and historical activation receipt
+AssertionError: expected [ { layer: 'ir-program', …(2) }, …(2) ] to have a length of 1 but got 3
+
+- Expected
++ Received
+
+- 1
++ 3
+
+ ❯ tests/issue-3518-program-data-contract-boundary.test.ts:307:23
+    305|         (row: { layer: string; minModules: number }) => `${row.layer}:…
+    306|       );
+    307|       expect(matches).toHaveLength(1);
+       |                       ^
+    308|       return matches[0];
+    309|     });
+ ❯ tests/issue-3518-program-data-contract-boundary.test.ts:303:29
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/104]⎯
+
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > pins all forty required modules and history floors independently
+AssertionError: expected { id: 'foundation', …(5) } to match object { status: 'active', …(2) }
+(3 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "minModules": 6,
++   "minModules": 9,
+    "required": true,
+    "status": "active",
+  }
+
+ ❯ tests/issue-3518-program-data-contract-boundary.test.ts:391:21
+    389|     for (const [id, entries] of Object.entries(currentGroups)) {
+    390|       const layer = p.layers.find((x: { id: string }) => x.id === id);
+    391|       expect(layer).toMatchObject({ status: "active", required: true, …
+       |                     ^
+    392|       expect([...layer.entries].sort()).toEqual([...entries].sort());
+    393|       const history = p.activationHistory.filter(
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/104]⎯
+
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > checks the historical forty-module graph reconstructed from live declarations
+Error: historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+ ❯ requireCondition tests/helpers/ir-historical-runtime-reconstruction.ts:602:25
+    600| 
+    601| function requireCondition(condition: unknown, detail: string): asserts…
+    602|   if (!condition) throw new Error("historical reconstruction: " + deta…
+       |                         ^
+    603| }
+    604| 
+ ❯ acceptedHistoricalDeclarations tests/helpers/ir-historical-runtime-reconstruction.ts:2128:3
+ ❯ historicalIntrinsicSource tests/helpers/ir-historical-runtime-reconstruction.ts:819:16
+ ❯ fixture tests/issue-3518-program-data-contract-boundary.test.ts:152:11
+ ❯ tests/issue-3518-program-data-contract-boundary.test.ts:412:20
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/104]⎯
+
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > reproduces the original analysis error without changing source or population
+Error: historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+ ❯ requireCondition tests/helpers/ir-historical-runtime-reconstruction.ts:602:25
+    600| 
+    601| function requireCondition(condition: unknown, detail: string): asserts…
+    602|   if (!condition) throw new Error("historical reconstruction: " + deta…
+       |                         ^
+    603| }
+    604| 
+ ❯ acceptedHistoricalDeclarations tests/helpers/ir-historical-runtime-reconstruction.ts:2128:3
+ ❯ historicalIntrinsicSource tests/helpers/ir-historical-runtime-reconstruction.ts:819:16
+ ❯ fixture tests/issue-3518-program-data-contract-boundary.test.ts:152:11
+ ❯ tests/issue-3518-program-data-contract-boundary.test.ts:427:15
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/104]⎯
+
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > rejects removal of mandatory module src/shared/contracts/source-origin.ts even with its classification
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > rejects removal of mandatory module src/shared/contracts/ir-identity.ts even with its classification
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > rejects removal of mandatory module src/shared/contracts/identity-values.ts even with its classification
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > rejects removal of mandatory module src/shared/contracts/ir-counted-string-identity.ts even with its classification
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > rejects removal of mandatory module src/shared/contracts/ir-preparation-failure.ts even with its classification
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > rejects removal of mandatory module src/shared/contracts/ir-unit-inventory.ts even with its classification
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > rejects removal of mandatory module src/wasm/model/instructions.ts even with its classification
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > rejects removal of mandatory module src/wasm/physical/function-handles.ts even with its classification
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > rejects removal of mandatory module src/runtime/wasmgc/async/microtask-queue-bodies.ts even with its classification
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > rejects removal of mandatory module src/ir/core/types.ts even with its classification
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > rejects removal of mandatory module src/ir/core/fnctor-shapes.ts even with its classification
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > rejects removal of mandatory module src/ir/core/value-references.ts even with its classification
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > rejects removal of mandatory module src/ir/core/capability-provenance.ts even with its classification
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > rejects removal of mandatory module src/ir/core/tag-refinement.ts even with its classification
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > rejects removal of mandatory module src/ir/core/nodes.ts even with its classification
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > rejects removal of mandatory module src/ir/core/dialect/js.ts even with its classification
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > rejects removal of mandatory module src/ir/core/async-plan.ts even with its classification
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > rejects removal of mandatory module src/ir/core/intrinsic-vocabulary.ts even with its classification
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > rejects removal of mandatory module src/ir/core/async-intents.ts even with its classification
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > rejects removal of mandatory module src/ir/core/string-types.ts even with its classification
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > rejects removal of mandatory module src/ir/core/binding-key-primitives.ts even with its classification
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > rejects removal of mandatory module src/ir/analysis/contracts/allocations.ts even with its classification
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > rejects removal of mandatory module src/ir/passes/contracts/gvn.ts even with its classification
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > rejects removal of mandatory module src/ir/program/abi-inventory.ts even with its classification
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > rejects removal of mandatory module src/ir/program/abi.ts even with its classification
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > rejects removal of mandatory module src/ir/program/startup.ts even with its classification
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > rejects removal of mandatory module src/ir/program/abi-lookup.ts even with its classification
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > rejects removal of mandatory module src/ir/program/callable-bindings.ts even with its classification
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > rejects removal of mandatory module src/ir/program/controls.ts even with its classification
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > rejects removal of mandatory module src/ir/program/index.ts even with its classification
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > rejects removal of mandatory module src/ir/program/input-contracts.ts even with its classification
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > rejects removal of mandatory module src/ir/program/prepared-contracts.ts even with its classification
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > rejects removal of mandatory module src/runtime/contracts/host-capability-schema.ts even with its classification
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > rejects removal of mandatory module src/runtime/contracts/async-provider-schema.ts even with its classification
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > rejects removal of mandatory module src/runtime/contracts/provider-policy.ts even with its classification
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > rejects removal of mandatory module src/runtime/contracts/index.ts even with its classification
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > rejects removal of mandatory module src/ir/runtime/index.ts even with its classification
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > rejects removal of mandatory module src/ir/runtime/contracts/intrinsics.ts even with its classification
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > rejects removal of mandatory module src/ir/runtime/contracts/manifest.ts even with its classification
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > rejects removal of mandatory module src/ir/runtime/contracts/prepared.ts even with its classification
+Error: historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+ ❯ requireCondition tests/helpers/ir-historical-runtime-reconstruction.ts:602:25
+    600| 
+    601| function requireCondition(condition: unknown, detail: string): asserts…
+    602|   if (!condition) throw new Error("historical reconstruction: " + deta…
+       |                         ^
+    603| }
+    604| 
+ ❯ acceptedHistoricalDeclarations tests/helpers/ir-historical-runtime-reconstruction.ts:2128:3
+ ❯ historicalIntrinsicSource tests/helpers/ir-historical-runtime-reconstruction.ts:819:16
+ ❯ fixture tests/issue-3518-program-data-contract-boundary.test.ts:152:11
+ ❯ tests/issue-3518-program-data-contract-boundary.test.ts:455:15
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/104]⎯
+
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > keeps analysis forbidden from ir-program through a model intermediary
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > keeps analysis forbidden from ir-runtime through a model intermediary
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > keeps analysis forbidden from backend-wasmgc through a model intermediary
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > keeps analysis forbidden from wasm-physical through a model intermediary
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > keeps analysis forbidden from wasm-emit through a model intermediary
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > keeps analysis forbidden from frontend-ts through a model intermediary
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > keeps analysis forbidden from legacy-ir-bridge through a model intermediary
+Error: historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+ ❯ requireCondition tests/helpers/ir-historical-runtime-reconstruction.ts:602:25
+    600| 
+    601| function requireCondition(condition: unknown, detail: string): asserts…
+    602|   if (!condition) throw new Error("historical reconstruction: " + deta…
+       |                         ^
+    603| }
+    604| 
+ ❯ acceptedHistoricalDeclarations tests/helpers/ir-historical-runtime-reconstruction.ts:2128:3
+ ❯ historicalIntrinsicSource tests/helpers/ir-historical-runtime-reconstruction.ts:819:16
+ ❯ fixture tests/issue-3518-program-data-contract-boundary.test.ts:152:11
+ ❯ tests/issue-3518-program-data-contract-boundary.test.ts:474:15
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/104]⎯
+
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > rejects the actual clean ir-program dependency, independently of migration debt
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > rejects the actual clean ir-runtime dependency, independently of migration debt
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > rejects the actual clean wasm-physical dependency, independently of migration debt
+Error: historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+ ❯ requireCondition tests/helpers/ir-historical-runtime-reconstruction.ts:602:25
+    600| 
+    601| function requireCondition(condition: unknown, detail: string): asserts…
+    602|   if (!condition) throw new Error("historical reconstruction: " + deta…
+       |                         ^
+    603| }
+    604| 
+ ❯ acceptedHistoricalDeclarations tests/helpers/ir-historical-runtime-reconstruction.ts:2128:3
+ ❯ historicalIntrinsicSource tests/helpers/ir-historical-runtime-reconstruction.ts:819:16
+ ❯ fixture tests/issue-3518-program-data-contract-boundary.test.ts:152:11
+ ❯ tests/issue-3518-program-data-contract-boundary.test.ts:491:15
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[11/104]⎯
+
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > resolves and rejects forbidden import syntax: import { hidden } from "@forbidden";
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > resolves and rejects forbidden import syntax: import type { Hidden } from "@forbidden";
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > resolves and rejects forbidden import syntax: import { type Hidden } from "@forbidden";
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > resolves and rejects forbidden import syntax: export type { Hidden } from "@forbidden";
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > resolves and rejects forbidden import syntax: export * from "@forbidden";
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > resolves and rejects forbidden import syntax: type Hidden = import("@forbidden").Hidden;
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > resolves and rejects forbidden import syntax: type Hidden = typeof import("@forbidden");
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > resolves and rejects forbidden import syntax: import * as hidden from "@forbidden"; type Hidden = typeof hidden;
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > resolves and rejects forbidden import syntax: import hidden = require("@forbidden");
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > resolves and rejects forbidden import syntax: const hidden = require("@forbidden");
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > resolves and rejects forbidden import syntax: const hidden = import("@forbidden");
+Error: historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+ ❯ requireCondition tests/helpers/ir-historical-runtime-reconstruction.ts:602:25
+    600| 
+    601| function requireCondition(condition: unknown, detail: string): asserts…
+    602|   if (!condition) throw new Error("historical reconstruction: " + deta…
+       |                         ^
+    603| }
+    604| 
+ ❯ acceptedHistoricalDeclarations tests/helpers/ir-historical-runtime-reconstruction.ts:2128:3
+ ❯ historicalIntrinsicSource tests/helpers/ir-historical-runtime-reconstruction.ts:819:16
+ ❯ fixture tests/issue-3518-program-data-contract-boundary.test.ts:152:11
+ ❯ tests/issue-3518-program-data-contract-boundary.test.ts:521:15
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[12/104]⎯
+
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > enforces the newly activated owner src/shared/contracts/ir-preparation-failure.ts
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > enforces the newly activated owner src/shared/contracts/ir-unit-inventory.ts
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > enforces the newly activated owner src/ir/analysis/contracts/allocations.ts
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > enforces the newly activated owner src/ir/passes/contracts/gvn.ts
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > enforces the newly activated owner src/ir/program/abi-lookup.ts
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > enforces the newly activated owner src/ir/program/callable-bindings.ts
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > enforces the newly activated owner src/ir/program/controls.ts
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > enforces the newly activated owner src/ir/program/index.ts
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > enforces the newly activated owner src/ir/program/input-contracts.ts
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > enforces the newly activated owner src/ir/program/prepared-contracts.ts
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > enforces the newly activated owner src/runtime/contracts/async-provider-schema.ts
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > enforces the newly activated owner src/runtime/contracts/provider-policy.ts
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > enforces the newly activated owner src/runtime/contracts/index.ts
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > enforces the newly activated owner src/ir/runtime/index.ts
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > enforces the newly activated owner src/ir/runtime/contracts/intrinsics.ts
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > enforces the newly activated owner src/ir/runtime/contracts/manifest.ts
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > enforces the newly activated owner src/ir/runtime/contracts/prepared.ts
+Error: historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+ ❯ requireCondition tests/helpers/ir-historical-runtime-reconstruction.ts:602:25
+    600| 
+    601| function requireCondition(condition: unknown, detail: string): asserts…
+    602|   if (!condition) throw new Error("historical reconstruction: " + deta…
+       |                         ^
+    603| }
+    604| 
+ ❯ acceptedHistoricalDeclarations tests/helpers/ir-historical-runtime-reconstruction.ts:2128:3
+ ❯ historicalIntrinsicSource tests/helpers/ir-historical-runtime-reconstruction.ts:819:16
+ ❯ fixture tests/issue-3518-program-data-contract-boundary.test.ts:152:11
+ ❯ tests/issue-3518-program-data-contract-boundary.test.ts:532:15
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[13/104]⎯
+
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > rejects unprovable new-owner dependencies: const target = globalThis.toString(); import(target);
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > rejects unprovable new-owner dependencies: const target = globalThis.toString(); require(target);
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > rejects unprovable new-owner dependencies: export type { Missing } from "./missing.js";
+Error: historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+ ❯ requireCondition tests/helpers/ir-historical-runtime-reconstruction.ts:602:25
+    600| 
+    601| function requireCondition(condition: unknown, detail: string): asserts…
+    602|   if (!condition) throw new Error("historical reconstruction: " + deta…
+       |                         ^
+    603| }
+    604| 
+ ❯ acceptedHistoricalDeclarations tests/helpers/ir-historical-runtime-reconstruction.ts:2128:3
+ ❯ historicalIntrinsicSource tests/helpers/ir-historical-runtime-reconstruction.ts:819:16
+ ❯ fixture tests/issue-3518-program-data-contract-boundary.test.ts:152:11
+ ❯ tests/issue-3518-program-data-contract-boundary.test.ts:547:15
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[14/104]⎯
+
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > rejects malformed new-owner syntax
+Error: historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+ ❯ requireCondition tests/helpers/ir-historical-runtime-reconstruction.ts:602:25
+    600| 
+    601| function requireCondition(condition: unknown, detail: string): asserts…
+    602|   if (!condition) throw new Error("historical reconstruction: " + deta…
+       |                         ^
+    603| }
+    604| 
+ ❯ acceptedHistoricalDeclarations tests/helpers/ir-historical-runtime-reconstruction.ts:2128:3
+ ❯ historicalIntrinsicSource tests/helpers/ir-historical-runtime-reconstruction.ts:819:16
+ ❯ fixture tests/issue-3518-program-data-contract-boundary.test.ts:152:11
+ ❯ tests/issue-3518-program-data-contract-boundary.test.ts:556:15
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[15/104]⎯
+
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > rejects whole-group removal of ir-program
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > rejects whole-group removal of ir-runtime
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > rejects whole-group removal of runtime-contracts
+Error: historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+ ❯ requireCondition tests/helpers/ir-historical-runtime-reconstruction.ts:602:25
+    600| 
+    601| function requireCondition(condition: unknown, detail: string): asserts…
+    602|   if (!condition) throw new Error("historical reconstruction: " + deta…
+       |                         ^
+    603| }
+    604| 
+ ❯ acceptedHistoricalDeclarations tests/helpers/ir-historical-runtime-reconstruction.ts:2128:3
+ ❯ historicalIntrinsicSource tests/helpers/ir-historical-runtime-reconstruction.ts:819:16
+ ❯ fixture tests/issue-3518-program-data-contract-boundary.test.ts:152:11
+ ❯ tests/issue-3518-program-data-contract-boundary.test.ts:564:15
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[16/104]⎯
+
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > rejects activation demotion through status
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > rejects activation demotion through entries
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > rejects activation demotion through minimum
+ FAIL  tests/issue-3518-program-data-contract-boundary.test.ts > complete canonical program-data dependency boundary > rejects activation demotion through roots
+Error: historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+ ❯ requireCondition tests/helpers/ir-historical-runtime-reconstruction.ts:602:25
+    600| 
+    601| function requireCondition(condition: unknown, detail: string): asserts…
+    602|   if (!condition) throw new Error("historical reconstruction: " + deta…
+       |                         ^
+    603| }
+    604| 
+ ❯ acceptedHistoricalDeclarations tests/helpers/ir-historical-runtime-reconstruction.ts:2128:3
+ ❯ historicalIntrinsicSource tests/helpers/ir-historical-runtime-reconstruction.ts:819:16
+ ❯ fixture tests/issue-3518-program-data-contract-boundary.test.ts:152:11
+ ❯ tests/issue-3518-program-data-contract-boundary.test.ts:578:15
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[17/104]⎯
+
+
+ Test Files  1 failed | 1 passed (2)
+      Tests  104 failed | 353 passed (457)
+   Start at  07:40:15
+   Duration  127.47s (transform 67ms, setup 0ms, collect 249ms, tests 127.06s, environment 0ms, prepare 29ms)
+
+JSON report written to /private/tmp/js2-ir-validation-lowering-b-20261001/.tmp/validation-lowering-b/baseline-boundaries.json

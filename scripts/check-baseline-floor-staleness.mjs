@@ -195,6 +195,7 @@ const EXACT_TEST262_PATHS = new Set([
   "scripts/build-quickjs-eval-provider.mjs",
   "scripts/quickjs-eval-provider.mjs",
   "scripts/runtime-eval-provider.mjs",
+  "scripts/compiler-inputs-hash.mjs",
   "scripts/generate-editions.ts",
   "scripts/test262-worker.mjs",
   "tests/test262-runner.ts",
@@ -214,6 +215,7 @@ export function classifyTest262Path(p) {
   if (p === "scripts/build-quickjs-eval-provider.mjs") return "standalone";
   if (p === "scripts/quickjs-eval-provider.mjs") return "standalone";
   if (p === "scripts/runtime-eval-provider.mjs") return "standalone";
+  if (p === "scripts/compiler-inputs-hash.mjs") return "standalone";
   if (p.startsWith("scripts/quickjs-artifact/")) return "standalone";
   if (EXACT_TEST262_PATHS.has(p)) return "both";
   if (p.startsWith("src/")) return "both";

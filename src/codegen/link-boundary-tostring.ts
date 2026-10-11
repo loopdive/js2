@@ -62,6 +62,7 @@
  * own slice.
  */
 import { emitObjectProtoToStringClassifier } from "./object-proto-tostring.js";
+import { buildTaggedCarrierArms } from "./object-proto-tostring-carriers.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { definedFuncAt } from "./func-space.js";
@@ -117,6 +118,8 @@ export function fillLinkBoundaryToStringTagTerminal(ctx: CodegenContext): void {
   // parameter has no meaning for a terminal the peer calls directly).
   if (!emitObjectProtoToStringClassifier(ctx, fctx, 0)) return;
 
+  // (#6674) the owner answers its own Date / RegExp / Map / Symbol / … first.
+  if (ctx.nativeStrings) fctx.body.push(...buildTaggedCarrierArms(ctx, 0));
   const anyLocal = allocLocal(fctx, `__link_tag_any_${fctx.locals.length}`, { kind: "anyref" });
   fctx.body.push({ op: "local.get", index: 0 }, { op: "any.convert_extern" }, { op: "local.set", index: anyLocal });
 

@@ -1,0 +1,73 @@
+{
+  "schema": "vector-registry-layout-forward-v1",
+  "provenance": {
+    "publishedCommit": "bda70f02b1ac9043975b312d7300218a3e2ebfd1",
+    "scannerCommit": "1ce5d0575c890d640bc3ef9958c32d662bea9e98",
+    "extractionCommit": "edfb6f4b6bf884cc69eceddb8713eab04370b2c9",
+    "registrySha256": "8e30d0c98c75cb4feb3924050fe02a6e911eb0e9b459391ba2598fcd96b19979",
+    "canonicalSha256": "c821a11a15d7fbdb9caa71de856a2da588489795c6fd9d1ab6d2fcb4ecada9fc",
+    "note": "Pinned header/import spans read independently from both published parents. Live descriptor payloads must reconstruct unchanged original receipts; expected values are never regenerated from the candidate."
+  },
+  "registryImport": "import {\n  createErrorStructType,\n  createStringDataType,\n  createAnyStringType,\n  createNativeStringType,\n  createConsStringType,\n  createHashedStringType,\n  createUtf8StringDataType,\n  createUtf8StringType,\n} from \"../../runtime/wasmgc/values/string-layouts.js\";",
+  "canonicalPrefix": "// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.\n\nimport type { TypeDef } from \"../../../wasm/model/module-records.js\";\n\nexport interface NativeStringLayout {\n  readonly nativeStrDataTypeIdx: number;\n  readonly anyStrTypeIdx: number;\n  readonly nativeStrTypeIdx: number;\n  readonly consStrTypeIdx: number;\n  readonly hashedStrTypeIdx: number;\n  readonly utf8StrDataTypeIdx: number;\n  readonly utf8StrTypeIdx: number;\n}\n\n",
+  "factorySeparator": "\n\n",
+  "canonicalSuffix": "\n",
+  "factories": [
+    {
+      "name": "createErrorStructType",
+      "header": "export function createErrorStructType(): TypeDef ",
+      "call": "createErrorStructType()",
+      "extraIndent": 0,
+      "owner": "getOrRegisterErrorStructType"
+    },
+    {
+      "name": "createStringDataType",
+      "header": "export function createStringDataType(): TypeDef ",
+      "call": "createStringDataType()",
+      "extraIndent": 0,
+      "owner": "registerNativeStringTypes"
+    },
+    {
+      "name": "createAnyStringType",
+      "header": "export function createAnyStringType(): TypeDef ",
+      "call": "createAnyStringType()",
+      "extraIndent": 0,
+      "owner": "registerNativeStringTypes"
+    },
+    {
+      "name": "createNativeStringType",
+      "header": "export function createNativeStringType(layout: NativeStringLayout): TypeDef ",
+      "call": "createNativeStringType(ctx)",
+      "extraIndent": 0,
+      "owner": "registerNativeStringTypes"
+    },
+    {
+      "name": "createConsStringType",
+      "header": "export function createConsStringType(layout: NativeStringLayout): TypeDef ",
+      "call": "createConsStringType(ctx)",
+      "extraIndent": 0,
+      "owner": "registerNativeStringTypes"
+    },
+    {
+      "name": "createHashedStringType",
+      "header": "export function createHashedStringType(layout: NativeStringLayout): TypeDef ",
+      "call": "createHashedStringType(ctx)",
+      "extraIndent": 0,
+      "owner": "registerNativeStringTypes"
+    },
+    {
+      "name": "createUtf8StringDataType",
+      "header": "export function createUtf8StringDataType(): TypeDef ",
+      "call": "createUtf8StringDataType()",
+      "extraIndent": 2,
+      "owner": "registerNativeStringTypes"
+    },
+    {
+      "name": "createUtf8StringType",
+      "header": "export function createUtf8StringType(layout: NativeStringLayout): TypeDef ",
+      "call": "createUtf8StringType(ctx)",
+      "extraIndent": 2,
+      "owner": "registerNativeStringTypes"
+    }
+  ]
+}

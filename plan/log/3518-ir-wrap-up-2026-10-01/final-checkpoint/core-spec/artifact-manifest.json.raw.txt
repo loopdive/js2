@@ -1,0 +1,36 @@
+{
+  "kind": "read-only-core-vocabulary-pre-a-spec-artifacts",
+  "files": {
+    "boolean-hunk-provenance.json": {
+      "bytes": 7082,
+      "sha256": "17a150f2543b6365f3edbf3f4c82c5935566915e36aabd8e334de0d419a8b25a"
+    },
+    "findings.md": {
+      "bytes": 17503,
+      "sha256": "4c4ffc10d52af6e4ee556a68ebe36e9109d09a6765ae61d150c7ee2de5ce0fd4"
+    },
+    "helper-reuse-proof.json": {
+      "bytes": 1491,
+      "sha256": "1ed21c69bd7f998165663ff54e4792c9c5e67dd140ee8dea8a3179bec4f28b98"
+    },
+    "phase-a-composition-proof.json": {
+      "bytes": 10269,
+      "sha256": "bd76b95cd6550696d1502c24fd541922b44dc62b24cbc8e7882cc2090badeb0d"
+    },
+    "reconstruction-spec.json": {
+      "bytes": 443000,
+      "sha256": "7e2e7f46b215371e9b16bad6b6878b4629c64620c34a21313c0f1d9cc5662a0b"
+    },
+    "final-pin-check.json": {
+      "bytes": 130,
+      "sha256": "eb8e8303f56d55dd3a401dfacfed184dba1a848bd6d951e9e0645b21d938960a"
+    }
+  },
+  "testsRun": false,
+  "trackedWrites": false,
+  "rootMeasuredOriginalCoreAfterPhaseA": "17/20; counted row passes; other three fail",
+  "staticInverseAndReplay": "8 historical outputs, 15 current owners, 164 transfers, 4 fixed current residues; all exact bytes",
+  "remainingUnknowns": [
+    "Implementation and executed new-helper/core-cohort validation are root-owned and outstanding; broader historical suites are outside this proof."
+  ]
+}

@@ -132,8 +132,10 @@ async function runWorker(options: WorkerArguments): Promise<void> {
   } else {
     const allocator = options.rowId === "js2-porffor-arena-v1" ? "bump" : "analysis-stack";
     const policy = allocator === "bump" ? "arena-v1" : "analysis-stack-arena-v1";
+    // #6776: sourceMs is a published compile phase; keep it comparable with pre-validation runs.
+    const js2CompileOptions = { target: "linear", allocator, validate: false, fileName: source.path } as const;
     const sourceStart = performance.now();
-    const compiled = await compile(source.source, { target: "linear", allocator, fileName: source.path });
+    const compiled = await compile(source.source, js2CompileOptions);
     const sourceMs = performance.now() - sourceStart;
     if (!compiled.success || !compiled.binary) {
       throw new Error(`JS2 source compile failed: ${compiled.errors.map((error) => error.message).join("; ")}`);
@@ -180,7 +182,7 @@ async function runWorker(options: WorkerArguments): Promise<void> {
       porfforRenderMs: renderMs,
     };
     commandProvenance = {
-      js2CompileOptions: { target: "linear", allocator, fileName: source.path },
+      js2CompileOptions,
       telemetry: "getLastLinearIrReport captured immediately after the public compile",
       lowering: "lowerIrModuleToPorffor(report.irModule, { memoryPlan: report.memoryPlan, prefs: { gc: false } })",
     };

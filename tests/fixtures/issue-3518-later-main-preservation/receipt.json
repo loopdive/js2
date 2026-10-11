@@ -1,0 +1,442 @@
+{
+  "schemaVersion": 1,
+  "priorCommit": "d7de1281129ddff8d3a48902a5dcf81eaee7f8d3",
+  "currentCommit": "8a730516ced8ace5da216cbb8f5b5c54c064d421",
+  "upstreamCommit": "f6ff83a26cbfe116fbb990169ed0ff64c38a5543",
+  "records": [
+    {
+      "path": "src/codegen/expressions/calls.ts",
+      "before": {
+        "sha256": "631b1b2b58d252af22c0b74bbf7ed8387e0c175d24a00c609f1420085b8c18b6",
+        "gitBlob": "325fa2431c7adab9ab2ef074bd031d70f44766b8"
+      },
+      "after": {
+        "sha256": "9c10b1a652c700eb2358b3e2f219a0626643319806824f05c5a9c20323402332",
+        "gitBlob": "0a6a6f87dbabdfcf5bd44a2b8b24291ff5cecc91"
+      },
+      "spans": [
+        {
+          "ordinal": 0,
+          "beforeOffset": 1063,
+          "afterOffset": 1063,
+          "before": "import { compileArrayMethodCall, compileArrayPrototypeCall, resolveArrayInfo } from \"../array-methods.js\";\nimport { emitGlobalThisGopdFold } from \"../dyn-read.js\"; // (#2984)\nimport { tryEmitNullishReceiverCall } from \"../nullish-receiver-coercible.js\"; // (#4484 B) §7.3.2 on a syntactic null/undefined receiver\nimport { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from \"../func-space.js\"; // (#1916 S3b) stable-regime minting\nimport { sourceFunctionHandleForDeclaration } from \"../program-abi-source-callable-planning.js\";\nimport { withRuntimeModuleCallableBindings } from \"../runtime-module-callable-metadata.js\";\n",
+          "after": "import { compileArrayMethodCall, compileArrayPrototypeCall, resolveArrayInfo } from \"../array-methods.js\";\nimport { emitGlobalThisGopdFold } from \"../dyn-read.js\"; // (#2984)\nimport { tryEmitNullishReceiverCall } from \"../nullish-receiver-coercible.js\"; // (#4484 B) §7.3.2 on a syntactic null/undefined receiver\nimport { tryEmitDynamicGeneratorFunction } from \"../generator-function-dynamic.js\"; // (#6651 A9)\nimport { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from \"../func-space.js\"; // (#1916 S3b) stable-regime minting\nimport { sourceFunctionHandleForDeclaration } from \"../program-abi-source-callable-planning.js\";\nimport { withRuntimeModuleCallableBindings } from \"../runtime-module-callable-metadata.js\";\n",
+          "beforeSha256": "ff9e1aef8a5b50d7fa2dc346834d6f12528ccd1ba6c3b8782581813592642241",
+          "afterSha256": "9bc908dfac283470f2c479386f5e85799c715d3d90e8bf924456f58670dbd03c"
+        },
+        {
+          "ordinal": 1,
+          "beforeOffset": 3340,
+          "afterOffset": 3438,
+          "before": "import { NATIVE_HOF_METHODS } from \"../hof-native.js\";\nimport { ensureTaMapFilterHelper } from \"../ta-hof-map-filter.js\";\nimport { LAZY_ITER_METHODS } from \"../iter-lazy-native.js\"; // (#2903 R3b) flatMap closure-path exemption\nimport {\n  ensureBoundaryCallableKind,\n  ensureObjVecBuilders,\n",
+          "after": "import { NATIVE_HOF_METHODS } from \"../hof-native.js\";\nimport { ensureTaMapFilterHelper } from \"../ta-hof-map-filter.js\";\nimport { LAZY_ITER_METHODS } from \"../iter-lazy-native.js\"; // (#2903 R3b) flatMap closure-path exemption\nimport { prepareBuiltinCtorValueInvoke } from \"../builtin-ctor-value-invoke.js\"; // (#6713)\nimport {\n  ensureBoundaryCallableKind,\n  ensureObjVecBuilders,\n",
+          "beforeSha256": "f24baefec97bd5fdb1e87279b3ac22ce2d7973594d89fd615dbd3af7beea0cb6",
+          "afterSha256": "fae024412fad639b5293eadc3b9bf4a658ab983cc432b8c6fb8491079bddb480"
+        },
+        {
+          "ordinal": 2,
+          "beforeOffset": 5097,
+          "afterOffset": 5287,
+          "before": "  tryBorrowedPrototypeNullishThisThrow,\n} from \"../builtin-prototype-brand.js\"; // (#4076, #5143)\nimport { tryCompilePromiseCallWithoutNew } from \"../promise-newtarget.js\"; // (#5143)\nimport {\n  appendDynamicCandidateArgcSetup,\n  appendExternResultArgcReset,\n",
+          "after": "  tryBorrowedPrototypeNullishThisThrow,\n} from \"../builtin-prototype-brand.js\"; // (#4076, #5143)\nimport { tryCompilePromiseCallWithoutNew } from \"../promise-newtarget.js\"; // (#5143)\nimport { isDrainedCombinatorResultHandler } from \"../promise-species-then.js\"; // (#5197 r3)\nimport { isReflectivePromiseMember } from \"../promise-finally-invoke.js\"; // (#6651 D7)\nimport {\n  appendDynamicCandidateArgcSetup,\n  appendExternResultArgcReset,\n",
+          "beforeSha256": "24b0f6dfeb0ca89ec5de5d311cff71cc3eb06ee5755eeaba0e26416a64d47717",
+          "afterSha256": "70438e27917a07b82d61b4dbfa8c79c7d07c0e3fa0fde7ace9bceb2e82443cb7"
+        },
+        {
+          "ordinal": 3,
+          "beforeOffset": 12506,
+          "afterOffset": 12877,
+          "before": "} from \"../property-access.js\";\nimport { emitToNumber, emitToString } from \"../coercion-engine.js\";\nimport type { InnerResult } from \"../shared.js\";\nimport {\n  brandExternMethodResult,\n  coerceType,\n",
+          "after": "} from \"../property-access.js\";\nimport { emitToNumber, emitToString } from \"../coercion-engine.js\";\nimport type { InnerResult } from \"../shared.js\";\nimport { compileStandaloneDynamicImport } from \"./standalone-dynamic-import.js\";\nimport {\n  brandExternMethodResult,\n  coerceType,\n",
+          "beforeSha256": "588e94b426334f6bd78f7da30f32cfe5098ca159c53528793cf885b3fd75434d",
+          "afterSha256": "16151a0a4e644fa82cbf5c65a1c47db9503c386f8266fc9ca03ca866e6c47d72"
+        },
+        {
+          "ordinal": 4,
+          "beforeOffset": 63023,
+          "afterOffset": 63475,
+          "before": "  // invocation. (The value-erased spelling `var m = Promise.prototype.catch`\n  // already routed here, which is why a hand-probe of the same shape passed.)\n  // Enumerated rather than opening the family: `then` and `catch` now decide\n  // the receiver at runtime, but `finally` still `ref.cast`s it, so routing\n  // `finally` here would turn today's wrong-but-non-throwing answer into a trap.\n  else if (brand === undefined && ifaceName === \"Promise\" && (member === \"then\" || member === \"catch\")) {\n    brand = ensurePromiseNativeProtoGlue(ctx);\n  }\n  // (#6651 SN1) …and the same one-member-at-a-time discipline for `Symbol`.\n",
+          "after": "  // invocation. (The value-erased spelling `var m = Promise.prototype.catch`\n  // already routed here, which is why a hand-probe of the same shape passed.)\n  // Enumerated rather than opening the family: `then` and `catch` now decide\n  // the receiver at runtime; `finally` too since #6651 D7 (it Invokes `then`\n  // off any receiver) — except under wasi, whose native body still `ref.cast`s.\n  else if (brand === undefined && ifaceName === \"Promise\" && isReflectivePromiseMember(ctx, member)) {\n    brand = ensurePromiseNativeProtoGlue(ctx);\n  }\n  // (#6651 SN1) …and the same one-member-at-a-time discipline for `Symbol`.\n",
+          "beforeSha256": "ed159638780d786a00431f9c3c8b83b8ce42d781cb9401ecad91e755e849ab47",
+          "afterSha256": "3fa62df2d0e9d028b8bc43395aec3f37e89f05b98b817ef08351b9a64c9244f7"
+        },
+        {
+          "ordinal": 5,
+          "beforeOffset": 228066,
+          "afterOffset": 228515,
+          "before": "  if (wantIsCallableGuard) {\n    ensureBoundaryCallableKind(ctx); // (#6686) admitted JS functions are callable\n    ensureLateImport(ctx, \"__is_callable\", [{ kind: \"externref\" }], [{ kind: \"i32\" }]);\n  }\n  if (allCandidates.length === 0 && !wantProxyArm && !wantBoundArm && !wantTaCtorArm && !wantApplyFallback) return null;\n\n",
+          "after": "  if (wantIsCallableGuard) {\n    ensureBoundaryCallableKind(ctx); // (#6686) admitted JS functions are callable\n    ensureLateImport(ctx, \"__is_callable\", [{ kind: \"externref\" }], [{ kind: \"i32\" }]);\n    prepareBuiltinCtorValueInvoke(ctx, fctx, expr.expression); // (#6713) RegExp/Error carrier [[Call]]\n  }\n  if (allCandidates.length === 0 && !wantProxyArm && !wantBoundArm && !wantTaCtorArm && !wantApplyFallback) return null;\n\n",
+          "beforeSha256": "a13aa78ce52f61d470a90399aeaa2acf660b5f32f11ac1f31276c85f3e25e40d",
+          "afterSha256": "6d40d8979d1354138a3020c34dc81a73772dab1e7d82c9daec0fb1b7792c88ba"
+        },
+        {
+          "ordinal": 6,
+          "beforeOffset": 275835,
+          "afterOffset": 276388,
+          "before": "  const savedWidenTuple = ctx.widenTupleCallbackParams;\n  const restoreNativeIteratorResult = enterNativeIteratorResultCallback(ctx, nativeIteratorResult);\n  ctx.widenTupleCallbackParams = true;\n  try {\n    const type =\n      ts.isArrowFunction(arg) || ts.isFunctionExpression(arg)\n",
+          "after": "  const savedWidenTuple = ctx.widenTupleCallbackParams;\n  const restoreNativeIteratorResult = enterNativeIteratorResultCallback(ctx, nativeIteratorResult);\n  ctx.widenTupleCallbackParams = true;\n  // (#5197 r3 Step 7) a drained combinator aggregate is an externref vec, never the typed one.\n  const savedForceExternref = ctx.forceExternrefCallbackParams;\n  if (isDrainedCombinatorResultHandler(ctx, arg)) ctx.forceExternrefCallbackParams = true;\n  try {\n    const type =\n      ts.isArrowFunction(arg) || ts.isFunctionExpression(arg)\n",
+          "beforeSha256": "85bfb5885001afa4499a82e849ce12620b444c62f7649baf482410f8631dc5d4",
+          "afterSha256": "63a9c08a45b21479757024cc773a6cdf972a11905ccf09b54229236a6ffb1417"
+        },
+        {
+          "ordinal": 7,
+          "beforeOffset": 277274,
+          "afterOffset": 278078,
+          "before": "    return { instrs, closureInfo };\n  } finally {\n    ctx.widenTupleCallbackParams = savedWidenTuple;\n    restoreNativeIteratorResult();\n    fctx.savedBodies.pop();\n    fctx.body = savedBody;\n",
+          "after": "    return { instrs, closureInfo };\n  } finally {\n    ctx.widenTupleCallbackParams = savedWidenTuple;\n    ctx.forceExternrefCallbackParams = savedForceExternref;\n    restoreNativeIteratorResult();\n    fctx.savedBodies.pop();\n    fctx.body = savedBody;\n",
+          "beforeSha256": "374127cf7f7e6a3da36d199577ab7c9af6c9271221a500422e7ad6e8d2f0a37b",
+          "afterSha256": "828ead65ad0dce279c4762538fe4924c14a8bb4e25dd018003e61834b6bc222b"
+        },
+        {
+          "ordinal": 8,
+          "beforeOffset": 324642,
+          "afterOffset": 325506,
+          "before": "  return VOID_RESULT;\n}\n\n/**\n * #3509 — A standalone dynamic import in an ordinary lifted closure can be lowered\n * to a call-site trap instead of rejecting the whole module. This is the\n * deferred case: creating the function does not need a loader, and execution\n * remains honest because reaching import() throws before a Promise or module\n * namespace can be manufactured.\n *\n * Async functions stay on #3494's explicit unsupported path. Their throw must\n * become a rejected Promise rather than escape synchronously, which requires\n * the async/module-evaluation substrate that this bounded fix deliberately\n * does not approximate.\n */\nfunction canDeferStandaloneDynamicImport(fctx: FunctionContext): boolean {\n  return fctx.deferredDynamicImportTrap === true;\n}\n\n/** Private, opt-in proxy brand probe used by the Deno app bridge. Ordinary\n * source never sees this name; the JavaScript fallback returns false, while a\n * standalone build can test the concrete `$Proxy` RTT without invoking any\n",
+          "after": "  return VOID_RESULT;\n}\n\n/** Private, opt-in proxy brand probe used by the Deno app bridge. Ordinary\n * source never sees this name; the JavaScript fallback returns false, while a\n * standalone build can test the concrete `$Proxy` RTT without invoking any\n",
+          "beforeSha256": "0695ecfb4f0148d88e00314958e1309c3f655df545da146cbed2e56c4577bb80",
+          "afterSha256": "fb46d92f9bfae19dbd5c9577dda67c521b04e82cd496701ea19071b21d8a8d63"
+        },
+        {
+          "ordinal": 9,
+          "beforeOffset": 352731,
+          "afterOffset": 352850,
+          "before": "    if (r !== undefined) return r;\n  }\n  {\n    const r = tryRuntimeEvalInterpretedBoundaryIntrinsic(ctx, fctx, expr);\n    if (r !== undefined) return r;\n  }\n\n",
+          "after": "    if (r !== undefined) return r;\n  }\n  {\n    const r =\n      tryRuntimeEvalInterpretedBoundaryIntrinsic(ctx, fctx, expr) ?? tryEmitDynamicGeneratorFunction(ctx, fctx, expr); // (#6651 A9)\n    if (r !== undefined) return r;\n  }\n\n",
+          "beforeSha256": "6a9e8c41390809ba97df6d4b4b813a624e1d3b7eb053af54a0c83577409bffad",
+          "afterSha256": "1d6cc9d11f872bd0e6af2f4c7deeb2db4bd96484d24aae06a7f552f39d41209e"
+        },
+        {
+          "ordinal": 10,
+          "beforeOffset": 369225,
+          "afterOffset": 369416,
+          "before": "\n  // Dynamic import() — delegate to __dynamic_import host import.\n  // Takes a specifier (externref string) and returns an externref (Promise).\n  // #3494 — standalone has no host loader, while compileMulti does not yet\n  // represent deferred module records or module namespace objects. Never emit\n  // env.__dynamic_import or manufacture an always-fulfilled placeholder.\n  //\n  // #3509 — an ordinary function body is deferred: compiling/creating it does\n  // not require a loader. Preserve that property with a host-free, catchable\n  // runtime throw if execution reaches import(). Eager/top-level and async\n  // cases retain #3494's fatal diagnostic until their Promise/module semantics\n  // can be implemented honestly.\n  if (expr.expression.kind === ts.SyntaxKind.ImportKeyword) {\n    if (ctx.standalone) {\n      if (canDeferStandaloneDynamicImport(fctx)) {\n        reportError(\n          ctx,\n          expr,\n          \"Warning: standalone dynamic import has no module loader and will throw if this function is invoked (#3509; module evaluation #3494)\",\n          \"warning\",\n        );\n        // Preserve argument side effects and nesting order before the loader\n        // failure. A nested import emits its own terminal throw here; Wasm's\n        // stack-polymorphic unreachable tail keeps the enclosing expression\n        // valid without inventing a result.\n        for (const argument of expr.arguments) {\n          const argumentType = compileExpression(ctx, fctx, argument);\n          if (argumentType !== null) fctx.body.push({ op: \"drop\" });\n        }\n        emitThrowTypeError(ctx, fctx, \"Standalone dynamic import requires a module loader (#3494)\");\n        return { kind: \"externref\" };\n      }\n      reportError(\n        ctx,\n        expr,\n        \"Standalone dynamic import is unsupported until compileMulti provides internal module records and namespace objects\",\n      );\n      return null;\n    }\n    // Ensure __dynamic_import is registered\n    let dynIdx = ctx.funcMap.get(\"__dynamic_import\");\n    if (dynIdx === undefined) {\n",
+          "after": "\n  // Dynamic import() — delegate to __dynamic_import host import.\n  // Takes a specifier (externref string) and returns an externref (Promise).\n  // #3494 — standalone has no host loader: resolve an evaluated module of the\n  // compiled graph to its namespace, reject everything else with a TypeError.\n  if (expr.expression.kind === ts.SyntaxKind.ImportKeyword) {\n    if (ctx.standalone) return compileStandaloneDynamicImport(ctx, fctx, expr);\n    // Ensure __dynamic_import is registered\n    let dynIdx = ctx.funcMap.get(\"__dynamic_import\");\n    if (dynIdx === undefined) {\n",
+          "beforeSha256": "b6270245054ebd2df7100e380f15b93560bc741654df9115a5dbc40347479b07",
+          "afterSha256": "e884e3a30b1ecffd541bf34763d319c3bef109fc90be2466225195a05412071d"
+        }
+      ]
+    },
+    {
+      "path": "src/codegen/object-runtime.ts",
+      "before": {
+        "sha256": "4fdafd412c04e87006c335567647810cbb185e82d405e62e196144c2f4e98228",
+        "gitBlob": "b31b3ff6a6162b7d3c8cd85e72582360153a3548"
+      },
+      "after": {
+        "sha256": "1869f5b1ba83d66353bd941ba291049047b34179143339739a2674243813f450",
+        "gitBlob": "fe286d9252c8454db6a328cb4760efd65afc77a1"
+      },
+      "spans": [
+        {
+          "ordinal": 0,
+          "beforeOffset": 13682,
+          "afterOffset": 13682,
+          "before": "// `ensureObjectRuntime` (imported back here); `fillProxyDispatch` is re-exported\n// so `index.ts`s `from \"./object-runtime.js\"` importer keeps resolving.\nimport { ensureProxyRuntime } from \"./object-runtime-proxy.js\";\nimport { ensureArgcGlobal } from \"./statements/nested-declarations.js\";\nimport { buildLazyNativeProtoGetInstrs, flushPendingNativeProtoSeeders, getBuiltinBrand } from \"./native-proto.js\";\nimport { applyUndefinedInstrs } from \"./apply-closure-args.js\";\n",
+          "after": "// `ensureObjectRuntime` (imported back here); `fillProxyDispatch` is re-exported\n// so `index.ts`s `from \"./object-runtime.js\"` importer keeps resolving.\nimport { ensureProxyRuntime } from \"./object-runtime-proxy.js\";\nimport {\n  PROTO_LINK_FIELD,\n  fillProtoLinkArms,\n  protoLinkActive,\n  reserveProtoLinkSetWalk,\n  protoLinkSetWalkArm,\n  withProtoLinkNull,\n} from \"./object-runtime-proxy-chain.js\"; // (#6766) a Proxy as [[Prototype]]\nimport { ensureArgcGlobal } from \"./statements/nested-declarations.js\";\nimport { buildLazyNativeProtoGetInstrs, flushPendingNativeProtoSeeders, getBuiltinBrand } from \"./native-proto.js\";\nimport { applyUndefinedInstrs } from \"./apply-closure-args.js\";\n",
+          "beforeSha256": "07030ef3cc9ac4948737d419358be13166c8875f727b98a411c19748488e2956",
+          "afterSha256": "7f6c5e9e0cc7e4bdb54f85e33c231db2628b4ad954205e6a213d516d5b2fed02"
+        },
+        {
+          "ordinal": 1,
+          "beforeOffset": 15586,
+          "afterOffset": 15804,
+          "before": "  captureReversePeerReadBinding,\n  reverseMethodCallArmInstrs,\n} from \"./standalone-link-reverse-peer.js\"; // (#5383 S17 / #6600) the REVERSE hop\nimport { captureWrapperPrimitiveKey } from \"./to-primitive-wrapper-slot.js\"; // (#4492 wave-5) __to_primitive's [[PrimitiveValue]] arms\nimport { buildToPrimitiveBody } from \"../runtime/wasmgc/values/to-primitive-bodies.js\";\nimport type {\n",
+          "after": "  captureReversePeerReadBinding,\n  reverseMethodCallArmInstrs,\n} from \"./standalone-link-reverse-peer.js\"; // (#5383 S17 / #6600) the REVERSE hop\nimport { stringWrapperLengthArm } from \"./string-wrapper-dynamic-length.js\"; // (#6651 C5)\nimport { captureWrapperPrimitiveKey } from \"./to-primitive-wrapper-slot.js\"; // (#4492 wave-5) __to_primitive's [[PrimitiveValue]] arms\nimport { buildToPrimitiveBody } from \"../runtime/wasmgc/values/to-primitive-bodies.js\";\nimport type {\n",
+          "beforeSha256": "5cfc01ea4a6f7f331e931c7ddb5def60f7ce3960d4f9f16c763ec13a58ffa6bf",
+          "afterSha256": "92e65901b9775f4ee41d70cc3647772b67567eea19770686e7792699adc3c5d2"
+        },
+        {
+          "ordinal": 2,
+          "beforeOffset": 59724,
+          "afterOffset": 60033,
+          "before": "    // string keys were first added. Powers OrdinaryOwnPropertyKeys insertion\n    // ordering for Object.keys/values/entries/for-in/spread/JSON.stringify.\n    { name: \"nextSeq\", type: { kind: \"i32\" }, mutable: true },\n  ];\n  // `$Object` is a plain (final) struct. NOTE (#1100): an earlier attempt made\n  // this a NON-FINAL `sub` so the standalone `$Proxy` could extend it, but\n  // opening `$Object` up triggered WasmGC iso-recursive canonicalization\n",
+          "after": "    // string keys were first added. Powers OrdinaryOwnPropertyKeys insertion\n    // ordering for Object.keys/values/entries/for-in/spread/JSON.stringify.\n    { name: \"nextSeq\", type: { kind: \"i32\" }, mutable: true },\n    // (#6766) A Proxy in [[Prototype]] position: non-null only on a LINK — an\n    // empty `$Object` standing in `$proto` for the `$Proxy` it holds. Appended\n    // (never renumber); see object-runtime-proxy-chain.ts.\n    { name: \"protoLink\", type: { kind: \"anyref\" }, mutable: true },\n  ];\n  if (objectFields.length !== PROTO_LINK_FIELD + 1) throw new Error(\"$Object.protoLink must stay the last field\");\n  // `$Object` is a plain (final) struct. NOTE (#1100): an earlier attempt made\n  // this a NON-FINAL `sub` so the standalone `$Proxy` could extend it, but\n  // opening `$Object` up triggered WasmGC iso-recursive canonicalization\n",
+          "beforeSha256": "a26da597e915ee00e9608673061844914c8a8553f09065d2de4839dfc49d518a",
+          "afterSha256": "1408557cfd3a2704a33f9b1ff71392520082cb9c5dbef9e0fee41c9b1e99f89c"
+        },
+        {
+          "ordinal": 3,
+          "beforeOffset": 84122,
+          "afterOffset": 84833,
+          "before": "      propMapTypeIdx,\n      initialCapacity: INITIAL_CAP,\n    });\n    registerNative(\"__new_plain_object\", [], [{ kind: \"externref\" }], [], body);\n  }\n\n  // ── $__obj_find(ref $Object, externref key) -> ref null $PropEntry ────────\n",
+          "after": "      propMapTypeIdx,\n      initialCapacity: INITIAL_CAP,\n    });\n    registerNative(\"__new_plain_object\", [], [{ kind: \"externref\" }], [], withProtoLinkNull(body, objectTypeIdx));\n  }\n\n  // ── $__obj_find(ref $Object, externref key) -> ref null $PropEntry ────────\n",
+          "beforeSha256": "6862d4da638016d438017437673994530b49df91516faac114f34e74931cf006",
+          "afterSha256": "a2d1152f790050d70544e3324c6ec77148bed4a93686c0a643e232381a629177"
+        },
+        {
+          "ordinal": 4,
+          "beforeOffset": 109779,
+          "afterOffset": 110524,
+          "before": "    { op: \"i32.const\", value: 0 }, // tombstones\n    { op: \"i32.const\", value: 0 }, // flags\n    { op: \"i32.const\", value: 1 }, // nextSeq (slot consumes seq 0)\n    { op: \"struct.new\", typeIdx: objectTypeIdx },\n    { op: \"local.set\", index: objLocal },\n    // __obj_insert(o, WRAPPER_PRIMITIVE_KEY, any.convert_extern(value),\n",
+          "after": "    { op: \"i32.const\", value: 0 }, // tombstones\n    { op: \"i32.const\", value: 0 }, // flags\n    { op: \"i32.const\", value: 1 }, // nextSeq (slot consumes seq 0)\n    { op: \"ref.null\", typeIdx: NONE_HEAP }, // protoLink (#6766)\n    { op: \"struct.new\", typeIdx: objectTypeIdx },\n    { op: \"local.set\", index: objLocal },\n    // __obj_insert(o, WRAPPER_PRIMITIVE_KEY, any.convert_extern(value),\n",
+          "beforeSha256": "4837b75ee12a48b2122648ff5157a694af7d5eccd988270a17b1aa312ac59b3f",
+          "afterSha256": "6dbbe243b4cf42b6ba829a7aceb83d99899908a7edd4104fd5ec270c91450f74"
+        },
+        {
+          "ordinal": 5,
+          "beforeOffset": 116389,
+          "afterOffset": 117199,
+          "before": "  const SET_RESULT_SUCCESS = 1;\n  const SET_RESULT_REFUSED = 2;\n  let externSetResultGlobalIdx: number | undefined;\n\n  // ── __extern_set(externref obj, externref key, externref value) -> void ──\n  //\n",
+          "after": "  const SET_RESULT_SUCCESS = 1;\n  const SET_RESULT_REFUSED = 2;\n  let externSetResultGlobalIdx: number | undefined;\n  // (#6766) Without #4504's decide walk, a Proxy link on the chain is found by\n  // its own reserved walk (filled once the Proxy dispatch exists).\n  const protoLinkSetWalkIdx = inheritedSetRuntimeActive ? undefined : reserveProtoLinkSetWalk(ctx);\n\n  // ── __extern_set(externref obj, externref key, externref value) -> void ──\n  //\n",
+          "beforeSha256": "a2c293c509234502d8e9098677fe67521df068ade5e3677884df6f444d7bab18",
+          "afterSha256": "4b28e787c50aaffd69c30100949e4eef17dc861685420701f977e6bb12cf7dc3"
+        },
+        {
+          "ordinal": 6,
+          "beforeOffset": 128985,
+          "afterOffset": 130043,
+          "before": "          ...(protoIndexSetDecisionInstrs(ctx, 0, 2, 3) ?? [{ op: \"i32.const\", value: SET_DECISION_MISS }]),\n        ],\n      );\n\n      // Allowed own data updates/creates are centralized here so carrier bags\n      // never recurse through `__extern_set` as the hidden bag receiver.  That\n      // would restart an Object companion walk with the wrong `this`.\n",
+          "after": "          ...(protoIndexSetDecisionInstrs(ctx, 0, 2, 3) ?? [{ op: \"i32.const\", value: SET_DECISION_MISS }]),\n        ],\n      );\n    }\n    // (#6766) Also registered for a Proxy-as-prototype module without #4504:\n    // §10.1.9.2's receiver-side write must be OWN-only, or a link walk re-enters.\n    if (inheritedSetRuntimeActive || protoLinkActive(ctx)) {\n      // Allowed own data updates/creates are centralized here so carrier bags\n      // never recurse through `__extern_set` as the hidden bag receiver.  That\n      // would restart an Object companion walk with the wrong `this`.\n",
+          "beforeSha256": "e6463d2302328159b14d129caa493356ae68e051d9f686a68cc72b83208571aa",
+          "afterSha256": "714ffa853fe605c56c80fecfb80bea8883d01b43c90b4d46d0f697b2e3e5fd24"
+        },
+        {
+          "ordinal": 7,
+          "beforeOffset": 150090,
+          "afterOffset": 151375,
+          "before": "      // creating one. Runs AFTER the own-entry block (which returns for every\n      // own case) and BEFORE the frozen gate + own-create below.\n      ...inheritedAccessorArm,\n      // #1472 Phase B Blocker A Half 2 — FROZEN write gate. A frozen object\n      // refuses ALL data writes (update AND new key) per ES §10.4.7 / the\n      // [[Set]] invariant on non-writable own data properties. Sloppy-mode\n",
+          "after": "      // creating one. Runs AFTER the own-entry block (which returns for every\n      // own case) and BEFORE the frozen gate + own-create below.\n      ...inheritedAccessorArm,\n      // (#6766) …and a Proxy link on that chain takes the write (§10.1.9.2 2.b).\n      ...protoLinkSetWalkArm(protoLinkSetWalkIdx),\n      // #1472 Phase B Blocker A Half 2 — FROZEN write gate. A frozen object\n      // refuses ALL data writes (update AND new key) per ES §10.4.7 / the\n      // [[Set]] invariant on non-writable own data properties. Sloppy-mode\n",
+          "beforeSha256": "26793b5c4af92dc64589413c0d0f020dec0127215e236e5cbe936dbec367a9e4",
+          "afterSha256": "e1de6303e6828af7db7701a8124f92743b786aea84873014648a1d8892decc7a"
+        },
+        {
+          "ordinal": 8,
+          "beforeOffset": 160552,
+          "afterOffset": 161970,
+          "before": "          { op: \"return\" },\n        ],\n      },\n      // Missing own property: non-extensible objects refuse the new key.\n      { op: \"local.get\", index: 4 },\n      { op: \"ref.as_non_null\" },\n",
+          "after": "          { op: \"return\" },\n        ],\n      },\n      // (#6766) Missing own property: a Proxy link on the chain answers first.\n      ...protoLinkSetWalkArm(protoLinkSetWalkIdx, 6),\n      // Missing own property: non-extensible objects refuse the new key.\n      { op: \"local.get\", index: 4 },\n      { op: \"ref.as_non_null\" },\n",
+          "beforeSha256": "a7d6933117959a96379c12e8d67319aa343bd3ba4afd55731e5563937250075a",
+          "afterSha256": "c1e7005de8a1336989cf2960aa94ebad2d19d136e5097d32b7cbf3d44a384ec5"
+        },
+        {
+          "ordinal": 9,
+          "beforeOffset": 161393,
+          "afterOffset": 162945,
+          "before": "        { name: \"any\", type: { kind: \"anyref\" } },\n        { name: \"o\", type: objRefNull },\n        { name: \"e\", type: entryRefNull },\n      ],\n      body,\n    );\n",
+          "after": "        { name: \"any\", type: { kind: \"anyref\" } },\n        { name: \"o\", type: objRefNull },\n        { name: \"e\", type: entryRefNull },\n        ...(protoLinkSetWalkIdx === undefined ? [] : [{ name: \"linkSet\", type: { kind: \"i32\" } as ValType }]),\n      ],\n      body,\n    );\n",
+          "beforeSha256": "6d017dfd802bad311e23c3685302dcead4a5fa3cbe3b0eba56ebf1a827e5614b",
+          "afterSha256": "3650335848dfa8502067d5dfbc2aa7a9bdac99f81c210b8a98a12bda6e3d5512"
+        },
+        {
+          "ordinal": 10,
+          "beforeOffset": 256945,
+          "afterOffset": 258608,
+          "before": "  reserveOrdinarySetWithReceiver(ctx);\n\n  ensureProxyRuntime(ctx, types, registerNative);\n\n  // (#4749) Fill Object.assign's standalone Proxy-source CopyDataProperties\n  // arm now that descriptor helpers and Proxy dispatch front-guards exist.\n",
+          "after": "  reserveOrdinarySetWithReceiver(ctx);\n\n  ensureProxyRuntime(ctx, types, registerNative);\n  fillProtoLinkArms(ctx, types, registerNative); // (#6766) per-hop Proxy arms in the prototype walkers\n\n  // (#4749) Fill Object.assign's standalone Proxy-source CopyDataProperties\n  // arm now that descriptor helpers and Proxy dispatch front-guards exist.\n",
+          "beforeSha256": "338c6bbb7eda2b15aeca70c46bc6884f279bb9164743ae5286d01ec5f2ebb9a9",
+          "afterSha256": "ba1ef74860eb3b8c52bf5476f96769b4e7cd986db3dff2cc0e14a1fb7c13709d"
+        },
+        {
+          "ordinal": 11,
+          "beforeOffset": 344114,
+          "afterOffset": 345881,
+          "before": "  numberToStringIdx: number;\n  /** funcIdx of `__extern_get` (only used when objArrayLikeArms). */\n  externGetIdx: number;\n  /** Pre-built per-`__vec_<k>` dispatch arms (empty at registration time). */\n  vecArms: Instr[];\n  /** (#2106 S1) Factory for the miss (\"index absent\") result instrs. A FACTORY\n",
+          "after": "  numberToStringIdx: number;\n  /** funcIdx of `__extern_get` (only used when objArrayLikeArms). */\n  externGetIdx: number;\n  /** (#6651 H6) `$Proxy` type: its indexed read is the same `Get(O, ToString(i))`. */\n  proxyTypeIdx?: number;\n  /** Pre-built per-`__vec_<k>` dispatch arms (empty at registration time). */\n  vecArms: Instr[];\n  /** (#2106 S1) Factory for the miss (\"index absent\") result instrs. A FACTORY\n",
+          "beforeSha256": "5be8535fe0c35990a446625fe120e3adda7a57f5fefbc33379ef6cd29754bfb4",
+          "afterSha256": "4826c6bf09656a324cb31f236115e7ac8b06de849e99bbc5c57a8d0bb565f294"
+        },
+        {
+          "ordinal": 12,
+          "beforeOffset": 345580,
+          "afterOffset": 347459,
+          "before": "    ? [\n        { op: \"local.get\", index: 2 },\n        { op: \"ref.test\", typeIdx: objectTypeIdx },\n        {\n          op: \"if\",\n          blockType: { kind: \"empty\" },\n",
+          "after": "    ? [\n        { op: \"local.get\", index: 2 },\n        { op: \"ref.test\", typeIdx: objectTypeIdx },\n        ...(p.proxyTypeIdx === undefined\n          ? []\n          : ([\n              { op: \"local.get\", index: 2 },\n              { op: \"ref.test\", typeIdx: p.proxyTypeIdx },\n              { op: \"i32.or\" },\n            ] satisfies Instr[])),\n        {\n          op: \"if\",\n          blockType: { kind: \"empty\" },\n",
+          "beforeSha256": "c076d8ea14c83343fe03813061f85ffc0b742450291c4883a4780ddf7a3a78e3",
+          "afterSha256": "d50c8b5d1cdd1499e099f4addc40c40c80ad5c535b1297097d2dbdaaaca79ce9"
+        },
+        {
+          "ordinal": 13,
+          "beforeOffset": 447396,
+          "afterOffset": 449517,
+          "before": "          op: \"if\",\n          blockType: { kind: \"empty\" },\n          then: [\n            // n = ToNumber(key), then require Number::toString(n) to equal the\n            // original key. This rejects 01, 1.0, NaN, and other non-canonical\n            // numeric strings before the String-exotic arm runs.\n",
+          "after": "          op: \"if\",\n          blockType: { kind: \"empty\" },\n          then: [\n            ...stringWrapperLengthArm(ctx, 1, stringData), // (#6651 C5) `length`\n            // n = ToNumber(key), then require Number::toString(n) to equal the\n            // original key. This rejects 01, 1.0, NaN, and other non-canonical\n            // numeric strings before the String-exotic arm runs.\n",
+          "beforeSha256": "cb043d79e776e611a99072dc7c32af3f42badb77b1f1b4373ecff6488316cd30",
+          "afterSha256": "c5f88139395273e8ebc2c76ac95215cff5335abee1ee0d6964649162ded7ad6e"
+        }
+      ]
+    },
+    {
+      "path": "src/codegen/closure-exports.ts",
+      "before": {
+        "sha256": "3253fb30a184f9aef53e975a000bc05d5a32890ec4783e19f93d63a240b2fb84",
+        "gitBlob": "8d65b08491a7f8db6eddec3550a4a928286fa8ab"
+      },
+      "after": {
+        "sha256": "c7c065018a5494911d5d6f21e66731c9490137357a993b961669e24372264c45",
+        "gitBlob": "9b09ac736f4833d519beb69db114a7fccfa79a01"
+      },
+      "spans": [
+        {
+          "ordinal": 0,
+          "beforeOffset": 24124,
+          "afterOffset": 24124,
+          "before": " */\nfunction externToClosureParamRef(ctx: CodegenContext, paramType: ValType): Instr[] {\n  if (paramType.kind === \"ref\" || paramType.kind === \"ref_null\") {\n    const helperName = buildVecFromExternMaterializer(ctx, paramType.typeIdx);\n    const helperIdx = helperName !== undefined ? ctx.funcMap.get(helperName) : undefined;\n    if (helperIdx !== undefined) return buildClosureReferenceArgument(paramType, helperIdx);\n  }\n  return buildClosureReferenceArgument(paramType);\n}\n\n/** Preserve explicit host `undefined` for numeric default-parameter checks. */\n\n/** Lower a host argument into the closure's native i64 carrier. */\nfunction externToClosureI64(\n  ctx: CodegenContext,\n  argLocalIdx: number,\n  paramType: Extract<ValType, { kind: \"i64\" }>,\n): Instr[] {\n  if (paramType.bigint === true) {\n    const toBigintIdx = ctx.funcMap.get(\"__to_bigint\");\n",
+          "after": " */\nfunction externToClosureParamRef(ctx: CodegenContext, paramType: ValType): Instr[] {\n  if (paramType.kind === \"ref\" || paramType.kind === \"ref_null\") {\n    const helperName = buildVecFromExternMaterializer(ctx, paramType.typeIdx);\n    const helperIdx = helperName !== undefined ? ctx.funcMap.get(helperName) : undefined;\n    if (helperIdx !== undefined) return buildClosureReferenceArgument(paramType, helperIdx);\n  }\n  return buildClosureReferenceArgument(paramType);\n}\n\n/**\n * (#6710) The parameter type a dispatcher arm converts a host argument to.\n * `widenNonDefaultableTypes` (src/compiler/output.ts) rewrites every func-type\n * `ref $T` param to `ref null $T` after codegen, so a `(ref $AnyString)` formal\n * emitted here is `(ref null $AnyString)` in the binary — structurally the same\n * type as a sibling closure's nullable formal, so its `ref.test` arm also\n * catches that sibling's funcref. Under the JS value bridge a JS `undefined`\n * (explicit, or padded by a widened under-applied call such as `$DONE()`\n * dispatched through `__runtime_eval_call_aot`) then met a non-null\n * `ref.cast` and trapped. Convert to the type the callee actually declares, so\n * the omitted/undefined argument takes the `ref.null` arm below. Scoped to the\n * native regime in a JS environment: the host-assisted default and host-free\n * standalone projections stay byte-identical (#5385 slice rule).\n */\nfunction closureDispatchParamType(ctx: CodegenContext, paramType: ValType | undefined): ValType | undefined {\n  return paramType?.kind === \"ref\" && ctx.standalone && jsValueBoundary(ctx)\n    ? { kind: \"ref_null\", typeIdx: paramType.typeIdx }\n    : paramType;\n}\n\n/** Does any user formal of this closure func type convert as a nullable ref? */\nfunction hasNullableRefFormal(ctx: CodegenContext, funcTypeIdx: number): boolean {\n  const def = ctx.mod.types[funcTypeIdx];\n  return def?.kind === \"func\" && def.params.slice(1).some((p) => closureDispatchParamType(ctx, p)?.kind === \"ref_null\");\n}\n\n/** Preserve explicit host `undefined` for numeric default-parameter checks. */\n\n/** Lower a host argument into the closure's native i64 carrier. */\nfunction externToClosureI64(\n  ctx: CodegenContext,\n  argLocalIdx: number,\n  paramType: Extract<ValType, { kind: \"i64\" }>,\n): Instr[] {\n  if (paramType.bigint === true) {\n    const toBigintIdx = ctx.funcMap.get(\"__to_bigint\");\n",
+          "beforeSha256": "4d7666889b096f8d6b3fc2cd6d3b045616c38f705ef78e399eebd96eb5223bf2",
+          "afterSha256": "f2b5e19ac4d010a87b2227d8d4bce919d80b77655ea3818ec91997334cfe33f1"
+        },
+        {
+          "ordinal": 1,
+          "beforeOffset": 32492,
+          "afterOffset": 34010,
+          "before": "  // Host-free targets have no facade and must not acquire a host import.\n  const needsHostFacadeUnwrap =\n    jsValueBoundary(ctx) && // (#6686) a facade exists iff the JS value bridge does\n    entries.some((entry) => {\n      const funcTypeDef = mod.types[entry.funcTypeIdx];\n      return (\n        funcTypeDef?.kind === \"func\" &&\n        funcTypeDef.params.slice(1).some((param) => param.kind === \"ref\" || param.kind === \"ref_null\")\n      );\n    });\n  const needsExplicitUndefinedRefNormalization = entries.some((entry) => {\n    const funcTypeDef = mod.types[entry.funcTypeIdx];\n    return funcTypeDef?.kind === \"func\" && funcTypeDef.params.slice(1).some((param) => param.kind === \"ref_null\");\n  });\n  if (needsHostFacadeUnwrap) {\n    ensureLateImport(ctx, \"__unwrap_for_wasm\", [{ kind: \"externref\" }], [{ kind: \"externref\" }]);\n  }\n  if (needsExplicitUndefinedRefNormalization) {\n    ensureLateImport(ctx, \"__extern_is_undefined\", [{ kind: \"externref\" }], [{ kind: \"i32\" }]);\n  }\n  if (needsHostFacadeUnwrap || needsExplicitUndefinedRefNormalization) {\n    flushLateImportShifts(ctx, null);\n  }\n\n",
+          "after": "  // Host-free targets have no facade and must not acquire a host import.\n  const needsHostFacadeUnwrap =\n    jsValueBoundary(ctx) && // (#6686) a facade exists iff the JS value bridge does\n    entries.some((entry) => {\n      const funcTypeDef = mod.types[entry.funcTypeIdx];\n      return (\n        funcTypeDef?.kind === \"func\" &&\n        funcTypeDef.params.slice(1).some((param) => param.kind === \"ref\" || param.kind === \"ref_null\")\n      );\n    });\n  const needsExplicitUndefinedRefNormalization = entries.some((entry) => hasNullableRefFormal(ctx, entry.funcTypeIdx));\n  if (needsHostFacadeUnwrap) {\n    ensureLateImport(ctx, \"__unwrap_for_wasm\", [{ kind: \"externref\" }], [{ kind: \"externref\" }]);\n  }\n  if (needsExplicitUndefinedRefNormalization) {\n    ensureLateImport(ctx, \"__extern_is_undefined\", [{ kind: \"externref\" }], [{ kind: \"i32\" }]);\n  }\n  if (needsHostFacadeUnwrap || needsExplicitUndefinedRefNormalization) {\n    flushLateImportShifts(ctx, null);\n  }\n\n",
+          "beforeSha256": "7c6cbca7635481d4d656bd96d2745da9031bcd79418d8a656f4ace32b9016d76",
+          "afterSha256": "ee5f9abd921e6364a7c1e2b7a32dba0787a02d47503112bf297131ada796cc3a"
+        },
+        {
+          "ordinal": 2,
+          "beforeOffset": 38334,
+          "afterOffset": 39722,
+          "before": "      }\n      return ops;\n    };\n\n    // Push self + fixed user args. For a source rest parameter, materialize its\n    // final Wasm vec formal from every remaining positional host argument.\n    const argInstrs: Instr[] = [];\n    for (let i = 0; i < entry.closureArity; i++) {\n      const paramType =\n        funcTypeDef?.kind === \"func\" && funcTypeDef.params.length >= i + 2 ? funcTypeDef.params[i + 1] : undefined;\n      argInstrs.push(...buildArgConversion(i + 1, paramType));\n    }\n    if (entry.rest) {\n      argInstrs.push(\n        ...materializeClosureDispatchRest(\n          entry.rest,\n          arity,\n          entry.closureArity,\n          extrasVecTypeIdx,\n          extrasArrTypeIdx,\n          (argumentIndex, elemType) => buildArgConversion(argumentIndex + 1, elemType),\n",
+          "after": "      }\n      return ops;\n    };\n\n    // Push self + fixed user args. For a source rest parameter, materialize its\n    // final Wasm vec formal from every remaining positional host argument.\n    const argInstrs: Instr[] = [];\n    for (let i = 0; i < entry.closureArity; i++) {\n      const paramType =\n        funcTypeDef?.kind === \"func\" && funcTypeDef.params.length >= i + 2 ? funcTypeDef.params[i + 1] : undefined;\n      argInstrs.push(...buildArgConversion(i + 1, closureDispatchParamType(ctx, paramType)));\n    }\n    if (entry.rest) {\n      argInstrs.push(\n        ...materializeClosureDispatchRest(\n          entry.rest,\n          arity,\n          entry.closureArity,\n          extrasVecTypeIdx,\n          extrasArrTypeIdx,\n          (argumentIndex, elemType) => buildArgConversion(argumentIndex + 1, elemType),\n",
+          "beforeSha256": "0ad911fedf781b10a81f9a140eb8acae24cdd63ec5a140d829c31599c3aaa63e",
+          "afterSha256": "9bf6a1e61861ca6b942bf1ac474191799e1be297967b5f7da61d7a6cf1eff22b"
+        },
+        {
+          "ordinal": 3,
+          "beforeOffset": 63107,
+          "afterOffset": 64526,
+          "before": "  // parity with emitClosureCallExportN's argument bridge above.\n  const needsHostFacadeUnwrap =\n    jsValueBoundary(ctx) && // (#6686) a facade exists iff the JS value bridge does\n    entries.some((entry) => {\n      const funcTypeDef = mod.types[entry.funcTypeIdx];\n      return (\n        funcTypeDef?.kind === \"func\" &&\n        funcTypeDef.params.slice(1).some((param) => param.kind === \"ref\" || param.kind === \"ref_null\")\n      );\n    });\n  const needsExplicitUndefinedRefNormalization = entries.some((entry) => {\n    const funcTypeDef = mod.types[entry.funcTypeIdx];\n    return funcTypeDef?.kind === \"func\" && funcTypeDef.params.slice(1).some((param) => param.kind === \"ref_null\");\n  });\n  if (needsHostFacadeUnwrap) {\n    ensureLateImport(ctx, \"__unwrap_for_wasm\", [{ kind: \"externref\" }], [{ kind: \"externref\" }]);\n  }\n  if (needsExplicitUndefinedRefNormalization) {\n    ensureLateImport(ctx, \"__extern_is_undefined\", [{ kind: \"externref\" }], [{ kind: \"i32\" }]);\n  }\n  if (needsHostFacadeUnwrap || needsExplicitUndefinedRefNormalization) {\n    flushLateImportShifts(ctx, null);\n  }\n\n",
+          "after": "  // parity with emitClosureCallExportN's argument bridge above.\n  const needsHostFacadeUnwrap =\n    jsValueBoundary(ctx) && // (#6686) a facade exists iff the JS value bridge does\n    entries.some((entry) => {\n      const funcTypeDef = mod.types[entry.funcTypeIdx];\n      return (\n        funcTypeDef?.kind === \"func\" &&\n        funcTypeDef.params.slice(1).some((param) => param.kind === \"ref\" || param.kind === \"ref_null\")\n      );\n    });\n  const needsExplicitUndefinedRefNormalization = entries.some((entry) => hasNullableRefFormal(ctx, entry.funcTypeIdx));\n  if (needsHostFacadeUnwrap) {\n    ensureLateImport(ctx, \"__unwrap_for_wasm\", [{ kind: \"externref\" }], [{ kind: \"externref\" }]);\n  }\n  if (needsExplicitUndefinedRefNormalization) {\n    ensureLateImport(ctx, \"__extern_is_undefined\", [{ kind: \"externref\" }], [{ kind: \"i32\" }]);\n  }\n  if (needsHostFacadeUnwrap || needsExplicitUndefinedRefNormalization) {\n    flushLateImportShifts(ctx, null);\n  }\n\n",
+          "beforeSha256": "954ea4ba4dd48fdf1136d5e2f4fbd4f60248db71a3592dffc6e1faf59b01dbbc",
+          "afterSha256": "8ee6b4ef5bc63b5012ad2ec7b8cea36ca5007789f99ffa9ebddab82174b17120"
+        },
+        {
+          "ordinal": 4,
+          "beforeOffset": 68563,
+          "afterOffset": 69852,
+          "before": "        unwrapForWasm: unwrapForWasmIdx,\n      });\n    };\n\n    // User args occupy locals [2..arity+1]. Push fixed formals, then build the\n    // rest vec formal (when present) from the remaining positional args.\n    const argInstrs: Instr[] = [];\n    for (let i = 0; i < entry.closureArity; i++) {\n      const paramType =\n        funcTypeDef?.kind === \"func\" && funcTypeDef.params.length >= i + 2 ? funcTypeDef.params[i + 1] : undefined;\n      argInstrs.push(...buildArgConversion(i + 2, i, paramType));\n    }\n    if (entry.rest) {\n      argInstrs.push(\n        ...materializeClosureDispatchRest(\n          entry.rest,\n          arity,\n          entry.closureArity,\n          extrasVecTypeIdx,\n          extrasArrTypeIdx,\n          (argumentIndex, elemType) => buildArgConversion(argumentIndex + 2, argumentIndex, elemType),\n",
+          "after": "        unwrapForWasm: unwrapForWasmIdx,\n      });\n    };\n\n    // User args occupy locals [2..arity+1]. Push fixed formals, then build the\n    // rest vec formal (when present) from the remaining positional args.\n    const argInstrs: Instr[] = [];\n    for (let i = 0; i < entry.closureArity; i++) {\n      const paramType =\n        funcTypeDef?.kind === \"func\" && funcTypeDef.params.length >= i + 2 ? funcTypeDef.params[i + 1] : undefined;\n      argInstrs.push(...buildArgConversion(i + 2, i, closureDispatchParamType(ctx, paramType)));\n    }\n    if (entry.rest) {\n      argInstrs.push(\n        ...materializeClosureDispatchRest(\n          entry.rest,\n          arity,\n          entry.closureArity,\n          extrasVecTypeIdx,\n          extrasArrTypeIdx,\n          (argumentIndex, elemType) => buildArgConversion(argumentIndex + 2, argumentIndex, elemType),\n",
+          "beforeSha256": "45d082173e100734e3475f3c7dcb4c8186c4a8af1eac0f58ac08cc086942b9d6",
+          "afterSha256": "b9823741552368c71d0b878b83fc38f7bb5ebd64e35f9a10f8d05b27624053c9"
+        }
+      ]
+    },
+    {
+      "path": "src/codegen/apply-closure-variadic-builtin.ts",
+      "before": {
+        "sha256": "030d401c3784a5325d606ce3af00a4db5311220cadb7249e8313bbc1aab3410b",
+        "gitBlob": "e447950d4cf80b167671cd69f4083f49dcdabab0"
+      },
+      "after": {
+        "sha256": "6195c3593c4d1f44a13a5bc102cb8cc6fc0913dc7a227c1634a395ac9a9be5f3",
+        "gitBlob": "438d66b6d6b19f033a0249f33cde895a0722ffa5"
+      },
+      "spans": [
+        {
+          "ordinal": 0,
+          "beforeOffset": 1232,
+          "afterOffset": 1232,
+          "before": "import type { Instr, ValType } from \"../ir/types.js\";\nimport { getClosureFuncSelfTypeIdx } from \"./closures/funcref-wrapper-types.js\";\nimport type { CodegenContext } from \"./context/types.js\";\n\n/**\n * Build the arm for `__apply_closure` (params 0=fn 1=recv 2=args; local\n",
+          "after": "import type { Instr, ValType } from \"../ir/types.js\";\nimport { getClosureFuncSelfTypeIdx } from \"./closures/funcref-wrapper-types.js\";\nimport type { CodegenContext } from \"./context/types.js\";\nimport { BFN_ID_FIELD_IDX } from \"./builtin-fn-meta.js\";\n\n/** A rest callback can share the builtin's signature, but not its identity. */\nfunction variadicBuiltinIdentity(ctx: CodegenContext): Instr[] {\n  const body: Instr[] = [{ op: \"i32.const\", value: 0 }];\n  for (const key of [\"static:Math.max\", \"static:Math.min\", \"static:String.fromCharCode\"]) {\n    const typeIdx = ctx.builtinFnMetaTypeByKey?.get(key);\n    if (typeIdx === undefined) continue;\n    body.push(\n      { op: \"local.get\", index: 0 },\n      { op: \"any.convert_extern\" },\n      { op: \"ref.test\", typeIdx },\n      {\n        op: \"if\",\n        blockType: { kind: \"val\", type: { kind: \"i32\" } },\n        then: [\n          { op: \"local.get\", index: 0 },\n          { op: \"any.convert_extern\" },\n          { op: \"ref.cast\", typeIdx },\n          { op: \"struct.get\", typeIdx, fieldIdx: BFN_ID_FIELD_IDX },\n          { op: \"i32.const\", value: typeIdx },\n          { op: \"i32.eq\" },\n        ],\n        else: [{ op: \"i32.const\", value: 0 }],\n      },\n      { op: \"i32.or\" },\n    );\n  }\n  return body;\n}\n\n/**\n * Build the arm for `__apply_closure` (params 0=fn 1=recv 2=args; local\n",
+          "beforeSha256": "cdfa5670b28e1b73c2f811870f477c56640dc453d1b146b5fe8901e83dda1cc3",
+          "afterSha256": "aa07c5a7f3b68ff94e9495904e05b3f6a7d4addeca25b789cf8a587d3f4b7770"
+        },
+        {
+          "ordinal": 1,
+          "beforeOffset": 2714,
+          "afterOffset": 3772,
+          "before": "    { op: \"ref.cast\", typeIdx },\n  ];\n  return [\n    { op: \"local.get\", index: 0 },\n    { op: \"any.convert_extern\" },\n    { op: \"ref.test\", typeIdx: structTypeIdx },\n    {\n      op: \"if\",\n      blockType: { kind: \"empty\" },\n",
+          "after": "    { op: \"ref.cast\", typeIdx },\n  ];\n  return [\n    // Signature equality alone also admits user `function (...args)` bodies.\n    // This shortcut deliberately does not install a receiver, so only the\n    // three receiver-independent builtin identities may bypass the method\n    // dispatcher. The metadata id disambiguates canonicalized sibling types.\n    ...variadicBuiltinIdentity(ctx),\n    {\n      op: \"if\",\n      blockType: { kind: \"empty\" },\n",
+          "beforeSha256": "72bb2dcd750cde6766c51e7a3246f15b9c3f886f436483368209ba1c549227d2",
+          "afterSha256": "678b94e1ed794e3beece2e4b5f19cfd7c12cab96e613fa39d73972063702bb6f"
+        }
+      ]
+    }
+  ],
+  "sourceCommits": [
+    {
+      "commit": "0f136faea13c8e6b794caa98697be2cee6bd7a17",
+      "path": "src/codegen/expressions/calls.ts",
+      "subject": "fix(#5197): Promise.all(<iterable>) handlers read the aggregate as an untyped vec; r3 pins ✓"
+    },
+    {
+      "commit": "ec6c0161605bfd70b91aba4112b6108d8604cf09",
+      "path": "src/codegen/expressions/calls.ts",
+      "subject": "feat(#3494): standalone import() resolves in-graph modules to their namespace"
+    },
+    {
+      "commit": "6f8018cdb8c4cd388dd6182647f64d1f8ea9360f",
+      "path": "src/codegen/expressions/calls.ts",
+      "subject": "feat(#6651): A9 — %GeneratorFunction%(…) / new %GeneratorFunction%(…) in standalone via the realm engine ✓"
+    },
+    {
+      "commit": "937afecabddcec09394a6379a46866a17fde6be1",
+      "path": "src/codegen/expressions/calls.ts",
+      "subject": "fix(#6651): slice D7 — Promise.prototype.finally Invokes the receiver's then (standalone) ✓"
+    },
+    {
+      "commit": "7283f26fd9bbcef77ce74a556654910efe314a26",
+      "path": "src/codegen/expressions/calls.ts",
+      "subject": "fix(#6713): standalone RegExp / Error carriers callable and constructible through a variable"
+    },
+    {
+      "commit": "d71b6e53ab23ac25bc810efd83c6a8ea1a6493ee",
+      "path": "src/codegen/object-runtime.ts",
+      "subject": "feat(#6766): a Proxy as [[Prototype]] — link $Object, per-hop walker arms, receiver-observable trap-absent [[Set]] ✓"
+    },
+    {
+      "commit": "854b5d2aba919ea97ba007f2846a3c4b1c124151",
+      "path": "src/codegen/object-runtime.ts",
+      "subject": "fix(#6651): H6 — Array methods read a Proxy receiver through the MOP, not as its target's shape ✓"
+    },
+    {
+      "commit": "a38c8db1b098dc4bf50cf2b023bbffeb6ba5f248",
+      "path": "src/codegen/object-runtime.ts",
+      "subject": "fix(#6651): C5 — builtin subclass carriers at the new site, bound-class args, ctor arguments, String length ✓"
+    },
+    {
+      "commit": "167878f0fc62a6a54b6ffef4a62d63f555b29050",
+      "path": "src/codegen/closure-exports.ts",
+      "subject": "fix(#6710): dispatcher arms convert host args to the post-widening formal type"
+    },
+    {
+      "commit": "31237a90fb8461617dd1314843989e27de83c0dc",
+      "path": "src/codegen/apply-closure-variadic-builtin.ts",
+      "subject": "fix(deno): preserve rest callback receivers in dynamic calls ✓"
+    }
+  ],
+  "dependencies": [
+    {
+      "path": "src/codegen/builtin-ctor-value-invoke.ts",
+      "sha256": "7cb505be2a391dfb9d43b956c406e1b7f698748c651b42105e1425034ff48a6b",
+      "gitBlob": "ecd4b9b2384379b2db2f146e88705c5924f78f7d"
+    },
+    {
+      "path": "src/codegen/generator-function-dynamic.ts",
+      "sha256": "8a8ffd627dc3ccb041726b1e66bc0d7eac145e42327d0bacfda25cabf55fa211",
+      "gitBlob": "0934f45e72c266fb30129d5a5ac5c503695760f3"
+    },
+    {
+      "path": "src/codegen/promise-finally-invoke.ts",
+      "sha256": "1079fa61dc76de0d9cbfd81959ec7fe2d73c5856c15e35b43bb07b1993ff2156",
+      "gitBlob": "eae3fd43761749a2b21326decbab1a0dd698ff88"
+    },
+    {
+      "path": "src/codegen/promise-species-then.ts",
+      "sha256": "788eba493c376ab509fe7ab80ea86dfdbe6b0cb00534086615194c70796232e2",
+      "gitBlob": "58a343b7e06c6e50cd8c712ce4da39a5126b7b7b"
+    },
+    {
+      "path": "src/codegen/expressions/standalone-dynamic-import.ts",
+      "sha256": "ad859290435afcf0528e573c92c4d0bef87d9f9e9b7342afb33d20ed740b3bb6",
+      "gitBlob": "8378bbe24d4bdf2ade179cad4992d912773da53e"
+    },
+    {
+      "path": "src/codegen/object-runtime-proxy-chain.ts",
+      "sha256": "c7099e1a03cefb6e1ceb84b7b73874d5168baa3424b5627f4f8efa65b3f7e7b8",
+      "gitBlob": "bd8fa1cd4239dbab9db7dfe4749a67d66348f6d7"
+    },
+    {
+      "path": "src/codegen/string-wrapper-dynamic-length.ts",
+      "sha256": "63cb2c8e89b3500d9988ca9b39aa9f088ab041618c3c009bedf38796640ad2fe",
+      "gitBlob": "6c9d9b4bd6adde5d47c54e54ddb73b7da07db8d7"
+    },
+    {
+      "path": "src/codegen/builtin-fn-meta.ts",
+      "sha256": "61a65b087cd30897debcc79e60640656bba990ef4452dc67fd6631d9cf0c1755",
+      "gitBlob": "a898c6e57391ad2f6aee3bd694462eab721e4808"
+    }
+  ]
+}

@@ -38,9 +38,43 @@ interface RequireRewrite {
  *
  * Returns the original source unchanged if no top-level require() calls are present.
  */
-export function rewriteCjsRequire(source: string): string {
-  return rewriteCjsRequireWithMap(source).source;
+export function rewriteCjsRequire(source: string, opts?: CjsRewriteOptions): string {
+  return rewriteCjsRequireWithMap(source, opts).source;
 }
+
+/** #6479 — options for the textual pre-filter (tests disable it to compare outputs). */
+export interface CjsRewriteOptions {
+  /** Set `false` to force the AST pass even when the source has no CJS token. */
+  prefilter?: boolean;
+}
+
+/**
+ * #6479 — cheap textual gate in front of the `ts.createSourceFile` parse.
+ *
+ * On a multi-file graph this pass parsed every source, and on the self-compile
+ * graph (1,381 files / 34 MB) that cost 2.5 s while only ~8 % of files carry
+ * any CommonJS surface at all. A false positive costs one wasted parse whose
+ * output is identical; a false negative silently drops a rewrite, so the
+ * pattern is a deliberate superset of every shape the AST visitor below can
+ * act on:
+ *
+ * | rewrite shape                                  | produced by                               | matched by       |
+ * | ---------------------------------------------- | ----------------------------------------- | ---------------- |
+ * | `const X = require("Y")`                       | `tryRenderRequireImport` (default import) | `require\s*\(`   |
+ * | `const { a, b: c } = require("Y")`             | `tryRenderRequireImport` (named import)   | `require\s*\(`   |
+ * | `const X = require("Y").member`                | `tryRenderRequireImport` (member import)  | `require\s*\(`   |
+ * | `const X = require("Y")(args)`                 | `tryRenderRequireImport` (factory call)   | `require\s*\(`   |
+ * | `var`/`let` forms of all of the above          | `tryRewriteStatement` (non-const branch)  | `require\s*\(`   |
+ * | `module.exports = <expr>` (single assignment)  | `tryRewriteSingleModuleExportsAssignment` | `module\s*\.\s*exports` |
+ * | `module.exports = require("Y")`                | same, re-exported default                 | `require\s*\(`   |
+ * | `module.exports` / `exports.foo` wrapping      | `shouldWrapModuleExports` + its visitor   | `module\s*\.\s*exports`, `exports\s*\.` |
+ *
+ * Every one of those requires the literal token `require`, `module.exports` or
+ * `exports.` in the source, because the AST guards compare identifier text
+ * against those exact names. This is strictly wider than the `includes("require(")`
+ * check it replaces (whitespace before `(` is now allowed) on the require side.
+ */
+const CJS_SURFACE_RE = /\brequire\s*\(|\bmodule\s*\.\s*exports\b|\bexports\s*\./;
 
 /**
  * #1928 — like {@link rewriteCjsRequire} but also returns a `PositionMap` from
@@ -49,10 +83,14 @@ export function rewriteCjsRequire(source: string): string {
  * declarations can be longer (and multi-line) than the `const … = require(…)`
  * they replace, shifting everything below.
  */
-export function rewriteCjsRequireWithMap(source: string): { source: string; positionMap: PositionMap } {
-  // Cheap pre-check: dependency leaves may have no `require()` calls but still
-  // need their `module.exports` value surfaced for a rewritten importer.
-  if (!source.includes("require(") && !source.includes("module.exports") && !source.includes("exports")) {
+export function rewriteCjsRequireWithMap(
+  source: string,
+  opts?: CjsRewriteOptions,
+): { source: string; positionMap: PositionMap } {
+  // Cheap pre-check (#6479): dependency leaves may have no `require()` calls but
+  // still need their `module.exports` value surfaced for a rewritten importer,
+  // so the gate covers the export surface too. See `CJS_SURFACE_RE`.
+  if (opts?.prefilter !== false && !CJS_SURFACE_RE.test(source)) {
     return { source, positionMap: PositionMap.identity() };
   }
 
@@ -71,6 +109,14 @@ export function rewriteCjsRequireWithMap(source: string): { source: string; posi
   // `module.exports = function factory() {}` package leaf.
   const directDefaultExport = tryRewriteSingleModuleExportsAssignment(sf);
   if (directDefaultExport) rewrites.push(directDefaultExport);
+
+  // (#6876) `require('<literal>')` inside module-scope control flow — the
+  // `process.env.NODE_ENV` idiom (`if (…) { module.exports = require('./a') }
+  // else { … require('./b') }`) every React-family package uses. Hoist each
+  // distinct specifier to one module-scope default import (the same binding
+  // the top-level `const x = require('…')` rewrite produces) and replace the
+  // call with it. Evaluation becomes eager at module init, as under a bundler.
+  const hoistedImports = collectInBranchRequireHoists(sf, rewrites);
 
   // A static require rewrite turns a CommonJS file into an ESM file. Surface
   // its `module.exports` value explicitly before that happens, including
@@ -102,11 +148,13 @@ export function rewriteCjsRequireWithMap(source: string): { source: string; posi
     return { source, positionMap: PositionMap.identity() };
   }
 
-  const modulePrelude = wrapModuleExports
-    ? "/** @type {any} */ let __cjs_default_export = Object.create(Object.prototype);\n" +
-      "/** @type {any} */ const exports = __cjs_default_export;\n" +
-      "/** @type {any} */ const module = {};\n"
-    : "";
+  const modulePrelude =
+    hoistedImports +
+    (wrapModuleExports
+      ? "/** @type {any} */ let __cjs_default_export = Object.create(Object.prototype);\n" +
+        "/** @type {any} */ const exports = __cjs_default_export;\n" +
+        "/** @type {any} */ const module = {};\n"
+      : "");
   // Export the binding, not an `export default <expression>` snapshot. CommonJS
   // is allowed to replace `module.exports` while the module executes; importers
   // must observe that final/live cell rather than the empty object seeded by the
@@ -421,6 +469,48 @@ function tryRenderRequireImport(decl: ts.VariableDeclaration): string | null {
 
   // Array destructuring or other patterns — leave alone.
   return null;
+}
+
+/**
+ * (#6876) Find `require('<literal>')` calls nested in module-scope control
+ * flow (not inside functions or classes, and not inside a statement another
+ * rewrite already replaces), register a call-site rewrite to a hoisted
+ * binding for each, and return the import lines to prepend. One import per
+ * distinct specifier.
+ */
+function collectInBranchRequireHoists(sf: ts.SourceFile, rewrites: RequireRewrite[]): string {
+  const taken = rewrites.map((r) => ({ start: r.start, end: r.end }));
+  const covered = (start: number, end: number): boolean => taken.some((t) => start >= t.start && end <= t.end);
+  const bindingBySpec = new Map<string, string>();
+  const lines: string[] = [];
+  const visit = (node: ts.Node): void => {
+    if (ts.isFunctionLike(node) || ts.isClassLike(node)) return;
+    if (ts.isCallExpression(node)) {
+      const raw = extractRequireSpecifier(node);
+      if (raw !== null) {
+        const start = node.getStart(sf);
+        if (covered(start, node.end)) return;
+        const moduleSpec = isNodeBuiltin(raw) && !raw.startsWith("node:") ? `node:${normalizeNodeBuiltin(raw)}` : raw;
+        let name = bindingBySpec.get(moduleSpec);
+        if (name === undefined) {
+          name = `__cjs_hoisted_require_${bindingBySpec.size}`;
+          bindingBySpec.set(moduleSpec, name);
+          lines.push(`import ${name} from ${JSON.stringify(moduleSpec)};`);
+        }
+        rewrites.push({ start, end: node.end, text: name });
+        return;
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  for (const stmt of sf.statements) {
+    // Top-level variable statements are the existing rewrite's domain: the
+    // ones it declines (reassigned bindings, rest patterns, default
+    // initializers) stay as written, by design (#1279).
+    if (ts.isVariableStatement(stmt) || covered(stmt.getStart(sf), stmt.end)) continue;
+    visit(stmt);
+  }
+  return lines.length === 0 ? "" : `${lines.join("\n")}\n`;
 }
 
 /**

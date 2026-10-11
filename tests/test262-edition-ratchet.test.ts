@@ -234,3 +234,129 @@ describe("test262 per-edition ratchet — ungated editions are reported, not hid
     }
   });
 });
+
+describe("test262 per-edition ratchet — a COMPLETED (100 %) edition allows no regression", () => {
+  // Project-lead rule, 2026-09-29: no regression is allowed inside an edition
+  // that has reached 100 %. ES5 lost 7 rows between 2026-09-23 and 09-28 while
+  // the ratchet reported OK, so these cases assert the gate FIRES.
+
+  it("--update marks an edition completed once every row passes, and keeps it", () => {
+    const baseline = join(dir, "completed-seed.json");
+    expect(run(["--results", jsonl(allPass(), "completed-seed.jsonl"), "--baseline", baseline, "--update"]).code).toBe(
+      0,
+    );
+    const b = JSON.parse(readFileSync(baseline, "utf-8"));
+    expect(b.editions["5"].completed).toBe(true);
+    expect(b.editions["2016"].completed).toBe(true);
+
+    // A re-bank keeps the flag: `completed` is sticky.
+    expect(run(["--results", jsonl(allPass(), "completed-seed2.jsonl"), "--baseline", baseline, "--update"]).code).toBe(
+      0,
+    );
+    expect(JSON.parse(readFileSync(baseline, "utf-8")).editions["5"].completed).toBe(true);
+  });
+
+  it("does NOT mark an edition completed from a partial run", () => {
+    const baseline = join(dir, "completed-partial.json");
+    const seed = allPass();
+    seed[0].status = "fail";
+    expect(
+      run(["--results", jsonl(seed, "completed-partial-seed.jsonl"), "--baseline", baseline, "--update"]).code,
+    ).toBe(0);
+    expect(JSON.parse(readFileSync(baseline, "utf-8")).editions["5"].completed).toBeUndefined();
+
+    // Only two of the three ES5 rows, both passing: pass == total for the run,
+    // but the run is smaller than the floor, so it is not a completion.
+    const partial = allPass().filter((r) => r.file !== ES5_PASS[0]);
+    run(["--results", jsonl(partial, "completed-partial.jsonl"), "--baseline", baseline, "--update", "--force"]);
+    expect(JSON.parse(readFileSync(baseline, "utf-8")).editions["5"].completed).toBeUndefined();
+  });
+
+  it("FAILS on a single non-passing row of a completed edition, even in a PARTIAL run", () => {
+    // The count check skips a partially covered edition. The completed check
+    // must not: it judges every row the run has.
+    const baseline = join(dir, "completed-partial-fail.json");
+    run(["--results", jsonl(allPass(), "cpf-seed.jsonl"), "--baseline", baseline, "--update"]);
+
+    const partialWithFail = [{ file: ES5_PASS[0], status: "fail" }];
+    const r = run(["--results", jsonl(partialWithFail, "cpf-run.jsonl"), "--baseline", baseline]);
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("COMPLETED");
+    expect(r.out).toContain(ES5_PASS[0]);
+  });
+
+  it("FAILS on a count-neutral swap inside a completed edition without --compare", () => {
+    // Per-test regressions in a completed edition need no compare baseline:
+    // every row must pass, so any non-pass row is the regression.
+    const baseline = join(dir, "completed-swap.json");
+    run(["--results", jsonl(allPass(), "cs-seed.jsonl"), "--baseline", baseline, "--update"]);
+    const b = JSON.parse(readFileSync(baseline, "utf-8"));
+    b.editions["5"].pass = 2; // floor below the run, so the COUNT check alone would pass
+    writeFileSync(baseline, JSON.stringify(b, null, 2));
+
+    const oneFail = allPass();
+    oneFail[1].status = "compile_error";
+    const r = run(["--results", jsonl(oneFail, "cs-run.jsonl"), "--baseline", baseline]);
+    expect(r.code).toBe(1);
+    expect(r.out).toContain(ES5_PASS[1]);
+  });
+
+  it("accepts a listed exception, and only that one", () => {
+    const baseline = join(dir, "completed-exception.json");
+    run(["--results", jsonl(allPass(), "ce-seed.jsonl"), "--baseline", baseline, "--update"]);
+    const b = JSON.parse(readFileSync(baseline, "utf-8"));
+    b.editions["5"].exceptions = [{ file: ES5_PASS[2], reason: "test: cannot pass on this target by construction" }];
+    b.editions["5"].pass = 2;
+    writeFileSync(baseline, JSON.stringify(b, null, 2));
+
+    const excepted = allPass();
+    excepted[2].status = "fail";
+    expect(run(["--results", jsonl(excepted, "ce-ok.jsonl"), "--baseline", baseline]).code).toBe(0);
+
+    const another = allPass();
+    another[2].status = "fail";
+    another[0].status = "fail";
+    const r = run(["--results", jsonl(another, "ce-bad.jsonl"), "--baseline", baseline]);
+    expect(r.code).toBe(1);
+    expect(r.out).toContain(ES5_PASS[0]);
+  });
+
+  it("REFUSES --update while a completed edition has a failing row", () => {
+    const baseline = join(dir, "completed-update.json");
+    run(["--results", jsonl(allPass(), "cu-seed.jsonl"), "--baseline", baseline, "--update"]);
+    const withFail = [...allPass(), { file: "test/language/statements/if/S12.5_A1.2_T1.js", status: "fail" }];
+    const r = run(["--results", jsonl(withFail, "cu-run.jsonl"), "--baseline", baseline, "--update"]);
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("COMPLETED");
+  });
+});
+
+describe("test262 per-edition ratchet — refuses to run blind", () => {
+  it("REFUSES (exit 2) when there is no test262 checkout to classify rows", () => {
+    // Without test262 every row classifies as "Unclassified (legacy)", every
+    // real edition reads NOT COVERED, and the gate would pass having checked
+    // nothing — which is how it passed through the 2026-09 ES5 regressions.
+    const baseline = join(dir, "blind-baseline.json");
+    run(["--results", jsonl(allPass(), "blind-seed.jsonl"), "--baseline", baseline, "--update"]);
+    const empty = mkdtempSync(join(tmpdir(), "edition-ratchet-no262-"));
+    try {
+      const r = (() => {
+        try {
+          const out = execFileSync(
+            TSX,
+            [SCRIPT, "--results", jsonl(allPass(), "blind-run.jsonl"), "--baseline", baseline],
+            { encoding: "utf-8", stdio: "pipe", env: { ...process.env, EDITION_RATCHET_TEST262_ROOT: empty } },
+          );
+          return { code: 0, out };
+        } catch (e: unknown) {
+          const err = e as { status?: number; stdout?: string; stderr?: string };
+          return { code: err.status ?? -1, out: (err.stdout ?? "") + (err.stderr ?? "") };
+        }
+      })();
+      expect(r.code).toBe(2);
+      expect(r.out).toContain("no test262 checkout");
+    } finally {
+      rmSync(empty, { recursive: true, force: true });
+    }
+  });
+});

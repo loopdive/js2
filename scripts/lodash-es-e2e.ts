@@ -113,7 +113,8 @@ for (const tc of cases) {
 
   let instance: WebAssembly.Instance;
   try {
-    const imports = buildImports(result.imports, undefined, result.stringPool);
+    // (#6779) lodash's root detection reaches `Function("return this")()`.
+    const imports = buildImports(result.imports, undefined, result.stringPool, { dynamicCode: "hostEval" });
     const mod = await WebAssembly.instantiate(result.binary, imports);
     instance = mod.instance;
   } catch (e: any) {

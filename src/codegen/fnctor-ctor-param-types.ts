@@ -50,6 +50,7 @@ import {
   fnctorCtorParamTypesFlagEnabled,
 } from "../derivation-flags.js";
 import { inferParamTypeFromCallSites } from "./declarations/param-return-inference.js";
+import { readEnv } from "../env.js";
 
 /**
  * **ON by default since 2026-08-08** — `JS2WASM_FNCTOR_CTOR_PARAM_TYPES=0`
@@ -206,7 +207,7 @@ function exactNativeStringCtorParamField(
     !ctx.standalone ||
     !ctx.nativeStrings ||
     ctx.anyStrTypeIdx < 0 ||
-    process.env.JS2WASM_STRING_FIELDS === "0" ||
+    readEnv("JS2WASM_STRING_FIELDS") === "0" ||
     fieldName !== "input" ||
     rhsWasm.kind !== "externref" ||
     !ts.isFunctionDeclaration(funcDecl) ||

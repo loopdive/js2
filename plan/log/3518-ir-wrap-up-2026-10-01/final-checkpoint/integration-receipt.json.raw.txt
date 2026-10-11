@@ -1,0 +1,17 @@
+{
+  "base": "1265c47d6fc41300a380ef7e4abc45fdfcfd2c61",
+  "prior_base": "ff564bccab11c53ae1aeaf1d510385e16b54a832",
+  "phase_a_paths": 26,
+  "metadata_file_count": 1761,
+  "prior_main_file_count": 1749,
+  "new_main_records_preserved": 9,
+  "activation_history": 91,
+  "layer_additions": [
+    "foundation",
+    "ir-core",
+    "ir-runtime"
+  ],
+  "semantic_three_way_conflicts": 1,
+  "conflict_resolution": "preserve both newly landed realm additions and all sourceContractActivations additions in their original order",
+  "relocation_helper_state": "integrated-unvalidated"
+}

@@ -71,6 +71,7 @@ import type { ts } from "../ts-api.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { ts as tsApi } from "../ts-api.js";
 import { emitClassStaticSidecar } from "./class-static-sidecar.js";
+import { mintClassStaticReflectiveViews } from "./class-static-descriptor.js"; // (#6767)
 import { hasStaticModifier } from "./ast-modifiers.js";
 import { resolveInstallableClassMemberName } from "./class-bodies.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
@@ -125,6 +126,9 @@ function declaresInstallableStatic(ctx: CodegenContext, className: string): bool
  */
 export function mintStandaloneClassStaticBuilders(ctx: CodegenContext): void {
   if (!ctx.standalone) return;
+  // (#6767) The reflective views need the same position (before the arity
+  // dispatchers) and are not gated on the runtime-key demand below.
+  mintClassStaticReflectiveViews(ctx);
   // (#5383 S2h/S2i) A module compiled as a linked PROVIDER for a wasm consumer
   // has no read site of its own — the read happens in the OTHER module and
   // arrives through the S2d boundary terminal — so it cannot know which class

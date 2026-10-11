@@ -41,9 +41,10 @@ import type { CodegenContext } from "./context/types.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { ensureArgcGlobal } from "./statements/nested-declarations.js";
 import { CLOSURE_ARITY_FIELD_IDX, getFuncRefWrapperRootTypeIdx } from "./closures/funcref-wrapper-types.js";
+import { readEnv } from "../env.js";
 
 export function fastClosureCallEnabled(): boolean {
-  return process.env.JS2WASM_FAST_CLOSURE_CALL !== "0";
+  return readEnv("JS2WASM_FAST_CLOSURE_CALL") !== "0";
 }
 
 /**

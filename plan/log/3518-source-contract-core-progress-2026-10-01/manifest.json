@@ -1,0 +1,67 @@
+{
+  "state": "core-receipts-verified-runtime-inverse-pending",
+  "source_base": "1265c47d6fc41300a380ef7e4abc45fdfcfd2c61",
+  "upstream_main_verified": "0d94fc71681fd4988ae0ca32dda3a12f614e4b47",
+  "claim_write_id": "87615-9npim132",
+  "core_actual": "152/152",
+  "public_original_actual": "5/9",
+  "public_failure": "runtime feature js.number.from-value has no provider",
+  "runtime_previous_actual": "69/75",
+  "historical_runtime_previous_actual": "2/631",
+  "core_helpers_attribution": "Codex GPT-6 Astra Max",
+  "integration_attribution": "Codex GPT-6 Default",
+  "raw_artifacts": {
+    "core-cohort.json.raw.txt": {
+      "bytes": 59591,
+      "sha256": "88abaa7c33c7d8881fd91862810fa06fce9c02eda3e6653b32d1064209b4afe4"
+    },
+    "core-cohort.log.raw.txt": {
+      "bytes": 530,
+      "sha256": "278cead9c43eb6abe32cee3ac3b7b6b6e05eee532cf04b0903546db321a9345f"
+    },
+    "core-validation.json.raw.txt": {
+      "bytes": 551,
+      "sha256": "5f0ed95dcce2663a0f6e3be9100f500947fc1c7ad2d9c78dd4e499b8c325d531"
+    },
+    "core-integration.json.raw.txt": {
+      "bytes": 878,
+      "sha256": "d9d4dce84aad204e69b42ea52c8e95e64d3d249d60f98ef711bbbf8db15356d7"
+    },
+    "format-precheck.log.raw.txt": {
+      "bytes": 160,
+      "sha256": "0b64c2f21edf6bdda19fb2bc9e9b1ca0cd67fb87294522dcfac44fc0baaaef41"
+    },
+    "format-verified.log.raw.txt": {
+      "bytes": 66,
+      "sha256": "17aa973d3f004560237d9a95171210b0671deff23d61628eecf7322ff5938f20"
+    },
+    "typecheck.log.raw.txt": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "public-number-inputs.json.raw.txt": {
+      "bytes": 525,
+      "sha256": "32e65b050540cd586cad7ad79606653b8a19eef279c31286fabef6f9623cdf12"
+    },
+    "public-number-current.json.raw.txt": {
+      "bytes": 10028,
+      "sha256": "54144077113d898b817a5a8357703a5647534d44e3b8ff9819fec5c12390c1d4"
+    },
+    "public-number-current.log.raw.txt": {
+      "bytes": 3362,
+      "sha256": "1f92ead9229a8aafb2cb214d84a79d736db3eb0bccfd0dd8f03d59f484430c07"
+    },
+    "core-after-format.json.raw.txt": {
+      "bytes": 8065,
+      "sha256": "8ecb410e6edcb4e2220ba636f27842b83e6d13fca5cb2ec507ae6f5d3b6fa34f"
+    },
+    "core-after-format.log.raw.txt": {
+      "bytes": 455,
+      "sha256": "c71911a3a92dccd4e26b94a44658875219ed6ef44a283de1b6a3f9e2fbdb5082"
+    }
+  },
+  "full_migration_completed": false,
+  "legacy_retirement_certified": false,
+  "original_core_after_format_actual": "20/20",
+  "runtime_suite_plumbing": "prepared only; writer freeze and real execution pending"
+}

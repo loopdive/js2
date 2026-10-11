@@ -925,15 +925,10 @@ class Parser {
       }
       return this.backrefNode(idx);
     }
-    if (e === "p" || e === "P") {
-      // u/v: property escapes resolve through the host enumerator. Non-u
-      // `\p` stays a narrowed refusal (Annex B treats it as identity — rare).
-      if (this.unicode) {
-        const source = this.extractPropertyEscapeSource();
-        const stringSet = this.vMode ? unicodeStringPropertyEscape(source) : null;
-        return stringSet === null ? this.uEnum(source) : this.uStringSet(stringSet);
-      }
-      throw new RegexUnsupportedError(`Unicode property escape \\${e}{…} — #1539 Phase 2d`);
+    if ((e === "p" || e === "P") && this.unicode) {
+      const source = this.extractPropertyEscapeSource();
+      const stringSet = this.vMode ? unicodeStringPropertyEscape(source) : null;
+      return stringSet === null ? this.uEnum(source) : this.uStringSet(stringSet);
     }
     if (this.unicode) return this.parseUnicodeEscapeTail();
     return { kind: "char", code: this.parseEscapedCodeUnit() };
@@ -1190,9 +1185,6 @@ class Parser {
         this.next();
         return { kind: "char", code: 0x08 };
       } // \b is backspace in a class
-      if (e === "p" || e === "P") {
-        throw new RegexUnsupportedError(`Unicode property escape \\${e}{…} — #1539 Phase 2d`);
-      }
       return { kind: "char", code: this.parseEscapedCodeUnit(true) };
     }
     return { kind: "char", code: this.next().charCodeAt(0) };

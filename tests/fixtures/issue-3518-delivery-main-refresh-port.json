@@ -1,0 +1,94 @@
+{
+  "schemaVersion": 1,
+  "priorCommit": "91d954797abe9e461032a6e7e1d374404157bfa4",
+  "mainCommit": "f2e06e122439bc5b4c5629abc6f9d76e5a23c432",
+  "mergeBase": "359c2d63b6753e0c540b8761d13647b00e24a9a4",
+  "records": [
+    {
+      "path": "src/codegen/expressions/calls.ts",
+      "before": {
+        "gitBlob": "935810bed3584305cd58ea3076149ed33e8de93d",
+        "sha256": "05dfb95c2068d52a8cedf8549ed247561379c4e1055d369249a9ce3ec45f76da"
+      },
+      "after": {
+        "gitBlob": "6e62b4f8a0b50697a0d775cc88f90f009eafcb84",
+        "sha256": "b9f0c5d2d0a8f6603e0e174cfe8abb20dd2843b64ae14ff75a937467ee0f3ff7"
+      },
+      "upstream": {
+        "before": {
+          "gitBlob": "935810bed3584305cd58ea3076149ed33e8de93d",
+          "sha256": "05dfb95c2068d52a8cedf8549ed247561379c4e1055d369249a9ce3ec45f76da"
+        },
+        "after": {
+          "gitBlob": "6e62b4f8a0b50697a0d775cc88f90f009eafcb84",
+          "sha256": "b9f0c5d2d0a8f6603e0e174cfe8abb20dd2843b64ae14ff75a937467ee0f3ff7"
+        }
+      },
+      "spans": [
+        {
+          "ordinal": 0,
+          "before": "import { BUILTIN_CLASS_NAMES } from \"./builtin-class-names.js\";\nimport { maybeEmitLayoutHint } from \"../fnctor-layout-emit.js\";",
+          "after": "import { BUILTIN_CLASS_NAMES } from \"./builtin-class-names.js\";\nimport { objectOwnPredicateCallKeepsFold } from \"../object-proto-has-own-property.js\";\nimport { maybeEmitLayoutHint } from \"../fnctor-layout-emit.js\";",
+          "beforeSha256": "9a946edb395a784e34a397d1ca478fcca2653b33cb4488486371077a5bb94732",
+          "afterSha256": "81a5c2dffc63dd97ea0a5b39399403dd2f3378e698e4d3cc0fe90b4a4dd01b74",
+          "beforeOffset": 23422,
+          "afterOffset": 23422,
+          "upstreamBeforeOffset": 23422,
+          "upstreamAfterOffset": 23422
+        },
+        {
+          "ordinal": 1,
+          "before": "  // `.call` at all. Neither gives the fold a receiver to read.\n  if (ifaceName === \"Object\" && member === \"toString\" && ts.isPropertyAccessExpression(unwrapTransparent(receiver))) {",
+          "after": "  // `.call` at all. Neither gives the fold a receiver to read.\n  // (#6684) Same precedence for the own-property predicates — see the helper.\n  if (objectOwnPredicateCallKeepsFold(ifaceName, member, unwrapTransparent(receiver))) return undefined;\n  if (ifaceName === \"Object\" && member === \"toString\" && ts.isPropertyAccessExpression(unwrapTransparent(receiver))) {",
+          "beforeSha256": "11e98e1985cb5234415b4300da26c5e533e2b236b2eebefcee1c2ad4c56b2098",
+          "afterSha256": "3a57015c849ad9d130ce201953fab2492049e32f56accbc588ea4cdfce2446ab",
+          "beforeOffset": 60708,
+          "afterOffset": 60795,
+          "upstreamBeforeOffset": 60708,
+          "upstreamAfterOffset": 60795
+        }
+      ]
+    },
+    {
+      "path": "src/codegen/registry/imports.ts",
+      "before": {
+        "gitBlob": "1de1e18a79534f813ea6383f9defbe1fca01ed28",
+        "sha256": "f6180c5908ed7b57cfddf218301887af7369b10095b3efa95e6fccebd8292a51"
+      },
+      "after": {
+        "gitBlob": "33d0986744a2b5614926beb07a920603714f9a31",
+        "sha256": "3feb3ccddfc9ce1320b78818196ac4507a64745cbae0e7933a2babbd60c63bcb"
+      },
+      "upstream": {
+        "before": {
+          "gitBlob": "3a90f016c1be7d821b82488883c625b0bf300c89",
+          "sha256": "39d00e9bc74ce6bbc94e70f06d7421017ef2b5acb6cdc94d50f1c518baefb4e1"
+        },
+        "after": {
+          "gitBlob": "a2603dcad5b019d61bea5727ab31b996490700dc",
+          "sha256": "8aae5e7a0e233f06ead2bd6900f9b48bff14650ae8ffd2c129e133a05abac1ca"
+        }
+      },
+      "spans": [
+        {
+          "ordinal": 0,
+          "before": "  for (const entry of ctx.staticInitExprs) {\n    if (entry.globalIdx !== undefined && entry.globalIdx >= threshold) {\n      entry.globalIdx += delta;\n    }\n  }\n\n  if (ctx.symbolCounterGlobalIdx >= threshold) {",
+          "after": "  for (const entry of ctx.staticInitExprs) {\n    if (entry.globalIdx !== undefined && entry.globalIdx >= threshold) {\n      entry.globalIdx += delta;\n    }\n  }\n\n  if (ctx.undefinedGlobalIdx !== undefined && ctx.undefinedGlobalIdx >= threshold) {\n    ctx.undefinedGlobalIdx += delta;\n  }\n  if (ctx.symbolCounterGlobalIdx >= threshold) {",
+          "beforeSha256": "2445df1c26beb51fea7b84305e15247dd287f7b0e43ec004b75bf636ee0da60b",
+          "afterSha256": "73106c83876b59f13c2e785ee16ad19e0e60bcd8f8609ae987af15b9b08e6b61",
+          "beforeOffset": 33264,
+          "afterOffset": 33264,
+          "upstreamBeforeOffset": 32912,
+          "upstreamAfterOffset": 32912
+        }
+      ]
+    }
+  ],
+  "dependencies": [
+    {
+      "path": "src/codegen/object-proto-has-own-property.ts",
+      "gitBlob": "ce04710e751d8910971aa3cd2131de72e4f36562",
+      "sha256": "6f23fba3d4d552d222686122ceb277852b8ed523af12434e78288467742c40a8"
+    }
+  ]
+}

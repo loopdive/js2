@@ -67,8 +67,9 @@ object methods and closure calls retain provider identity and lifecycle. The
 consumer receives declaration-only stubs and imports the provider under a
 content-addressed namespace such as `js2wasm:npm:pkg:<hash>`. Package-to-package
 edges are compiled in dependency order, and the binary plus its export/signature
-and boundary-kind manifest is cached in `.js2wasm-cache/npm-modules` (or
-`packageCacheDir`).
+and boundary-kind manifest is cached in `packageCacheDir` — by default the
+nearest `node_modules/.cache/js2wasm/npm-modules`, else the OS user cache
+directory (#6794; it used to be `.js2wasm-cache/` beside the entry).
 
 The export analyzer follows exact relative package edges, including named
 aliases, `export { fn } from`, `export * from`, and default function

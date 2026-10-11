@@ -1,0 +1,11 @@
+# Phase A historical transport handoff
+
+Frozen source-only draft: three new files, no existing test/helper/source changes. Actual writer: Codex GPT-6 Astra Max.
+
+The helper requires all 25 actual sources on every supported read and checks UTF-8 byte length, SHA256 and computed Git blob. It syntax-parses exact declaration kind/name/occurrence/offset/hash inventories, rebuilds 13 original donors solely from live slices and fixed non-executable scaffold, checks each original full pin, then reconstructs all 25 current owners from that inverse and compares exact current bytes again. There is no source snapshot, Git lookup, fallback, wildcard discovery or successful-validation cache. The fixed receipt SHA authenticates metadata before use. Only the requireString export modifier is removed on inverse and restored on forward.
+
+Static generator evidence: 184 original/current declarations, 115 moved; all 13 inverses and 25 forward populations reproduced authoring bytes exactly. Runtime helper tests have NOT run. 65 static rows cover all original donors, missing/changed versions of all 25 owners, deletion/duplication/order/body/import/docs/readonly/optionality/extra/shifted edits, retained-owner damage, independent bad Git blob with valid SHA, receipt mutations, warm-read currentness, repeated normalization refusal and unknown raw paths.
+
+Preserved production draft: all 26 pins in /private/tmp/js2-ir-source-contracts-writer-20261001/.tmp/source-contracts-writer/phase-a-role-correction-qktlatcg/freeze.json remain unchanged. Original Phase A snapshots are untouched. Root owns existing-reader integration, prior baseline drift attribution, metadata and all tests. Attach only readBeforeIrSourceContractRelocation or beforeIrSourceContractRelocation to initial raw reads; never apply it again to an injected historical mutation.
+
+Proposed root validation after copy and exclusive heavy-slot grant: run tests/issue-3518-source-contract-relocation.test.ts with strict JSON/default reporting, parent/fork 4096 MB, max forks 1, no file parallelism and unchanged timeouts; then affected original historical cohorts. No passing runtime/compile claim is made here.

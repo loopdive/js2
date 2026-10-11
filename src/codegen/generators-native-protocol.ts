@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import type { GeneratorReadBinding } from "../runtime/wasmgc/values/object-get-arms.js";
 /** Ordinary protocol property values for native generator state objects. */
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
@@ -15,6 +16,7 @@ import { nativeStringLiteralInstrs } from "./native-strings.js";
 import { ensureExternStrictEqHelper } from "./any-helpers.js";
 import { externIsObjectInstrs } from "./iterator-native.js";
 import { PROTO_FROM_FUNCTION } from "./proto-function-value.js";
+import { OBJECT_PROTO_SINGLETON } from "./object-runtime-prototype.js"; // (#6651 SG1)
 import { UNDEF_F64_BITS } from "./value-tags.js";
 
 const ER: ValType = { kind: "externref" };
@@ -248,22 +250,35 @@ export function fillNativeGeneratorProtocol(ctx: CodegenContext): void {
   definedFuncAt(ctx, ctx.funcMap.get(NATIVE_GENERATOR_PROTO_VIEW)!)!.body = viewBody;
 }
 
-/** Canonical property-get prefix. Requires the caller's ER scratch local. */
-export function nativeGeneratorProtocolReadPrefix(ctx: CodegenContext, valueLocal: number): Instr[] {
-  const funcIdx = ctx.funcMap.get(NATIVE_GENERATOR_PROTOCOL_GET);
-  if (funcIdx === undefined) return [];
+/**
+ * (#6651 A13) `<i32 on the stack> || isNativeGeneratorObject(anyLocal)`, for a
+ * dispatch whose other arms test `$Object` / callables. The protocol lookup's
+ * first result is exactly that flag (0 for every other value), so this asks it
+ * for `@@iterator` and drops the value. `[]` when the lookup is not reserved,
+ * or when the source declares no generator (none can exist, so the module keeps
+ * its bytes).
+ */
+export function orNativeGeneratorCarrierInstrs(ctx: CodegenContext, anyLocal: number): Instr[] {
+  if (!ctx.usesSourceGenerator) return [];
+  const getIdx = ctx.funcMap.get(NATIVE_GENERATOR_PROTOCOL_GET);
+  const boxSymbolIdx = ctx.funcMap.get("__box_symbol");
+  if (getIdx === undefined || boxSymbolIdx === undefined) return [];
   return [
-    load(0),
-    load(1),
-    { op: "call", funcIdx },
-    { op: "local.set", index: valueLocal },
-    {
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [load(valueLocal), { op: "return" }],
-      else: [],
-    },
+    load(anyLocal),
+    { op: "extern.convert_any" },
+    { op: "i32.const", value: 1 },
+    { op: "call", funcIdx: boxSymbolIdx },
+    { op: "call", funcIdx: getIdx },
+    { op: "drop" },
+    { op: "i32.or" },
   ];
+}
+
+/** Canonical property-get prefix. Requires the caller's ER scratch local. */
+export function captureGeneratorReadBinding(ctx: CodegenContext, valueLocal: number): GeneratorReadBinding | undefined {
+  const funcIdx = ctx.funcMap.get(NATIVE_GENERATOR_PROTOCOL_GET);
+  if (funcIdx === undefined) return undefined;
+  return { get: funcIdx, valueLocal };
 }
 
 /** Delegation getter bridge. The receiver is parameter zero of that getter. */
@@ -287,4 +302,94 @@ export function buildNativeGeneratorProtocolGet(
       else: fallback,
     },
   ];
+}
+
+/**
+ * (#6651 SG1) FINALIZE: teach `__getPrototypeOf` that a native generator's
+ * iteration result reports `%Object.prototype%`.
+ *
+ * §27.5.1.5 CreateIterResultObject builds the `{value, done}` result with
+ * OrdinaryObjectCreate(%Object.prototype%), so its `[[Prototype]]` is the
+ * ordinary-object root. The native generator lane represents that result as a
+ * CLOSED WasmGC struct (`__NativeGeneratorResult_<kind>`, minted per element kind
+ * by `ensureNativeGeneratorResultType`) rather than as an `$Object`, so it carries
+ * no `$proto` link for the generic walk to follow and `__getPrototypeOf` answered
+ * **null** — while `hasOwnProperty(result, "value" | "done")` already answered
+ * correctly off the struct shape. That exact split is what test262
+ * `built-ins/GeneratorPrototype/next/result-prototype.js` reports.
+ *
+ * ## Why this is a RUNTIME arm and not a static fold
+ * The first cut of this fix was a static arm in
+ * `expressions/object-get-prototype-of.ts` keyed on the compiled argument's
+ * `ValType`. It cannot work for the spelling the corpus uses. Measured on this
+ * branch's base: for `var result = g().next(); Object.getPrototypeOf(result)` the
+ * argument compiles to a bare **`externref`** (`typeIdx=undefined`) — the binding
+ * is widened, so the struct identity is erased before the query is compiled.
+ * A `ref.test` inside the native is the only place the representation is still
+ * visible, and it is also the only form that answers for an `any`-typed alias or
+ * a result that crossed a function boundary.
+ *
+ * ## Narrowings, mirroring `prependIterRecPrototypeArm` (#6484 S3)
+ *   - Armed only for structs this module actually minted — the
+ *     `__NativeGeneratorResult_` name prefix is the same structural screen
+ *     `isNativeGeneratorResultStruct` uses, so no other carrier is claimed. A
+ *     module with no native generator has no such struct and its
+ *     `__getPrototypeOf` is byte-identical.
+ *   - Each per-element-kind struct gets its own `ref.test` arm, because #2171
+ *     mints a distinct type per carrier kind (f64, externref, native string) and
+ *     WasmGC `ref.test` is per concrete type.
+ *   - The `%Object.prototype%` carrier is consulted at RUNTIME through
+ *     `OBJECT_PROTO_SINGLETON`, and a null answer FALLS THROUGH to the
+ *     pre-change result instead of replacing it. That matters because the
+ *     singleton is reserve-then-fill (`fillObjectProtoSingleton`): a module that
+ *     never materializes the `Object` brand leaves it `ref.null.extern`, and
+ *     answering null there would be no better than today.
+ *
+ * Identity is the point of routing through that singleton rather than minting a
+ * fresh object: a program's own `Object.prototype` read resolves to the SAME
+ * brand global, so `Object.getPrototypeOf(g().next()) === Object.prototype` is an
+ * `===` on one carrier, which is what the row asserts.
+ */
+export function prependNativeGeneratorResultPrototypeArm(ctx: CodegenContext): void {
+  if (!(ctx.standalone || ctx.wasi)) return;
+  const gptIdx = ctx.funcMap.get("__getPrototypeOf");
+  const protoIdx = ctx.funcMap.get(OBJECT_PROTO_SINGLETON);
+  if (gptIdx === undefined || protoIdx === undefined) return;
+  const fn = definedFuncAt(ctx, gptIdx);
+  if (!fn) return;
+
+  const resultTypeIdxs: number[] = [];
+  const seen = new Set<number>();
+  for (const [structName, typeIdx] of ctx.structMap) {
+    if (!structName.startsWith("__NativeGeneratorResult_")) continue;
+    // `structMap` can alias; only the canonical reverse mapping proves identity.
+    if (ctx.typeIdxToStructName.get(typeIdx) !== structName || seen.has(typeIdx)) continue;
+    seen.add(typeIdx);
+    resultTypeIdxs.push(typeIdx);
+  }
+  if (resultTypeIdxs.length === 0) return;
+
+  const arms: Instr[] = [];
+  for (const typeIdx of resultTypeIdxs) {
+    arms.push(
+      { op: "local.get", index: 0 },
+      { op: "any.convert_extern" },
+      { op: "ref.test", typeIdx },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "call", funcIdx: protoIdx },
+          { op: "ref.is_null" },
+          { op: "i32.eqz" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [{ op: "call", funcIdx: protoIdx }, { op: "return" }],
+          },
+        ],
+      },
+    );
+  }
+  fn.body = [...arms, ...fn.body];
 }

@@ -57,6 +57,7 @@ import { type AnalysisState, type FieldWrite, unwrap } from "./fnctor-graph-mode
 import { assignedIdentifierSymbols } from "./fnctor-field-writes.js";
 import { buildWriteIndex } from "./fnctor-field-lattice.js";
 import { enclosingThisBinder, isClassMemberLike } from "./fnctor-graph-model.js";
+import { readEnv } from "../env.js";
 
 type Prov = "bot" | "top" | IrUnitId;
 
@@ -290,7 +291,7 @@ export function refineFieldWriteAttribution(state: AnalysisState): void {
   // the outer loop below is monotone over two finite sets and terminates.
   const applyDeferredPoisons = (): boolean => {
     let changed = false;
-    const diag = process.env.JS2WASM_LOG_FNCTOR_GRAPH === "1";
+    const diag = readEnv("JS2WASM_LOG_FNCTOR_GRAPH") === "1";
     for (const poison of state.deferredFieldPoisons) {
       const prov = exprProv(poison.receiver, new Set(), new Set());
       if (diag) {

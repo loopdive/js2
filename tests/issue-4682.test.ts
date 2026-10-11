@@ -66,15 +66,23 @@ describe("#4682 standalone Promise.all custom capability executor", () => {
     expect(result.value).toBe(71);
   });
 
-  it("keeps the non-empty custom-constructor fallback unchanged", async () => {
-    const result = await compile(
-      `function C(executor: any) { executor(function () {}, function () {}); }
+  // REWRITTEN for #6651 cluster D (#5197 R3-3). This case used to assert the
+  // NON-EMPTY custom-constructor shape still leaked `env.Promise_all` — i.e.
+  // that it did not compile at all under `--target standalone`. It now takes
+  // the native element pipeline, so the assertion is inverted: no host import,
+  // and the capability's own `resolve` is called with the values array.
+  it("lowers the non-empty custom-constructor shape natively (no host import)", async () => {
+    const result = await runStandalone(
+      `let observed = 0;
+       function C(executor: any) {
+         executor(function (values: any) { observed = Array.isArray(values) ? values.length : -1; }, function () {});
+       }
        C.resolve = function (value: any) { return value; };
-       export function test(): number { Promise.all.call(C, [1]); return 1; }`,
-      { fileName: "issue-4682-control.ts", target: "standalone" },
+       const element: any = { then: function (onFulfilled: any) { onFulfilled("v"); } };
+       export function test(): number { Promise.all.call(C, [element]); return observed; }`,
     );
-    expect(result.success, result.success ? "" : JSON.stringify(result.errors?.slice(0, 3))).toBe(true);
-    expect((result.imports ?? []).map((item) => `${item.module}.${item.name}`)).toContain("env.Promise_all");
+    expect(result.imports).toEqual([]);
+    expect(result.value).toBe(1);
   });
 
   it("keeps the gc/host custom-constructor path unchanged", async () => {

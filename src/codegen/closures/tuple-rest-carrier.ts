@@ -27,11 +27,12 @@
  */
 
 import type { ts } from "../../ts-api.js";
-import type { ValType } from "../../ir/types.js";
+import type { Instr, TypeDef, ValType } from "../../ir/types.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { allocLocal } from "../context/locals.js";
 import { coerceType, compileExpression, valTypesMatch } from "../shared.js";
 import { defaultValueInstrs, pushDefaultValue } from "../type-coercion.js";
+import { UNDEF_F64_BITS } from "../value-tags.js";
 
 export interface TupleRestCarrier {
   /** The `__tuple_N` struct type index the lifted formal declares. */
@@ -143,4 +144,84 @@ export function compileTupleRestClosureArgument(
   for (const fieldLocal of fieldLocals) fctx.body.push({ op: "local.get", index: fieldLocal });
   fctx.body.push({ op: "struct.new", typeIdx: tupleTypeIdx });
   return { fixedParamCount, restExternLocals };
+}
+
+/**
+ * (#6867) Resolve the tuple rest carrier of a dynamic-call candidate whose
+ * trailing lifted formal (after `self`) is a `__tuple_N` struct. Answers
+ * `null` for every other candidate, leaving it on its existing arm.
+ */
+export function dynamicCandidateTupleRest(
+  ctx: CodegenContext,
+  funcTypeDef: TypeDef | undefined,
+  info: { paramTypes: readonly ValType[]; hasRestParam?: boolean },
+): TupleRestCarrier | null {
+  if (info.hasRestParam !== true || info.paramTypes.length === 0 || funcTypeDef?.kind !== "func") return null;
+  const restParam = funcTypeDef.params[info.paramTypes.length];
+  if (!restParam || (restParam.kind !== "ref" && restParam.kind !== "ref_null")) return null;
+  return classifyTupleRestCarrier(ctx, restParam.typeIdx);
+}
+
+/**
+ * (#6867) Build a tuple rest formal inside an any-typed dynamic-call arm, from
+ * the call site's saved EXTERNREF argument locals. The positional arm treated
+ * the carrier as one ordinary `ref` formal: a missing argument became a typed
+ * null (`next()` → "dereferencing a null pointer" on `args[0]`) and a present
+ * one was `ref.cast` to the tuple struct ("illegal cast" — jest's
+ * `queueRunner` `next(error)`). Each tuple element instead takes the matching
+ * call argument, unboxed to the field's slot, or its missing-argument value:
+ * `undefined` for externref, the #866 sentinel for f64, 0 / typed null
+ * otherwise. A non-matching ref argument becomes null rather than trapping.
+ */
+export function appendDynamicTupleRestArgument(
+  body: Instr[],
+  carrier: TupleRestCarrier,
+  fixedCount: number,
+  argLocals: readonly number[],
+  pads: { unboxNumberIdx: number; isUndefinedIdx: number | undefined },
+  pushUndefined: (body: Instr[]) => void,
+): void {
+  carrier.fieldTypes.forEach((fieldType, element) => {
+    const argLocal = argLocals[fixedCount + element];
+    if (argLocal === undefined) {
+      if (fieldType.kind === "externref") pushUndefined(body);
+      else body.push(...defaultValueInstrs(fieldType));
+      return;
+    }
+    body.push({ op: "local.get", index: argLocal });
+    if (fieldType.kind === "f64") {
+      if (pads.isUndefinedIdx === undefined) {
+        body.push({ op: "call", funcIdx: pads.unboxNumberIdx });
+        return;
+      }
+      body.push({ op: "call", funcIdx: pads.isUndefinedIdx });
+      body.push({
+        op: "if",
+        blockType: { kind: "val", type: { kind: "f64" } },
+        then: [{ op: "i64.const", value: UNDEF_F64_BITS }, { op: "f64.reinterpret_i64" }],
+        else: [
+          { op: "local.get", index: argLocal },
+          { op: "call", funcIdx: pads.unboxNumberIdx },
+        ],
+      });
+    } else if (fieldType.kind === "i32") {
+      body.push({ op: "call", funcIdx: pads.unboxNumberIdx }, { op: "i32.trunc_sat_f64_s" });
+    } else if (fieldType.kind === "ref_null") {
+      body.push({ op: "any.convert_extern" }, { op: "ref.test", typeIdx: fieldType.typeIdx });
+      body.push({
+        op: "if",
+        blockType: { kind: "val", type: fieldType },
+        then: [
+          { op: "local.get", index: argLocal },
+          { op: "any.convert_extern" },
+          { op: "ref.cast_null", typeIdx: fieldType.typeIdx },
+        ],
+        else: [{ op: "ref.null", typeIdx: fieldType.typeIdx }],
+      });
+    } else if (fieldType.kind !== "externref") {
+      // No dynamic unboxing recipe for this slot kind: keep the missing value.
+      body.push({ op: "drop" }, ...defaultValueInstrs(fieldType));
+    }
+  });
+  body.push({ op: "struct.new", typeIdx: carrier.tupleTypeIdx });
 }

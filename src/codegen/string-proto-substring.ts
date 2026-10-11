@@ -58,7 +58,7 @@ function unboxBoundToI32(ctx: CodegenContext, fctx: FunctionContext, paramIdx: n
 }
 
 /**
- * Native body for a reflective `String.prototype.{substring,slice}` closure.
+ * Native body for a reflective `String.prototype.{substring,slice,substr}` closure.
  * Closure ABI: `this` = param 1, start = param 2, end = param 3. The body
  * preserves receiver/bound coercion order and delegates clamping plus swapped
  * bounds to the existing native substring core.
@@ -69,11 +69,27 @@ function unboxBoundToI32(ctx: CodegenContext, fctx: FunctionContext, paramIdx: n
  * resolves negative indices instead of swapping reversed bounds, exactly the
  * §22.1.3.22-vs-§22.1.3.24 difference. Both direct paths in `string-ops.ts`
  * already emit the same call sequence with only the helper name differing.
+ *
+ * (#6651 I3) `substr` (Annex B B.2.2.1) joins them for the same three reasons,
+ * and for one more that has to be checked rather than assumed: `__str_substr`
+ * has the IDENTICAL `(ref $NativeString, i32, i32) -> ref $NativeString` shape,
+ * it resolves the negative start internally, and its second bound is a LENGTH
+ * rather than an end index — for which the shared `0x7fffffff` absent-bound
+ * sentinel is still the right value, because the helper's `min(length, tail)`
+ * turns it into "to the end of the string", which is exactly B.2.2.1 step 4's
+ * `length === undefined ⇒ +∞`. A negative or NaN length clamps to `0` inside
+ * the helper, i.e. the empty string, also per spec.
+ *
+ * Before this, `substr` had no reflective body at all: it was absent from
+ * `TRANSFERRED_STRING_PROTO_MEMBERS`, so `String.prototype.substr.call(x)` hit
+ * the borrowed-method refusal and threw a TypeError BEFORE running the
+ * receiver's `toString` — which is what
+ * `annexB/…/substr/this-to-str-err.js` measures.
  */
 export function emitStringSubstringMemberBody(
   ctx: CodegenContext,
   fctx: FunctionContext,
-  member: "substring" | "slice" = "substring",
+  member: "substring" | "slice" | "substr" = "substring",
 ): ValType | null {
   ensureNativeStringHelpers(ctx);
   ensureObjectRuntime(ctx);
@@ -86,7 +102,9 @@ export function emitStringSubstringMemberBody(
   const anyToStrIdx = ensureAnyToStringHelper(ctx);
   const toPrimitiveIdx = getToPrimitiveProvider(ctx);
   const flattenIdx = ctx.nativeStrHelpers.get("__str_flatten");
-  const substringIdx = ctx.nativeStrHelpers.get(member === "slice" ? "__str_slice" : "__str_substring");
+  const substringIdx = ctx.nativeStrHelpers.get(
+    member === "slice" ? "__str_slice" : member === "substr" ? "__str_substr" : "__str_substring",
+  );
   if (toPrimitiveIdx === undefined || flattenIdx === undefined || substringIdx === undefined) {
     return emitRefusal(ctx, fctx, member);
   }

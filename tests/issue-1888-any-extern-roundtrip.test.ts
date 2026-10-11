@@ -1,6 +1,10 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
+// (#6768) These cases inspect the emitted body of a function that is dead in
+// the test program (never called, or inlined away); the standalone reachability
+// sweep would stub it to `unreachable`.
+process.env.JS2WASM_FUNC_SWEEP = "0";
 
 // #1888 — round-trip safety of the standalone `any` ⇄ externref bridge.
 //

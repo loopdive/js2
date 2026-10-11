@@ -38,7 +38,12 @@ function read(path) {
   return readFileSync(path, "utf8");
 }
 
-function references(file, options) {
+/**
+ * Every module reference in one parsed file, each tagged `typeOnly`. Exported
+ * so `check-import-cycles.mjs` (#6797) classifies value vs type-only edges with
+ * this exact rule instead of a second, drifting copy.
+ */
+export function references(file, options) {
   const edges = [];
   const add = (node, specifier, syntax, typeOnly = false) => {
     const usage =

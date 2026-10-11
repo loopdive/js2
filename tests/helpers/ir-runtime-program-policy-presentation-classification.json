@@ -1,0 +1,97 @@
+{
+  "schema": 1,
+  "kind": "fixed-prepared-presentation-classification-policy-evolution",
+  "provenance": {
+    "preparationCommit": "5a633bf93ec0e7b9d2992334d00f1279c7bd2c25",
+    "planSha256": "1d332bd357bb3867a187f8841308f82e3f0518e400eb684c2b7f71b5567d89b1",
+    "legacyRetained": true
+  },
+  "helperPrefix": {
+    "path": "tests/helpers/ir-runtime-program-policy-evolution.ts",
+    "bytes": 356816,
+    "sha256": "f195d0c432429bfb43c3f8a65617c886ef176e24fa81c2c6539845575fc01a54",
+    "gitBlob": "ea6cef6bbd168ab0f68f412ae3bc270184fd8e9c"
+  },
+  "predecessorReceipt": {
+    "path": "tests/helpers/ir-runtime-program-policy-lowering-analysis.json",
+    "bytes": 13393,
+    "sha256": "72db51a0e892a4fa8a2d9762042eacc8d88609ccd0ae1ac80f9f548852e04f9b",
+    "gitBlob": "3c7ce06a7075d66f786e01b79d44527e86ae0f3f"
+  },
+  "topLevelKeys": [
+    "schema",
+    "description",
+    "sourceRoot",
+    "tsconfig",
+    "requireGitProvenance",
+    "externalAssets",
+    "frontendWrapper",
+    "moduleExtensions",
+    "layers",
+    "allowedEdges",
+    "externalPackages",
+    "activationHistory",
+    "nonModules",
+    "moves",
+    "evidence",
+    "files"
+  ],
+  "before": {
+    "source": {
+      "bytes": 583986,
+      "sha256": "0cbff25993c92150c6c7cd45934b25552b315266833adc84301f49287d3982ee",
+      "gitBlob": "37d83315305278b25047fa4ed6b38af24b3cf9ce"
+    },
+    "dataSha256": "2d3c02197bd25875755aa64a0d7f9f8cdaba6f08f2394448e2e70870e327e738",
+    "fileCount": 1824,
+    "filesSha256": "04e5d8f08098f2f3f0d30813353c3521762c2f2f266b777083796549c3654156",
+    "activationCount": 104,
+    "activationHistorySha256": "27cbdad6be8299ff447e8407b2d04adbb44a28e11999c3dd56d75948f47b44ab",
+    "layersSha256": "45c79ff9c27d08c74dfab859be8cec1ef6a85acbc1cae121e096c0ca35026eeb",
+    "allowedEdgesSha256": "efe7e7ed8dee1a009d2bef3ff36dba80df1a805cd3f5b7b472e62ec6dcff64c7",
+    "moveCount": 12,
+    "movesSha256": "050fb62b7369179b0b3bd81193ec9bc275a77db1ebb45ac5fdef1a136ab037f2"
+  },
+  "current": {
+    "source": {
+      "bytes": 584358,
+      "sha256": "b1693461855cc60546bb29bee370c02ad3cf21e17e539d521c8f2b6598b0e411",
+      "gitBlob": "b77bcc4a76f1a959bc77db8c37cf8ef48ad2da0f"
+    },
+    "dataSha256": "475ebcec73e71dddd9b3cca9ec1e8c36c9e345436b3e2a7173e13da29c09427a",
+    "fileCount": 1825,
+    "filesSha256": "2155c33a508f2f0177541878b0b50e4b11b5f7ccba4aceb762e90877023203a0",
+    "activationCount": 104,
+    "activationHistorySha256": "27cbdad6be8299ff447e8407b2d04adbb44a28e11999c3dd56d75948f47b44ab",
+    "layersSha256": "45c79ff9c27d08c74dfab859be8cec1ef6a85acbc1cae121e096c0ca35026eeb",
+    "allowedEdgesSha256": "efe7e7ed8dee1a009d2bef3ff36dba80df1a805cd3f5b7b472e62ec6dcff64c7",
+    "moveCount": 12,
+    "movesSha256": "050fb62b7369179b0b3bd81193ec9bc275a77db1ebb45ac5fdef1a136ab037f2"
+  },
+  "delta": {
+    "addedRowIndex": 1824,
+    "addedRow": {
+      "path": "src/compiler/ir-program-presentation.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "compiler",
+      "owner": "3525-prepared-presentation",
+      "nextBoundary": "Separate AST declaration capture and finalizer presentation from prepared-program output association before compiler-layer activation."
+    },
+    "previousRow": {
+      "path": "src/ir/analysis/backend-legality.ts",
+      "state": "clean",
+      "layer": "ir-analysis"
+    },
+    "activationHistoryUnchanged": true,
+    "movesUnchanged": true
+  },
+  "rawSpans": [
+    {
+      "beforeOffset": 583862,
+      "afterOffset": 583862,
+      "before": "    {\n      \"path\": \"src/ir/analysis/backend-legality.ts\",\n      \"state\": \"clean\",\n      \"layer\": \"ir-analysis\"\n    }\n",
+      "after": "    {\n      \"path\": \"src/ir/analysis/backend-legality.ts\",\n      \"state\": \"clean\",\n      \"layer\": \"ir-analysis\"\n    },\n    {\n      \"path\": \"src/compiler/ir-program-presentation.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"compiler\",\n      \"owner\": \"3525-prepared-presentation\",\n      \"nextBoundary\": \"Separate AST declaration capture and finalizer presentation from prepared-program output association before compiler-layer activation.\"\n    }\n"
+    }
+  ]
+}

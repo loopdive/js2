@@ -76,6 +76,7 @@
 
 import type { IrFunction } from "../nodes.js";
 import { createGvnCounters, gvnCore, type GvnCounters, type GvnOptions } from "./gvn-core.js";
+import { readEnv } from "../../env.js";
 export type { GvnOptions } from "./gvn-core.js";
 
 /**
@@ -84,13 +85,13 @@ export type { GvnOptions } from "./gvn-core.js";
  * returned untouched; `1`/`true` → GVN; `poison` → the liveness control.
  */
 export function gvnFromEnv(fn: IrFunction): IrFunction {
-  const mode = process.env.JS2WASM_IR_GVN;
+  const mode = readEnv("JS2WASM_IR_GVN");
   if (mode !== "1" && mode !== "true" && mode !== "poison") return fn;
   return gvn(fn, { poison: mode === "poison" });
 }
 
 const stats = { merged: 0, poisoned: 0, functions: 0 };
-if (process.env.JS2WASM_IR_GVN_DEBUG === "1") {
+if (readEnv("JS2WASM_IR_GVN_DEBUG") === "1") {
   process.on("exit", () => {
     if (stats.merged > 0 || stats.poisoned > 0) {
       process.stderr.write(`[ir-gvn] functions=${stats.functions} merged=${stats.merged} poisoned=${stats.poisoned}\n`);

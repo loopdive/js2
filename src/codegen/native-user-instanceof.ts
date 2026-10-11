@@ -79,6 +79,14 @@ export function tryEmitNativeUserCtorInstanceOf(
   // separately-measured work.
   if (ctx.classSet.has(ctorName)) return null;
   if (ts.isIdentifier(expr.right) && identifierIsWrittenTo(expr.right.getSourceFile(), ctorName)) return null;
+  // (#6651 A13) A generator function has no [[Construct]], so neither arm
+  // below models it: its instances come from a CALL and inherit its own
+  // `prototype` property (§15.5.4 / §27.5), not the per-fnctor prototype
+  // global `emitFnctorProtoGet` would mint. That global is a fresh object no
+  // generator ever inherits from, so `g() instanceof g` answered false
+  // (`statements/generators/has-instance.js`). The dynamic path reads the
+  // value's real `prototype`, and is host-free in standalone.
+  if (ts.isIdentifier(expr.right) && denotesGeneratorFunction(ctx, expr.right)) return null;
 
   const structTypeIdx = ctx.structMap.get(`__fnctor_${ctorName}`);
   const hasStructArm = typeof structTypeIdx === "number" && structTypeIdx >= 0;
@@ -155,4 +163,18 @@ export function tryEmitNativeUserCtorInstanceOf(
     fctx.body.push({ op: "i32.const", value: 0 });
   }
   return { kind: "i32" };
+}
+
+/** A binding whose value is a `function*` — a declaration, or a `var` initialised to one. */
+function denotesGeneratorFunction(ctx: CodegenContext, id: ts.Identifier): boolean {
+  let decl: ts.Node | undefined = ctx.oracle.valueDeclarationOf(id);
+  if (decl !== undefined && ts.isVariableDeclaration(decl)) {
+    decl = decl.initializer;
+    while (decl !== undefined && ts.isParenthesizedExpression(decl)) decl = decl.expression;
+  }
+  return (
+    decl !== undefined &&
+    (ts.isFunctionDeclaration(decl) || ts.isFunctionExpression(decl)) &&
+    decl.asteriskToken !== undefined
+  );
 }

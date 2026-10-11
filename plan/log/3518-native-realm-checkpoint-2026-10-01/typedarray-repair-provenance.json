@@ -1,0 +1,29 @@
+{
+  "owned": {
+    "tests/helpers/typedarray-main-preservation-port.ts": "7f36e6c8b5c9d3051266a1376a94549ad22f9e5112eb8e594cb26c09a26447fc",
+    "tests/fixtures/issue-3518-typedarray-main-preservation/receipt.json": "81b51d14fa321ace63defb89741b0a1d0761c9e6ffcbb08edcde9e6e82e52dd2",
+    "tests/issue-3518-typedarray-main-preservation-port.test.ts": "d81cb8e463f72f4b28de39e0bc94bbd21770b85d4eab790a98d3180e6e0d0153",
+    "tests/helpers/later-main-preservation-port.ts": "26be5329c2140c618078d8a149f5983dc68fe3fa24ffbc7ce51df4ef6efc5f77",
+    "tests/issue-3518-later-main-preservation-port.test.ts": "91c220e95b9b3d3f1d2c5b164172c9e035860d991cdcb2b72c4f1a1157ff4eac"
+  },
+  "lineCounts": {
+    "tests/helpers/typedarray-main-preservation-port.ts": 169,
+    "tests/fixtures/issue-3518-typedarray-main-preservation/receipt.json": 53,
+    "tests/issue-3518-typedarray-main-preservation-port.test.ts": 324,
+    "tests/helpers/later-main-preservation-port.ts": 180,
+    "tests/issue-3518-later-main-preservation-port.test.ts": 355
+  },
+  "newStaticRows": 29,
+  "staticDerivation": "one pin/positive row + 2 spans*2 directions*3 corruptions + 2 directions*3 nonlocal corruptions + 10 remaining rows = 29",
+  "oldSuiteStaticRows": 248,
+  "oldSuiteChanges": "Only one import and four genuine initial/current input reader calls changed; original receipt, errors, assertions and mutation operands retained.",
+  "protected": {
+    "tests/fixtures/issue-3518-later-main-preservation/receipt.json": "1db8b018682040ff4d5a248b364b126c5ed6743543e40e26a72c4cfee1b5d1ea",
+    "src/codegen/expressions/calls.ts": "bbfc57a121a6557ebcd279250bd0dd124e9eba7571cf03b20d35ec790ef1186c",
+    "src/codegen/ta-static-from-of-spec.ts": "f3dfc889d30cb07bada46dda7f65a1601d5a91389a796f856d718544f093cbca"
+  },
+  "protectedDrift": [],
+  "testsExecuted": false,
+  "validation": "Await root read-only review and explicit heavy slot; parent owns current validation/publication.",
+  "model": "Codex GPT-6 Astra Max"
+}

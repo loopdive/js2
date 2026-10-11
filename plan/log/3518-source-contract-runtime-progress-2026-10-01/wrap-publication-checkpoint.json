@@ -1,0 +1,11 @@
+{
+  "source_head": "a42694443adf30798f980616bec3ec504ac9b65f",
+  "integrated_main": "18a53eeca1601e35ef511492d9929db90474c75c",
+  "source_commit_hook_log_sha256": "4e12404299f2e603368045ced7cc740b231988edf1693af69a466cedfcadc924",
+  "source_commit_hook_cohorts": [125, 132, 20, 631, 47, 22, 76, 331, 75, 352, 65, 53],
+  "source_commit_hooks_passed": true,
+  "source_commit_signed": true,
+  "merge_hooks_pending": true,
+  "pr_not_created_at_record": true,
+  "main_delivery_not_verified": true
+}

@@ -1,0 +1,291 @@
+
+ RUN  v3.2.4 /private/tmp/js2-ir-validation-lowering-b-resume-20261001
+
+ ❯ tests/issue-3518-semantic-verification-ownership.test.ts (34 tests | 3 failed) 786ms
+   ✓ semantic implementation preservation > preserves every selected 'src/ir/callable-bindings.ts' declaration in 'src/ir/core/callable-bindings.ts' 9ms
+   ✓ semantic implementation preservation > preserves every selected 'src/ir/effects.ts' declaration in 'src/ir/analysis/effects.ts' 5ms
+   × semantic implementation preservation > preserves every selected 'src/ir/intrinsics.ts' declaration in 'src/ir/core/intrinsics.ts' 6ms
+     → expected [ 'F64_TYPE', 'I32_TYPE', …(19) ] to deeply equal [ 'F64_TYPE', 'I32_TYPE', …(18) ]
+   × semantic implementation preservation > preserves every selected 'src/ir/intrinsics.ts' declaration in 'src/ir/analysis/intrinsics.ts' 3ms
+     → signatureMismatch: expected '38f1214d1a8b93c91dc85e147ca4c06c6615a…' to be '0e58749590b4dbfa116ddeba00d65903f852d…' // Object.is equality
+   ✓ semantic implementation preservation > preserves every selected 'src/ir/runtime/contracts/intrinsics.ts' declaration in 'src/ir/core/intrinsic-contracts.ts' 1ms
+   ✓ semantic implementation preservation > preserves every selected 'src/ir/async-plan.ts' declaration in 'src/ir/analysis/async-plan.ts' 7ms
+   ✓ semantic implementation preservation > preserves every selected 'src/ir/async-runtime-providers.ts' declaration in 'src/ir/core/async-intents.ts' 0ms
+   ✓ semantic implementation preservation > keeps the fixed denominator and rejects deleted, duplicated and changed implementations 4ms
+   ✓ semantic implementation preservation > retains every evidence member and the async error parameter-property constructor 4ms
+   ✓ semantic implementation preservation > pins the exact extracted signature prefix, not an empty success adapter 1ms
+   ✓ canonical export identities and complete catalogs > forwards callable IR_FNCTOR_CONSTRUCTOR_SUPPORT_ROLE without a wrapper 0ms
+   ✓ canonical export identities and complete catalogs > forwards callable irUnitCallableBindingId without a wrapper 0ms
+   ✓ canonical export identities and complete catalogs > forwards callable irUnitFuncRef without a wrapper 0ms
+   ✓ canonical export identities and complete catalogs > forwards callable irImportFuncRef without a wrapper 0ms
+   ✓ canonical export identities and complete catalogs > forwards callable irCapabilityImportFuncRef without a wrapper 0ms
+   ✓ canonical export identities and complete catalogs > forwards callable irRuntimeFuncRef without a wrapper 0ms
+   ✓ canonical export identities and complete catalogs > forwards callable irIntrinsicFuncRef without a wrapper 0ms
+   ✓ canonical export identities and complete catalogs > forwards callable irSupportFuncRef without a wrapper 0ms
+   ✓ canonical export identities and complete catalogs > forwards callable irFnctorConstructorBindingId without a wrapper 0ms
+   ✓ canonical export identities and complete catalogs > forwards callable irFnctorConstructorFuncRef without a wrapper 0ms
+   ✓ canonical export identities and complete catalogs > forwards callable irCallableBindingKey without a wrapper 0ms
+   ✓ canonical export identities and complete catalogs > forwards callable sameIrCallableBinding without a wrapper 0ms
+   ✓ canonical export identities and complete catalogs > keeps the callable export denominator, provenance and compatibility names 0ms
+   × canonical export identities and complete catalogs > forwards all five effect functions and every intrinsic signature/catalog object 1ms
+     → expected [ 'js.to_uint32', …(38) ] to have a length of 38 but got 39
+   ✓ canonical export identities and complete catalogs > forwards semantic async exports through B's composed historical facade 0ms
+   ✓ semantic diagnostics and shared effect authority > preserves cache identity, conflict ordering and schedule violations 0ms
+   ✓ semantic diagnostics and shared effect authority > accepts only pure evidence from the one private-field class 0ms
+   ✓ semantic diagnostics and shared effect authority > keeps first-failure ordering for use identity, location, version, signature and effects 0ms
+   ✓ semantic diagnostics and shared effect authority > preserves signature diagnostic order and appends provider diagnostics afterward 0ms
+   ✓ nonempty async plan preservation > preserves suspension/spill/handler data, canonical ordering, deep freeze and exact old serialization/hash 5ms
+   ✓ nonempty async plan preservation > retains exact missing-spill and liveness diagnostics 0ms
+   ✓ nonempty async plan preservation > retains complete missing-intent diagnostic ordering and invariant error contents 0ms
+   ✓ nonempty async plan preservation > does not admit source-node fields or undefined metadata 0ms
+   ✓ actually compiles legacy/core types, wider runtime features and located negative controls  737ms
+ ❯ tests/ir-scaffold.test.ts (7 tests | 1 failed) 361ms
+   ✓ ir scaffold — phase 1 > feature flag off → identical legacy-path output 289ms
+   ✓ ir scaffold — phase 1 > feature flag on → runtime behavior preserved 48ms
+   × ir scaffold — phase 1 > selector picks up only phase-1-shaped functions 14ms
+     → expected [ 'compound', 'nonNumeric', …(11) ] to deeply equal [ 'compound', 'nonNumeric', …(10) ]
+   ✓ ir scaffold — phase 1 > verifier rejects a duplicate SSA def 0ms
+   ✓ ir scaffold — phase 1 > builder → verifier → (smoke) for a zero-arg function 0ms
+   ✓ ir scaffold — phase 1 > AST → IR produces a shape the verifier accepts 2ms
+   ✓ ir scaffold — phase 1 > IR-path compile does not register any raw function-index instrs that would need shifting 7ms
+ ❯ tests/issue-4113-ir-final-allocation-provenance.test.ts (4 tests | 3 failed) 234ms
+   × #4113 final allocation-provenance gate > accepts a normal final artifact with IR_VERIFY_ALLOC unset 200ms
+     → expected [ { …(19) }, { …(14) } ] to deeply equal [ ObjectContaining{…} ]
+   ✓ #4113 final allocation-provenance gate > rejects invalid final provenance with IR_VERIFY_ALLOC unset 17ms
+   × #4113 final allocation-provenance gate > does not let a synthetic final artifact bypass the required gate 12ms
+     → expected [ { …(21) }, { …(14) } ] to deeply equal [ ObjectContaining{…} ]
+   × #4113 final allocation-provenance gate > does not let a monomorphized final artifact bypass the required gate 5ms
+     → expected [ { …(21) }, { …(14) } ] to deeply equal [ ObjectContaining{…} ]
+ ✓ tests/issue-3518-allocation-runtime-seam.test.ts (24 tests) 425ms
+   ✓ allocation ownership runtime relocation > loads and exercises only canonical allocation/core leaves in a fresh process  354ms
+ ✓ tests/issue-3518-preparation-allocation-replay.test.ts (29 tests) 43ms
+ ✓ tests/issue-3954-phase3-nonjs-domain.test.ts (26 tests) 9ms
+ ✓ tests/ir/ownership-analysis.test.ts (14 tests) 4ms
+ ✓ tests/issue-4605-declared-type-table.test.ts (19 tests) 5ms
+ ✓ tests/issue-3954-tag-domain.test.ts (16 tests) 4ms
+ ✓ tests/ir-dominance.test.ts (13 tests) 3ms
+ ✓ tests/ir/escape-analysis.test.ts (7 tests) 3ms
+ ✓ tests/ir/encoding-analysis.test.ts (19 tests) 3ms
+ ✓ tests/ir/alloc-provenance.test.ts (7 tests) 3ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 7 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/ir-scaffold.test.ts > ir scaffold — phase 1 > selector picks up only phase-1-shaped functions
+AssertionError: expected [ 'compound', 'nonNumeric', …(11) ] to deeply equal [ 'compound', 'nonNumeric', …(10) ]
+
+- Expected
++ Received
+
+@@ -8,7 +8,8 @@
+    "withIfElseBlocks",
+    "withIfNoElse",
+    "withLet",
+    "withLocal",
+    "withParam",
++   "withVar",
+    "withWhile",
+  ]
+
+ ❯ tests/ir-scaffold.test.ts:96:35
+     94|     // (#2856 C1) `withWhile` — an early `return` directly as a while …
+     95|     // is now claimable (statement-level early-return inside C-style l…
+     96|     expect([...sel.funcs].sort()).toEqual([
+       |                                   ^
+     97|       "compound",
+     98|       "nonNumeric",
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/7]⎯
+
+ FAIL  tests/issue-3518-semantic-verification-ownership.test.ts > semantic implementation preservation > preserves every selected 'src/ir/intrinsics.ts' declaration in 'src/ir/core/intrinsics.ts'
+AssertionError: expected [ 'F64_TYPE', 'I32_TYPE', …(19) ] to deeply equal [ 'F64_TYPE', 'I32_TYPE', …(18) ]
+
+- Expected
++ Received
+
+@@ -4,10 +4,11 @@
+    "U32_TYPE",
+    "EXTERNREF_TYPE",
+    "F64_TO_EXTERNREF_INTRINSIC_SIGNATURE",
+    "EXTERNREF_TO_F64_INTRINSIC_SIGNATURE",
+    "I32_TO_EXTERNREF_INTRINSIC_SIGNATURE",
++   "EXTERNREF_TO_BOOLEAN_INTRINSIC_SIGNATURE",
+    "EXTERNREF_TO_I32_INTRINSIC_SIGNATURE",
+    "EXTERNREF_PAIR_TO_I32_INTRINSIC_SIGNATURE",
+    "REF_EXTERN_TYPE",
+    "EXTERNREF_PAIR_TO_REF_EXTERN_INTRINSIC_SIGNATURE",
+    "EXTERNREF_I32_TO_F64_INTRINSIC_SIGNATURE",
+
+ ❯ verifyReceipt tests/issue-3518-semantic-verification-ownership.test.ts:238:45
+    236|         ? ["ASYNC_RUNTIME_FEATURES", "ASYNC_OPTIONAL_RUNTIME_FEATURES"…
+    237|         : [];
+    238|   expect(declarations.map(declarationName)).toEqual(
+       |                                             ^
+    239|     receipt.path === "src/ir/core/async-intents.ts"
+    240|       ? [...additions, ...selectedNames]
+ ❯ tests/issue-3518-semantic-verification-ownership.test.ts:325:92
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/7]⎯
+
+ FAIL  tests/issue-3518-semantic-verification-ownership.test.ts > semantic implementation preservation > preserves every selected 'src/ir/intrinsics.ts' declaration in 'src/ir/analysis/intrinsics.ts'
+AssertionError: signatureMismatch: expected '38f1214d1a8b93c91dc85e147ca4c06c6615a…' to be '0e58749590b4dbfa116ddeba00d65903f852d…' // Object.is equality
+
+Expected: "0e58749590b4dbfa116ddeba00d65903f852d0c2040a66b81cd3cefcc5ca87d6"
+Received: "38f1214d1a8b93c91dc85e147ca4c06c6615a257e6558661ed9d75d394df41cd"
+
+ ❯ verifyReceipt tests/issue-3518-semantic-verification-ownership.test.ts:246:65
+    244|     const matches = declarations.filter((node) => declarationName(node…
+    245|     expect(matches, name).toHaveLength(1);
+    246|     expect(sha(preservedText(receipt.path, matches[0]!)), name).toBe(e…
+       |                                                                 ^
+    247|   }
+    248| }
+ ❯ tests/issue-3518-semantic-verification-ownership.test.ts:325:92
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/7]⎯
+
+ FAIL  tests/issue-3518-semantic-verification-ownership.test.ts > canonical export identities and complete catalogs > forwards all five effect functions and every intrinsic signature/catalog object
+AssertionError: expected [ 'js.to_uint32', …(38) ] to have a length of 38 but got 39
+
+- Expected
++ Received
+
+- 38
++ 39
+
+ ❯ tests/issue-3518-semantic-verification-ownership.test.ts:404:35
+    402|     expect(oldIntrinsics.verifyIntrinsicUse).toBe(intrinsic.verifyIntr…
+    403|     expect(Object.keys(catalog.INTRINSIC_DEFINITIONS)).toEqual(catalog…
+    404|     expect(catalog.INTRINSIC_IDS).toHaveLength(38);
+       |                                   ^
+    405|     expect(Object.isFrozen(catalog.INTRINSIC_DEFINITIONS)).toBe(true);
+    406|     for (const [id, row] of Object.entries(catalog.INTRINSIC_DEFINITIO…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/7]⎯
+
+ FAIL  tests/issue-4113-ir-final-allocation-provenance.test.ts > #4113 final allocation-provenance gate > accepts a normal final artifact with IR_VERIFY_ALLOC unset
+AssertionError: expected [ { …(19) }, { …(14) } ] to deeply equal [ ObjectContaining{…} ]
+
+- Expected
++ Received
+
+@@ -2,6 +2,22 @@
+    ObjectContaining {
+      "displayName": "value",
+      "irBodyEmitted": true,
+      "kind": "emitted",
+    },
++   {
++     "backend": "wasmgc",
++     "column": 1,
++     "displayName": "<module-init>",
++     "file": "issue-4113-pass.ts",
++     "irBodyEmitted": false,
++     "key": "issue-4113-pass.ts::module-init::<module-init>#0",
++     "kind": "non-executable",
++     "legacyBodyEmitted": false,
++     "line": 1,
++     "ordinal": 0,
++     "sourceId": "ir-source:v1:0000000000000000:entry:issue-4113-pass.ts",
++     "stage": "select",
++     "target": "gc",
++     "unitKind": "module-init",
++   },
+  ]
+
+ ❯ tests/issue-4113-ir-final-allocation-provenance.test.ts:94:31
+     92| 
+     93|     expect(result.success, result.errors.map((error) => error.message)…
+     94|     expect(result.irOutcomes).toEqual([
+       |                               ^
+     95|       expect.objectContaining({ displayName: "value", kind: "emitted",…
+     96|     ]);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/7]⎯
+
+ FAIL  tests/issue-4113-ir-final-allocation-provenance.test.ts > #4113 final allocation-provenance gate > does not let a synthetic final artifact bypass the required gate
+AssertionError: expected [ { …(21) }, { …(14) } ] to deeply equal [ ObjectContaining{…} ]
+
+- Expected
++ Received
+
+@@ -4,6 +4,22 @@
+      "displayName": "outer",
+      "irBodyEmitted": false,
+      "kind": "invariant",
+      "stage": "verify",
+    },
++   {
++     "backend": "wasmgc",
++     "column": 1,
++     "displayName": "<module-init>",
++     "file": "issue-4113-synthetic.ts",
++     "irBodyEmitted": false,
++     "key": "issue-4113-synthetic.ts::module-init::<module-init>#0",
++     "kind": "non-executable",
++     "legacyBodyEmitted": false,
++     "line": 1,
++     "ordinal": 0,
++     "sourceId": "ir-source:v1:0000000000000000:entry:issue-4113-synthetic.ts",
++     "stage": "select",
++     "target": "gc",
++     "unitKind": "module-init",
++   },
+  ]
+
+ ❯ tests/issue-4113-ir-final-allocation-provenance.test.ts:137:31
+    135| 
+    136|     expect(result.success).toBe(false);
+    137|     expect(result.irOutcomes).toEqual([
+       |                               ^
+    138|       expect.objectContaining({
+    139|         displayName: "outer",
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/7]⎯
+
+ FAIL  tests/issue-4113-ir-final-allocation-provenance.test.ts > #4113 final allocation-provenance gate > does not let a monomorphized final artifact bypass the required gate
+AssertionError: expected [ { …(21) }, { …(14) } ] to deeply equal [ ObjectContaining{…} ]
+
+- Expected
++ Received
+
+@@ -4,6 +4,22 @@
+      "displayName": "cloneSource",
+      "irBodyEmitted": false,
+      "kind": "invariant",
+      "stage": "verify",
+    },
++   {
++     "backend": "wasmgc",
++     "column": 1,
++     "displayName": "<module-init>",
++     "file": "issue-4113-monomorphized.ts",
++     "irBodyEmitted": false,
++     "key": "issue-4113-monomorphized.ts::module-init::<module-init>#0",
++     "kind": "non-executable",
++     "legacyBodyEmitted": false,
++     "line": 1,
++     "ordinal": 0,
++     "sourceId": "ir-source:v1:0000000000000000:entry:issue-4113-monomorphized.ts",
++     "stage": "select",
++     "target": "gc",
++     "unitKind": "module-init",
++   },
+  ]
+
+ ❯ tests/issue-4113-ir-final-allocation-provenance.test.ts:158:31
+    156| 
+    157|     expect(result.success).toBe(false);
+    158|     expect(result.irOutcomes).toEqual([
+       |                               ^
+    159|       expect.objectContaining({
+    160|         displayName: "cloneSource",
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/7]⎯
+
+
+ Test Files  3 failed | 10 passed (13)
+      Tests  7 failed | 212 passed (219)
+   Start at  08:39:03
+   Duration  17.41s (transform 5.50s, setup 0ms, collect 13.82s, tests 1.89s, environment 1ms, prepare 354ms)
+
+JSON report written to /private/tmp/js2-ir-validation-lowering-b-resume-20261001/.tmp/validation-lowering-b-resume/first-integration/original-controls.json

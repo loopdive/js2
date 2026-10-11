@@ -1,0 +1,44 @@
+{
+  "schema": "prepared-source-forward-v1",
+  "path": "src/codegen/registry/imports.ts",
+  "sourceProvenance": {
+    "originalBefore": {
+      "revision": "1771229aa8d3ddf7025a0191fca8c43f80a1e901",
+      "blob": "a0cf36ff8bf33a6a6527b04609bd3adc501d7744",
+      "sha256": "fd9be2622bd34fb02cf115e47326771aa9e427792361ef34745b10721849fafb",
+      "bytes": 118734,
+      "spanLine": 346
+    },
+    "originalAfter": {
+      "revision": "37ecd264d125c2c75bf7b7af0cfb1f84b6f2eb4a",
+      "blob": "e80ed31cc2ac72cab9552cf90dfaf18e82080fbe",
+      "sha256": "4f311ff7ae97a15c9a4a5f3c0ef4ca56388cee3afb322db4a20996825187a85d",
+      "bytes": 118989,
+      "spanLine": 346
+    },
+    "deliveredMain": {
+      "revision": "2c6a0f1daa3d43cdf68b0d2d07fe7e3fa58b97f0",
+      "blob": "672c98b945d772e0c07642601d7f1cfaf6d69bab",
+      "sha256": "7fa93bbcae1311ec2f425e132a5e14dfcef7d45da3b16395ed10e3cff06bb936",
+      "bytes": 119418,
+      "spanLine": 346
+    },
+    "preparedHead": {
+      "revision": "5b59430597315b08b2d7a1365324b56551230308",
+      "blob": "f2d13ac0d69a501ccf315d5022f1291e80acba5a",
+      "sha256": "be46472568a57e877571770c817ede6af9ad6e8ca71d04da77aa6c20bca68668",
+      "bytes": 114970,
+      "spanLine": 354
+    }
+  },
+  "derivation": "One exact exportedExnTagIndex function replacement from independently committed 1771229aa8d3ddf7025a0191fca8c43f80a1e901 to 37ecd264d125c2c75bf7b7af0cfb1f84b6f2eb4a. The same after span is retained in delivered main 2c6a0f1daa3d43cdf68b0d2d07fe7e3fa58b97f0. Inversion precedes the unchanged prepared import inverse and unchanged original full-module/comment receipts. The joined worktree is only a comparison, never an authority input.",
+  "spans": [
+    {
+      "id": "exported-exception-tag-import-space",
+      "before": "export function exportedExnTagIndex(\n  ctx: CodegenContext,\n  mod: { imports: readonly { desc: { kind: string } }[] },\n): number {\n  if (ctx.sharedExnTag) return ctx.exnTagIdx;\n  return mod.imports.filter((imp) => imp.desc.kind === \"tag\").length + ctx.exnTagIdx;\n}\n",
+      "after": "export function exportedExnTagIndex(\n  ctx: CodegenContext,\n  mod: { imports: readonly { desc: { kind: string } }[] },\n): number {\n  // (#5383 S2m) `exnTagImported` is the standalone twin of `sharedExnTag` — in\n  // both cases the tag lives in the IMPORT space, so `exnTagIdx` is already\n  // absolute and adding the import-tag count would name a different tag.\n  if (ctx.sharedExnTag || ctx.exnTagImported) return ctx.exnTagIdx;\n  return mod.imports.filter((imp) => imp.desc.kind === \"tag\").length + ctx.exnTagIdx;\n}\n",
+      "beforeSha256": "a639134079c5cde3e002b66deef5da5b1109b2e2b269a30884f8daf2d2d87a47",
+      "afterSha256": "0dd8d525d10cf4bef3d3e2e4fd55a7efb0d3debbaf76dfed0c42c6138dba4053"
+    }
+  ]
+}

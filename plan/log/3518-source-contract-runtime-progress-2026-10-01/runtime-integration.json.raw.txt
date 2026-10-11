@@ -1,0 +1,39 @@
+{
+  "freeze": "/private/tmp/js2-ir-source-contracts-writer-20261001/.tmp/source-contracts-writer/runtime-evolution-freeze-yN0bkE",
+  "manifest_sha256": "33aa7477d4c73995d205622a6b9a47e5f0e6ad4ba1f9bb95fa56866ba0309e8b",
+  "claim": {
+    "id": "3518",
+    "slice": "source-validation-contracts-20261001",
+    "assignee": "ttraenkler/codex-source-validation-contracts-20261001",
+    "requested_by": "ttraenkler/codex-source-validation-contracts-20261001",
+    "status": "in-progress",
+    "branch": "codex/3518-source-contracts-main-20261001",
+    "claimed_at": "2026-10-01T04:22:15Z",
+    "updated_at": "2026-10-01T04:22:15Z",
+    "write_id": "92121-m1jz4k2t"
+  },
+  "files": {
+    "tests/helpers/ir-runtime-contract-evolution.ts": {
+      "bytes": 19449,
+      "sha256": "579a39d3e2046ea8cc5efb129577d71579cf655d4ced730ef10a0a87b4b5244e",
+      "gitBlob": "0c58c16f2e5c22f7f15cd77535249d279c0f431a",
+      "lines": 478
+    },
+    "tests/helpers/ir-runtime-contract-evolution.json": {
+      "bytes": 1185011,
+      "sha256": "f7c21adce97a49db5b05106e8da21217be8c96c70133bf8d425054e38b7adafc",
+      "gitBlob": "2a0ffc32a9fa15cc683a76c62fd2e7aefd369964",
+      "lines": 30844
+    },
+    "tests/issue-3518-runtime-contract-evolution.test.ts": {
+      "bytes": 26282,
+      "sha256": "349b2318dc19fe646c6da1f8c8162cdb5a9b7804c2634ff97ab9e305c955dbf1",
+      "gitBlob": "02121424d3eb6ce4a80a05680783e2ca020f36ae",
+      "lines": 774
+    }
+  },
+  "raw_input_pins_verified": 27,
+  "source_base": "1265c47d6fc41300a380ef7e4abc45fdfcfd2c61",
+  "upstream_main_verified": "11661c310659b921af5584ceb4155e7c1209c7d2",
+  "executed_tests": 0
+}

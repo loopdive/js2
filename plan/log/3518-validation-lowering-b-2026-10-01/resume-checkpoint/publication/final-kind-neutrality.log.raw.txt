@@ -1,0 +1,8 @@
+IR kind-neutrality gate: OK — 85 instruction kinds (81 IrInstr arms + 4 terminators; 3 symbolic-reference kinds and 1 named payload kind excluded, 89 `readonly kind:` fields reconciled).
+  verdicts: 55 neutral · 27 js · 3 unresolved   |   placement: 58 in core, 27 in dialect
+  phase 2 move list (js, still in core): none
+  unresolved (3):
+    binary — Split `IrBinop`: the six `js.*` composites (and the `i64.rem_s` fast path's ECMAScript justification) move to the dialect as a separate opcode union; the Wasm primitives stay.
+    intrinsic — State whether a `math.*` id denotes an ECMA-262 clause or an IEEE/libm operation.
+    string.len — A policy call phase 2 has to make anyway: does `js` mean ECMAScript-SPECIFIC, or LANGUAGE-COMMITTED? If the former, `string.len` stays in core with a documented commitment; if the latter it moves — and the same answer then governs a future `utf16-string` dialect shared by the family, which is the third option.
+  residuals (8, reported not gated — other seams own these): box, closure.call, const, raw.wasm, string.const, tag.test, unbox, vec.len

@@ -1,0 +1,91 @@
+# Remaining runtime-contract joins: bounded read-only specification
+
+Exact target main: `1265c47d6fc41300a380ef7e4abc45fdfcfd2c61`. Golden post-clock/vector stage: `6ed68535323e0756c3a0b15dde18fd480ad7fc9f`. Boolean-before stage: `545923d1c9b0a30476f5a6e0dd7f5078be3c25c0`. This extends `.tmp/runtime-historical-inverses-d740ci` only. No Program inverse or core vocabulary842 relocation inverse is recreated. No tracked edits, compiler/checker, Vitest, heavyweight process, network or Git mutation. Git reads used `GIT_NO_LAZY_FETCH=1`.
+
+## Concrete result and evidence scope
+
+Seven additional exact full sources require **13 ordered unique reciprocal contextual spans**: provider-policy3; runtime contract manifest4; Boolean five-file6. Combined with the prior21 spans, the complete later-runtime normalization has **34 spans across11 changed files**, plus the unchanged runtime-program-manifest identity input. Every additional inverse reproduces complete golden6ed bytes and every forward reproduces complete live1265 bytes. All five Boolean targets equal545 bytes exactly. `bounded-joins.json` pins whole current and target sources, Git blob identities, contextual offsets/lines/operands, and full inverse/forward results; it contains no complete historical executable module fallback.
+
+`static-proof.mjs` performs source arithmetic and invokes only the unchanged historical helper's syntax/source-receipt reconstruction functions. It does not execute recipes/runtime algorithms, tests or checker/compiler programs. `static-compatibility-proof.json` records22 successful source-level checks, zero failures: assertIntrinsicSpecialization; both callableSourceView stages; eight acceptedHistoricalDeclarations receipts; historicalIntrinsicSource; five runtime75 moved-source requirements and five retained-source requirements. Calling either callableSourceView retains the actual original10link/5owner assertions, stage ordering and facade checks. The old runtime75 suite itself is **not rerun**; root's actual69passed/6failed remains its measured result.
+
+The eight original unchanged declaration receipts have exact counts/functions: runtime intrinsics20/0; async providers26/12; runtime manifest85/38; core intrinsic facade24/5; async plan48/39; intrinsic support41/24; callable declarations5/2; manifest contract67/0. Runtime75 source requirements match its original five moved populations10,30,20,67,8 (total135) and five retained populations26,85,24,48,41 (total224). The source-only comparison retains the suite's two approved prepared.ts normalizations, not an unreviewed new type inverse.
+
+## Exact live-body-preserving recipes
+
+### provider-policy.ts: three declarations,30 unchanged identities
+
+Target the complete source at6ed. Preserve every other policy member, initializer, export and declaration order.
+
+- NumberBoundaryPolicy: remove only `| "native"` from the box member; restore that member's original exact non-executable doc. Keep unbox unchanged. This change arrived through the85750 merge, not the later Boolean extraction.
+- BooleanBoundaryPolicy: remove only native from box; remove exactly the optional unbox member and its doc; restore the old interface and box docs. Keep its disabled object initializer unchanged. Provenance c2fb.
+- GeneratorNumberBoxPolicy: reverse only the changed paragraph in the leading documentation about the synchronous native box arm. Keep its whole interface and policy semantics actual/live. Provenance85750.
+
+The original30row/17type moved receipt is427cef6e60b0e3328fc6ace4a66eabab7afa466ca917e389101f74b892f8c678. Raw imports, disabled-policy object identity/freezing, Number/Boolean native production arms and generator policy remain current outside the initial historical reader.
+
+### runtime/contracts/manifest.ts:79 current ->75 post-vector ->67 final historical
+
+Current import/link block still matches the original receipt; do not rewrite it. Preserve exact identity/order of all75 old declarations and authenticate all four additional ones before removal.
+
+- RuntimeFeature: remove exact closure method/apply-vector/undefined atoms, OrdinaryObjectRuntimeFeature and js.number.from-value arms, leaving the existing vector/native-async/ReferenceError and all other arms unchanged.
+- NUMBER_BOUNDARY_RUNTIME_PROVIDER_IDS: remove only native.js.number.box, preserving order and all other actual array elements.
+- BOOLEAN_BOUNDARY_RUNTIME_PROVIDER_IDS: remove only native.js.boolean.box and native.js.boolean.unbox; restore exact old doc and one-line formatting. Keep host.js.boolean.box's actual source atom.
+- Remove the four precisely pinned OrdinaryObject declarations (feature tuple/type and provider tuple/type) as separately authenticated current-only residues. Do not name-filter an unknown population. Their exact current population is8feature atoms and8provider atoms; retain actual source slices for reciprocal forward replay.
+- RuntimeProviderId: remove only OrdinaryObjectRuntimeProviderId arm.
+
+Do not alter RuntimeProviderImplementation's alternatives or any other provider contract. OrdinaryObject feature declarations arrived in7de; the provider tuple/type and RuntimeProviderId arm arrived through85750; cb64/85750 closure feature changes overlap and must be represented by reviewed net spans, not blindly composed first-parent deltas. c2fb adds native Boolean ID rows. Keep the old callable/vector/clock layers to remove their original additions in their original order, giving the final67row38type original contract receipt e7d1bd5d610126b6dcf945ca5584114b21a779b2803139c357f146cb7a16841e.
+
+### Coordinated Boolean five-file inverse: preserve545 generic separation
+
+Reuse the independent retained `boolean-hunk-provenance.json` at `/private/tmp/js2-ir-source-validation-contracts-20261001/.tmp/source-contracts/core-vocabulary-pre-a-y6hs1nun/`; this spec records its actual full pin and the same five current/before pins. The full current five sources equal c2fb's outputs; target545 sources equal6ed. Exactly six changes:
+
+1. ir/intrinsics.ts: remove just the added EXTERNREF_TO_BOOLEAN_INTRINSIC_SIGNATURE export atom. Keep the canonical table alias, its actual import and all other named forwarding intact.
+2. core/intrinsic-vocabulary.ts: remove just Boolean unbox tuple atom and restore exact old non-executable Boolean declaration documentation. Retain its12 current declaration identities/order and the complete surrounding semantic vocabulary; do not reconstruct842 or merge provider features into semantic identifiers.
+3. runtime/contracts/intrinsics.ts: same unbox tuple-atom removal and original feature doc restoration. Keep exact type import, five forwarded generic contract types and the actual `IntrinsicDefinition = CoreIntrinsicDefinition<RuntimeFeature>` alias at ordinal14. This module stays15declarations. Its old20row receipt is assembled by the unchanged helper from14runtime rows and6actual generic contract declarations.
+4. core/intrinsics.ts: remove precisely the added EXTERNREF_TO_BOOLEAN_INTRINSIC_SIGNATURE declaration (current ordinal7) as an authenticated current-only live residue; remove precisely its Boolean-unbox table property. Retain the function definition body, defaults, generic signature `IntrinsicDefinition<IntrinsicId>` and generic table annotation. It becomes the old20declaration canonical module. Existing normalizeIntrinsicImplementations must remain responsible for the historical signature/table annotation inverse.
+5. analysis/intrinsics.ts: remove only the Boolean-result-brand conditional in signatureMismatch. Keep all5declarations, all other checks/order/errors and full verifyIrIntrinsicSignature body. The unchanged historicalIntrinsicVerifier composes its actual semantic prefix with the actual runtime provider suffix.
+
+Do not touch core/intrinsic-contracts.ts: the single Feature extends string parameter, three mandatory readonly members and exact forwarding are required by assertIntrinsicSpecialization/historicalIntrinsicDeclarations. Do not replace the old alias with a same-shaped local definition, remove generic contracts, concatenate semantic/provider tables or bypass the canonical alias checks. All those existing assertions passed on the proposed source-only view.
+
+## Fixed closed population and initial-reader integration
+
+The exact closed raw reconstruction population is27 production paths listed below, with full current byte/SHA256/Git-blob pins in `static-compatibility-proof.json`. The helper/source-requirement reader touches25 of them; the additional two are the actual ABI donor and Boolean vocabulary owner. The runtime75 test requirement source is separately pinned as the28th authoring input. `live-declaration-census.json` records the actual seven new scope file populations; `bounded-joins.json` records all complete target stage pins. This is the closed population for this reconstruction, not a claim about transitive native realm implementation dependencies.
+
+- src/runtime/contracts/provider-policy.ts
+- src/ir/runtime/contracts/manifest.ts
+- src/ir/intrinsics.ts
+- src/ir/core/intrinsic-vocabulary.ts
+- src/ir/runtime/contracts/intrinsics.ts
+- src/ir/core/intrinsics.ts
+- src/ir/analysis/intrinsics.ts
+- src/ir/runtime/callable-declarations.ts
+- src/ir/runtime/manifest.ts
+- src/ir/intrinsic-support.ts
+- src/ir/program-runtime-abi.ts
+- src/ir/program/runtime-abi-identity.ts
+- src/ir/runtime-program-manifest.ts
+- src/ir/core/vector-runtime.ts
+- src/ir/vector-runtime.ts
+- src/ir/runtime/vector-callables.ts
+- src/ir/program-runtime-validation.ts
+- src/ir/core/async-callables.ts
+- src/ir/runtime/native-async-callables.ts
+- src/ir/core/intrinsic-contracts.ts
+- src/ir/core/async-intents.ts
+- src/ir/runtime/async-providers.ts
+- src/ir/analysis/async-plan.ts
+- src/ir/runtime/async-attachment.ts
+- src/ir/runtime/intrinsic-verification.ts
+- src/runtime/contracts/async-provider-schema.ts
+- src/ir/runtime/contracts/prepared.ts
+
+Capture these actual raw strings once per top-level reconstruction with exact fixed path membership, authenticating all complete current inputs, link/body/doc/order identities and contextual uniqueness. Compose the four prior later-runtime inverses and the seven additional-file recipes from actual live slices; ABI bodies must come from the actual authenticated runtime-abi-identity donor, not the prior recorded target context as executable fallback. Keep removed additions as authenticated actual current residues for forward comparison. Reverse all34 spans and replay every current population exactly, then feed the initial historical reader to unchanged source-receipt calls. Production/module imports, runtime policy/value equality, current freezing/public-forward chains, source currentness authorities and all81public-type checker fixtures must retain their raw/current inputs.
+
+In runtime75, the historical moved provider-policy receipt currently calls parse(path) through its default raw reader. Route only that source receipt parsing through the explicit historical source view, alongside the existing acceptedHistoricalDeclarations calls. Its current runtime policy imports/value controls and type fixtures stay raw. Current source-read documentation/WeakMap assertions stay raw; there is no reason to globally alter parse or read. In the separate historical-helper suite, the exact old6/21/7/82/75/37 census is a historical stage census; obtain it from the checked source view, not raw future files. Retain every row/denominator and add independent raw-population checks79manifest/10callables rather than redefining the old populations.
+
+Normalize once BEFORE any old negative injection. All unchanged old negative-anchor sources for the11 changed paths recover exactly6ed bytes; retained old canonical/core generic bodies recover the native-Boolean-before545 view. Do not try-current-or-old receipt acceptance or re-normalize injected mutants. Preserve every old mutation row, including native provider/policy ordering, declaration/drop/rename/reorder, doc/private-field/body, alias/import/readonly/generic-contract and missing dependency controls. Keep source alteration and valid-syntax assertions. Add raw-current controls independently: every13new span missing/duplicate/change/reorder; all removed current residues mutated before removal; full outside-span mutation; wrong/unknown path or receipt/provenance; Boolean signature/table/verifier/control-doc mutations; and complete inverse+forward comparisons. No negatives were run here.
+
+## Provenance, retained failures and limits
+
+`provenance.txt` pins the exact4reachable later commits/parent lists; explicit first-parent diffs are retained per commit. The85750 record has2parents; no merge-parent linearization or guessed missing Git contents. Full current/target pins, reciprocal operands and independent c2fb provenance are retained. Commit ed15 and its live ABI donor remain in the prior runtime spec, not duplicated.
+
+Two failed local authoring-script diagnostics were retained: first selected the function-name boundary instead of preserving the following ABI declaration's doc/export; second tried an unsupported `current` callableSourceView version and omitted the runtime75 suite's existing prepared.ts-specific source normalization. Both were corrected only in `.tmp` script; original source/helper/tests never changed. Corrected static proof has zero failures and zero captured-input drift. No future helper acceptance under adversarial controls, runtime75 execution, public runtime/realm completion, full both-backend behavior or dynamic-code obligations is inferred from this static proof. Root/Astra owns implementation and actual validation.

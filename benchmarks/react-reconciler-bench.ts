@@ -343,7 +343,8 @@ async function main() {
   // --- Compile Wasm ---
   console.log("Compiling reconciler TypeScript to WasmGC...");
   const compileStart = performance.now();
-  const result = await compile(WASM_SOURCE, { fast: true });
+  // #6776: `validate: false` keeps the compile time comparable with pre-validation runs.
+  const result = await compile(WASM_SOURCE, { fast: true, validate: false });
   const compileTime = performance.now() - compileStart;
 
   if (!result.success) {

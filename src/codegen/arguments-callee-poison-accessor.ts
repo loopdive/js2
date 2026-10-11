@@ -44,6 +44,10 @@ import { ensureObjectRuntime } from "./object-runtime.js";
 import { addFuncType } from "./registry/types.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
+import { ensureArrayNativeProtoGlue } from "./array-object-proto.js";
+import { pushBuiltinFnSingletonValueInstrs } from "./builtin-fn-meta.js";
+import { getWellKnownSymbolId } from "./literals.js";
+import { ensureStandaloneNativeMethodClosure } from "./native-proto.js";
 
 const POISON_FUNC_NAME = "__args_callee_poison";
 
@@ -124,6 +128,52 @@ export function seedStrictArgumentsCalleePoison(
   for (const instr of poisonValue) fctx.body.push({ ...instr });
   for (const instr of poisonValue) fctx.body.push({ ...instr });
   fctx.body.push({ op: "f64.const", value: POISON_FLAGS });
+  fctx.body.push({ op: "call", funcIdx: defineIdx });
+  fctx.body.push({ op: "drop" });
+}
+
+/** `{writable: true, enumerable: false, configurable: true}` in the host flag encoding. */
+const ITERATOR_FLAGS = 0x01 | 0x04;
+
+/**
+ * (#6651 V10b) §10.4.4.6 step 7 / §10.4.4.7 step 20 — every arguments object,
+ * strict or sloppy, gets an OWN `@@iterator` data property
+ * `{ value: %Array.prototype.values%, writable: true, enumerable: false,
+ * configurable: true }`.
+ *
+ * The standalone vec carries no such property, so `hasOwnProperty`, `gOPD` and
+ * `verifyProperty(arguments, Symbol.iterator, …)` all answered "absent". The
+ * value is the Array glue's `values` closure singleton — the very object a
+ * standalone `Array.prototype.values` / `[][Symbol.iterator]` read yields — so
+ * the identity the spec requires holds by `ref.eq`. Defined through the same
+ * `__defineProperty_value` the `callee` seed uses, so writability, deletion and
+ * non-enumerability come out of the object runtime by construction.
+ *
+ * Callers gate this on the observability proof (`shouldRegisterArgumentsWithHost`):
+ * an arguments object that only answers `.length` and proven-numeric index
+ * reads never reaches a property query, and keeps its bytes unchanged.
+ * Installed BEFORE `callee`, matching the spec's own-key creation order.
+ */
+export function seedArgumentsIteratorProperty(ctx: CodegenContext, fctx: FunctionContext, argsLocalIdx: number): void {
+  if (!noJsHost(ctx)) return;
+  ensureObjectRuntime(ctx);
+  const brand = ensureArrayNativeProtoGlue(ctx);
+  if (brand === undefined) return;
+  const closure = ensureStandaloneNativeMethodClosure(ctx, brand, "values", "method", { refusalBodyFallback: true });
+  if (!closure) return;
+  const boxSymbolIdx = ensureLateImport(ctx, "__box_symbol", [{ kind: "i32" }], [{ kind: "externref" }]);
+  flushLateImportShifts(ctx, fctx);
+  const defineIdx = ctx.funcMap.get("__defineProperty_value");
+  const iteratorId = getWellKnownSymbolId("iterator");
+  if (boxSymbolIdx === undefined || defineIdx === undefined || iteratorId === undefined) return;
+
+  fctx.body.push({ op: "local.get", index: argsLocalIdx });
+  fctx.body.push({ op: "extern.convert_any" });
+  fctx.body.push({ op: "i32.const", value: iteratorId });
+  fctx.body.push({ op: "call", funcIdx: boxSymbolIdx });
+  for (const instr of pushBuiltinFnSingletonValueInstrs(ctx, closure)) fctx.body.push(instr);
+  fctx.body.push({ op: "extern.convert_any" });
+  fctx.body.push({ op: "f64.const", value: ITERATOR_FLAGS });
   fctx.body.push({ op: "call", funcIdx: defineIdx });
   fctx.body.push({ op: "drop" });
 }

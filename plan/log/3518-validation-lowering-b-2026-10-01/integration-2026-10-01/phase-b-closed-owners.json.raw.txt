@@ -1,0 +1,130 @@
+{
+  "closedOwnerCount": 9,
+  "owners": [
+    {
+      "path": "src/ir/analysis/lattice.ts",
+      "layer": "ir-analysis",
+      "sourceHash": "8814ff9b71c04e9e16760a913984aaba60f23b402a700968fd6c2a70c92fc22c",
+      "edgeCount": 0,
+      "tracked": true
+    },
+    {
+      "path": "src/ir/analysis/ownership.ts",
+      "layer": "ir-analysis",
+      "sourceHash": "9c622ef53c8c9c1ecbc1c0bc8eee907dfb00da82a5f16c89feecb0c6d918495f",
+      "edgeCount": 4,
+      "tracked": true
+    },
+    {
+      "path": "src/ir/analysis/encoding.ts",
+      "layer": "ir-analysis",
+      "sourceHash": "e1a4e863db13b51769904457502adcca368cf4a9d8bacf79659daaba34596c23",
+      "edgeCount": 4,
+      "tracked": true
+    },
+    {
+      "path": "src/ir/analysis/escape.ts",
+      "layer": "ir-analysis",
+      "sourceHash": "72d036b3565c778b29425f9c853276d67d48b13e2dfff6d38d8d4afa327e4c53",
+      "edgeCount": 4,
+      "tracked": true
+    },
+    {
+      "path": "src/ir/analysis/dominance.ts",
+      "layer": "ir-analysis",
+      "sourceHash": "f005d9447e65170b0b968839d3bde44a0ffeb9752a46fab0e34a572191989fdc",
+      "edgeCount": 1,
+      "tracked": true
+    },
+    {
+      "path": "src/ir/analysis/alloc-verification.ts",
+      "layer": "ir-analysis",
+      "sourceHash": "93b78752e411016cc490655c0fc981ec3beaadc227682ae35c0599fcc5c6e2a4",
+      "edgeCount": 3,
+      "tracked": false
+    },
+    {
+      "path": "src/ir/runtime/verify.ts",
+      "layer": "ir-runtime",
+      "sourceHash": "2d42cdd44b7a979ee0c960369c5ace9f75d2e7c47ccf3c17c8bc9f592f8dd74b",
+      "edgeCount": 23,
+      "tracked": false
+    },
+    {
+      "path": "src/ir/program/allocations.ts",
+      "layer": "ir-program",
+      "sourceHash": "e2da59c2bf90e2a833c35206d014e6745f79a94bade7f04c882cdb6495eb7e5f",
+      "edgeCount": 11,
+      "tracked": false
+    },
+    {
+      "path": "src/ir/program/class-layouts.ts",
+      "layer": "ir-program",
+      "sourceHash": "900a8b56289b6565feb9dd52fb06405de720916208542be3079465942d0a6f42",
+      "edgeCount": 4,
+      "tracked": false
+    }
+  ],
+  "latticeNote": "Unchanged source contains actual pure lattice declarations and no imports; source-preservation full pins authenticate it. First reporting floor incorrectly required imports on every owner; corrected reporting preserves exact measured shape.",
+  "wholeInventory": {
+    "total": 1765,
+    "tracked": 1761,
+    "untracked": 4,
+    "excludedNonModules": 2,
+    "byState": {
+      "unmigrated": 1474,
+      "clean": 286,
+      "compatibility-adapter": 5
+    },
+    "byLayer": {
+      "mixed-needs-split": 1389,
+      "backend-wasmgc": 54,
+      "frontend-ts": 6,
+      "legacy-linear": 24,
+      "wasm-emit": 9,
+      "ir-analysis": 11,
+      "ir-core": 29,
+      "ir-passes": 1,
+      "ir-program": 41,
+      "ir-runtime": 18,
+      "legacy-host": 54,
+      "runtime-contracts": 9,
+      "native-runtime": 103,
+      "foundation": 9,
+      "wasm-model": 3,
+      "wasm-physical": 5
+    },
+    "edgesBySyntax": {
+      "import": 12920,
+      "require": 6,
+      "import-type": 203,
+      "export-from": 331,
+      "dynamic-import": 10,
+      "export-star": 29
+    },
+    "edgesByType": {
+      "typeOnly": 3597,
+      "runtime": 9902
+    },
+    "resolvedEdgesBySyntax": {
+      "import": 12920,
+      "require": 6,
+      "import-type": 203,
+      "export-from": 331,
+      "dynamic-import": 6,
+      "export-star": 29
+    },
+    "resolvedEdgesByType": {
+      "typeOnly": 3597,
+      "runtime": 9898
+    }
+  },
+  "architectureComplete": false,
+  "graphComplete": false,
+  "comparisonBase": {
+    "requested": "88cdb141715f59f3504acfae2213105e09174f24",
+    "revision": "88cdb141715f59f3504acfae2213105e09174f24",
+    "policyPresent": true,
+    "policyHash": "af4c023a432063e4c8211b842862d9a51fd064220e300201dce037c8532c04cc"
+  }
+}

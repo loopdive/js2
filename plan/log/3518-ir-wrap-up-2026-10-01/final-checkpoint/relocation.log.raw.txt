@@ -1,0 +1,11 @@
+
+ RUN  v3.2.4 /private/tmp/js2-ir-source-contracts-main-20261001
+
+ ✓ tests/issue-3518-source-contract-relocation.test.ts (65 tests) 1926ms
+
+ Test Files  1 passed (1)
+      Tests  65 passed (65)
+   Start at  05:23:34
+   Duration  2.29s (transform 24ms, setup 0ms, collect 212ms, tests 1.93s, environment 0ms, prepare 37ms)
+
+JSON report written to /private/tmp/js2-ir-source-contracts-main-20261001/.tmp/source-contracts-main/relocation.json

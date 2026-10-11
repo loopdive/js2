@@ -226,4 +226,3 @@ on the way in, and it does: zero rows moved in either direction.
   consistent with that path's own premise ("at the JavaScript level it is still
   the same Array object"), but it is the one place this change could over-brand.
   The 17-suite A/B is the evidence that it does not.
-

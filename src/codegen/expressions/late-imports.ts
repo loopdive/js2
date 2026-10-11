@@ -27,6 +27,7 @@ import {
 import { shiftAsyncSideChannelFuncIdxs } from "../async-scheduler.js";
 import { inLiveShiftRange } from "../../emit/resolve-layout.js";
 import { emitWasiErrorConstructor, isWasiErrorName } from "../registry/error-types.js";
+import { registerExpressionHelpers } from "../registry/expression-helper-delegates.js";
 
 /**
  * #1471: helper names that `addUnionImports` provides Wasm-native
@@ -181,23 +182,40 @@ export function shiftLateImportIndices(
   function shiftInstrs(instrs: Instr[]): void {
     if (shifted.has(instrs)) return;
     shifted.add(instrs);
-    for (const instr of instrs) {
-      if ("funcIdx" in instr && typeof (instr as any).funcIdx === "number") {
-        if (inLiveShiftRange((instr as any).funcIdx, importsBefore) && !shiftedInstrObjects.has(instr)) {
+    // (#6480) Hot walk: ~53,000 instructions per compile (33 flushes x ~1,600
+    // each — every late import rewalks every live body). Two shape-only
+    // changes, no semantic ones: an indexed loop (no iterator object per
+    // array, and these arrays are many and small), and direct property reads
+    // instead of `in` — the same treatment #4415 already gave the twin
+    // module-global walk in registry/imports.ts. `typeof x === "number"`
+    // rejects an absent `funcIdx` exactly as `in` did, and `Array.isArray`
+    // rejects both absent and non-array nested slots.
+    for (let i = 0; i < instrs.length; i++) {
+      const instr = instrs[i]!;
+      const a = instr as unknown as {
+        funcIdx?: unknown;
+        body?: unknown;
+        then?: unknown;
+        else?: unknown;
+        catches?: { body?: unknown }[];
+        catchAll?: unknown;
+      };
+      const funcIdx = a.funcIdx;
+      if (typeof funcIdx === "number") {
+        if (inLiveShiftRange(funcIdx, importsBefore) && !shiftedInstrObjects.has(instr)) {
           shiftedInstrObjects.add(instr);
-          (instr as any).funcIdx += added;
+          a.funcIdx = funcIdx + added;
         }
       }
-      const a = instr as any;
-      if (a.body && Array.isArray(a.body)) shiftInstrs(a.body);
-      if (a.then && Array.isArray(a.then)) shiftInstrs(a.then);
-      if (a.else && Array.isArray(a.else)) shiftInstrs(a.else);
-      if (a.catches && Array.isArray(a.catches)) {
+      if (Array.isArray(a.body)) shiftInstrs(a.body as Instr[]);
+      if (Array.isArray(a.then)) shiftInstrs(a.then as Instr[]);
+      if (Array.isArray(a.else)) shiftInstrs(a.else as Instr[]);
+      if (Array.isArray(a.catches)) {
         for (const c of a.catches) {
-          if (Array.isArray(c.body)) shiftInstrs(c.body);
+          if (Array.isArray(c.body)) shiftInstrs(c.body as Instr[]);
         }
       }
-      if (a.catchAll && Array.isArray(a.catchAll)) shiftInstrs(a.catchAll);
+      if (Array.isArray(a.catchAll)) shiftInstrs(a.catchAll as Instr[]);
     }
   }
   for (const func of ctx.mod.functions) {
@@ -761,6 +779,7 @@ export function emitUndefined(ctx: CodegenContext, fctx: FunctionContext): void 
     fctx.body.push({ op: "ref.null.extern" });
   }
 }
+registerExpressionHelpers({ emitUndefined }); // (#6797) late-bound for the expressions/ leaves
 
 /**
  * Ensure the __extern_is_undefined host import exists, returning its funcIdx.

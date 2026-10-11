@@ -32,6 +32,7 @@ import { ensureObjVecBuilders } from "./object-runtime.js";
 import { coercionInstrs } from "./type-coercion.js";
 import { compileExpression, ensureLateImport, flushLateImportShifts, VOID_RESULT } from "./shared.js";
 import { guardedFuncRefCastInstrs } from "./array-methods.js";
+import { undefinedExternInstrs } from "./any-helpers.js";
 
 /**
  * Shared per-call locals (as local indices) + pre-built instruction templates
@@ -190,7 +191,7 @@ export function emitArrayLikeHofArm(
 
     case "find": {
       const resTmp = allocLocal(fctx, `__ali_fd_res_${fctx.locals.length}`, { kind: "externref" });
-      fctx.body.push({ op: "ref.null.extern" });
+      fctx.body.push(...(undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" } satisfies Instr]));
       fctx.body.push({ op: "local.set", index: resTmp });
       fctx.body.push({
         op: "block",
@@ -411,7 +412,7 @@ export function emitArrayLikeHofArm(
             blockType: { kind: "empty" },
             body: [
               ...exitIfDone,
-              ...gatedBody([
+              ...(nativeBuilder ? positionalMapGate(ctx, hasIdxCheck, resultTmp, arrPushIdx!) : gatedBody)([
                 ...loadElem,
                 ...withThisInstalled(callClosure),
                 ...mapReturnToExternref,
@@ -763,4 +764,31 @@ export function emitArrayLikeHofArm(
     default:
       return undefined;
   }
+}
+
+/**
+ * (#6898) Gate for the native array-like `map` loop. Its `__objvec_push` store is
+ * positional, so an index the HasProperty gate skips must still occupy its slot
+ * (the hole reads back as `undefined`); otherwise `map.call({5: v, length: 100}, f)`
+ * answered a 1-element array with `f(v)` at index 0.
+ */
+function positionalMapGate(
+  ctx: CodegenContext,
+  hasIdxCheck: Instr[],
+  resultTmp: number,
+  pushIdx: number,
+): (inner: Instr[]) => Instr[] {
+  return (inner) => [
+    ...hasIdxCheck,
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: inner,
+      else: [
+        { op: "local.get", index: resultTmp },
+        ...(undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" } satisfies Instr]),
+        { op: "call", funcIdx: pushIdx },
+      ],
+    },
+  ];
 }

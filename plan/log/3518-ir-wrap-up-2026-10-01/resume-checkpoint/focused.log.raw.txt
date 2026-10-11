@@ -1,0 +1,15 @@
+
+ RUN  v3.2.4 /private/tmp/js2-ir-source-contracts-integration-20261001
+
+ ✓ tests/issue-3954-phase3-nonjs-domain.test.ts (26 tests) 9ms
+ ✓ tests/issue-3518-source-validation-contracts.test.ts (53 tests) 5ms
+ ✓ tests/issue-4605-declared-type-table.test.ts (19 tests) 2ms
+ ✓ tests/issue-3954-tag-domain.test.ts (16 tests) 1ms
+ ✓ tests/ir/fnctor-abi.test.ts (7 tests) 2ms
+
+ Test Files  5 passed (5)
+      Tests  121 passed (121)
+   Start at  04:57:00
+   Duration  6.73s (transform 4.76s, setup 0ms, collect 6.50s, tests 19ms, environment 0ms, prepare 37ms)
+
+JSON report written to /private/tmp/js2-ir-source-contracts-integration-20261001/.tmp/contracts-integration/focused.json

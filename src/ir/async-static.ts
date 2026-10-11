@@ -24,9 +24,9 @@ import { ts } from "../ts-api.js";
  * is not a thenable the resumption is a single microtask carrying `V` unchanged;
  * when `V` is `Promise.resolve(x)` with a non-thenable `x` it likewise settles
  * to `x`. In both cases the *value* is statically known to be the operand (or
- * its resolve-argument); only the scheduling differs. js2wasm's synchronous
- * model already collapses that scheduling, so these awaits are safe to treat as
- * pass-through.
+ * its resolve-argument); only the scheduling differs — and it still differs
+ * (#6780): the host engine suspends these awaits like any other. Only the
+ * native wasi/standalone sync model still treats them as pass-through.
  *
  * Recognised static forms (intentionally narrow — over-approximating here would
  * mis-elide a genuinely-suspending await):

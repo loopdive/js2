@@ -1,0 +1,22 @@
+{
+  "revision": "/private/tmp/js2-ir-source-contracts-writer-20261001/.tmp/source-contracts-writer/runtime-shift-revision-keig2pbo",
+  "test_path": "tests/issue-3518-runtime-contract-evolution.test.ts",
+  "before_sha256": "349b2318dc19fe646c6da1f8c8162cdb5a9b7804c2634ff97ab9e305c955dbf1",
+  "after_sha256": "fad69b1198683cd8e154b02004c9839679bcef9ba67decbacc723f887f38678c",
+  "rows_preserved": 331,
+  "helper_receipt_unchanged": true,
+  "baseline": {
+    "path": "/private/tmp/js2-ir-source-contracts-main-20261001/.tmp/source-contracts-main/runtime-resume/runtime-cohort.json",
+    "pin": {
+      "sha256": "5151c0f4921acdeb71149507fd243052e99662dcc82d8699ebbf4792be9c3b0a",
+      "gitBlob": "9e784d00dc880bbe08b496c9668f37d5aea46173",
+      "bytes": 155445,
+      "lines": 0
+    },
+    "numPassedTests": 405,
+    "numFailedTests": 1,
+    "originalRuntimeRows": "75/75 passed (root execution)",
+    "newRows": "330/331 passed (root execution)",
+    "failingRow": "rejects shifted raw span 1 in src/ir/runtime/callable-declarations.ts"
+  }
+}

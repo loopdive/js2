@@ -1,0 +1,9 @@
+# Frozen EOF-span mutation correction
+
+Only `tests/issue-3518-runtime-contract-evolution.test.ts` changes. The reviewed span ends at EOF, so remove-and-append returned the original raw source. It now moves to the beginning in that case; other spans still move to the end. All 331 rows and their positive source-alteration/authentication/refusal checks remain.
+
+Root's original 405/406 cohort is preserved: original runtime75 passed; new suite330/331 passed. This revision has NOT run compiler/checker/tests. Scoped formatting is complete. Root owns actual validation.
+
+The original three-file freeze, unchanged reader/receipt, and all 35 earlier protected paths remain byte-exact. `exact.patch` proves the sole replacement; `before/` and `frozen/` retain only the changed test.
+
+Model: Codex GPT-6 Astra Max. No Git/network or heavy process was used. Stop editing after this freeze.

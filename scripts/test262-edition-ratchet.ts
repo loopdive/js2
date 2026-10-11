@@ -16,6 +16,38 @@
  *      ratcheted edition that goes pass -> not-pass fails the gate, even when
  *      the edition's total is flat or up. A count-only ratchet lets you break
  *      test A and fix test B and call it even; that is not "no regressions".
+ *   3. COMPLETED — an edition marked `completed` (it reached 100 %) is
+ *      zero-tolerance: EVERY row of it present in the run must pass, except
+ *      rows listed in its `exceptions` with a reason. This needs no compare
+ *      baseline and no full coverage — a partial run is checked on the rows it
+ *      has — so it cannot be switched off by a lagging baseline or a scoped
+ *      shard. `--update` sets `completed` the first time a full run measures
+ *      pass == total, and never clears it. (Project-lead rule, 2026-09-29: no
+ *      regression is allowed inside an edition that has reached 100 %. ES5 lost
+ *      7 rows between 2026-09-23 and 09-28 while this gate reported OK, because
+ *      CI classified every row as "Unclassified (legacy)" — see the test262
+ *      check below.)
+ *   4. HOST LANE (#6786) — `--host-lane --compare <host-baseline.jsonl>` checks
+ *      the js-host jsonl ROW BY ROW: no row of a `completed` edition that passed
+ *      in the host baseline may stop passing, whatever the net. Checks 1-3 do
+ *      not run on this lane. The js-host lane is not at 100 % in any edition
+ *      (the published host artifact has ES5 at 8,001 / 9,029), so "every row
+ *      must pass" cannot apply there. "Nothing that passed may regress" can.
+ *      Only the baseline's DESIGNATIONS are read on this lane (`completed`,
+ *      `ratcheted`, `host_exceptions`). Its pass counts are standalone-measured
+ *      and are not scored. Two flake classes are listed but not gated: rows in
+ *      scripts/test262-host-noise-quarantine.json (exact paths seen changing
+ *      status between same-SHA canary runs, #3426) and pass -> compile_timeout
+ *      (runner-load flake, #1192; the #1942 compile-time guard owns real
+ *      slowdowns). In-progress editions stay with the net gate
+ *      (scripts/diff-test262.ts, `check for test262 regressions`). This mode
+ *      never banks anything, and it refuses (exit 2) rather than compare nothing.
+ *
+ * THE CLASSIFIER READS TEST262. Each row's edition comes from its test file's
+ * frontmatter. Without a test262 checkout every row classifies as
+ * "Unclassified (legacy)", every real edition reads as NOT COVERED, and the
+ * gate passes having checked nothing. So a missing checkout is refused (exit 2),
+ * never scored.
  *
  * PARTIAL RUNS ARE REFUSED, NOT SCORED. A path-filtered or sharded run sees
  * only some of an edition's tests, so its pass count is meaninglessly low. The
@@ -29,6 +61,7 @@
  *   npx tsx scripts/test262-edition-ratchet.ts --results <run.jsonl> [--target standalone]
  *   npx tsx scripts/test262-edition-ratchet.ts --results <run.jsonl> --compare <base.jsonl>
  *   npx tsx scripts/test262-edition-ratchet.ts --results <run.jsonl> --update
+ *   npx tsx scripts/test262-edition-ratchet.ts --host-lane --results <host.jsonl> --compare <host-base.jsonl>
  *
  * Exit codes: 0 clean · 1 regression · 2 usage / refused input.
  */
@@ -38,13 +71,18 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { type HostNoiseQuarantineManifest, validateHostNoiseQuarantineManifest } from "./diff-test262.ts";
 import { classifyEdition, editionStringToYear, parseFrontmatter } from "./generate-editions.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, "..");
 const DEFAULT_BASELINE = join(ROOT, "scripts", "test262-edition-ratchet-baseline.json");
+const DEFAULT_HOST_QUARANTINE = join(ROOT, "scripts", "test262-host-noise-quarantine.json");
 
 function findTest262Root(base: string): string {
+  // Test hook: lets the gate's own tests prove it refuses a missing checkout.
+  const override = process.env.EDITION_RATCHET_TEST262_ROOT;
+  if (override) return override;
   const direct = join(base, "test262");
   if (existsSync(join(direct, "test"))) return direct;
   const fromMain = join(base, "..", "..", "..", "test262");
@@ -83,6 +121,26 @@ interface EditionEntry {
   compile_error: number;
   other: number;
   total: number;
+  /**
+   * The edition reached 100 %: every row of it must pass from now on (check 3).
+   * Set by `--update` when a full run measures pass == total; never cleared by
+   * the tool. Clearing it is a hand edit with a reason, like lowering a floor.
+   */
+  completed?: boolean;
+  /**
+   * Rows of a completed edition that may be non-pass, each with its reason:
+   * a row that cannot pass on this target by construction, or a known failure
+   * that has never passed since the floor was seeded. Never a regression — a
+   * row that passed and stopped passing is exactly what this gate refuses.
+   */
+  exceptions?: { file: string; reason: string }[];
+  /**
+   * The js-host lane's own escape (check 4): rows of a completed edition that
+   * may go pass -> not-pass on the host lane, each with its reason. Read ONLY
+   * by `--host-lane`. `exceptions` above is standalone's and is not honoured
+   * there, so excusing a row on one lane never loosens the other.
+   */
+  host_exceptions?: { file: string; reason: string }[];
 }
 
 interface Baseline {
@@ -183,6 +241,13 @@ function main(): void {
   const evalEngine = getArg(args, "--eval-engine") ?? process.env.JS2WASM_EVAL_ENGINE ?? "quickjs";
   const update = args.includes("--update");
   const force = args.includes("--force");
+  const hostLane = args.includes("--host-lane");
+  if (hostLane && update) {
+    refuseHostLane(
+      "--update with --host-lane. The js-host lane banks nothing: completion is measured on the\n" +
+        "  standalone lane, and a host run has no counts this baseline could hold.",
+    );
+  }
 
   // Seed the floor from the project's OWN published per-edition artifact
   // (`website/public/benchmarks/results/test262-standalone-editions.json`),
@@ -201,8 +266,30 @@ function main(): void {
   }
 
   if (!resultsPath) {
-    console.error("usage: test262-edition-ratchet.ts --results <run.jsonl> [--compare <base.jsonl>] [--update]");
+    console.error(
+      "usage: test262-edition-ratchet.ts --results <run.jsonl> [--compare <base.jsonl>] [--update]\n" +
+        "       test262-edition-ratchet.ts --host-lane --results <host.jsonl> --compare <host-base.jsonl>",
+    );
     process.exit(2);
+  }
+
+  if (!existsSync(join(TEST262_ROOT, "test"))) {
+    console.error(
+      `REFUSED: no test262 checkout at ${TEST262_ROOT} — cannot classify a single row by edition.\n` +
+        `  Without it every row reads as "Unclassified (legacy)" and every real edition as NOT COVERED,\n` +
+        `  so the gate would report OK having checked nothing (this is how ES5 lost 7 rows,\n` +
+        `  2026-09-23 → 09-28, under a green ratchet). Check out the test262 submodule first.`,
+    );
+    process.exit(2);
+  }
+
+  if (hostLane) {
+    runHostLane({
+      resultsPath,
+      comparePath,
+      baselinePath,
+      quarantinePath: getArg(args, "--host-noise-quarantine") ?? DEFAULT_HOST_QUARANTINE,
+    });
   }
 
   const rows = readRows(resultsPath);
@@ -306,6 +393,18 @@ function main(): void {
       );
       process.exit(1);
     }
+    const violations = findCompletedViolations(rows, base);
+    if (violations.length > 0 && !force) {
+      console.error(
+        `\nREFUSED to update: ${violations.length} row(s) of a COMPLETED edition do not pass:\n` +
+          violations
+            .slice(0, 20)
+            .map((v) => `  ${name(v.ed)}: ${v.status} ${v.file}`)
+            .join("\n") +
+          `\n  A completed edition allows no regression. Fix the rows first.`,
+      );
+      process.exit(1);
+    }
     writeBaseline(baselinePath, cur, target, base, evalEngine);
     console.log(`\nUPDATED ${baselinePath}`);
     return;
@@ -353,9 +452,25 @@ function main(): void {
     if (perTest.length > 50) console.log(`  ... and ${perTest.length - 50} more`);
   }
 
+  // ── Check 3: a COMPLETED edition is zero-tolerance, row by row ──────────
+  const completedViolations = findCompletedViolations(rows, base);
+  const completedEditions = Object.entries(base.editions)
+    .filter(([, e]) => e.completed && e.ratcheted)
+    .map(([k]) => name(Number(k)));
+  if (completedEditions.length > 0) {
+    console.log(
+      `\ncompleted editions (every row must pass): ${completedEditions.join(", ")} — ` +
+        `${completedViolations.length} row(s) not passing`,
+    );
+    for (const v of completedViolations.slice(0, 50)) {
+      console.log(`  ${name(v.ed).padEnd(10)} ${v.status.padEnd(14)} ${v.file}`);
+    }
+    if (completedViolations.length > 50) console.log(`  ... and ${completedViolations.length - 50} more`);
+  }
+
   if (improvements.length > 0) console.log(`\nimprovements: ${improvements.join(", ")}`);
 
-  if (countRegressions.length === 0 && perTest.length === 0) {
+  if (countRegressions.length === 0 && perTest.length === 0 && completedViolations.length === 0) {
     console.log(`\ntest262-edition-ratchet: OK — no ratcheted edition regressed.`);
     process.exit(0);
   }
@@ -365,9 +480,228 @@ function main(): void {
   if (perTest.length > 0) {
     console.error(`  ${perTest.length} individual test(s) went pass -> not-pass in a ratcheted edition`);
   }
+  if (completedViolations.length > 0) {
+    console.error(
+      `  ${completedViolations.length} row(s) of a COMPLETED edition do not pass — a 100 % edition allows no regression`,
+    );
+  }
   console.error(
     `\n  A completed ES edition may not go backwards. If a drop is genuinely intended,\n` +
       `  say so explicitly by editing ${baselinePath} in the same change, with a reason.`,
+  );
+  process.exit(1);
+}
+
+/**
+ * `completed` is sticky: once set it survives every rewrite. It is newly set
+ * only when this measurement covers at least the recorded total and every row
+ * passed — a partial run (fewer rows than the floor knows) can never mark an
+ * edition complete.
+ */
+function completionFields(
+  before: EditionEntry | undefined,
+  pass: number,
+  total: number,
+): Pick<EditionEntry, "completed" | "exceptions" | "host_exceptions"> {
+  const nowComplete = total > 0 && pass === total && total >= (before?.total ?? 0);
+  return {
+    ...(before?.completed || nowComplete ? { completed: true } : {}),
+    ...(before?.exceptions?.length ? { exceptions: before.exceptions } : {}),
+    ...(before?.host_exceptions?.length ? { host_exceptions: before.host_exceptions } : {}),
+  };
+}
+
+/**
+ * Every row of a completed edition that is present in `rows` and does not
+ * pass, minus the edition's listed exceptions. Works on partial runs: it
+ * checks the rows it has and says nothing about the ones it does not.
+ */
+function findCompletedViolations(rows: Row[], base: Baseline): { ed: number; file: string; status: string }[] {
+  const out: { ed: number; file: string; status: string }[] = [];
+  const excepted = new Map<string, Set<string>>();
+  for (const [key, entry] of Object.entries(base.editions)) {
+    // An explicit opt-out (`ratcheted: false`, with its reason) wins: it is the
+    // one reviewed way to stop gating an edition, completed or not.
+    if (entry.completed && entry.ratcheted) excepted.set(key, new Set((entry.exceptions ?? []).map((e) => e.file)));
+  }
+  if (excepted.size === 0) return out;
+  for (const r of rows) {
+    if (r.status === "pass") continue;
+    const ed = editionOf(r.file);
+    const ex = excepted.get(String(ed));
+    if (ex === undefined || ex.has(r.file)) continue;
+    out.push({ ed, file: r.file, status: r.status });
+  }
+  return out;
+}
+
+function refuseHostLane(msg: string): never {
+  console.error(`REFUSED (js-host lane, #6786): ${msg}`);
+  process.exit(2);
+}
+
+/** Rows of a jsonl the host lane needs. Missing OR empty is refused: either way it would compare nothing. */
+function readRequiredRows(path: string, what: string): Row[] {
+  if (!existsSync(path)) refuseHostLane(`${what} not found: ${path}`);
+  const rows = readRows(path);
+  if (rows.length === 0) refuseHostLane(`${what} has no rows: ${path}`);
+  return rows;
+}
+
+interface HostRow {
+  file: string;
+  now: string;
+}
+interface HostEditionTally {
+  checked: number;
+  absent: number;
+  flips: HostRow[];
+  quarantined: HostRow[];
+  timeouts: HostRow[];
+  excepted: HostRow[];
+}
+
+/**
+ * Check 4 (#6786): the js-host lane's per-row gate for COMPLETED editions.
+ * Every row that passed in the host baseline (`comparePath`) and is present in
+ * the run must still pass, minus the two flake classes and the edition's
+ * `host_exceptions`. Rows absent from the run are not covered — the #5215
+ * completeness validator owns missing verdicts — but a run that covers NONE of
+ * them is refused, never reported OK.
+ */
+function runHostLane(o: {
+  resultsPath: string;
+  comparePath: string | undefined;
+  baselinePath: string;
+  quarantinePath: string;
+}): never {
+  if (!o.comparePath) {
+    refuseHostLane(
+      "--host-lane needs --compare <host-baseline.jsonl>. Without it there is no pass -> not-pass\n" +
+        "  to find, and the gate would report OK having compared nothing.",
+    );
+  }
+  const rows = readRequiredRows(o.resultsPath, "host results jsonl");
+  const baseRows = readRequiredRows(o.comparePath, "host baseline jsonl (--compare)");
+  if (!existsSync(o.baselinePath)) refuseHostLane(`no edition baseline at ${o.baselinePath}`);
+  const base: Baseline = JSON.parse(readFileSync(o.baselinePath, "utf-8"));
+
+  // Which editions are held, and each one's host-lane exceptions (with reasons).
+  const held = new Map<string, Set<string>>();
+  for (const [key, entry] of Object.entries(base.editions)) {
+    if (!(entry.completed && entry.ratcheted)) continue;
+    const ex = new Set<string>();
+    for (const e of entry.host_exceptions ?? []) {
+      if (!e?.file || !e?.reason?.trim()) {
+        refuseHostLane(`${name(Number(key))} host_exceptions entry needs a file AND a reason: ${JSON.stringify(e)}`);
+      }
+      ex.add(e.file);
+    }
+    held.set(key, ex);
+  }
+  console.log(
+    `test262-edition-ratchet (js-host lane, #6786): ${rows.length} rows from ${o.resultsPath}, ` +
+      `${baseRows.length} baseline rows from ${o.comparePath}\n` +
+      `  edition designations from ${o.baselinePath} (measured on ${base.target}; its counts are NOT scored here)`,
+  );
+  if (held.size === 0) {
+    console.log(`\nno edition is marked completed — nothing for the per-row host gate to hold. OK.`);
+    process.exit(0);
+  }
+
+  // Fail closed, like diff-test262: this file decides which rows are excused.
+  let quarantine: ReadonlySet<string>;
+  try {
+    const manifest = JSON.parse(readFileSync(o.quarantinePath, "utf-8")) as HostNoiseQuarantineManifest;
+    quarantine = validateHostNoiseQuarantineManifest(manifest).paths;
+  } catch (e) {
+    refuseHostLane(`host noise quarantine ${o.quarantinePath} is missing or invalid: ${(e as Error).message}`);
+  }
+  console.log(`  host noise quarantine: ${quarantine.size} exact paths from ${o.quarantinePath}`);
+
+  const now = new Map(rows.map((r) => [r.file, r.status]));
+  const was = new Map(baseRows.map((r) => [r.file, r.status]));
+  const tallies = new Map<string, HostEditionTally>();
+  for (const [file, status] of was) {
+    if (status !== "pass") continue;
+    const key = String(editionOf(file));
+    const excepted = held.get(key);
+    if (excepted === undefined) continue;
+    let t = tallies.get(key);
+    if (!t) {
+      t = { checked: 0, absent: 0, flips: [], quarantined: [], timeouts: [], excepted: [] };
+      tallies.set(key, t);
+    }
+    const cur = now.get(file);
+    if (cur === undefined) {
+      t.absent++;
+      continue;
+    }
+    t.checked++;
+    if (cur === "pass") continue;
+    const row = { file, now: cur };
+    if (quarantine.has(file)) t.quarantined.push(row);
+    else if (cur === "compile_timeout") t.timeouts.push(row);
+    else if (excepted.has(file)) t.excepted.push(row);
+    else t.flips.push(row);
+  }
+
+  const heldNames = [...held.keys()].map((k) => name(Number(k))).join(", ");
+  const all = [...tallies.values()];
+  const checked = all.reduce((n, t) => n + t.checked, 0);
+  if (checked === 0) {
+    refuseHostLane(
+      `compared nothing: no row of ${heldNames} passed in the baseline and is present in the run.\n` +
+        `  A gate that checks nothing must not report OK (ES5 lost 7 rows under exactly that, 2026-09).`,
+    );
+  }
+
+  console.log(
+    `\ncompleted editions held per-row on the js-host lane: ${heldNames}\n` +
+      `${"edition".padEnd(12)} ${"checked".padStart(8)} ${"absent".padStart(7)} ${"FLIPPED".padStart(8)} ` +
+      `${"quarant.".padStart(8)} ${"ct_flake".padStart(8)} ${"excepted".padStart(8)}`,
+  );
+  for (const [key, t] of [...tallies].sort((a, b) => Number(a[0]) - Number(b[0]))) {
+    console.log(
+      `${name(Number(key)).padEnd(12)} ${String(t.checked).padStart(8)} ${String(t.absent).padStart(7)} ` +
+        `${String(t.flips.length).padStart(8)} ${String(t.quarantined.length).padStart(8)} ` +
+        `${String(t.timeouts.length).padStart(8)} ${String(t.excepted.length).padStart(8)}`,
+    );
+  }
+  const list = (title: string, items: HostRow[], max: number) => {
+    if (items.length === 0) return;
+    console.log(`\n${title}: ${items.length}`);
+    for (const r of items.slice(0, max)) console.log(`  pass -> ${r.now.padEnd(14)} ${r.file}`);
+    if (items.length > max) console.log(`  ... and ${items.length - max} more`);
+  };
+  const flips = all.flatMap((t) => t.flips);
+  list(
+    "NOT gated — host noise quarantine (#3426, same-SHA canary flips)",
+    all.flatMap((t) => t.quarantined),
+    20,
+  );
+  list(
+    "NOT gated — pass -> compile_timeout (runner-load flake, #1192; see the #1942 guard)",
+    all.flatMap((t) => t.timeouts),
+    20,
+  );
+  list(
+    "NOT gated — host_exceptions",
+    all.flatMap((t) => t.excepted),
+    20,
+  );
+  list("REGRESSIONS in a completed edition", flips, 100);
+
+  if (flips.length === 0) {
+    console.log(`\ntest262-edition-ratchet (js-host lane): OK — no completed-edition row went pass -> not-pass.`);
+    process.exit(0);
+  }
+  console.error(
+    `\ntest262-edition-ratchet (js-host lane): FAILED — ${flips.length} row(s) of a COMPLETED edition ` +
+      `went pass -> not-pass.\n` +
+      `  A completed edition allows no regression on either lane, whatever the net (#6786).\n` +
+      `  Fix the rows. A row that cannot pass on the js-host lane by construction goes in that\n` +
+      `  edition's \`host_exceptions\` in ${o.baselinePath}, with a reason, in a reviewed diff.`,
   );
   process.exit(1);
 }
@@ -414,6 +748,7 @@ function seedFromEditionsArtifact(
       compile_error: r.ce,
       other: r.skip ?? 0,
       total: r.total,
+      ...completionFields(before, r.pass, r.total),
     };
   }
   let commit = "unknown";
@@ -461,6 +796,7 @@ function writeBaseline(
       compile_error: t.compile_error,
       other: t.other,
       total: t.total,
+      ...completionFields(before, t.pass, t.total),
     };
   }
   let commit = "unknown";

@@ -41,7 +41,10 @@ export type ValType =
   // `__box_symbol` instead of `__box_number` — so a boolean (`i32` 1) is not
   // boxed as the number 1 and a symbol HANDLE (`i32` id) is not boxed as a
   // number. Keep both brands optional + inert.
-  | { kind: "i32"; boolean?: true; symbol?: true }
+  // (#6798) `int32` marks a `type i32 = number` destination: an f64 entering it
+  // converts with ToInt32 (wrap, like `x | 0`), not the saturating truncation
+  // the generic f64 → i32 coercion keeps for indices.
+  | { kind: "i32"; boolean?: true; symbol?: true; int32?: true }
   | { kind: "i64"; bigint?: boolean }
   | { kind: "f32" }
   // (#2864 wave-2 S1) `undefSentinel` is the same kind of structural-only BRAND

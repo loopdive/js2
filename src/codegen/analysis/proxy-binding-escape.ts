@@ -2,6 +2,7 @@
 import { forEachChild, ts } from "../../ts-api.js";
 import type { CodegenContext } from "../context/types.js";
 import { tracesToProxyConstructorValue } from "../proxy-value-provenance.js"; // (#5196 R3-0)
+import { arrayMethodReadsProxyOperand } from "../proxy-array-like.js"; // (#6651 H6)
 export { variableStatementContainsPromiseSubclass } from "../expressions/promise-subclass.js";
 
 /**
@@ -192,10 +193,109 @@ function consumesExternrefCarrier(parent: ts.CallExpression | ts.NewExpression):
   const member = callee.name.text;
   if (namespace === "Reflect") return true;
   if (namespace === "Proxy") return member === "revocable";
+  // (#6775 S4) The native JSON codec walks a `$Proxy` value/replacer through
+  // its traps; a vec/struct slot copied the Proxy (running `length` and every
+  // index trap) at the binding's initialisation instead.
+  if (namespace === "JSON") return member === "stringify";
   return namespace === "Object" && OBJECT_META_STATICS.has(member);
 }
 
-function expressionIsEscapingArgument(expression: ts.Expression): boolean {
+/**
+ * (#6775 S2) Argument zero of `<id>.call(...)` / `<id>.apply(...)` where `<id>`
+ * resolves to a declaration initialised from
+ * `Object.getOwnPropertyDescriptor(...).get` or `.set`. Such a callee is an
+ * accessor closure whose `this` is an externref: it never casts the receiver
+ * to the binding's TypeScript target struct, so a Proxy receiver passed here
+ * does not need the struct slot — and keeping it copies the Proxy into a
+ * fresh struct (every trap vanishes; `Error.prototype.stack`'s setter rows).
+ */
+function isDescriptorAccessorReceiverArg(
+  ctx: CodegenContext,
+  parent: ts.CallExpression | ts.NewExpression,
+  outer: ts.Expression,
+): boolean {
+  if (!ts.isCallExpression(parent) || parent.arguments[0] !== outer) return false;
+  const callee = parent.expression;
+  if (!ts.isPropertyAccessExpression(callee) || !ts.isIdentifier(callee.expression)) return false;
+  if (callee.name.text !== "call" && callee.name.text !== "apply") return false;
+  const decl = ctx.oracle.valueDeclarationOf(callee.expression);
+  if (decl === undefined || !ts.isVariableDeclaration(decl) || decl.initializer === undefined) return false;
+  return isDescriptorAccessorRead(decl.initializer);
+}
+
+/** (#6775) `Object.getOwnPropertyDescriptor(o, k).get` / `.set` — a runtime accessor function value. */
+export function isDescriptorAccessorRead(init: ts.Expression): boolean {
+  if (!ts.isPropertyAccessExpression(init) || (init.name.text !== "get" && init.name.text !== "set")) return false;
+  const gopd = init.expression;
+  return (
+    ts.isCallExpression(gopd) &&
+    ts.isPropertyAccessExpression(gopd.expression) &&
+    ts.isIdentifier(gopd.expression.expression) &&
+    gopd.expression.expression.text === "Object" &&
+    gopd.expression.name.text === "getOwnPropertyDescriptor"
+  );
+}
+
+/**
+ * (#6637) True when `parent` is a plain call `f(...)` — callee is a bare
+ * identifier, never a property access — and the parameter at `argIndex`
+ * has NO type annotation (the oracle's `{kind:"any"}` fact, i.e. genuine
+ * implicit-any, not merely "the oracle couldn't resolve it").
+ *
+ * Deliberately narrower than `consumesExternrefCarrier`'s allowlist: this
+ * asks a QUESTION about the callee's OWN signature instead of naming
+ * specific host builtins, so it only fires for a plain named function/
+ * const-arrow call. `.call`/`.apply`/method receivers (the #2615 regression
+ * class — `Object.prototype.toString.call(p)`, `Array.prototype.copyWithin.
+ * call(p,...)`, `Object.getPrototypeOf(p)`) all have a PropertyAccessExpression
+ * callee and are excluded by the `ts.isIdentifier` guard below, so this
+ * cannot reopen that regression: those calls keep declining (falling back to
+ * the existing struct-typed storage) exactly as before.
+ *
+ * An untyped ("any") parameter reads its argument through the compiler's
+ * generic dynamic member-access path (`__dyn_member_get`/`__extern_get`),
+ * which already recognizes `$Proxy` via its own `ref.test` front-guard —
+ * the SAME path a direct `p.field` read on a locally-typed Proxy binding
+ * uses. So passing the raw externref Proxy carrier into an untyped
+ * parameter is always safe; forcing the struct-typed slot here instead
+ * guarded-casts the live Proxy to its (checker-fictional) target struct,
+ * which fails and replaces the value with `ref.null` — the receiver then
+ * misreads as "null or undefined" for every dynamic read the callee does.
+ */
+/**
+ * (#6770 S8) `obj.method(…)` whose `method` is written in THIS source file —
+ * `assert.sameValue = function (actual, expected) {…}`, the harness shape every
+ * Proxy row passes its proxy through (`assert.sameValue(receiver, proxy)`). Its
+ * untyped parameter reads dynamically exactly like a plain function's, and a
+ * declined widening kept the binding in its target's closed struct: the
+ * assignment snapshotted the proxy by `[[Get]]`-ing every field (firing the
+ * get trap with a foreign receiver before any operation ran) and `receiver ===
+ * proxy` was false forever after. `.call` / `.apply` / `.bind` stay excluded
+ * (#2615: argument zero is a receiver), and so does every lib-declared method.
+ */
+function isSourceDeclaredMethodCallee(ctx: CodegenContext, call: ts.CallExpression): boolean {
+  const callee = call.expression;
+  if (!ts.isPropertyAccessExpression(callee) || ["call", "apply", "bind"].includes(callee.name.text)) return false;
+  const decls = ctx.oracle.declarationsOf(callee.name);
+  const sourceFile = call.getSourceFile();
+  return decls.length > 0 && decls.every((d) => d.getSourceFile() === sourceFile);
+}
+
+function calleeParamIsUntyped(
+  ctx: CodegenContext,
+  parent: ts.CallExpression | ts.NewExpression,
+  outer: ts.Expression,
+): boolean {
+  if (!ts.isCallExpression(parent) || parent.arguments === undefined) return false;
+  if (!ts.isIdentifier(parent.expression) && !isSourceDeclaredMethodCallee(ctx, parent)) return false;
+  const argIndex = parent.arguments.indexOf(outer);
+  if (argIndex < 0) return false;
+  const sig = ctx.oracle.signatureOf(parent.expression);
+  if (!sig || argIndex >= sig.params.length) return false;
+  return sig.params[argIndex]!.kind === "any";
+}
+
+function expressionIsEscapingArgument(ctx: CodegenContext, expression: ts.Expression): boolean {
   const outer = outermostTransparentExpression(expression);
   const parent = outer.parent;
   if ((!ts.isCallExpression(parent) && !ts.isNewExpression(parent)) || parent.arguments === undefined) return false;
@@ -207,6 +307,19 @@ function expressionIsEscapingArgument(expression: ts.Expression): boolean {
   // guarded-cast the actual `$Proxy`/host Proxy to its TypeScript target type,
   // replace it with null, and skip the getOwnPropertyDescriptor trap entirely.
   if (consumesExternrefCarrier(parent)) return false;
+
+  // (#6637) A plain call to a bare-identifier function whose matching
+  // parameter carries no type annotation reads dynamically too — see
+  // `calleeParamIsUntyped` for why this cannot reopen #2615.
+  if (calleeParamIsUntyped(ctx, parent, outer)) return false;
+  // (#6651 H6) A standalone Array borrow/concat that reads the operand via the MOP.
+  if (arrayMethodReadsProxyOperand(ctx, parent, outer)) return false;
+
+  // (#6775 S2) `get.call(p)` / `set.call(p, v)` where the callee binding is an
+  // accessor pulled off a descriptor (`Object.getOwnPropertyDescriptor(o, k)
+  // .get|.set`) takes its receiver as a raw externref `this`, like the
+  // `Reflect.*` consumers above.
+  if (isDescriptorAccessorReceiverArg(ctx, parent, outer)) return false;
 
   // This includes argument zero of `.call` / `.apply`, the generic-method
   // receiver that motivated #2615. A member receiver (`p.method()`) is not in
@@ -269,7 +382,7 @@ export function proxyBindingEscapesToCall(ctx: CodegenContext, declaration: ts.V
       return;
     }
 
-    if (ts.isIdentifier(node) && node.text === bindingName && expressionIsEscapingArgument(node)) {
+    if (ts.isIdentifier(node) && node.text === bindingName && expressionIsEscapingArgument(ctx, node)) {
       const resolved = ctx.oracle.valueDeclarationOf(node);
       if (resolved === declaration || resolved === undefined) {
         escapes = true;

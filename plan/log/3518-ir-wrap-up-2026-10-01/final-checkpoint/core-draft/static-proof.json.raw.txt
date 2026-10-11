@@ -1,0 +1,95 @@
+{
+  "syntaxParsingOnly": true,
+  "compilerOrTestExecution": false,
+  "rawOwners": 51,
+  "phaseA": {
+    "inverseFiles": 13,
+    "forwardFiles": 25
+  },
+  "core": {
+    "inverseFiles": 8,
+    "forwardFiles": 15,
+    "transfers": 164,
+    "currentResidues": 4,
+    "editedRoles": [
+      {
+        "path": "src/ir/runtime/contracts/intrinsics.ts",
+        "name": "BOOLEAN_BOUNDARY_RUNTIME_FEATURES",
+        "editsSha256": "c0ce199d2baf1422a12cbe8646db364da3b7e3f8af8c0de5cf6358d077382103"
+      },
+      {
+        "path": "src/ir/core/intrinsic-contracts.ts",
+        "name": "IntrinsicDefinition",
+        "editsSha256": "55e023985212ddf29bfe3e30e9cdb4934477d00c6b3f858b94aa3d037795f6e5"
+      },
+      {
+        "path": "src/ir/core/intrinsics.ts",
+        "name": "definition",
+        "editsSha256": "27bb02d56a340ef7209d136f07e3a20c1f081a1773c257a1ad60dec4ceda7342"
+      },
+      {
+        "path": "src/ir/core/intrinsics.ts",
+        "name": "INTRINSIC_DEFINITIONS",
+        "editsSha256": "cc8a3a351c46e49a805366a437c815aaa6f731d0ea2401bdd06899712dcab05b"
+      },
+      {
+        "path": "src/ir/analysis/intrinsics.ts",
+        "name": "signatureMismatch",
+        "editsSha256": "93ffc1901f970666a0b4e0560226c647f8a4903c40404e2f8f1014a2c12f3387"
+      },
+      {
+        "path": "src/ir/core/intrinsic-vocabulary.ts",
+        "name": "BOOLEAN_BOUNDARY_INTRINSIC_IDS",
+        "editsSha256": "f4874d722e697029a322b900d31d147e0842ffbaf4fffb69930c34f3bf0c6685"
+      }
+    ]
+  },
+  "receiptProofs": [
+    {
+      "old": "src/ir/intrinsics.ts",
+      "moved": {
+        "count": 12,
+        "sha256": "12c95d79325da6795c51cba7511d4e80b33c6138365b7ee104f9e31d82dab8b4"
+      },
+      "retained": {
+        "count": 44,
+        "sha256": "6e7eec6bbaef010d054f9f0309cc16f638d35cca139f8b11b85ed456592b4ba6"
+      }
+    },
+    {
+      "old": "src/ir/async-runtime-providers.ts",
+      "moved": {
+        "count": 3,
+        "sha256": "d8a4e132d226ef7959c01860234a0a35006e1c8b274fdc7939184e3d6f64846e"
+      },
+      "retained": {
+        "count": 36,
+        "sha256": "258e2df650b4c63de0b980af3cf246be6aa394f6dcb852a026e63fd8b5b31e58"
+      }
+    },
+    {
+      "old": "src/ir/string-runtime.ts",
+      "moved": {
+        "count": 2,
+        "sha256": "892c6b176ce446d8b0e9f9f61616e822b56b6cf227e5442a1ae0fc4f593adfb5"
+      },
+      "retained": {
+        "count": 31,
+        "sha256": "5c81a555626ad6b994806f135f4da8a0d406974245bed7058a8cce0e193417dd"
+      }
+    },
+    {
+      "old": "src/ir/counted-string-append-provenance.ts",
+      "moved": {
+        "count": 4,
+        "sha256": "3bca63c8b7bc0b8bac48a30aba9af5dfdef3fd9a25fb95d18a5e573adc7cc333"
+      },
+      "retained": {
+        "count": 32,
+        "sha256": "43fee73f4c73e2e294c021dd025513a34f2552f58a65f7b3912d2f1b044f07aa"
+      }
+    }
+  ],
+  "wholeByteInverseAll": true,
+  "wholeByteForwardAll": true
+}

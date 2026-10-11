@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 1,
+  "scope": "preservation-only TypedArray intrinsic Call main evolution",
+  "priorCommit": "8a730516ced8ace5da216cbb8f5b5c54c064d421",
+  "currentCommit": "25ee5b64b883b6d735b1072272a24d8740256e0b",
+  "sourceCommit": "2b3b5d2dcb49cd2e28bceeba7569fe1312aeb51b",
+  "records": [
+    {
+      "path": "src/codegen/expressions/calls.ts",
+      "before": {
+        "sha256": "9c10b1a652c700eb2358b3e2f219a0626643319806824f05c5a9c20323402332",
+        "gitBlob": "0a6a6f87dbabdfcf5bd44a2b8b24291ff5cecc91",
+        "bytes": 519522,
+        "utf16Units": 517965
+      },
+      "after": {
+        "sha256": "bbfc57a121a6557ebcd279250bd0dd124e9eba7571cf03b20d35ec790ef1186c",
+        "gitBlob": "26c1c1643460d0382d24d8cedf3a6be70f253eff",
+        "bytes": 520725,
+        "utf16Units": 519164
+      },
+      "spans": [
+        {
+          "ordinal": 0,
+          "beforeOffset": 3438,
+          "afterOffset": 3438,
+          "before": "import { NATIVE_HOF_METHODS } from \"../hof-native.js\";\nimport { ensureTaMapFilterHelper } from \"../ta-hof-map-filter.js\";\nimport { LAZY_ITER_METHODS } from \"../iter-lazy-native.js\"; // (#2903 R3b) flatMap closure-path exemption\nimport { prepareBuiltinCtorValueInvoke } from \"../builtin-ctor-value-invoke.js\"; // (#6713)\n",
+          "after": "import { NATIVE_HOF_METHODS } from \"../hof-native.js\";\nimport { ensureTaMapFilterHelper } from \"../ta-hof-map-filter.js\";\nimport { buildTypedArrayIntrinsicCarrierMatch } from \"../ta-static-from-of-spec.js\"; // (#6769 S7d)\nimport { LAZY_ITER_METHODS } from \"../iter-lazy-native.js\"; // (#2903 R3b) flatMap closure-path exemption\nimport { prepareBuiltinCtorValueInvoke } from \"../builtin-ctor-value-invoke.js\"; // (#6713)\n",
+          "beforeSha256": "8efc0a687f79c34232b14c0f11f54a424cb054c5e4c53d8f38bd90d0c329e841",
+          "afterSha256": "4eb7dc07927fb427f29f74e47a26ce7ad4e9bda0a46940663c98557076938d4f"
+        },
+        {
+          "ordinal": 1,
+          "beforeOffset": 268847,
+          "afterOffset": 268947,
+          "before": "  }\n\n  return dispatch;\n}\n\n/**\n",
+          "after": "  }\n\n  return wantTaCtorArm ? wrapTaIntrinsicCallThrow(ctx, fctx, anyLocal, dispatch) : dispatch; // (#6769 S7d)\n}\n\n/**\n * (#6769 S7d) §23.2.1.1: the `%TypedArray%` intrinsic throws TypeError when\n * CALLED too. It is an ordinary `$Object` carrier here, so the `$__ta_ctor` /\n * Int8Array-carrier arms cannot see it and `TypedArray()` returned normally.\n * The existing identity match (`ta-static-from-of-spec.ts`) reserves the\n * carrier's global itself, so a `__dyn_call_N` helper built from harness code\n * before the intrinsic is first materialized still recognises it.\n */\nfunction wrapTaIntrinsicCallThrow(\n  ctx: CodegenContext,\n  fctx: FunctionContext,\n  anyLocal: number,\n  dispatch: Instr[],\n): Instr[] {\n  const abstractThrow = buildThrowJsErrorInstrs(ctx, \"TypeError\", TA_INTRINSIC_ABSTRACT_MSG, { flush: fctx });\n  return [...buildTypedArrayIntrinsicCarrierMatch(ctx, anyLocal, abstractThrow), ...dispatch];\n}\n\n/** (#6769 S7d) §23.2.1.1 — the message `dataview-native.ts` already uses for this throw. */\nexport const TA_INTRINSIC_ABSTRACT_MSG = \"TypeError: Abstract class TypedArray not directly constructable\";\n\n/**\n",
+          "beforeSha256": "fea62ac611dce0295c647671de2d4b1c48c3e343bf2a450fb2da457cd3300aa9",
+          "afterSha256": "671069488e292f2f3da4f5d1d3d9c90b05a12ec4627d7731056c7f3ec2517caa"
+        }
+      ]
+    }
+  ],
+  "dependencies": [
+    {
+      "path": "src/codegen/ta-static-from-of-spec.ts",
+      "sha256": "f3dfc889d30cb07bada46dda7f65a1601d5a91389a796f856d718544f093cbca",
+      "gitBlob": "6daa28466bf8271e611d2ea1715ea2c928779cad",
+      "bytes": 11099,
+      "utf16Units": 11064
+    }
+  ]
+}

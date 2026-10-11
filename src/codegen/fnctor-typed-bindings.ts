@@ -93,6 +93,7 @@ import { fnctorTypedBindingsFlagEnabled } from "../derivation-flags.js";
 import type { CodegenContext } from "./context/types.js";
 import type { ValType } from "../ir/types.js";
 import { writeOnceThisCallReturnStruct } from "./fnctor-escape-gate.js";
+import { readEnv } from "../env.js";
 
 /**
  * **ON by default since 2026-08-08** (#743 derivation-defaults flip);
@@ -125,7 +126,7 @@ export const fnctorTypedBindingStats = {
 };
 let statsHookInstalled = false;
 function censusEnabled(): boolean {
-  return process.env.JS2WASM_FNCTOR_TYPED_BINDINGS_DEBUG === "1";
+  return readEnv("JS2WASM_FNCTOR_TYPED_BINDINGS_DEBUG") === "1";
 }
 function note(bucket: Map<string, number>, key: string): void {
   if (!censusEnabled()) return;

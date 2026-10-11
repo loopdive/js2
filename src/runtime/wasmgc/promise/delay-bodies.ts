@@ -75,6 +75,7 @@ export function buildNativePromiseDelayProviderBody(resources: NativePromiseDela
     { op: "ref.null.extern" },
     { op: "ref.null.extern" },
     { op: resources.bagInit.op },
+    { op: "i32.const", value: 0 },
     { op: "struct.new", typeIdx: resources.promiseTypeIdx },
     { op: "local.set", index: promiseLocal },
     buildStandardTryTable({ kind: "empty" }, timerRegistration, [

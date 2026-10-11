@@ -1,0 +1,1 @@
+Local audit initially parsed standalone comment fragments, but span boundaries can split authentic comment text; standalone parser classification is inapplicable. Correct check uses final reconstructed source comment ranges and exact recipe targetStart. No production/source/test changes.

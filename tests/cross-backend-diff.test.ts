@@ -110,6 +110,16 @@ describe("#1854 cross-backend differential (WasmGC vs linear)", () => {
         const argStr = `${call.fn}(${call.args.join(", ")})`;
         const gcVal = invoke(gc.exports, call.fn, call.args);
         const linVal = invoke(linear.exports, call.fn, call.args);
+        if (call.expectLinearDivergence) {
+          // Known linear miscompile (#6793): measured, not skipped. Assert it
+          // STILL diverges so a fix forces the flag off (ratchet direction).
+          expect(
+            linVal,
+            `${program.name} :: ${argStr} is flagged expectLinearDivergence (${call.expectLinearDivergence}) but ` +
+              `linear now agrees with WasmGC (${JSON.stringify(gcVal)}) — remove the flag so this call is gated.`,
+          ).not.toStrictEqual(gcVal);
+          continue;
+        }
         expect(
           linVal,
           `Cross-backend DIVERGENCE in ${program.name} :: ${argStr} — ` +

@@ -1,0 +1,119 @@
+{
+  "base": "f52f6ae020d6d5ddb07e69a3b18811a5b4f86c24",
+  "records": [
+    {
+      "path": "src/codegen/bigint-wide.ts",
+      "beforeSHA256": "a61daeaea9a425c8c58449f8bfdcbbb5207d2b600c5e8cb0994463723a61d911",
+      "beforeGitBlob": "c4621e4c246b0ebd4d7ca66f19e417d6b9708e1c",
+      "afterSHA256": "ee6bb5e33ecc5004b264d61c090e17562e729b2a4110dba06d206bae588da687",
+      "spans": [
+        {
+          "before": " * Runtime arithmetic on the i64 lane is unchanged (it still wraps), because an\n * i64 slot cannot hold the wider result.\n */\nimport { ts } from \"../ts-api.js\";\nimport type { Instr, ValType } from \"../ir/types.js\";\nimport type { CodegenContext, FunctionContext } from \"./context/types.js\";\n",
+          "after": " * Runtime arithmetic on the i64 lane is unchanged (it still wraps), because an\n * i64 slot cannot hold the wider result.\n */\nimport { buildBigIntLimbsType, buildWideBigIntType } from \"../runtime/wasmgc/values/bigint-carrier-layouts.js\";\nimport { buildBigIntCarrierEqualityDefinition } from \"../runtime/wasmgc/values/bigint-carrier-body.js\";\nimport { ts } from \"../ts-api.js\";\nimport type { Instr, ValType } from \"../ir/types.js\";\nimport type { CodegenContext, FunctionContext } from \"./context/types.js\";\n",
+          "beforeOffset": 2573,
+          "afterOffset": 2573
+        },
+        {
+          "before": " */\nexport function registerWideBigIntTypes(ctx: CodegenContext, bigIntStructIdx: number): void {\n  const limbsIdx = ctx.mod.types.length;\n  ctx.mod.types.push({ kind: \"array\", name: \"$BigIntLimbs\", element: { kind: \"i32\" }, mutable: true });\n  const wideIdx = ctx.mod.types.length;\n  ctx.mod.types.push({\n    kind: \"struct\",\n    name: \"$BigIntWide\",\n    superTypeIdx: bigIntStructIdx,\n    fields: [\n      { name: \"value\", type: { kind: \"i64\", bigint: true }, mutable: false },\n      { name: \"sign\", type: { kind: \"i32\" }, mutable: false },\n      { name: \"mag\", type: { kind: \"ref\", typeIdx: limbsIdx }, mutable: false },\n    ],\n  });\n  ctx.nativeBigIntLimbsTypeIdx = limbsIdx;\n  ctx.nativeBigIntWideTypeIdx = wideIdx;\n}\n",
+          "after": " */\nexport function registerWideBigIntTypes(ctx: CodegenContext, bigIntStructIdx: number): void {\n  const limbsIdx = ctx.mod.types.length;\n  ctx.mod.types.push(buildBigIntLimbsType());\n  const wideIdx = ctx.mod.types.length;\n  ctx.mod.types.push(buildWideBigIntType(bigIntStructIdx, limbsIdx));\n  ctx.nativeBigIntLimbsTypeIdx = limbsIdx;\n  ctx.nativeBigIntWideTypeIdx = wideIdx;\n}\n",
+          "beforeOffset": 3852,
+          "afterOffset": 4068
+        },
+        {
+          "before": " * wide value never equal to an i64 one, and two wide values equal exactly when\n * sign and magnitude limbs agree.\n */\nfunction ensureBigIntCarrierEq(ctx: CodegenContext): number | undefined {\n  const existing = ctx.funcMap.get(\"__bigint_carrier_eq\");\n  if (existing !== undefined) return existing;\n  const types = wideTypes(ctx);\n  if (types === undefined) return undefined;\n  const WA = 2;\n  const WB = 3;\n  const N = 4;\n  const I = 5;\n  const isWide = (index: number): Instr[] => [\n    { op: \"local.get\", index },\n    { op: \"ref.test\", typeIdx: types.wide },\n  ];\n  const field = (local: number, fieldIdx: number): Instr[] => [\n    { op: \"local.get\", index: local },\n    { op: \"struct.get\", typeIdx: types.wide, fieldIdx },\n  ];\n  const returnFalse: Instr[] = [{ op: \"i32.const\", value: 0 }, { op: \"return\" }];\n  const body: Instr[] = [\n    ...isWide(0),\n    ...isWide(1),\n    { op: \"i32.or\" },\n    {\n      op: \"if\",\n      blockType: { kind: \"empty\" },\n      then: [\n        ...isWide(0),\n        ...isWide(1),\n        { op: \"i32.and\" },\n        { op: \"i32.eqz\" },\n        { op: \"if\", blockType: { kind: \"empty\" }, then: returnFalse },\n        { op: \"local.get\", index: 0 },\n        { op: \"ref.cast\", typeIdx: types.wide },\n        { op: \"local.set\", index: WA },\n        { op: \"local.get\", index: 1 },\n        { op: \"ref.cast\", typeIdx: types.wide },\n        { op: \"local.set\", index: WB },\n        ...field(WA, WIDE_FIELD_SIGN),\n        ...field(WB, WIDE_FIELD_SIGN),\n        { op: \"i32.ne\" },\n        { op: \"if\", blockType: { kind: \"empty\" }, then: returnFalse },\n        ...field(WA, WIDE_FIELD_MAG),\n        { op: \"array.len\" },\n        { op: \"local.tee\", index: N },\n        ...field(WB, WIDE_FIELD_MAG),\n        { op: \"array.len\" },\n        { op: \"i32.ne\" },\n        { op: \"if\", blockType: { kind: \"empty\" }, then: returnFalse },\n        {\n          op: \"loop\",\n          blockType: { kind: \"empty\" },\n          body: [\n            { op: \"local.get\", index: I },\n            { op: \"local.get\", index: N },\n            { op: \"i32.ge_u\" },\n            { op: \"if\", blockType: { kind: \"empty\" }, then: [{ op: \"i32.const\", value: 1 }, { op: \"return\" }] },\n            ...field(WA, WIDE_FIELD_MAG),\n            { op: \"local.get\", index: I },\n            { op: \"array.get\", typeIdx: types.limbs },\n            ...field(WB, WIDE_FIELD_MAG),\n            { op: \"local.get\", index: I },\n            { op: \"array.get\", typeIdx: types.limbs },\n            { op: \"i32.ne\" },\n            { op: \"if\", blockType: { kind: \"empty\" }, then: returnFalse },\n            { op: \"local.get\", index: I },\n            { op: \"i32.const\", value: 1 },\n            { op: \"i32.add\" },\n            { op: \"local.set\", index: I },\n            { op: \"br\", depth: 0 },\n          ],\n        },\n      ],\n    },\n    { op: \"local.get\", index: 0 },\n    { op: \"ref.cast\", typeIdx: types.narrow },\n    { op: \"struct.get\", typeIdx: types.narrow, fieldIdx: 0 },\n    { op: \"local.get\", index: 1 },\n    { op: \"ref.cast\", typeIdx: types.narrow },\n    { op: \"struct.get\", typeIdx: types.narrow, fieldIdx: 0 },\n    { op: \"i64.eq\" },\n  ];\n  return pushHelper(\n    ctx,\n    \"__bigint_carrier_eq\",\n    [{ kind: \"anyref\" }, { kind: \"anyref\" }],\n    [{ kind: \"i32\" }],\n    [\n      { name: \"wa\", type: { kind: \"ref_null\", typeIdx: types.wide } },\n      { name: \"wb\", type: { kind: \"ref_null\", typeIdx: types.wide } },\n      { name: \"n\", type: { kind: \"i32\" } },\n      { name: \"i\", type: { kind: \"i32\" } },\n    ],\n    body,\n  );\n}\n",
+          "after": " * wide value never equal to an i64 one, and two wide values equal exactly when\n * sign and magnitude limbs agree.\n */\nexport function ensureBigIntCarrierEq(ctx: CodegenContext): number | undefined {\n  const existing = ctx.funcMap.get(\"__bigint_carrier_eq\");\n  if (existing !== undefined) return existing;\n  const types = wideTypes(ctx);\n  if (types === undefined) return undefined;\n  const { locals, body } = buildBigIntCarrierEqualityDefinition(types);\n  return pushHelper(\n    ctx,\n    \"__bigint_carrier_eq\",\n    [{ kind: \"anyref\" }, { kind: \"anyref\" }],\n    [{ kind: \"i32\" }],\n    locals,\n    body,\n  );\n}\n",
+          "beforeOffset": 33122,
+          "afterOffset": 32998
+        }
+      ]
+    },
+    {
+      "path": "src/codegen/registry/imports.ts",
+      "beforeSHA256": "5f80683056138c531b40e9bc104469844d928d0f7647780b8a5b929ffbdb2fc6",
+      "beforeGitBlob": "510347f4001116ef9c9de158d3d2b9ad25ac7b70",
+      "afterSHA256": "f6180c5908ed7b57cfddf218301887af7369b10095b3efa95e6fccebd8292a51",
+      "spans": [
+        {
+          "before": "// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.\n/** Import/global registration and late index-space fixups. */\nimport { registerWideBigIntTypes } from \"../bigint-wide.js\";\nimport type { Import, Instr, ValType, WasmFunction } from \"../../ir/types.js\";\nimport { buildBoxNumberType, buildBoxBooleanType } from \"../../runtime/wasmgc/values/primitive-layouts.js\";\nimport {\n",
+          "after": "// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.\n/** Import/global registration and late index-space fixups. */\nimport { registerWideBigIntTypes } from \"../bigint-wide.js\";\nimport { buildOpenBigIntType } from \"../../runtime/wasmgc/values/bigint-carrier-layouts.js\";\nimport type { Import, Instr, ValType, WasmFunction } from \"../../ir/types.js\";\nimport { buildBoxNumberType, buildBoxBooleanType } from \"../../runtime/wasmgc/values/primitive-layouts.js\";\nimport {\n",
+          "beforeOffset": 0,
+          "afterOffset": 0
+        },
+        {
+          "before": "  buildUnboxBooleanLocals,\n  buildTypeofBooleanBody,\n} from \"../../runtime/wasmgc/values/boolean-bodies.js\";\nimport {\n  buildBigIntPrimitiveType,\n  buildBoxBigIntBody,\n  buildTypeofBigIntBody,\n} from \"../../runtime/wasmgc/values/bigint-primitive-bodies.js\";\nimport type { CodegenContext, ExternClassInfo } from \"../context/types.js\";\nimport { resolveWidenedVarKey } from \"../widened-var-key.js\";\nimport { hasLoneSurrogate, hexCodeUnits, STRING_CONSTANTS16_NS } from \"../../string-surrogate.js\";\n",
+          "after": "  buildUnboxBooleanLocals,\n  buildTypeofBooleanBody,\n} from \"../../runtime/wasmgc/values/boolean-bodies.js\";\nimport { buildBoxBigIntBody, buildTypeofBigIntBody } from \"../../runtime/wasmgc/values/bigint-primitive-bodies.js\";\nimport type { CodegenContext, ExternClassInfo } from \"../context/types.js\";\nimport { resolveWidenedVarKey } from \"../widened-var-key.js\";\nimport { hasLoneSurrogate, hexCodeUnits, STRING_CONSTANTS16_NS } from \"../../string-surrogate.js\";\n",
+          "beforeOffset": 614,
+          "afterOffset": 707
+        },
+        {
+          "before": "  ctx.mod.types.push(buildBoxBooleanType());\n\n  const bigIntStructIdx = ctx.mod.types.length;\n  ctx.mod.types.push({ ...buildBigIntPrimitiveType(), superTypeIdx: -1 });\n  registerWideBigIntTypes(ctx, bigIntStructIdx);\n  ctx.nativeBoxNumberTypeIdx = boxNumStructIdx;\n  ctx.nativeBoxBooleanTypeIdx = boxBoolStructIdx;\n",
+          "after": "  ctx.mod.types.push(buildBoxBooleanType());\n\n  const bigIntStructIdx = ctx.mod.types.length;\n  ctx.mod.types.push(buildOpenBigIntType());\n  registerWideBigIntTypes(ctx, bigIntStructIdx);\n  ctx.nativeBoxNumberTypeIdx = boxNumStructIdx;\n  ctx.nativeBoxBooleanTypeIdx = boxBoolStructIdx;\n",
+          "beforeOffset": 63690,
+          "afterOffset": 63750
+        }
+      ]
+    },
+    {
+      "path": "src/codegen/object-runtime-enumeration.ts",
+      "beforeSHA256": "f2fadd3644b9c86cb942b51ce2cb9de821b2e9f092bcfdc44bbb2b83892be161",
+      "beforeGitBlob": "33312e9bcf6fbdf393555e82967dff0616804807",
+      "afterSHA256": "57d79bed49bb1d1fa30faf7515e6a971c87c5d92fd4b597a302482e720dfe596",
+      "spans": [
+        {
+          "before": " * preserved exactly.\n */\nimport { buildObjectSameValueBody } from \"../runtime/wasmgc/values/object-same-value-body.js\";\nimport type { Instr, ValType } from \"../ir/types.js\";\nimport type { CodegenContext } from \"./context/types.js\";\nimport { getStringToNumberProvider, getToPrimitiveProvider } from \"./coercion-engine.js\";\n",
+          "after": " * preserved exactly.\n */\nimport { buildObjectSameValueBody } from \"../runtime/wasmgc/values/object-same-value-body.js\";\nimport { ensureBigIntCarrierEq } from \"./bigint-wide.js\";\nimport type { Instr, ValType } from \"../ir/types.js\";\nimport type { CodegenContext } from \"./context/types.js\";\nimport { getStringToNumberProvider, getToPrimitiveProvider } from \"./coercion-engine.js\";\n",
+          "beforeOffset": 1235,
+          "afterOffset": 1235
+        },
+        {
+          "before": "      else: [{ op: \"f64.const\", value: 0 }],\n    },\n  ];\n}\n\nexport function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnumerationHelperState): void {\n",
+          "after": "      else: [{ op: \"f64.const\", value: 0 }],\n    },\n  ];\n}\n\n/** Register SameValue at its original final enumeration step, using captured string bindings. */\nfunction registerObjectSameValueHelper(\n  ctx: CodegenContext,\n  bindings: Pick<ObjectEnumerationHelperState, \"registerNative\" | \"anyStrTypeIdx\" | \"strFlattenIdx\" | \"strEqualsIdx\">,\n): void {\n  const { registerNative, anyStrTypeIdx, strFlattenIdx, strEqualsIdx } = bindings;\n  // ── __object_is(externref a, externref b) -> i32 (#2042 S3 — Object.is) ────\n  //\n  // SameValue (§7.2.10) over two boxed externrefs. Tag-dispatched like the\n  // union-helper `===` lowering, but with the SameValue numeric rule:\n  // NaN is SameValue NaN, and +0 is NOT SameValue -0. Comparing the f64 bit\n  // patterns (`i64.reinterpret_f64` + `i64.eq`) gives exactly that — equal NaN\n  // bit patterns compare equal, and +0 (0x0…) vs -0 (0x8000…) compare unequal.\n  // boolean → unbox i32; bigint → exact carrier equality; both-null → equal; else ref identity.\n  //\n  // NATIVE-PROVIDER (`semanticProviders === \"native-first\"`), not merely\n  // standalone-only (#2609/#4397). The\n  // native `__defineProperty_value` block below is registered UNCONDITIONALLY by\n  // this runtime and its #2042-S4 ValidateAndApplyPropertyDescriptor preflight\n  // bakes a direct `call __object_is` for the SameValue value-change check. WASI\n  // is host-free too (no JS `__object_is` import — `--target wasi` sets\n  // `ctx.wasi` but leaves `ctx.standalone` false), so gating this registration on\n  // `ctx.standalone` alone left `funcMap.get(\"__object_is\")` undefined in WASI,\n  // and the define helper baked an undefined funcIdx → \"function index out of\n  // range — undefined at __defineProperty_value\" hard emit error (loopdive/js2wasm#389).\n  // The compatibility-provider path still owns `__object_is` via its JS import,\n  // so its output stays byte-identical.\n  if (ctx.targetProfile.semanticProviders === \"native-first\") {\n    addUnionImportsViaRegistry(ctx);\n    const bigintEqualityIdx = ensureBigIntCarrierEq(ctx);\n    if (bigintEqualityIdx === undefined) throw new Error(\"native SameValue requires canonical BigInt carrier equality\");\n    const typeofNumIdx = ctx.funcMap.get(\"__typeof_number\")!;\n    const typeofBoolIdx = ctx.funcMap.get(\"__typeof_boolean\")!;\n    const typeofBigIdx = ctx.funcMap.get(\"__typeof_bigint\")!;\n    const unboxNumIdx = ctx.funcMap.get(\"__unbox_number\")!;\n    const unboxBoolIdx = ctx.funcMap.get(\"__unbox_boolean\")!;\n    registerNative(\n      \"__object_is\",\n      [{ kind: \"externref\" }, { kind: \"externref\" }],\n      [{ kind: \"i32\" }],\n      [\n        { name: \"aa\", type: { kind: \"anyref\" } },\n        { name: \"ba\", type: { kind: \"anyref\" } },\n      ],\n      buildObjectSameValueBody({\n        typeofNumIdx,\n        typeofBoolIdx,\n        typeofBigIdx,\n        unboxNumIdx,\n        unboxBoolIdx,\n        bigint: { kind: \"carrier\", equalIdx: bigintEqualityIdx },\n        anyStrTypeIdx,\n        strFlattenIdx,\n        strEqualsIdx,\n      }),\n    );\n  }\n}\n\nexport function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnumerationHelperState): void {\n",
+          "beforeOffset": 10332,
+          "afterOffset": 10390
+        },
+        {
+          "before": "    );\n  }\n\n  // ── __object_is(externref a, externref b) -> i32 (#2042 S3 — Object.is) ────\n  //\n  // SameValue (§7.2.10) over two boxed externrefs. Tag-dispatched like the\n  // union-helper `===` lowering, but with the SameValue numeric rule:\n  // NaN is SameValue NaN, and +0 is NOT SameValue -0. Comparing the f64 bit\n  // patterns (`i64.reinterpret_f64` + `i64.eq`) gives exactly that — equal NaN\n  // bit patterns compare equal, and +0 (0x0…) vs -0 (0x8000…) compare unequal.\n  // boolean → unbox i32; bigint → i64; both-null → equal; else ref identity.\n  //\n  // NATIVE-PROVIDER (`semanticProviders === \"native-first\"`), not merely\n  // standalone-only (#2609/#4397). The\n  // native `__defineProperty_value` block below is registered UNCONDITIONALLY by\n  // this runtime and its #2042-S4 ValidateAndApplyPropertyDescriptor preflight\n  // bakes a direct `call __object_is` for the SameValue value-change check. WASI\n  // is host-free too (no JS `__object_is` import — `--target wasi` sets\n  // `ctx.wasi` but leaves `ctx.standalone` false), so gating this registration on\n  // `ctx.standalone` alone left `funcMap.get(\"__object_is\")` undefined in WASI,\n  // and the define helper baked an undefined funcIdx → \"function index out of\n  // range — undefined at __defineProperty_value\" hard emit error (loopdive/js2wasm#389).\n  // The compatibility-provider path still owns `__object_is` via its JS import,\n  // so its output stays byte-identical.\n  if (ctx.targetProfile.semanticProviders === \"native-first\") {\n    addUnionImportsViaRegistry(ctx);\n    const typeofNumIdx = ctx.funcMap.get(\"__typeof_number\")!;\n    const typeofBoolIdx = ctx.funcMap.get(\"__typeof_boolean\")!;\n    const typeofBigIdx = ctx.funcMap.get(\"__typeof_bigint\")!;\n    const unboxNumIdx = ctx.funcMap.get(\"__unbox_number\")!;\n    const unboxBoolIdx = ctx.funcMap.get(\"__unbox_boolean\")!;\n    const toBigIdx = ctx.funcMap.get(\"__to_bigint\")!;\n    registerNative(\n      \"__object_is\",\n      [{ kind: \"externref\" }, { kind: \"externref\" }],\n      [{ kind: \"i32\" }],\n      [\n        { name: \"aa\", type: { kind: \"anyref\" } },\n        { name: \"ba\", type: { kind: \"anyref\" } },\n      ],\n      buildObjectSameValueBody({\n        typeofNumIdx,\n        typeofBoolIdx,\n        typeofBigIdx,\n        unboxNumIdx,\n        unboxBoolIdx,\n        toBigIdx,\n        anyStrTypeIdx,\n        strFlattenIdx,\n        strEqualsIdx,\n      }),\n    );\n  }\n}\n\n/**\n",
+          "after": "    );\n  }\n\n  registerObjectSameValueHelper(ctx, { registerNative, anyStrTypeIdx, strFlattenIdx, strEqualsIdx });\n}\n\n/**\n",
+          "beforeOffset": 62031,
+          "afterOffset": 65048
+        }
+      ]
+    },
+    {
+      "path": "src/runtime/wasmgc/values/object-same-value-body.ts",
+      "beforeSHA256": "b796f55fa4eaf251a7494262e5fa21a6208d9e72c1b997902c32227d6186531d",
+      "beforeGitBlob": "5c1258d06f346aa68646c87406b54a83b4033556",
+      "afterSHA256": "ab29f1bc725f56fc8e33c66818ee103fc316faa0c11077a9b5a20e08fde00ebb",
+      "spans": [
+        {
+          "before": "  readonly typeofBigIdx: FuncHandle;\n  readonly unboxNumIdx: FuncHandle;\n  readonly unboxBoolIdx: FuncHandle;\n  readonly toBigIdx: FuncHandle;\n  readonly anyStrTypeIdx: TypeHandle;\n  readonly strFlattenIdx: FuncHandle | undefined;\n  readonly strEqualsIdx: FuncHandle | undefined;\n",
+          "after": "  readonly typeofBigIdx: FuncHandle;\n  readonly unboxNumIdx: FuncHandle;\n  readonly unboxBoolIdx: FuncHandle;\n  /** The legacy-i64 case exists only to preserve explicitly selected historical recipes. */\n  readonly bigint:\n    | { readonly kind: \"carrier\"; readonly equalIdx: FuncHandle }\n    | { readonly kind: \"legacy-i64\"; readonly toBigIdx: FuncHandle };\n  readonly anyStrTypeIdx: TypeHandle;\n  readonly strFlattenIdx: FuncHandle | undefined;\n  readonly strEqualsIdx: FuncHandle | undefined;\n",
+          "beforeOffset": 408,
+          "afterOffset": 408
+        },
+        {
+          "before": "    typeofBigIdx,\n    unboxNumIdx,\n    unboxBoolIdx,\n    toBigIdx,\n    anyStrTypeIdx,\n    strFlattenIdx,\n    strEqualsIdx,\n",
+          "after": "    typeofBigIdx,\n    unboxNumIdx,\n    unboxBoolIdx,\n    bigint,\n    anyStrTypeIdx,\n    strFlattenIdx,\n    strEqualsIdx,\n",
+          "beforeOffset": 928,
+          "afterOffset": 1143
+        },
+        {
+          "before": "    {\n      op: \"if\",\n      blockType: { kind: \"val\", type: { kind: \"i32\" } },\n      then: [\n        { op: \"local.get\", index: 0 },\n        { op: \"call\", funcIdx: toBigIdx },\n        { op: \"local.get\", index: 1 },\n        { op: \"call\", funcIdx: toBigIdx },\n        { op: \"i64.eq\" },\n      ],\n      else: elseArm,\n    },\n  ];\n",
+          "after": "    {\n      op: \"if\",\n      blockType: { kind: \"val\", type: { kind: \"i32\" } },\n      then:\n        bigint.kind === \"carrier\"\n          ? [\n              { op: \"local.get\", index: 0 },\n              { op: \"any.convert_extern\" },\n              { op: \"local.get\", index: 1 },\n              { op: \"any.convert_extern\" },\n              { op: \"call\", funcIdx: bigint.equalIdx },\n            ]\n          : [\n              { op: \"local.get\", index: 0 },\n              { op: \"call\", funcIdx: bigint.toBigIdx },\n              { op: \"local.get\", index: 1 },\n              { op: \"call\", funcIdx: bigint.toBigIdx },\n              { op: \"i64.eq\" },\n            ],\n      else: elseArm,\n    },\n  ];\n",
+          "beforeOffset": 3726,
+          "afterOffset": 3939
+        }
+      ]
+    }
+  ],
+  "modules": [
+    {
+      "path": "src/runtime/wasmgc/values/bigint-carrier-layouts.ts",
+      "sha256": "817af771dbab5a84062c85cef84ae00ee7fda395d008594ca9da54e083effe7f"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/bigint-carrier-body.ts",
+      "sha256": "5a1f09019dea0ae70c82f95d103f3b7abad3aa49f1dd31e73b498bdc0b5587f1"
+    }
+  ]
+}

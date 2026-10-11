@@ -9,6 +9,7 @@
  * arithmetic, and the f64 coercion fallback. Byte-identical lift — no behavioural
  * change (prove-emit-identity IDENTICAL across gc/standalone/wasi).
  */
+import { addStringConstantGlobal } from "./registry/imports.js"; // (#6774 S19)
 import { ts } from "../ts-api.js";
 import { isBooleanType, isNumberType, isStringType, isWrapperObjectType } from "../checker/type-mapper.js";
 import type { Instr, ValType } from "../ir/types.js";
@@ -17,7 +18,7 @@ import { reportError } from "./context/errors.js";
 import { allocTempLocal, releaseTempLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { ensureLateImport } from "./expressions/late-imports.js";
-import { ensureNativeStringHelpers } from "./native-strings.js";
+import { ensureNativeStringHelpers, stringConstantExternrefInstrs } from "./native-strings.js";
 import { redundantFlattenCall } from "./lazy-str-flatten.js"; // (#4157) caller-side flatten elision
 import { emitNativeParseNumber } from "./parse-number-native.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
@@ -781,9 +782,16 @@ export function compileTypedBinaryDispatch(
       const toPrimIdx = ctx.funcMap.get("__to_primitive");
       const typeofObject = ctx.funcMap.get("__typeof_object");
       if (isLoose && toPrimIdx !== undefined && typeofObject !== undefined) {
+        // (#6774 S19) Standalone passes an EXPLICIT "default" hint: the
+        // runtime then keeps a Symbol @@toPrimitive result (§7.2.14 step 11
+        // compares it) instead of the abrupt ToNumber it applies otherwise.
+        if (ctx.standalone) addStringConstantGlobal(ctx, "default");
+        const defaultHint: Instr[] = ctx.standalone
+          ? stringConstantExternrefInstrs(ctx, "default")
+          : [{ op: "ref.null.extern" }];
         const reduceOperand = (externLocal: number): Instr[] => [
           { op: "local.get", index: externLocal },
-          { op: "ref.null.extern" }, // default hint
+          ...structuredClone(defaultHint),
           { op: "call", funcIdx: toPrimIdx },
           { op: "local.set", index: externLocal },
         ];

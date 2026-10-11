@@ -1,0 +1,70 @@
+const fs=require('node:fs'),crypto=require('node:crypto');
+const ts=require('/private/tmp/js2-ir-source-validation-contracts-20261001/node_modules/typescript/lib/typescript.js');
+const base='/private/tmp/js2-ir-source-contracts-main-20261001/.tmp/';
+const priorPath=base+'runtime-historical-inverses-d740ci/',joinPath=base+'runtime-contract-joins-zfyoy_rc/';
+const read=p=>fs.readFileSync(p,'utf8'),json=p=>JSON.parse(read(p)),hash=s=>crypto.createHash('sha256').update(s).digest('hex');
+const pin=s=>({bytes:Buffer.byteLength(s),sha256:hash(s),gitBlob:crypto.createHash('sha1').update(`blob ${Buffer.byteLength(s)}\0`).update(s).digest('hex')});
+const check=(s,p,l)=>{for(const[k,v]of Object.entries(pin(s)))if(p[k]!==v)throw Error(`${l} ${k} mismatch`);};
+const old=json(priorPath+'bounded-inverse-spans.json'),joined=json(joinPath+'bounded-joins.json'),proof=json(joinPath+'static-compatibility-proof.json'),drift=json(priorPath+'receipt-drift.json');
+const requirement=proof.authoringRawCapturedPopulation.find(p=>p.path.startsWith('tests/'));
+const pins=proof.authoringRawCapturedPopulation.filter(p=>p.path.startsWith('src/'));
+const sources=new Map(pins.map(r=>{const s=read(r.path);check(s,r,r.path);return[r.path,s];}));
+check(read(requirement.path),requirement,'authoring requirement source');
+function ast(path,source){const sf=ts.createSourceFile(path,source,ts.ScriptTarget.Latest,true);if(sf.parseDiagnostics.length)throw Error('syntax '+path);return sf;}
+function analyze(path,source){const sf=ast(path,source),seen=new Map();const declarations=sf.statements.filter(n=>!ts.isImportDeclaration(n)&&!ts.isExportDeclaration(n)).map((n,ordinal)=>{const name=ts.isVariableStatement(n)?n.declarationList.declarations.map(d=>d.name.getText(sf)).join(','):n.name?.getText(sf);if(!name)throw Error('unnamed declaration');const kind=ts.SyntaxKind[n.kind],key=kind+':'+name,occurrence=seen.get(key)??0;seen.set(key,occurrence+1);return {path,ordinal,name,kind,occurrence,start:n.getStart(sf),end:n.end,fullStart:n.getFullStart(),...pin(n.getText(sf)),fullText:pin(n.getFullText(sf))};});
+ const links=sf.statements.filter(n=>ts.isImportDeclaration(n)||ts.isExportDeclaration(n)).map(n=>({start:n.getStart(sf),end:n.end,kind:ts.SyntaxKind[n.kind],...pin(n.getText(sf))}));
+ function parents(n){const out=[];for(let p=n.parent;p&&p!==sf;p=p.parent)if(p.kind!==ts.SyntaxKind.SyntaxList)out.push({kind:ts.SyntaxKind[p.kind],start:p.getStart(sf),end:p.end});return out;}
+ const tokens=[];function visit(n){const c=n.getChildren(sf);if(c.length)c.forEach(visit);else if(n.kind!==ts.SyntaxKind.EndOfFileToken&&n.end>n.getStart(sf))tokens.push({ordinal:tokens.length,kind:ts.SyntaxKind[n.kind],start:n.getStart(sf),end:n.end,text:n.getText(sf),parents:parents(n)});}visit(sf);
+ const comments=new Map();function comment(n){for(const c of ts.getLeadingCommentRanges(source,n.pos)??[])comments.set(c.pos+':'+c.end,{start:c.pos,end:c.end,kind:'comment'});ts.forEachChild(n,comment);}comment(sf);
+ return {sf,declarations,links,tokens,scaffold:[...links.map(r=>({start:r.start,end:r.end,kind:'module-link'})),...comments.values()].sort((a,b)=>a.start-b.start)};
+}
+const analyses=new Map([...sources].map(([p,s])=>[p,analyze(p,s)]));
+const edits=new Map();
+for(const r of old.records){if(hash(sources.get(r.path))!==r.afterFullSha256)throw Error('prior current');edits.set(r.path,r.spans.map(e=>({ordinal:e.ordinal,kind:e.kind,start:e.afterOffset,end:e.afterOffset+e.after.length,targetStart:e.beforeOffset,actual:e.after,target:e.before})));}
+for(const r of joined.records){check(sources.get(r.path),r.current,'join current');edits.set(r.path,r.spans.map(e=>({ordinal:e.ordinal,kind:'fixed-reviewed-delta',start:e.currentOffset,end:e.currentOffset+e.currentContext.length,targetStart:e.targetOffset,actual:e.currentContext,target:e.targetContext})));}
+const donorPath='src/ir/program/runtime-abi-identity.ts',donor=sources.get(donorPath),donorAst=analyses.get(donorPath);
+if(JSON.stringify(donorAst.declarations.map(d=>d.name))!==JSON.stringify(['preparedIrRuntimeAbiAnchor','preparedIrRuntimeCallableBindingId']))throw Error('ABI donor order');
+const donorStart=donor.indexOf('/** Shared ABI identity'),donorEnd=donorAst.declarations[1].end,donorText=donor.slice(donorStart,donorEnd);
+const targets=new Map(sources),diagnostics=[];
+for(const[p,list]of edits){let s=sources.get(p);for(const e of [...list].reverse()){
+ if(s.slice(e.start,e.end)!==e.actual||s.indexOf(e.actual)!==e.start||s.indexOf(e.actual,e.start+1)!==-1)throw Error('nonunique current context');
+ if(e.kind==='live-donor-splice-required'){const i=e.target.indexOf('/** Shared ABI identity'),j=e.target.indexOf('/** Caller-supplied declaration');if(i<0||j<0)throw Error('ABI context anchors');const target=e.target.slice(0,i)+donorText+'\n\n'+e.target.slice(j);if(target!==e.target)throw Error('ABI actual donor mismatch');}
+ s=s.slice(0,e.start)+e.target+s.slice(e.end);
+ }const prior=old.records.find(r=>r.path===p),join=joined.records.find(r=>r.path===p);if(prior){if(hash(s)!==prior.beforeFullSha256)throw Error('prior target');}else check(s,join.target,'join target');targets.set(p,s);
+}
+const targetAnalyses=new Map([...targets].map(([p,s])=>[p,analyze(p,s)]));
+const reference=(p,start,end)=>({path:p,start,end,...pin(sources.get(p).slice(start,end))});
+const callable='src/ir/runtime/callable-declarations.ts';
+function candidates(p,e){const a=analyses.get(p);const result=[{path:p,start:e.start,end:e.end}];
+ for(const d of a.declarations)if(d.fullStart<e.end&&d.end>e.start)result.push({path:p,start:d.fullStart,end:d.end,owner:d});
+ if(p==='src/ir/runtime/manifest.ts')for(const d of analyses.get(callable).declarations)if(['SEMANTIC_CALLABLE_RUNTIME_PROVIDERS','semanticCallableProviderMismatch','semanticCallablePolicyMismatch'].includes(d.name))result.push({path:callable,start:d.fullStart,end:d.end,owner:d});
+ return result;
+}
+function recipe(p,e){const target=targets.get(p),ta=targetAnalyses.get(p),end=e.targetStart+e.target.length,scopes=candidates(p,e),out=[];
+ let at=e.targetStart;const tokenEnds=new Set(ta.tokens.map(t=>t.end));
+ while(at<end){
+  if(e.kind==='live-donor-splice-required'&&target.startsWith(donorText,at)){out.push({kind:'abi-functions',source:reference(donorPath,donorStart,donorEnd),targetStart:at});at+=donorText.length;continue;}
+  const white=/^\s+/.exec(target.slice(at,end));if(white){out.push({kind:'literal',category:'whitespace',text:white[0],targetStart:at});at+=white[0].length;continue;}
+  const scaffold=ta.scaffold.find(r=>r.start<=at&&r.end>at);if(scaffold){const stop=Math.min(end,scaffold.end),text=target.slice(at,stop);out.push({kind:'literal',category:scaffold.kind,text,targetStart:at});at=stop;continue;}
+  const token=ta.tokens.find(t=>t.start===at);if(!token)throw Error(`target offset not token or scaffold ${p}:${at}: ${target.slice(at,at+50)}`);
+  let best;
+  for(const scope of scopes){const actual=sources.get(scope.path),a=analyses.get(scope.path),ends=new Set(a.tokens.map(t=>t.end));
+   for(const first of a.tokens){if(first.start<scope.start||first.end>scope.end||first.text!==token.text)continue;
+    let len=token.end-token.start;while(at+len<end&&first.start+len<scope.end&&target[at+len]===actual[first.start+len])len++;
+    while(len>0&&(!tokenEnds.has(at+len)||!ends.has(first.start+len)))len--;
+    if(len>0&&(!best||len>best.length))best={length:len,source:reference(scope.path,first.start,first.start+len),scope:{...reference(scope.path,scope.start,scope.end),...(scope.owner?{owner:scope.owner}:{})}};
+   }
+  }
+  if(!best){diagnostics.push({path:p,span:e.ordinal,offset:at,missingToken:token.text,context:target.slice(at,at+150),scopes:scopes.map(s=>({path:s.path,owner:s.owner?.name,start:s.start,end:s.end}))});break;}
+  const ts=analyses.get(best.source.path).tokens,role=t=>({ordinal:t.ordinal,kind:t.kind,start:t.start,end:t.end,sha256:hash(t.text),parents:t.parents});out.push({kind:'live',source:best.source,scope:best.scope,tokens:{first:role(ts.find(t=>t.start===best.source.start)),last:role(ts.find(t=>t.end===best.source.end))},targetStart:at});at+=best.length;
+ }
+ return out;
+}
+const records=pins.map(r=>({path:r.path,current:{...r,declarations:analyses.get(r.path).declarations,links:analyses.get(r.path).links},target:{path:r.path,...pin(targets.get(r.path)),declarations:targetAnalyses.get(r.path).declarations,links:targetAnalyses.get(r.path).links},spans:(edits.get(r.path)??[]).map(e=>({ordinal:e.ordinal,kind:e.kind,current:{start:e.start,end:e.end,...pin(e.actual)},target:{start:e.targetStart,end:e.targetStart+e.target.length,...pin(e.target)},recipe:recipe(r.path,e)}))}));
+if(diagnostics.length){fs.writeFileSync('.tmp/source-contracts-writer/runtime-evolution/unavailable-fragments.json',JSON.stringify(diagnostics,null,2)+'\n');throw Error('Unavailable live fragments: '+JSON.stringify(diagnostics));}
+let slices=0;for(const r of records){const raw=sources.get(r.path);let cursor=0,reconstructed='';for(const e of r.spans){const replacement=e.recipe.map(p=>{if(p.kind==='literal')return p.text;slices++;return sources.get(p.source.path).slice(p.source.start,p.source.end);}).join('');check(replacement,e.target,'replacement');reconstructed+=raw.slice(cursor,e.current.start)+replacement;cursor=e.current.end;}reconstructed+=raw.slice(cursor);check(reconstructed,r.target,'target replay');if(reconstructed!==targets.get(r.path))throw Error('original full bytes');cursor=0;let forward='';for(const e of r.spans){if(reconstructed.indexOf(reconstructed.slice(e.target.start,e.target.end))!==e.target.start||reconstructed.indexOf(reconstructed.slice(e.target.start,e.target.end),e.target.start+1)!==-1)throw Error('nonunique target context');forward+=reconstructed.slice(cursor,e.target.start)+raw.slice(e.current.start,e.current.end);cursor=e.target.end;}forward+=reconstructed.slice(cursor);if(forward!==raw)throw Error('forward bytes');}
+const residues=records.flatMap(r=>r.current.declarations.filter(d=>!r.target.declarations.some(t=>t.name===d.name&&t.kind===d.kind&&t.occurrence===d.occurrence)));
+const metadata={schema:1,kind:'live-runtime-contract-evolution',head:old.head,golden:old.base,booleanBeforeStage:joined.booleanBeforeStage,coordinateUnit:'UTF-16 code units; source lengths are UTF-8 bytes',authoring:{priorSpecSha256:hash(read(priorPath+'bounded-inverse-spans.json')),joinsSpecSha256:hash(read(joinPath+'bounded-joins.json')),compatibilityProofSha256:hash(read(joinPath+'static-compatibility-proof.json')),requirementSource:requirement},provenance:old.provenance,paths:pins.map(r=>r.path),records,abiDonor:{path:donorPath,source:pin(donor),links:donorAst.links,declarations:donorAst.declarations,functions:reference(donorPath,donorStart,donorEnd)},currentResidues:residues,goldenReceipts:drift.records.map(r=>({path:r.path,linkHash:r.expectedLinksHash,...(r.expectedOwnerHash?{ownerHash:r.expectedOwnerHash}:{})})),historicalReceipts:proof.receipts,runtime75SourceRequirements:proof.runtime75SourceRequirements};
+const output='tests/helpers/ir-runtime-contract-evolution.json';fs.writeFileSync(output,JSON.stringify(metadata,null,2)+'\n');
+const evidence={mode:'static syntax parsing and source arithmetic only',compilerOrTestExecution:false,rawInputs:sources.size,modifiedFiles:records.filter(r=>r.spans.length).length,spans:records.reduce((n,r)=>n+r.spans.length,0),liveSlices:slices,literalCategories:[...new Set(records.flatMap(r=>r.spans.flatMap(s=>s.recipe.flatMap(p=>p.kind==='literal'?[p.category]:[]))))],abiLiveBodies:2,currentResidues:residues.map(d=>({path:d.path,name:d.name})),inverseWholePinsAll:true,forwardWholeBytesAll:true,unavailableFragments:diagnostics,currentManifestCount:analyses.get('src/ir/runtime/contracts/manifest.ts').declarations.length,currentCallableCount:analyses.get(callable).declarations.length};
+fs.writeFileSync('.tmp/source-contracts-writer/runtime-evolution/static-proof.json',JSON.stringify(evidence,null,2)+'\n');console.log(JSON.stringify({output,sha256:hash(read(output)),...evidence},null,2));

@@ -1,0 +1,59 @@
+from pathlib import Path
+root=Path.cwd()
+changes={
+'src/ir/analysis/ownership.ts':{'"../alloc-registry.js"':'"./alloc-registry.js"','"../nodes.js"':'"../core/nodes.js"'},
+'src/ir/analysis/encoding.ts':{'"../alloc-registry.js"':'"./alloc-registry.js"','  type IrFuncRef,\n':'','"../nodes.js"':'"../core/nodes.js"','import type { IrStringEncoding } from "../string-runtime.js";':'import type { IrFuncRef } from "../core/value-references.js";\nimport type { IrStringEncoding } from "../core/string-types.js";'},
+'src/ir/analysis/escape.ts':{'"../alloc-registry.js"':'"./alloc-registry.js"','"../nodes.js"':'"../core/nodes.js"'},
+'src/ir/analysis/dominance.ts':{'"../nodes.js"':'"../core/nodes.js"'},
+}
+for p,replace in changes.items():
+ s=(root/p).read_text()
+ for a,b in replace.items():
+  assert a in s,(p,a);s=s.replace(a,b)
+ (root/p).write_text(s)
+p='src/ir/verify.ts';s=(root/p).read_text()
+replacements={
+'import type { IrBlock, IrFunction, IrInstr, IrLabelId, IrModuleDeclarations, IrType, IrValueId } from "./nodes.js";':'import type { IrBlock, IrInstr, IrLabelId, IrModuleDeclarations, IrValueId } from "../core/nodes.js";\nimport type { PreparedIrFunction as IrFunction } from "./contracts/prepared.js";\nimport type { IrType } from "../core/types.js";',
+'import { asVal, forEachInstrDeep, forEachNestedBuffer, irTypeEquals } from "./nodes.js";':'import { forEachInstrDeep, forEachNestedBuffer } from "../core/nodes.js";\nimport { asVal, irTypeEquals } from "../core/types.js";',
+'"./core/types.js"':'"../core/types.js"','"./declared-types.js"':'"../core/declared-types.js"','"./types.js"':'"../../wasm/model/instructions.js"','"./tag-domain.js"':'"../core/tag-domain.js"','"./runtime/intrinsic-verification.js"':'"./intrinsic-verification.js"','"./analysis/async-plan.js"':'"../analysis/async-plan.js"','"./fnctor-abi.js"':'"../core/fnctor-abi.js"','"./string-runtime.js"':'"../core/string-runtime.js"','"./counted-string-append-provenance.js"':'"../../shared/contracts/ir-counted-string-site-id.js"','"./analysis/dominance.js"':'"../analysis/dominance.js"','import("./nodes.js").IrType':'import("../core/types.js").IrType','import("./nodes.js")':'import("../core/nodes.js")'}
+for a,b in replacements.items():assert a in s,(p,a);s=s.replace(a,b)
+(root/'src/ir/runtime/verify.ts').write_text(s)
+(root/p).write_text('''// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+
+// Compatibility names share the complete runtime-aware verifier implementation.
+export {
+  irGlobalReferenceProblem,
+  irTypeReferenceProblem,
+  verifyIrFunction,
+  TYPE_RULE_CATEGORIES,
+  typeRuleCategoryOf,
+  TYPE_RULE_STATUS,
+  typeRuleCoverageProblem,
+} from "./runtime/verify.js";
+export type { IrVerifyError, IrVerificationOptions, TypeRuleStatus, TypeRuleCategory } from "./runtime/verify.js";
+''')
+p='src/ir/verify-alloc.ts';s=(root/p).read_text()
+start=s.index('/** True iff the env/debug flag');end=s.index('/**\n * Walk every instr',start);enabled=s[start:end]
+start=s.index('/**\n * Throwing wrapper for intermediate');end=s.index('/**\n * Required final-artifact gate.',start);optional=s[start:end]
+s=s.replace(enabled,'').replace(optional,'')
+s=s.replace('"./alloc-registry.js"','"./alloc-registry.js"').replace('"./nodes.js"','"../core/nodes.js"').replace('"./outcomes.js"','"../../shared/contracts/ir-preparation-errors.js"')
+(root/'src/ir/analysis/alloc-verification.ts').write_text(s)
+(root/p).write_text('''// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+
+import type { AllocSiteRegistry } from "./analysis/alloc-registry.js";
+import type { IrFunction } from "./core/nodes.js";
+import { assertFinalAllocProvenance } from "./analysis/alloc-verification.js";
+
+export { verifyAllocProvenance, assertFinalAllocProvenance } from "./analysis/alloc-verification.js";
+export type { AllocVerifyError } from "./analysis/alloc-verification.js";
+
+'''+enabled+optional.replace('assertVerifiedAllocProvenance(func, registry);','assertFinalAllocProvenance(func, registry);'))
+for old,new,replacements,names in [
+('src/ir/program-allocations.ts','src/ir/program/allocations.ts',{
+'"./alloc-registry.js"':'"../analysis/alloc-registry.js"','"./analysis/ownership.js"':'"../analysis/ownership.js"','"./analysis/escape.js"':'"../analysis/escape.js"','"./analysis/encoding.js"':'"../analysis/encoding.js"','"./nodes.js"':'"../core/nodes.js"','"./program-abi-contracts.js"':'"./abi-signatures.js"','import { PreparedIrProgramInvariantError, type PreparedIrProgram } from "./program.js";':'import { PreparedIrProgramInvariantError } from "./errors.js";\nimport type { PreparedIrProgram } from "./prepared-contracts.js";','"./verify-alloc.js"':'"../analysis/alloc-verification.js"','"./program/runtime-support.js"':'"./runtime-support.js"','"./program/controls.js"':'"./controls.js"'},['analyzeIrRuntimeSupportAllocations','assertPreparedIrProgramAllocations']),
+('src/ir/program-class-layouts.ts','src/ir/program/class-layouts.ts',{'"./nodes.js"':'"../core/types.js"','"./program-abi-contracts.js"':'"./abi-signatures.js"','import { PreparedIrProgramInvariantError, type PreparedIrProgram } from "./program.js";':'import { PreparedIrProgramInvariantError } from "./errors.js";\nimport type { PreparedIrProgram } from "./prepared-contracts.js";'},['assertPreparedIrClassLayouts'])]:
+ s=(root/old).read_text()
+ for a,b in replacements.items():assert a in s,(old,a);s=s.replace(a,b)
+ (root/new).write_text(s)
+ relative='./program/'+Path(new).name.replace('.ts','.js')
+ (root/old).write_text('// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.\n\nexport { '+', '.join(names)+' } from "'+relative+'";\n')

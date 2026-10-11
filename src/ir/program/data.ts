@@ -141,15 +141,19 @@ export function invalidPreparedData(detail: string): never {
 }
 
 function isRecursiveIrClassShape(value: object): boolean {
-  const candidate = value as Record<PropertyKey, unknown>;
+  const own = (key: PropertyKey): unknown => {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    return descriptor && Object.hasOwn(descriptor, "value") ? descriptor.value : undefined;
+  };
+  const classId = own("classId");
   return (
-    candidate[IR_CLASS_SHAPE_CELL] === true &&
-    typeof candidate.classId === "string" &&
-    candidate.classId.startsWith("ir-class:v1:") &&
-    typeof candidate.className === "string" &&
-    Array.isArray(candidate.fields) &&
-    Array.isArray(candidate.methods) &&
-    Array.isArray(candidate.constructorParams)
+    own(IR_CLASS_SHAPE_CELL) === true &&
+    typeof classId === "string" &&
+    classId.startsWith("ir-class:v1:") &&
+    typeof own("className") === "string" &&
+    Array.isArray(own("fields")) &&
+    Array.isArray(own("methods")) &&
+    Array.isArray(own("constructorParams"))
   );
 }
 
@@ -215,16 +219,33 @@ export function freezePreparedIrValue(value: unknown): unknown {
   return immutableCopy(value);
 }
 
+// Internal collection slots cannot change on an existing object. Only that
+// brand is cached: prototypes, descriptors, values and entries stay live data.
+const nativeCollectionBrand = Object.freeze({
+  cache: new WeakMap<object, boolean>(),
+  get: WeakMap.prototype.get,
+  set: WeakMap.prototype.set,
+  apply: Reflect.apply,
+  probes: Object.freeze([Map.prototype.has, Set.prototype.has, WeakMap.prototype.has, WeakSet.prototype.has]),
+});
+
 function hasNativeCollectionState(value: object): boolean {
-  for (const has of [Map.prototype.has, Set.prototype.has, WeakMap.prototype.has, WeakSet.prototype.has]) {
+  const { cache, get, set, apply, probes } = nativeCollectionBrand;
+  const cached = apply(get, cache, [value]) as boolean | undefined;
+  if (cached !== undefined) return cached;
+  let hasSlots = false;
+  for (let index = 0; index < probes.length; index++) {
     try {
-      Reflect.apply(has, value, [value]);
-      return true;
+      apply(probes[index]!, value, [value]);
+      // Probe success authenticates the slot, even when membership is false.
+      hasSlots = true;
+      break;
     } catch {
       // Native methods authenticate internal slots even when the prototype was erased.
     }
   }
-  return false;
+  apply(set, cache, [value, hasSlots]);
+  return hasSlots;
 }
 
 /** Freeze producer-owned attachments without replacing authenticated plan/manifest identities. */

@@ -18,38 +18,15 @@
  * `undefined` has no guaranteed non-null externref spelling, so the sequence
  * degrades to the bare `local.get` and the install stays byte-identical.
  */
+import { buildInstallableClosureReceiver } from "../../runtime/wasmgc/values/closure-receiver-bodies.js";
 import type { Instr } from "../../ir/types.js";
 import { ensureAnyValueType, undefinedSingletonActive } from "../any-helpers.js";
 import type { CodegenContext } from "../context/types.js";
 
 /** The externref to install for the thisArg held in `localIdx`. */
 export function installableReceiverInstrs(ctx: CodegenContext, localIdx: number): Instr[] {
-  const thisVal: Instr[] = [{ op: "local.get", index: localIdx }];
-  if (!undefinedSingletonActive(ctx)) return thisVal;
+  if (!undefinedSingletonActive(ctx)) return buildInstallableClosureReceiver(localIdx);
   if (ctx.anyValueTypeIdx < 0) ensureAnyValueType(ctx);
   const t = ctx.anyValueTypeIdx;
-  if (t < 0) return thisVal;
-  const boxed: Instr[] = [{ op: "local.get", index: localIdx }, { op: "any.convert_extern" }];
-  return [
-    ...boxed,
-    { op: "ref.test", typeIdx: t },
-    {
-      op: "if",
-      blockType: { kind: "val", type: { kind: "externref" } },
-      then: [
-        ...boxed,
-        { op: "ref.cast", typeIdx: t },
-        { op: "struct.get", typeIdx: t, fieldIdx: 0 },
-        { op: "i32.const", value: 1 },
-        { op: "i32.eq" },
-        {
-          op: "if",
-          blockType: { kind: "val", type: { kind: "externref" } },
-          then: [{ op: "ref.null.extern" }],
-          else: thisVal,
-        },
-      ],
-      else: thisVal,
-    },
-  ];
+  return buildInstallableClosureReceiver(localIdx, t < 0 ? undefined : t);
 }

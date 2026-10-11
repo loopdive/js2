@@ -40,6 +40,11 @@ export interface StrictIteratorHostOperations {
 export interface StrictIteratorHostRuntime {
   getIterator(value: any, state?: StrictIteratorCallbackState): any;
   iteratorNext(iterator: any, state?: StrictIteratorCallbackState): [number, any];
+  /** (#1691) The `__gen_yield_star_step` import; TypeErrors use the module realm's ctor. */
+  yieldStarStepImport(
+    state: StrictIteratorCallbackState | undefined,
+    TypeErrorCtor: new (message: string) => Error,
+  ): (iterator: any, mode: number, received: any) => [number, any];
   resolveArrayIterationImport(name: string, state?: StrictIteratorCallbackState): ((...args: any[]) => any) | undefined;
 }
 
@@ -157,6 +162,71 @@ export function createStrictIteratorHostRuntime(ops: StrictIteratorHostOperation
     return [done ? 1 : 0, done ? undefined : safeGet(result, "value", state)];
   }
 
+  /**
+   * (#1691) One `yield*` resumption (§14.4.14 step 7) against a host iterator.
+   * `mode` 0 = next(received), 1 = return(received), 2 = throw(received).
+   * Status 0 = the delegate yielded `value`; 1 = it completed normally with
+   * `value` (the `yield*` result); 2 = the outer must return `value`.
+   * IteratorValue is read eagerly even when not done — the native result
+   * struct cannot re-yield the delegate's result object itself.
+   */
+  function yieldStarStep(
+    iterator: any,
+    mode: number,
+    received: any,
+    state: StrictIteratorCallbackState | undefined,
+    TypeErrorCtor: new (message: string) => Error,
+  ): [number, any] {
+    const typeError = (message: string): Error => new TypeErrorCtor(message);
+    const exports = state?.getExports();
+    const marshalView = marshalExports(state, exports);
+    // Closed object-literal carriers expose their fields only through the
+    // `__sget_<key>` exports (gated on the struct's own field shape);
+    // accessors and sidecar properties go through `safeGet` first.
+    const hasField = (receiver: any, key: string): boolean => {
+      const names = exports?.__struct_field_names?.(receiver);
+      if (typeof names !== "string" || !names.split(",").includes(key)) return false;
+      const presence = exports?.[`__shas_${key}`];
+      return typeof presence !== "function" || presence(receiver) !== 0;
+    };
+    const read = (receiver: any, key: string): any => {
+      const value = safeGet(receiver, key, state);
+      if (value !== undefined || !isWasmStruct(receiver) || !hasField(receiver, key)) return value;
+      const getter = exports?.[`__sget_${key}`];
+      return typeof getter === "function" ? getter(receiver) : undefined;
+    };
+    const method = (key: string): any => {
+      const value = read(iterator, key);
+      if (value === undefined || value === null) return undefined;
+      if (!isCallable(value, exports)) throw typeError(`iterator.${key} is not a function`);
+      return value;
+    };
+    const settle = (result: any, doneStatus: number): [number, any] => {
+      if (!isObjectValue(result, marshalView)) throw typeError("iterator result is not an object");
+      const doneValue = read(result, "done");
+      const donePrimitive = nativePrimitiveToHost(doneValue, marshalView);
+      const done = donePrimitive === missingValue ? !!doneValue : !!donePrimitive;
+      return [done ? doneStatus : 0, read(result, "value")];
+    };
+    if (mode === 0) {
+      const next = method("next");
+      if (next === undefined) throw typeError("iterator.next is not a function");
+      return settle(invokeCallable(iterator, next, [received], state), 1);
+    }
+    if (mode === 2) {
+      const throwMethod = method("throw");
+      if (throwMethod !== undefined) return settle(invokeCallable(iterator, throwMethod, [received], state), 1);
+      // Protocol violation: IteratorClose with a normal completion, then TypeError.
+      const returnMethod = method("return");
+      if (returnMethod !== undefined && !isObjectValue(invokeCallable(iterator, returnMethod, [], state), marshalView))
+        throw typeError("iterator result is not an object");
+      throw typeError("The iterator does not provide a 'throw' method");
+    }
+    const returnMethod = method("return");
+    if (returnMethod === undefined) return [2, received];
+    return settle(invokeCallable(iterator, returnMethod, [received], state), 2);
+  }
+
   function drainStrictIterator(iterator: any, limit: number, state?: StrictIteratorCallbackState): any[] {
     const out: any[] = [];
     while (out.length < limit) {
@@ -262,5 +332,9 @@ export function createStrictIteratorHostRuntime(ops: StrictIteratorHostOperation
     return (obj: any, count: number): any => arrayFromIter(obj, count < 0 ? Infinity : count >>> 0);
   }
 
-  return { getIterator, iteratorNext, resolveArrayIterationImport };
+  const yieldStarStepImport: StrictIteratorHostRuntime["yieldStarStepImport"] =
+    (state, TypeErrorCtor) => (iterator, mode, received) =>
+      yieldStarStep(iterator, mode, received, state, TypeErrorCtor);
+
+  return { getIterator, iteratorNext, yieldStarStepImport, resolveArrayIterationImport };
 }

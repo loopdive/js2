@@ -22,9 +22,11 @@ import type {
   IrCountedStringAppendSiteClaim,
 } from "../src/shared/contracts/ir-counted-string-identity.js";
 import { createIrSourceId, createIrUnitId } from "../src/ir/identity.js";
+import { readCoreVocabularyReceiptSource } from "./helpers/ir-core-vocabulary-evolution.js";
 
 const root = resolve(import.meta.dirname, "..");
-const read = (path: string) => readFileSync(resolve(root, path), "utf8");
+const rawRead = (path: string) => readFileSync(resolve(root, path), "utf8");
+const read = rawRead;
 function parse(path: string, text = read(path)) {
   const tree = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true);
   expect((tree as ts.SourceFile & { parseDiagnostics: readonly ts.Diagnostic[] }).parseDiagnostics).toEqual([]);
@@ -131,8 +133,8 @@ function identity(): IrCountedStringAppendSiteIdentity {
 
 describe("#3518 canonical core vocabulary seam", () => {
   it.each(moves)("moves exactly $moved declarations from $old and preserves everything retained", (move) => {
-    const canonical = declarations(parse(move.canonical));
-    const retained = declarations(parse(move.old));
+    const canonical = declarations(parse(move.canonical, readCoreVocabularyReceiptSource(move.canonical, rawRead)));
+    const retained = declarations(parse(move.old, readCoreVocabularyReceiptSource(move.old, rawRead)));
     expect(canonical).toHaveLength(move.moved);
     expect(new Set(canonical.map(([name]) => name)).size).toBe(move.moved);
     expect(digest(canonical)).toBe(move.movedHash);
@@ -140,7 +142,7 @@ describe("#3518 canonical core vocabulary seam", () => {
     expect(digest(retained)).toBe(move.retainedHash);
     expect(retained.filter(([name]) => canonical.some(([movedName]) => movedName === name))).toEqual([]);
     const publicNames = canonical.map(([name]) => name).filter((name) => name !== "irCountedStringAppendSiteIdBrand");
-    const forwarded = parse(move.old).statements.flatMap((node) => {
+    const forwarded = parse(move.old, readCoreVocabularyReceiptSource(move.old, rawRead)).statements.flatMap((node) => {
       if (
         !ts.isExportDeclaration(node) ||
         !node.moduleSpecifier ||
@@ -165,8 +167,14 @@ describe("#3518 canonical core vocabulary seam", () => {
   it("preserves closed intrinsic tuple order, existing guard and definition consumers", () => {
     expect(Object.keys(vocabulary).sort()).toEqual([...intrinsicValues].sort());
     expect(vocabulary.PURE_MATH_INTRINSIC_IDS).toHaveLength(33);
-    expect(vocabulary.INTRINSIC_IDS).toHaveLength(38);
-    expect(new Set(vocabulary.INTRINSIC_IDS).size).toBe(38);
+    expect(vocabulary.INTRINSIC_IDS).toHaveLength(39);
+    expect(new Set(vocabulary.INTRINSIC_IDS).size).toBe(39);
+    expect(vocabulary.BOOLEAN_BOUNDARY_INTRINSIC_IDS).toEqual(["js.boolean.box", "js.boolean.unbox"]);
+    expect(intrinsics.INTRINSIC_DEFINITIONS["js.boolean.unbox"].signature).toEqual({
+      version: vocabulary.INTRINSIC_SIGNATURE_VERSION,
+      params: [{ kind: "val", val: { kind: "externref" } }],
+      result: { kind: "val", val: { kind: "i32", boolean: true } },
+    });
     expect(vocabulary.INTRINSIC_IDS).toEqual([
       ...vocabulary.NUMERIC_COERCION_INTRINSIC_IDS,
       ...vocabulary.NUMBER_BOUNDARY_INTRINSIC_IDS,
@@ -185,7 +193,7 @@ describe("#3518 canonical core vocabulary seam", () => {
   });
 
   it("retains the verbatim Math certification quote and canonical math.pow tuple evidence", () => {
-    const source = read(moves[0]!.canonical);
+    const source = rawRead(moves[0]!.canonical);
     expect(source).toContain("exact-arity f64 Math surface certified by");
     expect(source).toContain('"math.pow",');
     expect(vocabulary.PURE_MATH_INTRINSIC_IDS).toContain("math.pow");
@@ -201,7 +209,12 @@ describe("#3518 canonical core vocabulary seam", () => {
   );
 
   it("does not confuse semantic async features with provider IDs or capability IDs", () => {
-    expect(Object.keys(intents).sort()).toEqual(["ASYNC_OPTIONAL_RUNTIME_FEATURES", "ASYNC_RUNTIME_FEATURES"]);
+    expect(Object.keys(intents).sort()).toEqual([
+      "ASYNC_OPTIONAL_RUNTIME_FEATURES",
+      "ASYNC_RUNTIME_FEATURES",
+      "isAsyncRuntimeFeature",
+    ]);
+    expect(providers.isAsyncRuntimeFeature).toBe(intents.isAsyncRuntimeFeature);
     expect(intents.ASYNC_RUNTIME_FEATURES).toHaveLength(7);
     expect(intents.ASYNC_OPTIONAL_RUNTIME_FEATURES).toEqual(["value.undefined", "promise.number.bridge"]);
     for (const invalid of ["native.scheduler.enqueue", "host.scheduler.enqueue", "async.promise.react", ""]) {
@@ -242,7 +255,8 @@ describe("#3518 canonical core vocabulary seam", () => {
       const intents = await import('./src/ir/core/async-intents.ts');
       const strings = await import('./src/ir/core/string-types.ts');
       const identity = await import('./src/shared/contracts/ir-counted-string-identity.ts');
-      assert.equal(vocabulary.INTRINSIC_IDS.length, 38);
+      assert.equal(vocabulary.INTRINSIC_IDS.length, 39);
+      assert.deepEqual(vocabulary.BOOLEAN_BOUNDARY_INTRINSIC_IDS, ["js.boolean.box", "js.boolean.unbox"]);
       assert.equal(intents.ASYNC_RUNTIME_FEATURES.length, 7);
       assert.deepEqual(Object.keys(strings), []);
       assert.deepEqual(Object.keys(identity), []);
@@ -288,7 +302,7 @@ describe("#3518 canonical core vocabulary seam", () => {
     const forwarders = new Map(
       moves.map((move) => [
         resolve(root, move.old),
-        parse(move.old)
+        parse(move.old, rawRead(move.old))
           .statements.filter(
             (node) =>
               ts.isExportDeclaration(node) && node.moduleSpecifier?.getText() === JSON.stringify(move.specifier),
@@ -297,6 +311,42 @@ describe("#3518 canonical core vocabulary seam", () => {
           .join("\n"),
       ]),
     );
+    // Follow the actual two-hop public aliases. Keep this bounded surface on
+    // current source even when declaration receipts use a historical reader.
+    function forwardingSurface(path: string, specifier: string, names: readonly string[]) {
+      const file = parse(path, rawRead(path));
+      const found: string[] = [];
+      const declarations = file.statements.flatMap((node) => {
+        if (!ts.isExportDeclaration(node) || node.moduleSpecifier?.getText() !== JSON.stringify(specifier)) return [];
+        expect(node.exportClause && ts.isNamedExports(node.exportClause)).toBe(true);
+        if (!node.exportClause || !ts.isNamedExports(node.exportClause)) return [];
+        const elements = node.exportClause.elements.filter((entry) => names.includes(entry.name.text));
+        for (const entry of elements) {
+          expect(entry.propertyName?.text ?? entry.name.text).toBe(entry.name.text);
+          found.push(entry.name.text);
+        }
+        if (!elements.length) return [];
+        const declaration = ts.factory.updateExportDeclaration(
+          node,
+          node.modifiers,
+          node.isTypeOnly,
+          ts.factory.updateNamedExports(node.exportClause, elements),
+          node.moduleSpecifier,
+          node.attributes,
+        );
+        return [ts.createPrinter().printNode(ts.EmitHint.Unspecified, declaration, file)];
+      });
+      expect(declarations.length, path).toBeGreaterThan(0);
+      expect(found.sort(), path).toEqual([...names].sort());
+      expect(new Set(found).size).toBe(names.length);
+      forwarders.set(resolve(root, path), declarations.join("\n"));
+    }
+    const asyncNames = ["ASYNC_RUNTIME_FEATURES", "ASYNC_OPTIONAL_RUNTIME_FEATURES", "AsyncRuntimeFeature"];
+    forwardingSurface("src/ir/async-runtime-providers.ts", "./runtime/async-providers.js", asyncNames);
+    forwardingSurface("src/ir/runtime/async-providers.ts", "../core/async-intents.js", asyncNames);
+    const stringNames = ["IrStringEncoding", "IrStringConcatMode"];
+    forwardingSurface("src/ir/string-runtime.ts", "./core/string-runtime.js", stringNames);
+    forwardingSurface("src/ir/core/string-runtime.ts", "./string-types.js", stringNames);
     const pairs = [
       [
         "I",

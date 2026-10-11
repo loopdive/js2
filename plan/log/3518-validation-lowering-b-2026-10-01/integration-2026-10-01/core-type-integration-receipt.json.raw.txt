@@ -1,0 +1,11 @@
+{
+  "files": {
+    "tests/helpers/ir-program-core-type-evolution.ts": "521ab5369f34e6653427b98b1dafec5ff276d898b375e879043efd12e67516be",
+    "tests/helpers/ir-program-core-type-evolution.json": "7656fac126fa982f114f900382e6f3a256d417d3750406a142e96df22d6f80e2",
+    "tests/issue-3518-program-core-type-evolution.test.ts": "32ee02f629c1cb5601dc2c9e361325cdd4c3aeb388c5769752efe0739c521947"
+  },
+  "sevenLiveInputsVerified": true,
+  "completeHistoricalGitAuthorityVerified": true,
+  "existingGraphFilesUnchanged": true,
+  "model": "Codex GPT-6.1 Sol High"
+}

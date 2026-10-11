@@ -1,0 +1,37 @@
+{
+  "helper": {
+    "path": "tests/helpers/ir-historical-runtime-reconstruction.ts",
+    "bytes": 108057,
+    "sha256": "114a21cb1bc05bfe64045a12f8fa5474a729284f442afc4c155234bc3e08aafc",
+    "gitBlob": "688f7d77fcfe88aa26dd89b88a2b9362ccde7f64"
+  },
+  "reusableReceipts": [
+    {
+      "path": "src/ir/runtime/contracts/intrinsics.ts",
+      "epoch": "3a119a88b28bb347f4faaaa2146bd991acf61228",
+      "bytes": 3851,
+      "sha256": "8350b4ca608c747121b17789518ee88da390fb0e40a548357a015d599e57238b",
+      "gitBlob": "d1852d2d6d0010414afa9d47f701f8c385daf595",
+      "declarationCount": 20,
+      "rowsSha256": "3e3c8fd145f03837dce98ce6b364fabddb88cc98bcc9281304a8a48da009b3f9"
+    },
+    {
+      "path": "src/ir/intrinsics.ts",
+      "epoch": "3a119a88b28bb347f4faaaa2146bd991acf61228",
+      "bytes": 14195,
+      "sha256": "c2b73395440a0f9060b94c590dc11a5eba0aa27ea6802cc50057261ed3d7e415",
+      "gitBlob": "d960065cde25a5b1493dbdc69c7d32d2a664656c",
+      "declarationCount": 24,
+      "rowsSha256": "eee3f92b352fb705c5addda7f396ce665c329ab53e501cfe1f6d7e0fbd93291f"
+    },
+    {
+      "path": "src/ir/async-runtime-providers.ts",
+      "epoch": "3a119a88b28bb347f4faaaa2146bd991acf61228",
+      "bytes": 9498,
+      "sha256": "a9a64dd992c384a315a479e33fffdedee4b174f939f1ae79a9e4d2361b2c9d9b",
+      "gitBlob": "853649d5f50c9dbc88e9eaf8a3593c259183abb8",
+      "declarationCount": 26,
+      "rowsSha256": "e6c4a6e91bf4878715ef9b508342a42f7bd692c7bb8ca32fb33568be13635045"
+    }
+  ]
+}

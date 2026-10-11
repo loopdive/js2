@@ -3,16 +3,18 @@
 import type { CodegenContext } from "../codegen/context/types.js";
 import {
   CLOSURE_CAPTURE_FIELD_BASE,
-  closureArityField,
-  closureBagField,
   getOrCreateFuncRefWrapperTypes,
   type ClosureAllocationMode,
 } from "../codegen/closures/funcref-wrapper-types.js";
 import { resolveStandaloneDomCallbackClosureSubtype } from "../codegen/standalone-dom-callback-authority.js";
 import type { IrClosureLowering } from "./backend/handles.js";
 import type { IrClosureSignature, IrDomCallbackAuthority, IrType } from "./nodes.js";
-import type { FieldDef, StructTypeDef, ValType } from "./types.js";
+import type { StructTypeDef, ValType } from "./types.js";
 import { irTypeKey } from "./type-key.js";
+import {
+  createClosureCaptureHeader,
+  createClosureCaptureField,
+} from "../runtime/wasmgc/values/closure-capture-layouts.js";
 
 function signatureKey(signature: IrClosureSignature): string {
   const params = signature.params.map(irTypeKey).join(",");
@@ -118,11 +120,7 @@ export class ClosureStructRegistry {
     const base = this.resolveBase(signature, mode);
     if (!base) return null;
 
-    const fields: FieldDef[] = [
-      { name: "func", type: { kind: "funcref" }, mutable: false },
-      closureArityField(),
-      closureBagField(),
-    ];
+    const fields = createClosureCaptureHeader();
     for (let index = 0; index < captureFieldTypes.length; index++) {
       let fieldType: ValType;
       try {
@@ -130,7 +128,7 @@ export class ClosureStructRegistry {
       } catch {
         return null;
       }
-      fields.push({ name: `cap${index}`, type: fieldType, mutable: false });
+      fields.push(createClosureCaptureField(index, fieldType));
     }
 
     const subtypeIdx = this.ctx.mod.types.length;

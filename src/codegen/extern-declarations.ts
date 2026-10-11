@@ -10,6 +10,13 @@
 import { ts, forEachChild } from "../ts-api.js";
 import type { ValType } from "../ir/types.js";
 import type { CodegenContext, ExternClassInfo } from "./context/types.js";
+import {
+  applyLibExternScanEffects,
+  captureLibExternScanEffects,
+  getLibExternScanEffects,
+  libExternScanMemoKey,
+  putLibExternScanEffects,
+} from "./lib-extern-scan-memo.js";
 import type { NodeBuiltinImport } from "../import-resolver.js";
 import { hasDeclareModifier } from "./ast-modifiers.js";
 import { isExternalDeclaredClass, isVoidType, mapTsTypeToWasm } from "../checker/type-mapper.js";
@@ -21,6 +28,7 @@ import { ensureNativeStringHelpers } from "./native-strings.js";
 import { nativeTypeFromTypeNode } from "./native-type-annotations.js";
 import { reportError } from "./context/errors.js";
 import { registerAmbientParseImport } from "./ambient-parse-import.js";
+import { isStandaloneUnavailableTimerGlobal } from "./standalone-timers.js";
 import {
   heritageBaseName,
   isExternDeclaredLibName,
@@ -32,6 +40,7 @@ import {
   typeRefName,
   type LibDeclIndex,
 } from "./lib-decl-index.js";
+import { isStandaloneUnprovidedExternClass } from "./standalone-unavailable-globals.js";
 // ── Built-in extern class registration ───────────────────────────────
 
 /** Helper to create an extern method signature with externref params and results */
@@ -272,8 +281,8 @@ export function registerBuiltinExternClasses(ctx: CodegenContext): void {
     });
   }
 
-  // Intl.ListFormat — extern class for internationalized list formatting
-  if (!ctx.externClasses.has("ListFormat")) {
+  // Intl.ListFormat — JS-host extern class (#6839: standalone/WASI use the Wasm-native prelude class)
+  if (!ctx.externClasses.has("ListFormat") && !["none", "wasi"].includes(ctx.targetProfile.environment)) {
     const methods = new Map<string, { params: ValType[]; results: ValType[]; requiredParams: number }>();
     methods.set("format", externMethod(1)); // format(list) → string (externref)
     methods.set("formatToParts", externMethod(1)); // formatToParts(list) → array (externref)
@@ -317,9 +326,9 @@ export function registerBuiltinExternClasses(ctx: CodegenContext): void {
   // out of scope with its bound (there is no ICU in pure Wasm, so a compiled
   // shim would have to reimplement calendar + time-zone data).
   //
-  // Unlike ListFormat/NumberFormat above this is gated on the JS-host lane. Those
-  // two predate the #2961 no-leak ratchet and still emit `Intl_*_new` into a
-  // `--target standalone` binary with a host-import-leak warning; a NEW host
+  // Like ListFormat (#6839) and unlike NumberFormat above this is gated on the
+  // JS-host lane. NumberFormat predates the #2961 no-leak ratchet and still emits
+  // `Intl_*_new` into a `--target standalone` binary with a host-import-leak warning; a NEW host
   // import must not add to that. Standalone/WASI instead get a catchable
   // `TypeError` from `tryCompileIntlHostOnlyNew` (new-intl-host-bridge.ts) —
   // never a trap, never an unsatisfiable import.
@@ -766,18 +775,49 @@ const WASI_STDIN_REACTOR_INTRINSICS = new Set([
 // `ctx.checker` queries. User-file call sites omit it and keep the checker
 // (user `declare`s are input-driven and cheap; lib files were 96 % of the
 // compiler's checker traffic).
+/**
+ * (#6480) The lib-file extern-CLASS scan is replayed from a per-process memo
+ * rather than re-walked on every compile; see `lib-extern-scan-memo.ts` for the
+ * key (lib source-file identity, lib index identity, the profile booleans the
+ * collectors read, and a fingerprint of the two maps' pre-state) and why the
+ * `declare function` branch below is deliberately excluded from it.
+ */
 export function collectExternDeclarations(
   ctx: CodegenContext,
   sourceFile: ts.SourceFile,
   libReferencedNames?: Set<string>,
   libIndex?: LibDeclIndex,
 ): void {
+  if (!libIndex) {
+    collectExternDeclarationsImpl(ctx, sourceFile, libReferencedNames, libIndex, false);
+    return;
+  }
+  const key = libExternScanMemoKey(ctx, libIndex);
+  const hit = getLibExternScanEffects(sourceFile, key);
+  if (hit) {
+    applyLibExternScanEffects(ctx, hit);
+    collectExternDeclarationsImpl(ctx, sourceFile, libReferencedNames, libIndex, true);
+    return;
+  }
+  const beforeClasses = new Map(ctx.externClasses);
+  const beforeParents = new Map(ctx.externClassParent);
+  collectExternDeclarationsImpl(ctx, sourceFile, libReferencedNames, libIndex, false);
+  putLibExternScanEffects(sourceFile, key, captureLibExternScanEffects(ctx, beforeClasses, beforeParents));
+}
+
+function collectExternDeclarationsImpl(
+  ctx: CodegenContext,
+  sourceFile: ts.SourceFile,
+  libReferencedNames: Set<string> | undefined,
+  libIndex: LibDeclIndex | undefined,
+  skipExternClasses: boolean,
+): void {
   for (const stmt of sourceFile.statements) {
-    if (ts.isModuleDeclaration(stmt) && hasDeclareModifier(stmt)) {
+    if (!skipExternClasses && ts.isModuleDeclaration(stmt) && hasDeclareModifier(stmt)) {
       collectDeclareNamespace(ctx, stmt, [], libIndex);
     }
     // Top-level declare class (e.g. user-defined or import-resolver stubs)
-    if (ts.isClassDeclaration(stmt) && stmt.name && hasDeclareModifier(stmt)) {
+    if (!skipExternClasses && ts.isClassDeclaration(stmt) && stmt.name && hasDeclareModifier(stmt)) {
       collectExternClass(ctx, stmt, [], libIndex);
     }
     // Top-level declare function stubs — registered as Wasm imports so that calls
@@ -868,6 +908,10 @@ export function collectExternDeclarations(
       // (correct semantics — standalone has no structuredClone). Host mode still
       // registers the import so a real host can satisfy it.
       if ((ctx.wasi || ctx.standalone) && name === "structuredClone") continue;
+      // (#6664) standalone `queueMicrotask(cb)` enqueues on the module's own
+      // microtask queue (standalone-queue-microtask.ts), never on the host.
+      if (ctx.standalone && name === "queueMicrotask") continue;
+      if (isStandaloneUnavailableTimerGlobal(ctx, name)) continue; // #6675: no event loop, no env.<timer>
       if (!ctx.funcMap.has(name)) {
         // (#4238) Under `externNativeTypes` an explicit native annotation
         // (`type i32 = number` & friends) wins over the default mapping, so
@@ -909,7 +953,7 @@ export function collectExternDeclarations(
     }
     // declare var X: { prototype: X; new(): X } (lib.dom.d.ts pattern)
     // declare var Date: DateConstructor (interface with new() pattern)
-    if (ts.isVariableStatement(stmt) && hasDeclareModifier(stmt)) {
+    if (!skipExternClasses && ts.isVariableStatement(stmt) && hasDeclareModifier(stmt)) {
       for (const decl of stmt.declarationList.declarations) {
         if (!decl.name || !ts.isIdentifier(decl.name) || !decl.type) continue;
         // Inline type literal with construct signature
@@ -1108,6 +1152,9 @@ function collectExternFromDeclareVar(ctx: CodegenContext, decl: ts.VariableDecla
   // declaration — otherwise the extern-class import registration eagerly
   // emits a `Map_new` host import the standalone module can't satisfy.
   if (className === "Map" && ctx.nativeStrings) return;
+  // (#6664) lib.dom classes with no standalone provider: every member would
+  // otherwise lower to an `env::` import (`MessageChannel_new`, …).
+  if (isStandaloneUnprovidedExternClass(ctx, className)) return;
   if (ctx.externClasses.has(className)) return;
 
   // (#4218) Lib path: the merged `interface <className>` declarations come
@@ -1404,13 +1451,15 @@ function collectMixinMembersLib(
 
 // ── Declared globals (e.g. declare const document: Document) ────────
 
-export function collectDeclaredGlobals(
-  ctx: CodegenContext,
-  libFile: ts.SourceFile,
-  userFile: ts.SourceFile,
-  libIndex?: LibDeclIndex,
-  allUserFiles?: readonly ts.SourceFile[],
-): void {
+/**
+ * (#6737) The user-program name sets `collectDeclaredGlobals` filters lib
+ * declarations by depend only on the user files, yet the multi-source caller
+ * runs once per (lib file x user source): memoized on the `allUserFiles` array.
+ */
+type UserProgramNames = Record<"referencedNames" | "valueRefNames" | "userModuleBindings", ReadonlySet<string>>;
+const userProgramNamesCache = new WeakMap<readonly ts.SourceFile[], UserProgramNames>();
+
+function userProgramNames(bindingSourceFiles: readonly ts.SourceFile[]): UserProgramNames {
   // First collect identifiers referenced in user source
   const referencedNames = new Set<string>();
   // #2520 — also track names used as a VALUE (vs. a pure call/new callee or a
@@ -1450,7 +1499,6 @@ export function collectDeclaredGlobals(
     }
     forEachChild(node, collectRefs);
   };
-  const bindingSourceFiles = allUserFiles ?? [userFile];
   for (const sourceFile of bindingSourceFiles) {
     for (const stmt of sourceFile.statements) {
       forEachChild(stmt, collectRefs);
@@ -1496,6 +1544,21 @@ export function collectDeclaredGlobals(
       }
     }
   }
+
+  return { referencedNames, valueRefNames, userModuleBindings };
+}
+
+export function collectDeclaredGlobals(
+  ctx: CodegenContext,
+  libFile: ts.SourceFile,
+  userFile: ts.SourceFile,
+  libIndex?: LibDeclIndex,
+  allUserFiles?: readonly ts.SourceFile[],
+): void {
+  const names =
+    (allUserFiles && userProgramNamesCache.get(allUserFiles)) || userProgramNames(allUserFiles ?? [userFile]);
+  if (allUserFiles) userProgramNamesCache.set(allUserFiles, names);
+  const { referencedNames, valueRefNames, userModuleBindings } = names;
 
   for (const stmt of libFile.statements) {
     if (!ts.isVariableStatement(stmt) || !hasDeclareModifier(stmt)) continue;
@@ -1887,6 +1950,30 @@ const LIB_GLOBALS = new Set([
   "queueMicrotask",
   "requestAnimationFrame",
   "cancelAnimationFrame",
+  // (#6492 round 6) The lib.es5 `declare function` globals — the SAME class as
+  // the three above, and the one this gate kept missing. A module whose only
+  // lib-global reference is one of these skipped `collectDeclaredGlobals`
+  // entirely, so `ctx.declaredGlobals` never learned the name and
+  // `calleeMayBeHostCallable` (via `isDeclaredHostGlobal`) answered false —
+  // which suppresses the `__call_function` host arm at the call site. A first
+  // class read then holds a real host function while the dispatch has only the
+  // closure-struct path, so `var s = eval; s("1+1")` NULLS the guarded cast and
+  // `struct.get` traps: `dereferencing a null pointer`, uncatchable.
+  //
+  // Invisible in the honest test262 lane because the harness prefix shares the
+  // compilation unit and mentions `Array`/`Object`/`String` on its first lines,
+  // so the gate always fired there; the linked lane compiles the BODY ALONE and
+  // a body-only unit can genuinely reference nothing else. Same failure the
+  // `EvalError` note below records, same fix.
+  "eval",
+  "parseInt",
+  "parseFloat",
+  "isNaN",
+  "isFinite",
+  "decodeURI",
+  "decodeURIComponent",
+  "encodeURI",
+  "encodeURIComponent",
   // #1065 — ambient builtin constructors that need host-global resolution
   // for bare-identifier uses (e.g. `x.constructor === Array`). Call-site
   // fast paths intercept before identifier resolution runs.

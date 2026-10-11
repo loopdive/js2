@@ -18,6 +18,8 @@
  * to the pre-split inline blocks (verified via `prove-emit-identity`).
  */
 import type { Instr } from "../ir/types.js";
+import { buildStringEqualityBody } from "../runtime/wasmgc/values/string-equality-body.js";
+import { buildStringConcatDefinition } from "../runtime/wasmgc/values/string-concat-bodies.js";
 import { addFuncType } from "./registry/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { lazyStrFlattenEnabled, relocatedFlattenPreamble } from "./lazy-str-flatten.js";
@@ -39,136 +41,15 @@ export function emitStrConcatHelpers(shared: NativeStrShared): void {
     const funcIdx = mintDefinedFunc(ctx);
     ctx.nativeStrHelpers.set("__str_concat", funcIdx);
 
-    // params: a(0), b(1)
-    // locals: lenA(2), lenB(3), newLen(4), newArr(5), flatA(6), flatB(7)
-    const body: Instr[] = [
-      // lenA = a.len (field 0 of AnyString)
-      { op: "local.get", index: 0 },
-      { op: "struct.get", typeIdx: anyStrTypeIdx, fieldIdx: 0 },
-      { op: "local.set", index: 2 }, // lenA
-
-      // lenB = b.len (field 0 of AnyString)
-      { op: "local.get", index: 1 },
-      { op: "struct.get", typeIdx: anyStrTypeIdx, fieldIdx: 0 },
-      { op: "local.set", index: 3 }, // lenB
-
-      // Empty strings are the identity element for concatenation. Returning
-      // the other immutable string directly avoids allocating and copying a
-      // fresh flat string for common accumulator shapes such as
-      // `let out = ""; out += value`. Keep a compile-time kill switch so the
-      // optimization can be measured against the identical compiler tree.
-      ...(process.env.JS2WASM_STR_CONCAT_EMPTY_IDENTITY === "0"
-        ? []
-        : [
-            { op: "local.get" as const, index: 2 },
-            { op: "i32.eqz" as const },
-            {
-              op: "if" as const,
-              blockType: { kind: "empty" as const },
-              then: [{ op: "local.get" as const, index: 1 }, { op: "return" as const }],
-            },
-            { op: "local.get" as const, index: 3 },
-            { op: "i32.eqz" as const },
-            {
-              op: "if" as const,
-              blockType: { kind: "empty" as const },
-              then: [{ op: "local.get" as const, index: 0 }, { op: "return" as const }],
-            },
-          ]),
-
-      // newLen = lenA + lenB
-      { op: "local.get", index: 2 },
-      { op: "local.get", index: 3 },
-      { op: "i32.add" },
-      { op: "local.set", index: 4 }, // newLen
-
-      // if newLen >= 64, create ConsString (O(1) rope node)
-      { op: "local.get", index: 4 },
-      { op: "i32.const", value: 64 },
-      { op: "i32.ge_u" },
-      {
-        op: "if",
-        blockType: { kind: "val", type: strRef },
-        then: [
-          // struct.new $ConsString(newLen, a, b)
-          { op: "local.get", index: 4 }, // len = newLen
-          { op: "local.get", index: 0 }, // left = a
-          { op: "local.get", index: 1 }, // right = b
-          { op: "struct.new", typeIdx: consStrTypeIdx },
-        ],
-        else: [
-          // Short string: flatten both sides and copy
-          // flatA = flatten(a)
-          { op: "local.get", index: 0 },
-          { op: "call", funcIdx: flattenIdx },
-          { op: "local.set", index: 6 },
-
-          // flatB = flatten(b)
-          { op: "local.get", index: 1 },
-          { op: "call", funcIdx: flattenIdx },
-          { op: "local.set", index: 7 },
-
-          // newArr = array.new_default(newLen)
-          { op: "local.get", index: 4 },
-          { op: "array.new_default", typeIdx: strDataTypeIdx },
-          { op: "local.set", index: 5 },
-
-          // array.copy(newArr, 0, flatA.data, flatA.off, lenA)
-          { op: "local.get", index: 5 }, // dst
-          { op: "ref.as_non_null" },
-          { op: "i32.const", value: 0 }, // dstOffset
-          { op: "local.get", index: 6 }, // flatA
-          { op: "ref.as_non_null" },
-          { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 2 }, // flatA.data
-          { op: "local.get", index: 6 }, // flatA
-          { op: "ref.as_non_null" },
-          { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 1 }, // flatA.off
-          { op: "local.get", index: 2 }, // lenA
-          {
-            op: "array.copy",
-            dstTypeIdx: strDataTypeIdx,
-            srcTypeIdx: strDataTypeIdx,
-          },
-
-          // array.copy(newArr, lenA, flatB.data, flatB.off, lenB)
-          { op: "local.get", index: 5 }, // dst
-          { op: "ref.as_non_null" },
-          { op: "local.get", index: 2 }, // dstOffset = lenA
-          { op: "local.get", index: 7 }, // flatB
-          { op: "ref.as_non_null" },
-          { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 2 }, // flatB.data
-          { op: "local.get", index: 7 }, // flatB
-          { op: "ref.as_non_null" },
-          { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 1 }, // flatB.off
-          { op: "local.get", index: 3 }, // lenB
-          {
-            op: "array.copy",
-            dstTypeIdx: strDataTypeIdx,
-            srcTypeIdx: strDataTypeIdx,
-          },
-
-          // result = struct.new $NativeString(newLen, 0, newArr)
-          { op: "local.get", index: 4 }, // len = newLen
-          { op: "i32.const", value: 0 }, // off = 0
-          { op: "local.get", index: 5 }, // data = newArr
-          { op: "ref.as_non_null" },
-          { op: "struct.new", typeIdx: strTypeIdx },
-        ],
-      },
-    ];
-
+    const definition = buildStringConcatDefinition(
+      { strTypeIdx, strDataTypeIdx, anyStrTypeIdx, consStrTypeIdx },
+      { flattenIdx, emptyIdentity: process.env.JS2WASM_STR_CONCAT_EMPTY_IDENTITY !== "0" },
+    );
     pushDefinedFunc(ctx, funcIdx, {
       name: "__str_concat",
       typeIdx,
-      locals: [
-        { name: "lenA", type: { kind: "i32" } },
-        { name: "lenB", type: { kind: "i32" } },
-        { name: "newLen", type: { kind: "i32" } },
-        { name: "newArr", type: { kind: "ref_null", typeIdx: strDataTypeIdx } },
-        { name: "flatA", type: { kind: "ref_null", typeIdx: strTypeIdx } },
-        { name: "flatB", type: { kind: "ref_null", typeIdx: strTypeIdx } },
-      ],
-      body,
+      locals: definition.locals,
+      body: definition.body,
       exported: false,
     });
   }
@@ -442,173 +323,22 @@ export function emitStrCompareHelpers(shared: NativeStrShared): void {
     // down (just before the character loop), and the length compare reads
     // `$AnyString` field 0. See `lazy-str-flatten.ts`.
     const lazy = lazyStrFlattenEnabled();
-    const lenTypeIdx = lazy ? anyStrTypeIdx : strTypeIdx;
     const lazyFlattenPreamble = relocatedFlattenPreamble(lazy, strTypeIdx, getFlattenIdx, [0, 1]);
     const typeIdx = addFuncType(ctx, [strRef, strRef], [{ kind: "i32" }]);
     const funcIdx = mintDefinedFunc(ctx);
     ctx.nativeStrHelpers.set("__str_equals", funcIdx);
 
     // locals: len(2), i(3), aData(4), bData(5), aOff(6), bOff(7)
-    const body: Instr[] = [
-      // (#3673) identity fast path: same ref → equal. Literal interning gives
-      // every literal site one shared struct, so comparisons against the same
-      // interned literal (property-name probes, keyword checks) exit here
-      // without touching the character data.
-      { op: "local.get", index: 0 },
-      { op: "local.get", index: 1 },
-      { op: "ref.eq" },
+    const body = buildStringEqualityBody(
       {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [{ op: "i32.const", value: 1 }, { op: "return" }],
+        nativeStrTypeIdx: strTypeIdx,
+        nativeStrDataTypeIdx: strDataTypeIdx,
+        anyStrTypeIdx,
+        hashedStrTypeIdx: ctx.hashedStrTypeIdx,
       },
-      // len = a.len
-      { op: "local.get", index: 0 },
-      { op: "struct.get", typeIdx: lenTypeIdx, fieldIdx: 0 },
-      { op: "local.set", index: 2 }, // len
-
-      // if a.len != b.len return 0
-      { op: "local.get", index: 2 },
-      { op: "local.get", index: 1 },
-      { op: "struct.get", typeIdx: lenTypeIdx, fieldIdx: 0 },
-      { op: "i32.ne" },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [{ op: "i32.const", value: 0 }, { op: "return" }],
-      },
-
-      // (#3673 round 9) Hash fast-reject: when BOTH sides are `$HashedString`
-      // with computed hashes (interned literals bake theirs at compile time)
-      // and the hashes differ, the strings cannot be equal — O(1) instead of
-      // the char loop. Equal hashes (match or collision) fall through to the
-      // authoritative char compare. The `__extern_get` member-ladder arms
-      // compare an interned probe key against interned field-name constants
-      // bucketed by length + first char, so this reject does the real work.
-      ...(ctx.hashedStrTypeIdx >= 0
-        ? ([
-            { op: "local.get", index: 0 },
-            { op: "ref.test", typeIdx: ctx.hashedStrTypeIdx },
-            {
-              op: "if",
-              blockType: { kind: "empty" },
-              then: [
-                { op: "local.get", index: 1 },
-                { op: "ref.test", typeIdx: ctx.hashedStrTypeIdx },
-                {
-                  op: "if",
-                  blockType: { kind: "empty" },
-                  then: [
-                    { op: "local.get", index: 0 },
-                    { op: "ref.cast", typeIdx: ctx.hashedStrTypeIdx },
-                    { op: "struct.get", typeIdx: ctx.hashedStrTypeIdx, fieldIdx: 3 },
-                    { op: "local.tee", index: 8 },
-                    {
-                      op: "if",
-                      blockType: { kind: "empty" },
-                      then: [
-                        { op: "local.get", index: 1 },
-                        { op: "ref.cast", typeIdx: ctx.hashedStrTypeIdx },
-                        { op: "struct.get", typeIdx: ctx.hashedStrTypeIdx, fieldIdx: 3 },
-                        { op: "local.tee", index: 9 },
-                        {
-                          op: "if",
-                          blockType: { kind: "empty" },
-                          then: [
-                            { op: "local.get", index: 8 },
-                            { op: "local.get", index: 9 },
-                            { op: "i32.ne" },
-                            {
-                              op: "if",
-                              blockType: { kind: "empty" },
-                              then: [{ op: "i32.const", value: 0 }, { op: "return" }],
-                            },
-                          ],
-                        },
-                      ],
-                    },
-                  ],
-                },
-              ],
-            },
-          ] satisfies Instr[])
-        : []),
-
-      // (#4157) Everything above answered without a flat buffer; the loop below
-      // is the first consumer of `off`/`data`.
-      ...lazyFlattenPreamble,
-
-      // aOff = a.off
-      { op: "local.get", index: 0 },
-      { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 1 },
-      { op: "local.set", index: 6 },
-
-      // bOff = b.off
-      { op: "local.get", index: 1 },
-      { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 1 },
-      { op: "local.set", index: 7 },
-
-      // aData = a.data
-      { op: "local.get", index: 0 },
-      { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 2 },
-      { op: "local.set", index: 4 },
-
-      // bData = b.data
-      { op: "local.get", index: 1 },
-      { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 2 },
-      { op: "local.set", index: 5 },
-
-      // i = 0
-      { op: "i32.const", value: 0 },
-      { op: "local.set", index: 3 },
-
-      // loop: compare element by element
-      {
-        op: "block",
-        blockType: { kind: "empty" },
-        body: [
-          {
-            op: "loop",
-            blockType: { kind: "empty" },
-            body: [
-              // if i >= len, break (strings are equal)
-              { op: "local.get", index: 3 },
-              { op: "local.get", index: 2 },
-              { op: "i32.ge_u" },
-              { op: "br_if", depth: 1 },
-
-              // if aData[aOff + i] != bData[bOff + i], return 0
-              { op: "local.get", index: 4 },
-              { op: "local.get", index: 6 },
-              { op: "local.get", index: 3 },
-              { op: "i32.add" },
-              { op: "array.get_u", typeIdx: strDataTypeIdx },
-              { op: "local.get", index: 5 },
-              { op: "local.get", index: 7 },
-              { op: "local.get", index: 3 },
-              { op: "i32.add" },
-              { op: "array.get_u", typeIdx: strDataTypeIdx },
-              { op: "i32.ne" },
-              {
-                op: "if",
-                blockType: { kind: "empty" },
-                then: [{ op: "i32.const", value: 0 }, { op: "return" }],
-              },
-
-              // i++
-              { op: "local.get", index: 3 },
-              { op: "i32.const", value: 1 },
-              { op: "i32.add" },
-              { op: "local.set", index: 3 },
-              { op: "br", depth: 0 },
-            ],
-          },
-        ],
-      },
-
-      // return 1 (equal)
-      { op: "i32.const", value: 1 },
-    ];
+      lazy,
+      lazyFlattenPreamble,
+    );
 
     pushDefinedFunc(ctx, funcIdx, {
       name: "__str_equals",

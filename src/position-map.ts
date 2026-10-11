@@ -1,4 +1,9 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import type {
+  IrSourceMapStageProducer,
+  IrSourceMapTextStage,
+  IrSourceMapTextEdit,
+} from "./shared/contracts/ir-unit-inventory.js";
 import type { CompilerSourceOrigin, CompilerSourceOriginSpan } from "./shared/contracts/source-origin.js";
 export type {
   CompilerSourceProducer,
@@ -64,6 +69,64 @@ export class PositionMap {
   /** Identity map — output offsets equal input offsets. */
   static identity(): PositionMap {
     return new PositionMap([]);
+  }
+
+  /** Capture actual replacement bytes before a single stage loses its input. */
+  captureSourceMapStage(
+    producer: IrSourceMapStageProducer,
+    inputText: string,
+    outputText: string,
+  ): IrSourceMapTextStage {
+    if (typeof inputText !== "string" || typeof outputText !== "string")
+      throw new Error("source map: stage text must be primitive strings");
+    if (this.inner && !this.inner.isIdentity) throw new Error("source map: cannot capture a composed position map");
+    if (
+      ![
+        "define",
+        "stdin-prelude",
+        "iterator-prelude",
+        "listformat-prelude",
+        "cjs-rewrite",
+        "eval-super-rewrite",
+        "imports",
+      ].includes(producer)
+    )
+      throw new Error("source map: unknown text-stage producer");
+    const edits: IrSourceMapTextEdit[] = [];
+    let cursor = 0;
+    let delta = 0;
+    let replay = "";
+    for (const edit of this.edits) {
+      const { origStart: start, origEnd: end, newLength } = edit;
+      if (
+        ![start, end, newLength].every(Number.isSafeInteger) ||
+        start < cursor ||
+        end < start ||
+        end > inputText.length ||
+        newLength < 0
+      )
+        throw new Error("source map: invalid single-stage edit");
+      const outputStart = start + delta;
+      if (outputStart < 0 || outputStart + newLength > outputText.length)
+        throw new Error("source map: replacement lies outside actual output");
+      const removed = inputText.slice(start, end);
+      const inserted = outputText.slice(outputStart, outputStart + newLength);
+      replay += inputText.slice(cursor, start) + inserted;
+      if (removed !== inserted)
+        edits.push(
+          Object.freeze({
+            input: Object.freeze({ start, end }),
+            removed,
+            inserted,
+            kind: start === end ? "generated-insertion" : "replacement",
+          }),
+        );
+      cursor = end;
+      delta += newLength - (end - start);
+    }
+    replay += inputText.slice(cursor);
+    if (replay !== outputText) throw new Error("source map: single-stage replay differs from actual output");
+    return Object.freeze({ producer, inputText, outputText, edits: Object.freeze(edits) });
   }
 
   /** Apply only THIS stage's single transform (output → its direct input). */

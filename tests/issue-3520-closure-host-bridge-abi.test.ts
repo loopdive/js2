@@ -1,7 +1,9 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
+import { execFile } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { describe, expect, it, vi } from "vitest";
 
@@ -118,6 +120,11 @@ const CLOSURE_FREE_SPOOF_SOURCE = `
 `;
 
 const CLOSURE_STANDALONE_HELPER_EXPORTS = [
+  // (#6491) the free-function argc channel, sibling of the method family below.
+  "__\0js2_call_fn_argc_1",
+  "__\0js2_call_fn_argc_2",
+  "__\0js2_call_fn_argc_3",
+  "__\0js2_call_fn_argc_4",
   "__\0js2_call_fn_method_argc_1",
   "__\0js2_call_fn_method_argc_2",
   "__\0js2_call_fn_method_argc_3",
@@ -129,6 +136,9 @@ const CLOSURE_STANDALONE_HELPER_EXPORTS = [
   "__box_boolean",
   "__box_number",
   "__dynamic_boundary_tag",
+  // (#6666) the lite host-free renderer for compiler-synthesized throws
+  "__exn_render_char",
+  "__exn_render_prepare",
   "__exn_tag",
   "__to_bigint",
   "__typeof_bigint",
@@ -205,6 +215,49 @@ function generateWithCapturedRegistry(
   }
   if (!registry) throw new Error(`missing closure Program ABI session for ${fileName}`);
   return { registry, result: result! };
+}
+
+type CompileResult = Awaited<ReturnType<typeof compile>>;
+
+/**
+ * (#6697) Standalone/WASI compiles run out of process with an explicit heap:
+ * in-process they push the 512 MB Vitest fork over its limit. Returns the
+ * serialisable CompileResult fields this file reads, in job order.
+ */
+async function compileIsolated(
+  jobs: readonly { source: string; options: Record<string, unknown> }[],
+): Promise<CompileResult[]> {
+  const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
+  const stdout = await new Promise<string>((resolveRun, rejectRun) => {
+    const child = execFile(
+      process.execPath,
+      ["--max-old-space-size=2048", "--import", "tsx", join(repoRoot, "tests/fixtures/issue-3520-compile-probe.mts")],
+      { cwd: repoRoot, encoding: "utf-8", maxBuffer: 64 * 1024 * 1024 },
+      (error, out) => (error ? rejectRun(error) : resolveRun(out)),
+    );
+    child.stdin!.end(JSON.stringify(jobs));
+  });
+  const rows = JSON.parse(stdout) as (Omit<CompileResult, "binary"> & { binary: string })[];
+  return rows.map((row) => ({ ...row, binary: new Uint8Array(Buffer.from(row.binary, "base64")) }) as CompileResult);
+}
+
+/** The untracked/tracked pair for each host-free target, compiled out of process. */
+async function compileHostFreePairs(
+  source: string,
+  fileStem: string,
+): Promise<Map<"standalone" | "wasi", { untracked: CompileResult; tracked: CompileResult }>> {
+  const targets = ["standalone", "wasi"] as const;
+  const jobs = targets.flatMap((target) => {
+    const options = { fileName: `${fileStem}-${target}.ts`, experimentalIR: true, target };
+    return [
+      { source, options },
+      { source, options: { ...options, trackIrOutcomes: true } },
+    ];
+  });
+  const results = await compileIsolated(jobs);
+  return new Map(
+    targets.map((target, index) => [target, { untracked: results[2 * index]!, tracked: results[2 * index + 1]! }]),
+  );
 }
 
 async function instantiate(sourceOrResult: string | Awaited<ReturnType<typeof compile>>): Promise<{
@@ -302,14 +355,9 @@ describe("#3520 C31 closure host bridge Program ABI ownership", () => {
 
   it("strips compiler constructor-closure exports in standalone and WASI with exact parity", async () => {
     const expectedNames = [...CLOSURE_STANDALONE_HELPER_EXPORTS, "getCtor", "invokeCtor"];
+    const pairs = await compileHostFreePairs(CONSTRUCTIBLE_CLOSURE_SOURCE, "issue-3520-closure-ctor");
     for (const target of ["standalone", "wasi"] as const) {
-      const options = {
-        fileName: `issue-3520-closure-ctor-${target}.ts`,
-        experimentalIR: true,
-        target,
-      } as const;
-      const untracked = await compile(CONSTRUCTIBLE_CLOSURE_SOURCE, options);
-      const tracked = await compile(CONSTRUCTIBLE_CLOSURE_SOURCE, { ...options, trackIrOutcomes: true });
+      const { untracked, tracked } = pairs.get(target)!;
       expect(untracked.success, `${target} untracked`).toBe(true);
       expect(tracked.success, `${target} tracked`).toBe(true);
       expect(untracked.imports, `${target} untracked imports`).toEqual([]);
@@ -345,14 +393,9 @@ describe("#3520 C31 closure host bridge Program ABI ownership", () => {
       "getCtor",
       "invokeCtor",
     ];
+    const pairs = await compileHostFreePairs(CLOSURE_COLLISION_SOURCE, "issue-3520-closure-collisions");
     for (const target of ["standalone", "wasi"] as const) {
-      const options = {
-        fileName: `issue-3520-closure-collisions-${target}.ts`,
-        experimentalIR: true,
-        target,
-      } as const;
-      const untracked = await compile(CLOSURE_COLLISION_SOURCE, options);
-      const tracked = await compile(CLOSURE_COLLISION_SOURCE, { ...options, trackIrOutcomes: true });
+      const { untracked, tracked } = pairs.get(target)!;
       expect(untracked.success, `${target} untracked`).toBe(true);
       expect(tracked.success, `${target} tracked`).toBe(true);
       expect(untracked.imports, `${target} untracked imports`).toEqual([]);
@@ -425,14 +468,9 @@ describe("#3520 C31 closure host bridge Program ABI ownership", () => {
             entry.intent.origin === "support",
         ),
     ).toEqual([]);
+    const pairs = await compileHostFreePairs(CLOSURE_FREE_SPOOF_SOURCE, "issue-3520-closure-spoof");
     for (const target of ["standalone", "wasi"] as const) {
-      const options = {
-        fileName: `issue-3520-closure-spoof-${target}.ts`,
-        experimentalIR: true,
-        target,
-      } as const;
-      const untracked = await compile(CLOSURE_FREE_SPOOF_SOURCE, options);
-      const tracked = await compile(CLOSURE_FREE_SPOOF_SOURCE, { ...options, trackIrOutcomes: true });
+      const { untracked, tracked } = pairs.get(target)!;
       expect(untracked.success, `${target} untracked`).toBe(true);
       expect(tracked.success, `${target} tracked`).toBe(true);
       expect(untracked.imports, `${target} imports`).toEqual([]);
@@ -869,24 +907,13 @@ describe("#3520 C31 closure host bridge Program ABI ownership", () => {
     expect(closureFree.exports["$cf$"]).toBeUndefined();
     expect(closureFree.exports["__\0js2_closure_host_bridge"]).toBeUndefined();
     expect(closureFree.exports["__\0js2_closure_host_bridge_marker"]).toBeUndefined();
-  });
 
-  // (#6419 → #6441) Reaching this at all is new: the row above used to bail on
-  // its first assertion, so the marshal claim had never run. It is a THIRD,
-  // separate defect — with a compiler closure family present, the module's own
-  // user-declared `__is_closure` (which answers 1 unconditionally) is what
-  // `looksMarshalable` consults, so a returned `Empty` instance comes back as
-  // a callable FUNCTION instead of an object. `it.fails` pins the known-bad
-  // behaviour honestly: when #6441 lands this marker goes red, which is the
-  // signal to delete it and fold these two assertions back into the row above.
-  it.fails("MARSHALS a forged-name module's class instance as an object (#6441, known-bad)", async () => {
-    const { exports } = await instantiate(`
-      export function __is_closure(_value: any): number { return 1; }
-      export function __call_fn_0(_value: any): number { return 709; }
-      export function $cf(): number { return 704; }
-      class Empty { ping(): number { return 1; } }
-      export function makeEmpty(): Empty { return new Empty(); }
-    `);
+    // (#6419 → #6441, fixed) With a compiler closure family present, the
+    // module's own user-declared `__is_closure` answers `1` unconditionally
+    // for *its own* callers, but the boundary consults the compiler's
+    // authenticated classifier (via `_hostBridgeExportView`), which answers
+    // `0` for the escaping `Empty` instance — so `wrapExports` must marshal it
+    // to an object, not wrap it as a callable function.
     const wrapped = wrapExports(exports as WebAssembly.Exports);
     const instance = wrapped.makeEmpty();
     expect(instance).toEqual({});

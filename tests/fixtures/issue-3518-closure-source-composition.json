@@ -1,0 +1,70 @@
+{
+  "schema": 1,
+  "records": [
+    {
+      "path": "src/codegen/closures/funcref-wrapper-types.ts",
+      "parent": "605df4a43008ebcdd5af731b9a3db387b2b7daf1",
+      "commit": "bfe17bb4691881ebcb39e9848f52d7df1d4d620f",
+      "beforeBlob": "2f756d3b806b2cd0e883e688cf706003d49674ba",
+      "afterBlob": "8e3e594064bdf7241f0bcb1513bb8c241c256292",
+      "beforeSha256": "4c86728a314dff7d893c34f07f0c510341aeeecd316b1dde82bd2e77c98bc61d",
+      "afterSha256": "aa5d69ad2ee3412b1095bc25eec54224d8533c6bbc8ffc245258acf33823e99d",
+      "spans": [
+        {
+          "beforeStart": 3126,
+          "afterStart": 3126,
+          "before": " * across all functions with the same signature, but each function gets its own\n * trampoline.\n */\nexport function getOrCreateFuncRefWrapperTypes(\n  ctx: CodegenContext,\n  userParams: ValType[],\n",
+          "after": " * across all functions with the same signature, but each function gets its own\n * trampoline.\n */\nfunction funcRefWrapperSigKey(userParams: readonly ValType[], resultTypes: readonly ValType[]): string {\n  return `${userParams.map((p) => p.kind + ((p as { typeIdx?: number }).typeIdx ?? \"\")).join(\",\")}->${resultTypes\n    .map((r) => r.kind + ((r as { typeIdx?: number }).typeIdx ?? \"\"))\n    .join(\",\")}`;\n}\n\n/**\n * (#6492) Look up an EXISTING wrapper for a signature without minting one.\n *\n * The distinction matters at finalize time: a call site's closure dispatch\n * chain enumerates the wrapper func types known when that call site was\n * emitted. Retyping a trampoline to a signature no call site has ever seen\n * would make every dynamic call miss every arm; retyping it to a wrapper that\n * already exists keeps the value dispatchable. So the repair in\n * `finalizeMethodTrampolines` asks \"does this ABI already exist?\", never \"make\n * me one\".\n */\nexport function peekFuncRefWrapperTypes(\n  ctx: CodegenContext,\n  userParams: readonly ValType[],\n  resultTypes: readonly ValType[],\n): ClosureInfo | null {\n  return ctx.funcRefWrapperCache.get(funcRefWrapperSigKey(userParams, resultTypes)) ?? null;\n}\n\nexport function getOrCreateFuncRefWrapperTypes(\n  ctx: CodegenContext,\n  userParams: ValType[],\n",
+          "beforeSha256": "13b207bbbbd99717ac038b90932123f2cb9c8f2e0c198ffff60f97ef53a11fb0",
+          "afterSha256": "67ee413f2e1785450cadfd536caa919fc32c060626aff6bddcbba3b51467df7c"
+        },
+        {
+          "beforeStart": 3489,
+          "afterStart": 4600,
+          "before": "  closureInfo: ClosureInfo;\n} | null {\n  // Build cache key from param types and result types\n  const sigKey = `${userParams.map((p) => p.kind + ((p as any).typeIdx ?? \"\")).join(\",\")}->${resultTypes.map((r) => r.kind + ((r as any).typeIdx ?? \"\")).join(\",\")}`;\n\n  const cached = ctx.funcRefWrapperCache.get(sigKey);\n  if (cached) {\n",
+          "after": "  closureInfo: ClosureInfo;\n} | null {\n  // Build cache key from param types and result types\n  const sigKey = funcRefWrapperSigKey(userParams, resultTypes);\n\n  const cached = ctx.funcRefWrapperCache.get(sigKey);\n  if (cached) {\n",
+          "beforeSha256": "110ceaca120d0218b94d03ff1277917e3d5a8f1f09aef1057d3d1ba3bd0ab488",
+          "afterSha256": "0f24a69f5c7b0f0104bf0828d64b900226ff5ab4f0e738445380bdb0cb067850"
+        }
+      ]
+    },
+    {
+      "path": "src/codegen/expressions/calls.ts",
+      "parent": "862a7591e5d2b4df2d86c5d8c53f543d8eaac1ea",
+      "commit": "ea46c33ddcfaf6a62203f7c50c628ce57acd17d4",
+      "beforeBlob": "a353f03c9e4d1026a0260048c8a15bfa42f31cde",
+      "afterBlob": "0814c53e741d6308ff2bebc68260d97947d6770f",
+      "beforeSha256": "705a447923932e8047de2a7836edc1826808b5d57253ad8a5075dd34dcc8ac48",
+      "afterSha256": "8787a9b5e1a9bec41cb17a82c2dee96c2c75e2715d59daeccd669f7c0986d9df",
+      "spans": [
+        {
+          "beforeStart": 126979,
+          "afterStart": 126979,
+          "before": "  if (ctx.skippedClosureRecastDecls?.has(decl)) return true;\n\n  return false;\n}\n\n/**\n",
+          "after": "  if (ctx.skippedClosureRecastDecls?.has(decl)) return true;\n\n  return false;\n}\n\n/**\n * (#6490) Is `expr` an identifier resolving to a **callable parameter of a\n * separately-linked provider module**?\n *\n * In a linked graph (`src/package-linker.ts`, #2527 — the Temporal provider and\n * the #3451 test262 harness provider) the provider is compiled as its own Wasm\n * module and its callers live in a DIFFERENT module. A callback the consumer\n * passes in therefore arrives as an `externref` whose wasm closure struct\n * belongs to the consumer's type group, so the provider's guarded\n * `ref.test`/`ref.cast` to ITS wrapper root misses and yields `ref.null` — and\n * the callable-param dispatch then `struct.get`s a null and TRAPS with\n * \"dereferencing a null pointer\". A wasm trap is not catchable, so it takes the\n * whole program down.\n *\n * This is exactly the #1941 invariant — \"pure local closures / function params\n * are always wrapped into the closure struct, so the host arm would be dead\n * code\" — and it is FALSE by construction for a provider: the value did not\n * come from this module. Measured on the test262 linked lane, where every call\n * of `testTypedArray.js`'s `testWithTypedArrayConstructors(f)` trapped inside\n * the provider (~1,340 corpus rows). The same reasoning #4616 applied to\n * host-reachable METHOD params applies here to every param, because a\n * provider's exports are its whole reason to exist.\n *\n * Gated on `ctx.exportsConsumedByWasm` (set only by the linker, #5247), so a\n * single-module compile — every ordinary and honest-lane build — is\n * byte-identical.\n */\nexport function calleeIsLinkedProviderParam(ctx: CodegenContext, expr: ts.Expression): boolean {\n  if (ctx.exportsConsumedByWasm !== true) return false;\n  if (ctx.standalone || ctx.wasi) return false;\n  if (!ts.isIdentifier(expr)) return false;\n  const decl = ctx.oracle.valueDeclarationOf(expr);\n  return decl !== undefined && ts.isParameter(decl);\n}\n\n/**\n",
+          "beforeSha256": "77611d79895349a767ec75f7e8c2568f00cb7edce6124e0afa4afb68360a2cfe",
+          "afterSha256": "a789d44db1eaacdb96a138f59b5c4ea6f579cd36c610e309e2ef6a8d51260a8b"
+        }
+      ]
+    },
+    {
+      "path": "src/runtime/wasmgc/values/closure-layouts.ts",
+      "parent": "fdaa94315aeeeab5dc85a3596f2b4997b388ac76",
+      "commit": "cb64af7b0315d59d08809e404c1216c846270654",
+      "beforeBlob": "b4fd5fa3271a5740cd5a5defbbc601af56df7f71",
+      "afterBlob": "d62858d3ba7c3668a47287325410dbdbc33ec67e",
+      "beforeSha256": "0f9e1fe72f60e7f24577bf12ef194629e0b77815339f335c37df5784950a5543",
+      "afterSha256": "f79e77c4bb0a0286c0c3462d80613f8a1c3c3ee861cab689f6fb0f1ad3dc9d7b",
+      "spans": [
+        {
+          "beforeStart": 2036,
+          "afterStart": 2036,
+          "before": " */\nimport type { Instr, FuncHandle } from \"../../../wasm/model/instructions.js\";\nimport type { FieldDef, StructTypeDef } from \"../../../wasm/model/module-records.js\";\n\n/** Field 0 — the lifted function reference. */\nexport const CLOSURE_FUNC_FIELD_IDX = 0;\n",
+          "after": " */\nimport type { Instr, FuncHandle } from \"../../../wasm/model/instructions.js\";\nimport type { FieldDef, StructTypeDef } from \"../../../wasm/model/module-records.js\";\n\n/**\n * Slice 3 / #3214 B0: WasmGC allocation/type info for a closure:\n *   - A signature wrapper (`structTypeIdx`) contains field 0's funcref and is\n *     shared with the legacy `__fn_wrap_*` registry. A no-capture closure\n *     constructs it directly; it is not the cross-module carrier.\n *   - An optional captured subtype extends that signature wrapper with capture\n *     fields and is downcast from root `self` inside the lifted body.\n *\n * `funcTypeIdx` is the exact lifted function signature\n * `(ref $wrapperRoot, ...sig.params) -> sig.returnType`. The root self type,\n * field-0 read, and funcref signature together are independent of per-module\n * signature-wrapper creation order.\n */\nexport interface IrClosureLowering {\n  readonly structTypeIdx: number;\n  readonly funcFieldIdx: number;\n  /** Field index for capture position `i` (0-based). Valid only for captured-subtype lowerings. */\n  capFieldIdx(index: number): number;\n  readonly funcTypeIdx: number;\n  /**\n   * Exact private singleton appended to certified standalone DOM callback\n   * carriers. The thunk resolves the live absolute global index so a late\n   * import-global insertion cannot stale the allocation operand.\n   */\n  readonly domCallbackAuthorityGlobalIdx?: () => number;\n}\n\n/** Field 0 — the lifted function reference. */\nexport const CLOSURE_FUNC_FIELD_IDX = 0;\n",
+          "beforeSha256": "933f12f00f6f11ce11a395f01924fe70d3485d14a494edb10e523d02d8f47c7b",
+          "afterSha256": "7f7b778e5045b31ee168ab900f5c36db1096e43a6b4901583ad456b81510588a"
+        }
+      ]
+    }
+  ]
+}

@@ -8,6 +8,10 @@
  */
 import { afterEach, describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
+// (#6768) These cases inspect the emitted body of a function that is dead in
+// the test program (never called, or inlined away); the standalone reachability
+// sweep would stub it to `unreachable`.
+process.env.JS2WASM_FUNC_SWEEP = "0";
 
 const ENV_NAME = "JS2WASM_NUMBER_TO_STRING_INTEGER_FASTPATH";
 const originalEnv = process.env[ENV_NAME];

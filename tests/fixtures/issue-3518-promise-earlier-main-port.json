@@ -1,0 +1,363 @@
+{
+  "schemaVersion": 1,
+  "baseCommit": "3316b27608d694d89396e166572e89460caa8dfe",
+  "priorCommit": "d7de1281129ddff8d3a48902a5dcf81eaee7f8d3",
+  "sourcePath": "src/codegen/promise-combinators.ts",
+  "baseSource": {
+    "gitBlob": "55f7951d0a64076e68cc42eb0dfb8469a320a1fa",
+    "sha256": "4c14d929347b28e46cd5b6fe050d14f40baec1313881506db9619fbf59c7aa1a"
+  },
+  "priorSource": {
+    "gitBlob": "64511b85773bacb6f0e32b5c6770f69fd3eee9ee",
+    "sha256": "f428fbde2ac63f35d2308a183cf9937a11af2e625fa63ac79b71fd9afa03ca92"
+  },
+  "records": [
+    {
+      "path": "src/codegen/promise-combinators.ts",
+      "parent": "905dca7579fdc66e497ec3ee3b4755e389c5b52e",
+      "commit": "82b83e1de56cfdaf28842f36377f9bc623bf695b",
+      "before": {
+        "gitBlob": "55f7951d0a64076e68cc42eb0dfb8469a320a1fa",
+        "sha256": "4c14d929347b28e46cd5b6fe050d14f40baec1313881506db9619fbf59c7aa1a"
+      },
+      "after": {
+        "gitBlob": "6e8675c14b27399be8d43ceb33374e6570c29db0",
+        "sha256": "7f6c6b1193edd06d41dac836b93d09bb6522aff5f498d4b224f4ad5bcf45b801"
+      },
+      "spans": [
+        {
+          "ordinal": 0,
+          "before": " * captured resolve/reject pair.\n */\ninterface CustomCapabilityRuntime {\n  stateTypeIdx: number;\n  executorTypeIdx: number;\n",
+          "after": " * captured resolve/reject pair.\n */\nexport interface CustomCapabilityRuntime {\n  stateTypeIdx: number;\n  executorTypeIdx: number;\n",
+          "beforeSha256": "1d79245c3303414532a56d9e8926bf07a1d6187a87990b9905c4345f4062fd5e",
+          "afterSha256": "b7dabb8d0ff40f0b15d83a5289abc7fc55bb433bde91d37207e4768275fae626",
+          "beforeOffset": 6904,
+          "afterOffset": 6904
+        },
+        {
+          "ordinal": 1,
+          "before": " * capture is appended AFTER the carrier's fields — never at a hard-coded index.\n */\nfunction buildCustomCapabilityExecutorInstrs(runtime: CustomCapabilityRuntime, stateLocal: number): Instr[] {\n  return [\n    { op: \"ref.func\", funcIdx: runtime.executorFuncIdx },\n",
+          "after": " * capture is appended AFTER the carrier's fields — never at a hard-coded index.\n */\nexport function buildCustomCapabilityExecutorInstrs(runtime: CustomCapabilityRuntime, stateLocal: number): Instr[] {\n  return [\n    { op: \"ref.func\", funcIdx: runtime.executorFuncIdx },\n",
+          "beforeSha256": "d4f8869c2151b1300e2e73598e46e0d2e2cd5d4b0eec588c89258491000faa3f",
+          "afterSha256": "207775fcb3d7d55f78aec65685d1a32355af7f886e113fc39fd50675a5d284b2",
+          "beforeOffset": 7590,
+          "afterOffset": 7597
+        },
+        {
+          "ordinal": 2,
+          "before": "type CtxWithCustomCapability = CodegenContext & { __promiseCustomCapability?: CustomCapabilityRuntime };\n\nfunction customCapabilityTypeError(ctx: CodegenContext): Instr[] {\n  // NewPromiseCapability's executor protocol throws a TypeError before the\n  // combinator touches an empty iterable when either captured slot is not\n",
+          "after": "type CtxWithCustomCapability = CodegenContext & { __promiseCustomCapability?: CustomCapabilityRuntime };\n\nexport function customCapabilityTypeError(ctx: CodegenContext): Instr[] {\n  // NewPromiseCapability's executor protocol throws a TypeError before the\n  // combinator touches an empty iterable when either captured slot is not\n",
+          "beforeSha256": "0a0c913b065c2836ed23c139ec980e9295e60135a21ff47cb5dca11dfcd3663f",
+          "afterSha256": "308acecd9114b378e8f0d2fee87a5c178689d738ae0005a2b21770dfb03dcb15",
+          "beforeOffset": 8245,
+          "afterOffset": 8259
+        },
+        {
+          "ordinal": 3,
+          "before": "\n/** Register the two-argument capability executor and its mutable slots once. */\nfunction ensureCustomCapabilityRuntime(ctx: CodegenContext): CustomCapabilityRuntime | null {\n  const cached = (ctx as CtxWithCustomCapability).__promiseCustomCapability;\n  if (cached) return cached;\n",
+          "after": "\n/** Register the two-argument capability executor and its mutable slots once. */\nexport function ensureCustomCapabilityRuntime(ctx: CodegenContext): CustomCapabilityRuntime | null {\n  const cached = (ctx as CtxWithCustomCapability).__promiseCustomCapability;\n  if (cached) return cached;\n",
+          "beforeSha256": "abb96cb10cf7d098eed1856d42830f5b7f25ea850edc245cba459adbdc86d0f6",
+          "afterSha256": "5949240f6652db4b6af45f580581786f96bb288ca209aab79cdeef119718a643",
+          "beforeOffset": 8990,
+          "afterOffset": 9011
+        }
+      ]
+    },
+    {
+      "path": "src/codegen/promise-combinators.ts",
+      "parent": "a61c2d41b4f7fd7935e3253b0a735b11ee1ecbf3",
+      "commit": "94c00fa7b1d5526c170268c91049ff6967a09233",
+      "before": {
+        "gitBlob": "6e8675c14b27399be8d43ceb33374e6570c29db0",
+        "sha256": "7f6c6b1193edd06d41dac836b93d09bb6522aff5f498d4b224f4ad5bcf45b801"
+      },
+      "after": {
+        "gitBlob": "a1b93dbf7bd85a211fecdb7f45707807e526b067",
+        "sha256": "e59d391b8ff10666d977beed00515cd3b244eb53c79bb8007d26b8562e5564e2"
+      },
+      "spans": [
+        {
+          "ordinal": 0,
+          "before": "// all/race-only modules stay byte-identical. (#2867 string-combinator slice)\n// String arguments drain through `__combinator_to_vec`'s code-point string arm\n// under native strings. f64-backed `number[]` vecs (the Gap-4\n// output-representation escalation) and generator-state arguments still fall\n// through to the existing host path (follow-ups).\n//\n// **THE WIDEN HAS LANDED — this module is LIVE on `--target standalone`.**\n",
+          "after": "// all/race-only modules stay byte-identical. (#2867 string-combinator slice)\n// String arguments drain through `__combinator_to_vec`'s code-point string arm\n// under native strings. f64-backed `number[]` vecs still fall through to the\n// existing host path except for #5197 R3-2's observable direct-VEC arm, which\n// boxes each slot only as that pipeline element is consumed. Generator-state\n// arguments remain follow-up work.\n//\n// **THE WIDEN HAS LANDED — this module is LIVE on `--target standalone`.**\n",
+          "beforeSha256": "62e3fb47924f5ee53dc696b524eeebb8b724412fba7ea4fb39b939e4a5253ac7",
+          "afterSha256": "785bb3731aa15e31e2ffd23d824de1b0b51fe6ac8dc1b1fb4f3247cdc1ff2177",
+          "beforeOffset": 1882,
+          "afterOffset": 1882
+        },
+        {
+          "ordinal": 1,
+          "before": "import { ensureNativeStringHelpers, stringConstantExternrefInstrs } from \"./native-strings.js\";\nimport { BUILTIN_TYPE_TAGS } from \"./builtin-tags.js\";\nimport {\n  ensureAsyncDriveRuntime,\n  getOrRegisterPromiseType,\n  PROMISE_STATE_FULFILLED,\n",
+          "after": "import { ensureNativeStringHelpers, stringConstantExternrefInstrs } from \"./native-strings.js\";\nimport { BUILTIN_TYPE_TAGS } from \"./builtin-tags.js\";\nimport { buildClosureRefTestArms } from \"./closure-classifier.js\";\nimport { emitBuiltinConstructorIdentity } from \"./builtin-static-globals.js\";\nimport { ensureStandaloneBuiltinStaticMethodClosure } from \"./builtin-value-read.js\";\nimport { reserveCarrierBagVisibility } from \"./carrier-bag-visibility.js\";\nimport { buildTargetTaggedTry } from \"../ir/try-table.js\";\nimport {\n  buildPromiseSettleClosureInstrs,\n  ensureAsyncDriveRuntime,\n  ensurePromiseExecutorClosures,\n  getOrRegisterPromiseType,\n  PROMISE_STATE_FULFILLED,\n",
+          "beforeSha256": "7d8f7be2c031f935c3bdf609a53a54542d25ad46a4962ec463c17701361c3292",
+          "afterSha256": "eb3ec7e6cd507b3f8dc776db2b79c2bafc3b066b2abf361e993404fd13ad716a",
+          "beforeOffset": 5761,
+          "afterOffset": 5840
+        },
+        {
+          "ordinal": 2,
+          "before": "  PROMISE_STATE_REJECTED,\n  isStandalonePromiseActive,\n} from \"./async-scheduler.js\";\n\n",
+          "after": "  PROMISE_STATE_REJECTED,\n  isStandalonePromiseActive,\n  type PromiseExecutorClosures,\n} from \"./async-scheduler.js\";\n\n",
+          "beforeSha256": "6e5ef858f51bf45fb0115aa787f7c4d241be3913b57893e49627b002e81ed078",
+          "afterSha256": "0d6b45be131f9be2773e512aa1003f5a301640595512f3c9346ec1bb6988a6e4",
+          "beforeOffset": 6028,
+          "afterOffset": 6540
+        },
+        {
+          "ordinal": 3,
+          "before": "\ntype CtxWithCombinators = CodegenContext & { __promiseCombinators?: CombinatorRuntime };\n\nfunction registerStruct(\n",
+          "after": "\ntype CtxWithCombinators = CodegenContext & { __promiseCombinators?: CombinatorRuntime };\n\n/**\n * (#5197 R3-2) The closure carrier for `Promise.all`'s per-element resolve\n * function.  The normal combinator runtime uses raw microtask callbacks, but\n * the observable protocol must hand a real, one-argument function object to\n * `nextPromise.then`.  Keep this tiny bridge separate from the legacy\n * subscribe/runtime bodies so sources that do not observe `resolve`/`then`\n * remain byte-identical.\n */\ninterface ObservableCombinatorRuntime {\n  /** `$__combinator_all_resolve_cap` subtype containing element caps + called bit. */\n  allResolveCapTypeIdx: number;\n  /** First capture after the inherited builtin-function metadata fields. */\n  allResolveElemCapsFieldIdx: number;\n  /** Mutable once-only bit used by §27.2.4.1 resolve-element functions. */\n  allResolveCalledFieldIdx: number;\n  /** Builtin metadata carrier used to make the closure observable as a function. */\n  allResolveMetaTypeIdx: number;\n  /** Target-standard exception tag used around observable Get/Call/Invoke. */\n  exnTagIdx: number;\n  /** Standard one-argument result capability resolve/reject closures. */\n  settleClosures: PromiseExecutorClosures;\n}\n\n// Do not cache defined-function indices here. A later host import can shift\n// them after this runtime has been registered; every observable emit site\n// re-resolves its helper from `ctx.funcMap`, while these type indices remain\n// stable for the lifetime of the module.\n\ntype CtxWithObservableCombinators = CodegenContext & {\n  __promiseObservableCombinators?: ObservableCombinatorRuntime | null;\n};\n\n/** State shared by the literal and direct-vector observable paths. */\ninterface ObservableCombinatorPreparation {\n  resultLocal: number;\n  ctorLocal: number;\n  resolveLocal: number;\n  abortedLocal: number;\n  /** One result-capability resolve closure, shared by every observable race element. */\n  raceFulfillLocal: number;\n  /** One result-capability reject closure, shared by every observable element. */\n  rejectLocal: number;\n}\n\n/**\n * Register the bounded R3-2 plumbing before an emitter splices any detached\n * argument buffers into a function body.  Every existing native combinator\n * helper deliberately remains untouched: the source-wide observable gate is\n * the sole admission point for this additional machinery.\n */\nfunction ensureObservableCombinatorRuntime(\n  ctx: CodegenContext,\n  ids: CombinatorRuntime,\n): ObservableCombinatorRuntime | null {\n  const cache = ctx as CtxWithObservableCombinators;\n  if (cache.__promiseObservableCombinators !== undefined) return cache.__promiseObservableCombinators;\n\n  // Register the property-read/call substrate before minting our capture type.\n  // `Promise.resolve` must be a reified closure in the unmodified case too: the\n  // observable route always performs the actual Get/Call rather than assuming\n  // the direct native entry point.\n  ensureObjectRuntime(ctx);\n  ensureObjVecBuilders(ctx);\n  // A source that assigns/defines an own Promise `then` has already reserved\n  // its carrier substrate. Make the shared presence predicate available before\n  // observable native-own Invoke arms are emitted.\n  reserveCarrierBagVisibility(ctx);\n  const applyClosureIdx = reserveApplyClosure(ctx);\n  ensureStandaloneBuiltinStaticMethodClosure(ctx, \"Promise\", \"resolve\");\n  const executorClosures = ensurePromiseExecutorClosures(ctx);\n  emitWasiErrorConstructor(ctx, \"TypeError\", 1);\n  addStringConstantGlobal(ctx, \"Promise resolve is not callable\");\n  addStringConstantGlobal(ctx, \"Promise then is not callable\");\n\n  const externGetIdx = ctx.funcMap.get(\"__extern_get\");\n  const newTypeErrorIdx = ctx.funcMap.get(\"__new_TypeError\");\n  if (\n    executorClosures === null ||\n    externGetIdx === undefined ||\n    applyClosureIdx === undefined ||\n    newTypeErrorIdx === undefined\n  ) {\n    cache.__promiseObservableCombinators = null;\n    return null;\n  }\n\n  const wrapper = getOrCreateFuncRefWrapperTypes(ctx, [EXTERNREF], []);\n  if (!wrapper) {\n    cache.__promiseObservableCombinators = null;\n    return null;\n  }\n  const allResolveMetaTypeIdx = ensureBuiltinFnMetaType(\n    ctx,\n    wrapper.structTypeIdx,\n    wrapper.closureInfo,\n    \"promise:all-resolve-element\",\n    \"\",\n    1,\n  );\n  const metaFields = (ctx.mod.types[allResolveMetaTypeIdx] as { fields: FieldDef[] }).fields;\n  const allResolveElemCapsFieldIdx = metaFields.length;\n  const allResolveCalledFieldIdx = allResolveElemCapsFieldIdx + 1;\n  const allResolveCapTypeIdx = ctx.mod.types.length;\n  const allResolveFields: FieldDef[] = [\n    ...metaFields.map((field) => ({ ...field })),\n    { name: \"$elemCaps\", type: { kind: \"ref\", typeIdx: ids.elemCapsTypeIdx }, mutable: false },\n    { name: \"$called\", type: { kind: \"i32\" }, mutable: true },\n  ];\n  ctx.mod.types.push({\n    kind: \"struct\",\n    name: \"$__combinator_all_resolve_cap\",\n    fields: allResolveFields,\n    superTypeIdx: allResolveMetaTypeIdx,\n  });\n  ctx.structMap.set(\"$__combinator_all_resolve_cap\", allResolveCapTypeIdx);\n  ctx.typeIdxToStructName.set(allResolveCapTypeIdx, \"$__combinator_all_resolve_cap\");\n  ctx.structFields.set(\n    \"$__combinator_all_resolve_cap\",\n    allResolveFields.map((field) => ({ ...field })),\n  );\n\n  const allResolveFuncIdx = mintDefinedFunc(ctx);\n  pushDefinedFunc(ctx, allResolveFuncIdx, {\n    name: \"__combinator_all_resolve_element\",\n    typeIdx: wrapper.liftedFuncTypeIdx,\n    locals: [{ name: \"$cap\", type: { kind: \"ref\", typeIdx: allResolveCapTypeIdx } }],\n    body: [\n      { op: \"local.get\", index: 0 },\n      { op: \"ref.cast\", typeIdx: allResolveCapTypeIdx },\n      { op: \"local.set\", index: 2 },\n      { op: \"local.get\", index: 2 },\n      { op: \"struct.get\", typeIdx: allResolveCapTypeIdx, fieldIdx: allResolveCalledFieldIdx },\n      {\n        op: \"if\",\n        blockType: { kind: \"empty\" },\n        then: [],\n        else: [\n          { op: \"local.get\", index: 2 },\n          { op: \"i32.const\", value: 1 },\n          { op: \"struct.set\", typeIdx: allResolveCapTypeIdx, fieldIdx: allResolveCalledFieldIdx },\n          { op: \"local.get\", index: 2 },\n          { op: \"struct.get\", typeIdx: allResolveCapTypeIdx, fieldIdx: allResolveElemCapsFieldIdx },\n          { op: \"extern.convert_any\" },\n          { op: \"local.get\", index: 1 },\n          { op: \"call\", funcIdx: ids.allFulfillFuncIdx },\n          { op: \"drop\" },\n        ],\n      },\n    ],\n    exported: false,\n  });\n  ctx.funcMap.set(\"__combinator_all_resolve_element\", allResolveFuncIdx);\n\n  const result: ObservableCombinatorRuntime = {\n    allResolveCapTypeIdx,\n    allResolveElemCapsFieldIdx,\n    allResolveCalledFieldIdx,\n    allResolveMetaTypeIdx,\n    exnTagIdx: ensureExnTag(ctx),\n    settleClosures: executorClosures,\n  };\n  cache.__promiseObservableCombinators = result;\n  return result;\n}\n\nfunction registerStruct(\n",
+          "beforeSha256": "a3bc3164da25766de917a33fc549b418abb3858534bca5e8638242fd99625f36",
+          "afterSha256": "1c99772503501eba668e9be514a2b9d10e66736a70ae61bbf9ba69df4b139d44",
+          "beforeOffset": 26320,
+          "afterOffset": 26864
+        },
+        {
+          "ordinal": 4,
+          "before": "}\n\n/**\n * Emit a native `Promise.all([...])` / `Promise.race([...])`. `elementInstrs` is\n",
+          "after": "}\n\n// ── (#5197 R3-2) Observable Promise.all / Promise.race pipeline ───────────\n\n/** Build `RejectPromise(result, reason)` plus the local abrupt-completion bit. */\nfunction buildObservableRejectInstrs(\n  rt: AsyncDriveRuntimeT,\n  preparation: ObservableCombinatorPreparation,\n  reasonInstrs: readonly Instr[],\n): Instr[] {\n  return [\n    { op: \"local.get\", index: preparation.resultLocal },\n    ...reasonInstrs,\n    { op: \"call\", funcIdx: rt.rejectFuncIdx },\n    { op: \"drop\" },\n    { op: \"i32.const\", value: 1 },\n    { op: \"local.set\", index: preparation.abortedLocal },\n  ];\n}\n\n/** The observable path's `IsCallable` predicate over the shared closure set. */\nfunction buildObservableCallableCheckInstrs(\n  ctx: CodegenContext,\n  valueLocal: number,\n  callableLocal: number,\n  anyLocal: number,\n): Instr[] {\n  return [\n    { op: \"i32.const\", value: 0 },\n    { op: \"local.set\", index: callableLocal },\n    { op: \"local.get\", index: valueLocal },\n    { op: \"ref.is_null\" },\n    {\n      op: \"if\",\n      blockType: { kind: \"empty\" },\n      then: [],\n      else: [\n        { op: \"local.get\", index: valueLocal },\n        { op: \"any.convert_extern\" },\n        { op: \"local.set\", index: anyLocal },\n        ...buildClosureRefTestArms(ctx, anyLocal, [\n          { op: \"i32.const\", value: 1 },\n          { op: \"local.set\", index: callableLocal },\n        ]),\n      ],\n    },\n  ];\n}\n\n/** Emit a native TypeError rejection for a non-callable observable method. */\nfunction buildObservableTypeErrorRejectInstrs(\n  ctx: CodegenContext,\n  rt: AsyncDriveRuntimeT,\n  preparation: ObservableCombinatorPreparation,\n  observable: ObservableCombinatorRuntime,\n  message: string,\n): Instr[] {\n  return buildObservableRejectInstrs(rt, preparation, [\n    ...stringConstantExternrefInstrs(ctx, message),\n    { op: \"call\", funcIdx: ctx.funcMap.get(\"__new_TypeError\")! },\n  ]);\n}\n\n/**\n * Set up NewPromiseCapability's native result carrier and the one observable\n * `Get(C, \"resolve\")`.  The get is wrapped in the target-standard EH builder;\n * an abrupt completion rejects the already-created result and prevents any\n * later iterator/pipeline work.  The resolve value is intentionally held in a\n * local so later source writes cannot replace the captured method.\n */\nfunction emitObservableCombinatorPreparation(\n  ctx: CodegenContext,\n  fctx: FunctionContext,\n  ids: CombinatorRuntime,\n  rt: AsyncDriveRuntimeT,\n  observable: ObservableCombinatorRuntime,\n  method: \"all\" | \"race\",\n): ObservableCombinatorPreparation {\n  const resultLocal = allocLocal(fctx, `__comb_observable_result_${fctx.locals.length}`, {\n    kind: \"ref\",\n    typeIdx: ids.promiseTypeIdx,\n  });\n  const ctorLocal = allocLocal(fctx, `__comb_observable_ctor_${fctx.locals.length}`, EXTERNREF);\n  const resolveLocal = allocLocal(fctx, `__comb_observable_resolve_${fctx.locals.length}`, EXTERNREF);\n  const abortedLocal = allocLocal(fctx, `__comb_observable_abrupt_${fctx.locals.length}`, { kind: \"i32\" });\n  const reasonLocal = allocLocal(fctx, `__comb_observable_reason_${fctx.locals.length}`, EXTERNREF);\n  const callableLocal = allocLocal(fctx, `__comb_observable_callable_${fctx.locals.length}`, { kind: \"i32\" });\n  const callableAnyLocal = allocLocal(fctx, `__comb_observable_callable_any_${fctx.locals.length}`, {\n    kind: \"anyref\",\n  });\n  // §27.2.4.3.1 creates the aggregate capability's resolve/reject exactly\n  // once, then passes those same function *objects* to each `then` Invoke.\n  // Keep them in externref locals so a thenable can observe handler identity.\n  const raceFulfillLocal =\n    method === \"race\" ? allocLocal(fctx, `__comb_observable_race_fulfill_${fctx.locals.length}`, EXTERNREF) : -1;\n  const rejectLocal = allocLocal(fctx, `__comb_observable_reject_${fctx.locals.length}`, EXTERNREF);\n  const preparation = { resultLocal, ctorLocal, resolveLocal, abortedLocal, raceFulfillLocal, rejectLocal };\n\n  // New native result promise: `Promise.all` / `race`'s capability promise.\n  fctx.body.push(\n    { op: \"i32.const\", value: PROMISE_STATE_PENDING },\n    { op: \"ref.null.extern\" },\n    { op: \"ref.null.extern\" },\n    closureBagInitInstr(),\n    { op: \"struct.new\", typeIdx: ids.promiseTypeIdx },\n    { op: \"local.set\", index: resultLocal },\n    { op: \"i32.const\", value: 0 },\n    { op: \"local.set\", index: abortedLocal },\n  );\n\n  if (method === \"race\") {\n    fctx.body.push(\n      ...buildPromiseSettleClosureInstrs(observable.settleClosures, ctx.funcMap.get(\"__promise_resolve_cl\")!, [\n        { op: \"local.get\", index: resultLocal },\n      ]),\n      { op: \"extern.convert_any\" },\n      { op: \"local.set\", index: raceFulfillLocal },\n    );\n  }\n  fctx.body.push(\n    ...buildPromiseSettleClosureInstrs(observable.settleClosures, ctx.funcMap.get(\"__promise_reject_cl\")!, [\n      { op: \"local.get\", index: resultLocal },\n    ]),\n    { op: \"extern.convert_any\" },\n    { op: \"local.set\", index: rejectLocal },\n  );\n\n  // `Promise` is the same identity-stable carrier the source-level mutation\n  // writes target.  Do this before iterator draining so a throwing getter wins\n  // over an observable iterator getter, as required by GetPromiseResolve.\n  emitBuiltinConstructorIdentity(ctx, fctx, \"Promise\");\n  fctx.body.push({ op: \"local.set\", index: ctorLocal });\n  fctx.body.push(\n    buildTargetTaggedTry(\n      ctx,\n      { kind: \"empty\" },\n      [\n        { op: \"local.get\", index: ctorLocal },\n        ...stringConstantExternrefInstrs(ctx, \"resolve\"),\n        { op: \"call\", funcIdx: ctx.funcMap.get(\"__extern_get\")! },\n        { op: \"local.set\", index: resolveLocal },\n      ],\n      [\n        {\n          tagIdx: observable.exnTagIdx,\n          body: [\n            { op: \"local.set\", index: reasonLocal },\n            ...buildObservableRejectInstrs(rt, preparation, [{ op: \"local.get\", index: reasonLocal }]),\n          ],\n        },\n      ],\n    ),\n  );\n\n  // IsCallable(promiseResolve). A non-callable resolve is an abrupt completion\n  // converted to a rejected capability, never a synchronous throw from the\n  // direct-call lowering.\n  fctx.body.push(\n    { op: \"local.get\", index: abortedLocal },\n    { op: \"i32.eqz\" },\n    {\n      op: \"if\",\n      blockType: { kind: \"empty\" },\n      then: [\n        ...buildObservableCallableCheckInstrs(ctx, resolveLocal, callableLocal, callableAnyLocal),\n        { op: \"local.get\", index: callableLocal },\n        { op: \"i32.eqz\" },\n        {\n          op: \"if\",\n          blockType: { kind: \"empty\" },\n          then: buildObservableTypeErrorRejectInstrs(\n            ctx,\n            rt,\n            preparation,\n            observable,\n            \"Promise resolve is not callable\",\n          ),\n        },\n      ],\n    },\n  );\n  return preparation;\n}\n\n/** Allocate the aggregate state once its (already-evaluated) input count is known. */\nfunction emitObservableCombinatorState(\n  fctx: FunctionContext,\n  ids: CombinatorRuntime,\n  preparation: ObservableCombinatorPreparation,\n  method: \"all\" | \"race\",\n  lengthInstrs: readonly Instr[],\n): { stateLocal: number; arrLocal: number; lengthLocal: number } {\n  const arrLocal = allocLocal(fctx, `__comb_observable_arr_${fctx.locals.length}`, {\n    kind: \"ref\",\n    typeIdx: ids.arrTypeIdx,\n  });\n  const stateLocal = allocLocal(fctx, `__comb_observable_state_${fctx.locals.length}`, {\n    kind: \"ref\",\n    typeIdx: ids.stateTypeIdx,\n  });\n  const lengthLocal = allocLocal(fctx, `__comb_observable_length_${fctx.locals.length}`, { kind: \"i32\" });\n  fctx.body.push(\n    ...lengthInstrs,\n    { op: \"local.set\", index: lengthLocal },\n    { op: \"local.get\", index: lengthLocal },\n    { op: \"array.new_default\", typeIdx: ids.arrTypeIdx },\n    { op: \"local.set\", index: arrLocal },\n    { op: \"local.get\", index: preparation.resultLocal },\n    { op: \"local.get\", index: arrLocal },\n    { op: \"local.get\", index: lengthLocal },\n    // Promise.all's remaining-elements count begins with its completion\n    // sentinel. Each successfully-resolved element increments it immediately\n    // before Invoke(next, \"then\", ...); iteration drops this final unit only\n    // after every Invoke has returned. This prevents an eager thenable from\n    // fulfilling the aggregate before a later abrupt Invoke can reject it.\n    ...(method === \"all\"\n      ? ([{ op: \"i32.const\", value: 1 }] satisfies Instr[])\n      : ([{ op: \"local.get\", index: lengthLocal }] satisfies Instr[])),\n    { op: \"struct.new\", typeIdx: ids.stateTypeIdx },\n    { op: \"local.set\", index: stateLocal },\n  );\n  return { stateLocal, arrLocal, lengthLocal };\n}\n\n/**\n * Drop Promise.all's remaining-elements completion sentinel after its admitted\n * literal/direct-VEC iteration finishes. The final decrement is intentionally\n * absent when an earlier Get/Call/Invoke rejected the aggregate.\n */\nfunction emitObservableAllIterationComplete(\n  fctx: FunctionContext,\n  ids: CombinatorRuntime,\n  rt: AsyncDriveRuntimeT,\n  method: NativeCombinator,\n  preparation: ObservableCombinatorPreparation,\n  state: { stateLocal: number; arrLocal: number; lengthLocal: number },\n): void {\n  if (method !== \"all\") return;\n  const remainingLocal = allocLocal(fctx, `__comb_observable_remaining_${fctx.locals.length}`, { kind: \"i32\" });\n  fctx.body.push(\n    { op: \"local.get\", index: preparation.abortedLocal },\n    { op: \"i32.eqz\" },\n    {\n      op: \"if\",\n      blockType: { kind: \"empty\" },\n      then: [\n        { op: \"local.get\", index: state.stateLocal },\n        { op: \"local.get\", index: state.stateLocal },\n        { op: \"struct.get\", typeIdx: ids.stateTypeIdx, fieldIdx: 3 },\n        { op: \"i32.const\", value: 1 },\n        { op: \"i32.sub\" },\n        { op: \"local.tee\", index: remainingLocal },\n        { op: \"struct.set\", typeIdx: ids.stateTypeIdx, fieldIdx: 3 },\n        { op: \"local.get\", index: remainingLocal },\n        { op: \"i32.eqz\" },\n        {\n          op: \"if\",\n          blockType: { kind: \"empty\" },\n          then: [\n            { op: \"local.get\", index: preparation.resultLocal },\n            { op: \"local.get\", index: state.lengthLocal },\n            { op: \"local.get\", index: state.arrLocal },\n            { op: \"struct.new\", typeIdx: ids.vecTypeIdx },\n            { op: \"extern.convert_any\" },\n            { op: \"call\", funcIdx: rt.fulfillFuncIdx },\n            { op: \"drop\" },\n          ],\n        },\n      ],\n    },\n  );\n}\n\n/** Mint the `resolveElement` closure passed to one observable `Promise.all` then call. */\nfunction buildObservableAllResolveClosureInstrs(\n  ctx: CodegenContext,\n  observable: ObservableCombinatorRuntime,\n  elemCapsLocal: number,\n): Instr[] {\n  return [\n    { op: \"ref.func\", funcIdx: ctx.funcMap.get(\"__combinator_all_resolve_element\")! },\n    { op: \"i32.const\", value: 1 },\n    closureBagInitInstr(),\n    { op: \"i32.const\", value: 0 },\n    { op: \"i32.const\", value: observable.allResolveMetaTypeIdx },\n    { op: \"local.get\", index: elemCapsLocal },\n    { op: \"i32.const\", value: 0 },\n    { op: \"struct.new\", typeIdx: observable.allResolveCapTypeIdx },\n    { op: \"extern.convert_any\" },\n  ];\n}\n\n/**\n * Append one `Call(resolve, C, [value])` then `Invoke(next, \"then\", …)`\n * pipeline.  This is intentionally emitted at the call site: the captured\n * resolve method and constructor are per-combinator invocation, while the\n * legacy `__combinator_subscribe` helper is source-agnostic.\n */\nfunction emitObservableCombinatorElement(\n  ctx: CodegenContext,\n  fctx: FunctionContext,\n  ids: CombinatorRuntime,\n  rt: AsyncDriveRuntimeT,\n  observable: ObservableCombinatorRuntime,\n  preparation: ObservableCombinatorPreparation,\n  method: \"all\" | \"race\",\n  reaction: { fulfillIdx: number; rejectIdx: number },\n  stateLocal: number,\n  indexInstrs: readonly Instr[],\n  inputInstrs: readonly Instr[],\n): void {\n  const inputLocal = allocLocal(fctx, `__comb_observable_input_${fctx.locals.length}`, EXTERNREF);\n  const resolveArgsLocal = allocLocal(fctx, `__comb_observable_resolve_args_${fctx.locals.length}`, EXTERNREF);\n  const thenArgsLocal = allocLocal(fctx, `__comb_observable_then_args_${fctx.locals.length}`, EXTERNREF);\n  const nextLocal = allocLocal(fctx, `__comb_observable_next_${fctx.locals.length}`, EXTERNREF);\n  const errorLocal = allocLocal(fctx, `__comb_observable_error_${fctx.locals.length}`, EXTERNREF);\n  const thenLocal = allocLocal(fctx, `__comb_observable_then_${fctx.locals.length}`, EXTERNREF);\n  const callableLocal = allocLocal(fctx, `__comb_observable_then_callable_${fctx.locals.length}`, { kind: \"i32\" });\n  const callableAnyLocal = allocLocal(fctx, `__comb_observable_then_any_${fctx.locals.length}`, { kind: \"anyref\" });\n  const nextAnyLocal = allocLocal(fctx, `__comb_observable_next_any_${fctx.locals.length}`, { kind: \"anyref\" });\n  const elemCapsLocal =\n    method === \"all\"\n      ? allocLocal(fctx, `__comb_observable_elem_caps_${fctx.locals.length}`, {\n          kind: \"ref\",\n          typeIdx: ids.elemCapsTypeIdx,\n        })\n      : -1;\n\n  // Literal callers pass a pre-evaluated local; direct-vector callers pass the\n  // current slot. No source argument expression is evaluated here, so an\n  // earlier abrupt pipeline element cannot change argument-list evaluation.\n  fctx.body.push(...inputInstrs, { op: \"local.set\", index: inputLocal });\n\n  const buildRejectFromError = (): Instr[] => [\n    { op: \"local.set\", index: errorLocal },\n    ...buildObservableRejectInstrs(rt, preparation, [{ op: \"local.get\", index: errorLocal }]),\n  ];\n  const buildFulfilHandler = (): Instr[] => {\n    if (method === \"all\") {\n      return [\n        { op: \"local.get\", index: stateLocal },\n        ...indexInstrs,\n        { op: \"struct.new\", typeIdx: ids.elemCapsTypeIdx },\n        { op: \"local.set\", index: elemCapsLocal },\n        ...buildObservableAllResolveClosureInstrs(ctx, observable, elemCapsLocal),\n      ];\n    }\n    return [{ op: \"local.get\", index: preparation.raceFulfillLocal }];\n  };\n  const buildRejectHandler = (): Instr[] => [{ op: \"local.get\", index: preparation.rejectLocal }];\n  const buildThenArgs = (): Instr[] => [\n    { op: \"call\", funcIdx: ctx.funcMap.get(\"__objvec_new\")! },\n    { op: \"local.set\", index: thenArgsLocal },\n    { op: \"local.get\", index: thenArgsLocal },\n    ...buildFulfilHandler(),\n    { op: \"call\", funcIdx: ctx.funcMap.get(\"__objvec_push\")! },\n    { op: \"local.get\", index: thenArgsLocal },\n    ...buildRejectHandler(),\n    { op: \"call\", funcIdx: ctx.funcMap.get(\"__objvec_push\")! },\n  ];\n  const buildLegacySubscribe = (): Instr[] => [\n    { op: \"local.get\", index: nextLocal },\n    { op: \"local.get\", index: stateLocal },\n    { op: \"extern.convert_any\" },\n    ...indexInstrs,\n    { op: \"ref.func\", funcIdx: reaction.fulfillIdx },\n    { op: \"ref.func\", funcIdx: reaction.rejectIdx },\n    { op: \"call\", funcIdx: ids.subscribeFuncIdx },\n  ];\n  const buildNativeInvoke = (): Instr[] => {\n    const carrierBagHasIdx = ctx.funcMap.get(\"__carrier_bag_has\");\n    if (carrierBagHasIdx === undefined) return buildLegacySubscribe();\n    return [\n      { op: \"local.get\", index: nextLocal },\n      ...stringConstantExternrefInstrs(ctx, \"then\"),\n      { op: \"call\", funcIdx: carrierBagHasIdx },\n      {\n        op: \"if\",\n        blockType: { kind: \"empty\" },\n        then: [\n          buildTargetTaggedTry(\n            ctx,\n            { kind: \"empty\" },\n            [\n              { op: \"local.get\", index: nextLocal },\n              ...stringConstantExternrefInstrs(ctx, \"then\"),\n              { op: \"call\", funcIdx: ctx.funcMap.get(\"__extern_get\")! },\n              { op: \"local.set\", index: thenLocal },\n              ...buildObservableCallableCheckInstrs(ctx, thenLocal, callableLocal, callableAnyLocal),\n              { op: \"local.get\", index: callableLocal },\n              {\n                op: \"if\",\n                blockType: { kind: \"empty\" },\n                then: [\n                  { op: \"local.get\", index: thenLocal },\n                  { op: \"local.get\", index: nextLocal },\n                  { op: \"local.get\", index: thenArgsLocal },\n                  { op: \"call\", funcIdx: ctx.funcMap.get(\"__apply_closure\")! },\n                  { op: \"drop\" },\n                ],\n                else: buildObservableTypeErrorRejectInstrs(\n                  ctx,\n                  rt,\n                  preparation,\n                  observable,\n                  \"Promise then is not callable\",\n                ),\n              },\n            ],\n            [{ tagIdx: observable.exnTagIdx, body: buildRejectFromError() }],\n          ),\n        ],\n        else: buildLegacySubscribe(),\n      },\n    ];\n  };\n  // `Invoke(nextPromise, \"then\", handlers)` performs ONE Get, then calls the\n  // captured value.  Do not route through `__promise_has_callable_then` plus\n  // `__call_m_then_vararg`: that pair gets an accessor once to classify it and\n  // again to dispatch it, which is observably wrong when the getter changes its\n  // answer. `__extern_get` is the runtime's ordinary property read for open\n  // objects, closure bags, and finalized closed-struct field ladders.\n  const buildNonNativeInvoke = (): Instr[] => [\n    buildTargetTaggedTry(\n      ctx,\n      { kind: \"empty\" },\n      [\n        { op: \"local.get\", index: nextLocal },\n        ...stringConstantExternrefInstrs(ctx, \"then\"),\n        { op: \"call\", funcIdx: ctx.funcMap.get(\"__extern_get\")! },\n        { op: \"local.set\", index: thenLocal },\n        ...buildObservableCallableCheckInstrs(ctx, thenLocal, callableLocal, callableAnyLocal),\n        { op: \"local.get\", index: callableLocal },\n        {\n          op: \"if\",\n          blockType: { kind: \"empty\" },\n          then: [\n            { op: \"local.get\", index: thenLocal },\n            { op: \"local.get\", index: nextLocal },\n            { op: \"local.get\", index: thenArgsLocal },\n            { op: \"call\", funcIdx: ctx.funcMap.get(\"__apply_closure\")! },\n            { op: \"drop\" },\n          ],\n          else: buildObservableTypeErrorRejectInstrs(ctx, rt, preparation, observable, \"Promise then is not callable\"),\n        },\n      ],\n      [{ tagIdx: observable.exnTagIdx, body: buildRejectFromError() }],\n    ),\n  ];\n  // §27.2.4.1's remainingElementsCount gains one for this element only after\n  // Call(resolve, C, value) succeeds, and before a synchronously-calling\n  // thenable can invoke the resolve-element closure. The final completion\n  // sentinel remains until the enclosing literal/VEC iteration has finished.\n  const buildAllRemainingIncrement = (): Instr[] =>\n    method === \"all\"\n      ? [\n          { op: \"local.get\", index: stateLocal },\n          { op: \"local.get\", index: stateLocal },\n          { op: \"struct.get\", typeIdx: ids.stateTypeIdx, fieldIdx: 3 },\n          { op: \"i32.const\", value: 1 },\n          { op: \"i32.add\" },\n          { op: \"struct.set\", typeIdx: ids.stateTypeIdx, fieldIdx: 3 },\n        ]\n      : [];\n\n  const pipeline: Instr[] = [\n    // Call(promiseResolve, C, «nextValue»).\n    buildTargetTaggedTry(\n      ctx,\n      { kind: \"empty\" },\n      [\n        { op: \"call\", funcIdx: ctx.funcMap.get(\"__objvec_new\")! },\n        { op: \"local.set\", index: resolveArgsLocal },\n        { op: \"local.get\", index: resolveArgsLocal },\n        { op: \"local.get\", index: inputLocal },\n        { op: \"call\", funcIdx: ctx.funcMap.get(\"__objvec_push\")! },\n        ...buildThenArgs(),\n        { op: \"local.get\", index: preparation.resolveLocal },\n        { op: \"local.get\", index: preparation.ctorLocal },\n        { op: \"local.get\", index: resolveArgsLocal },\n        { op: \"call\", funcIdx: ctx.funcMap.get(\"__apply_closure\")! },\n        { op: \"local.set\", index: nextLocal },\n      ],\n      [{ tagIdx: observable.exnTagIdx, body: buildRejectFromError() }],\n    ),\n    // Invoke(nextPromise, \"then\", «fulfill, reject»). A `$Promise` without an\n    // own `then` keeps the tested legacy subscription path; an own slot is\n    // retrieved and called with the native promise as receiver. Other values\n    // use the same one-Get/captured-call Invoke sequence.\n    { op: \"local.get\", index: preparation.abortedLocal },\n    { op: \"i32.eqz\" },\n    {\n      op: \"if\",\n      blockType: { kind: \"empty\" },\n      then: [\n        ...buildAllRemainingIncrement(),\n        { op: \"local.get\", index: nextLocal },\n        { op: \"ref.is_null\" },\n        {\n          op: \"if\",\n          blockType: { kind: \"empty\" },\n          then: buildNonNativeInvoke(),\n          else: [\n            { op: \"local.get\", index: nextLocal },\n            { op: \"any.convert_extern\" },\n            { op: \"local.set\", index: nextAnyLocal },\n            { op: \"local.get\", index: nextAnyLocal },\n            { op: \"ref.test\", typeIdx: ids.promiseTypeIdx },\n            {\n              op: \"if\",\n              blockType: { kind: \"empty\" },\n              then: buildNativeInvoke(),\n              else: buildNonNativeInvoke(),\n            },\n          ],\n        },\n      ],\n    },\n  ];\n\n  fctx.body.push(\n    { op: \"local.get\", index: preparation.abortedLocal },\n    { op: \"i32.eqz\" },\n    { op: \"if\", blockType: { kind: \"empty\" }, then: pipeline },\n  );\n}\n\n/**\n * Bounded R3-2 literal route. It shares the old result/reaction substrate but\n * replaces only the per-element normalization shortcut with the observable\n * Get/Call/Invoke protocol. `allSettled`/`any`, custom constructors, and\n * iterator-closing stay on their existing/future slices.\n */\nfunction emitObservableStandalonePromiseCombinatorLiteral(\n  ctx: CodegenContext,\n  fctx: FunctionContext,\n  method: \"all\" | \"race\",\n  elementInstrs: Instr[][],\n  ids: CombinatorRuntime,\n  rt: AsyncDriveRuntimeT,\n  observable: ObservableCombinatorRuntime,\n): ValType {\n  const reaction = combinatorReactionFns(ctx, ids, method);\n  // Argument-list evaluation finishes BEFORE the static call begins. The\n  // buffers above are compile-time staging only; execute every element now and\n  // retain its value before `Get(Promise, \"resolve\")`. In particular,\n  // `Promise.all([first(), second()])` must run both calls even when resolve's\n  // getter subsequently throws.\n  const inputLocals: number[] = [];\n  for (const element of elementInstrs) {\n    const inputLocal = allocLocal(fctx, `__comb_observable_literal_input_${fctx.locals.length}`, EXTERNREF);\n    fctx.body.push(...element, { op: \"local.set\", index: inputLocal });\n    inputLocals.push(inputLocal);\n  }\n  const preparation = emitObservableCombinatorPreparation(ctx, fctx, ids, rt, observable, method);\n  const state = emitObservableCombinatorState(fctx, ids, preparation, method, [\n    { op: \"i32.const\", value: elementInstrs.length },\n  ]);\n  for (let i = 0; i < inputLocals.length; i++) {\n    emitObservableCombinatorElement(\n      ctx,\n      fctx,\n      ids,\n      rt,\n      observable,\n      preparation,\n      method,\n      reaction,\n      state.stateLocal,\n      [{ op: \"i32.const\", value: i }],\n      [{ op: \"local.get\", index: inputLocals[i]! }],\n    );\n  }\n  emitObservableAllIterationComplete(fctx, ids, rt, method, preparation, state);\n  fctx.body.push({ op: \"local.get\", index: preparation.resultLocal }, { op: \"extern.convert_any\" });\n  return EXTERNREF;\n}\n\n/**\n * Emit a native `Promise.all([...])` / `Promise.race([...])`. `elementInstrs` is\n",
+          "beforeSha256": "c6fa3ce1a026a9d77649884b7ade5e9b09adcc891c7ded96777fe8065cdd94f3",
+          "afterSha256": "0947ec9298f8dc721da9edb8dbe250329a4acd53f5ce6ec07631272fceebae67",
+          "beforeOffset": 47043,
+          "afterOffset": 54302
+        },
+        {
+          "ordinal": 5,
+          "before": "  method: NativeCombinator,\n  elementInstrs: Instr[][],\n): ValType {\n  const ids = ensureCombinatorFunctions(ctx);\n  const rt = ensureAsyncDriveRuntime(ctx);\n  // (#3137) MUST run before any element buffer splices into fctx.body — the\n  // allSettled/any arm lazily registers wrapper functions (see the ordering\n",
+          "after": "  method: NativeCombinator,\n  elementInstrs: Instr[][],\n  opts?: { observableResolve?: boolean },\n): ValType {\n  const ids = ensureCombinatorFunctions(ctx);\n  const rt = ensureAsyncDriveRuntime(ctx);\n  if (opts?.observableResolve === true && (method === \"all\" || method === \"race\")) {\n    const observable = ensureObservableCombinatorRuntime(ctx, ids);\n    if (observable) {\n      return emitObservableStandalonePromiseCombinatorLiteral(\n        ctx,\n        fctx,\n        method,\n        elementInstrs,\n        ids,\n        ensureAsyncDriveRuntime(ctx),\n        observable,\n      );\n    }\n  }\n  // (#3137) MUST run before any element buffer splices into fctx.body — the\n  // allSettled/any arm lazily registers wrapper functions (see the ordering\n",
+          "beforeSha256": "fb8f206d8381f6a19307e2ecec17793116fd3333a3bd220d7563aebb542223e3",
+          "afterSha256": "5622656a8e44d545c0e0e73c460b79addb4bef5f554459d5d772f9e5719616f5",
+          "beforeOffset": 47387,
+          "afterOffset": 77535
+        },
+        {
+          "ordinal": 6,
+          "before": " * EXTERNREF-backed array vec — the only shape the runtime-loop combinator can\n * feed to `__combinator_subscribe` without boxing. Returns the vec + backing\n * array type indices, or `null` for anything else (f64-backed `number[]` vecs\n * — the documented Gap-4 output-representation escalation, see module header —\n * `any`/externref values, strings, non-vec structs), which must keep the host\n * fallthrough unchanged.\n */\nexport function resolveExternrefVecArg(\n",
+          "after": " * EXTERNREF-backed array vec — the only shape the runtime-loop combinator can\n * feed to `__combinator_subscribe` without boxing. Returns the vec + backing\n * array type indices, or `null` for anything else (including f64-backed\n * `number[]` vecs, which use the separate observable-only arm below; `any` /\n * externref values, strings, and non-vec structs), which must keep the legacy\n * host fallthrough unchanged.\n */\nexport function resolveExternrefVecArg(\n",
+          "beforeSha256": "2fb524d07f27f75d307fc3eb263ea06b1324caced148a6fc8bd88fd5af151ad4",
+          "afterSha256": "df0ac702763fe3580f7008b5790d39a6f6fd386da236b8c9c809321a29762af1",
+          "beforeOffset": 51311,
+          "afterOffset": 81895
+        },
+        {
+          "ordinal": 7,
+          "before": "  if (!arrDef || arrDef.kind !== \"array\" || arrDef.element.kind !== \"externref\") return null;\n  return { vecTypeIdx, arrTypeIdx };\n}\n\n",
+          "after": "  if (!arrDef || arrDef.kind !== \"array\" || arrDef.element.kind !== \"externref\") return null;\n  return { vecTypeIdx, arrTypeIdx };\n}\n\n/**\n * Bounded R3-2 admission for a native `number[]` carrier. Unlike the legacy\n * generic path, the observable loop reads and boxes each f64 slot only when\n * its turn reaches `Call(resolve, C, value)`, leaving earlier resolve calls\n * able to mutate a later vector element before it is observed.\n */\nexport function resolveF64VecArg(\n  ctx: CodegenContext,\n  argType: ValType | null,\n): { vecTypeIdx: number; arrTypeIdx: number } | null {\n  if (!argType || (argType.kind !== \"ref\" && argType.kind !== \"ref_null\")) return null;\n  const vecTypeIdx = (argType as { typeIdx?: number }).typeIdx;\n  if (typeof vecTypeIdx !== \"number\" || vecTypeIdx < 0) return null;\n  const structName = ctx.typeIdxToStructName.get(vecTypeIdx);\n  if (!structName || !structName.startsWith(\"__vec_\")) return null;\n  const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);\n  if (arrTypeIdx < 0) return null;\n  const arrDef = ctx.mod.types[arrTypeIdx];\n  if (!arrDef || arrDef.kind !== \"array\" || arrDef.element.kind !== \"f64\") return null;\n  return { vecTypeIdx, arrTypeIdx };\n}\n\n/** Observable R3-2 analogue of the pre-existing externref-vector loop. */\nfunction emitObservableStandalonePromiseCombinatorRuntime(\n  ctx: CodegenContext,\n  fctx: FunctionContext,\n  method: \"all\" | \"race\",\n  argVecLocal: number,\n  argVecTypeIdx: number,\n  argArrTypeIdx: number,\n  ids: CombinatorRuntime,\n  rt: AsyncDriveRuntimeT,\n  observable: ObservableCombinatorRuntime,\n  boxF64Elements: boolean,\n): ValType {\n  const reaction = combinatorReactionFns(ctx, ids, method);\n  const preparation = emitObservableCombinatorPreparation(ctx, fctx, ids, rt, observable, method);\n  const boxNumberIdx = boxF64Elements ? ctx.funcMap.get(\"__box_number\") : undefined;\n  if (boxF64Elements && boxNumberIdx === undefined) {\n    throw new Error(\"observable f64 Promise combinator requires __box_number\");\n  }\n  const state = emitObservableCombinatorState(fctx, ids, preparation, method, [\n    { op: \"local.get\", index: argVecLocal },\n    { op: \"ref.as_non_null\" },\n    { op: \"struct.get\", typeIdx: argVecTypeIdx, fieldIdx: 0 },\n  ]);\n  const iLocal = allocLocal(fctx, `__comb_observable_i_${fctx.locals.length}`, { kind: \"i32\" });\n\n  fctx.body.push(\n    { op: \"i32.const\", value: 0 },\n    { op: \"local.set\", index: iLocal },\n    {\n      op: \"block\",\n      blockType: { kind: \"empty\" },\n      body: [\n        {\n          op: \"loop\",\n          blockType: { kind: \"empty\" },\n          body: [\n            { op: \"local.get\", index: iLocal },\n            { op: \"local.get\", index: state.lengthLocal },\n            { op: \"i32.ge_s\" },\n            { op: \"br_if\", depth: 1 },\n            { op: \"local.get\", index: preparation.abortedLocal },\n            { op: \"br_if\", depth: 1 },\n            // `emitObservableCombinatorElement` needs to append nested\n            // instructions to the loop, so its body is patched below rather\n            // than built as an opaque detached array.\n          ],\n        },\n      ],\n    },\n  );\n\n  // Replace the just-emitted loop body with the element pipeline while it is\n  // still live in fctx.body. This avoids a second runtime implementation and\n  // keeps every late-index shifter able to walk the nested instructions.\n  const outerBlock = fctx.body[fctx.body.length - 1] as Extract<Instr, { op: \"block\" }>;\n  const loop = outerBlock.body[0] as Extract<Instr, { op: \"loop\" }>;\n  const loopBody = loop.body;\n  const savedBody = fctx.body;\n  fctx.body = loopBody;\n  fctx.savedBodies.push(savedBody);\n  try {\n    emitObservableCombinatorElement(\n      ctx,\n      fctx,\n      ids,\n      rt,\n      observable,\n      preparation,\n      method,\n      reaction,\n      state.stateLocal,\n      [{ op: \"local.get\", index: iLocal }],\n      [\n        { op: \"local.get\", index: argVecLocal },\n        { op: \"ref.as_non_null\" },\n        { op: \"struct.get\", typeIdx: argVecTypeIdx, fieldIdx: 1 },\n        { op: \"local.get\", index: iLocal },\n        { op: \"array.get\", typeIdx: argArrTypeIdx },\n        ...(boxF64Elements ? ([{ op: \"call\", funcIdx: boxNumberIdx! }] satisfies Instr[]) : []),\n      ],\n    );\n    loopBody.push(\n      { op: \"local.get\", index: iLocal },\n      { op: \"i32.const\", value: 1 },\n      { op: \"i32.add\" },\n      { op: \"local.set\", index: iLocal },\n      { op: \"br\", depth: 0 },\n    );\n  } finally {\n    fctx.savedBodies.pop();\n    fctx.body = savedBody;\n  }\n  emitObservableAllIterationComplete(fctx, ids, rt, method, preparation, state);\n  fctx.body.push({ op: \"local.get\", index: preparation.resultLocal }, { op: \"extern.convert_any\" });\n  return EXTERNREF;\n}\n\n",
+          "beforeSha256": "5ecc729402060cbaeefee9bbdb73d1b789c5d04a06a50337cec6777f4e4c3b08",
+          "afterSha256": "60553706a2749fca8c96cf241d02dfe7c76ec69fb2652a6da6e1ab503c64c0ec",
+          "beforeOffset": 52586,
+          "afterOffset": 83167
+        },
+        {
+          "ordinal": 8,
+          "before": "  argVecTypeIdx: number,\n  argArrTypeIdx: number,\n  opts?: { notIterLocal: number; rejectReason: Instr[] },\n): ValType {\n  const ids = ensureCombinatorFunctions(ctx);\n  const rt = ensureAsyncDriveRuntime(ctx);\n  // (#3137) Lazily registers the allSettled/any wrappers; must precede all\n  // emission below (registration-before-bake, same contract as the literal arm).\n",
+          "after": "  argVecTypeIdx: number,\n  argArrTypeIdx: number,\n  opts?: {\n    notIterLocal?: number;\n    rejectReason?: Instr[];\n    observableResolve?: boolean;\n    /** R3-2 direct `number[]` arm: box each f64 slot at consumption time. */\n    boxF64Elements?: boolean;\n  },\n): ValType {\n  const ids = ensureCombinatorFunctions(ctx);\n  const rt = ensureAsyncDriveRuntime(ctx);\n  if (opts?.observableResolve === true && (method === \"all\" || method === \"race\")) {\n    const observable = ensureObservableCombinatorRuntime(ctx, ids);\n    if (observable) {\n      return emitObservableStandalonePromiseCombinatorRuntime(\n        ctx,\n        fctx,\n        method,\n        argVecLocal,\n        argVecTypeIdx,\n        argArrTypeIdx,\n        ids,\n        ensureAsyncDriveRuntime(ctx),\n        observable,\n        opts.boxF64Elements === true,\n      );\n    }\n  }\n  // (#3137) Lazily registers the allSettled/any wrappers; must precede all\n  // emission below (registration-before-bake, same contract as the literal arm).\n",
+          "beforeSha256": "2974778c487b855f5642b9893efba9179d749bdcfe99e32cae528b349e156785",
+          "afterSha256": "206677e2f4b15198c2b6337be6b904bb96315c356332834c745205c91c1fc837",
+          "beforeOffset": 54535,
+          "afterOffset": 89670
+        },
+        {
+          "ordinal": 9,
+          "before": "    },\n    { argVecLocal, resultLocal, arrLocal, stateLocal, nLocal, iLocal },\n    opts,\n  );\n  fctx.body.push(...body);\n",
+          "after": "    },\n    { argVecLocal, resultLocal, arrLocal, stateLocal, nLocal, iLocal },\n    // (#5197 R3-2) `opts` gained observable-only flags; the legacy vector body\n    // only ever understood the (#2922) not-iterable rejection pair, so narrow\n    // back to exactly that pair here rather than widening its contract.\n    opts?.notIterLocal !== undefined && opts.rejectReason !== undefined\n      ? { notIterLocal: opts.notIterLocal, rejectReason: opts.rejectReason }\n      : undefined,\n  );\n  fctx.body.push(...body);\n",
+          "beforeSha256": "aa4a41ea5005f35a2971391174e63c3e6dbd2291dfca342a178da98c248311c6",
+          "afterSha256": "fe9192b64967a3cb7977d4aacb945d9b8fb67a4cfc99d12e0a577483620990ec",
+          "beforeOffset": 56358,
+          "afterOffset": 92123
+        }
+      ]
+    },
+    {
+      "path": "src/codegen/promise-combinators.ts",
+      "parent": "10902f7c8d505ca58d25489349229e27599d9769",
+      "commit": "3388cd36f46af042a522f0719b265903d9bda82e",
+      "before": {
+        "gitBlob": "a1b93dbf7bd85a211fecdb7f45707807e526b067",
+        "sha256": "e59d391b8ff10666d977beed00515cd3b244eb53c79bb8007d26b8562e5564e2"
+      },
+      "after": {
+        "gitBlob": "64511b85773bacb6f0e32b5c6770f69fd3eee9ee",
+        "sha256": "f428fbde2ac63f35d2308a183cf9937a11af2e625fa63ac79b71fd9afa03ca92"
+      },
+      "spans": [
+        {
+          "ordinal": 0,
+          "before": "const EXTERNREF: ValType = { kind: \"externref\" };\n\ntype AsyncDriveRuntimeT = ReturnType<typeof ensureAsyncDriveRuntime>;\n\n/** The combinators this module lowers natively (#2867 Gap 4 `all`/`race`; #3137 `allSettled`/`any`). */\n",
+          "after": "const EXTERNREF: ValType = { kind: \"externref\" };\n\nexport type AsyncDriveRuntimeT = ReturnType<typeof ensureAsyncDriveRuntime>;\n\n/** The combinators this module lowers natively (#2867 Gap 4 `all`/`race`; #3137 `allSettled`/`any`). */\n",
+          "beforeSha256": "2d15d30b5320f0c1b8a727ef35de53de38c693ef1f8626426b6aa3006d585419",
+          "afterSha256": "4cff8834795241dfce24a883c16ba4a6017fecb42b5b6247130da1cfdf449688",
+          "beforeOffset": 6659,
+          "afterOffset": 6659
+        },
+        {
+          "ordinal": 1,
+          "before": "}\n\ninterface CombinatorRuntime {\n  /** `$CombinatorState { resultPromise: ref $Promise, resultsArr: ref $arr_ext, length: i32, remaining (mut) i32 }`. */\n  stateTypeIdx: number;\n",
+          "after": "}\n\nexport interface CombinatorRuntime {\n  /** `$CombinatorState { resultPromise: ref $Promise, resultsArr: ref $arr_ext, length: i32, remaining (mut) i32 }`. */\n  stateTypeIdx: number;\n",
+          "beforeSha256": "0a42026f7bb03974dfa12dfba18e7b17d29795157da5d61602a1252555620451",
+          "afterSha256": "266a26f0dfea5896dd89e4fcdc5e766c9a5ea29d11a89150ae24b7bd395eda73",
+          "beforeOffset": 24897,
+          "afterOffset": 24904
+        },
+        {
+          "ordinal": 2,
+          "before": " * remain byte-identical.\n */\ninterface ObservableCombinatorRuntime {\n  /** `$__combinator_all_resolve_cap` subtype containing element caps + called bit. */\n  allResolveCapTypeIdx: number;\n",
+          "after": " * remain byte-identical.\n */\nexport interface ObservableCombinatorRuntime {\n  /** `$__combinator_all_resolve_cap` subtype containing element caps + called bit. */\n  allResolveCapTypeIdx: number;\n",
+          "beforeSha256": "4ac8e7d485fda5f97a3d1d219c0f64475ad0435c13a1dd961a543123e93632e4",
+          "afterSha256": "1c8c8a1a46699aa454f103c42c660c48e3eb2359f29aeca1a8fe39aa84b17698",
+          "beforeOffset": 27337,
+          "afterOffset": 27351
+        },
+        {
+          "ordinal": 3,
+          "before": "\n/** State shared by the literal and direct-vector observable paths. */\ninterface ObservableCombinatorPreparation {\n  resultLocal: number;\n  ctorLocal: number;\n",
+          "after": "\n/** State shared by the literal and direct-vector observable paths. */\nexport interface ObservableCombinatorPreparation {\n  resultLocal: number;\n  ctorLocal: number;\n",
+          "beforeSha256": "546f20f11a90cf77a25db3edc0bee6d451f57b4941c0b617eebff61e845adb3b",
+          "afterSha256": "444c20052bf592fb7ee59c7a0eb83bca838da0220bb30d308ba586cf5c6f86d1",
+          "beforeOffset": 28493,
+          "afterOffset": 28514
+        },
+        {
+          "ordinal": 4,
+          "before": " * the sole admission point for this additional machinery.\n */\nfunction ensureObservableCombinatorRuntime(\n  ctx: CodegenContext,\n  ids: CombinatorRuntime,\n",
+          "after": " * the sole admission point for this additional machinery.\n */\nexport function ensureObservableCombinatorRuntime(\n  ctx: CodegenContext,\n  ids: CombinatorRuntime,\n",
+          "beforeSha256": "28e2a3453c78784a8c3666ffa981b7cf3277487d6cc1214b5e1821e61973e36a",
+          "afterSha256": "26d6f453c17841de63fb734dc183ce596350795548788664c1b8b4cb51e3e10d",
+          "beforeOffset": 29161,
+          "afterOffset": 29189
+        },
+        {
+          "ordinal": 5,
+          "before": " * to precede the copy (see the #2919 liveBodies note at the literal call site).\n */\nfunction combinatorReactionFns(\n  ctx: CodegenContext,\n  ids: CombinatorRuntime,\n",
+          "after": " * to precede the copy (see the #2919 liveBodies note at the literal call site).\n */\nexport function combinatorReactionFns(\n  ctx: CodegenContext,\n  ids: CombinatorRuntime,\n",
+          "beforeSha256": "b3c996c1e5ab656c70d508921b706374f368a98e2e37e6b2ae3463c65bab7d60",
+          "afterSha256": "6e3cac1a9ee8d25b868e14aa0d24129e5d4fc1fa8299dfba45389f99354e7836",
+          "beforeOffset": 43224,
+          "afterOffset": 43259
+        },
+        {
+          "ordinal": 6,
+          "before": " * local so later source writes cannot replace the captured method.\n */\nfunction emitObservableCombinatorPreparation(\n  ctx: CodegenContext,\n  fctx: FunctionContext,\n",
+          "after": " * local so later source writes cannot replace the captured method.\n */\nexport function emitObservableCombinatorPreparation(\n  ctx: CodegenContext,\n  fctx: FunctionContext,\n",
+          "beforeSha256": "e75287210fa546274caaab9a7190e351f1f9fd03e729b472f4c7848efac7cd87",
+          "afterSha256": "39623b1e5505e1875aa078ebd7e4d3d882270d83670fce230b20800915b10e61",
+          "beforeOffset": 56475,
+          "afterOffset": 56517
+        },
+        {
+          "ordinal": 7,
+          "before": "\n/**\n * Append one `Call(resolve, C, [value])` then `Invoke(next, \"then\", …)`\n * pipeline.  This is intentionally emitted at the call site: the captured\n",
+          "after": "\n/**\n * (#6651 D2b) The aggregate-state types an observable element pipeline writes.\n * The literal/direct-VEC callers pass none and get `$CombinatorState`; the\n * driven dynamic-iterable `Promise.all` (`promise-combinator-drive.ts`) passes\n * its growable `$CombinatorDriveState` twin, which has the same field order.\n */\nexport interface ObservableElementCarrier {\n  stateTypeIdx: number;\n  elemCapsTypeIdx: number;\n  subscribeFuncIdx: number;\n  buildAllResolveClosure: (elemCapsLocal: number) => Instr[];\n}\n\n/**\n * Append one `Call(resolve, C, [value])` then `Invoke(next, \"then\", …)`\n * pipeline.  This is intentionally emitted at the call site: the captured\n",
+          "beforeSha256": "8c7eddcebae7b3fed5caadd493107d53564eb636830bb9fc3de415a09bf893a1",
+          "afterSha256": "bd2fae197072d85f99373afa7fcf5cf01f198a8c546784f0d385e054f7b82216",
+          "beforeOffset": 65247,
+          "afterOffset": 65296
+        },
+        {
+          "ordinal": 8,
+          "before": " * legacy `__combinator_subscribe` helper is source-agnostic.\n */\nfunction emitObservableCombinatorElement(\n  ctx: CodegenContext,\n  fctx: FunctionContext,\n",
+          "after": " * legacy `__combinator_subscribe` helper is source-agnostic.\n */\nexport function emitObservableCombinatorElement(\n  ctx: CodegenContext,\n  fctx: FunctionContext,\n",
+          "beforeSha256": "5b59dc535e62b220acbc7f27faa407410ca931dd91a361e22c8036593465f5d6",
+          "afterSha256": "e30cf8d0123688dbefbe5cb378f1b7163dc031d05aedc6e258bb0559c4d5a7e3",
+          "beforeOffset": 65475,
+          "afterOffset": 66034
+        },
+        {
+          "ordinal": 9,
+          "before": "  indexInstrs: readonly Instr[],\n  inputInstrs: readonly Instr[],\n): void {\n  const inputLocal = allocLocal(fctx, `__comb_observable_input_${fctx.locals.length}`, EXTERNREF);\n",
+          "after": "  indexInstrs: readonly Instr[],\n  inputInstrs: readonly Instr[],\n  carrier: ObservableElementCarrier = {\n    stateTypeIdx: ids.stateTypeIdx,\n    elemCapsTypeIdx: ids.elemCapsTypeIdx,\n    subscribeFuncIdx: ids.subscribeFuncIdx,\n    buildAllResolveClosure: (elemCapsLocal) => buildObservableAllResolveClosureInstrs(ctx, observable, elemCapsLocal),\n  },\n): void {\n  const inputLocal = allocLocal(fctx, `__comb_observable_input_${fctx.locals.length}`, EXTERNREF);\n",
+          "beforeSha256": "0e37931b5d0c54ec6d69bf1f9a911c4569a1357c8a799172ad6d4e0495d03896",
+          "afterSha256": "500134e438d0050112403c1a7d36c124bcde8f941cb246e14fdc1916e1c7f7f0",
+          "beforeOffset": 65877,
+          "afterOffset": 66443
+        },
+        {
+          "ordinal": 10,
+          "before": "      ? allocLocal(fctx, `__comb_observable_elem_caps_${fctx.locals.length}`, {\n          kind: \"ref\",\n          typeIdx: ids.elemCapsTypeIdx,\n        })\n      : -1;\n",
+          "after": "      ? allocLocal(fctx, `__comb_observable_elem_caps_${fctx.locals.length}`, {\n          kind: \"ref\",\n          typeIdx: carrier.elemCapsTypeIdx,\n        })\n      : -1;\n",
+          "beforeSha256": "6d55f7a3bd8fb0001d0571b8187cb2ab28812e3ed57a034f114afa3fccd87823",
+          "afterSha256": "227cf825678dcbaa96f674ee5a0633be0bd010dfb242eb82854fe0b6df879420",
+          "beforeOffset": 66954,
+          "afterOffset": 67806
+        },
+        {
+          "ordinal": 11,
+          "before": "        { op: \"local.get\", index: stateLocal },\n        ...indexInstrs,\n        { op: \"struct.new\", typeIdx: ids.elemCapsTypeIdx },\n        { op: \"local.set\", index: elemCapsLocal },\n        ...buildObservableAllResolveClosureInstrs(ctx, observable, elemCapsLocal),\n      ];\n    }\n",
+          "after": "        { op: \"local.get\", index: stateLocal },\n        ...indexInstrs,\n        { op: \"struct.new\", typeIdx: carrier.elemCapsTypeIdx },\n        { op: \"local.set\", index: elemCapsLocal },\n        ...carrier.buildAllResolveClosure(elemCapsLocal),\n      ];\n    }\n",
+          "beforeSha256": "0fe275edaf4f195663378980b1398ae3ae5530a667f51a6860e87fd0cbdfe478",
+          "afterSha256": "9c72dc6adaf0d7a69a576fa975c517bd86286f284c119195c126dbea65d569c3",
+          "beforeOffset": 67708,
+          "afterOffset": 68564
+        },
+        {
+          "ordinal": 12,
+          "before": "    { op: \"ref.func\", funcIdx: reaction.fulfillIdx },\n    { op: \"ref.func\", funcIdx: reaction.rejectIdx },\n    { op: \"call\", funcIdx: ids.subscribeFuncIdx },\n  ];\n  const buildNativeInvoke = (): Instr[] => {\n",
+          "after": "    { op: \"ref.func\", funcIdx: reaction.fulfillIdx },\n    { op: \"ref.func\", funcIdx: reaction.rejectIdx },\n    { op: \"call\", funcIdx: carrier.subscribeFuncIdx },\n  ];\n  const buildNativeInvoke = (): Instr[] => {\n",
+          "beforeSha256": "f04fb3ea5edef2ed809606a549b4b9377214976d696484793c6c6aea63cdb95d",
+          "afterSha256": "bd720fc47d3175c856eb5769a169f3fb46d1fa7247bc0262c020472148eae442",
+          "beforeOffset": 68789,
+          "afterOffset": 69624
+        },
+        {
+          "ordinal": 13,
+          "before": "          { op: \"local.get\", index: stateLocal },\n          { op: \"local.get\", index: stateLocal },\n          { op: \"struct.get\", typeIdx: ids.stateTypeIdx, fieldIdx: 3 },\n          { op: \"i32.const\", value: 1 },\n          { op: \"i32.add\" },\n          { op: \"struct.set\", typeIdx: ids.stateTypeIdx, fieldIdx: 3 },\n        ]\n      : [];\n",
+          "after": "          { op: \"local.get\", index: stateLocal },\n          { op: \"local.get\", index: stateLocal },\n          { op: \"struct.get\", typeIdx: carrier.stateTypeIdx, fieldIdx: 3 },\n          { op: \"i32.const\", value: 1 },\n          { op: \"i32.add\" },\n          { op: \"struct.set\", typeIdx: carrier.stateTypeIdx, fieldIdx: 3 },\n        ]\n      : [];\n",
+          "beforeSha256": "8f8eb3bfd69af253924ae39c2bab50ca4c7f601cb79480f1bdbe262e6c52f41a",
+          "afterSha256": "74d64e3f7aec207833de5b3527196e4f155f19dbd540f43ea0d3ef95901f1ad3",
+          "beforeOffset": 72634,
+          "afterOffset": 73473
+        }
+      ]
+    }
+  ],
+  "dependencies": [
+    {
+      "path": "src/codegen/closure-classifier.ts",
+      "commit": "d7de1281129ddff8d3a48902a5dcf81eaee7f8d3",
+      "gitBlob": "274164a7d5a5128740437646951e70c4371c4287",
+      "sha256": "0d2b70770eb0aef9d2791fd75d6a006b0a1873e7e510caf62c5809512b386693"
+    },
+    {
+      "path": "src/codegen/builtin-static-globals.ts",
+      "commit": "d7de1281129ddff8d3a48902a5dcf81eaee7f8d3",
+      "gitBlob": "f32b73a204c21ac2639cc82f573e4e3ca7d5dc51",
+      "sha256": "fdcf9f1b5f18c18b256dd52f5084c9f28cc867a3f891dd9976b6dda6287cd5ca"
+    },
+    {
+      "path": "src/codegen/builtin-value-read.ts",
+      "commit": "d7de1281129ddff8d3a48902a5dcf81eaee7f8d3",
+      "gitBlob": "910ca3728f9901f8be4128c3019ae3d04a7870b4",
+      "sha256": "6fc29aea2b2b83fb4f4b7d654453cc2b4ed9450f52a8e65edb00b3aa457ac806"
+    },
+    {
+      "path": "src/codegen/carrier-bag-visibility.ts",
+      "commit": "d7de1281129ddff8d3a48902a5dcf81eaee7f8d3",
+      "gitBlob": "889f0b01fb14fc64ffebce10bfc5909a7407030a",
+      "sha256": "7a0820f193e2ddd2ac32488ebc99aaa7df9b6bf0370c096f36904dfeba3dc201"
+    },
+    {
+      "path": "src/ir/try-table.ts",
+      "commit": "d7de1281129ddff8d3a48902a5dcf81eaee7f8d3",
+      "gitBlob": "43b388b03b1c0383426521156ebc73b1589d2b3e",
+      "sha256": "60c4f8f6a4c4ce046b874638392d3892d4c434d77aac462c5e7c4703a9d914b9"
+    },
+    {
+      "path": "src/codegen/async-scheduler.ts",
+      "commit": "d7de1281129ddff8d3a48902a5dcf81eaee7f8d3",
+      "gitBlob": "c21ae077a44011e62bb9519294624e08b41f8ef7",
+      "sha256": "81d99ad21d51faee6105bb38f45588a3bddb0db1304932e3ab255eb04e84ae0c"
+    },
+    {
+      "path": "src/codegen/promise-custom-combinator.ts",
+      "commit": "d7de1281129ddff8d3a48902a5dcf81eaee7f8d3",
+      "gitBlob": "e23ba2cc3dcec52ba1597a61c289f496581d7d8b",
+      "sha256": "a8aa62f88f50ec943fcca33c6459bc468c00e5116c9dc53f2bccf1383f588234"
+    },
+    {
+      "path": "src/codegen/promise-combinator-drive.ts",
+      "commit": "d7de1281129ddff8d3a48902a5dcf81eaee7f8d3",
+      "gitBlob": "c2aad2aad58e3c934838be86d9e0d4d423be3888",
+      "sha256": "798bac3867597742aa3f4e9eb7dfa9511d2f1e876478a4218f6505b1bd3fa972"
+    }
+  ]
+}

@@ -1,0 +1,52 @@
+# Independent executable-slice implementability audit
+
+Read-only at exact source main1265c47d6fc41300a380ef7e4abc45fdfcfd2c61. Root/writer retain implementation ownership. No tracked source/test/helper/receipt changes, compiler/checker/tests, network or Git operations were performed. This audit only reads exact main and the writer's current generated recipe, parses TypeScript syntax and performs fixed-source slice/replay arithmetic. It is not executed acceptance of a runtime evolution helper or any of the631controls.
+
+## Result
+
+All34 inverse spans are implementable from the fixed27 actual raw production sources. The independently inspected writer recipe uses **84live slice pieces**, including one two-function ABI donor slice, and187literal scaffold pieces restricted to whitespace, comments and module links. Every live slice pin/boundary/scope was checked; every stored scaffold was checked against the final source's real comment/import/export region. All34 replacement pins, complete target pins, syntax and exact forward source bytes matched. No missing executable payload node was found; no old executable body is required as a saved fallback.
+
+The first audit captured writer receipt209453b1e3af77273ee8929dc59c471a290dbd4e79a387e83c7d008f4db78485 unchanged within that read interval. Writer then changed the receipt to5fa8434031d44258392be13d31067829cb954b8bd8d1e5cc69a8b8ae039864c5; the second independent audit verified the new pin unchanged within its read interval, with the same34/84/187census and complete replay checks. This actual between-review drift is recorded in reviewed-receipt-drift.json, and the original audit is retained. Main27source pins remained exact. `recipe-slice-audit.json` records each live slice's actual path/UTF16offsets/lines/hash/text, literal classifications and reciprocal checks. `semantic-node-donors.json` independently records22specific semantic AST node roles, avoiding any claim that a punctuation-token transfer is an unchanged historical expression. `all34-span-role-matrix.json` describes every fixed inverse, including deletion-only executable cases and nonexecutable scaffolds.
+
+## Exact donors for net rewiring
+
+Offsets below are half-open UTF16 code units in main1265 current full sources. Node declarations/owner full source hashes are in the fixed input manifest, not guessed from names.
+
+| Historical executable role | Actual current donor / slice | Operation |
+| --- | --- | --- |
+| callable fallback's native/vector calls | runtime/callable-declarations.ts::irRuntimeCallableDeclaration, lines102–103;4414:4451 and4463:4495 | Retain first2of5actual calls; remove only later tails. The original native/vector calls and ref arguments survive. |
+| manifest's native/vector provider spreads | same module::SEMANTIC_CALLABLE_RUNTIME_PROVIDERS, lines111–112;4870:4912 and4916:4952 | Copy actual SpreadElement nodes, with only indentation projection; remove ordinary-object spread. Keep all manifest surrounding spreads/sort callback live. |
+| manifest's native/vector provider mismatch | same module::semanticCallableProviderMismatch, lines118–119;5122:5199 | Actual left subtree already contains both calls and nullish operator. Drop only ordinary-object right tail; reindent. Keep manifest provider loop, local binding, error constructor and check order unchanged. |
+| manifest native/vector policy condition | same module::semanticCallablePolicyMismatch, line128;5397:5470 | Actual condition lambda/feature operand stays unchanged. |
+| manifest native policy true call | same module::semanticCallablePolicyMismatch, line129;5477:5527 | Preserve actual callee/feature argument; replace donor parameter argument with actual manifest caller operand. |
+| manifest vector policy false call | same module::semanticCallablePolicyMismatch, line130;5535:5580 | Preserve actual callee/feature; drop ordinary fallback; use actual caller policy operand. |
+| caller's policy operand | runtime/manifest.ts::RuntimeManifestBuilder.#selectProvider, line2123;87303:87315 | The actual call supplies this.#policy. Do not store that executable member expression as an old string. |
+| Boolean selector old host result/null | runtime/manifest.ts::booleanBoundaryProviderId, line1031;40456:40477,40480:40501,40556:40560 | Current host condition/value and native branch's final null survive; remove only new native/unbox arms and first parameter. Compact signature/whitespace using actual identifiers/types. |
+| Number selector old host result/null | runtime/manifest.ts::numberBoundaryProviderId, line1060;41778:41799,41802:41822,41876:41880 | Same live ternary projection; retain all old unbox statements. |
+| constructor old Boolean frozen box | runtime/manifest.ts::RuntimeManifestBuilder.constructor, line1655;65987:66011 | Actual object property and Object.freeze call survive; delete optional-unbox spread only. |
+| Boolean selectedId call/error message | runtime/manifest.ts::RuntimeManifestBuilder.#selectProvider, lines2151–2156 | Delete only feature argument and added template suffix; actual policy argument, selectedId local/filter, exception prefix and box interpolation remain current. Slice details in span14 audit. |
+| ReferenceError collection equality | intrinsic-support.ts::prepareIrRuntimeManifest#2 implementation, line829;39375:39426 | Actual declaration.feature, equality operator and literal all survive. Remove added OR demand arms and project member access to optional member access. |
+| actual ?. syntax token | same implementation, line806;38185:38187 | Present in the current same implementation, not a saved old condition. Used only as a member-access punctuation projection. |
+| original collection effect | same implementation, line833;39602:39647 | Keep whole actual runtimeCallFeatures.add(declaration.feature) statement and current callback ordering. |
+| ABI anchor full body | program/runtime-abi-identity.ts::preparedIrRuntimeAbiAnchor, line11;629:969 plus actual preceding doc | Actual declaration transfer; do not inject prior spec before-context body. |
+| ABI binding-ID full body | same module::preparedIrRuntimeCallableBindingId, line18;971:1241 | Actual declaration transfer; exact old bytes currently survive in the new owner. |
+
+## Shape changes and boundary obligations
+
+The complete old support guard `declaration?.feature === "error.reference.construct"` is absent from all27current raw inputs. Its executable operands all exist in the current reference-error equality, and ?. exists inside the same implementation. This is an explicit bounded AST/token recomposition, not an unchanged whole-expression donor. The current rewritten guard and call/local association must be fully authenticated before that projection. A same-named identifier/property elsewhere cannot establish the association; an arbitrary local nullish guard must not be accepted. The generated fixed recipe binds current full source/declaration/spans and target full pins, so no additional owner is needed.
+
+Likewise the old manifest provider aggregate and policy ternary are no longer contiguous manifest expressions. Their actual operands now live in exactly the3semantic callable declarations, all within fixed27inputs. Preserve that owner identity/order/full body and the actual current manifest call's arguments before inlining the historical view. Preserve current-only semantic and provider declarations as actual forward residues; do not silently erase a mutant addition.
+
+Some delimiters in the writer's maximal token slices are copied from role-unrelated but byte-identical tokens within the authenticated declaration (policy ternary colon currently from manifest parameter type annotation87044:87045; support condition close parenthesis from its for-loop header). They introduce no executable operand and the current34recipe reproduces exact full source. For clearer semantic attribution, an actual ternary colon is available in the policy donor5532:5533, and a predicate closing parenthesis can come from the current condition's actual parentheses. This is a provenance refinement, not a source-output defect. Do not describe those token pieces as unchanged complete expressions.
+
+Other executable inverses are deletion/projection only: added native Number/Boolean provider array entries, new feature/ID atoms/spreads, new Boolean signature/table entry and verifier guard. Their old executable operands remain actual current nodes; all untouched body/callback/private-field/error/order text is copied from live sources. Documentation/types/module-link scaffolds carry no executable-body authority. The generic interface, runtime specialization alias and canonical semantic table alias are unchanged inputs, not reconstructed replacement implementations.
+
+## Unknowns and retained diagnostics
+
+This audit does not independently execute the writer helper, mutate receipts/inputs, run631controls or checker programs, or verify runtime policy behavior/public/full-realm completion. Reciprocal source arithmetic proves the fixed current recipe can be emitted; it does not prove the runtime authenticators reject every malformed recipe or mutant source.
+
+Two local reviewer diagnostic attempts are retained: standalone parsing of partial comment and partial import fragments was inapplicable because fixed span boundaries can cut those scaffolds. The corrected independent checks use the final reconstructed source's actual AST comment/import/export ranges. These were audit-script errors, not writer/source failures. No tracked file changed. Original runtime historical helper and old tests/controls remain untouched.
+
+Current reviewed receipt drift: 0 span slice populations differ from the first recipe audit; see reviewed-receipt-drift.json. Any statement about colon/close-paren donors above identifies the inspected recipe source role; full newer recipe has been independently rechecked.
+
+The209453b1→5fa84340 refinement adds fresh first/last token ordinal, SyntaxKind, offset/hash and AST-parent-role associations. Independent token-role-check.json reconstructs all166boundary roles from fresh current ASTs and finds them exact; all84live slices,34spans, target pins, scaffold and donor coordinates stayed unchanged.

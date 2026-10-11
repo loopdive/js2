@@ -16,6 +16,12 @@ export interface AllocSite {
   readonly origin?: IrSiteId;
 }
 
+/** Read authority required by the canonical allocation-provenance verifier. */
+export interface AllocProvenanceLookup {
+  isKnown(id: AllocSiteId): boolean;
+  resolve(id: AllocSiteId): AllocSite | null;
+}
+
 /** A detached, read-only projection of one registry slot. */
 export type AllocRegistryProvenanceSnapshot =
   | { readonly state: "live"; readonly site: AllocSite }

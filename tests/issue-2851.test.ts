@@ -26,6 +26,10 @@ async function runMarshalled(src: string): Promise<any> {
   const imports = buildImports(r.imports, undefined, r.stringPool);
   const { instance } = await instantiateWasm(new Uint8Array(r.binary), imports.env, imports.string_constants);
   if (imports.setExports) imports.setExports(instance.exports as Record<string, Function>);
+  // (#6438) Establish the data-struct authority: without it the raw-exports
+  // overload cannot decode a returned struct and now refuses instead of
+  // answering `{}` (every assertion below read `{}` on main).
+  imports.setInstance?.(instance);
   return wrapExports(instance.exports, { marshal: "copy" }).test();
 }
 

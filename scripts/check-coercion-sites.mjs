@@ -82,17 +82,18 @@
  */
 import { readFileSync, readdirSync, writeFileSync, statSync } from "fs";
 import { join, relative, basename } from "path";
+import { fileURLToPath } from "node:url";
 import { resolveChangeBase, changedPaths, baseBlob, changeSetAllowances } from "./lib/change-scope.mjs";
 
-const REPO_ROOT = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
+const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url)).replace(/\/$/, "");
 const ROOTS = [
-  new URL("../src/codegen", import.meta.url).pathname,
-  new URL("../src/codegen-linear", import.meta.url).pathname,
+  fileURLToPath(new URL("../src/codegen", import.meta.url)),
+  fileURLToPath(new URL("../src/codegen-linear", import.meta.url)),
 ];
 // Repo-relative prefixes matching ROOTS, for change-scoping.
 const ROOT_PREFIXES = ["src/codegen/", "src/codegen-linear/"];
-const SRC_ROOT = new URL("../src", import.meta.url).pathname;
-const BASELINE_PATH = new URL("./coercion-sites-baseline.json", import.meta.url).pathname;
+const SRC_ROOT = fileURLToPath(new URL("../src", import.meta.url));
+const BASELINE_PATH = fileURLToPath(new URL("./coercion-sites-baseline.json", import.meta.url));
 
 // Engine-owned files that legitimately define / own the coercion vocabulary.
 // Matched by basename anywhere under the scanned roots.

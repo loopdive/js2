@@ -1,0 +1,76 @@
+
+ RUN  v3.2.4 /private/tmp/js2-ir-source-contracts-main-20261001
+
+ ❯ tests/issue-3518-symbolic-support-ref.test.ts (20 tests | 5 failed) 40ms
+   × nominal index-free support references > retains the exact old factory identity and complete two-body relocation receipt 10ms
+     → expected '32421c36a56ab3483c3838e7465524cd767ae…' to be '9324caf316c596019beab1007c7e602263ae2…' // Object.is equality
+   × nominal index-free support references > rejects a body relocation mutation after the original positive 1ms
+     → expected '32421c36a56ab3483c3838e7465524cd767ae…' to be '9324caf316c596019beab1007c7e602263ae2…' // Object.is equality
+   × nominal index-free support references > rejects a extra relocation mutation after the original positive 1ms
+     → expected '32421c36a56ab3483c3838e7465524cd767ae…' to be '9324caf316c596019beab1007c7e602263ae2…' // Object.is equality
+   × nominal index-free support references > rejects a route relocation mutation after the original positive 1ms
+     → expected '32421c36a56ab3483c3838e7465524cd767ae…' to be '9324caf316c596019beab1007c7e602263ae2…' // Object.is equality
+   × nominal index-free support references > rejects a export relocation mutation after the original positive 1ms
+     → expected '32421c36a56ab3483c3838e7465524cd767ae…' to be '9324caf316c596019beab1007c7e602263ae2…' // Object.is equality
+   ✓ nominal index-free support references > keys identity and nullability, never the compatibility name or physical fields 0ms
+   ✓ nominal index-free support references > rejects invalid constructor kind 0ms
+   ✓ nominal index-free support references > rejects invalid constructor binding 0ms
+   ✓ nominal index-free support references > rejects invalid constructor domain 0ms
+   ✓ nominal index-free support references > rejects invalid constructor empty 0ms
+   ✓ nominal index-free support references > rejects invalid constructor nullable 0ms
+   ✓ nominal index-free support references > checks exact argument flow 2ms
+   ✓ nominal index-free support references > checks exact result flow 0ms
+   ✓ nominal index-free support references > checks exact return flow 0ms
+   ✓ nominal index-free support references > checks exact nullability flow 0ms
+   ✓ nominal index-free support references > checks exact missing-declaration flow 0ms
+   ✓ nominal index-free support references > checks branch identities and rejects physical slot storage 0ms
+   ✓ nominal index-free support references > preserves the leaf without calling a physical attachment allocator 1ms
+   ✓ nominal index-free support references > resolves through two real ABI/ledger layouts without index-bearing source types 3ms
+   ✓ nominal index-free support references > lowers the unchanged original radix through the genuine frontend kernel (mandatory R+F join) 19ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 5 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/issue-3518-symbolic-support-ref.test.ts > nominal index-free support references > retains the exact old factory identity and complete two-body relocation receipt
+AssertionError: expected '32421c36a56ab3483c3838e7465524cd767ae…' to be '9324caf316c596019beab1007c7e602263ae2…' // Object.is equality
+
+Expected: "9324caf316c596019beab1007c7e602263ae2955328a0f336b1ab38246bb09fc"
+Received: "32421c36a56ab3483c3838e7465524cd767ae208d85c3bc37a4645a3544c2376"
+
+ ❯ requireFactoryRelocation tests/issue-3518-symbolic-support-ref.test.ts:115:25
+    113|       "\n\n/** Exact reserved layout type identity for one nominal-fnc…
+    114|   );
+    115|   expect(hash(inverse)).toBe("9324caf316c596019beab1007c7e602263ae2955…
+       |                         ^
+    116| }
+    117| 
+ ❯ tests/issue-3518-symbolic-support-ref.test.ts:121:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/5]⎯
+
+ FAIL  tests/issue-3518-symbolic-support-ref.test.ts > nominal index-free support references > rejects a body relocation mutation after the original positive
+ FAIL  tests/issue-3518-symbolic-support-ref.test.ts > nominal index-free support references > rejects a extra relocation mutation after the original positive
+ FAIL  tests/issue-3518-symbolic-support-ref.test.ts > nominal index-free support references > rejects a route relocation mutation after the original positive
+ FAIL  tests/issue-3518-symbolic-support-ref.test.ts > nominal index-free support references > rejects a export relocation mutation after the original positive
+AssertionError: expected '32421c36a56ab3483c3838e7465524cd767ae…' to be '9324caf316c596019beab1007c7e602263ae2…' // Object.is equality
+
+Expected: "9324caf316c596019beab1007c7e602263ae2955328a0f336b1ab38246bb09fc"
+Received: "32421c36a56ab3483c3838e7465524cd767ae208d85c3bc37a4645a3544c2376"
+
+ ❯ requireFactoryRelocation tests/issue-3518-symbolic-support-ref.test.ts:115:25
+    113|       "\n\n/** Exact reserved layout type identity for one nominal-fnc…
+    114|   );
+    115|   expect(hash(inverse)).toBe("9324caf316c596019beab1007c7e602263ae2955…
+       |                         ^
+    116| }
+    117| 
+ ❯ tests/issue-3518-symbolic-support-ref.test.ts:128:7
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/5]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  5 failed | 15 passed (20)
+   Start at  08:59:01
+   Duration  7.02s (transform 5.04s, setup 0ms, collect 6.79s, tests 40ms, environment 0ms, prepare 38ms)
+
+JSON report written to /private/tmp/js2-ir-validation-lowering-b-resume-20261001/.tmp/validation-lowering-b-resume/first-integration/support-ref-before-b.json

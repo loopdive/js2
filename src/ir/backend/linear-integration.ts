@@ -180,6 +180,7 @@ import type {
   LinearRefCellLowering,
   LinearVecLowering,
 } from "./handles.js";
+import { readEnv } from "../../env.js";
 
 /** One function routed to the direct path, and its stable bucketed reason. */
 export interface LinearIrRejection {
@@ -409,7 +410,7 @@ export interface LinearIrHelper {
 
 /** L4 gate: default-on, with an explicit `=0` direct-backend escape hatch. */
 export function linearIrEnabled(): boolean {
-  return typeof process === "undefined" || process.env?.JS2WASM_LINEAR_IR !== "0";
+  return readEnv("JS2WASM_LINEAR_IR") !== "0";
 }
 
 /**
@@ -435,8 +436,18 @@ function linearBackendResourceInvariant(detail: string): never {
   );
 }
 
-function addLinearBackendInstructionDemand(instr: IrInstr, runtimeFunctions: Set<string>): void {
+function addLinearBackendInstructionDemand(
+  instr: IrInstr,
+  runtimeFunctions: Set<string>,
+  addOperation: (operation: LinearRuntimeOperation) => void,
+): void {
   switch (instr.kind) {
+    case "vec.len":
+    case "vec.get":
+    case "vec.set":
+    case "forof.vec":
+      addOperation({ family: "vector", operation: "resolve-forwarding" });
+      return;
     case "string.const":
       runtimeFunctions.add("__str_from_data");
       return;
@@ -551,7 +562,7 @@ export function collectLinearBackendResourceDemand(
     for (const operation of allocation.operations) addOperation(operation);
   }
   for (const fn of module.functions) {
-    forEachLinearIrInstruction(fn, (instr) => addLinearBackendInstructionDemand(instr, runtimeFunctions));
+    forEachLinearIrInstruction(fn, (instr) => addLinearBackendInstructionDemand(instr, runtimeFunctions, addOperation));
   }
 
   return Object.freeze({
@@ -561,6 +572,20 @@ export function collectLinearBackendResourceDemand(
     layoutIds: Object.freeze([...layoutIds].sort()),
     dataSegmentIds: Object.freeze([...dataSegmentIds].sort()),
   });
+}
+
+/** Prove structural resources and the forwarding ABI before any body consumer. */
+function preflightLinearBackendResources(ctx: LinearContext, module: IrModule, memoryPlan: LinearMemoryPlan): void {
+  const demand = collectLinearBackendResourceDemand(module, memoryPlan);
+  validateLinearBackendResourceDemand({
+    demand,
+    memoryPlan,
+    availableFunctionNames: new Set(ctx.mod.functions.map((fn) => fn.name)),
+  });
+  for (const operation of demand.runtimeOperations) {
+    if (operation.family === "vector" && operation.operation === "resolve-forwarding")
+      resolveLinearRuntimeOperation(ctx, operation);
+  }
 }
 
 /**
@@ -1281,8 +1306,8 @@ export function compileLinearIrFunctions(
         );
         // Build through the SAME shared from-ast as WasmGC. The narrowed
         // linear resolver exposes the landed L2 vec/aggregate and L3 string
-        // shapes; every other representation-dependent family still throws
-        // and demotes.
+        // shapes; every other representation-dependent family still throws a
+        // typed IrUnsupportedError and demotes.
         const { main, lifted, countedStringAppendPlans } = lowerFunctionAstToIr(decl, {
           checker: evidenceChecker,
           oracle: prepared.oracle,
@@ -1343,18 +1368,17 @@ export function compileLinearIrFunctions(
         progressed = true;
       } catch (e) {
         rethrowLinearOwnerInvariant(e);
-        // Fail-safe demote: the linear DIRECT path compiles this function
-        // exactly as it does today (the overlay only ever ADDS capability).
+        // (#6793) Only a typed Unsupported demotes to the linear DIRECT path.
+        // An IrInvariantError or untyped throw (a bare TypeError) is a compiler
+        // bug: classified as the WasmGC lane does, it fails the compile.
+        const outcome = classifyIrFailure(e, "build");
+        if (outcome.kind === "invariant") {
+          const detail = `linear-ir: IR build of ${name} hit invariant ${outcome.code}: ${outcome.detail}`;
+          throw new IrInvariantError(outcome.code, outcome.stage, detail, e);
+        }
         // A "call to unknown function" may resolve in a later round once
         // the callee's signature lands in `signaturesByUnitId` — keep it pending.
-        const outcome =
-          e instanceof IrUnsupportedError || e instanceof IrInvariantError ? classifyIrFailure(e, "build") : undefined;
-        lastFailure.set(ownerUnitId, {
-          func: name,
-          reason: "build",
-          detail: e instanceof Error ? e.message : String(e),
-          ...(outcome ? { outcome } : {}),
-        });
+        lastFailure.set(ownerUnitId, { func: name, reason: "build", detail: outcome.detail, outcome });
         next.push(owner);
       }
     }
@@ -1534,21 +1558,8 @@ export function compileLinearIrFunctions(
   irModule = frozenBodyBatch.module;
   memoryPlan = planLinearMemoryFromFrozenFacts(irModule, frozenBodyBatch.allocationFacts, allocationPolicy);
   bindMemoryPlan(memoryPlan);
-  // Resolve every helper/operation/layout/data join demanded by the captured
-  // module before the first authenticated consumer/emitter callback. Data
-  // segments and globals intentionally remain relocatable/symbolic; this
-  // check only proves that the semantic resources the emitter will request
-  // are present in the completed plan and runtime table.
-  const resourceDemand = collectLinearBackendResourceDemand(irModule, memoryPlan);
-  validateLinearBackendResourceDemand({
-    demand: resourceDemand,
-    memoryPlan,
-    availableFunctionNames: new Set(ctx.mod.functions.map((func) => func.name)),
-  });
+  preflightLinearBackendResources(ctx, irModule, memoryPlan);
 
-  // Every body is lowered through the authenticated batch consumer. The
-  // existing local-slot/vector-scratch adaptation remains below this point,
-  // but the captured function and lowerer output are now the sole authority.
   let consumedBodies: ReturnType<typeof consumeFrozenIrBodyBatchWithFactories<Instr[], ValType>>;
   try {
     consumedBodies = consumeFrozenIrBodyBatchWithFactories<Instr[], ValType>({
@@ -1645,7 +1656,7 @@ export function compileLinearIrFunctions(
   }
   preparedCountedStringAppendReceipts = preparedCountedStringAppendReceiptCandidates;
 
-  if (typeof process !== "undefined" && process.env?.JS2WASM_LINEAR_IR_DEBUG === "1") {
+  if (readEnv("JS2WASM_LINEAR_IR_DEBUG") === "1") {
     console.error("[linear-ir] compiled:", JSON.stringify(compiled));
     console.error("[linear-ir] rejected:", JSON.stringify(result.rejected, null, 1));
   }
@@ -1759,7 +1770,7 @@ function authenticatePreparedLinearStringRepeatProvider(ctx: LinearContext, prep
     if (!prepared.reservationReceipt) {
       throw new Error("linear-ir: counted string.repeat has no exact early reservation receipt");
     }
-    if (typeof process !== "undefined" && process.env?.JS2WASM_TEST_TAMPER_LINEAR_COUNTED_REPEAT_RESERVATION === "1") {
+    if (readEnv("JS2WASM_TEST_TAMPER_LINEAR_COUNTED_REPEAT_RESERVATION") === "1") {
       const provider = prepared.reservationReceipt.reservation.provider;
       const originalName = provider.name;
       provider.name = `${originalName}$tampered`;
@@ -2198,58 +2209,28 @@ function makeLinearIrResolver(
 
 /** Map a symbolic plan operation to the existing linear runtime helper. */
 function linearRuntimeFunctionName(operation: LinearRuntimeOperation): string | undefined {
-  let name: string | undefined;
-  if (operation.family === "memory" && operation.operation === "allocate" && operation.allocationClass === "arena") {
-    name = "__malloc";
-  } else if (
-    operation.family === "memory" &&
-    operation.operation === "allocate" &&
-    operation.allocationClass === "stack"
-  ) {
-    name = "__linear_stack_alloc";
-  } else if (
-    operation.family === "vector" &&
-    operation.operation === "allocate" &&
-    operation.allocationClass === "arena" &&
-    operation.elementStorage === "f64"
-  ) {
-    name = "__arr_new";
-  } else if (
-    operation.family === "vector" &&
-    operation.operation === "initialize-element" &&
-    operation.allocationClass === "arena" &&
-    operation.elementStorage === "f64"
-  ) {
-    name = LINEAR_IR_VEC_INIT_F64_FN;
-  } else if (
-    operation.family === "vector" &&
-    operation.operation === "grow" &&
-    operation.allocationClass === "arena" &&
-    operation.elementStorage === "f64"
-  ) {
-    // Vector growth is realized by the existing checked element-store helper;
-    // the semantic plan keeps a distinct grow operation for other adapters.
-    name = "__arr_set";
-  } else if (
-    operation.family === "string" &&
-    operation.operation === "materialize-data" &&
-    operation.allocationClass === "arena" &&
-    operation.elementStorage === "i8"
-  ) {
-    name = "__str_from_data";
-  } else if (
-    operation.family === "string" &&
-    operation.operation === "concatenate" &&
-    operation.allocationClass === "arena" &&
-    operation.elementStorage === "i8"
-  ) {
-    name = "__str_concat";
-  } else if (operation.family === "stack" && operation.operation === "mark") {
-    name = "__linear_stack_mark";
-  } else if (operation.family === "stack" && operation.operation === "restore") {
-    name = "__linear_stack_restore";
+  if (operation.family === "vector") {
+    if (operation.operation === "resolve-forwarding") return "__arr_resolve";
+    if (operation.allocationClass !== "arena" || operation.elementStorage !== "f64") return undefined;
+    if (operation.operation === "allocate") return "__arr_new";
+    if (operation.operation === "initialize-element") return LINEAR_IR_VEC_INIT_F64_FN;
+    // The existing checked store realizes the distinct symbolic grow operation.
+    if (operation.operation === "grow") return "__arr_set";
+    return undefined;
   }
-  return name;
+  if (operation.family === "memory" && operation.operation === "allocate") {
+    if (operation.allocationClass === "arena") return "__malloc";
+    if (operation.allocationClass === "stack") return "__linear_stack_alloc";
+  }
+  if (operation.family === "string" && operation.allocationClass === "arena" && operation.elementStorage === "i8") {
+    if (operation.operation === "materialize-data") return "__str_from_data";
+    if (operation.operation === "concatenate") return "__str_concat";
+  }
+  if (operation.family === "stack") {
+    if (operation.operation === "mark") return "__linear_stack_mark";
+    if (operation.operation === "restore") return "__linear_stack_restore";
+  }
+  return undefined;
 }
 
 /** Bind a symbolic plan operation to the existing linear runtime adapter. */
@@ -2258,6 +2239,18 @@ function resolveLinearRuntimeOperation(ctx: LinearContext, operation: LinearRunt
   if (!name) throw new Error(`linear-ir: no runtime binding for '${linearRuntimeOperationKey(operation)}'`);
   const localIdx = ctx.mod.functions.findIndex((func) => func.name === name);
   if (localIdx < 0) throw new Error(`linear-ir: runtime helper '${name}' missing`);
+  if (operation.family === "vector" && operation.operation === "resolve-forwarding") {
+    const type = ctx.mod.types[ctx.mod.functions[localIdx]!.typeIdx];
+    if (
+      type?.kind !== "func" ||
+      type.params.length !== 1 ||
+      type.results.length !== 1 ||
+      type.params[0]!.kind !== "i32" ||
+      type.results[0]!.kind !== "i32"
+    ) {
+      linearBackendResourceInvariant("defined runtime helper '__arr_resolve' must have signature (i32)->i32");
+    }
+  }
   return ctx.numImportFuncs + localIdx;
 }
 

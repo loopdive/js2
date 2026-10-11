@@ -18,6 +18,37 @@ import { pushDefaultValue } from "../type-coercion.js";
 import { emitThrowTypeError, noJsHost } from "./helpers.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { ts } from "../../ts-api.js";
+import { linkBrandRoleOf } from "../shape-brand.js";
+
+/**
+ * (#6482 r6) Is the exact-shape uncurried-builtin alias arm live in this module?
+ *
+ * It was `ctx.standalone || noJsHost(ctx)`. The js-host lane did not need it,
+ * because there the alias's generic `$__bound_fn` dispatch runs the ENGINE's
+ * `Object.prototype.hasOwnProperty` against a receiver the host wraps through
+ * `_wrapForHost` — correct for anything this module minted.
+ *
+ * It is NOT correct across a #5225 linked edge. Measured against the real
+ * linked harness provider: `__hasOwnProperty(x, k)` — propertyHelper's
+ * `Function.prototype.call.bind(Object.prototype.hasOwnProperty)` alias, and
+ * the second half of both `isConfigurable` and `isWritable` — answers **false
+ * for every consumer-minted receiver**, a plain `{a: 1}` exactly as much as a
+ * `[101]`, with no mutation anywhere. Three instrumentations (the
+ * `__hasOwnProperty` import closure, a catch-all at `resolveImport`'s entry,
+ * and `createHostCallImport`'s `invoke`) recorded ZERO host calls on those
+ * rows, so the answer is produced entirely in wasm and no host-side
+ * `_decoderExportsFor` redirect can reach it.
+ *
+ * A linked participant therefore needs the same claim standalone does: route
+ * the alias to the `__hasOwnProperty` / `__propertyIsEnumerable` provider,
+ * which IS the host import in a js-host module and does resolve the minting
+ * module. A single-module js-host compile has no foreign receivers by
+ * construction and keeps the identical pre-#6482 path — which is what holds
+ * #4017's 684 host-free passes and #4626's index-shift reasoning untouched.
+ */
+export function uncurriedBuiltinAliasArmActive(ctx: CodegenContext): boolean {
+  return ctx.standalone || noJsHost(ctx) || linkBrandRoleOf(ctx) !== undefined;
+}
 
 export function tryCompileObjectCreateStaticPrototype(
   ctx: CodegenContext,

@@ -87,15 +87,18 @@ export const WRAPPER_CHAIN_MEMBERS = new Set([
 ]);
 
 const primitiveProtoExtensionCache = new WeakMap<ts.SourceFile, boolean>();
+const symbolProtoExtensionCache = new WeakMap<ts.SourceFile, boolean>();
+const NUMBER_BOOLEAN_PROTOS: ReadonlySet<string> = new Set(["Number", "Boolean", "Object"]);
+const SYMBOL_PROTOS: ReadonlySet<string> = new Set(["Symbol", "Object"]);
 
-function isPrimitiveProtoTarget(expr: ts.Expression): boolean {
+function isPrimitiveProtoTarget(expr: ts.Expression, ctors: ReadonlySet<string>): boolean {
   // `Number.prototype` / `Boolean.prototype` / `Object.prototype` — as the
   // RECEIVER of a write (`Number.prototype.touched = …`) or as the direct
   // target of a defineProperty-style call.
   if (!ts.isPropertyAccessExpression(expr)) return false;
   if (expr.name.text !== "prototype") return false;
   const base = expr.expression;
-  return ts.isIdentifier(base) && (base.text === "Number" || base.text === "Boolean" || base.text === "Object");
+  return ts.isIdentifier(base) && ctors.has(base.text);
 }
 
 /**
@@ -106,7 +109,24 @@ function isPrimitiveProtoTarget(expr: ts.Expression): boolean {
  * provably absent from the chain".
  */
 export function moduleExtendsPrimitiveProtos(sourceFile: ts.SourceFile): boolean {
-  const cached = primitiveProtoExtensionCache.get(sourceFile);
+  return scanProtoExtension(sourceFile, NUMBER_BOOLEAN_PROTOS, primitiveProtoExtensionCache);
+}
+
+/**
+ * (#6651 V10a) The `symbol` twin of {@link moduleExtendsPrimitiveProtos}: does
+ * this module touch `Symbol.prototype` / `Object.prototype`? A symbol
+ * receiver's GetValue walks exactly that chain (§6.2.4.8 step 5.a ToObject).
+ */
+export function moduleExtendsSymbolProto(sourceFile: ts.SourceFile): boolean {
+  return scanProtoExtension(sourceFile, SYMBOL_PROTOS, symbolProtoExtensionCache);
+}
+
+function scanProtoExtension(
+  sourceFile: ts.SourceFile,
+  ctors: ReadonlySet<string>,
+  cache: WeakMap<ts.SourceFile, boolean>,
+): boolean {
+  const cached = cache.get(sourceFile);
   if (cached !== undefined) return cached;
   let found = false;
   const walk = (node: ts.Node): void => {
@@ -119,13 +139,13 @@ export function moduleExtendsPrimitiveProtos(sourceFile: ts.SourceFile): boolean
       const left = node.left;
       if (
         (ts.isPropertyAccessExpression(left) || ts.isElementAccessExpression(left)) &&
-        isPrimitiveProtoTarget(left.expression)
+        isPrimitiveProtoTarget(left.expression, ctors)
       ) {
         found = true;
         return;
       }
       // `Number.prototype = …` itself.
-      if (isPrimitiveProtoTarget(left)) {
+      if (isPrimitiveProtoTarget(left, ctors)) {
         found = true;
         return;
       }
@@ -133,19 +153,19 @@ export function moduleExtendsPrimitiveProtos(sourceFile: ts.SourceFile): boolean
     if (
       ts.isDeleteExpression(node) &&
       (ts.isPropertyAccessExpression(node.expression) || ts.isElementAccessExpression(node.expression)) &&
-      isPrimitiveProtoTarget(node.expression.expression)
+      isPrimitiveProtoTarget(node.expression.expression, ctors)
     ) {
       found = true;
       return;
     }
-    if (ts.isCallExpression(node) && node.arguments.length > 0 && isPrimitiveProtoTarget(node.arguments[0]!)) {
+    if (ts.isCallExpression(node) && node.arguments.length > 0 && isPrimitiveProtoTarget(node.arguments[0]!, ctors)) {
       found = true;
       return;
     }
     ts.forEachChild(node, walk);
   };
   walk(sourceFile);
-  primitiveProtoExtensionCache.set(sourceFile, found);
+  cache.set(sourceFile, found);
   return found;
 }
 

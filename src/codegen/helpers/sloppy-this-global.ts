@@ -41,6 +41,7 @@ import { inlinedCalleeHasBoundReceiver } from "../expressions/inlined-call-recei
 import { emitUndefined, ensureLateImport, flushLateImportShifts } from "../expressions/late-imports.js";
 import { coerceType } from "../shared.js";
 import { isStrictContext, isStrictFunction } from "./is-strict-function.js";
+import { readEnv } from "../../env.js";
 
 /**
  * True when an unbound `this` at `expr` must evaluate to the global object
@@ -241,7 +242,7 @@ export function thisBelongsToTopLevelCode(expr: ts.Node): boolean {
  * for an `undefined` thisArg. So the gate proves the value, not the pointer.
  */
 export function thisReceiverIsGlobalObject(ctx: CodegenContext, fctx: FunctionContext, receiver: ts.Node): boolean {
-  if (process.env.JS2WASM_TWIN_RECEIVER_PARAM !== "0" && fctx.typedThisLocalIdx !== undefined) return false;
+  if (readEnv("JS2WASM_TWIN_RECEIVER_PARAM") !== "0" && fctx.typedThisLocalIdx !== undefined) return false;
   if (fctx.localMap.get("this") !== undefined) return false;
   if (fctx.isStaticContext) return false;
   return fctx.name === "__module_init" && !ctx.sourceIsModule && thisBelongsToTopLevelCode(receiver);

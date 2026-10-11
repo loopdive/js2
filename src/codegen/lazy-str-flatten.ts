@@ -68,9 +68,10 @@
  */
 import type { Instr } from "../ir/types.js";
 import { tunedFlagEnabled } from "../perf-flags.js";
+import { readEnv } from "../env.js";
 
 export function lazyStrFlattenEnabled(): boolean {
-  return tunedFlagEnabled(process.env.JS2WASM_LAZY_STR_FLATTEN);
+  return tunedFlagEnabled(readEnv("JS2WASM_LAZY_STR_FLATTEN"));
 }
 
 /**

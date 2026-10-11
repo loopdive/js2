@@ -1,0 +1,13 @@
+
+ RUN  v3.2.4 /private/tmp/js2-ir-source-contracts-main-20261001
+
+ ✓ tests/issue-3518-program-data-contract-seam.test.ts (47 tests) 87747ms
+   ✓ connected program-data declaration seam > actually compiles old/new identities, attachment joins and positive/negative type controls  87407ms
+ ✓ tests/issue-3518-program-pre-a-evolution.test.ts (76 tests) 527ms
+
+ Test Files  2 passed (2)
+      Tests  123 passed (123)
+   Start at  05:28:50
+   Duration  88.66s (transform 39ms, setup 0ms, collect 210ms, tests 88.27s, environment 0ms, prepare 39ms)
+
+JSON report written to /private/tmp/js2-ir-source-contracts-main-20261001/.tmp/source-contracts-main/program-pre-a-cohort.json

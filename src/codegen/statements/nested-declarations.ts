@@ -1,9 +1,14 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /** Nested declaration lowering, hoisting, default parameters, and `arguments`. */
 import { ts } from "../../ts-api.js";
+import { widenJsDefaultGuessSlot } from "../js-default-param-type-guess.js";
 import { isVoidType, unwrapPromiseType } from "../../checker/type-mapper.js";
-import { needsImplicitArgumentsObject } from "../helpers/body-uses-arguments.js";
-import { bodyReferencesOwnThis, functionLikeReferencesOwnThis } from "../helpers/body-references-own-this.js";
+import { bodyLexicallyBindsArguments, needsImplicitArgumentsObject } from "../helpers/body-uses-arguments.js";
+import {
+  bodyReferencesOwnThis,
+  functionLikeReferencesOwnThis,
+  readsAmbientThisGlobal,
+} from "../helpers/body-references-own-this.js";
 import { isStrictFunction, isSimpleParameterList } from "../helpers/is-strict-function.js";
 import { normalizeSloppyExplicitThisParameter } from "../helpers/sloppy-this-global.js";
 import { initializeFunctionPoisonPillContext } from "../function-poison-pill.js";
@@ -32,7 +37,10 @@ import {
 import { getOrRegisterArgumentsVecType, reserveArgumentsLengthBrand } from "../arguments-length-brand.js";
 import { recordLiftedCaptureBox, recordLiftedCaptureSlots } from "../closures/capture-source-slot.js";
 import { recordEagerCaptureBox } from "./eager-capture-box.js";
-import { collectOwnerBindingsWrittenAfterDeclaration } from "../closures/declaration-write-analysis.js";
+import {
+  collectOwnerBindingsWrittenAfterDeclaration,
+  scopeVariableDeclarations,
+} from "../closures/declaration-write-analysis.js";
 import { popBody, pushBody } from "../context/bodies.js";
 import { recordNestedFunctionBody } from "../context/body-route-audit.js";
 import { reportError } from "../context/errors.js";
@@ -49,7 +57,10 @@ import { emitThrowReferenceError, emitThrowTypeError, noJsHost } from "../expres
 import { emitToPropertyKeyOnce } from "../expressions/computed-member-reference.js";
 import { emitLazyProtoGet, emitRegisterDynamicClassParent } from "../expressions/extern.js";
 import { emitStandaloneHeritageCheck } from "../class-heritage-check.js"; // (#5195 r3-5)
+import { emitStandaloneCommaHeritageEffects } from "../classes/class-heritage-comma.js"; // (#6772 S6)
+import { emitStandaloneHeritagePrototypeGet } from "../classes/class-heritage-runtime-get.js"; // (#6772 S11)
 import { classHierarchyHasDynamicMember, dynamicClassKeyGlobalKey } from "../class-dynamic-keys.js"; // (#5195 Step 1 / F1)
+import { computedKeyHasAssignment } from "../class-member-keys.js"; // (#6772 S5)
 import { isForeignEvalNode } from "../expressions/eval-source.js";
 import { ensureNativeArrayFromIterN } from "../iterator-native.js";
 import { ensureObjectRuntime } from "../object-runtime.js";
@@ -61,6 +72,7 @@ import {
   extractConstantDefault,
   hoistLetConstWithTdz,
   hoistVarDeclarations,
+  isAnyValue,
   nativeGeneratorBindingType,
   ensureStructForType,
   resolveInstallableClassMemberName,
@@ -80,7 +92,8 @@ import {
   getOrRegisterVecType,
   refCellValueType,
 } from "../registry/types.js";
-import { getVecInfo } from "../type-coercion.js";
+import { coercionInstrs, getVecInfo } from "../type-coercion.js";
+import { spreadElemToExternInstrs } from "../expressions/spread-elem-extern.js"; // (#6736) $AnyValue spread elements
 import { widenMixedUndefinedReturn } from "../mixed-return-widening.js";
 import {
   coerceType,
@@ -116,7 +129,7 @@ import {
   enclosingVarScope,
   hasInterveningLexicalBinder,
 } from "../annexb-cancel.js";
-import { emitArgumentsVecTail } from "../arguments-vector-tail.js";
+import { emitArgumentsVecTail, emitRestArgs, prepareRestArgs } from "../arguments-vector-tail.js";
 import {
   beginNestedFunctionNameScope,
   endNestedFunctionNameScope,
@@ -124,6 +137,7 @@ import {
   shadowNestedFuncName,
 } from "../nested-function-name-scope.js"; // (#4456) lexical scope for the flat funcMap namespace
 import { collectBlockScopedNames } from "./shared.js";
+import { classifyReferencedSiblingFns } from "./nested-sibling-visibility.js";
 
 /**
  * Mirror declarations.ts' omitted-parameter ABI rule for lifted nested
@@ -141,6 +155,16 @@ function nestedParameterMayBeOmitted(param: ts.ParameterDeclaration): boolean {
       (jsdocType !== undefined && ts.isJSDocOptionalType(jsdocType)) ||
       jsdocTags.some((tag) => tag.isBracketed === true))
   );
+}
+
+/**
+ * Mirror declarations.ts' bindingPatternParamNeedsWiden (#862) for lifted
+ * nested declarations: an unannotated binding-pattern parameter must take the
+ * externref destructure path, never a nominal tuple/anon-struct ABI.
+ */
+function nestedBindingPatternParamNeedsWiden(p: ts.ParameterDeclaration): boolean {
+  if (p.type || p.dotDotDotToken) return false;
+  return ts.isArrayBindingPattern(p.name) || ts.isObjectBindingPattern(p.name);
 }
 
 const nestedParamUndefinedObservationCache = new WeakMap<ts.ParameterDeclaration, boolean>();
@@ -447,9 +471,16 @@ export function emitUnresolvedComputedAccessorNameEffects(
         !ts.isSetAccessorDeclaration(member) &&
         !ts.isMethodDeclaration(member)) ||
       !member.name ||
-      !ts.isComputedPropertyName(member.name) ||
-      resolveComputedKeyExpression(ctx, member.name.expression) !== undefined
+      !ts.isComputedPropertyName(member.name)
     ) {
+      continue;
+    }
+    if (resolveComputedKeyExpression(ctx, member.name.expression) !== undefined) {
+      // (#6772 S5) The name folded, but a write inside the key still runs here.
+      if (computedKeyHasAssignment(member.name.expression)) {
+        const effectType = compileExpression(ctx, fctx, member.name.expression);
+        if (effectType !== null && effectType !== (VOID_RESULT as unknown as ValType)) fctx.body.push({ op: "drop" });
+      }
       continue;
     }
     const keyGlobalIdx =
@@ -519,6 +550,8 @@ export function compileNestedClassDeclaration(
   // only for a heritage shape with no static parent lane — see
   // `class-heritage-check.ts`, whose predicate is the safety property here.
   emitStandaloneHeritageCheck(ctx, fctx, decl, compileExpression);
+  emitStandaloneCommaHeritageEffects(ctx, fctx, decl, compileExpression); // (#6772 S6)
+  emitStandaloneHeritagePrototypeGet(ctx, fctx, decl); // (#6772 S11)
 
   const isDeferred = ctx.deferredClassBodies.has(className);
   // (#4646) "Already fully compiled" used to be `structMap.has(className)` — a
@@ -1385,15 +1418,27 @@ function compileNestedFunctionDeclarationInScope(
     }
     return false;
   };
+  // An unannotated binding-pattern parameter routes through the externref
+  // destructure path (#862) — a nominal tuple/anon-struct ABI makes every
+  // caller holding a different runtime shape fail the guarded cast and pass
+  // null. Top-level declarations (bindingPatternParamNeedsWiden) and lifted
+  // closures both widen; the nested-declaration lane silently did not, so a
+  // nested `function f(a, { b, c })` pinned its pattern to one `__anon_*`
+  // shape and deno_core's `copyAccessor(dest, prefix, key, desc)` destructured
+  // null at `__module_init`.
   const paramTypes: ValType[] = [];
   for (let pi = 0; pi < stmt.parameters.length; pi++) {
     const p = stmt.parameters[pi]!;
     const paramType = foreignEvalDeclaration ? undefined : ctx.checker.getTypeAtLocation(p);
-    if (paramType !== undefined) ensureStructForType(ctx, paramType);
+    // The Deno primordial graph registers these carriers in its hoist lane.
+    // A second registration while compiling the body can move the ref type
+    // after reservation and change an externref ABI into ref_null. Other
+    // targets still use the general pre-registration fix.
+    if (paramType !== undefined && ctx.targetProfile.ambientPlatform !== "deno") ensureStructForType(ctx, paramType);
     let wasmType: ValType =
-      foreignEvalDeclaration || restBindingOverridesToExternref(p)
+      foreignEvalDeclaration || restBindingOverridesToExternref(p) || nestedBindingPatternParamNeedsWiden(p)
         ? { kind: "externref" }
-        : resolveWasmType(ctx, paramType!);
+        : widenJsDefaultGuessSlot(p, resolveWasmType(ctx, paramType!));
     if (!foreignEvalDeclaration) {
       wasmType = preserveOmittedNestedParameter(ctx, stmt, p, wasmType);
     }
@@ -1583,17 +1628,7 @@ function compileNestedFunctionDeclarationInScope(
   const findScopedVariableDeclaration = (from: ts.Node, name: string): ts.VariableDeclaration | undefined => {
     let scope: ts.Node | undefined = from.parent;
     while (scope !== undefined) {
-      let found: ts.VariableDeclaration | undefined;
-      const scan = (node: ts.Node): void => {
-        if (found) return;
-        if (node !== scope && (ts.isFunctionLike(node) || ts.isClassLike(node))) return;
-        if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === name) {
-          found = node;
-          return;
-        }
-        ts.forEachChild(node, scan);
-      };
-      scan(scope);
+      const found = scopeVariableDeclarations(scope).get(name);
       if (found) return found;
       if (ts.isFunctionLike(scope) || ts.isSourceFile(scope)) return undefined;
       scope = scope.parent;
@@ -1657,9 +1692,12 @@ function compileNestedFunctionDeclarationInScope(
     // primordials `state = { __proto__: null }` + nested `write`). Apply the
     // same literal checks the declaration path applies and capture as
     // externref when the promotion will happen.
+    // The slot may instead already be this binding's capture cell (an earlier
+    // sibling's mutable capture boxed it); that is not a stale literal type.
     if (
       (type.kind === "ref" || type.kind === "ref_null") &&
-      !ctx.closureInfoByTypeIdx.has((type as { typeIdx: number }).typeIdx)
+      !ctx.closureInfoByTypeIdx.has((type as { typeIdx: number }).typeIdx) &&
+      fctx.boxedCaptures?.get(name)?.refCellTypeIdx !== (type as { typeIdx: number }).typeIdx
     ) {
       const capturedInit = capturedDecl?.initializer;
       if (
@@ -1818,35 +1856,19 @@ function compileNestedFunctionDeclarationInScope(
   if (needsImplicitArgumentsObject(stmt)) {
     ctx.funcUsesArguments.add(funcName);
   }
+  // (#6436) A plain call to this name must install `undefined` as the receiver.
+  if (readsAmbientThisGlobal(stmt)) ctx.funcReadsOwnThis.add(funcName);
 
-  // (#5148 checkpoint) Classify referenced sibling registry functions for the
-  // lift-time transitive-capture promotion both branches below perform. The
-  // capture registry is NAME-keyed across frames, so a same-named local can
-  // shadow a foreign frame's function (Deno's 01_core destructures 00_infra's
-  // `__resolvePromise` from `window.__infra`). Discriminate by whether the
-  // registry entry's recorded captures are actually sourceable from THIS
-  // frame: if any capture's recorded slot neither names the captured binding
-  // here nor has a same-named local, the registry entry is foreign — the only
-  // sound call target is the local VALUE, so value-promote it instead of
-  // chasing unresolvable captures.
-  const referencedSiblingFns = new Set<string>();
-  const shadowedSiblingFnValues = new Set<string>();
-  for (const name of referencedNames) {
-    if (name === funcName || !ctx.funcMap.has(name) || !ctx.nestedFuncCaptures.has(name)) continue;
-    const sibCaps = ctx.nestedFuncCaptures.get(name)!;
-    const capsForeign =
-      fctx.localMap.has(name) &&
-      sibCaps.some((cap) => {
-        if (fctx.localMap.has(cap.name)) return false;
-        const def =
-          cap.outerLocalIdx < fctx.params.length
-            ? fctx.params[cap.outerLocalIdx]
-            : fctx.locals[cap.outerLocalIdx - fctx.params.length];
-        return def?.name !== cap.name;
-      });
-    if (capsForeign) shadowedSiblingFnValues.add(name);
-    else referencedSiblingFns.add(name);
-  }
+  // (#5148 / #6730) Classify referenced sibling registry functions for the
+  // lift-time transitive-capture promotion both branches below perform.
+  const { referencedSiblingFns, shadowedSiblingFnValues } = classifyReferencedSiblingFns(
+    ctx,
+    fctx,
+    stmt,
+    funcName,
+    referencedNames,
+    captures,
+  );
 
   if (captures.length === 0) {
     // No captures — compile as a regular module-level function
@@ -1942,6 +1964,9 @@ function compileNestedFunctionDeclarationInScope(
       });
     }
 
+    // (#6651) Spec-order arguments-object creation — see beginNestedArgumentsObject.
+    const hoistArgsNC = beginNestedArgumentsObject(ctx, liftedFctx, stmt, paramTypes, 0, reachesDirectEval);
+
     // Emit default-value initialization for parameters with initializers
     emitDefaultParamInit(ctx, liftedFctx, stmt, paramTypes, 0);
 
@@ -1962,20 +1987,8 @@ function compileNestedFunctionDeclarationInScope(
     }
     if (!pdLiveNC) ctx.liveBodies.delete(pdBodyNC);
 
-    // Set up `arguments` object if the function body references it.
-    // (#2743) Unmapped when strict OR the parameter list is non-simple
-    // (rest/default/destructuring) — §10.2.11 FunctionDeclarationInstantiation
-    // step 22.a.
-    if (needsImplicitArgumentsObject(stmt, reachesDirectEval)) {
-      const unmapped =
-        isStrictFunction(stmt, ctx.inferModuleStrictArguments) || !isSimpleParameterList(stmt.parameters);
-      emitArgumentsObject(ctx, liftedFctx, paramTypes, 0, unmapped);
-      // (#2676) Expose this nested mapped function's live `mappedArgsInfo` keyed
-      // by its declaration node so a `delete args[i]` in a deeper (strict)
-      // closure can resolve an aliased `arguments` (`var args = arguments`) back
-      // to this function's per-index `nonConfigurableIndices`.
-      if (liftedFctx.mappedArgsInfo) ctx.mappedArgsInfoByFunc.set(stmt, liftedFctx.mappedArgsInfo);
-    }
+    // Set up `arguments` object if the function body references it (#6651).
+    endNestedArgumentsObject(ctx, liftedFctx, stmt, paramTypes, 0, reachesDirectEval, hoistArgsNC);
 
     prepareBodyBindings(liftedFctx);
 
@@ -2444,6 +2457,16 @@ function compileNestedFunctionDeclarationInScope(
     // family trapped.
     const leadingParamCount = captures.length + tdzFlaggedCaptures.length;
 
+    // (#6651) Spec-order arguments-object creation — see beginNestedArgumentsObject.
+    const hoistArgsC = beginNestedArgumentsObject(
+      ctx,
+      liftedFctx,
+      stmt,
+      paramTypes,
+      leadingParamCount,
+      reachesDirectEval,
+    );
+
     // Emit default-value initialization for parameters with initializers
     // (offset by all prepended leading params — value captures + TDZ flag boxes)
     emitDefaultParamInit(ctx, liftedFctx, stmt, paramTypes, leadingParamCount);
@@ -2466,17 +2489,8 @@ function compileNestedFunctionDeclarationInScope(
     }
     if (!pdLiveNC2) ctx.liveBodies.delete(pdBodyNC2);
 
-    // Set up `arguments` object if the function body references it.
-    // (#2743) Unmapped when strict OR the parameter list is non-simple
-    // (rest/default/destructuring) — §10.2.11 step 22.a.
-    if (needsImplicitArgumentsObject(stmt, reachesDirectEval)) {
-      const unmapped =
-        isStrictFunction(stmt, ctx.inferModuleStrictArguments) || !isSimpleParameterList(stmt.parameters);
-      emitArgumentsObject(ctx, liftedFctx, paramTypes, leadingParamCount, unmapped);
-      // (#2676) See the sibling site above — expose the live `mappedArgsInfo`
-      // by decl node for aliased-`arguments` strict-delete resolution.
-      if (liftedFctx.mappedArgsInfo) ctx.mappedArgsInfoByFunc.set(stmt, liftedFctx.mappedArgsInfo);
-    }
+    // Set up `arguments` object if the function body references it (#6651).
+    endNestedArgumentsObject(ctx, liftedFctx, stmt, paramTypes, leadingParamCount, reachesDirectEval, hoistArgsC);
 
     // Body var/function/lexical declarations are NOT visible while parameter
     // defaults evaluate. Split them from any same-named hidden capture only
@@ -2922,6 +2936,14 @@ function emitEagerNestedCallCaptureBoxes(
   }>,
   referencedCalleeNames: ReadonlySet<string>,
 ): void {
+  // (#1058) First referenced callee's mutable capture per name, as the per-cap
+  // search below used to find it; that search was captures × callees × captures.
+  const calleeMutableValType = new Map<string, ValType>();
+  for (const g of referencedCalleeNames) {
+    for (const c of ctx.nestedFuncCaptures.get(g) ?? []) {
+      if (c.mutable && c.valType && !calleeMutableValType.has(c.name)) calleeMutableValType.set(c.name, c.valType);
+    }
+  }
   for (const cap of captures) {
     // Only plain by-value `var`/param captures. Mutable → already a box param;
     // alreadyBoxed → outer cell threaded through; hasTdzFlag → kept lazy here
@@ -2931,16 +2953,7 @@ function emitEagerNestedCallCaptureBoxes(
     if (cap.mutable || cap.alreadyBoxed || cap.hasTdzFlag) continue;
     // Find a referenced sibling that mutably captures this same name, and adopt
     // ITS ref-cell value type so our refCellTypeIdx matches the lazy call-site's.
-    let calleeValType: ValType | undefined;
-    for (const g of referencedCalleeNames) {
-      const gCaps = ctx.nestedFuncCaptures.get(g);
-      if (!gCaps) continue;
-      const m = gCaps.find((c) => c.name === cap.name && c.mutable && c.valType);
-      if (m) {
-        calleeValType = m.valType;
-        break;
-      }
-    }
+    const calleeValType = calleeMutableValType.get(cap.name);
     if (!calleeValType) continue;
     // The box is built from the by-value param via `local.get` (type `cap.type`);
     // the cell field type must match. Both derive from the SAME outer variable,
@@ -3282,10 +3295,10 @@ export function hoistFunctionDeclarations(
       // stale result ABI.
       const foreignEvalDeclaration = isForeignEvalNode(stmt);
       const paramTypes: ValType[] = stmt.parameters.map((p) => {
-        if (foreignEvalDeclaration) return { kind: "externref" };
+        if (foreignEvalDeclaration || nestedBindingPatternParamNeedsWiden(p)) return { kind: "externref" };
         const paramType = ctx.checker.getTypeAtLocation(p);
         ensureStructForType(ctx, paramType);
-        let wt = resolveWasmType(ctx, paramType);
+        let wt = widenJsDefaultGuessSlot(p, resolveWasmType(ctx, paramType));
         wt = preserveOmittedNestedParameter(ctx, stmt, p, wt);
         if (p.initializer && wt.kind === "ref") {
           wt = { kind: "ref_null", typeIdx: (wt as { typeIdx: number }).typeIdx };
@@ -3605,15 +3618,7 @@ export function emitDefaultParamInit(
   paramTypes: ValType[],
   paramOffset: number,
 ): void {
-  const tracksScalarOmission = registerNestedOmissionTrackedScalarParams(ctx, liftedFctx, stmt, paramTypes);
-  const defaultArgcLocal =
-    tracksScalarOmission ||
-    stmt.parameters.some((param, i) => {
-      if (!param.initializer) return false;
-      return paramDefaultNeedsArgc(paramTypes[i]);
-    })
-      ? cacheParamDefaultArgc(ctx, liftedFctx)
-      : undefined;
+  const defaultArgcLocal = precacheParamDefaultArgc(ctx, liftedFctx, stmt, paramTypes);
   for (let i = 0; i < stmt.parameters.length; i++) {
     const param = stmt.parameters[i]!;
     if (!param.initializer) continue;
@@ -3743,6 +3748,33 @@ export function ensureExtrasArgvGlobal(ctx: CodegenContext): { globalIdx: number
 }
 
 /**
+ * (#6491) Lazily register a `(mut i32)` module global `__host_argc`: the
+ * HOST's channel for telling `__call_fn_<arity>` the real call-site argument
+ * count when it widened an under-applied call to the closure's declared arity.
+ *
+ * Deliberately NOT `__argc`. That global is written by in-Wasm callers
+ * (`maybeSetArgcForKnownCall`) and consumed only by callees that read
+ * `arguments`, so at the moment a host callback re-enters the module it may
+ * hold a stale count from an unrelated Wasm call — a free-function dispatcher
+ * that consumed `__argc` would report THAT number as `arguments.length`. This
+ * global is written by exactly one producer (the `__\0js2_call_fn_argc_<arity>`
+ * wrapper) and consumed-and-cleared by exactly one consumer, so a module whose
+ * host never seeds it observes the historical behaviour bit for bit.
+ */
+export function ensureHostArgcGlobal(ctx: CodegenContext): number {
+  if (ctx.hostArgcGlobalIdx >= 0) return ctx.hostArgcGlobalIdx;
+  const globalIdx = nextModuleGlobalIdx(ctx);
+  ctx.mod.globals.push({
+    name: "__host_argc",
+    type: { kind: "i32" },
+    mutable: true,
+    init: [{ op: "i32.const", value: -1 }],
+  });
+  ctx.hostArgcGlobalIdx = globalIdx;
+  return globalIdx;
+}
+
+/**
  * Lazily register a `(mut i32)` module global `__argc` that callers set
  * to the actual call-site argument count before invoking a function whose
  * body reads `arguments`. The callee reads this to set `arguments.length`
@@ -3778,6 +3810,32 @@ export function cacheParamDefaultArgc(ctx: CodegenContext, fctx: FunctionContext
   return argcLocal;
 }
 
+/**
+ * (#6651) Cache `__argc` for the scalar parameter-default checks, if this
+ * parameter list needs it.
+ *
+ * MUST run before a hoisted arguments-object emission. `emitArgumentsVecBody`
+ * CONSUMES `__argc` — it reads the global and clears it to the -1 "unknown
+ * caller" sentinel — so a default prologue that cached afterwards would cache
+ * -1: every `was this arg omitted?` check would then read "unknown caller",
+ * making f64 defaults fall back to the sNaN sentinel and i32 defaults never
+ * fire. `cacheParamDefaultArgc` is idempotent, so caching here is transparent:
+ * the later prologue reuses this local, and the vec body reads it (its
+ * `fctx.argcCachedLocal` branch) instead of the global.
+ */
+export function precacheParamDefaultArgc(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  stmt: ts.FunctionLikeDeclarationBase,
+  paramTypes: readonly ValType[],
+): number | undefined {
+  const tracksScalarOmission = registerNestedOmissionTrackedScalarParams(ctx, fctx, stmt, paramTypes);
+  const needsArgc =
+    tracksScalarOmission ||
+    stmt.parameters.some((param, i) => param.initializer !== undefined && paramDefaultNeedsArgc(paramTypes[i]));
+  return needsArgc ? cacheParamDefaultArgc(ctx, fctx) : undefined;
+}
+
 export function paramDefaultNeedsArgc(type: ValType | undefined): boolean {
   return type?.kind === "i32" || type?.kind === "f64";
 }
@@ -3810,18 +3868,6 @@ export function maybeSetArgcForKnownCall(
   const argcGlobalIdx = ensureArgcGlobal(ctx);
   fctx.body.push({ op: "i32.const", value: Math.min(actualArgCount, paramCount) });
   fctx.body.push({ op: "global.set", index: argcGlobalIdx });
-  // (#6416) `arguments.length` is `argc + extrasLen`, so seeding `__argc` is
-  // only half the protocol: a non-null `__extras_argv` left behind by some
-  // EARLIER over-applied call — one whose callee never materialised
-  // `arguments` and so never consumed the vec — would be added to this
-  // call's count. This helper is emitted immediately before the `call`, after
-  // every argument has been compiled, so clearing here cannot wipe extras
-  // that belong to this call site. Guarded on `<=`: an over-applied caller
-  // has already run `emitSetExtrasArgv` for THIS callee and must keep it.
-  if (!ctx.funcUsesArguments.has(funcName) || actualArgCount > paramCount) return;
-  const { globalIdx: extrasGlobalIdx, vecTypeIdx } = ensureExtrasArgvGlobal(ctx);
-  fctx.body.push({ op: "ref.null", typeIdx: vecTypeIdx });
-  fctx.body.push({ op: "global.set", index: extrasGlobalIdx });
 }
 
 /**
@@ -3945,27 +3991,15 @@ export function emitSetExtrasArgv(
     flushLateImportShifts(ctx, fctx);
     if (lenFn !== undefined && getFn !== undefined && iterFn !== undefined) {
       const boxIdx = ctx.funcMap.get("__box_number");
-      // Box a vec element of the given kind to externref (extras are externref).
-      const boxVecElem = (elemKind: ValType["kind"]): Instr[] => {
-        if (elemKind === "f64") {
-          return boxIdx !== undefined ? [{ op: "call", funcIdx: boxIdx }] : [{ op: "drop" }, { op: "ref.null.extern" }];
-        }
-        if (elemKind === "i32" || elemKind === "i8" || elemKind === "i16") {
-          return boxIdx !== undefined
-            ? [{ op: "f64.convert_i32_s" }, { op: "call", funcIdx: boxIdx }]
-            : [{ op: "drop" }, { op: "ref.null.extern" }];
-        }
-        if (elemKind === "ref" || elemKind === "ref_null") {
-          return [{ op: "extern.convert_any" }];
-        }
-        // externref element — already correct.
-        return [];
-      };
+      // Box a vec element of the given type to externref (extras are externref).
+      const anyToExtern = (t: ValType): Instr[] | undefined =>
+        ctx.standalone && isAnyValue(t, ctx) ? coercionInstrs(ctx, t, { kind: "externref" }, fctx) : undefined;
+      const boxVecElem = (elemType: ValType): Instr[] => spreadElemToExternInstrs(elemType, boxIdx, anyToExtern);
       // Per-extra descriptor.
       type Slot =
         | { kind: "single"; valLocal: number }
         // vec-ref spread: read length/data fields directly.
-        | { kind: "vec"; vecLocal: number; vecTi: number; arrTi: number; elemKind: ValType["kind"]; lenLocal: number }
+        | { kind: "vec"; vecLocal: number; vecTi: number; arrTi: number; elemType: ValType; lenLocal: number }
         // extern spread (host iterable): materialized array indexed by helpers.
         | { kind: "spread"; srcLocal: number; lenLocal: number };
       const slots: Slot[] = [];
@@ -4003,7 +4037,7 @@ export function emitSetExtrasArgv(
               if (st.kind === "ref_null") fctx.body.push({ op: "ref.as_non_null" });
               fctx.body.push({ op: "struct.get", typeIdx: stTypeIdx, fieldIdx: fi });
               const valLocal = allocLocal(fctx, `__xa_tv_${fctx.locals.length}`, { kind: "externref" });
-              fctx.body.push(...boxVecElem(tupleDef.fields[fi]!.type.kind));
+              fctx.body.push(...boxVecElem(tupleDef.fields[fi]!.type));
               fctx.body.push({ op: "local.set", index: valLocal });
               fctx.body.push({ op: "local.get", index: totalLenLocal });
               fctx.body.push({ op: "i32.const", value: 1 });
@@ -4040,7 +4074,7 @@ export function emitSetExtrasArgv(
               vecLocal,
               vecTi,
               arrTi: vecInfo.arrTypeIdx,
-              elemKind: vecInfo.elemType.kind,
+              elemType: vecInfo.elemType,
               lenLocal,
             });
             continue;
@@ -4134,10 +4168,10 @@ export function emitSetExtrasArgv(
                   { op: "ref.as_non_null" },
                   { op: "struct.get", typeIdx: slot.vecTi, fieldIdx: 1 },
                   { op: "local.get", index: sIdx },
-                  ...(slot.elemKind === "i8" || slot.elemKind === "i16"
+                  ...(slot.elemType.kind === "i8" || slot.elemType.kind === "i16"
                     ? ([{ op: "array.get_s", typeIdx: slot.arrTi }] satisfies Instr[])
                     : ([{ op: "array.get", typeIdx: slot.arrTi }] satisfies Instr[])),
-                  ...boxVecElem(slot.elemKind),
+                  ...boxVecElem(slot.elemType),
                   { op: "array.set", typeIdx: ati },
                   // wIdx++
                   { op: "local.get", index: wIdx },
@@ -4241,9 +4275,11 @@ export function emitArgumentsVecBody(
     arrTmpIdx: number;
   },
   registerWithHost = true,
+  formals?: readonly ts.ParameterDeclaration[],
 ): void {
   const numArgs = paramTypes.length;
   const { vecTypeIdx: vti, arrTypeIdx: ati, argsLocalIdx: argsLocal, arrTmpIdx: arrTmp } = locals;
+  const rest = prepareRestArgs(ctx, fctx, paramTypes, formals); // (#6651 I7) a trailing rest formal
   const argumentsVecTypeIdx = registerWithHost && ctx.standalone ? getOrRegisterArgumentsVecType(ctx, vti, ati) : vti;
   if (argumentsVecTypeIdx !== vti) reserveArgumentsLengthBrand(ctx);
   // (#2743 a) Register this arguments vec with the host so its `[[Prototype]]`
@@ -4299,6 +4335,15 @@ export function emitArgumentsVecBody(
   fctx.body.push({ op: "local.set", index: extrasLocal });
   fctx.body.push({ op: "ref.null", typeIdx: extrasVecTypeIdx });
   fctx.body.push({ op: "global.set", index: extrasGlobalIdx });
+  if (rest) {
+    const restLocalIdx = numArgs - 1 + paramOffset;
+    emitRestArgs(ctx, fctx, rest, {
+      restLocalIdx,
+      fixedCount: numArgs - 1,
+      argcLocalIdx: argcLocal,
+      extrasLocalIdx: extrasLocal,
+    });
+  }
 
   // extrasLen = extrasLocal != null ? extrasLocal.length : 0
   fctx.body.push({ op: "local.get", index: extrasLocal });
@@ -4351,6 +4396,82 @@ export function emitArgumentsVecBody(
 }
 
 /**
+ * (#6651) §10.2.11 step 22 creates the `arguments` object BEFORE
+ * IteratorBindingInitialization of the formals, so a parameter default may read
+ * it (`function f(x = arguments[2]) {}`). Emit it up front for a NON-SIMPLE
+ * parameter list — the only shape with a default/destructuring to order
+ * against, and the shape that is already *unmapped* (step 22.a), so no
+ * param↔arguments aliasing is disturbed. A simple list keeps the historical
+ * emission point (see {@link endNestedArgumentsObject}), where nothing
+ * intervenes and the emitted bytes are unchanged.
+ *
+ * @returns whether the object was hoisted — pass it to the `end` half.
+ */
+function beginNestedArgumentsObject(
+  ctx: CodegenContext,
+  liftedFctx: FunctionContext,
+  stmt: ts.FunctionDeclaration,
+  paramTypes: ValType[],
+  paramOffset: number,
+  reachesDirectEval: boolean,
+): boolean {
+  if (isSimpleParameterList(stmt.parameters)) return false;
+  precacheParamDefaultArgc(ctx, liftedFctx, stmt, paramTypes);
+  emitNestedArgumentsObject(ctx, liftedFctx, stmt, paramTypes, paramOffset, reachesDirectEval);
+  return true;
+}
+
+/**
+ * (#6651) The post-defaults half of {@link beginNestedArgumentsObject}: emit the
+ * object here for a simple parameter list, or — when it was hoisted and the BODY
+ * declares its own `let arguments` — drop the spelling from the local map so the
+ * body's separate binding gets its own slot. The defaults just compiled above
+ * legitimately saw the object; the body's binding shadows it (helper doc on
+ * `bodyLexicallyBindsArguments`).
+ */
+function endNestedArgumentsObject(
+  ctx: CodegenContext,
+  liftedFctx: FunctionContext,
+  stmt: ts.FunctionDeclaration,
+  paramTypes: ValType[],
+  paramOffset: number,
+  reachesDirectEval: boolean,
+  hoisted: boolean,
+): void {
+  if (!hoisted) {
+    emitNestedArgumentsObject(ctx, liftedFctx, stmt, paramTypes, paramOffset, reachesDirectEval);
+  } else if (stmt.body && bodyLexicallyBindsArguments(stmt.body)) {
+    liftedFctx.localMap.delete("arguments");
+  }
+}
+
+/**
+ * Shared emission for a lifted nested function declaration's implicit
+ * `arguments` object, used by both halves above.
+ *
+ * (#2743) Unmapped when strict OR the parameter list is non-simple
+ * (rest/default/destructuring) — §10.2.11 FunctionDeclarationInstantiation
+ * step 22.a.
+ */
+function emitNestedArgumentsObject(
+  ctx: CodegenContext,
+  liftedFctx: FunctionContext,
+  stmt: ts.FunctionDeclaration,
+  paramTypes: ValType[],
+  paramOffset: number,
+  reachesDirectEval: boolean,
+): void {
+  if (!needsImplicitArgumentsObject(stmt, reachesDirectEval)) return;
+  const unmapped = isStrictFunction(stmt, ctx.inferModuleStrictArguments) || !isSimpleParameterList(stmt.parameters);
+  emitArgumentsObject(ctx, liftedFctx, paramTypes, paramOffset, unmapped, stmt.parameters);
+  // (#2676) Expose this nested mapped function's live `mappedArgsInfo` keyed by
+  // its declaration node so a `delete args[i]` in a deeper (strict) closure can
+  // resolve an aliased `arguments` (`var args = arguments`) back to this
+  // function's per-index `nonConfigurableIndices`.
+  if (liftedFctx.mappedArgsInfo) ctx.mappedArgsInfoByFunc.set(stmt, liftedFctx.mappedArgsInfo);
+}
+
+/**
  * Emit code to create an `arguments` vec struct from function parameters.
  * paramOffset is the number of leading params to skip (e.g. captures).
  *
@@ -4364,6 +4485,7 @@ export function emitArgumentsObject(
   paramTypes: ValType[],
   paramOffset: number,
   unmapped = false,
+  formals?: readonly ts.ParameterDeclaration[],
 ): void {
   const numArgs = paramTypes.length;
   const vti = getOrRegisterVecType(ctx, "arguments");
@@ -4396,12 +4518,8 @@ export function emitArgumentsObject(
 
   // Build the arguments vec by concatenating formal params with
   // extras delivered via the __extras_argv global (#1053).
-  emitArgumentsVecBody(ctx, fctx, paramTypes, paramOffset, {
-    vecTypeIdx: vti,
-    arrTypeIdx: ati,
-    argsLocalIdx: argsLocal,
-    arrTmpIdx: arrTmp,
-  });
+  const locals = { vecTypeIdx: vti, arrTypeIdx: ati, argsLocalIdx: argsLocal, arrTmpIdx: arrTmp };
+  emitArgumentsVecBody(ctx, fctx, paramTypes, paramOffset, locals, true, formals);
 }
 
 // Register delegates in shared.ts so index.ts can call these without

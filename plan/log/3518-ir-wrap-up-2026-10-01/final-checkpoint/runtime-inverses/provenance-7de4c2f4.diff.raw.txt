@@ -1,0 +1,71 @@
+diff --git a/src/ir/intrinsic-support.ts b/src/ir/intrinsic-support.ts
+index b158fd86da..843e50acc3 100644
+--- a/src/ir/intrinsic-support.ts
++++ b/src/ir/intrinsic-support.ts
+@@ -27,6 +27,7 @@ import {
+ } from "./runtime/host-capabilities.js";
+ import { IR_ASYNC_CLOCK_SNAPSHOT_FN } from "./core/async-callables.js";
+ import { irRuntimeCallableDeclaration } from "./runtime/callable-declarations.js";
++import { irOrdinaryObjectCallableDeclaration } from "./runtime/ordinary-object-callables.js";
+ import {
+   assertNativeAsyncCallableDemands,
+   assertNativeAsyncRuntimeCallables,
+@@ -823,7 +824,13 @@ export function prepareIrRuntimeManifest(input: PrepareIrRuntimeManifestInput):
+           forEachInstrDeep(root, (instr) => {
+             if (instr.kind === "call" || instr.kind === "closure.new") {
+               const declaration = irRuntimeCallableDeclaration(instr.kind === "call" ? instr.target : instr.liftedFunc);
+-              if (declaration?.feature === "error.reference.construct") runtimeCallFeatures.add(declaration.feature);
++              if (
++                declaration &&
++                (declaration.feature === "error.reference.construct" ||
++                  declaration.feature === "js.number.from-value" ||
++                  irOrdinaryObjectCallableDeclaration(declaration.ref))
++              )
++                runtimeCallFeatures.add(declaration.feature);
+             }
+             if (instr.kind !== "intrinsic") return;
+             const argumentTypes = instr.args.map((arg) => {
+diff --git a/src/ir/runtime/callable-declarations.ts b/src/ir/runtime/callable-declarations.ts
+index fa3936b7a5..b1bf9fc555 100644
+--- a/src/ir/runtime/callable-declarations.ts
++++ b/src/ir/runtime/callable-declarations.ts
+@@ -12,6 +12,8 @@ import type { RuntimeFeature, RuntimeProviderDefinition } from "./contracts/mani
+ import type { IntrinsicSignature } from "../core/intrinsic-contracts.js";
+ import { irNativeAsyncCallableDeclaration } from "./native-async-callables.js";
+ import { irVectorCallableDeclaration } from "./vector-callables.js";
++import { irNumberConversionCallableDeclaration } from "./number-conversion-callable.js";
++import { irOrdinaryObjectCallableDeclaration } from "./ordinary-object-callables.js";
+ 
+ /** Policy-independent callable contracts; physical providers are selected by the manifest. */
+ export interface IrRuntimeCallableDeclaration {
+@@ -75,5 +77,8 @@ export const REFERENCE_ERROR_RUNTIME_PROVIDERS: readonly RuntimeProviderDefiniti
+ export function irRuntimeCallableDeclaration(ref: IrFuncRef): IrRuntimeCallableDeclaration | undefined {
+   return ref.binding.kind === "runtime" && ref.binding.symbol === "__new_ReferenceError"
+     ? REFERENCE_ERROR_DECLARATION
+-    : (irNativeAsyncCallableDeclaration(ref) ?? irVectorCallableDeclaration(ref));
++    : (irNativeAsyncCallableDeclaration(ref) ??
++        irVectorCallableDeclaration(ref) ??
++        irOrdinaryObjectCallableDeclaration(ref) ??
++        irNumberConversionCallableDeclaration(ref));
+ }
+diff --git a/src/ir/runtime/manifest.ts b/src/ir/runtime/manifest.ts
+index 7e43887fab..61773d5436 100644
+--- a/src/ir/runtime/manifest.ts
++++ b/src/ir/runtime/manifest.ts
+@@ -107,6 +107,7 @@ import {
+   REFERENCE_ERROR_RUNTIME_FEATURES,
+   REFERENCE_ERROR_RUNTIME_PROVIDER_IDS,
+   VECTOR_CALLABLE_RUNTIME_FEATURES,
++  ORDINARY_OBJECT_RUNTIME_FEATURES,
+   VECTOR_CALLABLE_RUNTIME_PROVIDER_IDS,
+   NATIVE_ASYNC_CALLABLE_RUNTIME_FEATURES,
+   NATIVE_ASYNC_CALLABLE_RUNTIME_PROVIDER_IDS,
+@@ -1368,6 +1369,8 @@ const FEATURE_SET: ReadonlySet<string> = new Set([
+   ...PURE_MATH_RUNTIME_FEATURES,
+   ...NATIVE_ASYNC_CALLABLE_RUNTIME_FEATURES,
+   ...VECTOR_CALLABLE_RUNTIME_FEATURES,
++  ...ORDINARY_OBJECT_RUNTIME_FEATURES,
++  "js.number.from-value",
+   ...ASYNC_RUNTIME_FEATURES,
+   ...ASYNC_OPTIONAL_RUNTIME_FEATURES,
+ ]);

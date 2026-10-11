@@ -1,0 +1,42 @@
+{
+  "runs": [
+    {
+      "stage": "loc",
+      "exitCode": 0,
+      "seconds": 0.4447798728942871
+    },
+    {
+      "stage": "function",
+      "exitCode": 0,
+      "seconds": 0.5636680126190186
+    },
+    {
+      "stage": "oracle",
+      "exitCode": 0,
+      "seconds": 0.14940786361694336
+    },
+    {
+      "stage": "coercion",
+      "exitCode": 0,
+      "seconds": 0.2868638038635254
+    },
+    {
+      "stage": "jstag",
+      "exitCode": 0,
+      "seconds": 0.23817706108093262
+    },
+    {
+      "stage": "inventory",
+      "exitCode": 0,
+      "seconds": 2.464447021484375
+    },
+    {
+      "stage": "dead-exports",
+      "exitCode": 0,
+      "seconds": 20.503450870513916
+    }
+  ],
+  "drift": [],
+  "inputs": 7405,
+  "files": []
+}

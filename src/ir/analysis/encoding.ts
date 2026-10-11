@@ -31,16 +31,11 @@
 // there is no attachment point for an annotation. Documented as follow-up
 // in the issue.
 
-import { ALLOC_NAMESPACES, type AllocSiteRegistry } from "../alloc-registry.js";
-import {
-  forEachInstrDeep,
-  type AllocSiteId,
-  type IrFuncRef,
-  type IrFunction,
-  type IrInstr,
-  type IrValueId,
-} from "../nodes.js";
-import type { IrStringEncoding } from "../string-runtime.js";
+import { ALLOC_NAMESPACES, type AllocSiteRegistry } from "./alloc-registry.js";
+import { allocationEvidenceRule } from "./allocation-evidence/effect-rules.js";
+import { forEachInstrDeep, type AllocSiteId, type IrFunction, type IrInstr, type IrValueId } from "../core/nodes.js";
+import type { IrFuncRef } from "../core/value-references.js";
+import type { IrStringEncoding } from "../core/string-types.js";
 
 /**
  * Encoding lattice. Ordering (most → least restrictive):
@@ -136,6 +131,11 @@ function classifyInstr(
   enc: (v: IrValueId) => Encoding,
   record: (result: IrValueId | null, alloc: AllocSiteId | undefined, e: Encoding) => void,
 ): void {
+  const rule = allocationEvidenceRule(instr);
+  if (rule.kind === "effects") {
+    if (rule.encoding !== "no-write") throw new Error("allocation rule mismatch: encoding contribution");
+    return;
+  }
   switch (instr.kind) {
     case "string.const":
       record(instr.result, instr.alloc, classifyLiteral(instr.value));

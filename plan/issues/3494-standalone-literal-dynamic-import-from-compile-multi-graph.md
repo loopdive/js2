@@ -1,10 +1,11 @@
 ---
 id: 3494
 title: "Standalone compileMulti must resolve literal dynamic imports from its module graph"
-status: blocked
-sprint: Backlog
+status: done
+sprint: current
 created: 2026-07-20
-updated: 2026-07-20
+updated: 2026-09-28
+completed: 2026-09-28
 priority: high
 horizon: m
 feasibility: hard
@@ -13,14 +14,21 @@ task_type: feature
 area: compiler
 goal: test262-conformance
 lane: A
-related: [440, 2932, 3362, 3491, 3492, 3493]
+related: [440, 2932, 3362, 3491, 3492, 3493, 3509, 6741]
 files:
   - src/compiler.ts
   - src/codegen/expressions/calls.ts
+  - src/codegen/expressions/standalone-dynamic-import.ts
+  - src/codegen/module-namespace-value.ts
+  - src/codegen/receiver-flow-analysis.ts
   - tests/issue-3494-standalone-literal-dynamic-import.test.ts
 loc-budget-allow:
   - src/compiler.ts
   - src/codegen/expressions/calls.ts
+  # 2026-09-28 — memoized scope index replaces a per-receiver re-walk
+  # (quadratic on jsdom standalone); net +8 LOC across the PR.
+  - src/codegen/receiver-flow-analysis.ts
+  - src/codegen/module-namespace-value.ts
 ---
 
 # #3494 — Standalone `compileMulti` must resolve literal dynamic imports from its module graph
@@ -134,3 +142,71 @@ compiled into an unusable host dependency. The host lane remains unchanged.
 - Run the exact official path through both honest harnesses with fresh workers.
 - Rerun the historical 3,472-path standalone comparison set and verify the row
   changes for the supported literal internal-import capability only.
+
+## Implementation Plan
+
+Narrow sound slice (executed 2026-09-28). A standalone binary has exactly one
+module graph — the sources compiled into it — and compileMulti/compileProject
+already flatten it into one dependencies-first module initializer with
+same-compilation namespace objects (`module-namespace-value.ts`, used by
+static `import * as ns`). So `import(x)` needs no loader when `x` is a module
+of that graph that finished evaluating before the importer began.
+
+1. `src/codegen/expressions/standalone-dynamic-import.ts` (new, classified in
+   `scripts/compiler-boundaries.json`): evaluate the argument expressions left
+   to right (their throws stay synchronous, §13.3.10.1), then
+   - literal specifier, resolves (via `ctx.oracle.declarationsOf`) to a source
+     in `ctx.callableSourceFiles` that is ordered BEFORE the importer, and no
+     module in the graph prefix has top-level await → a fresh native Promise
+     resolved with that module's namespace object
+     (`tryEmitModuleNamespaceObjectForSource`, keyed by module symbol, so one
+     identity per module and live `let` exports);
+   - everything else (non-literal, outside the graph such as a Node builtin,
+     self/later/cyclic target, TLA prefix, import options, an unmaterializable
+     namespace) → a fresh Promise rejected with a TypeError. No host import,
+     no fabricated namespace.
+2. `calls.ts`: standalone `import()` routes there; the #3509 deferred trap
+   (and its `deferredDynamicImportTrap` plumbing in `closures.ts`,
+   `call-tail-dispatch.ts`, `context/types.ts`) and the pre-codegen
+   `detectStandaloneDynamicImports` refusal in `compiler.ts` are removed —
+   the rejected Promise is the honest runtime answer in every position
+   (top level, async, getter, IIFE, `with`).
+3. `receiver-flow-analysis.ts`: `resolveLocalBinding` re-walked every
+   enclosing scope up to the source file per receiver (quadratic). Index each
+   scope's declarations once (WeakMap). Byte-identical output (acorn:
+   standalone sha 18abf6d7f7eea682 and js-host sha dfd5466c74024b65, both with
+   `JS2WASM_RECEIVER_SPEC` off and on, identical before/after).
+
+## Resolution
+
+- Regression `tests/issue-3494-standalone-literal-dynamic-import.test.ts` +
+  updated `tests/issue-3509.test.ts`: parent 10/28 pass, fix 28/28 (resolve
+  with live bindings, one namespace identity + fresh Promise per call, TLA /
+  async / getter importers; TypeError rejection for builtin, missing,
+  non-literal, self-import, import options, TLA prefix; synchronous specifier
+  throw; single-source compile).
+- Scoped standalone test262 `language/expressions/dynamic-import` (469 paths,
+  `scripts/run-test262-paths.mts --standalone`): parent
+  `{ compile_error: 344, fail: 15, pass: 92, skip: 18 }` → fix
+  `{ fail: 225, pass: 197, compile_error: 29, skip: 18 }`, +105 pass, 0 losses.
+- Standalone-dynamic npm lanes:
+
+  | package | before | after (next blocker) |
+  |---|---|---|
+  | jsdom | compile-error: dynamic import refusal (lru-cache `import("node:diagnostics_channel")`) | compile passes the import; compile does not finish in >60 CPU-min — `assertMultiPreparedModuleInitCensusCurrent` re-walks the whole graph per body source (#6741) |
+  | stylelint | compile-error: dynamic import refusal | `Codegen error: '__get_builtin' (dynamic-shape object/property operation) is not yet supported in --target standalone (#1472 Phase B)` (import-meta-resolve errors.js:433) |
+  | eslint | compile-error: dynamic import refusal | `Codegen error: Array.prototype.flatMap() with a non-array-returning callback is not yet supported in --target standalone/wasi (#2717)` |
+
+- JS-host control: jsdom 6/6, stylelint 108/108 (the JS-host lowering is
+  untouched).
+
+### Residuals
+
+- Test262 dynamic-import rows whose target is only a `_FIXTURE` reached by
+  `import()` still reject: the runner deliberately does not promote dynamic
+  fixtures into the eager compileMulti graph, and eager evaluation would
+  violate the lazy-evaluation order those rows test. Needs per-module lazy
+  evaluators (points 2-5 of the feasibility finding above).
+- 36 `eval-rqstd-abrupt` rows expect the fixture's SyntaxError/URIError, and
+  25 generator rows fail on native generator lowering (#680), unrelated to
+  the loader.

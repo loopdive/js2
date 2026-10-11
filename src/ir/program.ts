@@ -19,11 +19,9 @@ import { assertPreparedIrProgram } from "./program-validation.js";
 import type { WasmModule } from "./types.js";
 import type { LinearOptions } from "../codegen-linear/index.js";
 import type {
-  PreparedIrProgramProducerInput,
   PreparedIrProgramFailure,
   PreparedIrProgramRuntimeProjection,
   PreparedIrProgram,
-  PreparedIrProgramOwner,
   PreparedIrSourceLocation,
 } from "./program/prepared-contracts.js";
 export type {
@@ -47,6 +45,9 @@ export interface PreparedIrBackendOptions {
   readonly utf8Storage: boolean;
   readonly sourceMap: boolean;
   readonly moduleName: string;
+  /** Explicitly resolved by the caller; never read from the environment during emission. */
+  readonly stringConcatEmptyIdentity?: boolean;
+  readonly numberFormat?: Readonly<{ integerBeforeScratch: boolean }>;
   readonly linear?: Readonly<
     Pick<
       LinearOptions,
@@ -74,30 +75,7 @@ export interface EmittedPreparedIrProgram {
   readonly emittedUnitIds: readonly IrUnitId[];
 }
 
-/** Resolve diagnostics through the existing original/derived ownership records. */
-export function preparedIrProgramOwner(
-  input: Pick<PreparedIrProgramProducerInput, "inventory" | "derivedUnits">,
-  unitId: IrUnitId,
-): PreparedIrProgramOwner | undefined {
-  const derived = input.derivedUnits.find((record) => record.id === unitId);
-  const source = input.inventory.allUnits.find((record) => record.id === unitId);
-  const ownerId = derived?.terminalOwnerId ?? source?.terminalOwnerId ?? unitId;
-  const owner = input.inventory.terminalUnits.find((record) => record.id === ownerId);
-  if (!owner) return undefined;
-  const sourceRecord = input.inventory.sources.find((record) => record.id === owner.sourceId);
-  if (!sourceRecord) return undefined;
-  return Object.freeze({
-    unitId: owner.id,
-    sourceFile: sourceRecord.sourceKey,
-    location: Object.freeze({
-      sourceId: owner.sourceId,
-      line: owner.line,
-      column: owner.column,
-      declarationStart: owner.declarationStart,
-      declarationEnd: owner.declarationEnd,
-    }),
-  });
-}
+export { preparedIrProgramOwner } from "./program/owner.js";
 
 /** Reconstructed read surface over the one owned ABI entry vector. */
 export function preparedIrProgramAbiLookup(program: PreparedIrProgram): PreparedComponentAbiLookup {

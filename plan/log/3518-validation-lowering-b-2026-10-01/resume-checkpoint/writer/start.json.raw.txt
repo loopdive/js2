@@ -1,0 +1,9 @@
+{
+  "worktree": "/private/tmp/js2-ir-validation-lowering-b-writer-20261001",
+  "branch": "codex/3518-validation-lowering-b-writer-20261001",
+  "base": "63c5ce9ae1d5a77591abaff28e27fe974926bf4f",
+  "model": "Codex GPT-6 Astra Max",
+  "beforeFiles": 9,
+  "copiedBeforeAnySourceEdit": true,
+  "testsRun": false
+}

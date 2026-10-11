@@ -425,11 +425,6 @@ export function tryLowerVecPush(
       `ir/from-ast: .push into '${elem.kind}' vec not in IR scope (${host.funcName})`,
     );
   }
-  const lenF64 =
-    scalarVecReceiver && host.emptyArrayInference.isResolvedVectorExpression(receiverExpression)
-      ? emitForwardingAwareLinearVecLen(recv, host)
-      : host.builder.emitVecLen(recv);
-  const lenI32 = host.builder.emitUnary("i32.trunc_sat_f64_s", lenF64, irVal({ kind: "i32" }));
   const countedPush = canonicalCountedPushPlanForCall(expr, host.checker);
   let value: IrValueId;
   if (narrowedI32) {
@@ -459,6 +454,14 @@ export function tryLowerVecPush(
     }
   }
 
+  // (#6787) `length` is read INSIDE push (§23.1.3.23), after the argument has
+  // been evaluated: an argument that pushes onto (or pops from) the same
+  // array must be visible to the slot index and to the returned length.
+  const lenF64 =
+    scalarVecReceiver && host.emptyArrayInference.isResolvedVectorExpression(receiverExpression)
+      ? emitForwardingAwareLinearVecLen(recv, host)
+      : host.builder.emitVecLen(recv);
+  const lenI32 = host.builder.emitUnary("i32.trunc_sat_f64_s", lenF64, irVal({ kind: "i32" }));
   if (countedPush) {
     host.builder.emitVecSet(recv, lenI32, value);
     const one = host.builder.emitConst({ kind: "i32", value: 1 }, irVal({ kind: "i32" }));

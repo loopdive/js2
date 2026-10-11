@@ -120,7 +120,9 @@ describe("#4439 — borrowed String.prototype.match", () => {
 describe("#4439 — an out-of-subset dynamic pattern constructs, then refuses on use", () => {
   // A DYNAMIC pattern is required: `new RegExp("[0-9]", "g")` with both
   // operands static is compiled by the STATIC path, which supports classes.
-  const DYNAMIC = `new RegExp({ toString: function () { return "[0-9]"; } }, (function () { return "gim"; })())`;
+  // Since #6677 the runtime compiles `[0-9]` too, so the refused shape is a
+  // non-ASCII range under `i` (its case folding needs Unicode tables).
+  const DYNAMIC = `new RegExp({ toString: function () { return "[\\u00e0-\\u00ff]"; } }, (function () { return "gim"; })())`;
 
   it.each([
     ["global flag", `re.global === true`],
@@ -135,7 +137,7 @@ describe("#4439 — an out-of-subset dynamic pattern constructs, then refuses on
   it("raises a CATCHABLE TypeError on first use, never a trap", async () => {
     const src = `export function f() {
       var re = ${DYNAMIC};
-      try { re.test("a1b"); return 0; }
+      try { re.test("a\\u00e9b"); return 0; }
       catch (e) { return (e instanceof TypeError) ? 1 : 2; }
     }`;
     expect(await runStandalone(src)).toBe(1);

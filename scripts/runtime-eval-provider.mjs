@@ -29,6 +29,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { setupAcorn } from "../tests/dogfood/setup-acorn.mjs";
+import { computeCompilerInputsHash } from "./compiler-inputs-hash.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(HERE, "..");
@@ -581,21 +582,23 @@ export function buildRuntimeEvalRefusalProviderSource() {
 }
 
 /**
- * Compiler-bundle hash, mirroring the worker's cache-key discipline (#1521):
- * TEST262_BUNDLE_HASH env first, then sha256 of the built compiler bundle.
- * The provider cache key folds this in so a provider compiled by an older
- * compiler is never linked against modules from a newer one.
+ * Compiler identity for the provider cache keys: TEST262_BUNDLE_HASH env first
+ * (an explicit caller-asserted identity), else the compiler-inputs hash — the
+ * `src/` tree, `pnpm-lock.yaml` and the built compiler bundle if present
+ * (`scripts/compiler-inputs-hash.mjs`). The provider cache key folds this in so
+ * a provider compiled by an older compiler is never linked against modules from
+ * a newer one. Before this fix it was the bundle hash alone, which is the
+ * constant "no-bundle" without a bundle, so compiler changes served a stale
+ * adapter as a cache HIT. Every builder and reader calls THIS function; never
+ * recompute the formula elsewhere.
  */
 export function computeCompilerBundleHash() {
   const fromEnv = process.env.TEST262_BUNDLE_HASH;
   if (fromEnv && fromEnv.length > 0) return fromEnv;
-  for (const file of ["compiler-bundle.mjs", "index.js"]) {
-    try {
-      const buf = readFileSync(join(HERE, file));
-      return createHash("sha256").update(buf).digest("hex").slice(0, 16);
-    } catch {}
-  }
-  return "no-bundle";
+  return computeCompilerInputsHash({
+    root: REPO_ROOT,
+    bundlePaths: ["compiler-bundle.mjs", "index.js"].map((file) => join(HERE, file)),
+  });
 }
 
 /** Cache key: provider source + compile options + compiler bundle hash. */

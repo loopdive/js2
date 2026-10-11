@@ -150,6 +150,7 @@
 
 import ts from "typescript";
 import type { CodegenContext } from "../context/types.js";
+import { readEnv } from "../../env.js";
 
 /**
  * What a node contributes to the pass-2 divergence question.
@@ -202,7 +203,7 @@ const CLOSURE_ADMIT_SEAM = "JS2WASM_TEST_ADMIT_CLOSURES_IN_MODULE_INIT_PASS2_GAT
  * not the file, decides.
  */
 function moduleInitPopulationIsPass2Stable(ctx: CodegenContext): boolean {
-  const admitClosures = process.env[CLOSURE_ADMIT_SEAM] === "1";
+  const admitClosures = readEnv(CLOSURE_ADMIT_SEAM) === "1";
   let sawCall = false;
   let sawClosure = false;
   const stack: ts.Node[] = [];
@@ -281,6 +282,6 @@ export function markModuleInitClosureRegistry(ctx: CodegenContext): number {
  */
 export function moduleInitPass2IsSkippable(ctx: CodegenContext, mark: number | undefined): boolean {
   if (!moduleInitPopulationIsPass2Stable(ctx)) return false;
-  if (process.env[CLOSURE_ADMIT_SEAM] === "1") return true;
+  if (readEnv(CLOSURE_ADMIT_SEAM) === "1") return true;
   return mark !== undefined && ctx.closureInfoByTypeIdx.size === mark;
 }

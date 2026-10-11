@@ -1,0 +1,606 @@
+{
+  "schema": "ir-phase-b-wrap-handoff-v1",
+  "recorded_at": "2026-10-01T05:54:37.061014+00:00",
+  "implementation_pr": "https://github.com/loopdive/js2/pull/6378",
+  "implementation_prior_head": "63c5ce9ae1d5a77591abaff28e27fe974926bf4f",
+  "fresh_main_integrated_for_final_publication": "88cdb141715f59f3504acfae2213105e09174f24",
+  "phase_b_base": "63c5ce9ae1d5a77591abaff28e27fe974926bf4f",
+  "phase_b_worktree": "/private/tmp/js2-ir-validation-lowering-b-20261001",
+  "phase_b_writer_worktree": "/private/tmp/js2-ir-validation-lowering-b-writer-20261001",
+  "writer_model": "Codex GPT-6 Astra Max",
+  "integration_model": "Codex GPT-6 Default",
+  "phase_b_candidate_paths": 14,
+  "phase_b_changed_paths": 13,
+  "phase_b_drafted_test_rows": 39,
+  "phase_b_candidate_integrated": false,
+  "phase_b_compiler_executed": false,
+  "phase_b_candidate_tests_executed": false,
+  "phase_b_baseline": {
+    "passed": 212,
+    "total": 219,
+    "failed": 7,
+    "skipped": 0
+  },
+  "phase_b_boundary_baseline": {
+    "passed": 353,
+    "total": 457,
+    "failed": 104,
+    "skipped": 0
+  },
+  "phase_b_initial_reader_probe": {
+    "passed": 0,
+    "selected": 2,
+    "unselected": 103
+  },
+  "phase_b_claim_release": {
+    "id": "3518",
+    "slice": "validation-lowering-phase-b-20261001",
+    "assignee": "ttraenkler/codex-validation-lowering-b-20261001",
+    "requested_by": "git@thomas.traenkler.com",
+    "status": "released",
+    "branch": "codex/3518-validation-lowering-b-20261001",
+    "claimed_at": "2026-10-01T05:33:24Z",
+    "updated_at": "2026-10-01T05:53:19Z",
+    "write_id": "40138-k7ulq2nc",
+    "released_at": "2026-10-01T05:53:19Z"
+  },
+  "kind_neutrality_repair": {
+    "only_three_evidence_paths_changed": true,
+    "all_verdicts_counts_ratchets_quotes_unchanged": true,
+    "actual_gate_exit": 0,
+    "existing_controls_passed": 5,
+    "existing_controls_total": 5
+  },
+  "main_delivery_verified": false,
+  "legacy_retirement_certified": false,
+  "artifacts": [
+    {
+      "source": "/private/tmp/js2-ir-validation-lowering-b-writer-20261001/.tmp/validation-lowering-b/phase-b-freeze-peavm3ha/HANDOFF.md",
+      "archive": "resume-checkpoint/writer/HANDOFF.md.raw.txt",
+      "bytes": 4700,
+      "sha256": "d4bdf485322fa572e9de8f392b363a49d5aa27db613e4602544fb8b573013eb1"
+    },
+    {
+      "source": "/private/tmp/js2-ir-validation-lowering-b-writer-20261001/.tmp/validation-lowering-b/phase-b-freeze-peavm3ha/before/src/ir/analysis/dominance.ts",
+      "archive": "resume-checkpoint/writer/before/src/ir/analysis/dominance.ts.raw.txt",
+      "bytes": 13729,
+      "sha256": "dd951d008a605614fb7e8eee4e8d148112f438b9a954d75197a6da6d6b50a820"
+    },
+    {
+      "source": "/private/tmp/js2-ir-validation-lowering-b-writer-20261001/.tmp/validation-lowering-b/phase-b-freeze-peavm3ha/before/src/ir/analysis/encoding.ts",
+      "archive": "resume-checkpoint/writer/before/src/ir/analysis/encoding.ts.raw.txt",
+      "bytes": 10318,
+      "sha256": "02502ab1f7a254253a830a1c4bbacfc27900f6d34aa0a43eb4030d50d3bcdf11"
+    },
+    {
+      "source": "/private/tmp/js2-ir-validation-lowering-b-writer-20261001/.tmp/validation-lowering-b/phase-b-freeze-peavm3ha/before/src/ir/analysis/escape.ts",
+      "archive": "resume-checkpoint/writer/before/src/ir/analysis/escape.ts.raw.txt",
+      "bytes": 10826,
+      "sha256": "8292ac767cb3f1f9ea89de4a7a4e1b7f68be8f2a78ac12c92a67ea0d2f614444"
+    },
+    {
+      "source": "/private/tmp/js2-ir-validation-lowering-b-writer-20261001/.tmp/validation-lowering-b/phase-b-freeze-peavm3ha/before/src/ir/analysis/lattice.ts",
+      "archive": "resume-checkpoint/writer/before/src/ir/analysis/lattice.ts.raw.txt",
+      "bytes": 5739,
+      "sha256": "8814ff9b71c04e9e16760a913984aaba60f23b402a700968fd6c2a70c92fc22c"
+    },
+    {
+      "source": "/private/tmp/js2-ir-validation-lowering-b-writer-20261001/.tmp/validation-lowering-b/phase-b-freeze-peavm3ha/before/src/ir/analysis/ownership.ts",
+      "archive": "resume-checkpoint/writer/before/src/ir/analysis/ownership.ts.raw.txt",
+      "bytes": 23651,
+      "sha256": "e591418b5044f844dd37562471d249aa116846e30f0a23cdde1b3e51d4640051"
+    },
+    {
+      "source": "/private/tmp/js2-ir-validation-lowering-b-writer-20261001/.tmp/validation-lowering-b/phase-b-freeze-peavm3ha/before/src/ir/program-allocations.ts",
+      "archive": "resume-checkpoint/writer/before/src/ir/program-allocations.ts.raw.txt",
+      "bytes": 6549,
+      "sha256": "bd7e82e46bfaf26bdcdf5759ef70b18b2ae1e74120039054f0f0aaf764dfb57c"
+    },
+    {
+      "source": "/private/tmp/js2-ir-validation-lowering-b-writer-20261001/.tmp/validation-lowering-b/phase-b-freeze-peavm3ha/before/src/ir/program-class-layouts.ts",
+      "archive": "resume-checkpoint/writer/before/src/ir/program-class-layouts.ts.raw.txt",
+      "bytes": 2620,
+      "sha256": "010ecc8d4ee03087bb0faac9d10c7f183fe50b07f3445ee7631756088fd81251"
+    },
+    {
+      "source": "/private/tmp/js2-ir-validation-lowering-b-writer-20261001/.tmp/validation-lowering-b/phase-b-freeze-peavm3ha/before/src/ir/verify-alloc.ts",
+      "archive": "resume-checkpoint/writer/before/src/ir/verify-alloc.ts.raw.txt",
+      "bytes": 7023,
+      "sha256": "40161d406e9d322c2681617dbc2bcf178e8be21bdac4c1448f7c7b3eec10ee84"
+    },
+    {
+      "source": "/private/tmp/js2-ir-validation-lowering-b-writer-20261001/.tmp/validation-lowering-b/phase-b-freeze-peavm3ha/before/src/ir/verify.ts",
+      "archive": "resume-checkpoint/writer/before/src/ir/verify.ts.raw.txt",
+      "bytes": 122223,
+      "sha256": "990ab03c38f460ee801a87224c60106d4f63a6d5367e9b742c1fd1763fa67100"
+    },
+    {
+      "source": "/private/tmp/js2-ir-validation-lowering-b-writer-20261001/.tmp/validation-lowering-b/phase-b-freeze-peavm3ha/before-manifest.json",
+      "archive": "resume-checkpoint/writer/before-manifest.json.raw.txt",
+      "bytes": 1498,
+      "sha256": "7d418bbd7e824902fae5cf14d99fe35debc89bde7bff64d6cab0d5797ae1cb40"
+    },
+    {
+      "source": "/private/tmp/js2-ir-validation-lowering-b-writer-20261001/.tmp/validation-lowering-b/phase-b-freeze-peavm3ha/exact.patch",
+      "archive": "resume-checkpoint/writer/exact.patch.raw.txt",
+      "bytes": 312504,
+      "sha256": "8ccc429e883a65381cb400edbfd265a3d82dddc9bf88da559f897129abadf214"
+    },
+    {
+      "source": "/private/tmp/js2-ir-validation-lowering-b-writer-20261001/.tmp/validation-lowering-b/phase-b-freeze-peavm3ha/frozen/src/ir/analysis/alloc-verification.ts",
+      "archive": "resume-checkpoint/writer/frozen/src/ir/analysis/alloc-verification.ts.raw.txt",
+      "bytes": 6498,
+      "sha256": "93b78752e411016cc490655c0fc981ec3beaadc227682ae35c0599fcc5c6e2a4"
+    },
+    {
+      "source": "/private/tmp/js2-ir-validation-lowering-b-writer-20261001/.tmp/validation-lowering-b/phase-b-freeze-peavm3ha/frozen/src/ir/analysis/dominance.ts",
+      "archive": "resume-checkpoint/writer/frozen/src/ir/analysis/dominance.ts.raw.txt",
+      "bytes": 13734,
+      "sha256": "f005d9447e65170b0b968839d3bde44a0ffeb9752a46fab0e34a572191989fdc"
+    },
+    {
+      "source": "/private/tmp/js2-ir-validation-lowering-b-writer-20261001/.tmp/validation-lowering-b/phase-b-freeze-peavm3ha/frozen/src/ir/analysis/encoding.ts",
+      "archive": "resume-checkpoint/writer/frozen/src/ir/analysis/encoding.ts.raw.txt",
+      "bytes": 10358,
+      "sha256": "e1a4e863db13b51769904457502adcca368cf4a9d8bacf79659daaba34596c23"
+    },
+    {
+      "source": "/private/tmp/js2-ir-validation-lowering-b-writer-20261001/.tmp/validation-lowering-b/phase-b-freeze-peavm3ha/frozen/src/ir/analysis/escape.ts",
+      "archive": "resume-checkpoint/writer/frozen/src/ir/analysis/escape.ts.raw.txt",
+      "bytes": 10829,
+      "sha256": "72d036b3565c778b29425f9c853276d67d48b13e2dfff6d38d8d4afa327e4c53"
+    },
+    {
+      "source": "/private/tmp/js2-ir-validation-lowering-b-writer-20261001/.tmp/validation-lowering-b/phase-b-freeze-peavm3ha/frozen/src/ir/analysis/lattice.ts",
+      "archive": "resume-checkpoint/writer/frozen/src/ir/analysis/lattice.ts.raw.txt",
+      "bytes": 5739,
+      "sha256": "8814ff9b71c04e9e16760a913984aaba60f23b402a700968fd6c2a70c92fc22c"
+    },
+    {
+      "source": "/private/tmp/js2-ir-validation-lowering-b-writer-20261001/.tmp/validation-lowering-b/phase-b-freeze-peavm3ha/frozen/src/ir/analysis/ownership.ts",
+      "archive": "resume-checkpoint/writer/frozen/src/ir/analysis/ownership.ts.raw.txt",
+      "bytes": 23654,
+      "sha256": "9c622ef53c8c9c1ecbc1c0bc8eee907dfb00da82a5f16c89feecb0c6d918495f"
+    },
+    {
+      "source": "/private/tmp/js2-ir-validation-lowering-b-writer-20261001/.tmp/validation-lowering-b/phase-b-freeze-peavm3ha/frozen/src/ir/program/allocations.ts",
+      "archive": "resume-checkpoint/writer/frozen/src/ir/program/allocations.ts.raw.txt",
+      "bytes": 6602,
+      "sha256": "e2da59c2bf90e2a833c35206d014e6745f79a94bade7f04c882cdb6495eb7e5f"
+    },
+    {
+      "source": "/private/tmp/js2-ir-validation-lowering-b-writer-20261001/.tmp/validation-lowering-b/phase-b-freeze-peavm3ha/frozen/src/ir/program/class-layouts.ts",
+      "archive": "resume-checkpoint/writer/frozen/src/ir/program/class-layouts.ts.raw.txt",
+      "bytes": 2660,
+      "sha256": "900a8b56289b6565feb9dd52fb06405de720916208542be3079465942d0a6f42"
+    },
+    {
+      "source": "/private/tmp/js2-ir-validation-lowering-b-writer-20261001/.tmp/validation-lowering-b/phase-b-freeze-peavm3ha/frozen/src/ir/program-allocations.ts",
+      "archive": "resume-checkpoint/writer/frozen/src/ir/program-allocations.ts.raw.txt",
+      "bytes": 200,
+      "sha256": "65374da4eff469fb8dfcd9a7fadad5f3ae6b94740ca2b9855de1d2b523c094c8"
+    },
+    {
+      "source": "/private/tmp/js2-ir-validation-lowering-b-writer-20261001/.tmp/validation-lowering-b/phase-b-freeze-peavm3ha/frozen/src/ir/program-class-layouts.ts",
+      "archive": "resume-checkpoint/writer/frozen/src/ir/program-class-layouts.ts.raw.txt",
+      "bytes": 160,
+      "sha256": "4e2a9f622b78f3cb8cafd2cf77888521c8b70a15d797fc0811824ae9d013e0ca"
+    },
+    {
+      "source": "/private/tmp/js2-ir-validation-lowering-b-writer-20261001/.tmp/validation-lowering-b/phase-b-freeze-peavm3ha/frozen/src/ir/runtime/verify.ts",
+      "archive": "resume-checkpoint/writer/frozen/src/ir/runtime/verify.ts.raw.txt",
+      "bytes": 122476,
+      "sha256": "2d42cdd44b7a979ee0c960369c5ace9f75d2e7c47ccf3c17c8bc9f592f8dd74b"
+    },
+    {
+      "source": "/private/tmp/js2-ir-validation-lowering-b-writer-20261001/.tmp/validation-lowering-b/phase-b-freeze-peavm3ha/frozen/src/ir/verify-alloc.ts",
+      "archive": "resume-checkpoint/writer/frozen/src/ir/verify-alloc.ts.raw.txt",
+      "bytes": 1061,
+      "sha256": "f6fc9383748867ca1ab5204f40830aa23f92152931ea1933ea55ba70730c9179"
+    },
+    {
+      "source": "/private/tmp/js2-ir-validation-lowering-b-writer-20261001/.tmp/validation-lowering-b/phase-b-freeze-peavm3ha/frozen/src/ir/verify.ts",
+      "archive": "resume-checkpoint/writer/frozen/src/ir/verify.ts.raw.txt",
+      "bytes": 487,
+      "sha256": "af70e5c4d53566c2a2238cbbb6b20799ee9f8fa8bfc0937a3e697a457ba3c3e0"
+    },
+    {
+      "source": "/private/tmp/js2-ir-validation-lowering-b-writer-20261001/.tmp/validation-lowering-b/phase-b-freeze-peavm3ha/frozen/tests/issue-3518-verifier-body-relocation.test.ts",
+      "archive": "resume-checkpoint/writer/frozen/tests/issue-3518-verifier-body-relocation.test.ts.raw.txt",
+      "bytes": 24630,
+      "sha256": "b651efc201d5a6b024a616f38368ddb1d88c0b940dc5edfaee2ec33b7ee74607"
+    },
+    {
+      "source": "/private/tmp/js2-ir-validation-lowering-b-writer-20261001/.tmp/validation-lowering-b/phase-b-freeze-peavm3ha/manifest.json",
+      "archive": "resume-checkpoint/writer/manifest.json.raw.txt",
+      "bytes": 8871,
+      "sha256": "de4e96c0281846e6f62d2bae7814d2e3ddced012de8d23c6613284e765eba39d"
+    },
+    {
+      "source": "/private/tmp/js2-ir-validation-lowering-b-writer-20261001/.tmp/validation-lowering-b/phase-b-freeze-peavm3ha/relocate.py",
+      "archive": "resume-checkpoint/writer/relocate.py.raw.txt",
+      "bytes": 5676,
+      "sha256": "155a29b25ce55e21b0bef1330c9b9fcee91c91c700a27fef002ed4427b2e41a7"
+    },
+    {
+      "source": "/private/tmp/js2-ir-validation-lowering-b-writer-20261001/.tmp/validation-lowering-b/phase-b-freeze-peavm3ha/seal.json",
+      "archive": "resume-checkpoint/writer/seal.json.raw.txt",
+      "bytes": 468,
+      "sha256": "ecda176a4a17d9f25b7b9d9ca85721e9515d83825dfed181b021d93a035cb83d"
+    },
+    {
+      "source": "/private/tmp/js2-ir-validation-lowering-b-writer-20261001/.tmp/validation-lowering-b/phase-b-freeze-peavm3ha/start.json",
+      "archive": "resume-checkpoint/writer/start.json.raw.txt",
+      "bytes": 310,
+      "sha256": "f24a17bebccc57b5d5813dd40f4b5458ade5da7430c896e4daeaa9d6c7d0a2f3"
+    },
+    {
+      "source": "/private/tmp/js2-ir-validation-lowering-b-writer-20261001/.tmp/validation-lowering-b/phase-b-freeze-peavm3ha/static-closure.cjs",
+      "archive": "resume-checkpoint/writer/static-closure.cjs.raw.txt",
+      "bytes": 3080,
+      "sha256": "2b0a400e49b2b59c80cd9b2263b6114049029680ad0c88eaa4dd12c42c73edbd"
+    },
+    {
+      "source": "/private/tmp/js2-ir-validation-lowering-b-writer-20261001/.tmp/validation-lowering-b/phase-b-freeze-peavm3ha/static-closure.json",
+      "archive": "resume-checkpoint/writer/static-closure.json.raw.txt",
+      "bytes": 34368,
+      "sha256": "0a8a5432bd771870caf73733c3812ec21d01cd304f9793f772a738f886c70886"
+    },
+    {
+      "source": "/private/tmp/js2-ir-validation-lowering-b-writer-20261001/.tmp/validation-lowering-b/phase-b-freeze-peavm3ha/transfer-proof.cjs",
+      "archive": "resume-checkpoint/writer/transfer-proof.cjs.raw.txt",
+      "bytes": 5764,
+      "sha256": "b8665656aa8cd6438e3e417545a034ffa571fe6f8a13eb399452ae48df7c2468"
+    },
+    {
+      "source": "/private/tmp/js2-ir-validation-lowering-b-writer-20261001/.tmp/validation-lowering-b/phase-b-freeze-peavm3ha/transfer-proof.json",
+      "archive": "resume-checkpoint/writer/transfer-proof.json.raw.txt",
+      "bytes": 81418,
+      "sha256": "91ff12187c3161fa64417920529f6cf32e61708bb94762b39e428dd48d8e55ee"
+    },
+    {
+      "source": "/private/tmp/js2-ir-validation-lowering-b-20261001/plan/log/3518-validation-lowering-b-2026-10-01/baseline/baseline-boundaries-exit.txt.raw.txt",
+      "archive": "resume-checkpoint/baseline/baseline-boundaries-exit.txt.raw.txt.raw.txt",
+      "bytes": 2,
+      "sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865"
+    },
+    {
+      "source": "/private/tmp/js2-ir-validation-lowering-b-20261001/plan/log/3518-validation-lowering-b-2026-10-01/baseline/baseline-boundaries.json.raw.txt",
+      "archive": "resume-checkpoint/baseline/baseline-boundaries.json.raw.txt.raw.txt",
+      "bytes": 341068,
+      "sha256": "5c5672c24c91e309fc1a50b87a751374c95f775f7f6a67843c1f595f392fff3f"
+    },
+    {
+      "source": "/private/tmp/js2-ir-validation-lowering-b-20261001/plan/log/3518-validation-lowering-b-2026-10-01/baseline/baseline-boundaries.log.raw.txt",
+      "archive": "resume-checkpoint/baseline/baseline-boundaries.log.raw.txt.raw.txt",
+      "bytes": 108526,
+      "sha256": "4eca56ec654c005d50d84ffb575af7c5056abec7b906f9bb982a048d57b2bb35"
+    },
+    {
+      "source": "/private/tmp/js2-ir-validation-lowering-b-20261001/plan/log/3518-validation-lowering-b-2026-10-01/baseline/baseline-original-controls.json.raw.txt",
+      "archive": "resume-checkpoint/baseline/baseline-original-controls.json.raw.txt.raw.txt",
+      "bytes": 89835,
+      "sha256": "6be729f931d23c9527e88eef4d20be498de32a85b0d5a2e107be2c818d196311"
+    },
+    {
+      "source": "/private/tmp/js2-ir-validation-lowering-b-20261001/plan/log/3518-validation-lowering-b-2026-10-01/baseline/baseline-original-controls.log.raw.txt",
+      "archive": "resume-checkpoint/baseline/baseline-original-controls.log.raw.txt.raw.txt",
+      "bytes": 15851,
+      "sha256": "3293eb263f166bcc51d0ad3b9d51d0e2bd3d43357687dea758ac1fafc0d53d3a"
+    },
+    {
+      "source": "/private/tmp/js2-ir-validation-lowering-b-20261001/plan/log/3518-validation-lowering-b-2026-10-01/baseline/baseline-typecheck.log.raw.txt",
+      "archive": "resume-checkpoint/baseline/baseline-typecheck.log.raw.txt.raw.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "source": "/private/tmp/js2-ir-validation-lowering-b-20261001/plan/log/3518-validation-lowering-b-2026-10-01/baseline/before-manifest.json.raw.txt",
+      "archive": "resume-checkpoint/baseline/before-manifest.json.raw.txt.raw.txt",
+      "bytes": 1498,
+      "sha256": "7d418bbd7e824902fae5cf14d99fe35debc89bde7bff64d6cab0d5797ae1cb40"
+    },
+    {
+      "source": "/private/tmp/js2-ir-validation-lowering-b-20261001/plan/log/3518-validation-lowering-b-2026-10-01/baseline/manifest.json",
+      "archive": "resume-checkpoint/baseline/manifest.json.raw.txt",
+      "bytes": 11539,
+      "sha256": "8978641e5f4f367fd756132fb26f154705b4eefab820e381a03487fc1539adce"
+    },
+    {
+      "source": "/private/tmp/js2-ir-validation-lowering-b-20261001/plan/log/3518-validation-lowering-b-2026-10-01/baseline/program-data-boundary-before.ts.raw.txt",
+      "archive": "resume-checkpoint/baseline/program-data-boundary-before.ts.raw.txt.raw.txt",
+      "bytes": 24573,
+      "sha256": "8c637b37de043a622eda295fa319f0c4257936c6c10dddc8892580eaf6983be4"
+    },
+    {
+      "source": "/private/tmp/js2-ir-validation-lowering-b-20261001/.tmp/validation-lowering-b/spec-dmikh2b5/actual-verifier-budget-spans.json",
+      "archive": "resume-checkpoint/policy-review/actual-verifier-budget-spans.json.raw.txt",
+      "bytes": 1329,
+      "sha256": "2a85f1d0505615cff3ef192ab0fcc2b27c7c2d75fbcf647feb9af05d756cb275"
+    },
+    {
+      "source": "/private/tmp/js2-ir-validation-lowering-b-20261001/.tmp/validation-lowering-b/spec-dmikh2b5/artifact-manifest.json",
+      "archive": "resume-checkpoint/policy-review/artifact-manifest.json.raw.txt",
+      "bytes": 1977,
+      "sha256": "be4cfb63b65f55f651d3dcbe1e65a014c0aed20239d30a7bcb16d94abd9d78fa"
+    },
+    {
+      "source": "/private/tmp/js2-ir-validation-lowering-b-20261001/.tmp/validation-lowering-b/spec-dmikh2b5/direct-reader-candidates.json",
+      "archive": "resume-checkpoint/policy-review/direct-reader-candidates.json.raw.txt",
+      "bytes": 20174,
+      "sha256": "601c80234d0d86ab5ffd5b27b193916535d39f3b60ce9feda5bad3d2081ab2ce"
+    },
+    {
+      "source": "/private/tmp/js2-ir-validation-lowering-b-20261001/.tmp/validation-lowering-b/spec-dmikh2b5/donor-before-pins.json",
+      "archive": "resume-checkpoint/policy-review/donor-before-pins.json.raw.txt",
+      "bytes": 2370,
+      "sha256": "960a4394fcd96fd3fc6010d04ee9eb1de72ac6241cd69c567d6bdd52d7202e49"
+    },
+    {
+      "source": "/private/tmp/js2-ir-validation-lowering-b-20261001/.tmp/validation-lowering-b/spec-dmikh2b5/donor-review-drift.json",
+      "archive": "resume-checkpoint/policy-review/donor-review-drift.json.raw.txt",
+      "bytes": 60,
+      "sha256": "53fd07cd1d3146414c5c044bf708621b295db1407c174bd8dbb200cfaf1c9e89"
+    },
+    {
+      "source": "/private/tmp/js2-ir-validation-lowering-b-20261001/.tmp/validation-lowering-b/spec-dmikh2b5/final-review-status.json",
+      "archive": "resume-checkpoint/policy-review/final-review-status.json.raw.txt",
+      "bytes": 1290,
+      "sha256": "91d5d6f74d0e4b352539881dbf35c0a29964a7492aaa4d60ed68974c97290bb6"
+    },
+    {
+      "source": "/private/tmp/js2-ir-validation-lowering-b-20261001/.tmp/validation-lowering-b/spec-dmikh2b5/findings.md",
+      "archive": "resume-checkpoint/policy-review/findings.md.raw.txt",
+      "bytes": 22844,
+      "sha256": "5a4826a98b5e7ead8ed0c8ab8026ead1db3910fa908b350458c05541725c8d14"
+    },
+    {
+      "source": "/private/tmp/js2-ir-validation-lowering-b-20261001/.tmp/validation-lowering-b/spec-dmikh2b5/policy-evolution-proposal.json",
+      "archive": "resume-checkpoint/policy-review/policy-evolution-proposal.json.raw.txt",
+      "bytes": 34461,
+      "sha256": "d1d73c0b3e7e62567a4062602a42518aa22d4b1a5acffc1c8e104a612da3e636"
+    },
+    {
+      "source": "/private/tmp/js2-ir-validation-lowering-b-20261001/.tmp/validation-lowering-b/spec-dmikh2b5/program-data-observed-root-edit.ts.txt",
+      "archive": "resume-checkpoint/policy-review/program-data-observed-root-edit.ts.txt.raw.txt",
+      "bytes": 25359,
+      "sha256": "83b10069f7b32298705f779df2121bcea0064f28cc7dbe10e4d113c2d32dfda6"
+    },
+    {
+      "source": "/private/tmp/js2-ir-validation-lowering-b-20261001/.tmp/validation-lowering-b/spec-dmikh2b5/receipt-domains.json",
+      "archive": "resume-checkpoint/policy-review/receipt-domains.json.raw.txt",
+      "bytes": 5626,
+      "sha256": "71c74969ac0b0adb299335a87f928b85356e023cee3b4f5ad507d9cbf3917476"
+    },
+    {
+      "source": "/private/tmp/js2-ir-validation-lowering-b-20261001/.tmp/validation-lowering-b/spec-dmikh2b5/review-input-pins.json",
+      "archive": "resume-checkpoint/policy-review/review-input-pins.json.raw.txt",
+      "bytes": 9950,
+      "sha256": "51ba3bce659bec2a8d49f0d5ea5f4f11d8b00d8ebae68e99e6745275e1632b12"
+    },
+    {
+      "source": "/private/tmp/js2-ir-validation-lowering-b-20261001/.tmp/validation-lowering-b/graph-restore-review-x_3h3m84/after-pins.json",
+      "archive": "resume-checkpoint/graph-review/after-pins.json.raw.txt",
+      "bytes": 5305,
+      "sha256": "08b2ac30f73c68f48ef63570f94b0cea7061c5a28936fb01cacaac57bf6c273d"
+    },
+    {
+      "source": "/private/tmp/js2-ir-validation-lowering-b-20261001/.tmp/validation-lowering-b/graph-restore-review-x_3h3m84/artifact-manifest.json",
+      "archive": "resume-checkpoint/graph-review/artifact-manifest.json.raw.txt",
+      "bytes": 1017,
+      "sha256": "04acac76198c67c95324d4d880abe16b27cfe655f27e79f17523dac217456917"
+    },
+    {
+      "source": "/private/tmp/js2-ir-validation-lowering-b-20261001/.tmp/validation-lowering-b/graph-restore-review-x_3h3m84/before-pins.json",
+      "archive": "resume-checkpoint/graph-review/before-pins.json.raw.txt",
+      "bytes": 5305,
+      "sha256": "08b2ac30f73c68f48ef63570f94b0cea7061c5a28936fb01cacaac57bf6c273d"
+    },
+    {
+      "source": "/private/tmp/js2-ir-validation-lowering-b-20261001/.tmp/validation-lowering-b/graph-restore-review-x_3h3m84/contract-static-proof.json",
+      "archive": "resume-checkpoint/graph-review/contract-static-proof.json.raw.txt",
+      "bytes": 5749,
+      "sha256": "83303754b0361ccece69d9c38473c9b22d13148fb5ef554aa0a0623e50b667cf"
+    },
+    {
+      "source": "/private/tmp/js2-ir-validation-lowering-b-20261001/.tmp/validation-lowering-b/graph-restore-review-x_3h3m84/findings.md",
+      "archive": "resume-checkpoint/graph-review/findings.md.raw.txt",
+      "bytes": 8343,
+      "sha256": "16e0a3f10c80daff83570a40f3bf9a028e0f812ad8b43672631b7af72aafc439"
+    },
+    {
+      "source": "/private/tmp/js2-ir-validation-lowering-b-20261001/.tmp/validation-lowering-b/graph-restore-review-x_3h3m84/input-live-static-proof.json",
+      "archive": "resume-checkpoint/graph-review/input-live-static-proof.json.raw.txt",
+      "bytes": 3157,
+      "sha256": "ac676e7df18acba62cef58bdefffafa285905ed07198880b0cd27eb6336101bc"
+    },
+    {
+      "source": "/private/tmp/js2-ir-validation-lowering-b-20261001/.tmp/validation-lowering-b/graph-restore-review-x_3h3m84/physical-syntax-census.json",
+      "archive": "resume-checkpoint/graph-review/physical-syntax-census.json.raw.txt",
+      "bytes": 15467,
+      "sha256": "5cfdcdc405113a514e2c03ff0a5743a344bc6a1db86703f4c89825de56257e3a"
+    },
+    {
+      "source": "/private/tmp/js2-ir-validation-lowering-b-20261001/.tmp/validation-lowering-b/graph-restore-review-x_3h3m84/review-drift.json",
+      "archive": "resume-checkpoint/graph-review/review-drift.json.raw.txt",
+      "bytes": 38,
+      "sha256": "8288c1e84e253b6a0cfe8853c4b1d42912c8e032d54e2df6adb550c0016017f1"
+    },
+    {
+      "source": "/private/tmp/js2-ir-validation-lowering-b-20261001/.tmp/validation-lowering-b/historical-positive-controls.json",
+      "archive": "resume-checkpoint/integration/historical-positive-controls.json.raw.txt",
+      "bytes": 44258,
+      "sha256": "12ab24c281dfda82206d432bc3ff4441b0b0b17888072ae466080321e1492ba4"
+    },
+    {
+      "source": "/private/tmp/js2-ir-validation-lowering-b-20261001/.tmp/validation-lowering-b/historical-positive-controls.log",
+      "archive": "resume-checkpoint/integration/historical-positive-controls.log.raw.txt",
+      "bytes": 21575,
+      "sha256": "e563b8f7ac027a98c4d1ffe1a3c5617ad045b498488221b403cf7ea3a0de0507"
+    },
+    {
+      "source": "/private/tmp/js2-ir-validation-lowering-b-20261001/.tmp/validation-lowering-b/before-manifest.json",
+      "archive": "resume-checkpoint/integration/before-manifest.json.raw.txt",
+      "bytes": 1498,
+      "sha256": "7d418bbd7e824902fae5cf14d99fe35debc89bde7bff64d6cab0d5797ae1cb40"
+    },
+    {
+      "source": "/private/tmp/js2-ir-validation-lowering-b-20261001/.tmp/validation-lowering-b/metadata-transfer-plan.json",
+      "archive": "resume-checkpoint/integration/metadata-transfer-plan.json.raw.txt",
+      "bytes": 2916,
+      "sha256": "1bdc3f184b7421ec273a45285d2af2cce756578fc8464dd46a3b59641df55b55"
+    },
+    {
+      "source": "/private/tmp/js2-ir-validation-lowering-b-20261001/.tmp/validation-lowering-b/coordination-state.json",
+      "archive": "resume-checkpoint/integration/coordination-state.json.raw.txt",
+      "bytes": 706,
+      "sha256": "b124ce1eb688b535ed70017edf059ffea51a7c672c4c4d509f6a64d946fd4e6b"
+    },
+    {
+      "source": "/private/tmp/js2-ir-validation-lowering-b-20261001/.tmp/validation-lowering-b/initial-sync-push.log",
+      "archive": "resume-checkpoint/integration/initial-sync-push.log.raw.txt",
+      "bytes": 1714,
+      "sha256": "cb6904b62276657a32a3ba55b3e83db45ed433b0235c275af89b25f171825c1e"
+    },
+    {
+      "source": "/private/tmp/js2-ir-validation-lowering-b-20261001/.tmp/validation-lowering-b/initial-sync-remote-ref.txt",
+      "archive": "resume-checkpoint/integration/initial-sync-remote-ref.txt.raw.txt",
+      "bytes": 94,
+      "sha256": "fb4c6a931830812f96e5b5cbfcdff0f3a259569c3fdf908ec0b5de89f795920d"
+    },
+    {
+      "source": "/private/tmp/js2-ir-validation-lowering-b-20261001/.tmp/validation-lowering-b/wrap-claim-release.log",
+      "archive": "resume-checkpoint/integration/wrap-claim-release.log.raw.txt",
+      "bytes": 352,
+      "sha256": "56cb9f433bf18abb13bdb204e052c0d5d5f444339f5e8c97fb153d2cc6fb14a8"
+    },
+    {
+      "source": "/private/tmp/js2-ir-validation-lowering-b-20261001/.tmp/validation-lowering-b/wrap-claim-record.json",
+      "archive": "resume-checkpoint/integration/wrap-claim-record.json.raw.txt",
+      "bytes": 415,
+      "sha256": "512779e40e362ef37db9e768e09d999f686027b7ca3aa79775335ce5651361ae"
+    },
+    {
+      "source": "/private/tmp/js2-ir-source-contracts-main-20261001/.tmp/wrap-final-20261001/pr6378-quality-job.log",
+      "archive": "resume-checkpoint/publication/pr6378-quality-job.log.raw.txt",
+      "bytes": 35144,
+      "sha256": "38cb345ef0e6c92b93bdf266a543d6d2fc7b83cf6e422af7de921758b02546f4"
+    },
+    {
+      "source": "/private/tmp/js2-ir-source-contracts-main-20261001/.tmp/wrap-final-20261001/kind-neutrality-after.log",
+      "archive": "resume-checkpoint/publication/kind-neutrality-after.log.raw.txt",
+      "bytes": 1106,
+      "sha256": "8eab9afe8f9164efe69ad1fb40ea37dfceb793390778dca2d1de371f4d2b4f3d"
+    },
+    {
+      "source": "/private/tmp/js2-ir-source-contracts-main-20261001/.tmp/wrap-final-20261001/kind-neutrality-controls.log",
+      "archive": "resume-checkpoint/publication/kind-neutrality-controls.log.raw.txt",
+      "bytes": 921,
+      "sha256": "9c38766d7a01868baf32e1966286cd29c2d09329148ad2ee1a31819accf6db8f"
+    },
+    {
+      "source": "/private/tmp/js2-ir-source-contracts-main-20261001/.tmp/wrap-final-20261001/kind-neutrality-controls.json",
+      "archive": "resume-checkpoint/publication/kind-neutrality-controls.json.raw.txt",
+      "bytes": 2700,
+      "sha256": "e1e81c0135f50eff8fdeff068ee470a36721f788794b166c9890a4746d6105f5"
+    },
+    {
+      "source": "/private/tmp/js2-ir-source-contracts-main-20261001/.tmp/wrap-final-20261001/check-ir-kind-neutrality.mjs.before.raw.txt",
+      "archive": "resume-checkpoint/publication/check-ir-kind-neutrality.mjs.before.raw.txt.raw.txt",
+      "bytes": 66991,
+      "sha256": "5fd2d0566db7e68670f1eccd511e91c139a98bd92d8cd2c887c66fac1ad58548"
+    },
+    {
+      "source": "/private/tmp/js2-ir-source-contracts-main-20261001/.tmp/wrap-final-20261001/ir-kind-neutrality-baseline.json.before.raw.txt",
+      "archive": "resume-checkpoint/publication/ir-kind-neutrality-baseline.json.before.raw.txt.raw.txt",
+      "bytes": 32731,
+      "sha256": "e4f871382a5478ab4a931816c441b52729145c2928c95c2b45119fd04dcf5800"
+    },
+    {
+      "source": "/private/tmp/js2-ir-source-contracts-main-20261001/.tmp/wrap-final-20261001/source-reclaim.log",
+      "archive": "resume-checkpoint/publication/source-reclaim.log.raw.txt",
+      "bytes": 404,
+      "sha256": "e3abd69457e87e892bb60c3c26742065280043b891e2be6d57a9960f20f3160c"
+    },
+    {
+      "source": "/private/tmp/js2-ir-source-contracts-main-20261001/.tmp/wrap-final-20261001/phase-b-worktree.patch.raw.txt",
+      "archive": "resume-checkpoint/integration/worktree.patch.raw.txt",
+      "bytes": 7271,
+      "sha256": "4e3077304039019fbce898e8c3473fa733c95cb6e2389e616714bf2a7f3f7632"
+    },
+    {
+      "source": "/private/tmp/js2-ir-source-contracts-main-20261001/.tmp/wrap-final-20261001/phase-b-index.patch.raw.txt",
+      "archive": "resume-checkpoint/integration/index.patch.raw.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "source": "/private/tmp/js2-ir-source-contracts-main-20261001/.tmp/wrap-final-20261001/phase-b-status.raw.txt",
+      "archive": "resume-checkpoint/integration/status.raw.txt",
+      "bytes": 180,
+      "sha256": "eb818e09bc17e13d823f998d92b5e15d8c7cf7a7638b8cec2c78342b90f2b698"
+    },
+    {
+      "source": "/private/tmp/js2-ir-validation-lowering-b-20261001/tests/issue-3518-program-data-contract-boundary.test.ts",
+      "archive": "resume-checkpoint/integration/tests/issue-3518-program-data-contract-boundary.test.ts.raw.txt",
+      "bytes": 25359,
+      "sha256": "83b10069f7b32298705f779df2121bcea0064f28cc7dbe10e4d113c2d32dfda6"
+    },
+    {
+      "source": "/private/tmp/js2-ir-source-contracts-main-20261001/.tmp/wrap-final-20261001/final-kind-neutrality.log",
+      "archive": "resume-checkpoint/publication/final-kind-neutrality.log.raw.txt",
+      "bytes": 1106,
+      "sha256": "8eab9afe8f9164efe69ad1fb40ea37dfceb793390778dca2d1de371f4d2b4f3d"
+    },
+    {
+      "source": "/private/tmp/js2-ir-source-contracts-main-20261001/.tmp/wrap-final-20261001/final-loc.log",
+      "archive": "resume-checkpoint/publication/final-loc.log.raw.txt",
+      "bytes": 241,
+      "sha256": "81dfc37dc368f07b8f46f9b242c1b44bbe6b55ad153761b71dbdb925f63023f9"
+    },
+    {
+      "source": "/private/tmp/js2-ir-source-contracts-main-20261001/.tmp/wrap-final-20261001/final-functions.log",
+      "archive": "resume-checkpoint/publication/final-functions.log.raw.txt",
+      "bytes": 234,
+      "sha256": "b7a99f4dcc2fab3d634f07c4d556d930b176afa4813fece2e560ee9c2b376737"
+    },
+    {
+      "source": "/private/tmp/js2-ir-source-contracts-main-20261001/.tmp/wrap-final-20261001/final-inventory.stderr",
+      "archive": "resume-checkpoint/publication/final-inventory.stderr.raw.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "source": "/private/tmp/js2-ir-source-contracts-main-20261001/.tmp/wrap-final-20261001/final-boundaries.log",
+      "archive": "resume-checkpoint/publication/final-boundaries.log.raw.gz",
+      "bytes": 488725,
+      "sha256": "ba454db03ad4fa469ca4d01d7fa15c6aca8c8b5e8acb8f27da814df817120533",
+      "compression": "gzip",
+      "uncompressed_bytes": 10138104,
+      "uncompressed_sha256": "a1e4a1edd737cad163df02228fb22ff30373eb93e377438cc3c3182941b174a6",
+      "actual_exit": 1
+    },
+    {
+      "source": "/private/tmp/js2-ir-source-contracts-main-20261001/.tmp/wrap-final-20261001/final-inventory.json",
+      "archive": "resume-checkpoint/publication/final-inventory.json.raw.gz",
+      "bytes": 488632,
+      "sha256": "755e62809d7fe7612e16f6c9452ca627c7b81bd40b505d42b9630ff1c4c6c341",
+      "compression": "gzip",
+      "uncompressed_bytes": 10137859,
+      "uncompressed_sha256": "c087e98028882aa1ed1e7d7044a0ac87cd3a2a11034bfd1361a5442679ee5269",
+      "actual_exit": 0
+    }
+  ],
+  "final_preservation_checks": {
+    "inventory_exit": 0,
+    "inventory": 1761,
+    "tracked": 1761,
+    "errors": 0,
+    "architecture_complete": false,
+    "complete_boundary_mode_exit": 1,
+    "complete_boundary_mode_status": "inventory-valid-architecture-incomplete",
+    "loc_budget_exit": 0,
+    "function_budget_exit": 0,
+    "script_and_baseline_format_exit": 0
+  }
+}

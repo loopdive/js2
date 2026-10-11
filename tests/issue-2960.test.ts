@@ -13,6 +13,7 @@
 //     #2928's linked acceptance test proves execution.
 import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
+import { buildImports } from "../src/runtime.js";
 import {
   RUNTIME_EVAL_IMPORT_MODULE,
   RUNTIME_EVAL_PROVIDER_COMPILE_OPTIONS,
@@ -27,9 +28,11 @@ function importNames(bin: Uint8Array): string[] {
 async function hostResult(src: string): Promise<number> {
   const r = await compile(src, { fileName: "t.ts" });
   expect(r.success, JSON.stringify(r.errors)).toBe(true);
-  const io = r.importObject as WebAssembly.Imports & { __setExports?: (e: unknown) => void };
-  const { instance } = await WebAssembly.instantiate(r.binary, io);
-  io.__setExports?.(instance.exports);
+  // (#6779) The meta-circular shim runs under the hostEval policy; the library
+  // default (`deny`, which `r.importObject` uses) refuses dynamic code.
+  const io = buildImports(r.imports, undefined, r.stringPool, { dynamicCode: "hostEval" });
+  const { instance } = await WebAssembly.instantiate(r.binary, io as unknown as WebAssembly.Imports);
+  io.setExports?.(instance.exports as Record<string, Function>);
   return (instance.exports as { test(): number }).test();
 }
 

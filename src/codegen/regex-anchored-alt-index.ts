@@ -10,6 +10,7 @@
  * RegExp semantics.
  */
 import type { Instr, LocalDef, ValType } from "../ir/types.js";
+import { readEnv } from "../env.js";
 
 export const REGEX_ANCHORED_LITERAL_ALT_HASH_MARKER = -0x3fffffff;
 export const REGEX_ALT_HASH_OFFSET = 0x811c9dc5 | 0;
@@ -18,7 +19,7 @@ export const REGEX_ALT_HASH_PRIME = 0x01000193;
 const I32: ValType = { kind: "i32" };
 
 function enabled(): boolean {
-  return process.env.JS2WASM_REGEX_ANCHORED_ALT_HASH !== "0";
+  return readEnv("JS2WASM_REGEX_ANCHORED_ALT_HASH") !== "0";
 }
 
 function programCell(arrayTypeIdx: number, index: Instr[], value: Instr[]): Instr[] {

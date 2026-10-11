@@ -61,6 +61,7 @@ import {
   isHostAsyncLane,
   tryCatchAsyncSpillInfo,
 } from "./async-cps.js";
+import { spilledCallLaneSupported, spilledCallSpillNames } from "./async-spilled-call.js";
 import { ensureNativeGeneratorResultType } from "./generators-native.js";
 import { canonicalUndefinedExternInstrs, undefinedExternInstrs } from "./any-helpers.js"; // (#3178) canonical undefined for the done-result value
 import { recordAsyncFrameMachinery } from "./compiler-support-abi.js";
@@ -77,6 +78,7 @@ import {
 } from "./async-scheduler.js";
 import { reportError } from "./context/errors.js";
 import { allocLocal, getLocalType } from "./context/locals.js";
+import { emitScopedClassLocalRebinds, liveBoxedCaptureSpillType } from "./async-frame-binding-continuity.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { closureBagInitInstr } from "./closures/closure-header-layout.js";
 import {
@@ -236,8 +238,8 @@ export function asyncFnNeedsHostDrive(
   if (!ASYNC_CPS_ENABLED) return false;
   if (ctx.wasi === true || ctx.standalone === true) return false; // host lane only
   if (plan.awaitPoints.length === 0) return false;
-  const anyRealSuspension = plan.awaitPoints.some((a) => plan.awaitedStaticallyResolved.get(a) !== true);
-  if (!anyRealSuspension) return false; // fully await-elidable → legacy sync path
+  // (#6780) No all-awaits-statically-resolved decline: `await null` still yields
+  // a microtask turn (§27.7.5.3), so only a ZERO-await body may run synchronously.
   // (#2967 slice 2b-2) Binding-pattern params are DRIVEN: the entry fn's
   // destructuring prologue has already derived the bound locals by the time
   // the activation emits (maybeActivateAsync / the closure body emit both run
@@ -252,7 +254,7 @@ export function asyncFnNeedsHostDrive(
   // function-like captures mutably is FORCE-BOXED into a cell-typed frame
   // field (buildAsyncFrameInfo `spillCellInfo`) — no pattern-shape decline
   // remains.
-  const linear = planLinearAwaits(fn, plan, { checker: ctx.checker });
+  const linear = planLinearAwaits(fn, plan, { checker: ctx.checker, allowSpilledCall: spilledCallLaneSupported(ctx) });
   if (linear === null) {
     // (#3587) try/catch-across-await — the #2906 3c CFG machine (catch regions
     // as states + routed dispatcher) drives this shape on the HOST settle
@@ -562,6 +564,7 @@ export function buildAsyncFrameInfo(
         }
       : collectNestedRefsAndAssigns(decl.body);
   const bodyBindingsByName = collectVarDeclsByName(decl);
+  const liveCellInit = new Map<number, number>();
   // The function-body hoist has already chosen concrete local/cell
   // representations before async activation. Prefer that exact contract over
   // checker reconstruction for body destructuring (where minified JS often has
@@ -573,6 +576,12 @@ export function buildAsyncFrameInfo(
       const local = activatingFctx?.localMap.get(name);
       const liveType =
         activatingFctx === undefined || local === undefined ? undefined : getLocalType(activatingFctx, local);
+      const liveCellType = liveBoxedCaptureSpillType(activatingFctx, name, liveType); // (#4618)
+      if (liveCellType !== undefined && local !== undefined) {
+        spillTypes[i] = liveCellType;
+        liveCellInit.set(i, local);
+        continue;
+      }
       if (liveType !== undefined) spillTypes[i] = liveType;
       else if (nestedCaptureType !== undefined) spillTypes[i] = nestedCaptureType;
       continue;
@@ -620,7 +629,7 @@ export function buildAsyncFrameInfo(
       const derivedNames = new Set(derived.map((d) => d.name));
       for (let i = 0; i < spillNames.length; i++) {
         const name = spillNames[i]!;
-        if (!referencedInNested.has(name)) continue;
+        if (!referencedInNested.has(name) || liveCellInit.has(i)) continue;
         const isDerived = derivedNames.has(name);
         const binding = declByName.get(name);
         if (binding === undefined && !isDerived) continue;
@@ -724,7 +733,8 @@ export function buildAsyncFrameInfo(
     spillNames,
     spillTypes,
     spillFieldOffset,
-    derivedSpillInit: derivedSpillInit.size > 0 ? derivedSpillInit : undefined,
+    derivedSpillInit:
+      derivedSpillInit.size + liveCellInit.size > 0 ? new Map([...derivedSpillInit, ...liveCellInit]) : undefined,
     undefWidenedPatternBindings: undefWidenedPatternBindings.size > 0 ? undefWidenedPatternBindings : undefined,
     spillCellInfo: spillCellInfo.size > 0 ? spillCellInfo : undefined,
     tdzCellNames: tdzCellNames.length > 0 ? tdzCellNames : undefined,
@@ -984,7 +994,11 @@ export function asyncFnNeedsDrive(ctx: CodegenContext, fn: ts.FunctionLikeDeclar
   if (!anyRealSuspension) return false; // fully await-elidable → sync + resolved promise
   // (#2906 3c-ii) The native gate admits return-in-try (return-through-finally
   // via the return hook's finalizer replay); the host gate does not.
-  const linear = planLinearAwaits(fn, plan, { allowReturnInTry: true, checker: ctx.checker });
+  const linear = planLinearAwaits(fn, plan, {
+    allowReturnInTry: true,
+    checker: ctx.checker,
+    allowSpilledCall: spilledCallLaneSupported(ctx),
+  });
   if (linear === null) {
     // (#2906 slice 3a) `while`-with-await loop shape (native drive lane only).
     // Eligible when every widened loop spill local has a spill-safe type — a
@@ -1032,7 +1046,7 @@ function computeLoopSpills(
   decl: ts.FunctionLikeDeclaration,
   plan: AsyncCpsPlan,
 ): { spillNames: string[]; spillTypes: ValType[] } | null {
-  const loop = loopAsyncSpillInfo(decl, plan);
+  const loop = loopAsyncSpillInfo(decl, plan, ctx.checker);
   if (loop === null) return null;
   const rbTypeByName = new Map<string, ValType>();
   for (const seg of loop.segments) {
@@ -1102,7 +1116,7 @@ function computeTryCatchSpills(
   decl: ts.FunctionLikeDeclaration,
   plan: AsyncCpsPlan,
 ): { spillNames: string[]; spillTypes: ValType[] } | null {
-  const info = tryCatchAsyncSpillInfo(decl, plan, isHostAsyncLane(ctx));
+  const info = tryCatchAsyncSpillInfo(decl, plan, isHostAsyncLane(ctx), ctx.checker);
   if (info === null) return null;
   const declByName = collectVarDeclsByName(decl);
   // `collectVarDeclsByName` also picks up a CATCH clause's own
@@ -1217,7 +1231,11 @@ function computeAsyncSpills(
     }
     return { spillNames, spillTypes };
   }
-  const linear = planLinearAwaits(decl, plan, { allowReturnInTry, checker: ctx.checker });
+  const linear = planLinearAwaits(decl, plan, {
+    allowReturnInTry,
+    checker: ctx.checker,
+    allowSpilledCall: spilledCallLaneSupported(ctx),
+  });
   if (linear === null) {
     // (#2906 slice 3a) `while`-with-await loop: widened spill set (all loop
     // own-locals). (#2906 slice 3b) for-await drive: loop own-locals + the
@@ -1234,6 +1252,15 @@ function computeAsyncSpills(
   const rbTypeByName = new Map<string, ValType>();
   for (const seg of linear.segments) {
     if (seg.resumeBinding) rbTypeByName.set(seg.resumeBinding.name, resumeBindingValType(ctx, seg.resumeBinding));
+  }
+  // (#6504) The call-argument spill continuation's own fields. They are not
+  // source bindings, so `plan.liveAfterAwait` cannot know about them; they are
+  // written by the suspend state's `emit` hook and read by the resume state's
+  // `postDeliverEmit`, one suspension later. All externref.
+  const spilledCallNames: string[] = [];
+  for (const seg of linear.segments) {
+    if (seg.spilledCall === undefined) continue;
+    for (const name of spilledCallSpillNames(seg.spilledCall)) spilledCallNames.push(name);
   }
 
   const declByName = collectVarDeclsByName(decl);
@@ -1259,6 +1286,12 @@ function computeAsyncSpills(
       spillNames.push(name);
       spillTypes.push(resolved ?? { kind: "externref" });
     }
+  }
+  for (const name of spilledCallNames) {
+    if (seen.has(name)) continue;
+    seen.add(name);
+    spillNames.push(name);
+    spillTypes.push({ kind: "externref" });
   }
   return { spillNames, spillTypes };
 }
@@ -1460,6 +1493,23 @@ function collectDerivedPatternParams(decl: ts.FunctionLikeDeclaration, fctx: Fun
     const type = idx < fctx.params.length ? fctx.params[idx]!.type : fctx.locals[idx - fctx.params.length]?.type;
     if (type === undefined) continue;
     out.push({ name, type, entryLocalIdx: idx });
+  }
+  // (#6859) An ASSIGNED identifier param rides the frame like a derived
+  // binding. Its param field is an immutable snapshot taken at activation, so
+  // `x ||= d; await p; use(x)` read the pre-assignment value after the resume,
+  // and a nested closure's `resolve = r` (hono `createPool`) never reached it at
+  // all. As a spill it is stored at every suspend and restored at every resume,
+  // and one a nested function also references gets the shared cell.
+  if (decl.body !== undefined && decl.asteriskToken === undefined) {
+    const { assigned } = collectNestedRefsAndAssigns(decl.body);
+    for (const parameter of decl.parameters) {
+      if (!ts.isIdentifier(parameter.name)) continue;
+      const name = parameter.name.text;
+      if (!assigned.has(name)) continue;
+      const idx = fctx.localMap.get(name);
+      if (idx === undefined || idx >= fctx.params.length || fctx.boxedCaptures?.has(name)) continue;
+      out.push({ name, type: fctx.params[idx]!.type, entryLocalIdx: idx });
+    }
   }
   return out;
 }
@@ -2232,6 +2282,7 @@ export function ensureAsyncResumeFunction(
               fulfillStepFuncIdx: info.stepFulfillFuncIdx ?? -1,
               rejectStepFuncIdx: info.stepRejectFuncIdx ?? -1,
               markRejectionHandledFuncIdx: rt?.markRejectionHandledFuncIdx ?? -1,
+              rejectionDispatchFuncIdx: rt?.rejectionDispatchFuncIdx,
               setThrowMode: setStateI32FromConst(info, frameLocal, MODE_FIELD, MODE_THROW),
             }),
           );
@@ -2575,6 +2626,7 @@ export function ensureAsyncResumeFunction(
           }),
     };
   });
+  emitScopedClassLocalRebinds(ctx, resumeFctx, info.decl); // (#4618)
   resumeFctx.body.push(
     buildAsyncFrameDispatch({
       target: { wasi: ctx.wasi, standalone: ctx.standalone },
@@ -2711,6 +2763,7 @@ function emitAsyncFrameEntry(
     fctx.body.push({ op: "ref.null.extern" });
     fctx.body.push({ op: "ref.null.extern" });
     fctx.body.push(closureBagInitInstr());
+    fctx.body.push({ op: "i32.const", value: 0 });
     fctx.body.push({ op: "struct.new", typeIdx: promiseTypeIdx });
   }
   fctx.body.push({ op: "local.set", index: resultPromiseLocal });
@@ -3211,6 +3264,7 @@ export function emitAsyncGenerator(ctx: CodegenContext, fctx: FunctionContext, d
   fctx.body.push({ op: "ref.null.extern" });
   fctx.body.push({ op: "ref.null.extern" });
   fctx.body.push(closureBagInitInstr());
+  fctx.body.push({ op: "i32.const", value: 0 });
   fctx.body.push({ op: "struct.new", typeIdx: promiseTypeIdx });
   fctx.body.push({ op: "struct.new", typeIdx: info.stateTypeIdx });
 
@@ -3253,6 +3307,7 @@ function emitAsyncGenNextHelper(ctx: CodegenContext, info: AsyncFrameInfo, promi
     { op: "ref.null.extern" },
     { op: "ref.null.extern" },
     closureBagInitInstr(),
+    { op: "i32.const", value: 0 },
     { op: "struct.new", typeIdx: promiseTypeIdx },
     { op: "local.set", index: pLocal },
     // frame.result_promise = p
@@ -3322,6 +3377,7 @@ function emitAsyncGenReturnThrowHelpers(ctx: CodegenContext, info: AsyncFrameInf
     { op: "ref.null.extern" },
     { op: "ref.null.extern" },
     closureBagInitInstr(),
+    { op: "i32.const", value: 0 },
     { op: "struct.new", typeIdx: promiseTypeIdx },
     { op: "local.set", index: pLocal },
     { op: "local.get", index: fLocal },

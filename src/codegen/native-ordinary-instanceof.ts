@@ -150,10 +150,24 @@ export function tryEmitNonCallableRhsThrow(
  * this issue flips to pass; excluding it here would give the row back for no
  * correctness gain. Every other value — a function, an identifier, a call
  * result — is treated as possibly callable.
+ *
+ * ## Why `Object.defineProperty` counts too (#6651 I2)
+ *
+ * The third installation spelling is `Object.defineProperty(F,
+ * Symbol.hasInstance, { get() {…} })` — `symbol-hasinstance-get-err.js`, which
+ * wants the ACCESSOR's `Test262Error` and measured
+ * "Expected a Test262Error but got a TypeError" on this branch's base: the
+ * syntactic scan matched neither the assignment nor the computed-key shape, so
+ * the step-1 arm threw before §13.10.2 step 2 could read the property. Any
+ * `defineProperty` naming `@@hasInstance` counts, whatever the descriptor
+ * says: a descriptor is an arbitrary object expression, so "this descriptor
+ * installs nothing callable" is not statically decidable in general, and the
+ * consequence of over-counting is only that a module DECLINES a static fold it
+ * could have taken.
  */
 const HAS_INSTANCE_INSTALL_CACHE = new WeakMap<ts.SourceFile, boolean>();
 
-function moduleInstallsCallableHasInstance(file: ts.SourceFile): boolean {
+export function moduleInstallsCallableHasInstance(file: ts.SourceFile): boolean {
   const cached = HAS_INSTANCE_INSTALL_CACHE.get(file);
   if (cached !== undefined) return cached;
   let found = false;
@@ -186,6 +200,19 @@ function moduleInstallsCallableHasInstance(file: ts.SourceFile): boolean {
         return;
       }
     }
+    // (#6651 I2) `Object.defineProperty(X, Symbol.hasInstance, <descriptor>)` /
+    // `Reflect.defineProperty(…)` — the accessor spelling. Matched on the KEY
+    // argument alone; see the "Why `Object.defineProperty` counts too" section.
+    if (
+      ts.isCallExpression(node) &&
+      node.arguments.length >= 3 &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      node.expression.name.text === "defineProperty" &&
+      isSymbolHasInstanceKey(node.arguments[1]!)
+    ) {
+      found = true;
+      return;
+    }
     ts.forEachChild(node, visit);
   };
   visit(file);
@@ -193,14 +220,57 @@ function moduleInstallsCallableHasInstance(file: ts.SourceFile): boolean {
   return found;
 }
 
-/** Is `key` the well-known symbol reference `Symbol.hasInstance`? */
+/**
+ * (#6651 H2) Strip the TYPE-ONLY wrappers a TypeScript source puts around an
+ * otherwise ordinary expression. `as`/`satisfies`/`!`/`<T>`/parentheses all
+ * erase to nothing at runtime, so a matcher that asks "is this expression
+ * `Symbol.hasInstance`?" must see through them.
+ *
+ * This is not hypothetical syntax. `obj[Symbol.hasInstance as any] = fn` and
+ * `Object.defineProperty(F, Symbol.hasInstance as any, …)` are the spellings a
+ * TS source needs whenever the receiver's index signature is not symbol-keyed —
+ * and MEASURED on this base, both made `0 instanceof F` throw
+ * `TypeError: Right-hand side of 'instanceof' is not callable`, because the
+ * unwrapped matcher below said "no handler here" and the #4484 A step-1 arm
+ * fired. A wrong THROW, not a wrong value.
+ */
+function unwrapTypeOnly(expr: ts.Expression): ts.Expression {
+  let cur = expr;
+  for (;;) {
+    if (
+      ts.isParenthesizedExpression(cur) ||
+      ts.isAsExpression(cur) ||
+      ts.isSatisfiesExpression(cur) ||
+      ts.isNonNullExpression(cur) ||
+      ts.isTypeAssertionExpression(cur)
+    ) {
+      cur = cur.expression;
+      continue;
+    }
+    return cur;
+  }
+}
+
+/**
+ * Is `key` the well-known symbol reference `Symbol.hasInstance`? Accepts both
+ * member spellings (`Symbol.hasInstance` / `Symbol["hasInstance"]`) and looks
+ * through type-only wrappers — see `unwrapTypeOnly`.
+ */
 function isSymbolHasInstanceKey(key: ts.Expression): boolean {
-  return (
-    ts.isPropertyAccessExpression(key) &&
-    ts.isIdentifier(key.expression) &&
-    key.expression.text === "Symbol" &&
-    key.name.text === "hasInstance"
-  );
+  const k = unwrapTypeOnly(key);
+  if (ts.isPropertyAccessExpression(k)) {
+    return ts.isIdentifier(k.expression) && k.expression.text === "Symbol" && k.name.text === "hasInstance";
+  }
+  if (ts.isElementAccessExpression(k)) {
+    const arg = unwrapTypeOnly(k.argumentExpression);
+    return (
+      ts.isIdentifier(k.expression) &&
+      k.expression.text === "Symbol" &&
+      ts.isStringLiteralLike(arg) &&
+      arg.text === "hasInstance"
+    );
+  }
+  return false;
 }
 
 /**

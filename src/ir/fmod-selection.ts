@@ -5,6 +5,7 @@ import { FMOD_EARLY_MAGNITUDE_FN, FMOD_FN } from "../codegen/fmod.js";
 import { ts } from "../ts-api.js";
 import { peelExpr } from "./analysis/i32-slots.js";
 import { irIntrinsicFuncRef } from "./callable-bindings.js";
+import { readEnv } from "../env.js";
 
 export { FMOD_FN };
 
@@ -28,7 +29,7 @@ function numericLiteralValue(expression: ts.Expression): number | undefined {
 
 /** Select the exact remainder helper without matching source or benchmark identities. */
 export function fmodRefFor(rhs: ts.Expression, checker?: ts.TypeChecker, oracle?: TypeOracle) {
-  if (process.env.JS2WASM_FMOD_EARLY_MAGNITUDE === "0") return irIntrinsicFuncRef(FMOD_FN);
+  if (readEnv("JS2WASM_FMOD_EARLY_MAGNITUDE") === "0") return irIntrinsicFuncRef(FMOD_FN);
 
   const literal = numericLiteralValue(rhs);
   let divisor = literal !== undefined && Number.isSafeInteger(literal) ? literal : undefined;

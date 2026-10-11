@@ -41,6 +41,11 @@ function signatureMismatch(use: IntrinsicUse, signature: IntrinsicSignature): st
       return `${use.id} argument ${index} does not match its v${signature.version} signature`;
     }
   }
+  if (
+    use.id === "js.boolean.unbox" &&
+    (use.resultType.kind !== "val" || use.resultType.val.kind !== "i32" || use.resultType.val.boolean !== true)
+  )
+    return `${use.id} result must preserve its Boolean carrier brand`;
   if (!irTypeEquals(use.resultType, signature.result)) {
     return `${use.id} result does not match its v${signature.version} signature`;
   }

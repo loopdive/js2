@@ -294,12 +294,22 @@ export function emitAddOrdinaryToPrimitiveResidue(
       blockType: { kind: "val", type: { kind: "i32" } },
       then: [{ op: "i32.const", value: 1 }],
       else: [
+        // A real Symbol is already primitive. The generic object classifier
+        // does not establish this carrier's semantics; never probe its methods.
+        ...(ctx.symbolTypeIdx >= 0
+          ? ([
+              { op: "local.get", index: local },
+              { op: "any.convert_extern" },
+              { op: "ref.test", typeIdx: ctx.symbolTypeIdx },
+            ] satisfies Instr[])
+          : []),
         { op: "local.get", index: local },
         { op: "call", funcIdx: typeofObject },
         { op: "local.get", index: local },
         { op: "call", funcIdx: typeofFunction },
         { op: "i32.or" },
         { op: "i32.eqz" },
+        ...(ctx.symbolTypeIdx >= 0 ? ([{ op: "i32.or" }] satisfies Instr[]) : []),
       ],
     },
   ];
@@ -378,14 +388,7 @@ export function emitAddOrdinaryToPrimitiveResidue(
     {
       op: "if",
       blockType: { kind: "empty" },
-      then: [
-        { op: "local.get", index: tmp },
-        { op: "call", funcIdx: typeofObject },
-        { op: "local.get", index: tmp },
-        { op: "call", funcIdx: typeofFunction },
-        { op: "i32.or" },
-        { op: "if", blockType: { kind: "empty" }, then: stillObject },
-      ],
+      then: [...isPrimitive(tmp), { op: "i32.eqz" }, { op: "if", blockType: { kind: "empty" }, then: stillObject }],
     },
   );
 

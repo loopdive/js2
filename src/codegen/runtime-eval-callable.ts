@@ -28,6 +28,8 @@ import { ensureExnTag, nextModuleGlobalIdx } from "./registry/imports.js";
 import { ensureObjectRuntime, ensureObjVecBuilders, reserveApplyClosure } from "./object-runtime.js";
 import { collectClosureBaseWrapperTypeIdxs } from "./closure-classifier.js";
 import { ensureNativeStringHelpers, nativeStringLiteralInstrs } from "./native-strings.js";
+import { FNINST_BAG_OWNS } from "./function-instance-props.js";
+import { carrierFnMetaEnabled, fillRuntimeEvalCarrierFnMeta } from "./runtime-eval-carrier-fn-meta.js";
 import {
   buildRuntimeEvalCallResultWrap,
   ensureRuntimeEvalCallResultUnwrapHelper,
@@ -363,6 +365,11 @@ function syncedPropertyGetTrampolineBody(
           { op: "any.convert_extern" },
           { op: "local.set", index: anyLocal },
         ];
+  // (#6894) Wrapping a callable property in a fresh carrier exists for the
+  // provider crossing only. An in-module read (provider inactive) must return
+  // the raw closure: a per-read carrier breaks identity (`assert.d === assert.d`
+  // false) and a write through it (`assert.d._c = fn`) lands in a throwaway bag.
+  const crossingWraps: Instr[] = [];
   if (carrier.trampolineFuncIdx !== undefined && carrier.propertyGetTrampolineFuncIdx !== undefined) {
     // The shared callable classifier intentionally includes this carrier so
     // `typeof`, apply, and ordinary dynamic calls all see it as a function.
@@ -373,7 +380,7 @@ function syncedPropertyGetTrampolineBody(
     // read back from the shared global object more than once.
     for (const typeIdx of collectClosureBaseWrapperTypeIdxs(ctx)) {
       if (typeIdx === carrier.structTypeIdx) continue;
-      readBody.push(
+      crossingWraps.push(
         { op: "local.get", index: anyLocal },
         { op: "ref.test", typeIdx },
         {
@@ -403,7 +410,7 @@ function syncedPropertyGetTrampolineBody(
     { name: "key_any", type: { kind: "anyref" } as ValType },
   ];
   if (beforeIdx === undefined || afterIdx === undefined || activeGlobalIdx === undefined) {
-    return { locals, body: [...readBody, { op: "local.get", index: resultLocal }] };
+    return { locals, body: [...readBody, ...crossingWraps, { op: "local.get", index: resultLocal }] };
   }
   return {
     locals,
@@ -415,6 +422,7 @@ function syncedPropertyGetTrampolineBody(
         then: [
           { op: "call", funcIdx: beforeIdx },
           ...readBody,
+          ...crossingWraps,
           { op: "call", funcIdx: afterIdx },
           { op: "local.get", index: resultLocal },
         ],
@@ -1086,6 +1094,19 @@ export function fillRuntimeEvalCallablePropertyGetArm(ctx: CodegenContext): void
       },
     );
   }
+  // (#6651 A14) Once the carrier's bag holds an entry for the key (a `delete`
+  // tombstone or a redefinition), the bag answers, not the hard-coded arm below.
+  const bagOwnsIdx = carrierFnMetaEnabled(ctx) ? ctx.funcMap.get(FNINST_BAG_OWNS) : undefined;
+  const bagFree = (): Instr[] =>
+    bagOwnsIdx === undefined
+      ? []
+      : [
+          { op: "local.get", index: 0 },
+          { op: "local.get", index: 1 },
+          { op: "call", funcIdx: bagOwnsIdx },
+          { op: "i32.eqz" },
+          { op: "i32.and" },
+        ];
   for (const name of ["__hasOwnProperty", "__object_hasOwn"]) {
     const hasOwn = ctx.mod.functions.find((candidate) => candidate.name === name);
     if (!hasOwn) continue;
@@ -1139,12 +1160,14 @@ export function fillRuntimeEvalCallablePropertyGetArm(ctx: CodegenContext): void
                 blockType: { kind: "empty" },
                 then: [
                   ...keyEquals("name"),
+                  ...bagFree(),
                   {
                     op: "if",
                     blockType: { kind: "empty" },
                     then: [{ op: "i32.const", value: 1 }, { op: "return" }],
                   },
                   ...keyEquals("length"),
+                  ...bagFree(),
                   {
                     op: "if",
                     blockType: { kind: "empty" },
@@ -1158,6 +1181,7 @@ export function fillRuntimeEvalCallablePropertyGetArm(ctx: CodegenContext): void
       },
     );
   }
+  fillRuntimeEvalCarrierFnMeta(ctx, carrier); // (#6651 A14) descriptor + delete for `length`/`name`
 }
 
 /** Replace an interpreted closure externref on the stack with a caller-owned

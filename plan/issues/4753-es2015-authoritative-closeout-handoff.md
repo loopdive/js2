@@ -1,7 +1,7 @@
 ---
 id: 4753
 title: "ES2015 authoritative Test262 close-out handoff"
-status: in_progress
+status: in-progress
 created: 2026-08-26
 updated: 2026-08-26
 priority: high

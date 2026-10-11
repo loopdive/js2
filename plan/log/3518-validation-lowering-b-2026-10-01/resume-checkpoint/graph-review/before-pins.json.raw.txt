@@ -1,0 +1,146 @@
+[
+  {
+    "path": "src/ir/identity.ts",
+    "bytes": 61452,
+    "sha256": "ac9bcf913f1bbe4358f020307b3fd25b47c0fac26be88dfde449ba1d33694e44",
+    "gitBlob": "4a47d555bb511e921e2e9fd70902fa9275d3329a"
+  },
+  {
+    "path": "src/ir/prepared-component-dependencies.ts",
+    "bytes": 74563,
+    "sha256": "0ea7a1b7d7ce5bf0a035d8b3a4c9c5a65aabd841ddd3c7a7c10bf82b11c9b8a7",
+    "gitBlob": "c75052c6c51a824bc1ad0af99155271fb4d30480"
+  },
+  {
+    "path": "src/ir/program/input-contracts.ts",
+    "bytes": 2375,
+    "sha256": "755022df130534f4ddeb0dab4eaebd50a5a1f9790bbc9a98d2e3d74e29e65fe7",
+    "gitBlob": "ae84ebb03ddd7461cf887d1028d558140ecba156"
+  },
+  {
+    "path": "src/ir/program/prepared-contracts.ts",
+    "bytes": 4843,
+    "sha256": "889bedc1c23fb8e26db609634ce0a0137da73a9cc85f636b810a86a396173225",
+    "gitBlob": "e8443bbd780aff5284f322d89748b8de691babe3"
+  },
+  {
+    "path": "src/shared/contracts/ir-identity.ts",
+    "bytes": 2741,
+    "sha256": "ef9427c37f81455e06b81cf4f2599601d50e80f0d83abcacda447c9048fa4d0f",
+    "gitBlob": "07f882159a6e688c1ed30c2965a36699d21a0b85"
+  },
+  {
+    "path": "src/shared/contracts/identity-values.ts",
+    "bytes": 1208,
+    "sha256": "df20402d646264c0341a16a0c49bac2db4bdb38b5ac3e3b1e7ab7ef5a17f2412",
+    "gitBlob": "b5dcede80a8be81b35e1442f2229a849cb785931"
+  },
+  {
+    "path": "src/ir/identity-values.ts",
+    "bytes": 312,
+    "sha256": "3f38d0923826ffa5e3114612a21c7e4c8f4d9c0d3e51c0826e4bc174877acd93",
+    "gitBlob": "ce78e415149dfff0cb447c2b97034f3b819ead23"
+  },
+  {
+    "path": "src/shared/contracts/ir-unit-inventory.ts",
+    "bytes": 4708,
+    "sha256": "f6f253cefa3b4618bd5f2daf2555b6c0d734a715f2dd44a30a83921c0d9b6496",
+    "gitBlob": "e7f088edffda5ef76b726b6786341e5bcc744078"
+  },
+  {
+    "path": "src/ir/program/abi-lookup.ts",
+    "bytes": 1112,
+    "sha256": "f461b6ed08cfd89e6efec74bddd3f6857e92bc0ab3bea354836292587d04facf",
+    "gitBlob": "a677bd2379ee5ad2439668fec0589ce01d8b13b0"
+  },
+  {
+    "path": "src/ir/program/runtime-support.ts",
+    "bytes": 14807,
+    "sha256": "da7e458acb00449fc57e2e6cace2eea5bcd9f781bc63c93baa29e810d537b1f9",
+    "gitBlob": "f92a1ef2653a66dedb9430371ce83d506a32befb"
+  },
+  {
+    "path": "src/ir/program/formatter-support.ts",
+    "bytes": 2489,
+    "sha256": "e6528c00040027687b3fb3cb887500535f789e14b7914599c168f6a73fc600bf",
+    "gitBlob": "112d4fb48c4556d1e87b9afe6c1ec95709e114e7"
+  },
+  {
+    "path": "src/ir/program/errors.ts",
+    "bytes": 1117,
+    "sha256": "b64c58e9ed9e870aa1fa8b219e413b786b66c6cdf4586adac78a5894fbce5907",
+    "gitBlob": "079dbd626af8dcc207201552095501ba0fd622f1"
+  },
+  {
+    "path": "src/ir/core/types.ts",
+    "bytes": 32296,
+    "sha256": "58d3795e4f38002798fbdb93c7599f74cb422555ba0ed84f160a51aec52543a2",
+    "gitBlob": "db0b740a300009d035b7af28377bf0333e023105"
+  },
+  {
+    "path": "src/ir/program/input.ts",
+    "bytes": 6763,
+    "sha256": "3c9da679634f7fcb8fee9a8e5664cc752ee1e6a370148d4d375e56f6462afbda",
+    "gitBlob": "07e2f9c4ec8b24f94028f76ba0ac7daebd963fb7"
+  },
+  {
+    "path": "src/wasm/physical/function-handles.ts",
+    "bytes": 4317,
+    "sha256": "c6a82f897b8fa6c755b68129926e2deb9b6e885a25ecd2e253a444d0bcb5193f",
+    "gitBlob": "e4f75d1b6faba7d320b5919520fca765622fe17d"
+  },
+  {
+    "path": "src/wasm/model/instructions.ts",
+    "bytes": 14904,
+    "sha256": "b305b96583e473272f26032cd1e4ad4653a32d4f56db74df50dac7f1c2461b6d",
+    "gitBlob": "699c7b386f529b6017659a2f4b0f3c5671235969"
+  },
+  {
+    "path": "src/wasm/model/module-records.ts",
+    "bytes": 3867,
+    "sha256": "0de6972cbc506dc29a04119fed1efbf9a4b84e4219a52363c120e0130364ae75",
+    "gitBlob": "c700df20e0e24aa54b0dd5d4a438773c22deb6f7"
+  },
+  {
+    "path": "tests/helpers/ir-program-pre-a-evolution.ts",
+    "bytes": 12656,
+    "sha256": "ccd9c748ad7d1c2b76d20cc414b07f94fed8cf80c014ef8a3012de8f4248d634",
+    "gitBlob": "5ea35c4a57ff66ee1ec4e6bb681dbd592891cb97"
+  },
+  {
+    "path": "tests/helpers/ir-program-pre-a-evolution.json",
+    "bytes": 17770,
+    "sha256": "76b82aab953cd10800aa3fabce9a6b96b6a8e6a1e98204a2ace117bca3e14909",
+    "gitBlob": "0d3b86d7b362ce5470c0d96d48cd44fe50e0a7b2"
+  },
+  {
+    "path": "tests/helpers/ir-ownership-evolution.ts",
+    "bytes": 7587,
+    "sha256": "7001d17e4f4ed676543ce16245e5e9474422ae503e64d304f789ca9d824e93af",
+    "gitBlob": "24447c4e9bbb1d8404d9ad67e1f4f0d2029d089b"
+  },
+  {
+    "path": "tests/issue-3518-program-data-contract-boundary.test.ts",
+    "bytes": 25359,
+    "sha256": "83b10069f7b32298705f779df2121bcea0064f28cc7dbe10e4d113c2d32dfda6",
+    "gitBlob": "1b3953ea03a75d507c888a99f81355cbaf1974d8"
+  },
+  {
+    "path": "tests/issue-3518-native-wasm-foundation.test.ts",
+    "bytes": 17429,
+    "sha256": "b93743bf4c75d79785a17834726f0822ba2bd0ca4f4fa110107fe3ca62805734",
+    "gitBlob": "7a6e38fd8c8b2b3edab610660299d1155fc4dd59"
+  },
+  {
+    "path": "tests/issue-3518-module-reservations.test.ts",
+    "bytes": 51290,
+    "sha256": "61906f5ab60352fbc9b8951ca1ab25a88635f858f256a3a5b5126ffb1d769848",
+    "gitBlob": "7b9e5e9252d5280f4d996a3732ec53fc647711cb"
+  },
+  {
+    "path": "plan/agent-context/3518-physical-module-completion-contract-2026-09-08.md",
+    "bytes": 14396,
+    "sha256": "35a4c21b7dece74f0faa574f21d571ca848801eb5bd46379a8771d690c7f7c6f",
+    "gitBlob": "7060f372d3ebe2afcbcc044c03f4ff9a4400cfe2"
+  }
+]

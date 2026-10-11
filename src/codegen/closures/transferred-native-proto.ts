@@ -2,7 +2,7 @@
 
 import type { Instr, ValType } from "../../ir/types.js";
 import type { CodegenContext } from "../context/types.js";
-import { BFN_ID_FIELD_IDX } from "../builtin-fn-meta.js";
+import { BFN_ID_FIELD_IDX, linkedSignatureGuard } from "../builtin-fn-meta.js"; // (#6651 V0) guard shared with every bfnid site
 import { buildClosureResultBoxing } from "./result-boxing.js";
 import { getArrTypeIdxFromVec } from "../registry/types.js";
 
@@ -130,6 +130,53 @@ export function collectTransferredNativeProtoReceivers(
   return entries;
 }
 
+/**
+ * (#6643) `1` when `local.get <fnLocal>` is one of THIS module's own
+ * transferred native-prototype method closures — i.e. a callee for which this
+ * module already has a DEDICATED local dispatch arm.
+ *
+ * It is the exact predicate {@link buildTransferredNativeProtoCallInstrs} uses
+ * to claim a value (`ref.test` on the per-(brand, member) meta subtype, then
+ * the `bfnid` exact-identity re-check, which is a MODULE-LOCAL type index and
+ * is therefore what makes this an ownership answer rather than a structural
+ * one). Sharing it is the point: a value this module would dispatch itself
+ * must never be handed to a linked peer instead.
+ *
+ * Returns `undefined` when there are no such closures, so the caller emits
+ * nothing and keeps whatever shape it has today.
+ */
+export function buildTransferredNativeProtoOwnedBitInstrs(
+  ctx: CodegenContext,
+  entries: readonly TransferredNativeReceiverEntry[],
+  fnLocal: number,
+): Instr[] | undefined {
+  if (entries.length === 0) return undefined;
+  const body: Instr[] = [{ op: "i32.const", value: 0 }];
+  for (const entry of entries) {
+    body.push(
+      { op: "local.get", index: fnLocal },
+      { op: "any.convert_extern" },
+      { op: "ref.test", typeIdx: entry.typeIdx },
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "i32" } },
+        then: [
+          { op: "local.get", index: fnLocal },
+          { op: "any.convert_extern" },
+          { op: "ref.cast", typeIdx: entry.typeIdx },
+          { op: "struct.get", typeIdx: entry.typeIdx, fieldIdx: BFN_ID_FIELD_IDX },
+          { op: "i32.const", value: entry.typeIdx },
+          { op: "i32.eq" },
+          ...linkedSignatureGuard(ctx, entry, [{ op: "local.get", index: fnLocal }, { op: "any.convert_extern" }]),
+        ],
+        else: [{ op: "i32.const", value: 0 }],
+      },
+      { op: "i32.or" },
+    );
+  }
+  return body;
+}
+
 export function resolveClosureBaseWrapperTypeIdx(
   ctx: CodegenContext,
   arity: number,
@@ -216,6 +263,7 @@ export function buildTransferredNativeProtoCallInstrs(
           { op: "struct.get", typeIdx: entry.typeIdx, fieldIdx: BFN_ID_FIELD_IDX },
           { op: "i32.const", value: entry.typeIdx },
           { op: "i32.eq" },
+          ...linkedSignatureGuard(ctx, entry, [{ op: "local.get", index: anyLocal }]),
           {
             op: "if",
             blockType: { kind: "empty" },
@@ -280,10 +328,33 @@ export function buildTransferredNativeProtoVariadicApplyInstrs(
       { op: "ref.test", typeIdx: vecTypeIdx },
     ];
     if (hasObjVec) {
+      // (#6643) The `$ObjVec` adoption below re-wraps the carrier's DATA array
+      // as this entry's own `arrTypeIdx` with a bare `ref.cast`. That cast is
+      // only sound when the two array types actually unify, so make the
+      // admission predicate ask — a `$ObjVec` whose data array is a different
+      // type must NOT be admitted, or the arm traps `illegal cast` instead of
+      // declining. Reached on the standalone LINK-CONSUMER lane, where the
+      // `%Function.prototype%.call` glue hands `__apply_closure` an `$ObjVec`
+      // it built itself: measured as an UNCATCHABLE trap for
+      // `<provider callable>.call(…)` (probe: `tests/issue-6643-*.test.ts`).
+      // Declining leaves the ordinary arity dispatch to answer, which is the
+      // behaviour every module that never reaches this arm already has.
       carrierCompatible.push(
         { op: "local.get", index: slots.argsLocal },
         { op: "any.convert_extern" },
         { op: "ref.test", typeIdx: slots.objVecTypeIdx! },
+        {
+          op: "if",
+          blockType: { kind: "val", type: { kind: "i32" } },
+          then: [
+            { op: "local.get", index: slots.argsLocal },
+            { op: "any.convert_extern" },
+            { op: "ref.cast", typeIdx: slots.objVecTypeIdx! },
+            { op: "struct.get", typeIdx: slots.objVecTypeIdx!, fieldIdx: 1 },
+            { op: "ref.test", typeIdx: arrTypeIdx },
+          ],
+          else: [{ op: "i32.const", value: 0 }],
+        },
         { op: "i32.or" },
       );
     }
@@ -332,6 +403,7 @@ export function buildTransferredNativeProtoVariadicApplyInstrs(
           { op: "struct.get", typeIdx: entry.typeIdx, fieldIdx: BFN_ID_FIELD_IDX },
           { op: "i32.const", value: entry.typeIdx },
           { op: "i32.eq" },
+          ...linkedSignatureGuard(ctx, entry, [{ op: "local.get", index: slots.anyLocal }]),
           {
             op: "if",
             blockType: { kind: "empty" },

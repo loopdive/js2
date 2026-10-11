@@ -1,0 +1,11 @@
+
+ RUN  v3.2.4 /private/tmp/js2-ir-source-contracts-integration-20261001
+
+ ✓ tests/issue-3518-program-ownership-runtime-seam.test.ts (22 tests) 245ms
+
+ Test Files  1 passed (1)
+      Tests  22 passed (22)
+   Start at  05:05:48
+   Duration  6.77s (transform 4.67s, setup 0ms, collect 6.37s, tests 245ms, environment 0ms, prepare 29ms)
+
+JSON report written to /private/tmp/js2-ir-source-contracts-integration-20261001/.tmp/contracts-integration/ownership.json

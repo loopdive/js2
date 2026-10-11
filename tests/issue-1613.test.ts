@@ -25,7 +25,7 @@ async function runTest(source: string): Promise<number | string> {
   }
   const imports = buildImports(r.imports, undefined, r.stringPool);
   const { instance } = await WebAssembly.instantiate(r.binary, imports);
-  if (imports.setExports) imports.setExports(instance.exports as Record<string, Function>);
+  if (imports.setInstance) imports.setInstance(instance);
   return (instance.exports as { test: () => number | string }).test();
 }
 

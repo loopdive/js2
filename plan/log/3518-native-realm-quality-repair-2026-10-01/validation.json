@@ -1,0 +1,2893 @@
+{
+  "base": "e4737c9f1dcb632c56f3cc3a31e3ad47cd7f848e",
+  "fullGoal": "complete ir migration; legacy kept until all IR behavior is implemented, tested and equal",
+  "validation": {
+    "total": 392,
+    "passed": 392,
+    "failed": 0,
+    "skipped": 0,
+    "tests": [
+      {
+        "file": "issue-3518-module-reservations.test.ts",
+        "rows": [
+          {
+            "name": "retains all four collection brands after importing the low-level context first",
+            "status": "passed",
+            "durationMs": 6.3288330000000315
+          },
+          {
+            "name": "explicit-rec grouping admission checks earlier params type-definition refs in flattened coordinates",
+            "status": "passed",
+            "durationMs": 1.4142080000001442
+          },
+          {
+            "name": "explicit-rec grouping admission checks earlier results type-definition refs in flattened coordinates",
+            "status": "passed",
+            "durationMs": 0.2636250000000473
+          },
+          {
+            "name": "explicit-rec grouping admission checks earlier field type-definition refs in flattened coordinates",
+            "status": "passed",
+            "durationMs": 0.2523750000000291
+          },
+          {
+            "name": "explicit-rec grouping admission checks earlier array type-definition refs in flattened coordinates",
+            "status": "passed",
+            "durationMs": 0.3058329999998932
+          },
+          {
+            "name": "explicit-rec grouping admission checks earlier struct-super type-definition refs in flattened coordinates",
+            "status": "passed",
+            "durationMs": 0.24108400000000074
+          },
+          {
+            "name": "explicit-rec grouping admission checks earlier sub-super type-definition refs in flattened coordinates",
+            "status": "passed",
+            "durationMs": 0.23050000000012005
+          },
+          {
+            "name": "explicit-rec grouping admission checks at-first params type-definition refs in flattened coordinates",
+            "status": "passed",
+            "durationMs": 1.244333000000097
+          },
+          {
+            "name": "explicit-rec grouping admission checks at-first results type-definition refs in flattened coordinates",
+            "status": "passed",
+            "durationMs": 0.313666000000012
+          },
+          {
+            "name": "explicit-rec grouping admission checks at-first field type-definition refs in flattened coordinates",
+            "status": "passed",
+            "durationMs": 0.3185840000001008
+          },
+          {
+            "name": "explicit-rec grouping admission checks at-first array type-definition refs in flattened coordinates",
+            "status": "passed",
+            "durationMs": 0.3064160000001266
+          },
+          {
+            "name": "explicit-rec grouping admission checks at-first struct-super type-definition refs in flattened coordinates",
+            "status": "passed",
+            "durationMs": 0.15895899999986796
+          },
+          {
+            "name": "explicit-rec grouping admission checks at-first sub-super type-definition refs in flattened coordinates",
+            "status": "passed",
+            "durationMs": 0.1534999999998945
+          },
+          {
+            "name": "explicit-rec grouping admission checks internal-forward params type-definition refs in flattened coordinates",
+            "status": "passed",
+            "durationMs": 0.23662500000000364
+          },
+          {
+            "name": "explicit-rec grouping admission checks internal-forward results type-definition refs in flattened coordinates",
+            "status": "passed",
+            "durationMs": 0.20041700000001583
+          },
+          {
+            "name": "explicit-rec grouping admission checks internal-forward field type-definition refs in flattened coordinates",
+            "status": "passed",
+            "durationMs": 0.209041999999954
+          },
+          {
+            "name": "explicit-rec grouping admission checks internal-forward array type-definition refs in flattened coordinates",
+            "status": "passed",
+            "durationMs": 0.17125000000010004
+          },
+          {
+            "name": "explicit-rec grouping admission checks internal-forward struct-super type-definition refs in flattened coordinates",
+            "status": "passed",
+            "durationMs": 0.1434999999999036
+          },
+          {
+            "name": "explicit-rec grouping admission checks internal-forward sub-super type-definition refs in flattened coordinates",
+            "status": "passed",
+            "durationMs": 0.13650000000006912
+          },
+          {
+            "name": "explicit-rec grouping admission checks trailing-forward params type-definition refs in flattened coordinates",
+            "status": "passed",
+            "durationMs": 0.21970899999996618
+          },
+          {
+            "name": "explicit-rec grouping admission checks trailing-forward results type-definition refs in flattened coordinates",
+            "status": "passed",
+            "durationMs": 0.2291659999998501
+          },
+          {
+            "name": "explicit-rec grouping admission checks trailing-forward field type-definition refs in flattened coordinates",
+            "status": "passed",
+            "durationMs": 0.3313339999999698
+          },
+          {
+            "name": "explicit-rec grouping admission checks trailing-forward array type-definition refs in flattened coordinates",
+            "status": "passed",
+            "durationMs": 0.256874999999809
+          },
+          {
+            "name": "explicit-rec grouping admission checks trailing-forward struct-super type-definition refs in flattened coordinates",
+            "status": "passed",
+            "durationMs": 0.21908400000006623
+          },
+          {
+            "name": "explicit-rec grouping admission checks trailing-forward sub-super type-definition refs in flattened coordinates",
+            "status": "passed",
+            "durationMs": 0.19029199999999946
+          },
+          {
+            "name": "explicit-rec grouping admission preserves params refs solely into the preceding flat prefix and flattened body/local refs",
+            "status": "passed",
+            "durationMs": 0.67837499999996
+          },
+          {
+            "name": "explicit-rec grouping admission preserves results refs solely into the preceding flat prefix and flattened body/local refs",
+            "status": "passed",
+            "durationMs": 0.1522500000000946
+          },
+          {
+            "name": "explicit-rec grouping admission preserves field refs solely into the preceding flat prefix and flattened body/local refs",
+            "status": "passed",
+            "durationMs": 0.1466250000000855
+          },
+          {
+            "name": "explicit-rec grouping admission preserves array refs solely into the preceding flat prefix and flattened body/local refs",
+            "status": "passed",
+            "durationMs": 0.13745799999992414
+          },
+          {
+            "name": "explicit-rec grouping admission preserves struct-super refs solely into the preceding flat prefix and flattened body/local refs",
+            "status": "passed",
+            "durationMs": 0.16470899999990252
+          },
+          {
+            "name": "explicit-rec grouping admission preserves sub-super refs solely into the preceding flat prefix and flattened body/local refs",
+            "status": "passed",
+            "durationMs": 0.18529199999989032
+          },
+          {
+            "name": "explicit-rec grouping admission emits High's no-prefix rec([A ref1, B]) plus function counterexample",
+            "status": "passed",
+            "durationMs": 0.25545800000008967
+          },
+          {
+            "name": "review controls \u2014 exact emitter-affecting state rejects a sparse hole in exports",
+            "status": "passed",
+            "durationMs": 0.2333329999999023
+          },
+          {
+            "name": "review controls \u2014 exact emitter-affecting state rejects a prototype-backed hole in exports",
+            "status": "passed",
+            "durationMs": 0.12733299999990777
+          },
+          {
+            "name": "review controls \u2014 exact emitter-affecting state rejects a sparse hole in declaredFuncRefs",
+            "status": "passed",
+            "durationMs": 0.12141699999983757
+          },
+          {
+            "name": "review controls \u2014 exact emitter-affecting state rejects a prototype-backed hole in declaredFuncRefs",
+            "status": "passed",
+            "durationMs": 0.1220419999999649
+          },
+          {
+            "name": "review controls \u2014 exact emitter-affecting state rejects changed NaN payload bits that the actual encoder distinguishes",
+            "status": "passed",
+            "durationMs": 0.2609580000000733
+          },
+          {
+            "name": "review controls \u2014 exact emitter-affecting state accepts an unchanged payload-bearing NaN snapshot",
+            "status": "passed",
+            "durationMs": 0.08416699999997945
+          },
+          {
+            "name": "review controls \u2014 exact emitter-affecting state indexes rec members and subsequent interned signatures in the emitted index space",
+            "status": "passed",
+            "durationMs": 0.5726659999997992
+          },
+          {
+            "name": "review controls \u2014 exact emitter-affecting state counts sub as one and resolves its actual inner record rather than the wrapper",
+            "status": "passed",
+            "durationMs": 0.2051249999999527
+          },
+          {
+            "name": "review controls \u2014 exact emitter-affecting state does not alias two interned signatures after multi-member rec groups",
+            "status": "passed",
+            "durationMs": 0.28483300000016243
+          },
+          {
+            "name": "review controls \u2014 exact emitter-affecting state uses the flattened member kind for instruction validation",
+            "status": "passed",
+            "durationMs": 0.13404100000002472
+          },
+          {
+            "name": "review controls \u2014 exact emitter-affecting state reserves the exact canonical group descriptor before its future members and emits it",
+            "status": "passed",
+            "durationMs": 0.23183300000005147
+          },
+          {
+            "name": "review controls \u2014 exact emitter-affecting state supports explicit rec wrappers after an independently retained flat canonical group",
+            "status": "passed",
+            "durationMs": 0.21304200000008677
+          },
+          {
+            "name": "review controls \u2014 exact emitter-affecting state retains the canonical group after an explicit group in flattened coordinates",
+            "status": "passed",
+            "durationMs": 0.300707999999986
+          },
+          {
+            "name": "review controls \u2014 exact emitter-affecting state rejects reserving canonical group add-undefined",
+            "status": "passed",
+            "durationMs": 0.09462500000017826
+          },
+          {
+            "name": "review controls \u2014 exact emitter-affecting state rejects reserving canonical group delete-undefined",
+            "status": "passed",
+            "durationMs": 0.06408299999998235
+          },
+          {
+            "name": "review controls \u2014 exact emitter-affecting state rejects reserving canonical group substitute",
+            "status": "passed",
+            "durationMs": 0.05945800000017698
+          },
+          {
+            "name": "review controls \u2014 exact emitter-affecting state rejects reserving canonical group content",
+            "status": "passed",
+            "durationMs": 0.057500000000118234
+          },
+          {
+            "name": "review controls \u2014 exact emitter-affecting state rejects filling canonical group add-undefined",
+            "status": "passed",
+            "durationMs": 0.04937500000005457
+          },
+          {
+            "name": "review controls \u2014 exact emitter-affecting state rejects filling canonical group delete-undefined",
+            "status": "passed",
+            "durationMs": 0.056707999999844105
+          },
+          {
+            "name": "review controls \u2014 exact emitter-affecting state rejects filling canonical group substitute",
+            "status": "passed",
+            "durationMs": 0.05583299999989322
+          },
+          {
+            "name": "review controls \u2014 exact emitter-affecting state rejects filling canonical group content",
+            "status": "passed",
+            "durationMs": 0.10054100000002109
+          },
+          {
+            "name": "review controls \u2014 exact emitter-affecting state rejects canonical group duplicate",
+            "status": "passed",
+            "durationMs": 0.0912500000001728
+          },
+          {
+            "name": "review controls \u2014 exact emitter-affecting state rejects canonical group late",
+            "status": "passed",
+            "durationMs": 0.07933299999990595
+          },
+          {
+            "name": "review controls \u2014 exact emitter-affecting state rejects canonical group missing-member",
+            "status": "passed",
+            "durationMs": 0.07458400000018628
+          },
+          {
+            "name": "review controls \u2014 exact emitter-affecting state rejects canonical group adjacent-merge",
+            "status": "passed",
+            "durationMs": 0.09962500000006003
+          },
+          {
+            "name": "review controls \u2014 exact emitter-affecting state accepts a defined body ref.func via declarative after fills",
+            "status": "passed",
+            "durationMs": 0.30845799999997325
+          },
+          {
+            "name": "review controls \u2014 exact emitter-affecting state accepts a imported body ref.func via declarative after fills",
+            "status": "passed",
+            "durationMs": 0.22375000000010914
+          },
+          {
+            "name": "review controls \u2014 exact emitter-affecting state accepts a defined body ref.func via element after fills",
+            "status": "passed",
+            "durationMs": 0.2610420000000886
+          },
+          {
+            "name": "review controls \u2014 exact emitter-affecting state accepts a imported body ref.func via element after fills",
+            "status": "passed",
+            "durationMs": 0.18424999999979264
+          },
+          {
+            "name": "review controls \u2014 exact emitter-affecting state accepts a defined body ref.func via offset after fills",
+            "status": "passed",
+            "durationMs": 0.1388329999999769
+          },
+          {
+            "name": "review controls \u2014 exact emitter-affecting state accepts a imported body ref.func via offset after fills",
+            "status": "passed",
+            "durationMs": 0.1453750000000582
+          },
+          {
+            "name": "review controls \u2014 exact emitter-affecting state accepts a defined body ref.func via global after fills",
+            "status": "passed",
+            "durationMs": 0.23533399999996618
+          },
+          {
+            "name": "review controls \u2014 exact emitter-affecting state accepts a imported body ref.func via global after fills",
+            "status": "passed",
+            "durationMs": 0.15012499999988904
+          },
+          {
+            "name": "review controls \u2014 exact emitter-affecting state accepts a defined body ref.func via export after fills",
+            "status": "passed",
+            "durationMs": 0.2714579999999387
+          },
+          {
+            "name": "review controls \u2014 exact emitter-affecting state accepts a imported body ref.func via export after fills",
+            "status": "passed",
+            "durationMs": 0.24245799999994233
+          },
+          {
+            "name": "review controls \u2014 exact emitter-affecting state rejects undeclared ref.func in body, even if target is startup",
+            "status": "passed",
+            "durationMs": 0.2942920000000413
+          },
+          {
+            "name": "review controls \u2014 exact emitter-affecting state rejects undeclared ref.func in block, even if target is startup",
+            "status": "passed",
+            "durationMs": 0.17899999999985994
+          },
+          {
+            "name": "review controls \u2014 exact emitter-affecting state rejects undeclared ref.func in loop, even if target is startup",
+            "status": "passed",
+            "durationMs": 0.1544170000001941
+          },
+          {
+            "name": "review controls \u2014 exact emitter-affecting state rejects undeclared ref.func in then, even if target is startup",
+            "status": "passed",
+            "durationMs": 0.17079100000000835
+          },
+          {
+            "name": "review controls \u2014 exact emitter-affecting state rejects undeclared ref.func in else, even if target is startup",
+            "status": "passed",
+            "durationMs": 0.17366600000013932
+          },
+          {
+            "name": "review controls \u2014 exact emitter-affecting state rejects undeclared ref.func in catch, even if target is startup",
+            "status": "passed",
+            "durationMs": 0.17487500000015643
+          },
+          {
+            "name": "review controls \u2014 exact emitter-affecting state rejects undeclared ref.func in catchAll, even if target is startup",
+            "status": "passed",
+            "durationMs": 0.20241699999996854
+          },
+          {
+            "name": "review controls \u2014 exact emitter-affecting state rejects undeclared ref.func in try_table, even if target is startup",
+            "status": "passed",
+            "durationMs": 0.15562500000010004
+          },
+          {
+            "name": "physical record relocation \u2014 fifteen complete declarations pins mandatory canonical declarations, order, members and documentation",
+            "status": "passed",
+            "durationMs": 10.051000000000158
+          },
+          {
+            "name": "physical record relocation \u2014 fifteen complete declarations requires exactly the explicit compatibility exports and no local replacement",
+            "status": "passed",
+            "durationMs": 3.309792000000016
+          },
+          {
+            "name": "physical record relocation \u2014 fifteen complete declarations retains all fifteen type identities",
+            "status": "passed",
+            "durationMs": 0.165958000000046
+          },
+          {
+            "name": "physical record relocation \u2014 fifteen complete declarations keeps the new kernel's dependencies entirely inside canonical Wasm modules",
+            "status": "passed",
+            "durationMs": 14.629167000000052
+          },
+          {
+            "name": "shared existing allocator authority resolves mint order independently of push order using the one ordinal array",
+            "status": "passed",
+            "durationMs": 0.23458300000015697
+          },
+          {
+            "name": "shared existing allocator authority retains legacy trace failure ordering: ordinal commit, trace, then append",
+            "status": "passed",
+            "durationMs": 3.8264580000000024
+          },
+          {
+            "name": "shared existing allocator authority shares function-type key/interner, cache-hit naming and exact descriptor references",
+            "status": "passed",
+            "durationMs": 0.4710410000000138
+          },
+          {
+            "name": "shared existing allocator authority shares the exact import append while legacy policy/counters stay authoritative",
+            "status": "passed",
+            "durationMs": 0.44612499999993815
+          },
+          {
+            "name": "module completion lifecycle and exact locators keeps tag/import/global/function/startup order and distinct instruction/ABI indices",
+            "status": "passed",
+            "durationMs": 0.6010000000001128
+          },
+          {
+            "name": "module completion lifecycle and exact locators counts real table/element/memory/data/string/reference objects including passive data",
+            "status": "passed",
+            "durationMs": 0.4475410000000011
+          },
+          {
+            "name": "module completion lifecycle and exact locators fills exact objects in place and treats an explicitly completed empty void body as complete",
+            "status": "passed",
+            "durationMs": 0.1173750000000382
+          },
+          {
+            "name": "module completion lifecycle and exact locators rejects an unfilled empty placeholder",
+            "status": "passed",
+            "durationMs": 0.10791700000004312
+          },
+          {
+            "name": "module completion lifecycle and exact locators rejects an unfilled valid-looking nonempty placeholder",
+            "status": "passed",
+            "durationMs": 0.07779200000004494
+          },
+          {
+            "name": "module completion lifecycle and exact locators rejects a duplicate function fill",
+            "status": "passed",
+            "durationMs": 0.09333300000002964
+          },
+          {
+            "name": "module completion lifecycle and exact locators rejects missing global completion",
+            "status": "passed",
+            "durationMs": 0.06862499999988358
+          },
+          {
+            "name": "module completion lifecycle and exact locators rejects duplicate global completion",
+            "status": "passed",
+            "durationMs": 0.055541999999832115
+          },
+          {
+            "name": "module completion lifecycle and exact locators rejects empty global completion",
+            "status": "passed",
+            "durationMs": 0.056125000000065484
+          },
+          {
+            "name": "module completion lifecycle and exact locators rejects reserving function population substitute",
+            "status": "passed",
+            "durationMs": 0.07387500000004366
+          },
+          {
+            "name": "module completion lifecycle and exact locators rejects reserving function population reorder",
+            "status": "passed",
+            "durationMs": 0.05075000000010732
+          },
+          {
+            "name": "module completion lifecycle and exact locators rejects reserving function population append",
+            "status": "passed",
+            "durationMs": 0.05400000000008731
+          },
+          {
+            "name": "module completion lifecycle and exact locators rejects reserving function population replace-array",
+            "status": "passed",
+            "durationMs": 0.04899999999997817
+          },
+          {
+            "name": "module completion lifecycle and exact locators rejects filling function population substitute",
+            "status": "passed",
+            "durationMs": 0.05424999999991087
+          },
+          {
+            "name": "module completion lifecycle and exact locators rejects filling function population reorder",
+            "status": "passed",
+            "durationMs": 0.11204100000009021
+          },
+          {
+            "name": "module completion lifecycle and exact locators rejects filling function population append",
+            "status": "passed",
+            "durationMs": 0.06029199999989032
+          },
+          {
+            "name": "module completion lifecycle and exact locators rejects filling function population replace-array",
+            "status": "passed",
+            "durationMs": 0.051624999999830834
+          },
+          {
+            "name": "module completion lifecycle and exact locators rejects post-freeze ordinal mutation",
+            "status": "passed",
+            "durationMs": 0.09699999999997999
+          },
+          {
+            "name": "module completion lifecycle and exact locators rejects post-freeze type mutation",
+            "status": "passed",
+            "durationMs": 0.07208400000013171
+          },
+          {
+            "name": "module completion lifecycle and exact locators rejects post-freeze signature-brand mutation",
+            "status": "passed",
+            "durationMs": 0.0597499999998945
+          },
+          {
+            "name": "module completion lifecycle and exact locators rejects post-freeze export mutation",
+            "status": "passed",
+            "durationMs": 0.04912500000000364
+          },
+          {
+            "name": "module completion lifecycle and exact locators rejects post-freeze start mutation",
+            "status": "passed",
+            "durationMs": 0.04662499999994907
+          },
+          {
+            "name": "module completion lifecycle and exact locators rejects post-freeze completed-body mutation",
+            "status": "passed",
+            "durationMs": 0.06349999999997635
+          },
+          {
+            "name": "module completion lifecycle and exact locators rejects post-freeze completed-locals mutation",
+            "status": "passed",
+            "durationMs": 0.06120899999996254
+          },
+          {
+            "name": "module completion lifecycle and exact locators rejects a duplicate identity, not just a duplicate display name",
+            "status": "passed",
+            "durationMs": 0.0621249999999236
+          },
+          {
+            "name": "module completion lifecycle and exact locators rejects reserving the same physical object under two distinct identities",
+            "status": "passed",
+            "durationMs": 0.051333000000113316
+          },
+          {
+            "name": "module completion lifecycle and exact locators retains the optional start field's exact presence even before publication",
+            "status": "passed",
+            "durationMs": 0.055041999999957625
+          },
+          {
+            "name": "module completion lifecycle and exact locators rejects negative zero mutation inside the exact completed instruction buffer",
+            "status": "passed",
+            "durationMs": 0.08624999999983629
+          },
+          {
+            "name": "module completion lifecycle and exact locators accepts an unchanged negative zero instruction snapshot",
+            "status": "passed",
+            "durationMs": 0.06654200000002675
+          },
+          {
+            "name": "module completion lifecycle and exact locators rejects non-finite mutation inside the exact completed instruction buffer",
+            "status": "passed",
+            "durationMs": 0.06433300000003328
+          },
+          {
+            "name": "module completion lifecycle and exact locators accepts an unchanged non-finite instruction snapshot",
+            "status": "passed",
+            "durationMs": 0.04587500000002365
+          },
+          {
+            "name": "module completion lifecycle and exact locators rejects delete of a present-undefined optional descriptor field",
+            "status": "passed",
+            "durationMs": 0.07187500000009095
+          },
+          {
+            "name": "module completion lifecycle and exact locators rejects add of a present-undefined optional descriptor field",
+            "status": "passed",
+            "durationMs": 0.05233399999997346
+          },
+          {
+            "name": "module completion lifecycle and exact locators accepts unchanged present-undefined optional fields and distinguishes bigint instruction values",
+            "status": "passed",
+            "durationMs": 0.0648750000000291
+          },
+          {
+            "name": "module completion lifecycle and exact locators rejects physical index lookup before freeze",
+            "status": "passed",
+            "durationMs": 0.046250000000100044
+          },
+          {
+            "name": "module completion lifecycle and exact locators rejects a foreign or cloned token despite equal names, keys and handles",
+            "status": "passed",
+            "durationMs": 0.10349999999993997
+          },
+          {
+            "name": "module completion lifecycle and exact locators rejects a wrong-kind owned token",
+            "status": "passed",
+            "durationMs": 0.05858299999999872
+          },
+          {
+            "name": "module completion lifecycle and exact locators rejects new imports after defined globals without changing their positional regime",
+            "status": "passed",
+            "durationMs": 0.04675000000020191
+          },
+          {
+            "name": "module completion lifecycle and exact locators rejects post-freeze function allocation",
+            "status": "passed",
+            "durationMs": 0.06979099999989558
+          },
+          {
+            "name": "module completion lifecycle and exact locators rejects post-freeze global allocation",
+            "status": "passed",
+            "durationMs": 0.04358300000012605
+          },
+          {
+            "name": "module completion lifecycle and exact locators rejects post-freeze type allocation",
+            "status": "passed",
+            "durationMs": 0.045583000000078755
+          },
+          {
+            "name": "module completion lifecycle and exact locators rejects post-freeze tag allocation",
+            "status": "passed",
+            "durationMs": 0.03749999999990905
+          },
+          {
+            "name": "module completion lifecycle and exact locators rejects post-freeze table allocation",
+            "status": "passed",
+            "durationMs": 0.04520800000000236
+          },
+          {
+            "name": "module completion lifecycle and exact locators rejects post-freeze memory allocation",
+            "status": "passed",
+            "durationMs": 0.042374999999992724
+          },
+          {
+            "name": "module completion lifecycle and exact locators rejects post-freeze string allocation",
+            "status": "passed",
+            "durationMs": 0.04037500000004002
+          },
+          {
+            "name": "module completion lifecycle and exact locators rejects post-freeze data allocation",
+            "status": "passed",
+            "durationMs": 0.0418329999999969
+          },
+          {
+            "name": "module completion lifecycle and exact locators permits only an already reserved exact signature after freeze",
+            "status": "passed",
+            "durationMs": 0.11675000000013824
+          },
+          {
+            "name": "module completion lifecycle and exact locators distinguishes the complete signature [{\"kind\":\"ref\",\"typeIdx\":0},{\"kind\":\"ref\",\"typeIdx\":1}]",
+            "status": "passed",
+            "durationMs": 0.17479099999991377
+          },
+          {
+            "name": "module completion lifecycle and exact locators distinguishes the complete signature [{\"kind\":\"ref\",\"typeIdx\":0},{\"kind\":\"ref_null\",\"typeIdx\":0}]",
+            "status": "passed",
+            "durationMs": 0.14037499999994907
+          },
+          {
+            "name": "module completion lifecycle and exact locators distinguishes the complete signature [{\"kind\":\"i32\"},{\"kind\":\"i32\",\"boolean\":true}]",
+            "status": "passed",
+            "durationMs": 0.13049999999998363
+          },
+          {
+            "name": "module completion lifecycle and exact locators distinguishes the complete signature [{\"kind\":\"i32\"},{\"kind\":\"i32\",\"symbol\":true}]",
+            "status": "passed",
+            "durationMs": 0.18241699999998673
+          },
+          {
+            "name": "module completion lifecycle and exact locators distinguishes the complete signature [{\"kind\":\"i64\"},{\"kind\":\"i64\",\"bigint\":true}]",
+            "status": "passed",
+            "durationMs": 0.14258300000005875
+          },
+          {
+            "name": "module completion lifecycle and exact locators distinguishes the complete signature [{\"kind\":\"f64\"},{\"kind\":\"f64\",\"undefSentinel\":true}]",
+            "status": "passed",
+            "durationMs": 0.1290000000001328
+          },
+          {
+            "name": "module completion lifecycle and exact locators rejects a missing reference-type dependency at freeze",
+            "status": "passed",
+            "durationMs": 0.0965000000001055
+          },
+          {
+            "name": "module completion lifecycle and exact locators rejects unresolved/wrong-kind body references [{\"op\":\"call\",\"funcIdx\":2097156}]",
+            "status": "passed",
+            "durationMs": 0.11670900000012807
+          },
+          {
+            "name": "module completion lifecycle and exact locators rejects unresolved/wrong-kind body references [{\"op\":\"call\",\"funcIdx\":9}]",
+            "status": "passed",
+            "durationMs": 0.08474999999998545
+          },
+          {
+            "name": "module completion lifecycle and exact locators rejects unresolved/wrong-kind body references [{\"op\":\"global.get\",\"index\":9}]",
+            "status": "passed",
+            "durationMs": 0.0626670000001468
+          },
+          {
+            "name": "module completion lifecycle and exact locators rejects unresolved/wrong-kind body references [{\"op\":\"ref.cast\",\"typeIdx\":9}]",
+            "status": "passed",
+            "durationMs": 0.05691700000011224
+          },
+          {
+            "name": "module completion lifecycle and exact locators rejects unresolved/wrong-kind body references [{\"op\":\"struct.new\",\"typeIdx\":0}]",
+            "status": "passed",
+            "durationMs": 0.06337500000017826
+          },
+          {
+            "name": "module completion lifecycle and exact locators rejects unresolved/wrong-kind body references [{\"op\":\"call_indirect\",\"typeIdx\":0,\"tableIdx\":9}]",
+            "status": "passed",
+            "durationMs": 0.06016700000009223
+          },
+          {
+            "name": "module completion lifecycle and exact locators rejects unresolved/wrong-kind body references [{\"op\":\"throw\",\"tagIdx\":9}]",
+            "status": "passed",
+            "durationMs": 0.060292000000117696
+          },
+          {
+            "name": "module completion lifecycle and exact locators rejects unresolved/wrong-kind body references [{\"op\":\"memory.init\",\"dataIdx\":9}]",
+            "status": "passed",
+            "durationMs": 0.06312500000012733
+          },
+          {
+            "name": "module completion lifecycle and exact locators rejects unresolved/wrong-kind body references [{\"op\":\"if\",\"blockType\":{\"kind\":\"empty\"},\"then\":[{\"op\":\"global.get\",\"index\":9}]}]",
+            "status": "passed",
+            "durationMs": 0.06254199999989396
+          },
+          {
+            "name": "module completion lifecycle and exact locators rejects export collision without toggling the actual function exported bit",
+            "status": "passed",
+            "durationMs": 0.10112499999991087
+          },
+          {
+            "name": "module completion lifecycle and exact locators rejects duplicate startup and incompatible startup signatures",
+            "status": "passed",
+            "durationMs": 0.11512500000003456
+          },
+          {
+            "name": "module completion lifecycle and exact locators rejects an existing unregistered population at transaction creation",
+            "status": "passed",
+            "durationMs": 0.0439169999999649
+          }
+        ]
+      },
+      {
+        "file": "issue-3518-native-authentication-performance.test.ts",
+        "rows": [
+          {
+            "name": "collection-slot caching preserves fresh data authentication detects value changes after repeatedly comparing the same object identities",
+            "status": "passed",
+            "durationMs": 0.8288340000000005
+          },
+          {
+            "name": "collection-slot caching preserves fresh data authentication detects negative-zero changes after repeatedly comparing the same object identities",
+            "status": "passed",
+            "durationMs": 0.18933400000000233
+          },
+          {
+            "name": "collection-slot caching preserves fresh data authentication detects undefined changes after repeatedly comparing the same object identities",
+            "status": "passed",
+            "durationMs": 0.14129200000000708
+          },
+          {
+            "name": "collection-slot caching preserves fresh data authentication detects hidden changes after repeatedly comparing the same object identities",
+            "status": "passed",
+            "durationMs": 0.13791700000000162
+          },
+          {
+            "name": "collection-slot caching preserves fresh data authentication detects symbol changes after repeatedly comparing the same object identities",
+            "status": "passed",
+            "durationMs": 0.16104099999999733
+          },
+          {
+            "name": "collection-slot caching preserves fresh data authentication detects prototype changes after repeatedly comparing the same object identities",
+            "status": "passed",
+            "durationMs": 0.20845800000000736
+          },
+          {
+            "name": "collection-slot caching preserves fresh data authentication detects accessor changes after repeatedly comparing the same object identities",
+            "status": "passed",
+            "durationMs": 0.13220799999999144
+          },
+          {
+            "name": "collection-slot caching preserves fresh data authentication detects function changes after repeatedly comparing the same object identities",
+            "status": "passed",
+            "durationMs": 0.11004099999999539
+          },
+          {
+            "name": "collection-slot caching preserves fresh data authentication rewalks warmed symbol/hidden fields and ordered native collection entries",
+            "status": "passed",
+            "durationMs": 0.7732910000000004
+          },
+          {
+            "name": "collection-slot caching preserves fresh data authentication retains local Map slots with null prototype",
+            "status": "passed",
+            "durationMs": 0.6135420000000096
+          },
+          {
+            "name": "collection-slot caching preserves fresh data authentication retains local Map slots with Object prototype",
+            "status": "passed",
+            "durationMs": 0.1375409999999988
+          },
+          {
+            "name": "collection-slot caching preserves fresh data authentication retains foreign Map slots with null prototype",
+            "status": "passed",
+            "durationMs": 0.5265419999999921
+          },
+          {
+            "name": "collection-slot caching preserves fresh data authentication retains foreign Map slots with Object prototype",
+            "status": "passed",
+            "durationMs": 0.3497909999999962
+          },
+          {
+            "name": "collection-slot caching preserves fresh data authentication retains local Set slots with null prototype",
+            "status": "passed",
+            "durationMs": 0.13016700000000014
+          },
+          {
+            "name": "collection-slot caching preserves fresh data authentication retains local Set slots with Object prototype",
+            "status": "passed",
+            "durationMs": 0.12041699999998912
+          },
+          {
+            "name": "collection-slot caching preserves fresh data authentication retains foreign Set slots with null prototype",
+            "status": "passed",
+            "durationMs": 0.3762080000000054
+          },
+          {
+            "name": "collection-slot caching preserves fresh data authentication retains foreign Set slots with Object prototype",
+            "status": "passed",
+            "durationMs": 0.29470799999999997
+          },
+          {
+            "name": "collection-slot caching preserves fresh data authentication retains local WeakMap slots with null prototype",
+            "status": "passed",
+            "durationMs": 0.1338750000000033
+          },
+          {
+            "name": "collection-slot caching preserves fresh data authentication retains local WeakMap slots with Object prototype",
+            "status": "passed",
+            "durationMs": 0.1681250000000034
+          },
+          {
+            "name": "collection-slot caching preserves fresh data authentication retains foreign WeakMap slots with null prototype",
+            "status": "passed",
+            "durationMs": 0.4024169999999998
+          },
+          {
+            "name": "collection-slot caching preserves fresh data authentication retains foreign WeakMap slots with Object prototype",
+            "status": "passed",
+            "durationMs": 0.3469999999999942
+          },
+          {
+            "name": "collection-slot caching preserves fresh data authentication retains local WeakSet slots with null prototype",
+            "status": "passed",
+            "durationMs": 0.12004199999999798
+          },
+          {
+            "name": "collection-slot caching preserves fresh data authentication retains local WeakSet slots with Object prototype",
+            "status": "passed",
+            "durationMs": 0.11641600000000096
+          },
+          {
+            "name": "collection-slot caching preserves fresh data authentication retains foreign WeakSet slots with null prototype",
+            "status": "passed",
+            "durationMs": 0.3077080000000052
+          },
+          {
+            "name": "collection-slot caching preserves fresh data authentication retains foreign WeakSet slots with Object prototype",
+            "status": "passed",
+            "durationMs": 0.30512500000000387
+          },
+          {
+            "name": "collection-slot caching preserves fresh data authentication does not treat tags or prototype changes as cached collection authority",
+            "status": "passed",
+            "durationMs": 0.12099999999999511
+          },
+          {
+            "name": "collection-slot caching preserves fresh data authentication rewalks proxy targets and refuses revocation after a successful comparison",
+            "status": "passed",
+            "durationMs": 0.20462499999999295
+          },
+          {
+            "name": "collection-slot caching preserves fresh data authentication uses captured probes and private cache dispatch after public intrinsic replacement",
+            "status": "passed",
+            "durationMs": 0.5230420000000038
+          },
+          {
+            "name": "fresh batch physical-index authentication preserves indices, order and duplicates with imports=false, displaced=false",
+            "status": "passed",
+            "durationMs": 4.2157920000000075
+          },
+          {
+            "name": "fresh batch physical-index authentication preserves indices, order and duplicates with imports=false, displaced=true",
+            "status": "passed",
+            "durationMs": 0.9896669999999972
+          },
+          {
+            "name": "fresh batch physical-index authentication preserves indices, order and duplicates with imports=true, displaced=false",
+            "status": "passed",
+            "durationMs": 1.1557080000000042
+          },
+          {
+            "name": "fresh batch physical-index authentication preserves indices, order and duplicates with imports=true, displaced=true",
+            "status": "passed",
+            "durationMs": 1.3610000000000042
+          },
+          {
+            "name": "fresh batch physical-index authentication refuses copied tokens even after a successful batch",
+            "status": "passed",
+            "durationMs": 0.5916249999999934
+          },
+          {
+            "name": "fresh batch physical-index authentication refuses foreign tokens even after a successful batch",
+            "status": "passed",
+            "durationMs": 0.5690420000000103
+          },
+          {
+            "name": "fresh batch physical-index authentication refuses reserving and failed phases even for empty batches",
+            "status": "passed",
+            "durationMs": 0.21437499999998977
+          },
+          {
+            "name": "fresh batch physical-index authentication refuses a object input without invoking entry accessors",
+            "status": "passed",
+            "durationMs": 0.35616699999999923
+          },
+          {
+            "name": "fresh batch physical-index authentication refuses a hole input without invoking entry accessors",
+            "status": "passed",
+            "durationMs": 0.2697909999999979
+          },
+          {
+            "name": "fresh batch physical-index authentication refuses a getter input without invoking entry accessors",
+            "status": "passed",
+            "durationMs": 0.25241700000000833
+          },
+          {
+            "name": "fresh batch physical-index authentication never calls a supplied iterator or public imports.filter after auditing",
+            "status": "passed",
+            "durationMs": 0.5067090000000007
+          },
+          {
+            "name": "fresh batch physical-index authentication audits once per batch and never rereads the public ordinal after that audit",
+            "status": "passed",
+            "durationMs": 0.4057499999999834
+          },
+          {
+            "name": "fresh batch physical-index authentication audits input reflection-trap mutations before computing any coordinates",
+            "status": "passed",
+            "durationMs": 0.32520900000000097
+          },
+          {
+            "name": "fresh batch physical-index authentication refuses body mutation on an unrelated resource after a previous successful batch",
+            "status": "passed",
+            "durationMs": 0.4586659999999938
+          },
+          {
+            "name": "fresh batch physical-index authentication refuses locals mutation on an unrelated resource after a previous successful batch",
+            "status": "passed",
+            "durationMs": 0.333500000000015
+          },
+          {
+            "name": "fresh batch physical-index authentication refuses initializer mutation on an unrelated resource after a previous successful batch",
+            "status": "passed",
+            "durationMs": 0.45729199999999537
+          },
+          {
+            "name": "fresh batch physical-index authentication refuses type mutation on an unrelated resource after a previous successful batch",
+            "status": "passed",
+            "durationMs": 0.3286250000000166
+          },
+          {
+            "name": "fresh batch physical-index authentication refuses ordinal mutation on an unrelated resource after a previous successful batch",
+            "status": "passed",
+            "durationMs": 0.29366699999999923
+          },
+          {
+            "name": "fresh batch physical-index authentication refuses population mutation on an unrelated resource after a previous successful batch",
+            "status": "passed",
+            "durationMs": 0.2938749999999857
+          },
+          {
+            "name": "fresh batch physical-index authentication refuses undefined mutation on an unrelated resource after a previous successful batch",
+            "status": "passed",
+            "durationMs": 0.3305000000000007
+          },
+          {
+            "name": "fresh batch physical-index authentication refuses hole mutation on an unrelated resource after a previous successful batch",
+            "status": "passed",
+            "durationMs": 0.2995420000000024
+          },
+          {
+            "name": "fresh batch physical-index authentication refuses nan-bits mutation on an unrelated resource after a previous successful batch",
+            "status": "passed",
+            "durationMs": 0.30154099999998607
+          }
+        ]
+      },
+      {
+        "file": "issue-3518-native-closure-resources.test.ts",
+        "rows": [
+          {
+            "name": "atomic compatibility of the same-owner engine keeps the complete frozen value shape for ordinary-first roots",
+            "status": "passed",
+            "durationMs": 6.074084000000084
+          },
+          {
+            "name": "atomic compatibility of the same-owner engine keeps the complete frozen value shape for host-one-shot-first roots",
+            "status": "passed",
+            "durationMs": 3.809332999999924
+          },
+          {
+            "name": "staged engine live mutations against complete original donor receipts rejects live suffix-preflight weakening after positive controls",
+            "status": "passed",
+            "durationMs": 112.22395800000004
+          },
+          {
+            "name": "staged engine live mutations against complete original donor receipts rejects live metadata-after-pause weakening after positive controls",
+            "status": "passed",
+            "durationMs": 45.714875000000006
+          },
+          {
+            "name": "staged engine live mutations against complete original donor receipts retains all three lazy observer timings across a pause",
+            "status": "passed",
+            "durationMs": 84.38529100000005
+          },
+          {
+            "name": "staged engine live mutations against complete original donor receipts rejects reset cache after the unchanged positive",
+            "status": "passed",
+            "durationMs": 100.14483300000006
+          },
+          {
+            "name": "staged engine live mutations against complete original donor receipts rejects reset lazy observer after the unchanged positive",
+            "status": "passed",
+            "durationMs": 119.10962500000005
+          },
+          {
+            "name": "staged engine live mutations against complete original donor receipts rejects freeze early after the unchanged positive",
+            "status": "passed",
+            "durationMs": 94.2266669999999
+          },
+          {
+            "name": "staged engine live mutations against complete original donor receipts rejects replace issued pack after the unchanged positive",
+            "status": "passed",
+            "durationMs": 91.19762500000002
+          },
+          {
+            "name": "staged engine live mutations against complete original donor receipts rejects wrong canonical offset after the unchanged positive",
+            "status": "passed",
+            "durationMs": 88.17091699999992
+          },
+          {
+            "name": "staged engine live mutations against complete original donor receipts rejects incomplete inventory after the unchanged positive",
+            "status": "passed",
+            "durationMs": 88.3871250000002
+          },
+          {
+            "name": "native closure identities and settlement metadata rejects live shape factoring mutation export function createSignatureWrapperShape<P>",
+            "status": "passed",
+            "durationMs": 3.7114579999999933
+          },
+          {
+            "name": "native closure identities and settlement metadata rejects live shape factoring mutation   return { kind: \"struct\" as const, name, fields, parent };",
+            "status": "passed",
+            "durationMs": 2.844665999999961
+          },
+          {
+            "name": "native closure identities and settlement metadata rejects live shape factoring mutation     parent,",
+            "status": "passed",
+            "durationMs": 1.6690410000001066
+          },
+          {
+            "name": "native closure identities and settlement metadata rejects live shape factoring mutation       { name: \"bfnstate\", type: { kind: \"i32\" as const }, mutable: true },",
+            "status": "passed",
+            "durationMs": 2.3409169999999904
+          },
+          {
+            "name": "native closure identities and settlement metadata feeds a pure declaration to the live observer loop without changing donor descriptors or aliases",
+            "status": "passed",
+            "durationMs": 21.774875000000065
+          },
+          {
+            "name": "native closure identities and settlement metadata reconstructs all original factory/body spans from complete live canonical declarations",
+            "status": "passed",
+            "durationMs": 1.8192079999998896
+          },
+          {
+            "name": "native closure identities and settlement metadata rejects complete canonical factory 0 extra-executable after a genuine positive",
+            "status": "passed",
+            "durationMs": 2.354082999999946
+          },
+          {
+            "name": "native closure identities and settlement metadata rejects complete canonical factory 0 early-return after a genuine positive",
+            "status": "passed",
+            "durationMs": 2.103249999999889
+          },
+          {
+            "name": "native closure identities and settlement metadata rejects complete canonical factory 0 missing-factory after a genuine positive",
+            "status": "passed",
+            "durationMs": 2.2825840000000426
+          },
+          {
+            "name": "native closure identities and settlement metadata rejects complete canonical factory 0 renamed-factory after a genuine positive",
+            "status": "passed",
+            "durationMs": 1.989084000000048
+          },
+          {
+            "name": "native closure identities and settlement metadata rejects complete canonical factory 1 extra-executable after a genuine positive",
+            "status": "passed",
+            "durationMs": 2.364749999999958
+          },
+          {
+            "name": "native closure identities and settlement metadata rejects complete canonical factory 1 early-return after a genuine positive",
+            "status": "passed",
+            "durationMs": 2.119459000000006
+          },
+          {
+            "name": "native closure identities and settlement metadata rejects complete canonical factory 1 missing-factory after a genuine positive",
+            "status": "passed",
+            "durationMs": 2.0667080000000624
+          },
+          {
+            "name": "native closure identities and settlement metadata rejects complete canonical factory 1 renamed-factory after a genuine positive",
+            "status": "passed",
+            "durationMs": 1.9314589999999043
+          },
+          {
+            "name": "native closure identities and settlement metadata rejects complete canonical factory 2 extra-executable after a genuine positive",
+            "status": "passed",
+            "durationMs": 3.1522910000001048
+          },
+          {
+            "name": "native closure identities and settlement metadata rejects complete canonical factory 2 early-return after a genuine positive",
+            "status": "passed",
+            "durationMs": 2.9533749999998236
+          },
+          {
+            "name": "native closure identities and settlement metadata rejects complete canonical factory 2 missing-factory after a genuine positive",
+            "status": "passed",
+            "durationMs": 2.1071249999999964
+          },
+          {
+            "name": "native closure identities and settlement metadata rejects complete canonical factory 2 renamed-factory after a genuine positive",
+            "status": "passed",
+            "durationMs": 2.2041659999999865
+          },
+          {
+            "name": "native closure identities and settlement metadata rejects live canonical wrapper-construction-order through fixed donor receipts",
+            "status": "passed",
+            "durationMs": 2.8420000000000982
+          },
+          {
+            "name": "native closure identities and settlement metadata rejects live canonical value-construction-order through fixed donor receipts",
+            "status": "passed",
+            "durationMs": 2.5661669999999503
+          },
+          {
+            "name": "native closure identities and settlement metadata rejects live canonical field-mutability through fixed donor receipts",
+            "status": "passed",
+            "durationMs": 3.0959170000000995
+          },
+          {
+            "name": "native closure identities and settlement metadata rejects live canonical metadata-id through fixed donor receipts",
+            "status": "passed",
+            "durationMs": 2.839375000000018
+          },
+          {
+            "name": "native closure identities and settlement metadata pins the complete canonical suffix population against mode",
+            "status": "passed",
+            "durationMs": 2.185416000000032
+          },
+          {
+            "name": "native closure identities and settlement metadata pins the complete canonical suffix population against constant",
+            "status": "passed",
+            "durationMs": 1.9326250000001437
+          },
+          {
+            "name": "native closure identities and settlement metadata pins the complete canonical suffix population against factory-order",
+            "status": "passed",
+            "durationMs": 2.306916000000001
+          },
+          {
+            "name": "native closure identities and settlement metadata pins the complete canonical suffix population against extra-declaration",
+            "status": "passed",
+            "durationMs": 1.9450000000001637
+          },
+          {
+            "name": "native closure identities and settlement metadata authenticates fixed originals and rejects altered receipts",
+            "status": "passed",
+            "durationMs": 0.18858299999988049
+          },
+          {
+            "name": "native closure identities and settlement metadata inverse reconstructs ALL of src/codegen/closures/closure-header-layout.ts",
+            "status": "passed",
+            "durationMs": 0.24441600000000108
+          },
+          {
+            "name": "native closure identities and settlement metadata rejects missing canonical imports/forwards in src/codegen/closures/closure-header-layout.ts",
+            "status": "passed",
+            "durationMs": 0.12316600000008293
+          },
+          {
+            "name": "native closure identities and settlement metadata rejects renamed canonical imports/forwards in src/codegen/closures/closure-header-layout.ts",
+            "status": "passed",
+            "durationMs": 0.08762499999988904
+          },
+          {
+            "name": "native closure identities and settlement metadata inverse reconstructs ALL of src/codegen/closures/funcref-wrapper-types.ts",
+            "status": "passed",
+            "durationMs": 0.28949999999986176
+          },
+          {
+            "name": "native closure identities and settlement metadata rejects missing canonical imports/forwards in src/codegen/closures/funcref-wrapper-types.ts",
+            "status": "passed",
+            "durationMs": 0.3297500000001037
+          },
+          {
+            "name": "native closure identities and settlement metadata rejects renamed canonical imports/forwards in src/codegen/closures/funcref-wrapper-types.ts",
+            "status": "passed",
+            "durationMs": 2.6528340000002117
+          },
+          {
+            "name": "native closure identities and settlement metadata inverse reconstructs ALL of src/codegen/builtin-fn-meta.ts",
+            "status": "passed",
+            "durationMs": 0.346416999999974
+          },
+          {
+            "name": "native closure identities and settlement metadata rejects missing canonical imports/forwards in src/codegen/builtin-fn-meta.ts",
+            "status": "passed",
+            "durationMs": 0.36104199999999764
+          },
+          {
+            "name": "native closure identities and settlement metadata rejects renamed canonical imports/forwards in src/codegen/builtin-fn-meta.ts",
+            "status": "passed",
+            "durationMs": 0.3630829999999605
+          },
+          {
+            "name": "native closure identities and settlement metadata preserves all moved header documentation, predicates and eleven forwards",
+            "status": "passed",
+            "durationMs": 14.736583999999993
+          },
+          {
+            "name": "native closure identities and settlement metadata retains original source controls and the full minimum-arity authority",
+            "status": "passed",
+            "durationMs": 48.81899999999996
+          },
+          {
+            "name": "native closure identities and settlement metadata rejects retained catalog changes and publication reorder",
+            "status": "passed",
+            "durationMs": 0.6759170000000267
+          },
+          {
+            "name": "native closure identities and settlement metadata matches independent donors and actual legacy callers with settle first",
+            "status": "passed",
+            "durationMs": 29.075250000000096
+          },
+          {
+            "name": "native closure identities and settlement metadata matches independent donors and actual legacy callers with numeric first",
+            "status": "passed",
+            "durationMs": 29.015375000000176
+          },
+          {
+            "name": "native closure identities and settlement metadata preserves allocation observations support then support",
+            "status": "passed",
+            "durationMs": 9.438833000000159
+          },
+          {
+            "name": "native closure identities and settlement metadata preserves allocation observations host-one-shot then support",
+            "status": "passed",
+            "durationMs": 9.782625000000053
+          },
+          {
+            "name": "native closure identities and settlement metadata preserves allocation observations host-one-shot then ordinary",
+            "status": "passed",
+            "durationMs": 9.39474999999993
+          },
+          {
+            "name": "native closure identities and settlement metadata preserves allocation observations ordinary then host-one-shot",
+            "status": "passed",
+            "durationMs": 13.585749999999962
+          },
+          {
+            "name": "native closure identities and settlement metadata preserves metadata-copy minima before-first observation without rescanning late copies",
+            "status": "passed",
+            "durationMs": 19.190415999999914
+          },
+          {
+            "name": "native closure identities and settlement metadata preserves metadata-copy minima after-first observation without rescanning late copies",
+            "status": "passed",
+            "durationMs": 19.257875000000013
+          },
+          {
+            "name": "native closure identities and settlement metadata preserves metadata-copy minima after-other-signature observation without rescanning late copies",
+            "status": "passed",
+            "durationMs": 21.58116700000005
+          },
+          {
+            "name": "native closure identities and settlement metadata retains actual minimum synchronization across copied closureMap and both caches",
+            "status": "passed",
+            "durationMs": 25.311583000000155
+          },
+          {
+            "name": "native closure identities and settlement metadata retains live arity selection and nested singleton initializer bodies",
+            "status": "passed",
+            "durationMs": 61.97195799999986
+          },
+          {
+            "name": "native closure identities and settlement metadata authenticates external ref/null-ref types and preserves their exact indices",
+            "status": "passed",
+            "durationMs": 4.542292000000089
+          },
+          {
+            "name": "native closure identities and settlement metadata rejects foreign matching-index type before allocation",
+            "status": "passed",
+            "durationMs": 0.2901249999999891
+          },
+          {
+            "name": "native closure identities and settlement metadata rejects copied matching-index type before allocation",
+            "status": "passed",
+            "durationMs": 0.11716599999999744
+          },
+          {
+            "name": "native closure identities and settlement metadata rejects copied/foreign packs and changed request sequences",
+            "status": "passed",
+            "durationMs": 6.876208000000133
+          },
+          {
+            "name": "native closure identities and settlement metadata rejects stale field content and missing references before reservation changes",
+            "status": "passed",
+            "durationMs": 0.20812499999988177
+          },
+          {
+            "name": "native closure identities and settlement metadata rejects invalid request population []",
+            "status": "passed",
+            "durationMs": 0.06770899999992253
+          },
+          {
+            "name": "native closure identities and settlement metadata rejects invalid request population [{\"kind\":\"metadata\",\"id\":\"forward\",\"signatureId\":\"missing\",\"key\":\"promise:settle\",\"name\":\"\",\"length\":1}]",
+            "status": "passed",
+            "durationMs": 0.04791700000009769
+          },
+          {
+            "name": "native closure identities and settlement metadata rejects invalid request population [{\"kind\":\"signature\",\"id\":\"a\",\"params\":[{\"kind\":\"externref\"}],\"results\":[],\"allocationMode\":\"ordinary\"},{\"kind\":\"signature\",\"id\":\"a\",\"params\":[{\"kind\":\"externref\"}],\"results\":[],\"allocationMode\":\"ordinary\"}]",
+            "status": "passed",
+            "durationMs": 0.058499999999867214
+          },
+          {
+            "name": "native closure identities and settlement metadata rejects invalid request population [{\"kind\":\"signature\",\"id\":\"a\",\"params\":[{\"kind\":\"externref\"}],\"results\":[],\"allocationMode\":\"ordinary\"},{\"kind\":\"metadata\",\"id\":\"bad\",\"signatureId\":\"a\",\"key\":\"promise:settle\",\"name\":\"wrong\",\"length\":1}]",
+            "status": "passed",
+            "durationMs": 0.2367500000000291
+          },
+          {
+            "name": "native closure identities and settlement metadata independent legacy control rejects canonical bag-mutability",
+            "status": "passed",
+            "durationMs": 20.68708300000003
+          },
+          {
+            "name": "native closure identities and settlement metadata independent legacy control rejects canonical field-order",
+            "status": "passed",
+            "durationMs": 24.752709000000095
+          },
+          {
+            "name": "native closure identities and settlement metadata independent legacy control rejects canonical metadata-id",
+            "status": "passed",
+            "durationMs": 19.733625000000075
+          },
+          {
+            "name": "native closure identities and settlement metadata rejects live wrapper root-self after a genuine positive",
+            "status": "passed",
+            "durationMs": 20.80229099999997
+          },
+          {
+            "name": "native closure identities and settlement metadata rejects live wrapper duplicate-root after a genuine positive",
+            "status": "passed",
+            "durationMs": 32.037166999999954
+          },
+          {
+            "name": "native closure identities and settlement metadata rejects live wrapper cache-update after a genuine positive",
+            "status": "passed",
+            "durationMs": 25.056291999999985
+          },
+          {
+            "name": "native closure identities and settlement metadata rejects live wrapper publication after a genuine positive",
+            "status": "passed",
+            "durationMs": 21.042624999999816
+          },
+          {
+            "name": "native closure identities and settlement metadata executes generated metadata values through actual typed functions and independently reads all fields",
+            "status": "passed",
+            "durationMs": 18.536833000000115
+          },
+          {
+            "name": "prepared callability forward receipts preserve closure observers authenticates four ordered additions and reconstructs the unchanged full minimum observer source",
+            "status": "passed",
+            "durationMs": 4.2283330000000205
+          },
+          {
+            "name": "prepared callability forward receipts preserve closure observers rejects altered, removed or duplicated callability-early-reservation after a genuine positive",
+            "status": "passed",
+            "durationMs": 7.894666999999799
+          },
+          {
+            "name": "prepared callability forward receipts preserve closure observers rejects altered, removed or duplicated callability-index-capture after a genuine positive",
+            "status": "passed",
+            "durationMs": 10.457791999999927
+          },
+          {
+            "name": "prepared callability forward receipts preserve closure observers rejects altered, removed or duplicated callability-index-refresh after a genuine positive",
+            "status": "passed",
+            "durationMs": 6.514625000000024
+          },
+          {
+            "name": "prepared callability forward receipts preserve closure observers rejects altered, removed or duplicated callability-post-argument-guard after a genuine positive",
+            "status": "passed",
+            "durationMs": 18.27279199999998
+          },
+          {
+            "name": "prepared callability forward receipts preserve closure observers rejects missing calls-forward evidence without accepting a replacement digest",
+            "status": "passed",
+            "durationMs": 3.125584000000117
+          },
+          {
+            "name": "prepared callability forward receipts preserve closure observers rejects provenance calls-forward evidence without accepting a replacement digest",
+            "status": "passed",
+            "durationMs": 1.8707500000000437
+          },
+          {
+            "name": "prepared callability forward receipts preserve closure observers rejects span calls-forward evidence without accepting a replacement digest",
+            "status": "passed",
+            "durationMs": 1.8758749999999509
+          },
+          {
+            "name": "prepared callability forward receipts preserve closure observers rejects moving the whole emitted guard ahead of reservation and argument evaluation",
+            "status": "passed",
+            "durationMs": 2.887666000000081
+          },
+          {
+            "name": "prepared callability forward receipts preserve closure observers rejects retained observer persistent-index corruption outside the forward additions",
+            "status": "passed",
+            "durationMs": 7.021624999999858
+          },
+          {
+            "name": "prepared callability forward receipts preserve closure observers rejects retained observer minimum-synchronization corruption outside the forward additions",
+            "status": "passed",
+            "durationMs": 5.320124999999962
+          },
+          {
+            "name": "prepared callability forward receipts preserve closure observers retains and rejects an extra executable statement outside the four approved additions",
+            "status": "passed",
+            "durationMs": 5.260708000000022
+          },
+          {
+            "name": "delivered main call transformations preserve the original closure observer authenticates five committed spans before applying the unchanged older donor receipt",
+            "status": "passed",
+            "durationMs": 6.403459000000112
+          },
+          {
+            "name": "delivered main call transformations preserve the original closure observer rejects changed, removed and duplicated main span from-char-code-spread-import after a genuine positive",
+            "status": "passed",
+            "durationMs": 2.650250000000142
+          },
+          {
+            "name": "delivered main call transformations preserve the original closure observer rejects changed, removed and duplicated main span undefined-receiver-import after a genuine positive",
+            "status": "passed",
+            "durationMs": 2.632082999999966
+          },
+          {
+            "name": "delivered main call transformations preserve the original closure observer rejects changed, removed and duplicated main span from-char-code-spread-dispatch after a genuine positive",
+            "status": "passed",
+            "durationMs": 2.8990830000000187
+          },
+          {
+            "name": "delivered main call transformations preserve the original closure observer rejects changed, removed and duplicated main span call-undefined-receiver after a genuine positive",
+            "status": "passed",
+            "durationMs": 3.1908339999999953
+          },
+          {
+            "name": "delivered main call transformations preserve the original closure observer rejects changed, removed and duplicated main span apply-undefined-receiver after a genuine positive",
+            "status": "passed",
+            "durationMs": 4.697499999999991
+          },
+          {
+            "name": "delivered main call transformations preserve the original closure observer rejects reordering the committed spread and undefined-receiver imports",
+            "status": "passed",
+            "durationMs": 2.1062080000001515
+          },
+          {
+            "name": "delivered main call transformations preserve the original closure observer rejects missing main evidence using the fixed fixture digest",
+            "status": "passed",
+            "durationMs": 1.8707500000000437
+          },
+          {
+            "name": "delivered main call transformations preserve the original closure observer rejects provenance main evidence using the fixed fixture digest",
+            "status": "passed",
+            "durationMs": 1.857166000000234
+          },
+          {
+            "name": "delivered main call transformations preserve the original closure observer rejects span main evidence using the fixed fixture digest",
+            "status": "passed",
+            "durationMs": 1.8417080000003807
+          },
+          {
+            "name": "fresh closure coordinate batch authentication audits the entire deduplicated type population once after freeze",
+            "status": "passed",
+            "durationMs": 9.49579199999971
+          },
+          {
+            "name": "fresh closure coordinate batch authentication checks the last coordinate returned by the genuine batch",
+            "status": "passed",
+            "durationMs": 5.15258300000005
+          },
+          {
+            "name": "fresh closure coordinate batch authentication reaudits unrelated body mutation after a successful closure batch",
+            "status": "passed",
+            "durationMs": 6.434959000000163
+          },
+          {
+            "name": "fresh closure coordinate batch authentication reaudits unrelated locals mutation after a successful closure batch",
+            "status": "passed",
+            "durationMs": 6.145207999999911
+          },
+          {
+            "name": "fresh closure coordinate batch authentication reaudits unrelated type mutation after a successful closure batch",
+            "status": "passed",
+            "durationMs": 6.010625000000346
+          },
+          {
+            "name": "fresh closure coordinate batch authentication reaudits unrelated population mutation after a successful closure batch",
+            "status": "passed",
+            "durationMs": 6.269749999999931
+          },
+          {
+            "name": "reentrant closure coordinate audit refuses a swallowed phase failure during a live descriptor getter",
+            "status": "passed",
+            "durationMs": 5.918833000000177
+          }
+        ]
+      },
+      {
+        "file": "issue-3518-native-mixed-object-access.test.ts",
+        "rows": [
+          {
+            "name": "normal coordinates and UTF16 keys executes a nonempty zero-import component, with pending production/source authority",
+            "status": "passed",
+            "durationMs": 1.5019580000007409
+          },
+          {
+            "name": "normal coordinates and UTF16 keys returns a nearer own entry before an unknown parent and ignores storage-prefix prototype",
+            "status": "passed",
+            "durationMs": 1.057541999998648
+          },
+          {
+            "name": "normal coordinates and UTF16 keys traverses ordinary/wrapper/String identities and preserves String own-before-virtual precedence",
+            "status": "passed",
+            "durationMs": 0.36220800000228337
+          },
+          {
+            "name": "normal coordinates and UTF16 keys retains present undefined and getter-less accessor shadowing",
+            "status": "passed",
+            "durationMs": 0.15137500000128057
+          },
+          {
+            "name": "normal coordinates and UTF16 keys uses the original receiver and an actual empty vector in named getter observers",
+            "status": "passed",
+            "durationMs": 0.2849580000001879
+          },
+          {
+            "name": "normal coordinates and UTF16 keys keeps lookup locals across reentry and propagates exact tag/payload from observer abrupt completion",
+            "status": "passed",
+            "durationMs": 0.18329199999789125
+          },
+          {
+            "name": "normal coordinates and UTF16 keys recognizes only the actual control native singleton and keeps incomplete populations unresolved",
+            "status": "passed",
+            "durationMs": 0.24479100000098697
+          },
+          {
+            "name": "normal coordinates and UTF16 keys authenticates keys, and never reads foreign/unready bags as empty",
+            "status": "passed",
+            "durationMs": 0.13012499999967986
+          },
+          {
+            "name": "normal coordinates and UTF16 keys preserves immutable Object.prototype and checks SameValue before nonextensibility",
+            "status": "passed",
+            "durationMs": 0.17637500000273576
+          },
+          {
+            "name": "normal coordinates and UTF16 keys rejects self/indirect/preexisting cycles and unknown edges before mutation",
+            "status": "passed",
+            "durationMs": 0.13862500000323053
+          },
+          {
+            "name": "normal coordinates and UTF16 keys walks beyond a small fixed depth with no accidental absence or lookahead",
+            "status": "passed",
+            "durationMs": 0.28341599999839673
+          },
+          {
+            "name": "normal coordinates and UTF16 keys rejects getter-bearing/hidden/sparse pure operands without invoking callbacks",
+            "status": "passed",
+            "durationMs": 1.00695899999846
+          },
+          {
+            "name": "displaced coordinates and actual UTF8 keys executes a nonempty zero-import component, with pending production/source authority",
+            "status": "passed",
+            "durationMs": 0.5525830000005953
+          },
+          {
+            "name": "displaced coordinates and actual UTF8 keys returns a nearer own entry before an unknown parent and ignores storage-prefix prototype",
+            "status": "passed",
+            "durationMs": 0.19033300000228337
+          },
+          {
+            "name": "displaced coordinates and actual UTF8 keys traverses ordinary/wrapper/String identities and preserves String own-before-virtual precedence",
+            "status": "passed",
+            "durationMs": 0.19479199999841512
+          },
+          {
+            "name": "displaced coordinates and actual UTF8 keys retains present undefined and getter-less accessor shadowing",
+            "status": "passed",
+            "durationMs": 0.06649999999717693
+          },
+          {
+            "name": "displaced coordinates and actual UTF8 keys uses the original receiver and an actual empty vector in named getter observers",
+            "status": "passed",
+            "durationMs": 0.2132080000010319
+          },
+          {
+            "name": "displaced coordinates and actual UTF8 keys keeps lookup locals across reentry and propagates exact tag/payload from observer abrupt completion",
+            "status": "passed",
+            "durationMs": 0.1389999999992142
+          },
+          {
+            "name": "displaced coordinates and actual UTF8 keys recognizes only the actual control native singleton and keeps incomplete populations unresolved",
+            "status": "passed",
+            "durationMs": 0.19725000000107684
+          },
+          {
+            "name": "displaced coordinates and actual UTF8 keys authenticates keys, and never reads foreign/unready bags as empty",
+            "status": "passed",
+            "durationMs": 0.08949999999822467
+          },
+          {
+            "name": "displaced coordinates and actual UTF8 keys preserves immutable Object.prototype and checks SameValue before nonextensibility",
+            "status": "passed",
+            "durationMs": 0.146708000000217
+          },
+          {
+            "name": "displaced coordinates and actual UTF8 keys rejects self/indirect/preexisting cycles and unknown edges before mutation",
+            "status": "passed",
+            "durationMs": 0.12829199999760021
+          },
+          {
+            "name": "displaced coordinates and actual UTF8 keys walks beyond a small fixed depth with no accidental absence or lookahead",
+            "status": "passed",
+            "durationMs": 0.20449999999982538
+          },
+          {
+            "name": "displaced coordinates and actual UTF8 keys rejects getter-bearing/hidden/sparse pure operands without invoking callbacks",
+            "status": "passed",
+            "durationMs": 0.20470800000111922
+          },
+          {
+            "name": "genuine mixed structural resource owner reserves exact structural and pending Get roles without public completion",
+            "status": "passed",
+            "durationMs": 7698.484999999997
+          },
+          {
+            "name": "genuine mixed structural resource owner rejects malformed dependency descriptors and genuine alternate owners before allocation",
+            "status": "passed",
+            "durationMs": 7002.1339579999985
+          },
+          {
+            "name": "genuine mixed structural resource owner preflights the last key before reserving any mixed role",
+            "status": "passed",
+            "durationMs": 2851.6492910000015
+          },
+          {
+            "name": "genuine mixed structural resource owner reauthenticates retained dependency roles and mutable declaration input",
+            "status": "passed",
+            "durationMs": 6019.541249999995
+          },
+          {
+            "name": "genuine mixed structural resource owner requires canonical dependency completion then completes only six structural bodies",
+            "status": "passed",
+            "durationMs": 16347.329957999995
+          },
+          {
+            "name": "genuine mixed structural resource owner refuses a canonical-looking external fill and wrong canonical body completion",
+            "status": "passed",
+            "durationMs": 13945.221583000006
+          },
+          {
+            "name": "genuine mixed structural resource owner refuses caller-filled roles and post-fill instruction mutation",
+            "status": "passed",
+            "durationMs": 19513.10087499999
+          },
+          {
+            "name": "genuine mixed structural resource owner rejects a genuine dependency with altered ordinary-own before structural fill",
+            "status": "passed",
+            "durationMs": 10275.869208000004
+          },
+          {
+            "name": "genuine mixed structural resource owner rejects a genuine dependency with altered String-own before structural fill",
+            "status": "passed",
+            "durationMs": 10344.108041999993
+          },
+          {
+            "name": "genuine mixed structural resource owner rejects a genuine dependency with altered equality before structural fill",
+            "status": "passed",
+            "durationMs": 10366.203624999995
+          },
+          {
+            "name": "genuine mixed structural resource owner rejects a genuine dependency with altered flatten-locals before structural fill",
+            "status": "passed",
+            "durationMs": 10391.606207999983
+          },
+          {
+            "name": "genuine mixed structural resource owner rejects a genuine dependency with altered copy-tree-locals before structural fill",
+            "status": "passed",
+            "durationMs": 10340.794167000015
+          },
+          {
+            "name": "genuine mixed structural resource owner rejects a genuine dependency with altered UTF8-decoder-locals before structural fill",
+            "status": "passed",
+            "durationMs": 10367.836624999996
+          }
+        ]
+      },
+      {
+        "file": "issue-3518-physical-snapshot-comparison.test.ts",
+        "rows": [
+          {
+            "name": "fresh filled-function snapshots match the historical textual algorithm pins the independent original algorithm and keeps other ledger snapshots on that exact implementation",
+            "status": "passed",
+            "durationMs": 12.523832999999996
+          },
+          {
+            "name": "fresh filled-function snapshots match the historical textual algorithm retains primitive kinds, raw float words, escaped keys, lone surrogates and present undefined",
+            "status": "passed",
+            "durationMs": 1.9798750000000211
+          },
+          {
+            "name": "fresh filled-function snapshots match the historical textual algorithm detects warmed scalar change: negative-zero",
+            "status": "passed",
+            "durationMs": 0.40229200000001697
+          },
+          {
+            "name": "fresh filled-function snapshots match the historical textual algorithm detects warmed scalar change: positive-zero",
+            "status": "passed",
+            "durationMs": 0.8508330000000228
+          },
+          {
+            "name": "fresh filled-function snapshots match the historical textual algorithm detects warmed scalar change: infinity-sign",
+            "status": "passed",
+            "durationMs": 0.30008300000000077
+          },
+          {
+            "name": "fresh filled-function snapshots match the historical textual algorithm detects warmed scalar change: finite-to-infinity",
+            "status": "passed",
+            "durationMs": 0.26804200000000833
+          },
+          {
+            "name": "fresh filled-function snapshots match the historical textual algorithm detects warmed scalar change: NaN-payload",
+            "status": "passed",
+            "durationMs": 0.22866600000000403
+          },
+          {
+            "name": "fresh filled-function snapshots match the historical textual algorithm detects warmed scalar change: NaN-sign",
+            "status": "passed",
+            "durationMs": 0.2099580000000003
+          },
+          {
+            "name": "fresh filled-function snapshots match the historical textual algorithm detects warmed scalar change: bigint",
+            "status": "passed",
+            "durationMs": 0.2594579999999951
+          },
+          {
+            "name": "fresh filled-function snapshots match the historical textual algorithm detects warmed scalar change: bigint-to-number",
+            "status": "passed",
+            "durationMs": 0.34966700000001083
+          },
+          {
+            "name": "fresh filled-function snapshots match the historical textual algorithm detects warmed scalar change: boolean",
+            "status": "passed",
+            "durationMs": 0.2719160000000045
+          },
+          {
+            "name": "fresh filled-function snapshots match the historical textual algorithm detects warmed scalar change: null-to-undefined",
+            "status": "passed",
+            "durationMs": 0.2081670000000031
+          },
+          {
+            "name": "fresh filled-function snapshots match the historical textual algorithm detects warmed scalar change: lone-surrogate",
+            "status": "passed",
+            "durationMs": 0.1893750000000125
+          },
+          {
+            "name": "fresh filled-function snapshots match the historical textual algorithm detects warmed scalar change: escaped-string",
+            "status": "passed",
+            "durationMs": 0.17620800000000258
+          },
+          {
+            "name": "fresh filled-function snapshots match the historical textual algorithm detects nested instruction after repeated successful public audits",
+            "status": "passed",
+            "durationMs": 0.21120799999999917
+          },
+          {
+            "name": "fresh filled-function snapshots match the historical textual algorithm detects local population after repeated successful public audits",
+            "status": "passed",
+            "durationMs": 0.18291600000000585
+          },
+          {
+            "name": "fresh filled-function snapshots match the historical textual algorithm detects undefined presence after repeated successful public audits",
+            "status": "passed",
+            "durationMs": 0.17875000000000796
+          },
+          {
+            "name": "fresh filled-function snapshots match the historical textual algorithm detects removed field after repeated successful public audits",
+            "status": "passed",
+            "durationMs": 0.16804099999998812
+          },
+          {
+            "name": "fresh filled-function snapshots match the historical textual algorithm detects nested value after repeated successful public audits",
+            "status": "passed",
+            "durationMs": 0.17224999999999113
+          },
+          {
+            "name": "fresh filled-function snapshots match the historical textual algorithm preserves array length observability",
+            "status": "passed",
+            "durationMs": 0.15645800000001486
+          },
+          {
+            "name": "fresh filled-function snapshots match the historical textual algorithm preserves array hole observability",
+            "status": "passed",
+            "durationMs": 0.12633400000001416
+          },
+          {
+            "name": "fresh filled-function snapshots match the historical textual algorithm preserves array extra observability",
+            "status": "passed",
+            "durationMs": 0.12816599999999312
+          },
+          {
+            "name": "fresh filled-function snapshots match the historical textual algorithm preserves array order observability",
+            "status": "passed",
+            "durationMs": 0.15454199999999219
+          },
+          {
+            "name": "fresh filled-function snapshots match the historical textual algorithm preserves ordered escaped object keys",
+            "status": "passed",
+            "durationMs": 0.17158299999999826
+          },
+          {
+            "name": "fresh filled-function snapshots match the historical textual algorithm preserves byte-array byte changes",
+            "status": "passed",
+            "durationMs": 0.22825000000000273
+          },
+          {
+            "name": "fresh filled-function snapshots match the historical textual algorithm preserves byte-array object changes",
+            "status": "passed",
+            "durationMs": 0.7211669999999799
+          },
+          {
+            "name": "fresh filled-function snapshots match the historical textual algorithm preserves byte-array tag changes",
+            "status": "passed",
+            "durationMs": 0.2121659999999963
+          },
+          {
+            "name": "fresh filled-function snapshots match the historical textual algorithm preserves the old instanceof bytes tag instead of adding an internal-slot admission rule",
+            "status": "passed",
+            "durationMs": 0.18637499999999818
+          },
+          {
+            "name": "fresh filled-function snapshots match the historical textual algorithm keeps hidden differences ignored as before",
+            "status": "passed",
+            "durationMs": 0.16312500000000796
+          },
+          {
+            "name": "fresh filled-function snapshots match the historical textual algorithm keeps symbol differences ignored as before",
+            "status": "passed",
+            "durationMs": 0.13750000000001705
+          },
+          {
+            "name": "fresh filled-function snapshots match the historical textual algorithm keeps prototype differences ignored as before",
+            "status": "passed",
+            "durationMs": 0.14145800000000008
+          },
+          {
+            "name": "fresh filled-function snapshots match the historical textual algorithm allows shared acyclic subtrees and equivalent replacement, then detects their mutation",
+            "status": "passed",
+            "durationMs": 0.22016600000000608
+          },
+          {
+            "name": "fresh filled-function snapshots match the historical textual algorithm matches original function refusal during the single capture",
+            "status": "passed",
+            "durationMs": 0.1268750000000125
+          },
+          {
+            "name": "fresh filled-function snapshots match the historical textual algorithm matches original symbol refusal during the single capture",
+            "status": "passed",
+            "durationMs": 0.09137499999999932
+          },
+          {
+            "name": "fresh filled-function snapshots match the historical textual algorithm matches original cycle refusal during the single capture",
+            "status": "passed",
+            "durationMs": 0.08587499999998727
+          },
+          {
+            "name": "fresh filled-function snapshots match the historical textual algorithm walks later function values after an earlier mismatch",
+            "status": "passed",
+            "durationMs": 0.1727910000000179
+          },
+          {
+            "name": "fresh filled-function snapshots match the historical textual algorithm walks later symbol values after an earlier mismatch",
+            "status": "passed",
+            "durationMs": 0.13579199999998082
+          },
+          {
+            "name": "fresh filled-function snapshots match the historical textual algorithm walks later cycle values after an earlier mismatch",
+            "status": "passed",
+            "durationMs": 0.14691700000000196
+          },
+          {
+            "name": "snapshot traversal keeps original observable evaluation order captures getter values exactly once and all siblings before their children",
+            "status": "passed",
+            "durationMs": 0.33483400000000074
+          },
+          {
+            "name": "snapshot traversal keeps original observable evaluation order compares captured siblings even when an earlier child mutates their live fields",
+            "status": "passed",
+            "durationMs": 0.15033399999998664
+          },
+          {
+            "name": "snapshot traversal keeps original observable evaluation order does not skip a later getter/error in extra-child",
+            "status": "passed",
+            "durationMs": 0.22270900000000893
+          },
+          {
+            "name": "snapshot traversal keeps original observable evaluation order does not skip a later getter/error in different-kind",
+            "status": "passed",
+            "durationMs": 0.2087500000000091
+          },
+          {
+            "name": "snapshot traversal keeps original observable evaluation order preserves array length coercion before Object.entries and still walks fields after tag mismatch",
+            "status": "passed",
+            "durationMs": 0.23541700000001242
+          },
+          {
+            "name": "snapshot traversal keeps original observable evaluation order keeps length failures ahead of snapshot mismatch and wraps non-Error throws",
+            "status": "passed",
+            "durationMs": 0.19895800000000463
+          },
+          {
+            "name": "snapshot traversal keeps original observable evaluation order keeps entries failures ahead of snapshot mismatch and wraps non-Error throws",
+            "status": "passed",
+            "durationMs": 0.16200000000000614
+          },
+          {
+            "name": "snapshot traversal keeps original observable evaluation order retains the outer locals identity short circuit",
+            "status": "passed",
+            "durationMs": 0.1401249999999834
+          },
+          {
+            "name": "snapshot traversal keeps original observable evaluation order retains the outer body identity short circuit",
+            "status": "passed",
+            "durationMs": 0.11691600000000335
+          },
+          {
+            "name": "batch indices cannot escape a failed private ledger state checks state again after a getter swallows an audit failure, shadowed=false",
+            "status": "passed",
+            "durationMs": 0.45241699999996854
+          },
+          {
+            "name": "batch indices cannot escape a failed private ledger state checks state again after a getter swallows an audit failure, shadowed=true",
+            "status": "passed",
+            "durationMs": 0.2657499999999686
+          }
+        ]
+      }
+    ]
+  },
+  "pairedDiagnostic": {
+    "beforeRevision": "e4737c9f1dcb632c56f3cc3a31e3ad47cd7f848e",
+    "beforeWorktree": "/private/tmp/js2-ir-native-realm-mixed-main-20261001",
+    "harnessSha256": "90e80e897c333e1fed83a2f0f8c60d35926a5e4643b51d17be60efd89e7993a6",
+    "node": "v25.9.0",
+    "argv": ["--max-old-space-size=4096", "--import", "tsx", ".tmp/canonical-audit/measure.mjs"],
+    "beforeStages": [
+      {
+        "name": "fixture",
+        "ms": 2061.1465000000003
+      },
+      {
+        "name": "reservation",
+        "ms": 1112.2491249999994
+      },
+      {
+        "name": "incomplete refusal",
+        "ms": 1052.019542
+      },
+      {
+        "name": "dependency fill",
+        "ms": 4827.004792
+      },
+      {
+        "name": "structural fill",
+        "ms": 2917.3225
+      },
+      {
+        "name": "completion",
+        "ms": 5253.5625
+      },
+      {
+        "name": "public refusal",
+        "ms": 3300.8732500000006
+      },
+      {
+        "name": "duplicate refusal",
+        "ms": 3269.400041000001
+      }
+    ],
+    "afterMeasured": true,
+    "note": "Single diagnostic run, source owner mutation/authentication exercise; not public execution or CI timing guarantee.",
+    "afterStages": [
+      {
+        "name": "fixture",
+        "ms": 2060.7370410000003
+      },
+      {
+        "name": "reservation",
+        "ms": 1119.5107090000001
+      },
+      {
+        "name": "incomplete refusal",
+        "ms": 840.0072909999999
+      },
+      {
+        "name": "dependency fill",
+        "ms": 4237.832167
+      },
+      {
+        "name": "structural fill",
+        "ms": 2133.9656250000007
+      },
+      {
+        "name": "completion",
+        "ms": 3238.456791999999
+      },
+      {
+        "name": "public refusal",
+        "ms": 1770.7992500000018
+      },
+      {
+        "name": "duplicate refusal",
+        "ms": 1757.1980409999996
+      }
+    ],
+    "afterNote": "Closure batching plus filled-function immutable snapshot candidate; same no-profile TSX/Node25.9.0 harness. Single-run diagnostic, not CI guarantee."
+  },
+  "writer": {
+    "base": "e4737c9f1dcb632c56f3cc3a31e3ad47cd7f848e",
+    "status": "formatted-frozen-unexecuted",
+    "model": "Codex GPT-6 Astra Max",
+    "files": {
+      "src/wasm/physical/module-reservations.ts": {
+        "sha256": "dc4952b91e9479a6b3f59d8dd0b3cb74fe9a79883c6a40c05a13230b00541eb4",
+        "bytes": 52865,
+        "lines": 1283
+      },
+      "tests/issue-3518-physical-snapshot-comparison.test.ts": {
+        "sha256": "678e4e654717421a9cd7101f4bddfaa8ad2ee1cdeb355b882b0185978de57b47",
+        "bytes": 20543,
+        "lines": 553
+      }
+    },
+    "originalDataTextSha256": "8779b9b6ff208763e3a251c41c7bc808a4a66aa45592ce0b6b24bc095a4e87c1",
+    "scope": "filled-function immutable expected-tree snapshots, fresh complete comparison, private post-audit physicalIndices state guard",
+    "validation": "No tests, typecheck, profiling, or gates run by writer. Scoped Prettier completed using the existing absolute dependency runtime after local node_modules was found absent.",
+    "proposedCommands": [
+      "node node_modules/typescript7/lib/tsc.js --noEmit -p tsconfig.ts7.json",
+      "node node_modules/vitest/dist/cli.js run tests/issue-3518-physical-snapshot-comparison.test.ts --pool=forks --poolOptions.forks.singleFork=true --no-file-parallelism --reporter=default --reporter=json --outputFile=<unique receipt>/focused.json"
+    ],
+    "staticUnexecutedRows": 49
+  },
+  "currentPins": {
+    "src/backend/wasmgc/resources/native-closures.ts": "a2a095b82209a5772e678841eaf218ebe64cdba5d0fc42a52b5ebcbbf1bb990c",
+    "src/wasm/physical/module-reservations.ts": "dc4952b91e9479a6b3f59d8dd0b3cb74fe9a79883c6a40c05a13230b00541eb4",
+    "tests/issue-3518-native-closure-resources.test.ts": "27887b73aec30063a20b2ac3567a05b120cb22c84e7dd648f5d725ad63d8cbf9",
+    "tests/issue-3518-physical-snapshot-comparison.test.ts": "c264985e8a43ed4898186440c6ee6704cd13c79f82b0f2eb5d9688c84dd00529",
+    "tests/issue-3518-native-mixed-object-access.test.ts": "3990263b0e0a7669e2472e96c335264912fbc4872fc3b3981420c1cb901d6024",
+    "tests/issue-3518-closure-coordinate-audits.test.ts": "459f2a53f0770bb3b08e13d0cc301d33712b42fe5aa93ff6a8890adf43c8d5d6"
+  },
+  "gates": {
+    "ts7": "exit0",
+    "loc": "pass",
+    "function": "pass",
+    "oracle": "pass",
+    "coercion": "pass",
+    "inventory": "valid; architecture incomplete",
+    "reachability": "preservation-only6/6full+6/6cut; graphOPEN,strictmodeledclosureFAIL,retirementNOTCERTIFIED"
+  },
+  "originalFailure": "PR6371 quality110167765637: three original mixed-owner rows timed out at35000ms; CI durations52961,42900,52554ms. Originaltestunchanged.",
+  "draftFixtureFailures": "Initial new closure fixture misused promise:settle key; later new count incorrectly assumed5tokens. Actual firstsignatureusesroot so4tokens. Original failedlogs retained under .tmp/canonical-audit. Unguardedphasecontrol6/7, correctedguard full392/392.",
+  "verifiedMainDelivery": {
+    "pr": 6372,
+    "title": "fix(ir): retain closure parameter facts across physical projections",
+    "head": "330584de4f7cee3ecdb535f30af5cb5dfb77feb6",
+    "main": "d1d7d68583ba312aa04f58f6144b3222a90c2d5e",
+    "mergedAt": "2026-10-01T02:01:35Z",
+    "ancestryAndSourceTestContent": "verified",
+    "mergeGroupRuns": [
+      {
+        "conclusion": "success",
+        "head_branch": "gh-readonly-queue/main/pr-6372-4c5a334669d3d9ac4db29e850f73d65965ba89f6",
+        "head_sha": "d1d7d68583ba312aa04f58f6144b3222a90c2d5e",
+        "html_url": "https://github.com/loopdive/js2/actions/runs/36802862200",
+        "id": 36802862200,
+        "name": "CLA Check",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "head_branch": "gh-readonly-queue/main/pr-6372-4c5a334669d3d9ac4db29e850f73d65965ba89f6",
+        "head_sha": "d1d7d68583ba312aa04f58f6144b3222a90c2d5e",
+        "html_url": "https://github.com/loopdive/js2/actions/runs/36802862226",
+        "id": 36802862226,
+        "name": "Differential test",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "head_branch": "gh-readonly-queue/main/pr-6372-4c5a334669d3d9ac4db29e850f73d65965ba89f6",
+        "head_sha": "d1d7d68583ba312aa04f58f6144b3222a90c2d5e",
+        "html_url": "https://github.com/loopdive/js2/actions/runs/36802862257",
+        "id": 36802862257,
+        "name": "CI",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "head_branch": "gh-readonly-queue/main/pr-6372-4c5a334669d3d9ac4db29e850f73d65965ba89f6",
+        "head_sha": "d1d7d68583ba312aa04f58f6144b3222a90c2d5e",
+        "html_url": "https://github.com/loopdive/js2/actions/runs/36802862513",
+        "id": 36802862513,
+        "name": "Test262 Sharded",
+        "status": "completed"
+      }
+    ],
+    "successfulConformanceShards": 102,
+    "conformanceJobs": [
+      {
+        "conclusion": "success",
+        "name": "cheap gate (main-ancestor + lint)",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "admit-measurement-baseline",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "detect test262-relevant changes",
+        "status": "completed"
+      },
+      {
+        "conclusion": "skipped",
+        "name": "promote root baseline + cache per-SHA for queue merge (#3467/#3468)",
+        "status": "completed"
+      },
+      {
+        "conclusion": "skipped",
+        "name": "probe merge_group baseline artifact",
+        "status": "completed"
+      },
+      {
+        "conclusion": "skipped",
+        "name": "build standalone harness providers (#6723)",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "build compiled Temporal provider (#5353)",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "build standalone runtime-eval provider (quickjs)",
+        "status": "completed"
+      },
+      {
+        "conclusion": "skipped",
+        "name": "test262 standalone-linked shard ${{ matrix.chunk }}",
+        "status": "completed"
+      },
+      {
+        "conclusion": "skipped",
+        "name": "test262 ${{ matrix.target.name }} shard ${{ matrix.chunk }}",
+        "status": "completed"
+      },
+      {
+        "conclusion": "skipped",
+        "name": "test262 honest-audit shard ${{ matrix.chunk }}",
+        "status": "completed"
+      },
+      {
+        "conclusion": "skipped",
+        "name": "merge native-first evidence",
+        "status": "completed"
+      },
+      {
+        "conclusion": "skipped",
+        "name": "test262 native-first shard ${{ matrix.chunk }}",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 js-host shard 7/20",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 js-host shard 10/20",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 js-host shard 2/20",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 js-host shard 13/20",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 js-host shard 15/20",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 js-host shard 5/20",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 js-host shard 12/20",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 js-host shard 18/20",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 js-host shard 9/20",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 standalone shard 1/82",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 js-host shard 8/20",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 js-host shard 11/20",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 js-host shard 3/20",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 js-host shard 19/20",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 js-host shard 1/20",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 standalone shard 4/82",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 js-host shard 17/20",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 js-host shard 6/20",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 standalone shard 7/82",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 standalone shard 8/82",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 standalone shard 2/82",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 standalone shard 14/82",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 standalone shard 5/82",
+        "status": "completed"
+      },
+      {
+        "conclusion": "skipped",
+        "name": "merge standalone-linked evidence",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 js-host shard 14/20",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 js-host shard 16/20",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 standalone shard 11/82",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 standalone shard 15/82",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 standalone shard 3/82",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 standalone shard 9/82",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 standalone shard 10/82",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 standalone shard 12/82",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 standalone shard 16/82",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 standalone shard 6/82",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 standalone shard 17/82",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 standalone shard 22/82",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 js-host shard 4/20",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 standalone shard 13/82",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 standalone shard 20/82",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 standalone shard 21/82",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 js-host shard 20/20",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 standalone shard 31/82",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 standalone shard 23/82",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 standalone shard 33/82",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 standalone shard 24/82",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 standalone shard 35/82",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 standalone shard 42/82",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 standalone shard 38/82",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 standalone shard 19/82",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 standalone shard 25/82",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 standalone shard 29/82",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 standalone shard 34/82",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 standalone shard 26/82",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 standalone shard 39/82",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 standalone shard 40/82",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 standalone shard 28/82",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 standalone shard 30/82",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 standalone shard 18/82",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 standalone shard 37/82",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 standalone shard 32/82",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 standalone shard 44/82",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 standalone shard 27/82",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 standalone shard 41/82",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 standalone shard 36/82",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 standalone shard 43/82",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 standalone shard 48/82",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 standalone shard 54/82",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 standalone shard 55/82",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 standalone shard 49/82",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 standalone shard 53/82",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 standalone shard 46/82",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 standalone shard 45/82",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 standalone shard 58/82",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 standalone shard 52/82",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 standalone shard 47/82",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 standalone shard 56/82",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 standalone shard 60/82",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 standalone shard 76/82",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 standalone shard 72/82",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 standalone shard 50/82",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 standalone shard 64/82",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 standalone shard 66/82",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 standalone shard 57/82",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 standalone shard 68/82",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 standalone shard 67/82",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 standalone shard 62/82",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 standalone shard 70/82",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 standalone shard 63/82",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 standalone shard 51/82",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 standalone shard 78/82",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 standalone shard 69/82",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 standalone shard 79/82",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 standalone shard 82/82",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 standalone shard 74/82",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 standalone shard 75/82",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 standalone shard 77/82",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 standalone shard 61/82",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 standalone shard 81/82",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 standalone shard 59/82",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 standalone shard 71/82",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 standalone shard 80/82",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 standalone shard 65/82",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "test262 standalone shard 73/82",
+        "status": "completed"
+      },
+      {
+        "conclusion": "skipped",
+        "name": "merge honest-audit evidence",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "check for test262 regressions",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "merge shard reports",
+        "status": "completed"
+      },
+      {
+        "conclusion": "skipped",
+        "name": "promote merged report to main baseline",
+        "status": "completed"
+      }
+    ],
+    "successfulReportMerge": true
+  },
+  "normalHookAttempt": {
+    "result": "refused before heavy tests",
+    "reason": "two noSparseArray lint errors in new differential controls",
+    "resolution": "writer uses length-constructed arrays retaining genuine holes; no lint suppression or substitution"
+  },
+  "postValidationLintFix": {
+    "testSha256": "c264985e8a43ed4898186440c6ee6704cd13c79f82b0f2eb5d9688c84dd00529",
+    "reason": "two sparse literal lint errors corrected with length-constructed arrays",
+    "retained": "index0 absent; other explicit undefined indices own/present; original lengths/order; production unchanged",
+    "writerModel": "Codex GPT-6 Astra Max",
+    "validation": "normal full hooks pending"
+  },
+  "historicalTestPreservation": {
+    "originalTest": "tests/issue-3518-native-closure-resources.test.ts",
+    "sha256": "27887b73aec30063a20b2ac3567a05b120cb22c84e7dd648f5d725ad63d8cbf9",
+    "unchanged": "byte-identical to e4737c9f1dcb632c56f3cc3a31e3ad47cd7f848e",
+    "newControls": "tests/issue-3518-closure-coordinate-audits.test.ts",
+    "rows": 7,
+    "reason": "original closure-state preservation reader pins the original whole test; retain its exact bytes rather than edit its digest"
+  },
+  "snapshotSignedCheckpoint": {
+    "head": "23c4991cebae90c0fdb39e9334ed7cfb6f2125b0",
+    "signature": "SSH signature present",
+    "model": "Codex GPT-6 Astra Max",
+    "normalHooks": "passed; no skip flags",
+    "workingTreeScope": "integrated candidate with unstaged root closure repair",
+    "changedRootTests": [
+      {
+        "file": "tests/issue-3518-builtin-request-literal-authentication.test.ts",
+        "rows": 24
+      },
+      {
+        "file": "tests/issue-3518-closure-state-preservation-port.test.ts",
+        "rows": 71
+      },
+      {
+        "file": "tests/issue-3518-later-main-preservation-port.test.ts",
+        "rows": 248
+      },
+      {
+        "file": "tests/issue-3518-native-mixed-object-access.test.ts",
+        "rows": 37
+      },
+      {
+        "file": "tests/issue-3518-native-object-realm-declarations.test.ts",
+        "rows": 26
+      },
+      {
+        "file": "tests/issue-3518-native-realm-object-layouts.test.ts",
+        "rows": 32
+      },
+      {
+        "file": "tests/issue-3518-native-realm-requirements.test.ts",
+        "rows": 26
+      },
+      {
+        "file": "tests/issue-3518-native-realm-source-integration.test.ts",
+        "rows": 24
+      },
+      {
+        "file": "tests/issue-3518-native-realm-wrapper-storage.test.ts",
+        "rows": 24
+      },
+      {
+        "file": "tests/issue-3518-physical-snapshot-comparison.test.ts",
+        "rows": 49
+      },
+      {
+        "file": "tests/issue-3518-semantic-provider-boundary.test.ts",
+        "rows": 349
+      },
+      {
+        "file": "tests/issue-3518-typedarray-main-preservation-port.test.ts",
+        "rows": 29
+      }
+    ],
+    "passed": 939,
+    "skipped": 0
+  },
+  "integratedMain": {
+    "head": "a8cd258d553278d8e5f908878f56a81377ba8e40",
+    "scope": "delivered source parameter fix plus upstream benchmark/budget refresh",
+    "sourceConflicts": 0,
+    "metadataConflicts": 1,
+    "resolution": "both exact additive issue tails retained after their identical updated-date edit; pending repair tail restored from byte-preserved backup"
+  },
+  "refreshedMainValidation": {
+    "total": 213,
+    "passed": 213,
+    "skipped": 0,
+    "runs": [
+      {
+        "report": "refreshed-main-controls",
+        "total": 163,
+        "passed": 163,
+        "files": [
+          {
+            "file": "issue-3518-closure-coordinate-audits.test.ts",
+            "rows": 7
+          },
+          {
+            "file": "issue-3518-closure-parameter-projections.test.ts",
+            "rows": 7
+          },
+          {
+            "file": "issue-3518-module-reservations.test.ts",
+            "rows": 149
+          }
+        ]
+      },
+      {
+        "report": "refreshed-main-authentication",
+        "total": 50,
+        "passed": 50,
+        "files": [
+          {
+            "file": "issue-3518-native-authentication-performance.test.ts",
+            "rows": 50
+          }
+        ]
+      }
+    ],
+    "instrumentNote": "first run selected three real files/163 rows; a mistyped fourth selector matched no file and was not counted. Correct real authentication file ran separately50/50."
+  }
+}

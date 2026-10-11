@@ -1,0 +1,294 @@
+{
+  "root": "/private/tmp/js2-3518-native-string-value-consumer-20260909",
+  "files": [
+    {
+      "file": "src/stdlib/number-format.ts",
+      "sha256": "35b95b76d63a942d8527deec6be1e8c6a5a2e38aeadb72b41d32aa7c544fe24f"
+    },
+    {
+      "file": "src/codegen/stdlib-selfhost.ts",
+      "sha256": "be609f10707aabadd5e8542ba868de0b32b67e57b275259ec7a20d8cf12e6eb8"
+    },
+    {
+      "file": "src/codegen/number-format-selfhost.ts",
+      "sha256": "179ef0f195aae80f68a9a2320e80514445d8c5a2ae3cce6d5da1c6ad3633a582"
+    },
+    {
+      "file": "src/codegen/number-format-native.ts",
+      "sha256": "780f229fa2ea01fb33c2abf3070271b9e8d401a6b6096eec19d05af7f9b7c4ff"
+    }
+  ],
+  "scopes": [
+    {
+      "file": "src/stdlib/number-format.ts",
+      "name": "TOSTRING_RADIX_SOURCE",
+      "start": 2722,
+      "end": 4366,
+      "startLine": 51,
+      "endLine": 110,
+      "sha256": "6664ed185bf6117a93ef311eefdb941b38a3feb8b8ef3ef5ef208c0dedbbb664"
+    },
+    {
+      "file": "src/stdlib/number-format.ts",
+      "name": "numToStringRadixDef",
+      "start": 4523,
+      "end": 5113,
+      "startLine": 116,
+      "endLine": 131,
+      "sha256": "3917470d4016fb92105cdb72babb4ebe627ddc83f6addd19dbc553b49cbb99cb"
+    },
+    {
+      "file": "src/codegen/stdlib-selfhost.ts",
+      "name": "selfHostedCalleeRef",
+      "start": 5913,
+      "end": 6150,
+      "startLine": 103,
+      "endLine": 109,
+      "sha256": "bc6e5c1c9eb301b433fb1229990b14cffa5e86a89227df13b0f8c43f12cc36a3"
+    },
+    {
+      "file": "src/codegen/stdlib-selfhost.ts",
+      "name": "SelfHostedFuncDef",
+      "start": 6904,
+      "end": 9044,
+      "startLine": 125,
+      "endLine": 162,
+      "sha256": "4ee45419caf028c733e7e233ffe216612ab1ad6512e962b552c13f50adbcbb78"
+    },
+    {
+      "file": "src/codegen/stdlib-selfhost.ts",
+      "name": "createSelfHostedIrUnitId",
+      "start": 12752,
+      "end": 13066,
+      "startLine": 251,
+      "endLine": 258,
+      "sha256": "c4cc2440770f3ffe79d5d0ee5a0cb3145a7b5ddbedc8ed0625b39f0218abb776"
+    },
+    {
+      "file": "src/codegen/stdlib-selfhost.ts",
+      "name": "selfHostedTemplate",
+      "start": 13068,
+      "end": 13203,
+      "startLine": 260,
+      "endLine": 263,
+      "sha256": "04791ff4aad0ae0b2d8e719e56d99e171b45e277f9b2936b5986e58bc3c08c26"
+    },
+    {
+      "file": "src/codegen/stdlib-selfhost.ts",
+      "name": "materializeSelfHostedIr",
+      "start": 13205,
+      "end": 13337,
+      "startLine": 265,
+      "endLine": 267,
+      "sha256": "ec38c3388cc52fb91da16043204877818f975d4b60d54e7ff95083e5c01d78b8"
+    },
+    {
+      "file": "src/codegen/stdlib-selfhost.ts",
+      "name": "irTypeContainsContextIndex",
+      "start": 13339,
+      "end": 15251,
+      "startLine": 269,
+      "endLine": 313,
+      "sha256": "512ac63e002132af6283cbabe99b5a6499ecbb2369d07ebc366c3d5fbb2ab489"
+    },
+    {
+      "file": "src/codegen/stdlib-selfhost.ts",
+      "name": "assertMemoEligible",
+      "start": 15253,
+      "end": 15983,
+      "startLine": 315,
+      "endLine": 330,
+      "sha256": "7744a8db3133e2ce9cf768115f07b80380f44ac4477c75fec03643bbb320e329"
+    },
+    {
+      "file": "src/codegen/stdlib-selfhost.ts",
+      "name": "selfHostedFingerprint",
+      "start": 15985,
+      "end": 16432,
+      "startLine": 332,
+      "endLine": 343,
+      "sha256": "1212de82fbe59f4b6420c8ff323d0062801420a78df3ee5d02039bf0ccc921c1"
+    },
+    {
+      "file": "src/codegen/stdlib-selfhost.ts",
+      "name": "buildSelfHostedIr",
+      "start": 17264,
+      "end": 20464,
+      "startLine": 363,
+      "endLine": 447,
+      "sha256": "22a2b866d2fbee576da3c8471e9d552efb8218d90038077b014259b95e364e57"
+    },
+    {
+      "file": "src/codegen/stdlib-selfhost.ts",
+      "name": "emitSelfHostedFunc",
+      "start": 22327,
+      "end": 24192,
+      "startLine": 492,
+      "endLine": 526,
+      "sha256": "c6087df562e74d4a731d556c2815dae1010a3f1c0771e0c9b539437fea115d59"
+    },
+    {
+      "file": "src/codegen/stdlib-selfhost.ts",
+      "name": "lowerAndRegister",
+      "start": 26565,
+      "end": 34513,
+      "startLine": 570,
+      "endLine": 733,
+      "sha256": "2bedbc03bea4db29611828882b49742f317431f5d00ed1a15eb19177ed13e0b8"
+    },
+    {
+      "file": "src/codegen/number-format-selfhost.ts",
+      "name": "ensureNumFmtBufKernels",
+      "start": 2553,
+      "end": 5490,
+      "startLine": 54,
+      "endLine": 148,
+      "sha256": "57cf3a039c292af32e01e74b7c09fe5fbf01f85de834db681ddcf3577049bcb4"
+    },
+    {
+      "file": "src/codegen/number-format-selfhost.ts",
+      "name": "emitSelfHostedToStringRadix",
+      "start": 5795,
+      "end": 6288,
+      "startLine": 157,
+      "endLine": 171,
+      "sha256": "3a53b8afeaa70df1893eee819c779a3cf2efbbf19a713b9cd5286d0b83abaf9e"
+    },
+    {
+      "file": "src/codegen/number-format-native.ts",
+      "name": "emitNativeNumberFormat",
+      "start": 19674,
+      "end": 22845,
+      "startLine": 494,
+      "endLine": 550,
+      "sha256": "5885034cf07eb5917fb6411c470f5ae67afbabdbee021d70cea6e82383a57f95"
+    },
+    {
+      "file": "src/codegen/number-format-native.ts",
+      "name": "emitToString",
+      "start": 24656,
+      "end": 29419,
+      "startLine": 587,
+      "endLine": 704,
+      "sha256": "1e2b872e5155b1ae4af79b89750f274eae0ab2981f5c1023b81bfa3139289ea5"
+    }
+  ],
+  "sourceCensus": {
+    "sha256": "7b13099fbed0a87079f92e9bddbf75959065ed28daf66d5ad344e0b240037dc6",
+    "utf8Bytes": 1618,
+    "functions": ["__sh_num_toString_radix"],
+    "calls": {
+      "Math.floor": 4,
+      "__num_fmt_trap": 1,
+      "__nfd_new": 1,
+      "__nfd_set": 7,
+      "__nfd_get": 2,
+      "__nfd_fin": 1
+    },
+    "totalCalls": 16,
+    "literals": ["NaN", "Infinity", "-Infinity", "0"]
+  },
+  "missing": [],
+  "classification": "source syntax only; no preparation or execution performed",
+  "observedHead": "9ccad45c62a29d3e314448f80da1e5a70e92e8a9",
+  "workingTreeBytes": true,
+  "additionalEvidenceFiles": [
+    {
+      "file": "plan/agent-context/3518-native-async-consumer-implementation-spec-2026-09-09.md",
+      "sha256": "71c0302fd7b3d52999e873a85d23b1b70ed4f4a2fc9ab5e5fb0f4f4d0f397e35"
+    },
+    {
+      "file": "src/ir/core/types.ts",
+      "sha256": "49f0b751abc784cff47501d3309a1e2d20307ce5c3a460bab1a60ef3bb19dac5"
+    },
+    {
+      "file": "src/ir/type-key.ts",
+      "sha256": "1d098814463f3edf56aa9ec411daa792d71f5a4bf0608c45f83e72409b63316b"
+    },
+    {
+      "file": "src/ir/program/input-contracts.ts",
+      "sha256": "35513eb7bbb1c5228da514904d4ed1baf8b904ccd4ba321c0feff5bf80623767"
+    },
+    {
+      "file": "src/ir/program/prepared-contracts.ts",
+      "sha256": "6535893fc7c88d72fb3b0f963dab151f18cf10052f36693d52859a92837e0a20"
+    },
+    {
+      "file": "src/ir/program/input.ts",
+      "sha256": "fc6d92f559b3a46e203ca5f8b1cf92ddf41cdc56d7f6ae326207b6596fcc6994"
+    },
+    {
+      "file": "src/ir/program-source.ts",
+      "sha256": "79e85a768f868fc356cb0b51758d811c4ffeb2069ab52c4ebfe9bf0070c2e30d"
+    },
+    {
+      "file": "src/ir/program-preparation.ts",
+      "sha256": "0e2ce7ecc74b122a5d89123d54297e285b45acad6e566d77bc1cfa9c24dd8bab"
+    },
+    {
+      "file": "src/ir/program-prepare-ir.ts",
+      "sha256": "fd2b0be7d2c51301f237b83bc0144ac12c737d490ea51ccdaaa6d0affb7f349d"
+    },
+    {
+      "file": "src/ir/program-abi-contracts.ts",
+      "sha256": "3c23202f2a7d87f5e0f4dd480594627868cbfe73a01eaf312b1d61cda29d93a8"
+    },
+    {
+      "file": "src/ir/program-validation.ts",
+      "sha256": "2328cf992b70cf17d76dc56209b32c9353ca7e437c5953ece80367f59319d5c2"
+    },
+    {
+      "file": "src/ir/program-allocations.ts",
+      "sha256": "ad9c9e397855cc3194a82feb102106c8eaedb5927dcd8bdd496fc4230f152a3c"
+    },
+    {
+      "file": "src/ir/program-codec.ts",
+      "sha256": "6d84995746782224b0a029fe9c6499b555bed5f3b0e7d9d5717aceb661f7cc30"
+    },
+    {
+      "file": "src/ir/program-population.ts",
+      "sha256": "ce29e6cc8603737671b12bc188bb149b1f39e5ab25e552e61782b462e470e20e"
+    },
+    {
+      "file": "src/ir/program-runtime-abi.ts",
+      "sha256": "2d38d6471fa3004ad0e63edc2cbf6d84ee455bb2227de00d5684be496aed7bb5"
+    },
+    {
+      "file": "src/ir/runtime/callable-declarations.ts",
+      "sha256": "db70bc14602f360179ac787c902af82476ffff5297993ba87d7f99be5d348e10"
+    },
+    {
+      "file": "src/ir/program.ts",
+      "sha256": "6139bbb844b6ee0b2770a8e87e198d6dcd52c88f40dcdcd80ff598779a6d3cc0"
+    },
+    {
+      "file": "src/ir/physical-ref-support.ts",
+      "sha256": "c40369e44f5255e853b7c5459f4df406f8da36cd071049d380eb062d071b88f2"
+    },
+    {
+      "file": "src/ir/prepared-component-dependencies.ts",
+      "sha256": "14e22cc9e8c319d9f2dc4c041ec628f5e04c55e3b86f4d7c10f3891329e2764e"
+    },
+    {
+      "file": "src/ir/builder.ts",
+      "sha256": "e1a2be04c16d38a0890d9e4110953edea1ad997e433b95c5662266840d859cba"
+    },
+    {
+      "file": "src/ir/lower.ts",
+      "sha256": "dd8bfeb0f7aa60a04c80298d4b9629e59c9b8d66876bb98ce70441ff781660e6"
+    },
+    {
+      "file": "src/ir/analysis/contracts/allocations.ts",
+      "sha256": "65a55b5e766280af62d728b8c54a6ead6f39e2c5c74d7eee6cb9c0aab697a813"
+    },
+    {
+      "file": "src/ir/abi-bindings.ts",
+      "sha256": "9324caf316c596019beab1007c7e602263ae2955328a0f336b1ab38246bb09fc"
+    },
+    {
+      "file": "tests/issue-3305.test.ts",
+      "sha256": "f2f9104f49ce40a74368df6fcb5dfbcc656da0682fa82f355ece36a190f25e24"
+    }
+  ],
+  "testsRun": 0
+}

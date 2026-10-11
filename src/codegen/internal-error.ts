@@ -16,6 +16,8 @@
 // unactionable string into a pointer.
 
 /** Frames inside the compiler itself, not node internals or dependencies. */
+import { readEnv } from "../env.js";
+
 const SRC_FRAME = /\(?((?:\/|[A-Za-z]:\\)?[^\s()]*(?:src[/\\][^\s()]+?)):(\d+):(\d+)\)?/;
 
 /**
@@ -52,7 +54,7 @@ export function innermostCompilerFrame(error: unknown): string | undefined {
  */
 export function describeInternalError(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
-  if (typeof process !== "undefined" && process.env?.JS2WASM_CODEGEN_STACK && error instanceof Error) {
+  if (typeof process !== "undefined" && readEnv("JS2WASM_CODEGEN_STACK") && error instanceof Error) {
     process.stderr.write(`[js2:internal] ${message}\n${error.stack ?? "<no stack>"}\n`);
   }
   const frame = innermostCompilerFrame(error);

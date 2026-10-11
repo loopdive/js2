@@ -32,8 +32,8 @@
 //     [ header 8B ][ len:u32 @+8 ][ cap:u32 @+12 ][ elements @+16 … ]
 //
 // A vec value in the linear backend is therefore an `i32` base pointer.
-//   - emitVecLen      : base on stack → `i32.load offset=8`  (the len field)
-//   - emitVecDataPtr  : base on stack → `i32.const 16; i32.add` (data-region
+//   - emitVecLen      : base on stack → resolve header, then `i32.load offset=8`  (the len field)
+//   - emitVecDataPtr  : base on stack → resolve header, then `i32.const 16; i32.add` (data-region
 //                       base ptr, still an i32 — this is the "data-region
 //                       handle" the trait abstracts: WasmGC leaves a (ref $arr),
 //                       linear leaves an i32. lower.ts never inspects which.)
@@ -248,19 +248,34 @@ export class LinearEmitter implements BackendEmitter<Instr[]> {
 
   emitVecLen(layout: LinearVecLowering, out: Instr[]): void {
     const linear = asLinearVec(layout);
-    // base ptr on stack → load the u32 len field.
-    out.push({
-      op: "i32.load",
-      align: 2,
-      offset: linear.linearMemory.layout.lengthOffset,
-    });
+    const resolver = this.vectorReadResolver();
+    // Resolve the current header before reading its u32 length.
+    out.push(
+      { op: "call", funcIdx: resolver },
+      {
+        op: "i32.load",
+        align: 2,
+        offset: linear.linearMemory.layout.lengthOffset,
+      },
+    );
   }
 
   emitVecDataPtr(layout: LinearVecLowering, out: Instr[]): void {
     const linear = asLinearVec(layout);
-    // base ptr on stack → base + 16 = element data-region base (still i32).
-    out.push({ op: "i32.const", value: linear.linearMemory.layout.elementsOffset });
-    out.push({ op: "i32.add" });
+    const resolver = this.vectorReadResolver();
+    out.push(
+      { op: "call", funcIdx: resolver },
+      { op: "i32.const", value: linear.linearMemory.layout.elementsOffset },
+      { op: "i32.add" },
+    );
+  }
+
+  private vectorReadResolver(): number {
+    const resolve = this.options.resolveRuntimeOperation;
+    if (!resolve) throw new Error("LinearEmitter: vector forwarding resolver is unavailable");
+    const index = resolve({ family: "vector", operation: "resolve-forwarding" });
+    if (!Number.isInteger(index) || index < 0) throw new Error("LinearEmitter: vector forwarding binding is invalid");
+    return index;
   }
 
   emitElemGet(layout: LinearVecLowering, out: Instr[]): void {

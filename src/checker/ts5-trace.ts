@@ -21,6 +21,7 @@
  * dependencies given the AST.
  */
 import type { ts } from "../ts-api.js";
+import { readEnv } from "../env.js";
 
 interface MethodTrace {
   calls: number;
@@ -36,7 +37,7 @@ const SITE_CAP = 40;
 const registry = new Map<string, MethodTrace>();
 
 function isEnabled(): boolean {
-  return typeof process !== "undefined" && !!process.env && process.env.JS2WASM_TRACE_TS5 === "1";
+  return readEnv("JS2WASM_TRACE_TS5") === "1";
 }
 
 /** First stack frame inside src/ that is not this module — the caller we blame. */

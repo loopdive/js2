@@ -1,0 +1,18 @@
+{
+  "branch": "codex/3518-validation-lowering-b-20261001",
+  "fork_head": "63c5ce9ae1d5a77591abaff28e27fe974926bf4f",
+  "normal_pre_push_passed": true,
+  "claim_write_id": "29580-nbe2k5m6",
+  "source_dependency_pr": 6378,
+  "new_pr_created": false,
+  "writer_active": false,
+  "root_original_boundary_baseline_process": "completed_exit_1",
+  "all_native_writers_stopped": true,
+  "claim_status": "released",
+  "claim_release_write_id": "40138-k7ulq2nc",
+  "claim_released_at": "2026-10-01T05:53:19Z",
+  "writer_freeze_manifest_sha256": "de4e96c0281846e6f62d2bae7814d2e3ddced012de8d23c6613284e765eba39d",
+  "candidate_integrated": false,
+  "candidate_compiled": false,
+  "candidate_tests_executed": false
+}

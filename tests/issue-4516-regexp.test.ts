@@ -19,7 +19,7 @@ it("matches Annex B \\c fallbacks with quantifiers and literal braces", async ()
   const source = `
 function pattern(suffix: any): any { return "\\\\c" + suffix; }
 function flags(): any { return ""; }
-function unsupported(): any { return "a*b"; }
+function unsupported(): any { return "\\u00e9"; }
 export function test(): number {
   let score = 0;
   try {
@@ -32,7 +32,7 @@ export function test(): number {
     return -1;
   }
   try {
-    new RegExp(unsupported(), flags()).exec("aab");
+    new RegExp(unsupported(), "i").exec("\\u00c9");
     return score + 100;
   } catch {
     return score;

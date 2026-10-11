@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "priorCommit": "d7de1281129ddff8d3a48902a5dcf81eaee7f8d3",
+  "mainCommit": "422dbf01a07b58cceefc64846444485eb549d9a5",
+  "mergeBase": "bb41a01224b8173818f4e4cde86f1fdf1905d8aa",
+  "record": {
+    "path": "src/codegen/promise-combinators.ts",
+    "before": {
+      "gitBlob": "64511b85773bacb6f0e32b5c6770f69fd3eee9ee",
+      "sha256": "f428fbde2ac63f35d2308a183cf9937a11af2e625fa63ac79b71fd9afa03ca92"
+    },
+    "after": {
+      "gitBlob": "b3bb351a185c5b62c11ab5dcbe7069c644ab8f2a",
+      "sha256": "b296ba1c515f722e416cb9bd0c85f54806c387e930a564bfbc6df51dce0ad32a"
+    },
+    "upstream": {
+      "before": {
+        "gitBlob": "64511b85773bacb6f0e32b5c6770f69fd3eee9ee",
+        "sha256": "f428fbde2ac63f35d2308a183cf9937a11af2e625fa63ac79b71fd9afa03ca92"
+      },
+      "after": {
+        "gitBlob": "b3bb351a185c5b62c11ab5dcbe7069c644ab8f2a",
+        "sha256": "b296ba1c515f722e416cb9bd0c85f54806c387e930a564bfbc6df51dce0ad32a"
+      }
+    },
+    "span": {
+      "before": "\nfunction ensureSettledAnyCombinators(ctx: CodegenContext): SettledAnyCombinatorRuntime {\n",
+      "after": "\nexport function ensureSettledAnyCombinators(ctx: CodegenContext): SettledAnyCombinatorRuntime {\n",
+      "beforeSha256": "2a9a1e598f60909234a34a8fb18652a26a414d3cf45ea20929be47b2b70357e6",
+      "afterSha256": "00556d81647e51c1a60a6da4f2f1548877000244c0893ce686ffa2bb7c2b7570",
+      "beforeOffset": 39658,
+      "afterOffset": 39658,
+      "upstreamBeforeOffset": 39658,
+      "upstreamAfterOffset": 39658
+    }
+  },
+  "dependencies": [
+    {
+      "path": "src/codegen/promise-class-receiver-drive.ts",
+      "gitBlob": "026e15e9b77f2c948ebaba6a7c46075423dd51a6",
+      "sha256": "fd31a929bed44833b5de430ef14c6e86129196ce3a0499fbe5f7bc30fc74dfc3"
+    }
+  ]
+}

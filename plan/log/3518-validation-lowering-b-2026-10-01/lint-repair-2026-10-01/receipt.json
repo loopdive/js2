@@ -1,0 +1,16 @@
+{
+  "model": "Codex GPT-6.1 Sol Medium",
+  "dispatch": "/root/sol_b_lint_repair",
+  "files": [
+    {
+      "path": "tests/issue-3518-verifier-body-relocation.test.ts",
+      "before": "b651efc201d5a6b024a616f38368ddb1d88c0b940dc5edfaee2ec33b7ee74607",
+      "after": "eaabb8b65f1064b321c8a809422c06d2f92b2cb729940b5ec366437c1110b058"
+    },
+    {
+      "path": "tests/issue-3518-validation-policy-evolution.test.ts",
+      "before": "485f44cf49ca36888214f28f523a2c2a8bf33c33f7711e629f3a03a82bf4c5c6",
+      "after": "1b5ba110797b8241bb6b5857678e3fb860052842725fbf7d58ac8c426eb5ab40"
+    }
+  ]
+}

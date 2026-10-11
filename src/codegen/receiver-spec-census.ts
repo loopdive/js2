@@ -34,6 +34,7 @@
 import ts from "typescript";
 
 import { explainReceiverDecline, type ReceiverFlowResult } from "./receiver-flow-analysis.js";
+import { readEnv } from "../env.js";
 
 /** Tallies. All empty unless `JS2WASM_RECEIVER_SPEC_STATS=1`. */
 export const receiverSpecCensus = {
@@ -51,7 +52,7 @@ export const receiverSpecCensus = {
 };
 
 export function receiverSpecCensusEnabled(): boolean {
-  return process.env.JS2WASM_RECEIVER_SPEC_STATS === "1";
+  return readEnv("JS2WASM_RECEIVER_SPEC_STATS") === "1";
 }
 
 let hookInstalled = false;

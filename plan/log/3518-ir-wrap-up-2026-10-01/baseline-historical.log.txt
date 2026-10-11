@@ -1,0 +1,818 @@
+
+ RUN  v3.2.4 /private/tmp/js2-ir-source-validation-contracts-20261001
+
+ ❯ tests/issue-3518-runtime-data-contract-seam.test.ts (75 tests | 6 failed) 1050ms
+   ✓ #3518 canonical runtime data-contract seam > checks historical 'src/runtime/contracts/async-provider-…' receipt after checked extension reconstruction 6ms
+   × #3518 canonical runtime data-contract seam > checks historical 'src/runtime/contracts/provider-policy…' receipt after checked extension reconstruction 7ms
+     → expected '239325a1ea954601a0107795bffb6db741799…' to be '427cef6e60b0e3328fc6ace4a66eabab7afa4…' // Object.is equality
+   × #3518 canonical runtime data-contract seam > checks historical 'src/ir/runtime/contracts/intrinsics.ts' receipt after checked extension reconstruction 4ms
+     → historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+   × #3518 canonical runtime data-contract seam > checks historical 'src/ir/runtime/contracts/manifest.ts' receipt after checked extension reconstruction 6ms
+     → historical reconstruction: current clock/vector links src/ir/runtime/callable-declarations.ts
+   ✓ #3518 canonical runtime data-contract seam > checks historical 'src/ir/runtime/contracts/prepared.ts' receipt after checked extension reconstruction 1ms
+   ✓ #3518 canonical runtime data-contract seam > checks historical retained 'src/ir/async-runtime-providers.ts' receipt after checked extension reconstruction 1ms
+   × #3518 canonical runtime data-contract seam > checks historical retained 'src/ir/runtime-manifest.ts' receipt after checked extension reconstruction 2ms
+     → historical reconstruction: current clock/vector links src/ir/runtime/callable-declarations.ts
+   × #3518 canonical runtime data-contract seam > checks historical retained 'src/ir/intrinsics.ts' receipt after checked extension reconstruction 1ms
+     → historical reconstruction: current declaration order/identity in src/ir/core/intrinsics.ts
+   ✓ #3518 canonical runtime data-contract seam > checks historical retained 'src/ir/async-plan.ts' receipt after checked extension reconstruction 7ms
+   × #3518 canonical runtime data-contract seam > checks historical retained 'src/ir/intrinsic-support.ts' receipt after checked extension reconstruction 1ms
+     → historical reconstruction: current clock/vector links src/ir/runtime/callable-declarations.ts
+   ✓ #3518 canonical runtime data-contract seam > keeps the complete moved/retained denominators and the one currentness authority 12ms
+   ✓ #3518 canonical runtime data-contract seam > forwards each 'src/runtime/contracts/async-provider-…' name only from its exact defining owner 6ms
+   ✓ #3518 canonical runtime data-contract seam > forwards each 'src/runtime/contracts/provider-policy…' name only from its exact defining owner 104ms
+   ✓ #3518 canonical runtime data-contract seam > forwards each 'src/ir/runtime/contracts/intrinsics.ts' name only from its exact defining owner 3ms
+   ✓ #3518 canonical runtime data-contract seam > forwards each 'src/ir/runtime/contracts/manifest.ts' name only from its exact defining owner 185ms
+   ✓ #3518 canonical runtime data-contract seam > forwards each 'src/ir/runtime/contracts/prepared.ts' name only from its exact defining owner 4ms
+   ✓ #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'ASYNC_HOST_CAPABILITY_IDS' object 0ms
+   ✓ #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'ASYNC_CALLBACK_EXCEPTION_POLICY' object 0ms
+   ✓ #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'ASYNC_RUNTIME_PROVIDER_IDS' object 0ms
+   ✓ #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'NUMBER_BOUNDARY_POLICY_DISABLED' object 0ms
+   ✓ #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'BOOLEAN_BOUNDARY_POLICY_DISABLED' object 0ms
+   ✓ #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'EXTERN_IS_UNDEFINED_POLICY_DISABLED' object 0ms
+   ✓ #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'GENERATOR_NUMBER_BOX_POLICY_DISABLED' object 0ms
+   ✓ #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'STRING_COMPARE_POLICY_DISABLED' object 0ms
+   ✓ #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'STRING_EQ_POLICY_DISABLED' object 0ms
+   ✓ #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'STRING_LEN_POLICY_DISABLED' object 0ms
+   ✓ #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'STRING_CONCAT_POLICY_DISABLED' object 0ms
+   ✓ #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'STRING_CHAR_CODE_AT_POLICY_DISABLED' object 0ms
+   ✓ #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'STRING_CONCAT_MANY_POLICY_DISABLED' object 0ms
+   ✓ #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'STRING_CONST_POLICY_DISABLED' object 0ms
+   ✓ #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'HOST_CALLBACK_WRAP_POLICY_DISABLED' object 0ms
+   ✓ #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'FUNCTION_PROTOTYPE_CALL_POLICY_DISABL…' object 0ms
+   ✓ #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'PURE_MATH_RUNTIME_FEATURES' object 0ms
+   ✓ #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'NUMERIC_COERCION_RUNTIME_FEATURES' object 0ms
+   ✓ #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'NUMBER_BOUNDARY_RUNTIME_FEATURES' object 0ms
+   ✓ #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'BOOLEAN_BOUNDARY_RUNTIME_FEATURES' object 0ms
+   ✓ #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'EXTERN_BOUNDARY_RUNTIME_FEATURES' object 0ms
+   ✓ #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'INTRINSIC_RUNTIME_FEATURES' object 0ms
+   ✓ #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'PURE_MATH_HOST_CAPABILITIES' object 0ms
+   ✓ #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'RUNTIME_BACKEND_REQUIREMENTS' object 0ms
+   ✓ #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'PURE_MATH_RUNTIME_PROVIDER_IDS' object 0ms
+   ✓ #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'NUMERIC_COERCION_RUNTIME_PROVIDER_IDS' object 0ms
+   ✓ #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'NUMBER_BOUNDARY_RUNTIME_PROVIDER_IDS' object 0ms
+   ✓ #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'BOOLEAN_BOUNDARY_RUNTIME_PROVIDER_IDS' object 0ms
+   ✓ #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'EXTERN_BOUNDARY_RUNTIME_PROVIDER_IDS' object 0ms
+   ✓ #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'GENERATOR_NUMBER_BOX_RUNTIME_FEATURES' object 0ms
+   ✓ #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'GENERATOR_NUMBER_BOX_RUNTIME_PROVIDER…' object 0ms
+   ✓ #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'STRING_COMPARE_RUNTIME_FEATURES' object 0ms
+   ✓ #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'STRING_COMPARE_RUNTIME_PROVIDER_IDS' object 0ms
+   ✓ #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'STRING_EQ_RUNTIME_FEATURES' object 0ms
+   ✓ #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'STRING_EQ_RUNTIME_PROVIDER_IDS' object 0ms
+   ✓ #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'STRING_LEN_RUNTIME_FEATURES' object 0ms
+   ✓ #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'STRING_LEN_RUNTIME_PROVIDER_IDS' object 0ms
+   ✓ #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'STRING_CONCAT_RUNTIME_FEATURES' object 0ms
+   ✓ #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'STRING_CONCAT_RUNTIME_PROVIDER_IDS' object 0ms
+   ✓ #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'STRING_CHAR_CODE_AT_RUNTIME_FEATURES' object 0ms
+   ✓ #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'STRING_CHAR_CODE_AT_RUNTIME_PROVIDER_…' object 0ms
+   ✓ #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'STRING_CONCAT_MANY_RUNTIME_FEATURES' object 0ms
+   ✓ #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'STRING_CONCAT_MANY_RUNTIME_PROVIDER_I…' object 0ms
+   ✓ #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'STRING_CONCAT_MANY_NATIVE_ARITY' object 0ms
+   ✓ #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'STRING_CONST_RUNTIME_FEATURES' object 0ms
+   ✓ #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'STRING_CONST_RUNTIME_PROVIDER_IDS' object 0ms
+   ✓ #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'HOST_CALLBACK_WRAP_RUNTIME_FEATURES' object 0ms
+   ✓ #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'HOST_CALLBACK_WRAP_RUNTIME_PROVIDER_I…' object 0ms
+   ✓ #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'FUNCTION_PROTOTYPE_CALL_RUNTIME_FEATU…' object 0ms
+   ✓ #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'FUNCTION_PROTOTYPE_CALL_RUNTIME_PROVI…' object 0ms
+   ✓ #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'REFERENCE_ERROR_RUNTIME_FEATURES' object 0ms
+   ✓ #3518 canonical runtime data-contract seam > retains the same old/canonical/barrel 'REFERENCE_ERROR_RUNTIME_PROVIDER_IDS' object 0ms
+   ✓ #3518 canonical runtime data-contract seam > reuses the canonical callback policy and exact capability/provider catalogs 0ms
+   ✓ #3518 canonical runtime data-contract seam > keeps both barrels explicit and contract-only 2ms
+   ✓ #3518 canonical runtime data-contract seam > preserves standalone authentication, exact provider order and seal identity 3ms
+   ✓ #3518 canonical runtime data-contract seam > rejects a copied manifest or semantic plan instead of granting shape-based authority 1ms
+   ✓ #3518 canonical runtime data-contract seam > rejects copied/reordered providers and mutable layouts while retaining logical-type identity when sealed 1ms
+   ✓ #3518 canonical runtime data-contract seam > retains failed-authentication rollback without publishing a second authority 1ms
+   ✓ #3518 compiled runtime data joins > resolves all 81 public old/new types, canonical joins and eleven negative controls  689ms
+ ❯ tests/issue-3518-program-data-contract-seam.test.ts (47 tests | 22 failed) 79082ms
+   ✓ connected program-data declaration seam > pins the complete 41-declaration, 40-public-name, ten-owner extraction 0ms
+   ✓ connected program-data declaration seam > preserves exact declarations and docs in src/shared/contracts/ir-preparation-failure.ts 1ms
+   ✓ connected program-data declaration seam > preserves exact declarations and docs in src/shared/contracts/ir-unit-inventory.ts 1ms
+   ✓ connected program-data declaration seam > preserves exact declarations and docs in src/ir/program/callable-bindings.ts 0ms
+   ✓ connected program-data declaration seam > preserves exact declarations and docs in src/ir/analysis/contracts/allocations.ts 0ms
+   ✓ connected program-data declaration seam > preserves exact declarations and docs in src/ir/passes/contracts/gvn.ts 0ms
+   ✓ connected program-data declaration seam > preserves exact declarations and docs in src/ir/program/controls.ts 0ms
+   ✓ connected program-data declaration seam > preserves exact declarations and docs in src/ir/program/abi-lookup.ts 0ms
+   × connected program-data declaration seam > preserves exact declarations and docs in src/ir/program/input-contracts.ts 2ms
+     → src/ir/program/input-contracts.ts:TypedIrProgramInput: expected 'c173dceb8682751ebcace76047de8bfa678da…' to be '1dc69663b93552c16a75cac76486906801e69…' // Object.is equality
+   × connected program-data declaration seam > preserves exact declarations and docs in src/ir/program/prepared-contracts.ts 1ms
+     → src/ir/program/prepared-contracts.ts:PreparedIrProgram: expected 'fcc2e17fa5248895562819c3278c03370abda…' to be '83eff15645a15944208dbc46f9dd83bace7fc…' // Object.is equality
+   ✓ connected program-data declaration seam > preserves every retained statement in 'src/ir/select.ts' 24ms
+   ✓ connected program-data declaration seam > preserves every retained statement in 'src/ir/outcomes.ts' 1ms
+   × connected program-data declaration seam > preserves every retained statement in 'src/ir/identity.ts' 4ms
+     → src/ir/identity.ts: expected [ …(60) ] to have a length of 62 but got 60
+   ✓ connected program-data declaration seam > preserves every retained statement in 'src/ir/program-callable-bindings.ts' 2ms
+   ✓ connected program-data declaration seam > preserves every retained statement in 'src/ir/alloc-registry.ts' 1ms
+   ✓ connected program-data declaration seam > preserves every retained statement in 'src/ir/passes/gvn-core.ts' 1ms
+   ✓ connected program-data declaration seam > preserves every retained statement in 'src/ir/program-middleend-ir.ts' 0ms
+   × connected program-data declaration seam > preserves every retained statement in 'src/ir/prepared-component-dependencie…' 3ms
+     → src/ir/prepared-component-dependencies.ts: expected [ …(42) ] to have a length of 41 but got 42
+   × connected program-data declaration seam > preserves every retained statement in 'src/ir/program-input.ts' 1ms
+     → src/ir/program-input.ts: expected 'b1d96f12e31fbe13f104023f0304315073664…' to be '33bb1e427b4290da77315ae6657e146aa87d8…' // Object.is equality
+   × connected program-data declaration seam > preserves every retained statement in 'src/ir/program.ts' 2ms
+     → expected [ Array(15) ] to have a length of 14 but got 15
+   ✓ connected program-data declaration seam > keeps explicit old-path compatibility exports in 'src/ir/select.ts' 22ms
+   ✓ connected program-data declaration seam > keeps explicit old-path compatibility exports in 'src/ir/outcomes.ts' 1ms
+   ✓ connected program-data declaration seam > keeps explicit old-path compatibility exports in 'src/ir/identity.ts' 3ms
+   ✓ connected program-data declaration seam > keeps explicit old-path compatibility exports in 'src/ir/program-callable-bindings.ts' 2ms
+   ✓ connected program-data declaration seam > keeps explicit old-path compatibility exports in 'src/ir/alloc-registry.ts' 0ms
+   ✓ connected program-data declaration seam > keeps explicit old-path compatibility exports in 'src/ir/passes/gvn-core.ts' 1ms
+   ✓ connected program-data declaration seam > keeps explicit old-path compatibility exports in 'src/ir/program-middleend-ir.ts' 0ms
+   ✓ connected program-data declaration seam > keeps explicit old-path compatibility exports in 'src/ir/prepared-component-dependencie…' 3ms
+   ✓ connected program-data declaration seam > keeps explicit old-path compatibility exports in 'src/ir/program-input.ts' 0ms
+   ✓ connected program-data declaration seam > keeps explicit old-path compatibility exports in 'src/ir/program.ts' 1ms
+   ✓ connected program-data declaration seam > exports exactly three input, one controls and ten prepared types, with no runtime authority 0ms
+   × connected program-data declaration seam > rejects a missing declaration in the declaration detector 1ms
+     → src/ir/program/input-contracts.ts:TypedIrProgramInput: expected 'c173dceb8682751ebcace76047de8bfa678da…' to be '1dc69663b93552c16a75cac76486906801e69…' // Object.is equality
+   × connected program-data declaration seam > rejects a changed readonly field in the declaration detector 0ms
+     → src/ir/program/input-contracts.ts:TypedIrProgramInput: expected 'c173dceb8682751ebcace76047de8bfa678da…' to be '1dc69663b93552c16a75cac76486906801e69…' // Object.is equality
+   × connected program-data declaration seam > rejects a changed documentation in the declaration detector 0ms
+     → src/ir/program/input-contracts.ts:TypedIrProgramInput: expected 'c173dceb8682751ebcace76047de8bfa678da…' to be '1dc69663b93552c16a75cac76486906801e69…' // Object.is equality
+   × connected program-data declaration seam > rejects a extra runtime authority in the declaration detector 0ms
+     → src/ir/program/input-contracts.ts:TypedIrProgramInput: expected 'c173dceb8682751ebcace76047de8bfa678da…' to be '1dc69663b93552c16a75cac76486906801e69…' // Object.is equality
+   × connected program-data declaration seam > rejects a malformed declaration in the declaration detector 0ms
+     → src/ir/program/input-contracts.ts:TypedIrProgramInput: expected 'c173dceb8682751ebcace76047de8bfa678da…' to be '1dc69663b93552c16a75cac76486906801e69…' // Object.is equality
+   × connected program-data declaration seam > detects a changed retained ownership algorithm 2ms
+     → expected [ Array(15) ] to have a length of 14 but got 15
+   × connected program-data declaration seam > actually compiles old/new identities, attachment joins and positive/negative type controls 78965ms
+     → compiler fixture failed (code=null, signal=SIGABRT): 
+
+<--- Last few GCs --->
+
+[57756:0xb4d40c000]    78618 ms: Mark-Compact 2037.2 (2053.5) -> 2033.3 (2053.5) MB, pooled: 0.0 MB, 239.33 / 0.00 ms (average mu = 0.092, current mu = 0.017) allocation failure; scavenge might not succeed
+[57756:0xb4d40c000]    78863 ms: Mark-Compact 2037.4 (2053.7) -> 2033.4 (2053.7) MB, pooled: 0.0 MB, 237.38 / 0.00 ms (average mu = 0.062, current mu = 0.031) allocation failure; scavenge might not succeed
+
+FATAL ERROR: Ineffective mark-compacts near heap limit Allocation failed - JavaScript heap out of memory
+----- Native stack trace -----
+
+ 1: 0x1021dff34 node::OOMErrorHandler(char const*, v8::OOMDetails const&) [/Users/thomas/.nvm/versions/node/v25.9.0/bin/node]
+ 2: 0x102401c20 v8::internal::V8::FatalProcessOutOfMemory(v8::internal::Isolate*, char const*, v8::OOMDetails const&) [/Users/thomas/.nvm/versions/node/v25.9.0/bin/node]
+ 3: 0x10264d978 v8::internal::Heap::stack() [/Users/thomas/.nvm/versions/node/v25.9.0/bin/node]
+ 4: 0x102650ea4 v8::internal::Heap::HasLowYoungGenerationAllocationRate() [/Users/thomas/.nvm/versions/node/v25.9.0/bin/node]
+ 5: 0x102661d94 v8::internal::Heap::CollectGarbage(v8::internal::AllocationSpace, v8::internal::GarbageCollectionReason, v8::GCCallbackFlags, v8::internal::PerformHeapLimitCheck)::$_1::operator()() const [/Users/thomas/.nvm/versions/node/v25.9.0/bin/node]
+ 6: 0x102661658 void heap::base::Stack::SetMarkerAndCallbackImpl<v8::internal::Heap::CollectGarbage(v8::internal::AllocationSpace, v8::internal::GarbageCollectionReason, v8::GCCallbackFlags, v8::internal::PerformHeapLimitCheck)::$_1>(heap::base::Stack*, void*, void const*) [/Users/thomas/.nvm/versions/node/v25.9.0/bin/node]
+ 7: 0x102fabf08 PushAllRegistersAndIterateStack [/Users/thomas/.nvm/versions/node/v25.9.0/bin/node]
+ 8: 0x10264b72c v8::internal::Heap::CollectGarbage(v8::internal::AllocationSpace, v8::internal::GarbageCollectionReason, v8::GCCallbackFlags, v8::internal::PerformHeapLimitCheck) [/Users/thomas/.nvm/versions/node/v25.9.0/bin/node]
+ 9: 0x102640844 std::__1::invoke_result<v8::internal::HeapAllocator::AllocateRawWithRetryOrFailSlowPath(int, v8::internal::AllocationType, v8::internal::AllocationOrigin, v8::internal::AllocationAlignment, v8::internal::AllocationHint)::$_0&>::type v8::internal::HeapAllocator::CollectGarbageAndRetryAllocation<v8::internal::HeapAllocator::AllocateRawWithRetryOrFailSlowPath(int, v8::internal::AllocationType, v8::internal::AllocationOrigin, v8::internal::AllocationAlignment, v8::internal::AllocationHint)::$_0&>(v8::internal::HeapAllocator::AllocateRawWithRetryOrFailSlowPath(int, v8::internal::AllocationType, v8::internal::AllocationOrigin, v8::internal::AllocationAlignment, v8::internal::AllocationHint)::$_0&, v8::internal::AllocationType) [/Users/thomas/.nvm/versions/node/v25.9.0/bin/node]
+10: 0x10263e730 v8::internal::HeapAllocator::AllocateRawWithRetryOrFailSlowPath(int, v8::internal::AllocationType, v8::internal::AllocationOrigin, v8::internal::AllocationAlignment, v8::internal::AllocationHint) [/Users/thomas/.nvm/versions/node/v25.9.0/bin/node]
+11: 0x10261f32c v8::internal::Factory::NewFillerObject(int, v8::internal::AllocationAlignment, v8::internal::AllocationType, v8::internal::AllocationOrigin) [/Users/thomas/.nvm/versions/node/v25.9.0/bin/node]
+12: 0x102a7c22c v8::internal::Runtime_AllocateInYoungGeneration(int, unsigned long*, v8::internal::Isolate*) [/Users/thomas/.nvm/versions/node/v25.9.0/bin/node]
+13: 0x10309d734 Builtins_CEntry_Return1_ArgvOnStack_NoBuiltinExit [/Users/thomas/.nvm/versions/node/v25.9.0/bin/node]
+14: 0x126e51058 
+15: 0x126e766ec 
+16: 0x126e76980 
+17: 0x126e76830 
+18: 0x126e76980 
+19: 0x127606924 
+20: 0x126cf1a68 
+21: 0x126e2c3d8 
+22: 0x127606724 
+23: 0x126c51c84 
+24: 0x126e2c42c 
+25: 0x127606724 
+26: 0x126cf1a68 
+27: 0x126e2c3d8 
+28: 0x127606724 
+29: 0x126c51c84 
+30: 0x126e2c42c 
+31: 0x127bbf138 
+32: 0x126d990d0 
+33: 0x126ce3384 
+34: 0x127765d7c 
+35: 0x1272dab94 
+36: 0x126ce39e4 
+37: 0x126db81c8 
+38: 0x12750d234 
+39: 0x126ce35e0 
+40: 0x126fd317c 
+41: 0x1271ae394 
+42: 0x126fd5284 
+43: 0x12702eac8 
+44: 0x127d0c500 
+45: 0x127d0b500 
+46: 0x126cb3dd0 
+47: 0x126c0cb98 
+48: 0x102ffd5ec Builtins_InterpreterEntryTrampoline [/Users/thomas/.nvm/versions/node/v25.9.0/bin/node]
+49: 0x102ffd5ec Builtins_InterpreterEntryTrampoline [/Users/thomas/.nvm/versions/node/v25.9.0/bin/node]
+50: 0x102ffd5ec Builtins_InterpreterEntryTrampoline [/Users/thomas/.nvm/versions/node/v25.9.0/bin/node]
+51: 0x102ffd5ec Builtins_InterpreterEntryTrampoline [/Users/thomas/.nvm/versions/node/v25.9.0/bin/node]
+52: 0x102ffd5ec Builtins_InterpreterEntryTrampoline [/Users/thomas/.nvm/versions/node/v25.9.0/bin/node]
+53: 0x102ffd5ec Builtins_InterpreterEntryTrampoline [/Users/thomas/.nvm/versions/node/v25.9.0/bin/node]
+54: 0x102ffd5ec Builtins_InterpreterEntryTrampoline [/Users/thomas/.nvm/versions/node/v25.9.0/bin/node]
+55: 0x102ffa96c Builtins_JSEntryTrampoline [/Users/thomas/.nvm/versions/node/v25.9.0/bin/node]
+56: 0x102ffa610 Builtins_JSEntry [/Users/thomas/.nvm/versions/node/v25.9.0/bin/node]
+57: 0x10257d53c v8::internal::(anonymous namespace)::Invoke(v8::internal::Isolate*, v8::internal::(anonymous namespace)::InvokeParams const&) [/Users/thomas/.nvm/versions/node/v25.9.0/bin/node]
+58: 0x10257cec0 v8::internal::Execution::Call(v8::internal::Isolate*, v8::internal::DirectHandle<v8::internal::Object>, v8::internal::DirectHandle<v8::internal::Object>, v8::base::Vector<v8::internal::DirectHandle<v8::internal::Object> const>) [/Users/thomas/.nvm/versions/node/v25.9.0/bin/node]
+59: 0x10241229c v8::Function::Call(v8::Isolate*, v8::Local<v8::Context>, v8::Local<v8::Value>, int, v8::Local<v8::Value>*) [/Users/thomas/.nvm/versions/node/v25.9.0/bin/node]
+60: 0x1020eb0ec node::InternalCallbackScope::Close() [/Users/thomas/.nvm/versions/node/v25.9.0/bin/node]
+61: 0x1020eb364 node::InternalMakeCallback(node::Environment*, v8::Local<v8::Object>, v8::Local<v8::Object>, v8::Local<v8::Function>, int, v8::Local<v8::Value>*, node::async_context, v8::Local<v8::Value>) [/Users/thomas/.nvm/versions/node/v25.9.0/bin/node]
+62: 0x1020fed64 node::AsyncWrap::MakeCallback(v8::Local<v8::Function>, int, v8::Local<v8::Value>*) [/Users/thomas/.nvm/versions/node/v25.9.0/bin/node]
+63: 0x102311dfc node::StreamBase::CallJSOnreadMethod(long, v8::Local<v8::ArrayBuffer>, unsigned long, node::StreamBase::StreamBaseJSChecks) [/Users/thomas/.nvm/versions/node/v25.9.0/bin/node]
+64: 0x10443b474 node::EmitToJSStreamListener::OnStreamRead(long, uv_buf_t const&) (.cold.2) [/Users/thomas/.nvm/versions/node/v25.9.0/bin/node]
+65: 0x102313d90 node::EmitToJSStreamListener::OnStreamRead(long, uv_buf_t const&) [/Users/thomas/.nvm/versions/node/v25.9.0/bin/node]
+66: 0x10231807c node::LibuvStreamWrap::OnUvRead(long, uv_buf_t const*) [/Users/thomas/.nvm/versions/node/v25.9.0/bin/node]
+67: 0x10231862c node::LibuvStreamWrap::ReadStart()::$_1::__invoke(uv_stream_s*, long, uv_buf_t const*) [/Users/thomas/.nvm/versions/node/v25.9.0/bin/node]
+68: 0x102fe51fc uv__stream_io [/Users/thomas/.nvm/versions/node/v25.9.0/bin/node]
+69: 0x102fed52c uv__io_poll [/Users/thomas/.nvm/versions/node/v25.9.0/bin/node]
+70: 0x102fd9aa8 uv_run [/Users/thomas/.nvm/versions/node/v25.9.0/bin/node]
+71: 0x1020ec594 node::SpinEventLoopInternal(node::Environment*) [/Users/thomas/.nvm/versions/node/v25.9.0/bin/node]
+72: 0x1043f72a4 node::NodeMainInstance::Run() (.cold.1) [/Users/thomas/.nvm/versions/node/v25.9.0/bin/node]
+73: 0x102223e94 node::NodeMainInstance::Run() [/Users/thomas/.nvm/versions/node/v25.9.0/bin/node]
+74: 0x10219d968 node::Start(int, char**) [/Users/thomas/.nvm/versions/node/v25.9.0/bin/node]
+75: 0x18ec884e4 start [/usr/lib/dyld]
+
+   × connected program-data declaration seam > rejects missing freeze while reconstructing the original runtime receipt 7ms
+     → expected [ Array(15) ] to have a length of 14 but got 15
+   × connected program-data declaration seam > rejects duplicate freeze while reconstructing the original runtime receipt 5ms
+     → expected [ Array(15) ] to have a length of 14 but got 15
+   × connected program-data declaration seam > rejects renamed function while reconstructing the original runtime receipt 4ms
+     → expected [ Array(15) ] to have a length of 14 but got 15
+   × connected program-data declaration seam > rejects changed body while reconstructing the original runtime receipt 4ms
+     → expected [ Array(15) ] to have a length of 14 but got 15
+   × connected program-data declaration seam > rejects reordered freezes while reconstructing the original runtime receipt 3ms
+     → expected [ Array(15) ] to have a length of 14 but got 15
+   × connected program-data declaration seam > rejects changed method while reconstructing the original runtime receipt 3ms
+     → expected [ Array(15) ] to have a length of 14 but got 15
+   × connected program-data declaration seam > rejects changed getter while reconstructing the original runtime receipt 3ms
+     → expected [ Array(15) ] to have a length of 14 but got 15
+   × connected program-data declaration seam > rejects changed private initialization while reconstructing the original runtime receipt 3ms
+     → expected [ Array(15) ] to have a length of 14 but got 15
+   × connected program-data declaration seam > rejects missing moved declaration while reconstructing the original runtime receipt 3ms
+     → expected [ Array(15) ] to have a length of 14 but got 15
+ ❯ tests/issue-3518-core-vocabulary-seam.test.ts (20 tests | 7 failed) 511ms
+   × #3518 canonical core vocabulary seam > moves exactly 12 declarations from 'src/ir/intrinsics.ts' and preserves everything retained 2ms
+     → expected '3b7c75894d4e7e2273d358670f52bcb77630a…' to be '12c95d79325da6795c51cba7511d4e80b33c6…' // Object.is equality
+   × #3518 canonical core vocabulary seam > moves exactly 3 declarations from 'src/ir/async-runtime-providers.ts' and preserves everything retained 0ms
+     → expected [ …(5) ] to have a length of 3 but got 5
+   × #3518 canonical core vocabulary seam > moves exactly 2 declarations from 'src/ir/string-runtime.ts' and preserves everything retained 1ms
+     → expected [ [ …(2) ], …(27) ] to have a length of 31 but got 28
+   ✓ #3518 canonical core vocabulary seam > moves exactly 4 declarations from 'src/ir/counted-string-append-provenan…' and preserves everything retained 3ms
+   ✓ #3518 canonical core vocabulary seam > re-exports the single canonical PURE_MATH_INTRINSIC_IDS runtime value 0ms
+   ✓ #3518 canonical core vocabulary seam > re-exports the single canonical NUMERIC_COERCION_INTRINSIC_IDS runtime value 0ms
+   ✓ #3518 canonical core vocabulary seam > re-exports the single canonical NUMBER_BOUNDARY_INTRINSIC_IDS runtime value 0ms
+   ✓ #3518 canonical core vocabulary seam > re-exports the single canonical BOOLEAN_BOUNDARY_INTRINSIC_IDS runtime value 0ms
+   ✓ #3518 canonical core vocabulary seam > re-exports the single canonical EXTERN_BOUNDARY_INTRINSIC_IDS runtime value 0ms
+   ✓ #3518 canonical core vocabulary seam > re-exports the single canonical INTRINSIC_IDS runtime value 0ms
+   ✓ #3518 canonical core vocabulary seam > re-exports the single canonical INTRINSIC_SIGNATURE_VERSION runtime value 0ms
+   × #3518 canonical core vocabulary seam > preserves closed intrinsic tuple order, existing guard and definition consumers 0ms
+     → expected [ 'js.to_uint32', …(38) ] to have a length of 38 but got 39
+   ✓ #3518 canonical core vocabulary seam > retains the verbatim Math certification quote and canonical math.pow tuple evidence 0ms
+   ✓ #3518 canonical core vocabulary seam > keeps ASYNC_RUNTIME_FEATURES frozen, shared and consumed by the existing feature guard 0ms
+   ✓ #3518 canonical core vocabulary seam > keeps ASYNC_OPTIONAL_RUNTIME_FEATURES frozen, shared and consumed by the existing feature guard 0ms
+   × #3518 canonical core vocabulary seam > does not confuse semantic async features with provider IDs or capability IDs 1ms
+     → expected [ …(3) ] to deeply equal [ …(2) ]
+   ✓ #3518 canonical core vocabulary seam > has no upward module edges: three import-free leaves and only canonical F0 identity/source-origin 1ms
+   × #3518 canonical core vocabulary seam > loads all four canonical leaves with old facades and providers barred in a fresh process 346ms
+     → node:internal/modules/run_main:107
+    triggerUncaughtException(
+    ^
+
+AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+
+39 !== 38
+
+    at file:///private/tmp/js2-ir-source-validation-contracts-20261001/[eval1]:21:14 {
+  generatedMessage: true,
+  code: 'ERR_ASSERTION',
+  actual: 39,
+  expected: 38,
+  operator: 'strictEqual',
+  diff: 'simple'
+}
+
+Node.js v25.9.0
+: expected 1 to be +0 // Object.is equality
+   ✓ #3518 canonical core vocabulary seam > round-trips canonical source/owner/span fields through the unmoved provenance authority 1ms
+   × #3518 canonical core vocabulary seam > preserves one nominal brand, exact type joins, readonly fields and closed literal unions 155ms
+     → expected [ …(2) ] to deeply equal []
+
+⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/issue-3518-program-ownership-runtime-seam.test.ts [ tests/issue-3518-program-ownership-runtime-seam.test.ts ]
+Error: ENOSPC: no space left on device, write
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/36]⎯
+
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 35 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/issue-3518-core-vocabulary-seam.test.ts > #3518 canonical core vocabulary seam > moves exactly 12 declarations from 'src/ir/intrinsics.ts' and preserves everything retained
+AssertionError: expected '3b7c75894d4e7e2273d358670f52bcb77630a…' to be '12c95d79325da6795c51cba7511d4e80b33c6…' // Object.is equality
+
+Expected: "12c95d79325da6795c51cba7511d4e80b33c6138365b7ee104f9e31d82dab8b4"
+Received: "3b7c75894d4e7e2273d358670f52bcb77630af3108b8d921c0a037bf30214457"
+
+ ❯ tests/issue-3518-core-vocabulary-seam.test.ts:138:31
+    136|     expect(canonical).toHaveLength(move.moved);
+    137|     expect(new Set(canonical.map(([name]) => name)).size).toBe(move.mo…
+    138|     expect(digest(canonical)).toBe(move.movedHash);
+       |                               ^
+    139|     expect(retained).toHaveLength(move.retained);
+    140|     expect(digest(retained)).toBe(move.retainedHash);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/36]⎯
+
+ FAIL  tests/issue-3518-core-vocabulary-seam.test.ts > #3518 canonical core vocabulary seam > moves exactly 3 declarations from 'src/ir/async-runtime-providers.ts' and preserves everything retained
+AssertionError: expected [ …(5) ] to have a length of 3 but got 5
+
+- Expected
++ Received
+
+- 3
++ 5
+
+ ❯ tests/issue-3518-core-vocabulary-seam.test.ts:136:23
+    134|     const canonical = declarations(parse(move.canonical));
+    135|     const retained = declarations(parse(move.old));
+    136|     expect(canonical).toHaveLength(move.moved);
+       |                       ^
+    137|     expect(new Set(canonical.map(([name]) => name)).size).toBe(move.mo…
+    138|     expect(digest(canonical)).toBe(move.movedHash);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/36]⎯
+
+ FAIL  tests/issue-3518-core-vocabulary-seam.test.ts > #3518 canonical core vocabulary seam > moves exactly 2 declarations from 'src/ir/string-runtime.ts' and preserves everything retained
+AssertionError: expected [ [ …(2) ], …(27) ] to have a length of 31 but got 28
+
+- Expected
++ Received
+
+- 31
++ 28
+
+ ❯ tests/issue-3518-core-vocabulary-seam.test.ts:139:22
+    137|     expect(new Set(canonical.map(([name]) => name)).size).toBe(move.mo…
+    138|     expect(digest(canonical)).toBe(move.movedHash);
+    139|     expect(retained).toHaveLength(move.retained);
+       |                      ^
+    140|     expect(digest(retained)).toBe(move.retainedHash);
+    141|     expect(retained.filter(([name]) => canonical.some(([movedName]) =>…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/36]⎯
+
+ FAIL  tests/issue-3518-core-vocabulary-seam.test.ts > #3518 canonical core vocabulary seam > preserves closed intrinsic tuple order, existing guard and definition consumers
+AssertionError: expected [ 'js.to_uint32', …(38) ] to have a length of 38 but got 39
+
+- Expected
++ Received
+
+- 38
++ 39
+
+ ❯ tests/issue-3518-core-vocabulary-seam.test.ts:168:38
+    166|     expect(Object.keys(vocabulary).sort()).toEqual([...intrinsicValues…
+    167|     expect(vocabulary.PURE_MATH_INTRINSIC_IDS).toHaveLength(33);
+    168|     expect(vocabulary.INTRINSIC_IDS).toHaveLength(38);
+       |                                      ^
+    169|     expect(new Set(vocabulary.INTRINSIC_IDS).size).toBe(38);
+    170|     expect(vocabulary.INTRINSIC_IDS).toEqual([
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/36]⎯
+
+ FAIL  tests/issue-3518-core-vocabulary-seam.test.ts > #3518 canonical core vocabulary seam > does not confuse semantic async features with provider IDs or capability IDs
+AssertionError: expected [ …(3) ] to deeply equal [ …(2) ]
+
+- Expected
++ Received
+
+  [
+    "ASYNC_OPTIONAL_RUNTIME_FEATURES",
+    "ASYNC_RUNTIME_FEATURES",
++   "isAsyncRuntimeFeature",
+  ]
+
+ ❯ tests/issue-3518-core-vocabulary-seam.test.ts:204:41
+    202| 
+    203|   it("does not confuse semantic async features with provider IDs or ca…
+    204|     expect(Object.keys(intents).sort()).toEqual(["ASYNC_OPTIONAL_RUNTI…
+       |                                         ^
+    205|     expect(intents.ASYNC_RUNTIME_FEATURES).toHaveLength(7);
+    206|     expect(intents.ASYNC_OPTIONAL_RUNTIME_FEATURES).toEqual(["value.un…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/36]⎯
+
+ FAIL  tests/issue-3518-core-vocabulary-seam.test.ts > #3518 canonical core vocabulary seam > loads all four canonical leaves with old facades and providers barred in a fresh process
+AssertionError: node:internal/modules/run_main:107
+    triggerUncaughtException(
+    ^
+
+AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+
+39 !== 38
+
+    at file:///private/tmp/js2-ir-source-validation-contracts-20261001/[eval1]:21:14 {
+  generatedMessage: true,
+  code: 'ERR_ASSERTION',
+  actual: 39,
+  expected: 38,
+  operator: 'strictEqual',
+  diff: 'simple'
+}
+
+Node.js v25.9.0
+: expected 1 to be +0 // Object.is equality
+
+- Expected
++ Received
+
+- 0
++ 1
+
+ ❯ tests/issue-3518-core-vocabulary-seam.test.ts:264:55
+    262|     expect(child.error).toBeUndefined();
+    263|     expect(child.signal).toBeNull();
+    264|     expect(child.status, child.stderr + child.stdout).toBe(0);
+       |                                                       ^
+    265|     expect(JSON.parse(child.stdout)).toEqual(paths.sort());
+    266|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/36]⎯
+
+ FAIL  tests/issue-3518-core-vocabulary-seam.test.ts > #3518 canonical core vocabulary seam > preserves one nominal brand, exact type joins, readonly fields and closed literal unions
+AssertionError: expected [ …(2) ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   "File '/private/tmp/js2-ir-source-validation-contracts-20261001/src/ir/async-runtime-providers.ts' is not a module.",
++   "Type 'false' does not satisfy the constraint 'true'.",
++ ]
+
+ ❯ tests/issue-3518-core-vocabulary-seam.test.ts:383:7
+    381|     expect(
+    382|       diagnostics(text).map((diagnostic) => ts.flattenDiagnosticMessag…
+    383|     ).toEqual([]);
+       |       ^
+    384|     const failures = diagnostics(text.replaceAll("@ts-expect-error", "…
+    385|     expect(failures.map((diagnostic) => diagnostic.code)).toEqual(nega…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/36]⎯
+
+ FAIL  tests/issue-3518-program-data-contract-seam.test.ts > connected program-data declaration seam > preserves exact declarations and docs in src/ir/program/input-contracts.ts
+AssertionError: src/ir/program/input-contracts.ts:TypedIrProgramInput: expected 'c173dceb8682751ebcace76047de8bfa678da…' to be '1dc69663b93552c16a75cac76486906801e69…' // Object.is equality
+
+Expected: "1dc69663b93552c16a75cac76486906801e697cb33dcc3cfe1201f1717824805"
+Received: "c173dceb8682751ebcace76047de8bfa678da7a11c6174ca1eec64659586b538"
+
+ ❯ verifyDestination tests/issue-3518-program-data-contract-seam.test.ts:356:73
+    354|   for (const row of expected) {
+    355|     const declaration = declarations.find((node) => node.name.text ===…
+    356|     expect(digest(declarationText(declaration)), `${path}:${row.name}`…
+       |                                                                         ^
+    357|   }
+    358|   return file;
+ ❯ tests/issue-3518-program-data-contract-seam.test.ts:667:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/36]⎯
+
+ FAIL  tests/issue-3518-program-data-contract-seam.test.ts > connected program-data declaration seam > preserves exact declarations and docs in src/ir/program/prepared-contracts.ts
+AssertionError: src/ir/program/prepared-contracts.ts:PreparedIrProgram: expected 'fcc2e17fa5248895562819c3278c03370abda…' to be '83eff15645a15944208dbc46f9dd83bace7fc…' // Object.is equality
+
+Expected: "83eff15645a15944208dbc46f9dd83bace7fc7f74fca8fcfdf450568c6381392"
+Received: "fcc2e17fa5248895562819c3278c03370abdafb709b21d92166dfb368ffba964"
+
+ ❯ verifyDestination tests/issue-3518-program-data-contract-seam.test.ts:356:73
+    354|   for (const row of expected) {
+    355|     const declaration = declarations.find((node) => node.name.text ===…
+    356|     expect(digest(declarationText(declaration)), `${path}:${row.name}`…
+       |                                                                         ^
+    357|   }
+    358|   return file;
+ ❯ tests/issue-3518-program-data-contract-seam.test.ts:667:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/36]⎯
+
+ FAIL  tests/issue-3518-program-data-contract-seam.test.ts > connected program-data declaration seam > preserves every retained statement in 'src/ir/identity.ts'
+AssertionError: src/ir/identity.ts: expected [ …(60) ] to have a length of 62 but got 60
+
+- Expected
++ Received
+
+- 62
++ 60
+
+ ❯ verifyRetained tests/issue-3518-program-data-contract-seam.test.ts:384:29
+    382|     retained = [...retained.slice(0, 9), ...errors, ...retained.slice(…
+    383|   }
+    384|   expect(retained, row.old).toHaveLength(row.retainedCount);
+       |                             ^
+    385|   expect(retained.filter(ts.isFunctionDeclaration), row.old).toHaveLen…
+    386|   const originalText = retained.map((node) => {
+ ❯ tests/issue-3518-program-data-contract-seam.test.ts:671:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[11/36]⎯
+
+ FAIL  tests/issue-3518-program-data-contract-seam.test.ts > connected program-data declaration seam > preserves every retained statement in 'src/ir/prepared-component-dependencie…'
+AssertionError: src/ir/prepared-component-dependencies.ts: expected [ …(42) ] to have a length of 41 but got 42
+
+- Expected
++ Received
+
+- 41
++ 42
+
+ ❯ verifyRetained tests/issue-3518-program-data-contract-seam.test.ts:384:29
+    382|     retained = [...retained.slice(0, 9), ...errors, ...retained.slice(…
+    383|   }
+    384|   expect(retained, row.old).toHaveLength(row.retainedCount);
+       |                             ^
+    385|   expect(retained.filter(ts.isFunctionDeclaration), row.old).toHaveLen…
+    386|   const originalText = retained.map((node) => {
+ ❯ tests/issue-3518-program-data-contract-seam.test.ts:671:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[12/36]⎯
+
+ FAIL  tests/issue-3518-program-data-contract-seam.test.ts > connected program-data declaration seam > preserves every retained statement in 'src/ir/program-input.ts'
+AssertionError: src/ir/program-input.ts: expected 'b1d96f12e31fbe13f104023f0304315073664…' to be '33bb1e427b4290da77315ae6657e146aa87d8…' // Object.is equality
+
+Expected: "33bb1e427b4290da77315ae6657e146aa87d83ea2d4e0bf0e243f23ef6185bb7"
+Received: "b1d96f12e31fbe13f104023f0304315073664321c158824e9024acafc95c592e"
+
+ ❯ verifyRetained tests/issue-3518-program-data-contract-seam.test.ts:404:57
+    402|     return text;
+    403|   });
+    404|   expect(digest(JSON.stringify(originalText)), row.old).toBe(row.retai…
+       |                                                         ^
+    405| }
+    406| 
+ ❯ tests/issue-3518-program-data-contract-seam.test.ts:671:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[13/36]⎯
+
+ FAIL  tests/issue-3518-program-data-contract-seam.test.ts > connected program-data declaration seam > preserves every retained statement in 'src/ir/program.ts'
+AssertionError: expected [ Array(15) ] to have a length of 14 but got 15
+
+- Expected
++ Received
+
+- 14
++ 15
+
+ ❯ verifyRetained tests/issue-3518-program-data-contract-seam.test.ts:379:18
+    377|     expect(retained).toHaveLength(37);
+    378|     expect(errors).toHaveLength(2);
+    379|     expect(data).toHaveLength(14);
+       |                  ^
+    380|     // Fixed original ordinals: errors 9–10; data 30–43, including all
+    381|     // four initialization statements. Never recover missing source fr…
+ ❯ tests/issue-3518-program-data-contract-seam.test.ts:671:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[14/36]⎯
+
+ FAIL  tests/issue-3518-program-data-contract-seam.test.ts > connected program-data declaration seam > rejects a missing declaration in the declaration detector
+ FAIL  tests/issue-3518-program-data-contract-seam.test.ts > connected program-data declaration seam > rejects a changed readonly field in the declaration detector
+ FAIL  tests/issue-3518-program-data-contract-seam.test.ts > connected program-data declaration seam > rejects a changed documentation in the declaration detector
+ FAIL  tests/issue-3518-program-data-contract-seam.test.ts > connected program-data declaration seam > rejects a extra runtime authority in the declaration detector
+ FAIL  tests/issue-3518-program-data-contract-seam.test.ts > connected program-data declaration seam > rejects a malformed declaration in the declaration detector
+AssertionError: src/ir/program/input-contracts.ts:TypedIrProgramInput: expected 'c173dceb8682751ebcace76047de8bfa678da…' to be '1dc69663b93552c16a75cac76486906801e69…' // Object.is equality
+
+Expected: "1dc69663b93552c16a75cac76486906801e697cb33dcc3cfe1201f1717824805"
+Received: "c173dceb8682751ebcace76047de8bfa678da7a11c6174ca1eec64659586b538"
+
+ ❯ verifyDestination tests/issue-3518-program-data-contract-seam.test.ts:356:73
+    354|   for (const row of expected) {
+    355|     const declaration = declarations.find((node) => node.name.text ===…
+    356|     expect(digest(declarationText(declaration)), `${path}:${row.name}`…
+       |                                                                         ^
+    357|   }
+    358|   return file;
+ ❯ tests/issue-3518-program-data-contract-seam.test.ts:728:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[15/36]⎯
+
+ FAIL  tests/issue-3518-program-data-contract-seam.test.ts > connected program-data declaration seam > detects a changed retained ownership algorithm
+AssertionError: expected [ Array(15) ] to have a length of 14 but got 15
+
+- Expected
++ Received
+
+- 14
++ 15
+
+ ❯ verifyRetained tests/issue-3518-program-data-contract-seam.test.ts:379:18
+    377|     expect(retained).toHaveLength(37);
+    378|     expect(errors).toHaveLength(2);
+    379|     expect(data).toHaveLength(14);
+       |                  ^
+    380|     // Fixed original ordinals: errors 9–10; data 30–43, including all
+    381|     // four initialization statements. Never recover missing source fr…
+ ❯ tests/issue-3518-program-data-contract-seam.test.ts:736:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[16/36]⎯
+
+ FAIL  tests/issue-3518-program-data-contract-seam.test.ts > connected program-data declaration seam > actually compiles old/new identities, attachment joins and positive/negative type controls
+Error: compiler fixture failed (code=null, signal=SIGABRT): 
+
+<--- Last few GCs --->
+
+[57756:0xb4d40c000]    78618 ms: Mark-Compact 2037.2 (2053.5) -> 2033.3 (2053.5) MB, pooled: 0.0 MB, 239.33 / 0.00 ms (average mu = 0.092, current mu = 0.017) allocation failure; scavenge might not succeed
+[57756:0xb4d40c000]    78863 ms: Mark-Compact 2037.4 (2053.7) -> 2033.4 (2053.7) MB, pooled: 0.0 MB, 237.38 / 0.00 ms (average mu = 0.062, current mu = 0.031) allocation failure; scavenge might not succeed
+
+FATAL ERROR: Ineffective mark-compacts near heap limit Allocation failed - JavaScript heap out of memory
+----- Native stack trace -----
+
+ 1: 0x1021dff34 node::OOMErrorHandler(char const*, v8::OOMDetails const&) [/Users/thomas/.nvm/versions/node/v25.9.0/bin/node]
+ 2: 0x102401c20 v8::internal::V8::FatalProcessOutOfMemory(v8::internal::Isolate*, char const*, v8::OOMDetails const&) [/Users/thomas/.nvm/versions/node/v25.9.0/bin/node]
+ 3: 0x10264d978 v8::internal::Heap::stack() [/Users/thomas/.nvm/versions/node/v25.9.0/bin/node]
+ 4: 0x102650ea4 v8::internal::Heap::HasLowYoungGenerationAllocationRate() [/Users/thomas/.nvm/versions/node/v25.9.0/bin/node]
+ 5: 0x102661d94 v8::internal::Heap::CollectGarbage(v8::internal::AllocationSpace, v8::internal::GarbageCollectionReason, v8::GCCallbackFlags, v8::internal::PerformHeapLimitCheck)::$_1::operator()() const [/Users/thomas/.nvm/versions/node/v25.9.0/bin/node]
+ 6: 0x102661658 void heap::base::Stack::SetMarkerAndCallbackImpl<v8::internal::Heap::CollectGarbage(v8::internal::AllocationSpace, v8::internal::GarbageCollectionReason, v8::GCCallbackFlags, v8::internal::PerformHeapLimitCheck)::$_1>(heap::base::Stack*, void*, void const*) [/Users/thomas/.nvm/versions/node/v25.9.0/bin/node]
+ 7: 0x102fabf08 PushAllRegistersAndIterateStack [/Users/thomas/.nvm/versions/node/v25.9.0/bin/node]
+ 8: 0x10264b72c v8::internal::Heap::CollectGarbage(v8::internal::AllocationSpace, v8::internal::GarbageCollectionReason, v8::GCCallbackFlags, v8::internal::PerformHeapLimitCheck) [/Users/thomas/.nvm/versions/node/v25.9.0/bin/node]
+ 9: 0x102640844 std::__1::invoke_result<v8::internal::HeapAllocator::AllocateRawWithRetryOrFailSlowPath(int, v8::internal::AllocationType, v8::internal::AllocationOrigin, v8::internal::AllocationAlignment, v8::internal::AllocationHint)::$_0&>::type v8::internal::HeapAllocator::CollectGarbageAndRetryAllocation<v8::internal::HeapAllocator::AllocateRawWithRetryOrFailSlowPath(int, v8::internal::AllocationType, v8::internal::AllocationOrigin, v8::internal::AllocationAlignment, v8::internal::AllocationHint)::$_0&>(v8::internal::HeapAllocator::AllocateRawWithRetryOrFailSlowPath(int, v8::internal::AllocationType, v8::internal::AllocationOrigin, v8::internal::AllocationAlignment, v8::internal::AllocationHint)::$_0&, v8::internal::AllocationType) [/Users/thomas/.nvm/versions/node/v25.9.0/bin/node]
+10: 0x10263e730 v8::internal::HeapAllocator::AllocateRawWithRetryOrFailSlowPath(int, v8::internal::AllocationType, v8::internal::AllocationOrigin, v8::internal::AllocationAlignment, v8::internal::AllocationHint) [/Users/thomas/.nvm/versions/node/v25.9.0/bin/node]
+11: 0x10261f32c v8::internal::Factory::NewFillerObject(int, v8::internal::AllocationAlignment, v8::internal::AllocationType, v8::internal::AllocationOrigin) [/Users/thomas/.nvm/versions/node/v25.9.0/bin/node]
+12: 0x102a7c22c v8::internal::Runtime_AllocateInYoungGeneration(int, unsigned long*, v8::internal::Isolate*) [/Users/thomas/.nvm/versions/node/v25.9.0/bin/node]
+13: 0x10309d734 Builtins_CEntry_Return1_ArgvOnStack_NoBuiltinExit [/Users/thomas/.nvm/versions/node/v25.9.0/bin/node]
+14: 0x126e51058 
+15: 0x126e766ec 
+16: 0x126e76980 
+17: 0x126e76830 
+18: 0x126e76980 
+19: 0x127606924 
+20: 0x126cf1a68 
+21: 0x126e2c3d8 
+22: 0x127606724 
+23: 0x126c51c84 
+24: 0x126e2c42c 
+25: 0x127606724 
+26: 0x126cf1a68 
+27: 0x126e2c3d8 
+28: 0x127606724 
+29: 0x126c51c84 
+30: 0x126e2c42c 
+31: 0x127bbf138 
+32: 0x126d990d0 
+33: 0x126ce3384 
+34: 0x127765d7c 
+35: 0x1272dab94 
+36: 0x126ce39e4 
+37: 0x126db81c8 
+38: 0x12750d234 
+39: 0x126ce35e0 
+40: 0x126fd317c 
+41: 0x1271ae394 
+42: 0x126fd5284 
+43: 0x12702eac8 
+44: 0x127d0c500 
+45: 0x127d0b500 
+46: 0x126cb3dd0 
+47: 0x126c0cb98 
+48: 0x102ffd5ec Builtins_InterpreterEntryTrampoline [/Users/thomas/.nvm/versions/node/v25.9.0/bin/node]
+49: 0x102ffd5ec Builtins_InterpreterEntryTrampoline [/Users/thomas/.nvm/versions/node/v25.9.0/bin/node]
+50: 0x102ffd5ec Builtins_InterpreterEntryTrampoline [/Users/thomas/.nvm/versions/node/v25.9.0/bin/node]
+51: 0x102ffd5ec Builtins_InterpreterEntryTrampoline [/Users/thomas/.nvm/versions/node/v25.9.0/bin/node]
+52: 0x102ffd5ec Builtins_InterpreterEntryTrampoline [/Users/thomas/.nvm/versions/node/v25.9.0/bin/node]
+53: 0x102ffd5ec Builtins_InterpreterEntryTrampoline [/Users/thomas/.nvm/versions/node/v25.9.0/bin/node]
+54: 0x102ffd5ec Builtins_InterpreterEntryTrampoline [/Users/thomas/.nvm/versions/node/v25.9.0/bin/node]
+55: 0x102ffa96c Builtins_JSEntryTrampoline [/Users/thomas/.nvm/versions/node/v25.9.0/bin/node]
+56: 0x102ffa610 Builtins_JSEntry [/Users/thomas/.nvm/versions/node/v25.9.0/bin/node]
+57: 0x10257d53c v8::internal::(anonymous namespace)::Invoke(v8::internal::Isolate*, v8::internal::(anonymous namespace)::InvokeParams const&) [/Users/thomas/.nvm/versions/node/v25.9.0/bin/node]
+58: 0x10257cec0 v8::internal::Execution::Call(v8::internal::Isolate*, v8::internal::DirectHandle<v8::internal::Object>, v8::internal::DirectHandle<v8::internal::Object>, v8::base::Vector<v8::internal::DirectHandle<v8::internal::Object> const>) [/Users/thomas/.nvm/versions/node/v25.9.0/bin/node]
+59: 0x10241229c v8::Function::Call(v8::Isolate*, v8::Local<v8::Context>, v8::Local<v8::Value>, int, v8::Local<v8::Value>*) [/Users/thomas/.nvm/versions/node/v25.9.0/bin/node]
+60: 0x1020eb0ec node::InternalCallbackScope::Close() [/Users/thomas/.nvm/versions/node/v25.9.0/bin/node]
+61: 0x1020eb364 node::InternalMakeCallback(node::Environment*, v8::Local<v8::Object>, v8::Local<v8::Object>, v8::Local<v8::Function>, int, v8::Local<v8::Value>*, node::async_context, v8::Local<v8::Value>) [/Users/thomas/.nvm/versions/node/v25.9.0/bin/node]
+62: 0x1020fed64 node::AsyncWrap::MakeCallback(v8::Local<v8::Function>, int, v8::Local<v8::Value>*) [/Users/thomas/.nvm/versions/node/v25.9.0/bin/node]
+63: 0x102311dfc node::StreamBase::CallJSOnreadMethod(long, v8::Local<v8::ArrayBuffer>, unsigned long, node::StreamBase::StreamBaseJSChecks) [/Users/thomas/.nvm/versions/node/v25.9.0/bin/node]
+64: 0x10443b474 node::EmitToJSStreamListener::OnStreamRead(long, uv_buf_t const&) (.cold.2) [/Users/thomas/.nvm/versions/node/v25.9.0/bin/node]
+65: 0x102313d90 node::EmitToJSStreamListener::OnStreamRead(long, uv_buf_t const&) [/Users/thomas/.nvm/versions/node/v25.9.0/bin/node]
+66: 0x10231807c node::LibuvStreamWrap::OnUvRead(long, uv_buf_t const*) [/Users/thomas/.nvm/versions/node/v25.9.0/bin/node]
+67: 0x10231862c node::LibuvStreamWrap::ReadStart()::$_1::__invoke(uv_stream_s*, long, uv_buf_t const*) [/Users/thomas/.nvm/versions/node/v25.9.0/bin/node]
+68: 0x102fe51fc uv__stream_io [/Users/thomas/.nvm/versions/node/v25.9.0/bin/node]
+69: 0x102fed52c uv__io_poll [/Users/thomas/.nvm/versions/node/v25.9.0/bin/node]
+70: 0x102fd9aa8 uv_run [/Users/thomas/.nvm/versions/node/v25.9.0/bin/node]
+71: 0x1020ec594 node::SpinEventLoopInternal(node::Environment*) [/Users/thomas/.nvm/versions/node/v25.9.0/bin/node]
+72: 0x1043f72a4 node::NodeMainInstance::Run() (.cold.1) [/Users/thomas/.nvm/versions/node/v25.9.0/bin/node]
+73: 0x102223e94 node::NodeMainInstance::Run() [/Users/thomas/.nvm/versions/node/v25.9.0/bin/node]
+74: 0x10219d968 node::Start(int, char**) [/Users/thomas/.nvm/versions/node/v25.9.0/bin/node]
+75: 0x18ec884e4 start [/usr/lib/dyld]
+
+ ❯ ChildProcess.<anonymous> tests/issue-3518-program-data-contract-seam.test.ts:526:11
+    524|       if (processError || code !== 0 || signal !== null) {
+    525|         reject(
+    526|           new Error(
+       |           ^
+    527|             `compiler fixture failed (code=${code}, signal=${signal}):…
+    528|           ),
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[17/36]⎯
+
+ FAIL  tests/issue-3518-program-data-contract-seam.test.ts > connected program-data declaration seam > rejects missing freeze while reconstructing the original runtime receipt
+ FAIL  tests/issue-3518-program-data-contract-seam.test.ts > connected program-data declaration seam > rejects duplicate freeze while reconstructing the original runtime receipt
+ FAIL  tests/issue-3518-program-data-contract-seam.test.ts > connected program-data declaration seam > rejects renamed function while reconstructing the original runtime receipt
+ FAIL  tests/issue-3518-program-data-contract-seam.test.ts > connected program-data declaration seam > rejects changed body while reconstructing the original runtime receipt
+ FAIL  tests/issue-3518-program-data-contract-seam.test.ts > connected program-data declaration seam > rejects reordered freezes while reconstructing the original runtime receipt
+ FAIL  tests/issue-3518-program-data-contract-seam.test.ts > connected program-data declaration seam > rejects changed method while reconstructing the original runtime receipt
+ FAIL  tests/issue-3518-program-data-contract-seam.test.ts > connected program-data declaration seam > rejects changed getter while reconstructing the original runtime receipt
+ FAIL  tests/issue-3518-program-data-contract-seam.test.ts > connected program-data declaration seam > rejects changed private initialization while reconstructing the original runtime receipt
+ FAIL  tests/issue-3518-program-data-contract-seam.test.ts > connected program-data declaration seam > rejects missing moved declaration while reconstructing the original runtime receipt
+AssertionError: expected [ Array(15) ] to have a length of 14 but got 15
+
+- Expected
++ Received
+
+- 14
++ 15
+
+ ❯ verifyRetained tests/issue-3518-program-data-contract-seam.test.ts:379:18
+    377|     expect(retained).toHaveLength(37);
+    378|     expect(errors).toHaveLength(2);
+    379|     expect(data).toHaveLength(14);
+       |                  ^
+    380|     // Fixed original ordinals: errors 9–10; data 30–43, including all
+    381|     // four initialization statements. Never recover missing source fr…
+ ❯ tests/issue-3518-program-data-contract-seam.test.ts:776:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[18/36]⎯
+
+ FAIL  tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 canonical runtime data-contract seam > checks historical 'src/runtime/contracts/provider-policy…' receipt after checked extension reconstruction
+AssertionError: expected '239325a1ea954601a0107795bffb6db741799…' to be '427cef6e60b0e3328fc6ace4a66eabab7afa4…' // Object.is equality
+
+Expected: "427cef6e60b0e3328fc6ace4a66eabab7afa466ca917e389101f74b892f8c678"
+Received: "239325a1ea954601a0107795bffb6db741799a6ed698946d216d2912a3eb5c75"
+
+ ❯ tests/issue-3518-runtime-data-contract-seam.test.ts:392:24
+    390|       file.statements.filter((node) => ts.isTypeAliasDeclaration(node)…
+    391|     ).toHaveLength(receipt.types);
+    392|     expect(hash(rows)).toBe(receipt.hash);
+       |                        ^
+    393|     expect(file.statements.filter(ts.isFunctionDeclaration)).toHaveLen…
+    394|     // Real-row positive controls: removal, rename, text/field changes…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[19/36]⎯
+
+ FAIL  tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 canonical runtime data-contract seam > checks historical 'src/ir/runtime/contracts/intrinsics.ts' receipt after checked extension reconstruction
+Error: historical reconstruction: unchanged historical declaration receipt src/ir/runtime/contracts/intrinsics.ts
+ ❯ requireCondition tests/helpers/ir-historical-runtime-reconstruction.ts:602:25
+    600| 
+    601| function requireCondition(condition: unknown, detail: string): asserts…
+    602|   if (!condition) throw new Error("historical reconstruction: " + deta…
+       |                         ^
+    603| }
+    604| 
+ ❯ acceptedHistoricalDeclarations tests/helpers/ir-historical-runtime-reconstruction.ts:2128:3
+ ❯ tests/issue-3518-runtime-data-contract-seam.test.ts:382:11
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[20/36]⎯
+
+ FAIL  tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 canonical runtime data-contract seam > checks historical 'src/ir/runtime/contracts/manifest.ts' receipt after checked extension reconstruction
+Error: historical reconstruction: current clock/vector links src/ir/runtime/callable-declarations.ts
+ ❯ requireCondition tests/helpers/ir-historical-runtime-reconstruction.ts:602:25
+    600| 
+    601| function requireCondition(condition: unknown, detail: string): asserts…
+    602|   if (!condition) throw new Error("historical reconstruction: " + deta…
+       |                         ^
+    603| }
+    604| 
+ ❯ assertCurrentClockVectorExtensions tests/helpers/ir-historical-runtime-reconstruction.ts:1962:5
+ ❯ callableSourceView tests/helpers/ir-historical-runtime-reconstruction.ts:2078:3
+ ❯ historicalRuntimeDeclarations tests/helpers/ir-historical-runtime-reconstruction.ts:2107:7
+ ❯ acceptedHistoricalDeclarations tests/helpers/ir-historical-runtime-reconstruction.ts:2127:72
+ ❯ tests/issue-3518-runtime-data-contract-seam.test.ts:382:11
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[21/36]⎯
+
+ FAIL  tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 canonical runtime data-contract seam > checks historical retained 'src/ir/runtime-manifest.ts' receipt after checked extension reconstruction
+ FAIL  tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 canonical runtime data-contract seam > checks historical retained 'src/ir/intrinsic-support.ts' receipt after checked extension reconstruction
+Error: historical reconstruction: current clock/vector links src/ir/runtime/callable-declarations.ts
+ ❯ requireCondition tests/helpers/ir-historical-runtime-reconstruction.ts:602:25
+    600| 
+    601| function requireCondition(condition: unknown, detail: string): asserts…
+    602|   if (!condition) throw new Error("historical reconstruction: " + deta…
+       |                         ^
+    603| }
+    604| 
+ ❯ assertCurrentClockVectorExtensions tests/helpers/ir-historical-runtime-reconstruction.ts:1962:5
+ ❯ callableSourceView tests/helpers/ir-historical-runtime-reconstruction.ts:2078:3
+ ❯ historicalRuntimeDeclarations tests/helpers/ir-historical-runtime-reconstruction.ts:2107:7
+ ❯ acceptedHistoricalDeclarations tests/helpers/ir-historical-runtime-reconstruction.ts:2127:72
+ ❯ tests/issue-3518-runtime-data-contract-seam.test.ts:410:23
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[22/36]⎯
+
+ FAIL  tests/issue-3518-runtime-data-contract-seam.test.ts > #3518 canonical runtime data-contract seam > checks historical retained 'src/ir/intrinsics.ts' receipt after checked extension reconstruction
+Error: historical reconstruction: current declaration order/identity in src/ir/core/intrinsics.ts
+ ❯ requireCondition tests/helpers/ir-historical-runtime-reconstruction.ts:602:25
+    600| 
+    601| function requireCondition(condition: unknown, detail: string): asserts…
+    602|   if (!condition) throw new Error("historical reconstruction: " + deta…
+       |                         ^
+    603| }
+    604| 
+ ❯ orderedDeclarations tests/helpers/ir-historical-runtime-reconstruction.ts:661:3
+ ❯ preClockDeclarations tests/helpers/ir-historical-runtime-reconstruction.ts:587:10
+ ❯ normalizeIntrinsicImplementations tests/helpers/ir-historical-runtime-reconstruction.ts:834:16
+ ❯ preClockRuntimeDeclarations tests/helpers/ir-historical-runtime-reconstruction.ts:1448:12
+ ❯ historicalRuntimeDeclarations tests/helpers/ir-historical-runtime-reconstruction.ts:2109:10
+ ❯ acceptedHistoricalDeclarations tests/helpers/ir-historical-runtime-reconstruction.ts:2127:72
+ ❯ tests/issue-3518-runtime-data-contract-seam.test.ts:410:23
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[23/36]⎯
+
+
+ Test Files  4 failed (4)
+      Tests  35 failed | 107 passed (142)
+   Start at  04:44:08
+   Duration  83.83s (transform 1.77s, setup 0ms, collect 470ms, tests 80.64s, environment 0ms, prepare 39ms)
+
+JSON report written to /private/tmp/js2-ir-source-validation-contracts-20261001/.tmp/source-contracts/baseline-historical.json

@@ -16,7 +16,7 @@ import type { TypedAST } from "../checker/index.js";
 import { buildPortableRyuTemplate } from "../codegen/number-ryu-portable.js";
 import type { Instr, LocalDef, ValType, WasmModule } from "../ir/types.js";
 import { forEachChild, ts } from "../ts-api.js";
-import { NUMBER_TO_STRING_RUNTIME } from "./coercion-engine.js";
+import { NUMBER_TO_STRING_RUNTIME, nodeStringifiesNumber } from "./coercion-engine.js";
 import type { LinearContext } from "./context.js";
 import { isLinkedArena, type LinkedHeapOptions } from "./linked-arena.js";
 import { addRuntime as addBaseRuntime } from "./runtime.js";
@@ -58,6 +58,11 @@ export function sourceMayUseLinearNumberToString(ast: TypedAST): boolean {
       } catch {
         // Unresolved receiver: the direct/IR lowering keeps its normal fallback.
       }
+    }
+    // #6778: string `+` / `+=` with a numeric operand, and numeric template spans.
+    if (nodeStringifiesNumber(ast.checker, node)) {
+      found = true;
+      return;
     }
     forEachChild(node, visit);
   };

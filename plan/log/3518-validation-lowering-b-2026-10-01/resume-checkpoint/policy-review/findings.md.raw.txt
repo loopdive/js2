@@ -1,0 +1,126 @@
+# Phase B preservation and metadata plan — 2026-10-01
+
+This is a read-only architectural inventory for the nine Phase B donors in `/private/tmp/js2-ir-validation-lowering-b-20261001`, branch `codex/3518-validation-lowering-b-20261001`, dependency base `63c5ce9ae1d5a77591abaff28e27fe974926bf4f`. Root owns implementation claims, metadata, receipts, integration and validation. The source writer owns the 13 source paths. No source, tests, issue metadata or Git state were changed for this analysis; no compiler, checker, test or gate ran.
+
+The exact nine donor SHA256/Git-blob/length pins are in `donor-before-pins.json`. All nine matched root's before manifest and remained unchanged at the final source read. `review-input-pins.json` pins 44 supporting source/test/helper/policy/evidence inputs. `direct-reader-candidates.json` records the 38 direct lexical candidate files and their references; it is a search census, not a claim that every candidate reads source text. `receipt-domains.json` records the actual fixed evolution domains. `policy-evolution-proposal.json` contains explicit historical and current layer arrays, roots, floors, ordered additions and historical activation positions.
+
+## Findings that determine the repair footprint
+
+No existing historical body receipt inspected here reads a Phase B donor. The four fixed source evolution domains (Phase A, program pre-A, runtime contracts, core vocabulary) contain none of these nine paths. The older allocation-runtime receipt owns `alloc-registry.ts`, not `verify-alloc.ts`. Existing behavioral imports of the verifier and analyses remain valid through the required compatibility facades and the same actual implementation.
+
+Consequently, do not wrap all existing historical readers with a new inverse, rewrite their hashes, or expand the Phase A receipt. A separate authenticated Phase B movement proof is appropriate for the actual move. The existing tests that definitely require an additive metadata evolution are:
+
+1. `tests/issue-3518-program-data-contract-boundary.test.ts`: the dominance-unmigrated assertion at 323–334, exact analysis roots at 401–408, and the already-stale current-layer equality at 389–400. Its history selection by `(layer,minModules)` at 303–320 was already ambiguous before B.
+2. `tests/issue-3518-semantic-provider-boundary.test.ts`: the full history suffix guard at 808–850 and actual layer additive tails at 985–1088. Its bounded live fixture is independently defined at 262–325 and copied at 883; it is not a complete current-policy fixture and must not silently grow.
+
+The 40/44/174-module graph fixtures do not contain the B owners. Keep those populations, old graph counts, old source mutants, and historical receipt hashes unchanged. Add a distinct actual Phase B closure control rather than relabeling those fixtures as proof of the new closure.
+
+## Existing reader arms to retain
+
+| Reader | Actual role | B treatment |
+| --- | --- | --- |
+| `ir-source-contract-relocation.ts:8–34,241–270` | Fixed 13 donors / 12 owners; whole-source Phase A reconstruction at an initial read | Preserve exact domain and receipt SHA. It does not own a B path. |
+| `issue-3518-program-data-contract-seam.test.ts:14–16` | Raw read → Phase A → program pre-A → ownership evolution | Keep this order and its raw compiler inputs. No B donor is in its receipt/dependency domain. |
+| `ir-program-pre-a-evolution.ts:8–25,283–309` | Four explicit program/identity records plus nine dependencies | No B record/dependency; no adapter needed. |
+| `ir-runtime-contract-evolution.ts:8–37,429–479` | Twenty-seven runtime/contract records, live ABI donor and reciprocal receipt sources | None of the B donors; keep current raw type/runtime readers separate. |
+| `ir-core-vocabulary-evolution.ts:13–33,439–455` | Eight original / fifteen current vocabulary paths | None of the B donors. |
+| `ir-historical-runtime-reconstruction.ts:18+` | Fixed intrinsic/async/current-source-qualified declarations | Analysis intrinsics/async-plan are different files from the five B analyses. |
+| `semantic-provider-source-receipts.mjs:22–76` | Twelve canonical semantic roots plus explicit baseline/candidate compiler routes | No B source receipt. Its actual compiler routes naturally follow the preserved facades; do not normalize those executable inputs. |
+| `issue-3518-allocation-runtime-seam.test.ts:18,171–185` | Old/canonical allocation registry declaration and identity controls | Registry owner unchanged. No verify-allocation source reconstruction. |
+| `issue-3518-core-{nodes,type}-seam.test.ts` | Node/type declaration receipts, raw compiler fixtures, verifier behavior | Keep raw current type inputs and verifier import identity. No verifier body receipt. |
+| `issue-3518-typed-middleend-controls.test.ts:380–387` | Raw source check of the four real calls in `integration.ts`, plus real analysis/debug behavior | Source check is not a B donor. Preserve the old debug wrapper so spies and environment behavior remain meaningful. |
+| `issue-4552-ir-dialect-gate-scope.test.ts:89,118` | Synthetic sandbox files named `ir/verify.ts` | Keep synthetic fixture paths; these do not read the old production verifier. |
+
+The direct search included full and relative donor paths through tests/scripts. The closed receipt domains above disambiguate comments and ordinary runtime imports from actual source-hash readers. This does not claim that every runtime test remains green; root's measured evidence remains authoritative.
+
+## Exact current-policy composition, without weakening the old 56
+
+At the inspected base, the actual inventory has 1,761 rows and 91 activation records. The 56 historical `currentGroups` entries are ordered prefixes of the live entries in all ten represented layers. The manifest records every extra path in actual order; no discovery or existence filtering is necessary.
+
+For `program-data-contract-boundary`, retain `groups`, `ownershipGroups`, `currentGroups`, the 40/44/56 population assertions, and the old edge/history hashes. Replace the stale claim that the 56 are the *entire current policy* with two independently checked views:
+
+1. Authenticate the complete current policy for the affected assertions. For each layer, require exactly `[...historical56EntriesForLayer, ...explicitPreBAdditions, ...explicitBAdditions]`, the reviewed exact roots and floor, active/required flags, unique entries and the exact clean classification of every actual entry. Use the arrays in `policy-evolution-proposal.json`, copied as reviewed constants, never derived from `policy().layers` at assertion time. This checks every new entry as well as every old one.
+2. Only after that full equality, assert the original ordered 56 prefixes equal the unchanged `currentGroups`, including their original denominator. This projection cannot erase unseen entries because an unseen suffix, omission, replacement or reorder fails step 1.
+
+Preserve the original nine-history SHA `820a39c3d3b05a1a20d030ae10b1e19621802cfed5cf9a29ccb5dccb80b3d6ee`. Static reconstruction from the actual policy finds one matching ordered selection: indices **66–74**. The old `(layer,minModules)` query is not a unique authority: `ir-program:3` occurs at 66/76/85, `foundation:3` at 71/88, and `native-runtime:1` at 74/81/83. Authenticate the full known history first, then select the exact original records by the fixed reviewed positions and verify their unchanged hash. Do not choose the first match or discard duplicates generically.
+
+The 56-layer activation positions are also explicit: foundation60, wasm-model72, wasm-physical73, native-runtime74, ir-core54, ir-analysis55, ir-passes62, ir-program58, runtime-contracts65, ir-runtime56. Require each selected actual record to equal the complete old entries/floor, retaining all later records in the separate current-policy guard.
+
+For both tests, the before-B history is exactly 91 records with compact-JSON SHA256 **`906d96d460433bb445216a2ed6fe10ffd7bf7dbbebbe1a9f557b0f878ad4403f`**. Require the whole original 91-record prefix plus exactly the reviewed B suffix. Keep existing semantic-provider historical hashes and its prior tail decomposition intact; authenticate B first, then pass the same old 91-prefix to the old guard. The unchanged allowed-edge SHA is **`efe7e7ed8dee1a009d2bef3ff36dba80df1a805cd3f5b7b472e62ec6dcff64c7`**.
+
+One existing policy distinction must not be smoothed away: native-runtime has **98 entries but floor97**. B does not touch it. Use the actual reviewed floor rather than deriving all floors from entry counts. This is recorded, not repaired by this plan.
+
+Move only dominance out of the old four-item unmigrated list; keep constant-fold, runtime-program-producers and runtime-program-manifest exact. Add a positive assertion for dominance's real clean analysis ownership. Extend the exact five analysis roots by the six B paths, not the whole `src/ir/analysis` directory. Keep raw source fixtures and raw current dependency closure checks separate from policy history projection.
+
+Required new policy negatives: delete/duplicate/replace/reorder an old or new suffix entry; change the floor; change one historical activation; append an unknown activation or unknown entry; remove a B classification; restore dominance to mixed/unmigrated; add a forbidden type-only edge. Each must fail the actual current-policy guard, without changing any old mutant's expected failure.
+
+## Proposed exact inventory delta
+
+Root should finalize one order and freeze it before receipt authoring. A concrete order matching the source plan is:
+
+- ir-analysis append `lattice.ts`, `ownership.ts`, `encoding.ts`, `escape.ts`, `dominance.ts`, `alloc-verification.ts`, all under `src/ir/analysis/`. Preserve the original five entries/roots as a prefix; floor5→11. The first five existing rows become genuinely clean ir-analysis; the sixth is new.
+- ir-runtime append `src/ir/runtime/verify.ts`; floor17→18.
+- ir-program append `src/ir/program/allocations.ts`, `src/ir/program/class-layouts.ts`; floor38→40.
+- Add exactly four file rows: total1,761→1,765. Append three delta activation records with entries/counts6,1,2: history91→94. Preserve all old rows/history/allowed edges outside the five reclassified analysis rows.
+- Old `verify.ts`, `verify-alloc.ts`, `program-allocations.ts`, `program-class-layouts.ts` remain compatibility paths outside activated roots. Do not classify a facade as an independent new implementation or activate unrelated mixed IR root modules.
+
+The active-root checker at `scripts/check-compiler-boundaries.mjs:425–438` still requires real clean ownership for every module under activated roots. No edge relaxation, mixed classification under a clean root, validation callback or authority replacement is involved.
+
+## Separate authenticated Phase B relocation proof
+
+Suggested root-owned test-only paths, if root elects to add this independent proof: `tests/helpers/ir-validation-analysis-relocation.ts`, its fixed `.json` receipt, and `tests/issue-3518-validation-analysis-relocation.test.ts`. The existing Phase A helper is a design precedent, not a generic permit to accept new domains.
+
+The receipt must enumerate **nine complete original source files and thirteen complete current source files**, not just moved public functions. Five originals stay at the same paths with import-only changes (lattice has no imports and should remain byte-identical); the four new owners contain the moved implementations. Include full source SHA256/Git blob/byte length, complete ordered declaration census including docs/overloads/private functions/constants, and each declaration's actual old/current offsets and hashes. Current pins cannot be authored until the source writer freezes the 13 files.
+
+Reconstruct old declarations only from live current declarations. Literal recipe pieces may cover fixed import/export/comment scaffolding; do not store executable historical bodies. Rebuild every old file, compare its entire original SHA/blob/length, then replay the forward recipes and require every one of the thirteen exact current files, including facades and import-only analyses. Enumerate every current-only facade/wrapper fragment as reviewed residue rather than allowing unaccounted code. Authenticate all dependencies referenced by the fixed movement proof; all reads are fresh within one operation, with no cross-operation object cache or fallback to Git/stored source.
+
+`verify-alloc.ts` requires special explicit treatment: `allocVerifyEnabled` stays at the old path. `assertAllocProvenance` stays as the optional environment wrapper, but delegates to the actual public final verifier; its old call to private `assertVerifiedAllocProvenance` therefore needs one precise reversible call-identifier substitution in the receipt. Record the single original/current span, occurrence count and complete wrapper hash; never generalize name substitution across a file. The actual final verifier/private traversal move only once. Do not export formerly private helpers solely for the receipt.
+
+Use paired negatives on each import-only donor, moved owner, facade and retained wrapper: missing file, extra/removed/duplicated/reordered declaration, changed body, changed documentation, stale source, altered import/type-only import, wrong receipt pin, moved error class, duplicate cache/registry owner, incorrect debug delegation and extra private/public export. Explicitly reject double normalization and caller-supplied historical mutants. The positive control must reconstruct all9 and replay all13; empty or selected-only proof is insufficient.
+
+There is currently **no initial-reader hook to change in the old historical suites**. If a future phase's actual fixed receipt starts reading one of these paths, its reader order is raw current → authenticated B inverse → authenticated A inverse (only for A's own paths) → the already-approved pre-A inverse → old parser. Inject old mutation strings only after that initial read. Current compiler/type/runtime tests always read actual files; the inverse is never a compiler host or runtime provider.
+
+## Canonical import and identity constraints
+
+| New/current owner | Required real dependencies and preserved authority |
+| --- | --- |
+| Five analyses | `analysis/alloc-registry.ts`, core nodes/types, core/string-types as needed. Keep one `dominance.ts` WeakMap and all existing ownership/escape/encoding registry namespace writes. Lattice stays import-free. |
+| `analysis/alloc-verification.ts` | Actual allocation registry class, core IrFunction/IrInstr/AllocSiteId/AllocKind, genuine `shared/contracts/ir-preparation-errors.ts` IrInvariantError. Required final provenance checking stays unconditional. |
+| `runtime/verify.ts` | **PreparedIrFunction** from `runtime/contracts/prepared.ts`; core block/instruction/value/declaration types; Phase A canonical declared-types/fnctor/tag/string owners; canonical runtime producer; actual analysis dominance/async-plan and runtime intrinsic verifier. |
+| `program/allocations.ts` | PreparedIrProgram from `program/prepared-contracts.ts`; actual program error class; keys from **`program/abi-signatures.ts`**; real analyses and final allocation verifier; same runtime-support/controls owners. Local `analyze(fn)` only needs core IrFunction, while the containing program must retain its prepared type. |
+| `program/class-layouts.ts` | Core IrClassShape, actual `program/abi-signatures.ts` class key, program error class and prepared contracts. Preserve recursive class graph/accessor checks and existing asyncRuntime traversal exclusion exactly. |
+
+The old `src/ir/nodes.ts:166` exports PreparedIrFunction under the compatibility name IrFunction. Replacing every IrFunction import with the core version would be wrong: the full verifier explicitly reads asyncRuntime at old lines411–423,2464,2541. Retain both asyncPlan and asyncRuntime traversal, adapter checks, error order, defaults and declaration validation. Preserve the exact optional `IrVerificationOptions` and environment behavior at old lines458–463. Absence of options must not become a forced false value.
+
+Old verifier inline `import("./nodes.js")` type expressions at1456/1466,1626/1663/1672/1693/1723 also need canonical relative paths after movement. `ValType` comes from `wasm/model/instructions.ts`. `IrFuncRef` is owned by `core/value-references.ts` and is legitimately re-exported by `core/nodes.ts:92`; either clean route preserves the same type. No extra split or alias is required for it.
+
+Runtime identity controls must assert old and new exported verifier functions/tables are the same objects, errors use the same class, and the analysis cache is not duplicated. Run genuine async prepared/decoded behavior through current raw types; the relocation proof alone is not behavioral verification.
+
+## Exact budget transfer
+
+The original full verifier is 2,865 lines. The issue currently grants `src/ir/verify.ts`; the new path does not inherit that allowance. Move this grant to `src/ir/runtime/verify.ts` in the same issue change, justified by the exact relocation proof, without duplicate old/new permissions.
+
+The committed function baseline is **stale for this purpose**: it lists `verifyBlock:379`, but actual current `verifyBlock` spans1022–1221 (200 lines). Actual `verifyInstrStructure` spans640–1020 (**381 lines**) and is the new-path over-limit unit. `verifyInstrTypeRules` spans2567–2865 (299). The required relocation-only function allowance is **`src/ir/runtime/verify.ts::verifyInstrStructure`**, with actual frozen size checked after formatting. Do not grant verifyBlock based on the historical JSON entry. This corrects my earlier preliminary message.
+
+`scripts/check-{loc,func}-budget.mjs` treats the new path as new; old facade shrink does not transfer a path-specific grandfather. Do not modify the committed baseline JSONs: their writer is the post-merge baseline process. No other new B source file needs a size allowance on the inspected donor spans. Avoid widening permissions or splitting verifier behavior to evade the budget during a pure extraction.
+
+## Pre-B failures and remaining evidence
+
+Root's immutable baseline is 219 rows: **212 passed,7 failed,0 skipped**, no worker errors, TS7 passed. Preserve the `.json` and `.log` bytes pinned here.
+
+- One ir-scaffold selector row and three issue-4113 final-allocation rows see the additional non-executable module-init outcome. They precede B. Do not filter outcome arrays to obtain green; a future separately reviewed evolution must explicitly admit the complete actual population and preserve the invalid-final-provenance control.
+- Three semantic-verification-ownership failures concern current intrinsic declaration/hash additions and catalog39 versus old38. `src/ir/core/intrinsics.ts` / `analysis/intrinsics.ts` are not B donors. If root later composes the already-authenticated Boolean evolution, apply it only to initial historical receipt reads at `verifyReceipt`; retain all original source hashes and mutant arms. The actual runtime catalog identity test at390–416 must observe the real39 with explicit old38+added-entry evidence, never a historical runtime replacement or hidden filtering. This is not part of the B source move.
+
+Root subsequently completed the separate boundary baseline: **457 rows,353 passed,104 failed,0 skipped**, no worker errors. `semantic-provider-boundary` passed **352/352**. `program-data-contract-boundary` had **1/105 pass**: 102 rows stopped in the same fixture preparation failure, one at the ambiguous historical-history lookup, and one at current foundation floor9 versus old6. The 102 setup failures are one shared missing input-composition defect, not 102 independent source regressions. Evidence: `.tmp/validation-lowering-b/baseline-boundaries.json` SHA256 `5c5672c24c91e309fc1a50b87a751374c95f775f7f6a67843c1f595f392fff3f`; `.log` SHA256 `4eca56ec654c005d50d84ffb575af7c5056abec7b906f9bb982a048d57b2bb35`.
+
+### Exact pre-B program-data fixture input repair
+
+The unchanged original fixture at old lines152–153 called `historicalIntrinsicSource(liveSourceReader(repository))` directly for `src/ir/runtime/contracts/intrinsics.ts`. That bypasses the existing authenticated 27-owner runtime inverse. `historicalIntrinsicSource` at helper818 still correctly enforces the old declaration receipt and live generic-contract specialization, so a current raw expanded intrinsic contract fails before the fixture/mutant detector can run.
+
+The bounded repair is to call `reconstructRuntimeContractReceiptSources(rawRead)` **once per fixture invocation**, where `rawRead = liveSourceReader(repository)`. Pass an exact-domain reader to the existing unchanged `historicalIntrinsicSource`: for a path in `runtimeContractCurrentPaths`, require the corresponding map entry (missing entry throws); for a path outside that fixed domain, use rawRead. Only the existing intrinsic-contract special case receives this historical reader. All other `clean` fixture files remain copied from raw current files. Copied fixture mutations happen afterward and never pass back through an inverse. Reuse the existing authenticated receipt/implementation unchanged; do not refresh its 27 source pins, add a wildcard, or re-invoke the inverse for every callback read. The map belongs to one fixture proof and is not a cross-operation cache.
+
+This is an existing pre-B fixture-composition repair, independent of the new B receipt. It does not require adding B owners to the 27-domain helper or applying core vocabulary's distinct historical inverse. Current runtime/compiler/type inputs remain raw. Keep the old 40/44 graph counts and all mutations intact; after this first preparation refusal is repaired, root must measure any newly exposed failures rather than infer success.
+
+The original program-data boundary test was pinned before root edits: SHA256 `8c637b37de043a622eda295fa319f0c4257936c6c10dddc8892580eaf6983be4`, blob `fdadae83ecf8fe4972cb6e983cc1caec0b65415c`,24573 bytes. During the final read, root's new one-operation input arm was already present: SHA256 `83b10069f7b32298705f779df2121bcea0064f28cc7dbe10e4d113c2d32dfda6`, blob `1b3953ea03a75d507c888a99f81355cbaf1974d8`,25359 bytes. Those observed bytes are archived as `program-data-observed-root-edit.ts.txt`; the new arm statically matches the scope above. No execution or final freeze is asserted for that edit. Semantic-provider source remained identical to its baseline pin.
+
+The candidate after-source pins, full reciprocal body proof, new controls, real boundary graph, and behavioral post-B cohort remain root/writer work after freeze. Strict complete migration still remains incomplete beyond this bounded dependency extraction; no public realm or whole-IR readiness is granted here.

@@ -16,6 +16,7 @@ import {
   linkedMallocPrologue,
 } from "./linked-arena.js";
 import { isLinearStringLiteralCacheGlobal } from "./string-literals.js";
+import { linearStringSliceBoundInstrs } from "./runtime/string-slice.js";
 
 /**
  * Heap starts at byte offset 1024 (leave low addresses for null/sentinel).
@@ -2225,8 +2226,8 @@ export function addStringRuntime(mod: WasmModule): void {
   );
 
   // __str_slice(str: i32, start: i32, end: i32) → i32
-  // Extract substring [start, end) from str. Returns new string pointer.
-  // extra locals: newLen, ptr, i
+  // Normalize signed bounds to byte intervals; ASCII indices match UTF-16.
+  // extra locals: newLen, ptr, i, byteLength, magnitude
   addRuntimeFunc(
     mod,
     "__str_slice",
@@ -2237,24 +2238,27 @@ export function addStringRuntime(mod: WasmModule): void {
       const newLenLocal = firstLocalIdx;
       const ptrLocal = firstLocalIdx + 1;
       const iLocal = firstLocalIdx + 2;
+      const byteLengthLocal = firstLocalIdx + 3;
+      const magnitudeLocal = firstLocalIdx + 4;
       return [
-        // newLen = end - start
+        { op: "local.get", index: 0 },
+        { op: "i32.load", align: 2, offset: 8 },
+        { op: "local.set", index: byteLengthLocal },
+        ...linearStringSliceBoundInstrs(1, byteLengthLocal, magnitudeLocal),
+        { op: "local.set", index: 1 },
+        ...linearStringSliceBoundInstrs(2, byteLengthLocal, magnitudeLocal),
+        { op: "local.set", index: 2 },
+        // newLen = end > start ? end - start : 0 (normalized unsigned bounds)
         { op: "local.get", index: 2 },
         { op: "local.get", index: 1 },
-        { op: "i32.sub" },
-        { op: "local.set", index: newLenLocal },
-        // Clamp: if newLen < 0, set to 0
-        { op: "local.get", index: newLenLocal },
-        { op: "i32.const", value: 0 },
-        { op: "i32.lt_s" },
+        { op: "i32.gt_u" },
         {
           op: "if",
-          blockType: { kind: "empty" },
-          then: [
-            { op: "i32.const", value: 0 },
-            { op: "local.set", index: newLenLocal },
-          ],
+          blockType: { kind: "val", type: { kind: "i32" } },
+          then: [{ op: "local.get", index: 2 }, { op: "local.get", index: 1 }, { op: "i32.sub" }],
+          else: [{ op: "i32.const", value: 0 }],
         },
+        { op: "local.set", index: newLenLocal },
         // ptr = malloc(12 + newLen)
         { op: "i32.const", value: 12 },
         { op: "local.get", index: newLenLocal },
@@ -2309,7 +2313,7 @@ export function addStringRuntime(mod: WasmModule): void {
         { op: "local.get", index: ptrLocal },
       ];
     },
-    3,
+    5,
   );
 
   // __str_index_of(str: i32, sep: i32, fromIdx: i32) → i32 (-1 if not found)

@@ -113,6 +113,9 @@ interface ConcatDeps {
   isUndefinedIdx: number;
   boxSymbolIdx: number;
   pushIdx: number;
+  /** (#6485) §23.1.3.1.1 step 1 — `Type(O) is Object`. Absent ⇒ arm omitted. */
+  typeofObjectIdx: number | undefined;
+  typeofFunctionIdx: number | undefined;
 }
 
 function prepareConcatSpec(ctx: CodegenContext, fctx: FunctionContext): ConcatDeps | undefined {
@@ -139,6 +142,11 @@ function prepareConcatSpec(ctx: CodegenContext, fctx: FunctionContext): ConcatDe
   ensureLateImport(ctx, "__extern_is_undefined", [externref], [i32]);
   ensureLateImport(ctx, "__box_symbol", [i32], [externref]);
   ensureLateImport(ctx, "__is_truthy", [externref], [i32]);
+  // (#6485) §23.1.3.1.1 step 1 — `If Type(O) is not Object, return false`, which
+  // runs BEFORE the symbol Get. `typeof` is the module's own classifier pair:
+  // "function" is an Object too, so the two are OR-ed.
+  ensureLateImport(ctx, "__typeof_object", [externref], [i32]);
+  ensureLateImport(ctx, "__typeof_function", [externref], [i32]);
   flushLateImportShifts(ctx, fctx);
 
   const required = [
@@ -163,6 +171,8 @@ function prepareConcatSpec(ctx: CodegenContext, fctx: FunctionContext): ConcatDe
     isUndefinedIdx: ctx.funcMap.get("__extern_is_undefined")!,
     boxSymbolIdx: ctx.funcMap.get("__box_symbol")!,
     pushIdx: ctx.funcMap.get("__objvec_push") ?? builders.pushIdx,
+    typeofObjectIdx: ctx.funcMap.get("__typeof_object"),
+    typeofFunctionIdx: ctx.funcMap.get("__typeof_function"),
   };
 }
 
@@ -178,6 +188,39 @@ function allocateConcatLocals(fctx: FunctionContext): ConcatLocals {
     total: allocLocal(fctx, `__cat_spec_n_${fctx.locals.length}`, { kind: "f64" }),
     present: allocLocal(fctx, `__cat_spec_present_${fctx.locals.length}`, { kind: "i32" }),
   };
+}
+
+/**
+ * (#6485) `Type(<src>) is Object` as an i32 — §23.1.3.1.1 step 1.
+ *
+ * The module's own `typeof` classifiers answer it: "object" or "function" IS
+ * the Object set, and `typeof null` is "object", so a wasm null (which is also
+ * how standalone represents `undefined`) is subtracted first.
+ *
+ * Returns `undefined` when either classifier is unavailable, in which case the
+ * caller emits the pre-#6485 sequence unchanged — absent-not-wrong.
+ *
+ * Known narrowing, deliberate: `__typeof_object` reports the Symbol CARRIER as
+ * object-like (see `array-object-proto.ts`'s §20.5.3.4 note), so a Symbol
+ * operand still performs the Get. The answer only differs from the spec's if a
+ * program also sets `Symbol.prototype[@@isConcatSpreadable]`, which no test262
+ * row does; subtracting the carrier here would need a third classifier for a
+ * case nothing exercises.
+ */
+function buildIsObjectInstrs(deps: ConcatDeps, srcLocal: number): Instr[] | undefined {
+  const { typeofObjectIdx, typeofFunctionIdx } = deps;
+  if (typeofObjectIdx === undefined || typeofFunctionIdx === undefined) return undefined;
+  return [
+    { op: "local.get", index: srcLocal },
+    { op: "ref.is_null" },
+    { op: "i32.eqz" },
+    { op: "local.get", index: srcLocal },
+    { op: "call", funcIdx: typeofObjectIdx },
+    { op: "local.get", index: srcLocal },
+    { op: "call", funcIdx: typeofFunctionIdx },
+    { op: "i32.or" },
+    { op: "i32.and" },
+  ];
 }
 
 function emitConcatSource(
@@ -213,15 +256,17 @@ function emitConcatSource(
   // `$Vec` and an `$Object` receiver (`[3,4][@@isConcatSpreadable]` prints
   // "undefined", while a stored `null` prints "null"), which is exactly the
   // distinction §23.1.3.1.1 step 3 rests on.
-  fctx.body.push({ op: "local.get", index: locals.src });
-  fctx.body.push({ op: "i32.const", value: SYMBOL_IS_CONCAT_SPREADABLE_ID });
-  fctx.body.push({ op: "call", funcIdx: deps.boxSymbolIdx });
-  fctx.body.push({ op: "call", funcIdx: deps.externGetIdx });
-  fctx.body.push({ op: "local.tee", index: locals.spv });
-  fctx.body.push({ op: "call", funcIdx: deps.isUndefinedIdx });
+  const spreadable: Instr[] = [
+    { op: "local.get", index: locals.src },
+    { op: "i32.const", value: SYMBOL_IS_CONCAT_SPREADABLE_ID },
+    { op: "call", funcIdx: deps.boxSymbolIdx },
+    { op: "call", funcIdx: deps.externGetIdx },
+    { op: "local.tee", index: locals.spv },
+    { op: "call", funcIdx: deps.isUndefinedIdx },
+  ];
   const toBool: Instr[] = [{ op: "local.get", index: locals.spv }];
   emitToBoolean(ctx, { kind: "externref" }, toBool);
-  fctx.body.push({
+  spreadable.push({
     op: "if",
     blockType: { kind: "val", type: { kind: "i32" } },
     then: [
@@ -230,6 +275,25 @@ function emitConcatSource(
     ],
     else: toBool,
   });
+
+  // (#6485) …but step 1 comes FIRST: `If Type(O) is not Object, return false`.
+  // Without it a PRIMITIVE operand inherits the answer from its wrapper
+  // prototype — `Boolean.prototype[@@isConcatSpreadable] = true` made
+  // `[].concat(true)` spread, and `String.prototype[…] = true` made
+  // `[].concat("yuck")` come back as its code units. Both are measured rows
+  // (`concat_spreadable-{boolean,string}-wrapper.js`, last assertion each), and
+  // step 1 is also what keeps the Get itself UNOBSERVABLE for a primitive.
+  const isObject = buildIsObjectInstrs(deps, locals.src);
+  if (isObject === undefined) fctx.body.push(...spreadable);
+  else {
+    fctx.body.push(...isObject);
+    fctx.body.push({
+      op: "if",
+      blockType: { kind: "val", type: { kind: "i32" } },
+      then: spreadable,
+      else: [{ op: "i32.const", value: 0 }],
+    });
+  }
   fctx.body.push({ op: "local.set", index: locals.flag });
 
   // ── Spreadable arm: append E's 0..ToLength(E.length) elements ─────────

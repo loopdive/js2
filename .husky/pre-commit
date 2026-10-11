@@ -10,10 +10,10 @@ pnpm run check:loc-budget || exit 1
 pnpm run check:func-budget || exit 1
 
 # Fast lane (#4100 post-mortem): the slow chain below takes minutes and exceeds
-# agent tool timeouts, which drove wholesale `git commit --no-verify` — losing
+# agent tool timeouts, which drove wholesale hook-bypassing commits — losing
 # the seconds-cheap prettier/biome gate above along with the slow checks.
 # SKIP_SLOW_PRECOMMIT=1 keeps the format+budget gates unconditional and skips
-# only the slow checks (CI runs them all regardless). Never use `--no-verify`;
+# only the slow checks (CI runs them all regardless). Never bypass the hook;
 # use this.
 if [ -n "$SKIP_SLOW_PRECOMMIT" ]; then
   echo "pre-commit: fast gates passed (lint-staged + LOC/function budgets); slow checks skipped (SKIP_SLOW_PRECOMMIT=1) — CI still runs them"

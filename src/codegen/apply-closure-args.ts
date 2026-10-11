@@ -11,16 +11,5 @@ export function applyUndefinedInstrs(ctx: CodegenContext, getUndefinedIdx: numbe
     : (undefinedExternInstrs(ctx)?.map((instr) => ({ ...instr })) ?? [{ op: "ref.null.extern" }]);
 }
 
-/** Treat null/undefined apply carriers as an empty argument list. */
-export function guardNullableApplyArguments(undefinedValue: Instr[], fallback: Instr[]): Instr[] {
-  return [
-    { op: "local.get", index: 2 },
-    { op: "ref.is_null" },
-    {
-      op: "if",
-      blockType: { kind: "val", type: { kind: "externref" } },
-      then: undefinedValue,
-      else: fallback,
-    },
-  ];
-}
+/** Compatibility path for the shared nullable apply carrier guard. */
+export { guardNullableApplyArguments } from "../runtime/wasmgc/values/closure-apply-body.js";

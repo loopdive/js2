@@ -220,3 +220,12 @@ regression tests, cross-linked here rather than duplicated:
   `__EAGER_GEN_LIMIT` (1,000,000) cap — the wrong output literally contains
   the cap value. Recommended as a canonical acceptance-test addition for
   whoever picks up Phase 3.
+
+## 2026-09-30 review cross-reference
+
+The silent fallback this model implies is now tracked separately as #6781
+(refuse to compile generators whose consumer calls `.throw()`/`.return()`
+instead of taking the eager-buffer path). Reproduced on `e303c5c7`: body and
+`finally` run at creation (`created=102` vs JS `0`); `it.throw("boom")`
+escapes the generator's own `catch`. See
+`plan/agent-context/claude-codebase-review-2026-09-30.md`.

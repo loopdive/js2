@@ -1,0 +1,1 @@
+import-cycles ratchet: OK — largest SCC 699 files, 4 SCCs > 1 file, 10 two-way directory pairs (1893 files, 10498 value edges, 3851 type-only refs skipped) (base: merge-base(origin))

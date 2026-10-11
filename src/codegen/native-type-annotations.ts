@@ -53,11 +53,13 @@
  * behaviour for values outside its range — that is the point of the escape
  * hatch, and it is why it is opt-in per binding:
  *
- *  - values are stored as a **signed 32-bit integer**; assignment of a value
- *    outside [-2^31, 2^31-1] saturates (`i32.trunc_sat_f64_s`) rather than
- *    wrapping, and a fractional value truncates toward zero;
- *  - `NaN` and `±Infinity` are not representable — they store as `0`,
- *    `2147483647` and `-2147483648` respectively (saturating truncation);
+ *  - values are stored as a **signed 32-bit integer** converted with ECMAScript
+ *    ToInt32 — exactly `x | 0` (#6798; it used to saturate, inconsistently with
+ *    `| 0`): a value outside [-2^31, 2^31-1] wraps modulo 2^32 (`2 ** 31` stores
+ *    as `-2147483648`), and a fractional value truncates toward zero. The
+ *    `int32` brand on the ValType selects this at every f64 → i32 destination;
+ *  - `NaN` and `±Infinity` are not representable — they store as `0`, so an
+ *    `i32` division by zero yields `0`, like `(a / 0) | 0`;
  *  - `-0` is not representable — it stores as `+0`, so `Object.is(x, -0)`
  *    reads `false`;
  *  - arithmetic on two `i32` operands is done in i32 (see
@@ -75,7 +77,7 @@ import type { ValType } from "../ir/types.js";
  * integration.
  */
 export const NATIVE_TYPE_MAP: Record<string, ValType> = {
-  i32: { kind: "i32" },
+  i32: { kind: "i32", int32: true },
   u8: { kind: "i32" }, // unsigned 8-bit — stored as i32 (masked at boundaries)
   u16: { kind: "i32" }, // unsigned 16-bit — stored as i32 (masked at boundaries)
   u32: { kind: "i32" }, // unsigned 32-bit — stored as i32

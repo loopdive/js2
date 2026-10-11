@@ -23,6 +23,7 @@ import type { CodegenContext } from "./context/types.js";
 import type { IrOverlayPlan } from "./index.js";
 import type { MultiPreparedProgramCallableComponent } from "./multi-prepared-program.js";
 import { describePreparedModuleCallableAliases } from "./program-abi-module-callable-alias-planning.js";
+import { readEnv } from "../env.js";
 
 export interface MultiPreparedCallableCandidate {
   readonly sourceFile: ts.SourceFile;
@@ -174,7 +175,7 @@ export function prepareMultiPreparedCallableGroup(
     const integrationSourceFiles = input.multiAst.sourceFiles.filter((sourceFile) =>
       group.some((candidate) => candidate.sourceFile === sourceFile),
     );
-    const declinedGroup = process.env.JS2WASM_TEST_DECLINE_MULTI_PREPARED_CALLABLE_COMPONENT;
+    const declinedGroup = readEnv("JS2WASM_TEST_DECLINE_MULTI_PREPARED_CALLABLE_COMPONENT");
     if (declinedGroup !== undefined) {
       if (!/^\d+$/.test(declinedGroup)) {
         throw new IrInvariantError(
@@ -325,7 +326,7 @@ export function prepareMultiPreparedCallableGroup(
     }
 
     const preparedComponentId = componentId;
-    const populationMutation = process.env.JS2WASM_TEST_MUTATE_MULTI_PREPARED_CALLABLE_COMPONENT_POPULATION;
+    const populationMutation = readEnv("JS2WASM_TEST_MUTATE_MULTI_PREPARED_CALLABLE_COMPONENT_POPULATION");
     if (populationMutation !== undefined && !/^\d+$/.test(populationMutation)) {
       pendingReceipt.abort();
       throw new IrInvariantError(

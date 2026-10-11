@@ -371,6 +371,12 @@ function requireIrPlanningTerminalRecord(
   return terminal;
 }
 
+/** (#6772 S6) `node` lies inside one of `owner`'s heritage clauses. */
+function isInHeritage(owner: ts.Node, node: ts.Node): boolean {
+  if (!ts.isClassLike(owner)) return false;
+  return (owner.heritageClauses ?? []).some((clause) => node.pos >= clause.pos && node.end <= clause.end);
+}
+
 /**
  * Require the R0 terminal owner for an exact AST node.
  *
@@ -405,6 +411,12 @@ export function requireIrPlanningOwnerUnitId(identityContext: IrPlanningIdentity
         "source-record-mismatch",
         `indexed unit ${unitId} belongs to source ${unit.sourceId}, not ${sourceId}`,
       );
+    }
+    // (#6772 S6) A top-level class's implicit-constructor SUPPORT unit is keyed
+    // by the class node itself, but its heritage expression is evaluated in the
+    // ENCLOSING scope at ClassDefinitionEvaluation, never in the constructor.
+    if (unit.terminalOwnerId === null && unit.kind === "class-implicit-constructor" && isInHeritage(current, node)) {
+      continue;
     }
     if (unit.terminalOwnerId === null) {
       return planningIdentityInvariant(

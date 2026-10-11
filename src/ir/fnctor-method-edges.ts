@@ -125,6 +125,7 @@ import {
 import { createSatelliteInferExtension } from "./fnctor-eval-extensions.js";
 import { refineFieldWriteAttribution } from "./fnctor-receiver-provenance.js";
 import { _propagationCore as core, type InferExtension, type LatticeType } from "./propagate.js";
+import { readEnv } from "../env.js";
 
 const memo = new WeakMap<ts.SourceFile, GraphFacts>();
 
@@ -276,7 +277,7 @@ function analyze(sourceFile: ts.SourceFile, checker: ts.TypeChecker): GraphFacts
 
   // Inert diagnostics (JS2WASM_LOG_FNCTOR_GRAPH=1) — mirrors the escape gate's
   // JS2WASM_LOG_FNCTOR_GATE pattern; zero effect on output.
-  if (process.env.JS2WASM_LOG_FNCTOR_GRAPH === "1") {
+  if (readEnv("JS2WASM_LOG_FNCTOR_GRAPH") === "1") {
     const callables = [...state.nodes.values()].filter((n) => n.kind === "callable");
     const methods = [...state.nodes.values()].filter((n) => n.kind !== "callable");
     const poisonedNames = callables.filter((n) => n.poisoned).map((n) => n.name);

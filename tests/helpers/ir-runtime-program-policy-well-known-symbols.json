@@ -1,0 +1,235 @@
+{
+  "schema": 1,
+  "kind": "wks-exact-runtime-program-policy-successor",
+  "provenance": {
+    "reviewedBase": "c7366c3c6d3eb9e4c5cff0b29b11c42e3faab4c7",
+    "planSha256": "803f3fcc5af93344f878b33dace6c9484d2d4aa1437e9537548c899f4204753c",
+    "c1HelperPrefix": {
+      "bytes": 10742,
+      "sha256": "2636bd52d821cbc1a7aaff425a03d1ea56fe29b584db5925d6ef099a893f5f3d"
+    },
+    "immutableInputs": [
+      {
+        "path": "tests/helpers/ir-runtime-program-policy-evolution.json",
+        "bytes": 6804,
+        "sha256": "8e2589e90fbc697dceba56e1bbe53447250a94f3bcb03d99317ad4878bc1f58c"
+      },
+      {
+        "path": "src/ir/program.ts",
+        "bytes": 20480,
+        "sha256": "bbc4c4e092fc98053434dea89451e54b0db80d994c479aa2f4e519285a71ea50"
+      },
+      {
+        "path": "src/ir/program-abi-contracts.ts",
+        "bytes": 10561,
+        "sha256": "ec7abc6488f3a77c24b65348713efec386c02f8ad065836d5e14814cec6656b9"
+      },
+      {
+        "path": "src/ir/prepared-component-dependencies.ts",
+        "bytes": 70294,
+        "sha256": "7954d8385517afb23689382abb066a8cec016a50b277ae37fd81e895c6fcf10f"
+      },
+      {
+        "path": "src/ir/generator-support.ts",
+        "bytes": 329,
+        "sha256": "b15757be319275f1872dab77541600551d32795624d530d4b71f9eaf474862f5"
+      },
+      {
+        "path": "src/ir/program/owner.ts",
+        "bytes": 1323,
+        "sha256": "3b25543059427df6f91cce6892a7bfb9b0104ec2f078bc41517a1d6c42fb6b19"
+      },
+      {
+        "path": "src/ir/program/draft-abi-lookup.ts",
+        "bytes": 714,
+        "sha256": "b360370fdcac3c633a0f09f23e11ae71833ceecbed61cdf153da29d91c33aa24"
+      },
+      {
+        "path": "src/ir/program/runtime-support-dependencies.ts",
+        "bytes": 4661,
+        "sha256": "269d0476bd2f81f57057a8a8507896931e3c13d6176b5585ce08dcb1ee1b54b9"
+      },
+      {
+        "path": "src/ir/runtime/generator-support.ts",
+        "bytes": 8956,
+        "sha256": "afc937aaacb916d39447df1254ac0da67877778b9c7df09e7891e3fc7c861c39"
+      },
+      {
+        "path": "tests/issue-3518-runtime-program-c1-relocation.test.ts",
+        "bytes": 24062,
+        "sha256": "68a40cd9a5e67fc702e202a4f6307d4021dfed73fdaf0e2dbccd97a4ec6f7aed"
+      },
+      {
+        "path": "tests/helpers/ir-runtime-program-relocation.ts",
+        "bytes": 19615,
+        "sha256": "6be4b992fb5a3aafab89112e7f3a4dfcacb67ad7f53edb1c99a17fe55c7c5141"
+      },
+      {
+        "path": "tests/helpers/ir-runtime-program-relocation.json",
+        "bytes": 680099,
+        "sha256": "aeeae92fa9c31d8d7ae6aa8805c91862cb1fa2b79486fa4d69cce29d7d065763"
+      },
+      {
+        "path": "tests/issue-3518-runtime-program-relocation.test.ts",
+        "bytes": 21449,
+        "sha256": "324fa026106c484167f6631158043bf16298d07d6f82f1136808fa07054dcc6b"
+      },
+      {
+        "path": "tests/issue-3518-program-data-contract-seam.test.ts",
+        "bytes": 35973,
+        "sha256": "84f249d70f2546cb9ac025f72c7817d5d58e4950c00691fd585caba7bd0cffda"
+      },
+      {
+        "path": "tests/issue-3518-program-ownership-runtime-seam.test.ts",
+        "bytes": 36546,
+        "sha256": "66dfa1235ce24d821a9530a5c3531b56eef2817033d89f0d3e8109f9ead13220"
+      },
+      {
+        "path": "tests/issue-3518-program-pre-a-evolution.test.ts",
+        "bytes": 17640,
+        "sha256": "0ee5b4d09d0efd9bd5f084fde4fb87bf316ad4aae85867c30d9903cce9353068"
+      },
+      {
+        "path": "tests/issue-3518-program-initial-graph-evolution.test.ts",
+        "bytes": 24556,
+        "sha256": "44f5ac79766e9046aa4ed3ccc32c5e609209d0000ffe4d7b06d9afcc8049c2e6"
+      },
+      {
+        "path": "tests/helpers/ir-validation-policy-evolution.ts",
+        "bytes": 11095,
+        "sha256": "a962c04960b945705e9ac5a354da3e96c8e0cf5543382847231dd3df9204fb40"
+      },
+      {
+        "path": "tests/helpers/ir-validation-policy-evolution.json",
+        "bytes": 51450,
+        "sha256": "39dacc9d17fb52b6a369ed81d7498afc30b00bc06d89362bba039305aa96fa0e"
+      }
+    ]
+  },
+  "before": {
+    "source": {
+      "bytes": 565188,
+      "sha256": "460eb6835dff1d22322ac9fb0fdd9526f04cd09d99d4dec8138f8e66b91ffd57",
+      "gitBlob": "5395e0265ca6fef778141101ea688e456417c558"
+    },
+    "dataSha256": "f24c0f10d4e8e9b5dc23471ec327f2fab7312890a5d4db035066e8c189ed2a11",
+    "fileCount": 1769,
+    "filesSha256": "c1e4f0b02ab0d5a42e0dbef3f725d64c427fc2c866e4989b5d0da8313cd92616",
+    "activationCount": 96,
+    "activationHistorySha256": "1c64b137373008c3bce05ac01a50808d2d3c2198b20b779d4f24f3bfcbdfed70",
+    "layersSha256": "c1be051d77d0857faeec740a200f3291fca0be93f2eb1bab8f93d9f2e12e9e36"
+  },
+  "current": {
+    "source": {
+      "bytes": 565875,
+      "sha256": "451258b5feed7669d08553de966cb654a88f134a1d197fb9768fa97607843e59",
+      "gitBlob": "74dc1b073145713d122e28a0b45f34c0cc41a066"
+    },
+    "dataSha256": "462b8a9a6047378eed5913e51441761734663ff8c53cbb804106368ff1a33be7",
+    "fileCount": 1771,
+    "filesSha256": "fb09eb31db052006e682dbad6dd421488a7ccc1093169ca18779e33a80ec929d",
+    "activationCount": 98,
+    "activationHistorySha256": "66367385757ebdd22d24656c46f0317f97aaf4b104a431e94c4b566753b53eac",
+    "layersSha256": "091f25a5fee65a0185b62916ecbdd60afabd96409fa914cf02cb17616a1f0d7c"
+  },
+  "allowedEdgesSha256": "efe7e7ed8dee1a009d2bef3ff36dba80df1a805cd3f5b7b472e62ec6dcff64c7",
+  "layerDeltas": [
+    {
+      "index": 10,
+      "id": "runtime-contracts",
+      "beforeEntries": 9,
+      "currentEntries": 10,
+      "beforeMinModules": 9,
+      "currentMinModules": 10,
+      "roots": ["src/runtime/contracts"],
+      "additions": ["src/runtime/contracts/well-known-symbols.ts"]
+    },
+    {
+      "index": 11,
+      "id": "backend-wasmgc",
+      "beforeEntries": 49,
+      "currentEntries": 50,
+      "beforeMinModules": 49,
+      "currentMinModules": 50,
+      "roots": ["src/backend/wasmgc"],
+      "additions": ["src/backend/wasmgc/resources/native-well-known-symbols.ts"]
+    }
+  ],
+  "addedFiles": [
+    {
+      "path": "src/runtime/contracts/well-known-symbols.ts",
+      "state": "clean",
+      "layer": "runtime-contracts"
+    },
+    {
+      "path": "src/backend/wasmgc/resources/native-well-known-symbols.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    }
+  ],
+  "activationAdditions": [
+    {
+      "layer": "runtime-contracts",
+      "entries": ["src/runtime/contracts/well-known-symbols.ts"],
+      "minModules": 1
+    },
+    {
+      "layer": "backend-wasmgc",
+      "entries": ["src/backend/wasmgc/resources/native-well-known-symbols.ts"],
+      "minModules": 1
+    }
+  ],
+  "census": {
+    "layers": 20,
+    "files": 1771,
+    "histories": 98,
+    "requiredContracts": 10,
+    "contractsFloor": 10,
+    "classifiedContracts": 10,
+    "requiredBackend": 50,
+    "backendFloor": 50,
+    "classifiedBackend": 55,
+    "requiredProgram": 43,
+    "classifiedProgram": 44,
+    "requiredRuntime": 19,
+    "classifiedRuntime": 19,
+    "requiredNative": 98,
+    "nativeFloor": 97,
+    "classifiedNative": 103,
+    "requiredAnalysis": 11,
+    "requiredCore": 29
+  },
+  "raw": {
+    "offsetUnit": "utf16-code-unit",
+    "spans": [
+      {
+        "role": "runtime-contracts-layer-tail",
+        "beforeOffset": 9384,
+        "afterOffset": 9384,
+        "before": "\"src/runtime/contracts/native-realm-catalog.ts\"\n      ],\n      \"minModules\": 9",
+        "after": "\"src/runtime/contracts/native-realm-catalog.ts\",\n        \"src/runtime/contracts/well-known-symbols.ts\"\n      ],\n      \"minModules\": 10"
+      },
+      {
+        "role": "backend-wasmgc-layer-tail",
+        "beforeOffset": 12760,
+        "afterOffset": 12816,
+        "before": "\"src/backend/wasmgc/resources/native-mixed-object-access.ts\"\n      ],\n      \"minModules\": 49",
+        "after": "\"src/backend/wasmgc/resources/native-mixed-object-access.ts\",\n        \"src/backend/wasmgc/resources/native-well-known-symbols.ts\"\n      ],\n      \"minModules\": 50"
+      },
+      {
+        "role": "activation-history-tail",
+        "beforeOffset": 64874,
+        "afterOffset": 64999,
+        "before": "    {\n      \"layer\": \"ir-runtime\",\n      \"entries\": [\"src/ir/runtime/generator-support.ts\"],\n      \"minModules\": 1\n    }\n  ],\n  \"nonModules\"",
+        "after": "    {\n      \"layer\": \"ir-runtime\",\n      \"entries\": [\"src/ir/runtime/generator-support.ts\"],\n      \"minModules\": 1\n    },\n    {\n      \"layer\": \"runtime-contracts\",\n      \"entries\": [\"src/runtime/contracts/well-known-symbols.ts\"],\n      \"minModules\": 1\n    },\n    {\n      \"layer\": \"backend-wasmgc\",\n      \"entries\": [\"src/backend/wasmgc/resources/native-well-known-symbols.ts\"],\n      \"minModules\": 1\n    }\n  ],\n  \"nonModules\""
+      },
+      {
+        "role": "files-tail",
+        "beforeOffset": 565065,
+        "afterOffset": 565475,
+        "before": "    {\n      \"path\": \"src/ir/runtime/generator-support.ts\",\n      \"state\": \"clean\",\n      \"layer\": \"ir-runtime\"\n    }\n  ]\n}\n",
+        "after": "    {\n      \"path\": \"src/ir/runtime/generator-support.ts\",\n      \"state\": \"clean\",\n      \"layer\": \"ir-runtime\"\n    },\n    {\n      \"path\": \"src/runtime/contracts/well-known-symbols.ts\",\n      \"state\": \"clean\",\n      \"layer\": \"runtime-contracts\"\n    },\n    {\n      \"path\": \"src/backend/wasmgc/resources/native-well-known-symbols.ts\",\n      \"state\": \"clean\",\n      \"layer\": \"backend-wasmgc\"\n    }\n  ]\n}\n"
+      }
+    ]
+  }
+}

@@ -114,8 +114,6 @@ export function buildRecordFromExternref(
   const nullFallback: Instr[] = [{ op: "ref.null", typeIdx: recordTypeIdx }];
   const fields = getAnonRecordFields(ctx, recordTypeIdx);
   if (!fields) return nullFallback;
-  // A host-free target has no `__extern_get` to read the properties with.
-  if (ctx.standalone || ctx.wasi) return nullFallback;
   // (#5346) A record whose own field type reaches back to it (`A.b: B`,
   // `B.a: A`) would recurse forever through the field recovery below. The set
   // is COMPILE-time only and always balanced by the `finally` at the end of
@@ -124,14 +122,22 @@ export function buildRecordFromExternref(
   if (materializingRecordTypes.has(recordTypeIdx)) return nullFallback;
 
   const externref: ValType = { kind: "externref" };
+  // A host-free target reads the properties through the NATIVE object runtime:
+  // `ensureLateImport` binds `__extern_get` / `__unbox_number` to defined
+  // Wasm helpers there (native-first semantic providers). It has no
+  // `__extern_is_object`; its `__typeof_object` answers 1 for `null`, so the
+  // object test below pairs it with an explicit null check.
+  const hostFree = ctx.standalone || ctx.wasi;
+  if (hostFree && ctx.targetProfile.semanticProviders !== "native-first") return nullFallback;
+  const isObjectName = hostFree ? "__typeof_object" : "__extern_is_object";
   ensureLateImport(ctx, "__extern_get", [externref, externref], [externref]);
-  ensureLateImport(ctx, "__extern_is_object", [externref], [{ kind: "i32" }]);
+  ensureLateImport(ctx, isObjectName, [externref], [{ kind: "i32" }]);
   ensureLateImport(ctx, UNBOX_NUMBER, [externref], [{ kind: "f64" }]);
   for (const field of fields) addStringConstantGlobal(ctx, field.name);
   flushLateImportShifts(ctx, fctx);
 
   const getIdx = ctx.funcMap.get("__extern_get");
-  const isObjectIdx = ctx.funcMap.get("__extern_is_object");
+  const isObjectIdx = ctx.funcMap.get(isObjectName);
   const unboxIdx = ctx.funcMap.get(UNBOX_NUMBER);
   if (getIdx === undefined || isObjectIdx === undefined || unboxIdx === undefined) return nullFallback;
 
@@ -199,9 +205,21 @@ export function buildRecordFromExternref(
   build.push({ op: "struct.new", typeIdx: recordTypeIdx });
 
   const resultType: ValType = { kind: "ref_null", typeIdx: recordTypeIdx };
+  const isObjectTest: Instr[] = hostFree
+    ? [
+        { op: "local.get", index: externLocal },
+        { op: "ref.is_null" },
+        { op: "i32.eqz" },
+        { op: "local.get", index: externLocal },
+        { op: "call", funcIdx: helperIdx(isObjectName, isObjectIdx) },
+        { op: "i32.and" },
+      ]
+    : [
+        { op: "local.get", index: externLocal },
+        { op: "call", funcIdx: isObjectIdx },
+      ];
   return [
-    { op: "local.get", index: externLocal },
-    { op: "call", funcIdx: isObjectIdx },
+    ...isObjectTest,
     {
       op: "if",
       blockType: { kind: "val", type: resultType },

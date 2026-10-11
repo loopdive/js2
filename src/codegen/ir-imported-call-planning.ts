@@ -26,6 +26,7 @@ import {
   shouldVisitIrImportedCallBody,
   type IrPreparedTimerShimResolver,
 } from "./ir-timer-shim-planning.js";
+import { readEnv } from "../env.js";
 
 export interface IrImportedCallPlanningState {
   readonly identityPlan: irOverlayIdentity.IrOverlayIdentityPlan;
@@ -421,8 +422,8 @@ function planSourceUnitImportedCalls(
           if (certified) {
             try {
               if (
-                process.env.JS2WASM_TEST_INJECT_IR_IMPORTED_PLAN_THROW === "1" ||
-                process.env.JS2WASM_TEST_INJECT_IR_IMPORTED_PLAN_THROW === ownerName
+                readEnv("JS2WASM_TEST_INJECT_IR_IMPORTED_PLAN_THROW") === "1" ||
+                readEnv("JS2WASM_TEST_INJECT_IR_IMPORTED_PLAN_THROW") === ownerName
               ) {
                 throw new Error(`injected imported-call planning failure for ${ownerName}`);
               }

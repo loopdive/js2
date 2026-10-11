@@ -63,6 +63,7 @@ import { addFuncType } from "./registry/types.js";
 import { addUnionImportsViaRegistry, ensureLateImport, flushLateImportShifts } from "./shared.js";
 import { fusedToNumberEnabled, smiFastPathEnabled } from "./tonumber-fast-path-flags.js";
 import { buildThrowJsErrorInstrs } from "./js-errors.js";
+import { readEnv } from "../env.js";
 export { fusedToNumberEnabled, smiFastPathAllValues, smiFastPathEnabled } from "./tonumber-fast-path-flags.js";
 
 /** The abstract `i31` heap type, as every other `ref.test`/`ref.cast` site spells it. */
@@ -109,7 +110,7 @@ function canAllocateLocals(fctx: FunctionContext): boolean {
 export const toNumberFastStats = { fusedSites: 0, smiSites: 0, declines: 0 };
 let statsHookInstalled = false;
 function note(bucket: "fusedSites" | "smiSites" | "declines"): void {
-  if (process.env.JS2WASM_TONUMBER_FAST_DEBUG !== "1") return;
+  if (readEnv("JS2WASM_TONUMBER_FAST_DEBUG") !== "1") return;
   toNumberFastStats[bucket]++;
   if (statsHookInstalled) return;
   statsHookInstalled = true;
@@ -151,18 +152,20 @@ function slowChainInstrs(ctx: CodegenContext, toPrimIdx: FuncHandle, unboxIdx: F
  * ordinary property write and must not throw. Only the value-coercion funnel
  * gets the guard.
  *
- * Local 2 holds the post-ToPrimitive value across the brand test; it is
- * declared with the helper at reserve time (`$prim`) rather than allocated
- * here, since this arm is spliced at finalize where the locals list is fixed.
+ * The caller supplies the local that holds the post-ToPrimitive value across
+ * the brand test. The fused helper uses its reserved local 2 (`$prim`), while
+ * ordinary body emitters supply a fresh externref local. This keeps the arm
+ * usable at both the finalize-time splice (where locals are fixed) and an
+ * ordinary function body (where a shared numeric-helper local would be
+ * unsound).
  *
  * A module that never registered the `$Symbol` carrier emits nothing.
  */
-function symbolThrowArm(ctx: CodegenContext): Instr[] {
+function symbolThrowArm(ctx: CodegenContext, primLocal = 2): Instr[] {
   const symTypeIdx = ctx.symbolTypeIdx;
   if (!ctx.standalone || symTypeIdx < 0) return [];
-  const L_PRIM = 2;
   return [
-    { op: "local.tee", index: L_PRIM },
+    { op: "local.tee", index: primLocal },
     { op: "any.convert_extern" },
     { op: "ref.test", typeIdx: symTypeIdx },
     {
@@ -175,7 +178,7 @@ function symbolThrowArm(ctx: CodegenContext): Instr[] {
       // which is exactly what a finalize-time splice needs.
       then: buildThrowJsErrorInstrs(ctx, "TypeError", SYMBOL_TO_NUMBER_MESSAGE, { forceInModuleCtor: true }),
     },
-    { op: "local.get", index: L_PRIM },
+    { op: "local.get", index: primLocal },
   ];
 }
 
@@ -221,6 +224,56 @@ function ensureDeps(
   const unboxIdx = ctx.funcMap.get("__unbox_number");
   if (unboxIdx === undefined) return undefined;
   return { toPrimIdx, unboxIdx };
+}
+
+/**
+ * Emit ToNumber for the standalone runtime's open `$Object` carrier.
+ *
+ * The nominal `ref -> f64` dispatcher cannot name this carrier through
+ * `typeIdxToStructName`, yet `$Object` is an ordinary ECMAScript object and
+ * must take the native `__to_primitive` route. This narrow helper is called
+ * only after the caller proves the exact runtime type. It deliberately does
+ * not use `tryEmitFastToNumber`: when fusion is disabled that helper's slow
+ * arm is spliced for the fused helper's fixed local 2, whereas this ordinary
+ * body needs its own scratch local for the Symbol ToNumber guard.
+ *
+ * All provider reservation occurs before `extern.convert_any`, so declining
+ * leaves the caller's stack value untouched. The fused route reuses the
+ * canonical native `__to_number`; the flag-off route is the same
+ * `__to_primitive`, Symbol TypeError guard, and `__unbox_number` sequence.
+ */
+export function emitStandaloneObjectToNumber(ctx: CodegenContext, fctx: FunctionContext, hint: string): boolean {
+  if (!ctx.standalone || hint !== "number") return false;
+
+  const fused = fusedToNumberEnabled();
+  // The non-fused arm must retain the post-ToPrimitive value while it tests
+  // for Symbol. A detached body-only shim has no local table, so preserve its
+  // existing caller fallback rather than partially emitting the conversion.
+  if (!fused && !canAllocateLocals(fctx)) return false;
+
+  const deps = ensureDeps(ctx, fctx);
+  if (deps === undefined) return false;
+  const fusedIdx = fused ? reserveFusedToNumber(ctx, fctx) : undefined;
+  if (fused && fusedIdx === undefined) return false;
+
+  if (fusedIdx !== undefined) {
+    fctx.body.push({ op: "extern.convert_any" }, { op: "call", funcIdx: fusedIdx });
+    return true;
+  }
+
+  // Allocate before touching the value stack. `symbolThrowArm` is a no-op
+  // when no Symbol carrier was registered, but retaining this local makes the
+  // emitted route uniform and keeps the provider/stack transaction simple.
+  const primLocal = allocTempLocal(fctx, { kind: "externref" });
+  fctx.body.push(
+    { op: "extern.convert_any" },
+    ...stringConstantExternrefInstrs(ctx, "number"),
+    { op: "call", funcIdx: deps.toPrimIdx },
+    ...symbolThrowArm(ctx, primLocal),
+    { op: "call", funcIdx: deps.unboxIdx },
+  );
+  releaseTempLocal(fctx, primLocal);
+  return true;
 }
 
 /**

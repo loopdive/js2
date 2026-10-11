@@ -127,6 +127,7 @@ class SiteNav extends HTMLElement {
           color: var(--fg-soft, rgba(255, 255, 255, 0.68));
           text-decoration: none;
           font-family: var(--font, Inter, ui-sans-serif, system-ui, sans-serif);
+          white-space: nowrap;
           transition:
             color 0.15s ease,
             background 0.15s ease;
@@ -176,6 +177,17 @@ class SiteNav extends HTMLElement {
           height: 100%;
           display: block;
           fill: currentColor;
+        }
+
+        /* Too narrow for labelled social buttons: collapse all to icon-only. */
+        @media (max-width: 1680px) {
+          .nav-actions .btn-label {
+            display: none;
+          }
+
+          .nav-actions .btn-outline {
+            padding: 0 12px;
+          }
         }
 
         .btn-outline:hover {
@@ -338,14 +350,31 @@ class SiteNav extends HTMLElement {
                 <path d="M8 0C3.58 0 0 3.67 0 8.2c0 3.63 2.29 6.71 5.47 7.8.4.08.55-.18.55-.4 0-.2-.01-.87-.01-1.58-2.01.38-2.53-.5-2.69-.96-.09-.24-.48-.96-.82-1.15-.28-.16-.68-.56-.01-.57.63-.01 1.08.59 1.23.83.72 1.24 1.87.89 2.33.68.07-.54.28-.89.51-1.09-1.78-.21-3.64-.92-3.64-4.09 0-.91.32-1.66.84-2.25-.08-.21-.37-1.07.08-2.22 0 0 .69-.23 2.26.86A7.6 7.6 0 0 1 8 3.58c.68 0 1.37.09 2.01.27 1.57-1.09 2.26-.86 2.26-.86.45 1.15.16 2.01.08 2.22.52.59.84 1.34.84 2.25 0 3.18-1.87 3.88-3.65 4.09.29.26.54.75.54 1.52 0 1.1-.01 1.98-.01 2.25 0 .22.14.49.55.4A8.21 8.21 0 0 0 16 8.2C16 3.67 12.42 0 8 0Z"></path>
               </svg>
             </span>
-            <span>GitHub</span>
+            <span class="btn-label">GitHub</span>
           </a>
-          <a class="btn-outline" href="https://x.com/js2wasm" aria-label="js2wasm on X">
+          <a class="btn-outline" href="https://x.com/js2compiler" aria-label="js2compiler on X">
             <span class="btn-icon" aria-hidden="true">
               <svg viewBox="0 0 16 16" focusable="false">
                 <path d="M12.6.75h2.45L9.7 6.86 16 15.25h-4.93L7.21 10.2l-4.42 5.05H.34l5.72-6.54L0 .75h5.05l3.49 4.62L12.6.75Zm-.86 12.97h1.35L4.31 2.2H2.86l8.88 11.52Z"></path>
               </svg>
             </span>
+            <span class="btn-label">X</span>
+          </a>
+          <a class="btn-outline" href="https://bsky.app/profile/js2compiler.bsky.social" aria-label="js2compiler on Bluesky">
+            <span class="btn-icon" aria-hidden="true">
+              <svg viewBox="0 0 16 16" focusable="false">
+                <path d="M3.468 1.948C5.303 3.325 7.276 6.118 8 7.616c.725-1.498 2.698-4.29 4.532-5.668C13.855.955 16 .186 16 2.632c0 .489-.28 4.105-.444 4.692-.572 2.04-2.653 2.561-4.504 2.246 3.236.551 4.06 2.375 2.281 4.2-3.376 3.464-4.852-.87-5.23-1.98-.07-.204-.103-.3-.103-.218 0-.081-.033.014-.102.218-.379 1.11-1.855 5.444-5.231 1.98-1.778-1.825-.955-3.65 2.28-4.2-1.85.315-3.932-.205-4.503-2.246C.28 6.737 0 3.12 0 2.632 0 .186 2.145.955 3.468 1.948"></path>
+              </svg>
+            </span>
+            <span class="btn-label">Bluesky</span>
+          </a>
+          <a class="btn-outline" href="https://mastodon.social/@js2wasm" aria-label="js2wasm on Mastodon">
+            <span class="btn-icon" aria-hidden="true">
+              <svg viewBox="0 0 16 16" focusable="false">
+                <path d="M11.19 12.195c2.016-.24 3.77-1.475 3.99-2.603.348-1.778.32-4.339.32-4.339 0-3.47-2.286-4.488-2.286-4.488C12.062.238 10.083.017 8.027 0h-.05C5.92.017 3.942.238 2.79.765c0 0-2.285 1.017-2.285 4.488l-.002.662c-.004.64-.007 1.35.011 2.091.083 3.394.626 6.74 3.78 7.57 1.454.383 2.703.463 3.709.408 1.823-.1 2.847-.647 2.847-.647l-.06-1.317s-1.303.41-2.767.36c-1.45-.05-2.98-.156-3.215-1.928a4 4 0 0 1-.033-.496s1.424.346 3.228.428c1.103.05 2.137-.064 3.188-.189zm1.613-2.47H11.13v-4.08c0-.859-.364-1.295-1.091-1.295-.804 0-1.207.517-1.207 1.541v2.233H7.168V5.89c0-1.024-.403-1.541-1.207-1.541-.727 0-1.091.436-1.091 1.296v4.079H3.197V5.522q0-1.288.66-2.046c.456-.505 1.052-.764 1.793-.764.856 0 1.504.328 1.933.983L8 4.39l.417-.695c.429-.655 1.077-.983 1.934-.983.74 0 1.336.259 1.791.764q.662.757.661 2.046z"></path>
+              </svg>
+            </span>
+            <span class="btn-label">Mastodon</span>
           </a>
           <a class="btn-outline" href="https://discord.gg/fZWxnBjzSj">
             <span class="btn-icon" aria-hidden="true">
@@ -353,7 +382,7 @@ class SiteNav extends HTMLElement {
                 <path d="M13.545 2.907a13.2 13.2 0 0 0-3.257-1.011.05.05 0 0 0-.052.025c-.141.25-.297.577-.406.833a12.2 12.2 0 0 0-3.658 0 8 8 0 0 0-.412-.833.05.05 0 0 0-.052-.025c-1.125.194-2.22.534-3.257 1.011a.04.04 0 0 0-.021.018C.356 6.024-.213 9.047.066 12.032q.003.022.021.037a13.3 13.3 0 0 0 3.995 2.02.05.05 0 0 0 .056-.019q.463-.63.818-1.329a.05.05 0 0 0-.01-.059l-.018-.011a9 9 0 0 1-1.248-.595.05.05 0 0 1-.02-.066l.015-.019q.127-.095.248-.195a.05.05 0 0 1 .051-.007c2.619 1.196 5.454 1.196 8.041 0a.05.05 0 0 1 .053.007q.121.1.248.195a.05.05 0 0 1-.004.085 8 8 0 0 1-1.249.594.05.05 0 0 0-.03.03.05.05 0 0 0 .003.041c.24.465.515.909.817 1.329a.05.05 0 0 0 .056.019 13.2 13.2 0 0 0 4.001-2.02.05.05 0 0 0 .021-.037c.334-3.451-.559-6.449-2.366-9.106a.03.03 0 0 0-.02-.019m-8.198 7.307c-.789 0-1.438-.724-1.438-1.612s.637-1.613 1.438-1.613c.807 0 1.45.73 1.438 1.613 0 .888-.637 1.612-1.438 1.612m5.316 0c-.788 0-1.438-.724-1.438-1.612s.637-1.613 1.438-1.613c.807 0 1.451.73 1.438 1.613 0 .888-.631 1.612-1.438 1.612"></path>
               </svg>
             </span>
-            <span>Discord</span>
+            <span class="btn-label">Discord</span>
           </a>
           <a class="btn-solid" href="${base}playground/">Playground</a>
         </div>
@@ -374,13 +403,29 @@ class SiteNav extends HTMLElement {
             </span>
             <span>GitHub</span>
           </a>
-          <a class="btn-outline" href="https://x.com/js2wasm" aria-label="js2wasm on X">
+          <a class="btn-outline" href="https://x.com/js2compiler" aria-label="js2compiler on X">
             <span class="btn-icon" aria-hidden="true">
               <svg viewBox="0 0 16 16" focusable="false">
                 <path d="M12.6.75h2.45L9.7 6.86 16 15.25h-4.93L7.21 10.2l-4.42 5.05H.34l5.72-6.54L0 .75h5.05l3.49 4.62L12.6.75Zm-.86 12.97h1.35L4.31 2.2H2.86l8.88 11.52Z"></path>
               </svg>
             </span>
-            <span>@js2wasm</span>
+            <span>@js2compiler</span>
+          </a>
+          <a class="btn-outline" href="https://bsky.app/profile/js2compiler.bsky.social" aria-label="js2compiler on Bluesky">
+            <span class="btn-icon" aria-hidden="true">
+              <svg viewBox="0 0 16 16" focusable="false">
+                <path d="M3.468 1.948C5.303 3.325 7.276 6.118 8 7.616c.725-1.498 2.698-4.29 4.532-5.668C13.855.955 16 .186 16 2.632c0 .489-.28 4.105-.444 4.692-.572 2.04-2.653 2.561-4.504 2.246 3.236.551 4.06 2.375 2.281 4.2-3.376 3.464-4.852-.87-5.23-1.98-.07-.204-.103-.3-.103-.218 0-.081-.033.014-.102.218-.379 1.11-1.855 5.444-5.231 1.98-1.778-1.825-.955-3.65 2.28-4.2-1.85.315-3.932-.205-4.503-2.246C.28 6.737 0 3.12 0 2.632 0 .186 2.145.955 3.468 1.948"></path>
+              </svg>
+            </span>
+            <span>Bluesky</span>
+          </a>
+          <a class="btn-outline" href="https://mastodon.social/@js2wasm" aria-label="js2wasm on Mastodon">
+            <span class="btn-icon" aria-hidden="true">
+              <svg viewBox="0 0 16 16" focusable="false">
+                <path d="M11.19 12.195c2.016-.24 3.77-1.475 3.99-2.603.348-1.778.32-4.339.32-4.339 0-3.47-2.286-4.488-2.286-4.488C12.062.238 10.083.017 8.027 0h-.05C5.92.017 3.942.238 2.79.765c0 0-2.285 1.017-2.285 4.488l-.002.662c-.004.64-.007 1.35.011 2.091.083 3.394.626 6.74 3.78 7.57 1.454.383 2.703.463 3.709.408 1.823-.1 2.847-.647 2.847-.647l-.06-1.317s-1.303.41-2.767.36c-1.45-.05-2.98-.156-3.215-1.928a4 4 0 0 1-.033-.496s1.424.346 3.228.428c1.103.05 2.137-.064 3.188-.189zm1.613-2.47H11.13v-4.08c0-.859-.364-1.295-1.091-1.295-.804 0-1.207.517-1.207 1.541v2.233H7.168V5.89c0-1.024-.403-1.541-1.207-1.541-.727 0-1.091.436-1.091 1.296v4.079H3.197V5.522q0-1.288.66-2.046c.456-.505 1.052-.764 1.793-.764.856 0 1.504.328 1.933.983L8 4.39l.417-.695c.429-.655 1.077-.983 1.934-.983.74 0 1.336.259 1.791.764q.662.757.661 2.046z"></path>
+              </svg>
+            </span>
+            <span>Mastodon</span>
           </a>
           <a class="btn-outline" href="https://discord.gg/fZWxnBjzSj">
             <span class="btn-icon" aria-hidden="true">

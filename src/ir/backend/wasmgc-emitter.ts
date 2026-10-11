@@ -178,6 +178,7 @@ export class WasmGcEmitter implements BackendEmitter<Instr[]> {
     out.push({ op: "local.set", index: dataScratchLocal });
     out.push({ op: "i32.const", value: count });
     out.push({ op: "local.get", index: dataScratchLocal });
+    out.push({ op: "ref.as_non_null" });
     out.push({ op: "struct.new", typeIdx: layout.vecStructTypeIdx });
   }
 
@@ -350,10 +351,11 @@ export class WasmGcEmitter implements BackendEmitter<Instr[]> {
   // ---- Promise aggregate family (#2953) — byte-identical to the prior
   // inline struct.new/get pushes in lower.ts. The canonical WasmGC Promise
   // layout is { state: i32, value: externref, callbacks: externref,
-  // $bag: externref }. The first three operands are already on the stack;
-  // every new Promise starts without an expando bag.
+  // $bag: externref, $handled: i32 }. The first three operands are already on
+  // the stack; every new Promise starts without an expando bag or handler.
   emitPromiseNew(promiseTypeIdx: number, out: Instr[]): void {
     out.push({ op: "ref.null.extern" });
+    out.push({ op: "i32.const", value: 0 });
     out.push({ op: "struct.new", typeIdx: promiseTypeIdx });
   }
 
@@ -371,7 +373,10 @@ export class WasmGcEmitter implements BackendEmitter<Instr[]> {
   // ref.cast.
   emitClosureNew(layout: IrClosureLowering, _captureCount: number, out: Instr[]): void {
     const authorityGlobalIdx = layout.domCallbackAuthorityGlobalIdx?.();
+    if (authorityGlobalIdx !== undefined && layout.realmStateInitializer !== undefined)
+      throw new Error("closure allocation cannot combine unrelated DOM and realm state tails");
     if (authorityGlobalIdx !== undefined) out.push({ op: "global.get", index: authorityGlobalIdx });
+    if (layout.realmStateInitializer !== undefined) out.push({ op: "call", funcIdx: layout.realmStateInitializer });
     out.push({ op: "struct.new", typeIdx: layout.structTypeIdx });
   }
 

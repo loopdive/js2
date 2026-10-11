@@ -1,24 +1,17 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
-import {
-  requireNonEmpty,
-  requireBindingId,
-  requireSourceGlobalCapability,
-  keyPart,
-  irSourceGlobalBindingKey,
-} from "./core/binding-key-primitives.js";
+import { irTypeBindingKey } from "./core/type-binding-keys.js";
+import { requireString } from "./core/global-binding-keys.js";
+export { irGlobalBindingKey, sameIrGlobalBinding } from "./core/global-binding-keys.js";
+export { irTypeBindingKey } from "./core/type-binding-keys.js";
+import { requireNonEmpty, requireBindingId, requireSourceGlobalCapability } from "./core/binding-key-primitives.js";
 import { createIrBindingId } from "./identity-values.js";
 import type { IrBindingId, IrClassId, IrSourceId, IrUnitId } from "./identity.js";
 import type { IrGlobalBinding, IrGlobalRef, IrTypeBinding, IrTypeRef } from "./nodes.js";
+import { typeRef, irSupportTypeRef } from "./core/type-references.js";
+export { irSupportTypeRef } from "./core/type-references.js";
 
 type IrBindingOwnerId = IrSourceId | IrUnitId | IrClassId;
-
-function requireString(value: string, label: string): string {
-  if (typeof value !== "string") {
-    throw new TypeError(`${label} must be a string`);
-  }
-  return value;
-}
 
 function compatibilityName(explicit: string | undefined, fallback: string, label: string): string {
   return requireNonEmpty(explicit ?? fallback, label);
@@ -29,15 +22,6 @@ function globalRef(name: string, binding: IrGlobalBinding): IrGlobalRef {
   return Object.freeze({
     kind: "global",
     name: requireNonEmpty(name, "global compatibility name"),
-    binding: Object.freeze(binding),
-  });
-}
-
-function typeRef(name: string, binding: IrTypeBinding): IrTypeRef {
-  requireBindingId(binding.bindingId, "type bindingId", binding.kind === "class" ? "class" : "type");
-  return Object.freeze({
-    kind: "type",
-    name: requireNonEmpty(name, "type compatibility name"),
     binding: Object.freeze(binding),
   });
 }
@@ -315,74 +299,9 @@ export function irRuntimeTypeRef(
   });
 }
 
-/** Reference one compiler support type intention. */
-export function irSupportTypeRef(
-  ownerId: IrBindingOwnerId,
-  role: string,
-  adapterName: string,
-  ordinal?: number,
-): IrTypeRef {
-  const checkedRole = requireNonEmpty(role, "support type role");
-  return typeRef(adapterName, {
-    kind: "support",
-    bindingId: createIrBindingId({
-      ownerId: requireNonEmpty(ownerId, "support type owner identity") as IrBindingOwnerId,
-      domain: "type",
-      role: checkedRole,
-      ordinal,
-    }),
-  });
-}
-
 /** Exact reserved layout type identity for one nominal-fnctor constructor. */
 export function irFnctorLayoutTypeRef(unitId: IrUnitId, adapterName: string): IrTypeRef {
   return irSupportTypeRef(unitId, "fnctor-layout", adapterName);
-}
-
-/** Canonical global-binding key. Compatibility names are deliberately excluded. */
-export function irGlobalBindingKey(binding: IrGlobalBinding): string {
-  const bindingId = keyPart(requireBindingId(binding.bindingId, "global bindingId", "global"));
-  switch (binding.kind) {
-    case "source":
-      return irSourceGlobalBindingKey(binding.bindingId, binding.capability);
-    case "support":
-      return `${binding.kind}|${bindingId}`;
-    case "import":
-      return (
-        `import|${bindingId}|${keyPart(requireNonEmpty(binding.module, "global import module"))}|` +
-        keyPart(requireString(binding.field, "global import field"))
-      );
-    case "runtime":
-      return `runtime|${bindingId}|${keyPart(requireNonEmpty(binding.symbol, "runtime global symbol"))}`;
-    default: {
-      const exhaustive: never = binding;
-      throw new TypeError(`unknown global binding kind ${(exhaustive as { kind?: unknown }).kind ?? "<missing>"}`);
-    }
-  }
-}
-
-export function sameIrGlobalBinding(left: IrGlobalBinding, right: IrGlobalBinding): boolean {
-  return irGlobalBindingKey(left) === irGlobalBindingKey(right);
-}
-
-/** Canonical type-binding key. Compatibility names are deliberately excluded. */
-export function irTypeBindingKey(binding: IrTypeBinding): string {
-  const bindingId = keyPart(
-    requireBindingId(binding.bindingId, "type bindingId", binding.kind === "class" ? "class" : "type"),
-  );
-  switch (binding.kind) {
-    case "source":
-    case "support":
-      return `${binding.kind}|${bindingId}`;
-    case "class":
-      return `class|${bindingId}|${keyPart(requireNonEmpty(binding.classId, "class type identity"))}`;
-    case "runtime":
-      return `runtime|${bindingId}|${keyPart(requireNonEmpty(binding.symbol, "runtime type symbol"))}`;
-    default: {
-      const exhaustive: never = binding;
-      throw new TypeError(`unknown type binding kind ${(exhaustive as { kind?: unknown }).kind ?? "<missing>"}`);
-    }
-  }
 }
 
 export function sameIrTypeBinding(left: IrTypeBinding, right: IrTypeBinding): boolean {

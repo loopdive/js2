@@ -1,0 +1,152 @@
+{
+  "schema": "prepared-source-forward-v1",
+  "path": "src/codegen/object-runtime.ts",
+  "independentRecordSha256": "6aca0046b06ee23938660785b00f0eb302b0a06005af2bb6157214fc106de3f8",
+  "sourceProvenance": {
+    "base": {
+      "revision": "6ed68535323e0756c3a0b15dde18fd480ad7fc9f",
+      "blob": "17f4151750a462d05a34163a12d4fc00620899e5",
+      "sha256": "112f4a613e34313406efa596186806ab500fcb2df1fc859619ce00bb558c3c6d"
+    },
+    "prepared5760": {
+      "revision": "e24a8d2798da9d4680c0af2660a63c6b80c35593",
+      "blob": "cd436ea736a66da633fa29079d7e6ca4aa585496",
+      "sha256": "a93be362181692b07a273b15d0d39e5939e1ebf6170c821704d499c89a275f15"
+    },
+    "scannerTarget": {
+      "revision": "1ce5d0575c890d640bc3ef9958c32d662bea9e98",
+      "blob": "584267f7ab172cd7cbef0b197c37cbe47db16b28",
+      "sha256": "0c09bfbf102535500cee07df72a73dd06d7506ffd750ce1545323b5d6f994edd"
+    },
+    "peerCallableMainForward": {
+      "independentRecordSha256": "42d992ad2292be3e2a26cdfade3f04db6941dfc8ae26a60095aaaac316fe9463",
+      "spanId": "peer-callable-pre-dispatch-main-6420",
+      "sourceAuthority": {
+        "e24": {
+          "revision": "e24a8d2798da9d4680c0af2660a63c6b80c35593",
+          "treeEntry": "100644 blob cd436ea736a66da633fa29079d7e6ca4aa585496\tsrc/codegen/object-runtime.ts",
+          "blob": "cd436ea736a66da633fa29079d7e6ca4aa585496",
+          "sha256": "a93be362181692b07a273b15d0d39e5939e1ebf6170c821704d499c89a275f15",
+          "bytes": 584482
+        },
+        "preparedParent": {
+          "revision": "1139297588b9105d5d39b3df278e7320308cdf7e",
+          "treeEntry": "100644 blob 5fd96ad1d0c01b2a9501e9f8e96c2eb3a7d79dc3\tsrc/codegen/object-runtime.ts",
+          "blob": "5fd96ad1d0c01b2a9501e9f8e96c2eb3a7d79dc3",
+          "sha256": "4f849215c225517ea8164a863396b15f6039ff4e6b8962e90ddf4df53252d4a3",
+          "bytes": 585838
+        },
+        "originalImplementation": {
+          "revision": "4fd5a582bbe7de375f2d0781cfd3cd06aa7fcda1",
+          "treeEntry": "100644 blob 5fd96ad1d0c01b2a9501e9f8e96c2eb3a7d79dc3\tsrc/codegen/object-runtime.ts",
+          "blob": "5fd96ad1d0c01b2a9501e9f8e96c2eb3a7d79dc3",
+          "sha256": "4f849215c225517ea8164a863396b15f6039ff4e6b8962e90ddf4df53252d4a3",
+          "bytes": 585838
+        },
+        "implementationParent": {
+          "revision": "c645a7627e099173b0b3e0c5daa1d7b5a110a9d5",
+          "treeEntry": "100644 blob cd436ea736a66da633fa29079d7e6ca4aa585496\tsrc/codegen/object-runtime.ts",
+          "blob": "cd436ea736a66da633fa29079d7e6ca4aa585496",
+          "sha256": "a93be362181692b07a273b15d0d39e5939e1ebf6170c821704d499c89a275f15",
+          "bytes": 584482
+        },
+        "verifiedMain": {
+          "revision": "699df289e10826ae9074deb943ff147d2ab08324",
+          "treeEntry": "100644 blob 5fd96ad1d0c01b2a9501e9f8e96c2eb3a7d79dc3\tsrc/codegen/object-runtime.ts",
+          "blob": "5fd96ad1d0c01b2a9501e9f8e96c2eb3a7d79dc3",
+          "sha256": "4f849215c225517ea8164a863396b15f6039ff4e6b8962e90ddf4df53252d4a3",
+          "bytes": 585838
+        }
+      },
+      "placement": {
+        "enclosingFunction": "fillApplyClosure",
+        "functionHeader": "export function fillApplyClosure(ctx: CodegenContext): void {",
+        "previousForwardSpan": "peer-apply-fallback",
+        "nextForwardSpan": "tuple-candidate-and-layout",
+        "rightAnchor": "  // (#4397) `Proxy.revocable`'s zero-argument revoker is a Wasm-owned callable\n  // carrier rather than a JavaScript closure. Invoke it at the same dynamic\n  // call boundary used for ordinary compiled closures, then return undefined.\n",
+        "rightAnchorSha256": "fa2d9c62b0a87214216244b082d1aebc70eabe631f4860c806b23c6d1b29228f",
+        "requireWholeExactAfterContext": true
+      },
+      "derivation": "Original implementation4fd5a582 and113929 have identical full object blobs; implementation parentc645a762 and e24 have identical full old blobs. This one exact hunk is the complete difference."
+    }
+  },
+  "spans": [
+    {
+      "id": "peer-terminal-import",
+      "before": "import { buildVecIndexKeyPush, reserveVecIndexEnumerable } from \"./vec-index-enumerable.js\"; // (#4491) overlay-aware key flags\nimport { fillHostArrayCarrierPredicate } from \"./host-array-carrier.js\"; // (#4649) js-host late-bound carrier test\nimport {\n  buildOwnToPrimitiveOverridePresent,\n  buildWrapperSlotShortCircuit,\n  type ToPrimitiveSlotDeps,\n",
+      "after": "import { buildVecIndexKeyPush, reserveVecIndexEnumerable } from \"./vec-index-enumerable.js\"; // (#4491) overlay-aware key flags\nimport { fillHostArrayCarrierPredicate } from \"./host-array-carrier.js\"; // (#4649) js-host late-bound carrier test\nimport {\n  emitStandaloneLinkBoundaryTerminals,\n  standaloneLinkBoundaryPeerIndex,\n  standaloneLinkBoundaryPeerIndices,\n} from \"./standalone-link-boundary.js\"; // (#5383 S2d/S2f) wasm→wasm peer terminals\nimport {\n  buildOwnToPrimitiveOverridePresent,\n  buildWrapperSlotShortCircuit,\n  type ToPrimitiveSlotDeps,\n",
+      "beforeSha256": "fc2e863ec3e00706677539f7e6b6cf62aeea166a160e377f6fceec3950693a26",
+      "afterSha256": "5b3be688b2fcc1278a794e1cee579dd5ae48bdbb1ab95546ce5e08d823139865"
+    },
+    {
+      "id": "early-peer-terminal-reservation",
+      "before": "  const boundaryObjectSetPrototypeIdx = boundaryObjectInterop\n    ? ctx.funcMap.get(\"__boundary_object_set_prototype\")\n    : undefined;\n  const boundaryObjectGetOwnPropertyDescriptorIdx = boundaryObjectInterop\n    ? ctx.funcMap.get(\"__boundary_object_get_own_property_descriptor\")\n    : undefined;\n",
+      "after": "  const boundaryObjectSetPrototypeIdx = boundaryObjectInterop\n    ? ctx.funcMap.get(\"__boundary_object_set_prototype\")\n    : undefined;\n  // (#5383 S2d) The standalone twin of the two host-lane boundary reads above.\n  // Registered HERE, next to them, because both must exist before the index\n  // space freezes (#1984) and because they answer the same question — \"this\n  // carrier is not mine; who can decode it?\". On the host lane these stay\n  // undefined and every arm below is byte-identical.\n  const {\n    memberGet: peerMemberGetIdx,\n    objectKeys: peerObjectKeysIdx,\n    // (#5383 S2h) …and the CALL twin of the same question, for the same reason:\n    // a receiver this module cannot decode is one whose owner must run the\n    // method, because the trampoline's `this` lives in the owner's globals.\n    methodCall: peerMethodCallIdx,\n  } = standaloneLinkBoundaryPeerIndices(ctx);\n  const boundaryObjectGetOwnPropertyDescriptorIdx = boundaryObjectInterop\n    ? ctx.funcMap.get(\"__boundary_object_get_own_property_descriptor\")\n    : undefined;\n",
+      "beforeSha256": "3619f980117fb59edc7c14f580cf3a0c03126d49636c390ce954d289d0137d25",
+      "afterSha256": "057a57a187b7ff8b6b2eba2e197a4227232c4cb306a3c529a0865ba812af3326"
+    },
+    {
+      "id": "peer-member-get-fallback",
+      "before": "          // fallback below. A present JS property whose value is `undefined`\n          // returns the non-null native undefined carrier, so miss and value do\n          // not alias.\n          ...(boundaryObjectGetIdx !== undefined\n            ? ([\n                { op: \"local.get\", index: 0 },\n                { op: \"local.get\", index: 1 },\n                { op: \"call\", funcIdx: boundaryObjectGetIdx },\n                { op: \"local.tee\", index: 6 },\n                { op: \"ref.is_null\" },\n                { op: \"i32.eqz\" },\n",
+      "after": "          // fallback below. A present JS property whose value is `undefined`\n          // returns the non-null native undefined carrier, so miss and value do\n          // not alias.\n          // (#5383 S2d) The standalone lane reaches the SAME arm with the peer\n          // provider's normalising terminal: \"not a `$Object` of mine\" is\n          // exactly the question, and the wrapper's null-for-a-miss contract is\n          // the same one this arm was written against. The closed-struct field\n          // ladder is unshifted onto the FRONT of this body at finalize, so a\n          // receiver this module can decode never gets here.\n          ...((boundaryObjectGetIdx ?? peerMemberGetIdx) !== undefined\n            ? ([\n                { op: \"local.get\", index: 0 },\n                { op: \"local.get\", index: 1 },\n                { op: \"call\", funcIdx: (boundaryObjectGetIdx ?? peerMemberGetIdx)! },\n                { op: \"local.tee\", index: 6 },\n                { op: \"ref.is_null\" },\n                { op: \"i32.eqz\" },\n",
+      "beforeSha256": "a1c6e08e9901c8689841b2901eb12f7f119a6f6c560407c1ba7b832cffd36fe7",
+      "afterSha256": "45695fb34d32bb4967e676153ed2041135b5ac302efc165dddea6e1814a6a049"
+    },
+    {
+      "id": "peer-key-reader-fallbacks",
+      "before": "    objVecPushIdx,\n    objOrderedIdx,\n    objOrderedAllIdx,\n    boundaryObjectKeysIdx,\n    boundaryObjectForInKeysIdx,\n    FLAG_ENUMERABLE,\n    FLAG_TOMBSTONE,\n  });\n",
+      "after": "    objVecPushIdx,\n    objOrderedIdx,\n    objOrderedAllIdx,\n    // (#5383 S2d) On the standalone lane the peer terminal takes the SAME arm:\n    // the arm's contract is \"ask, and use the answer only when it is non-null\",\n    // which is exactly what the provider's normalising wrapper guarantees. The\n    // two are mutually exclusive by construction (one needs a JS host, the\n    // other needs there not to be one), so neither lane grows an arm.\n    boundaryObjectKeysIdx: boundaryObjectKeysIdx ?? peerObjectKeysIdx,\n    boundaryObjectForInKeysIdx: boundaryObjectForInKeysIdx ?? peerObjectKeysIdx,\n    FLAG_ENUMERABLE,\n    FLAG_TOMBSTONE,\n  });\n",
+      "beforeSha256": "5ca9bdbeebc9314be47d318be7e70386bb9ea443b8f006212425f3efb96bc43d",
+      "afterSha256": "288958a5a7dc2f0f117fab9b098a12f50e744fe107df239a08a18fd69a66eaa4"
+    },
+    {
+      "id": "peer-method-call-local",
+      "before": "    // `resolved-callee-guard.ts` for the ABSENT and provably-PRIMITIVE arms and\n    // why the primitive test is sound where a negative callable test is not.\n    const resolvedMethodGuard = buildResolvedCalleeGuard(ctx, methodCallLocals);\n    const boundaryCallResultLocal = boundaryObjectCallIdx === undefined ? undefined : 3 + methodCallLocals.length;\n    if (boundaryCallResultLocal !== undefined) {\n      methodCallLocals.push({ name: \"boundaryCallResult\", type: { kind: \"externref\" } });\n    }\n",
+      "after": "    // `resolved-callee-guard.ts` for the ABSENT and provably-PRIMITIVE arms and\n    // why the primitive test is sound where a negative callable test is not.\n    const resolvedMethodGuard = buildResolvedCalleeGuard(ctx, methodCallLocals);\n    // (#5383 S2h) The standalone peer terminal takes the same slot as the\n    // host lane's `__boundary_object_call`: same arm, same arguments, same\n    // \"null means the peer does not own this receiver\" contract.\n    const boundaryOrPeerCallIdx = boundaryObjectCallIdx ?? peerMethodCallIdx;\n    const boundaryCallResultLocal = boundaryOrPeerCallIdx === undefined ? undefined : 3 + methodCallLocals.length;\n    if (boundaryCallResultLocal !== undefined) {\n      methodCallLocals.push({ name: \"boundaryCallResult\", type: { kind: \"externref\" } });\n    }\n",
+      "beforeSha256": "7cf05478ad12da5e1996138cd38c0a0714bb79450b591921da083006107b74c6",
+      "afterSha256": "fd5570f3e34661157ef9fe57ee776ca395142c5c605bf8995146bd6485e07a1a"
+    },
+    {
+      "id": "peer-method-call-arm",
+      "before": "        // ($Vec/string/Map/Set) are the Slice-4 arms → undefined for now (never\n        // invalid Wasm).\n        else: [\n          ...(boundaryObjectCallIdx !== undefined && boundaryCallResultLocal !== undefined\n            ? ([\n                { op: \"local.get\", index: 0 },\n                { op: \"local.get\", index: 1 },\n                { op: \"local.get\", index: 2 },\n                { op: \"call\", funcIdx: boundaryObjectCallIdx },\n                { op: \"local.tee\", index: boundaryCallResultLocal },\n                { op: \"ref.is_null\" },\n                { op: \"i32.eqz\" },\n",
+      "after": "        // ($Vec/string/Map/Set) are the Slice-4 arms → undefined for now (never\n        // invalid Wasm).\n        else: [\n          ...(boundaryOrPeerCallIdx !== undefined && boundaryCallResultLocal !== undefined\n            ? ([\n                { op: \"local.get\", index: 0 },\n                { op: \"local.get\", index: 1 },\n                { op: \"local.get\", index: 2 },\n                { op: \"call\", funcIdx: boundaryOrPeerCallIdx },\n                { op: \"local.tee\", index: boundaryCallResultLocal },\n                { op: \"ref.is_null\" },\n                { op: \"i32.eqz\" },\n",
+      "beforeSha256": "03292e44b80827c82319ae7edcca4f0b513683aecf57f97ec0065d2254bb4ed8",
+      "afterSha256": "0e3fbdf850fdefee5b5e1fcc755ed836a0f5298c632835559876e61540249021"
+    },
+    {
+      "id": "late-peer-terminal-emission",
+      "before": "      }\n    }\n  }\n\n  // (#2175 V2-S3b-1) Build any `$NativeProto` companion seeders that were parked\n  // because their proto materialized before `__defineProperty_value` existed\n",
+      "after": "      }\n    }\n  }\n\n  // (#5383 S2d) A standalone provider publishes the same two reads to its WASM\n  // consumer that the block above publishes to a JS host. Emitted here, at the\n  // end of the object runtime, because both wrappers call terminals the block\n  // above has only just finished registering.\n  emitStandaloneLinkBoundaryTerminals(ctx, registerNative);\n\n  // (#2175 V2-S3b-1) Build any `$NativeProto` companion seeders that were parked\n  // because their proto materialized before `__defineProperty_value` existed\n",
+      "beforeSha256": "8da0b3607705e748a9d4fba3472df09398d9e3fa25f7a71068bdad5eb4a8d781",
+      "afterSha256": "aded16ca88d9ab40984edd7b67cddd9852b66a1cc02a503d35163af8223f0126"
+    },
+    {
+      "id": "peer-apply-fallback",
+      "before": "  // guarded on the matching __call_fn_method_N being registered.\n  const callMethod = (n: number): number | undefined => ctx.funcMap.get(`__call_fn_method_${n}`);\n  const linkedCallName = ctx.standaloneGlobalThisImport?.call;\n  const linkedCallIdx = linkedCallName === undefined ? undefined : ctx.funcMap.get(linkedCallName);\n  const linkedFallback = (): Instr[] =>\n    linkedCallIdx === undefined\n      ? undefinedSentinel()\n",
+      "after": "  // guarded on the matching __call_fn_method_N being registered.\n  const callMethod = (n: number): number | undefined => ctx.funcMap.get(`__call_fn_method_${n}`);\n  const linkedCallName = ctx.standaloneGlobalThisImport?.call;\n  // (#5383 S2f R12) …or, on the standalone wasm→wasm lane, the linked\n  // provider's own `__apply_closure`, published as `__js2wasm_link_apply`.\n  // Reached only after every module-local arity dispatcher has already\n  // missed, so a caller-owned closure never crosses the boundary.\n  const linkedCallIdx =\n    (linkedCallName === undefined ? undefined : ctx.funcMap.get(linkedCallName)) ??\n    standaloneLinkBoundaryPeerIndex(ctx, \"apply\");\n  const linkedFallback = (): Instr[] =>\n    linkedCallIdx === undefined\n      ? undefinedSentinel()\n",
+      "beforeSha256": "5e9bed3ef731001faf2619d5d76e390b38545619ebfcaee39319eca6e1b19209",
+      "afterSha256": "d10ace9b4237882feae4c7daf0d7f960f44b3d75f84b72010fe6b2a7cf5c8ce0"
+    },
+    {
+      "id": "peer-callable-pre-dispatch-main-6420",
+      "before": "    );\n  }\n\n  // (#4397) `Proxy.revocable`'s zero-argument revoker is a Wasm-owned callable\n  // carrier rather than a JavaScript closure. Invoke it at the same dynamic\n  // call boundary used for ordinary compiled closures, then return undefined.\n",
+      "after": "    );\n  }\n\n  // (#6420) A standalone linked peer knows whether a foreign value has\n  // [[Call]]. Route a positive peer-owned callable before the local closure\n  // dispatcher: that dispatcher returns the legacy null sentinel for an\n  // unrecognised foreign closure, which otherwise shadows the peer fallback.\n  // Classes publish construct-only (bit 1), so the dynamic IsCallable guard\n  // rejects them before this bridge and they never enter the provider apply\n  // terminal. Caller-owned closures make the peer predicate false and retain\n  // the existing local dispatch unchanged.\n  const linkedStandaloneCallableKindIdx = standaloneLinkBoundaryPeerIndex(ctx, \"callableKind\");\n  const linkedStandaloneApplyIdx = standaloneLinkBoundaryPeerIndex(ctx, \"apply\");\n  if (linkedStandaloneCallableKindIdx !== undefined && linkedStandaloneApplyIdx !== undefined) {\n    body.unshift(\n      { op: \"local.get\", index: 0 },\n      { op: \"call\", funcIdx: linkedStandaloneCallableKindIdx },\n      { op: \"i32.const\", value: 1 },\n      { op: \"i32.and\" },\n      {\n        op: \"if\",\n        blockType: { kind: \"empty\" },\n        then: [\n          { op: \"local.get\", index: 0 },\n          { op: \"local.get\", index: 1 },\n          { op: \"local.get\", index: 2 },\n          { op: \"call\", funcIdx: linkedStandaloneApplyIdx },\n          { op: \"return\" },\n        ],\n      },\n    );\n  }\n\n  // (#4397) `Proxy.revocable`'s zero-argument revoker is a Wasm-owned callable\n  // carrier rather than a JavaScript closure. Invoke it at the same dynamic\n  // call boundary used for ordinary compiled closures, then return undefined.\n",
+      "beforeSha256": "f6bae0615d7fff11df1519f9cd165834ad05060f3bcfa916506a2ea42f64431c",
+      "afterSha256": "608a340c943a6c5d925fcad383911a3df8c411a711680f6825562b8543a1a2c3"
+    },
+    {
+      "id": "tuple-candidate-and-layout",
+      "before": "    lengthFieldIdx: number;\n    lengthFieldType: ValType;\n    numericFields: { n: number; fieldIdx: number; fieldType: ValType }[];\n  };\n  const seen = new Set<number>();\n  const cands: ArrayLikeCand[] = [];\n  const fnctorProtoGlobals = new Map<number, number>();\n  for (const [structName, fields] of ctx.structFields) {\n    const typeIdx = ctx.structMap.get(structName);\n    if (typeIdx === undefined || seen.has(typeIdx)) continue;\n    if (\n      structName.startsWith(\"Wrapper\") ||\n",
+      "after": "    lengthFieldIdx: number;\n    lengthFieldType: ValType;\n    numericFields: { n: number; fieldIdx: number; fieldType: ValType }[];\n    /**\n     * (#5383 S2l) A TUPLE carrier has no `length` FIELD — its length is the\n     * field count, a compile-time constant. Set only for tuple candidates;\n     * `lengthFieldIdx` is then −1 and the length arm emits `f64.const n`.\n     */\n    constLength?: number;\n  };\n  const seen = new Set<number>();\n  const cands: ArrayLikeCand[] = [];\n  const fnctorProtoGlobals = new Map<number, number>();\n  // (#5383 S2l) TUPLE carriers, the third array-like shape on the standalone\n  // dyn-reader trio. A TS tuple value IS a JS Array at runtime — `[\"a\", 1]` has\n  // `length 2` and integer-indexed elements — but `resolveWasmType` lowers a\n  // heterogeneous tuple to a NOMINAL struct `$__tuple_N` whose fields are named\n  // `_0`, `_1`, … with no `length` field. So it matched neither the `$ObjVec` /\n  // typed-vec arms (`fillExternGetIdxVecArms`) nor the closed-struct array-like\n  // arms below, whose candidate filter requires a real `length` field and\n  // CANONICAL integer field names.\n  //\n  // What that cost, measured on this slice's subject: the Temporal polyfill's\n  // `Object.fromEntries(nt.map(([e, t]) => [t, e]))`. `Object.fromEntries`'s\n  // lib signature is `Iterable<readonly [PropertyKey, T]>`, so the callback's\n  // `[t, e]` is CONTEXTUALLY a tuple and lowers to `$__tuple_0`\n  // (`struct (field $_0 externref) (field $_1 externref)`) — whereas the SAME\n  // expression bound to an `any` local first lowers to a `$__vec_externref`\n  // pair and worked. The self-hosted `__object_fromEntries` reads each pair\n  // with `__extern_get_idx(pair, 0/1)`, which had no tuple arm and answered\n  // `undefined` for BOTH slots, so ten entries all wrote `out[undefined] =\n  // undefined` and the table came out as the single key `\"undefined\"` — a\n  // wrong answer with no diagnostic, and the reason `Duration.total(\"minutes\")`\n  // threw `unit must be one of …, null ×10, not minutes`.\n  //\n  // Registering tuples as array-like candidates is the general fix (it is the\n  // same answer the JS-host lane gets from the `__sget_*` struct-read exports,\n  // #5205) and is `ref.test`-guarded per type like every other arm, so no\n  // other receiver shape changes.\n  const tupleTypeIdxs = new Set(ctx.tupleTypeMap.values());\n  for (const [structName, fields] of ctx.structFields) {\n    const typeIdx = ctx.structMap.get(structName);\n    if (typeIdx !== undefined && !seen.has(typeIdx) && tupleTypeIdxs.has(typeIdx)) {\n      // Fields are minted as `_0.._n-1` in order; require exactly that shape so\n      // a future differently-shaped tuple carrier cannot silently misread.\n      const positional = fields.every((f, i) => f.name === `_${i}`);\n      if (positional) {\n        seen.add(typeIdx);\n        cands.push({\n          typeIdx,\n          lengthFieldIdx: -1,\n          lengthFieldType: { kind: \"f64\" },\n          constLength: fields.length,\n          numericFields: fields.map((f, i) => ({ n: i, fieldIdx: i, fieldType: f.type })),\n        });\n      }\n      continue;\n    }\n    if (typeIdx === undefined || seen.has(typeIdx)) continue;\n    if (\n      structName.startsWith(\"Wrapper\") ||\n",
+      "beforeSha256": "161a2d105ae1e18120c3b33202b89b8ee5d1b54e9c2614dfab5e36f3453bf5bd",
+      "afterSha256": "ab576a0d22098838b8790fe2f7b26bee9b699f8c6d70a369c19b837cad9ba7b5"
+    },
+    {
+      "id": "tuple-constant-length-arm",
+      "before": "    const arms: Instr[] = [];\n    let lenPrimLocalAdded = false; // (#3317) L_PRIM scratch appended at most once\n    for (const cand of cands) {\n      // Read the length field as f64: i32 converts (a boolean-branded field\n      // reads 1/0 — ToLength(ToNumber(true)) = 1); externref (an `any`-typed\n      // `length` slot) unboxes via __unbox_number (NaN for non-numbers → the\n",
+      "after": "    const arms: Instr[] = [];\n    let lenPrimLocalAdded = false; // (#3317) L_PRIM scratch appended at most once\n    for (const cand of cands) {\n      // (#5383 S2l) A tuple carrier's length is its field count — a constant,\n      // with no field to read and nothing for ToLength to convert.\n      if (cand.constLength !== undefined) {\n        arms.push(\n          { op: \"local.get\", index: 1 },\n          { op: \"ref.test\", typeIdx: cand.typeIdx },\n          {\n            op: \"if\",\n            blockType: { kind: \"empty\" },\n            then: [{ op: \"f64.const\", value: cand.constLength }, { op: \"return\" }],\n          },\n        );\n        continue;\n      }\n      // Read the length field as f64: i32 converts (a boolean-branded field\n      // reads 1/0 — ToLength(ToNumber(true)) = 1); externref (an `any`-typed\n      // `length` slot) unboxes via __unbox_number (NaN for non-numbers → the\n",
+      "beforeSha256": "ce57a4ab1407b2723e049aea3d16e5d53a4cbd1c8d52fe5726878a375659c158",
+      "afterSha256": "9bb228912b8da1e76cfb33ff67c5ca257652107797ee3a6b71baf72f88bf108d"
+    }
+  ]
+}

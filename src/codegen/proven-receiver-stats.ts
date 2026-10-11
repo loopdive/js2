@@ -22,6 +22,8 @@
  */
 
 /** Decline / admit tallies, keyed by reason. Empty unless the env var is set. */
+import { readEnv } from "../env.js";
+
 export const provenReceiverStats = {
   /** Calls that reached the receiver-flow query (post `this`/private/`?.`). */
   asked: 0,
@@ -34,7 +36,7 @@ export const provenReceiverStats = {
 };
 
 export function provenReceiverStatsEnabled(): boolean {
-  return process.env.JS2WASM_PROVEN_RECEIVER_STATS === "1";
+  return readEnv("JS2WASM_PROVEN_RECEIVER_STATS") === "1";
 }
 
 let hookInstalled = false;

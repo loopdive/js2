@@ -54,6 +54,28 @@ export function emitLocalTdzInit(fctx: FunctionContext, name: string): void {
   const flagIdx = fctx.tdzFlagLocals?.get(name);
   if (flagIdx === undefined) return;
   const boxed = fctx.boxedTdzFlags?.get(name);
+  if (boxed?.srcFlagIdx !== undefined) {
+    // (#6651 V5) The box is teed at a capture-prepend site that need not
+    // dominate this declaration — a call the static TDZ analysis turned into an
+    // unconditional throw never reaches its tee, so the box local is still
+    // null here. Mark the raw source flag (the box is lazily re-built from it,
+    // `pushBoxedTdzFlagRef`) and update the box only when one exists.
+    fctx.body.push({ op: "i32.const", value: 1 });
+    fctx.body.push({ op: "local.set", index: boxed.srcFlagIdx });
+    fctx.body.push({ op: "local.get", index: boxed.localIdx });
+    fctx.body.push({ op: "ref.is_null" });
+    fctx.body.push({
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [],
+      else: [
+        { op: "local.get", index: boxed.localIdx },
+        { op: "i32.const", value: 1 },
+        { op: "struct.set", typeIdx: boxed.refCellTypeIdx, fieldIdx: 0 },
+      ],
+    });
+    return;
+  }
   if (boxed) {
     // Boxed: load ref cell, push 1, struct.set field 0
     fctx.body.push({ op: "local.get", index: boxed.localIdx });

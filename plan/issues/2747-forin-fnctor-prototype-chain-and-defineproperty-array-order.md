@@ -11,7 +11,14 @@ es_edition: ES5
 language_feature: for-in
 task_type: bug
 created: 2026-06-27
-updated: 2026-06-27
+updated: 2026-09-24
+# 2026-09-24: +1 line — gc/host `V.__proto__ = p` must not mark V growable (see
+# "Multi-level __proto__ chain" below); the function is already at its ceiling.
+loc-budget-allow:
+  - src/codegen/declarations/object-shape-widening.ts
+func-budget-allow:
+  - src/codegen/declarations/object-shape-widening.ts::collectGrowableObjectLiterals
+  - src/codegen/declarations/object-shape-widening.ts::scanStatements#2
 parent: 2739
 related: [1712, 2660, 2706, 2731]
 ---
@@ -131,3 +138,14 @@ pre-existing #1472/object-mutability/closed-imports failures are unrelated).
 ## Residual (as of #2199, PO reconcile 2026-06-28)
 
 NOT done — carve-out that explicitly does NOT close the issue. Group (d) carve-out (Reflect.setPrototypeOf + __proto__= mirror __host_set_struct) landed. The two remaining halves — constructor-function prototype-chain enumeration (S12.6.4_A6*) + defineProperty array-order — remain, carved due to the #1712 collision risk. Stays in-progress.
+
+## Multi-level `__proto__` chain (group d follow-up, 2026-09-24)
+
+`tests/issue-2747.test.ts` "walks a multi-level `__proto__` chain" failed on gc/host
+(`a,shared,p,` instead of `a,shared,p,g,`). `proto.__proto__ = grand` counted as an
+out-of-shape field add in `collectGrowableObjectLiterals`, so `proto` was built as a
+host plain object; `__host_set_struct_proto` records a link only for a WasmGC struct
+receiver, so the `proto → grand` link was dropped. gc/host now skips `__proto__` in
+that growth rule (standalone keeps it; it promotes these receivers through
+`dynamicProtoLiteralNodes`). A/B over the 49 test files mentioning `__proto__`:
+the one target test flips to pass, no other change.

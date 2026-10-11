@@ -1,0 +1,418 @@
+{
+  "status": "read-only inverse specification; not an authority fixture or tested helper",
+  "base": "6ed68535323e0756c3a0b15dde18fd480ad7fc9f",
+  "head": "1265c47d6fc41300a380ef7e4abc45fdfcfd2c61",
+  "records": [
+    {
+      "path": "src/ir/runtime/callable-declarations.ts",
+      "beforeFullSha256": "db70bc14602f360179ac787c902af82476ffff5297993ba87d7f99be5d348e10",
+      "afterFullSha256": "6632f6ecb4221bf31e4cd733b51baf5095a0d7268da1b4f7d0ffa14c8cf27911",
+      "spanCount": 2,
+      "spans": [
+        {
+          "ordinal": 0,
+          "kind": "fixed-reviewed-delta",
+          "beforeOffset": 269,
+          "afterOffset": 269,
+          "beforeLine": 7,
+          "afterLine": 7,
+          "before": "  resolveRuntimeHostCapabilityFuncRecord,\n  RUNTIME_HOST_CAPABILITY_RECORDS,\n  type RuntimeHostCapabilityValueType,\n} from \"./host-capabilities.js\";\nimport type { RuntimeFeature, RuntimeProviderDefinition } from \"./contracts/manifest.js\";\nimport type { IntrinsicSignature } from \"../core/intrinsic-contracts.js\";\nimport { irNativeAsyncCallableDeclaration } from \"./native-async-callables.js\";\nimport { irVectorCallableDeclaration } from \"./vector-callables.js\";\n\n/** Policy-independent callable contracts; physical providers are selected by the manifest. */\nexport interface IrRuntimeCallableDeclaration {\n  readonly feature: RuntimeFeature;\n",
+          "after": "  resolveRuntimeHostCapabilityFuncRecord,\n  RUNTIME_HOST_CAPABILITY_RECORDS,\n  type RuntimeHostCapabilityValueType,\n} from \"./host-capabilities.js\";\nimport {\n  NATIVE_ASYNC_CALLABLE_RUNTIME_FEATURES,\n  type RuntimeFeature,\n  type RuntimeProviderDefinition,\n} from \"./contracts/manifest.js\";\nimport type { IntrinsicSignature } from \"../core/intrinsic-contracts.js\";\nimport { irClosureInvocationCallableDeclaration } from \"./closure-invocation-callables.js\";\nimport {\n  NATIVE_ASYNC_CALLABLE_RUNTIME_PROVIDERS,\n  nativeAsyncProviderMismatch,\n  nativeAsyncCallablePolicyMismatch,\n  irNativeAsyncCallableDeclaration,\n} from \"./native-async-callables.js\";\nimport {\n  VECTOR_CALLABLE_RUNTIME_PROVIDERS,\n  vectorProviderMismatch,\n  vectorCallablePolicyMismatch,\n  irVectorCallableDeclaration,\n} from \"./vector-callables.js\";\nimport { irNumberConversionCallableDeclaration } from \"./number-conversion-callable.js\";\nimport {\n  ORDINARY_OBJECT_RUNTIME_PROVIDERS,\n  ordinaryObjectProviderMismatch,\n  ordinaryObjectCallablePolicyMismatch,\n  irOrdinaryObjectCallableDeclaration,\n} from \"./ordinary-object-callables.js\";\n\nimport type { RuntimeManifestPolicy } from \"../../runtime/contracts/provider-policy.js\";\n\n/** Policy-independent callable contracts; physical providers are selected by the manifest. */\nexport interface IrRuntimeCallableDeclaration {\n  readonly feature: RuntimeFeature;\n",
+          "beforeSha256": "389bba9b85d23aa62ca62bb4a857566d7a205df7e683460769d354fd73a40205",
+          "afterSha256": "5e52e24735039818952cc2028e7c1d606c6a0afc76e63588553fe5c894c699b7",
+          "beforeOccurrences": 1,
+          "afterOccurrences": 1
+        },
+        {
+          "ordinal": 1,
+          "kind": "fixed-reviewed-delta",
+          "beforeOffset": 3353,
+          "afterOffset": 4088,
+          "beforeLine": 74,
+          "afterLine": 98,
+          "before": "/** Exact structural bindings select declarations; display names and prefixes never do. */\nexport function irRuntimeCallableDeclaration(ref: IrFuncRef): IrRuntimeCallableDeclaration | undefined {\n  return ref.binding.kind === \"runtime\" && ref.binding.symbol === \"__new_ReferenceError\"\n    ? REFERENCE_ERROR_DECLARATION\n    : (irNativeAsyncCallableDeclaration(ref) ?? irVectorCallableDeclaration(ref));\n}\n",
+          "after": "/** Exact structural bindings select declarations; display names and prefixes never do. */\nexport function irRuntimeCallableDeclaration(ref: IrFuncRef): IrRuntimeCallableDeclaration | undefined {\n  return ref.binding.kind === \"runtime\" && ref.binding.symbol === \"__new_ReferenceError\"\n    ? REFERENCE_ERROR_DECLARATION\n    : (irNativeAsyncCallableDeclaration(ref) ??\n        irVectorCallableDeclaration(ref) ??\n        irOrdinaryObjectCallableDeclaration(ref) ??\n        irNumberConversionCallableDeclaration(ref) ??\n        irClosureInvocationCallableDeclaration(ref));\n}\n\n/** Canonical symbolic callable families; physical materialization remains a separate obligation. */\nexport const SEMANTIC_CALLABLE_RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.freeze([\n  ...NATIVE_ASYNC_CALLABLE_RUNTIME_PROVIDERS,\n  ...VECTOR_CALLABLE_RUNTIME_PROVIDERS,\n  ...ORDINARY_OBJECT_RUNTIME_PROVIDERS,\n]);\n\nexport function semanticCallableProviderMismatch(provider: RuntimeProviderDefinition): string | undefined {\n  return (\n    nativeAsyncProviderMismatch(provider) ??\n    vectorProviderMismatch(provider) ??\n    ordinaryObjectProviderMismatch(provider)\n  );\n}\n\nexport function semanticCallablePolicyMismatch(\n  feature: RuntimeFeature,\n  policy: RuntimeManifestPolicy,\n): string | undefined {\n  return NATIVE_ASYNC_CALLABLE_RUNTIME_FEATURES.some((entry) => entry === feature)\n    ? nativeAsyncCallablePolicyMismatch(feature, policy)\n    : (vectorCallablePolicyMismatch(feature, policy) ?? ordinaryObjectCallablePolicyMismatch(feature, policy));\n}\n",
+          "beforeSha256": "ed59b91ef433cee8a18d434bc2e259e8111d3a88b20d75a82096fb81644e4884",
+          "afterSha256": "ce8d516257a9d22bca92281fc8cdec56e90386107683d61c80f069b26210bb79",
+          "beforeOccurrences": 1,
+          "afterOccurrences": 1
+        }
+      ],
+      "arithmeticInverseExact": true,
+      "arithmeticForwardExact": true
+    },
+    {
+      "path": "src/ir/runtime/manifest.ts",
+      "beforeFullSha256": "d30bb0352b9ce81845f091d3c366297c40e7f9909fa969540711832c04b178c7",
+      "afterFullSha256": "ff36567f298b2ef4946caf7159d9e1647e0e9fdf920296735547dffca15a9ec8",
+      "spanCount": 15,
+      "spans": [
+        {
+          "ordinal": 0,
+          "kind": "fixed-reviewed-delta",
+          "beforeOffset": 3565,
+          "afterOffset": 3565,
+          "beforeLine": 106,
+          "afterLine": 106,
+          "before": "  FUNCTION_PROTOTYPE_CALL_RUNTIME_PROVIDER_IDS,\n  REFERENCE_ERROR_RUNTIME_FEATURES,\n  REFERENCE_ERROR_RUNTIME_PROVIDER_IDS,\n  VECTOR_CALLABLE_RUNTIME_FEATURES,\n  VECTOR_CALLABLE_RUNTIME_PROVIDER_IDS,\n  NATIVE_ASYNC_CALLABLE_RUNTIME_FEATURES,\n  NATIVE_ASYNC_CALLABLE_RUNTIME_PROVIDER_IDS,\n  type RuntimeFeature,\n  type HostCapabilityId,\n",
+          "after": "  FUNCTION_PROTOTYPE_CALL_RUNTIME_PROVIDER_IDS,\n  REFERENCE_ERROR_RUNTIME_FEATURES,\n  REFERENCE_ERROR_RUNTIME_PROVIDER_IDS,\n  VECTOR_CALLABLE_RUNTIME_FEATURES,\n  ORDINARY_OBJECT_RUNTIME_FEATURES,\n  VECTOR_CALLABLE_RUNTIME_PROVIDER_IDS,\n  ORDINARY_OBJECT_RUNTIME_PROVIDER_IDS,\n  NATIVE_ASYNC_CALLABLE_RUNTIME_FEATURES,\n  NATIVE_ASYNC_CALLABLE_RUNTIME_PROVIDER_IDS,\n  type RuntimeFeature,\n  type HostCapabilityId,\n",
+          "beforeSha256": "7f6a1c17f061e192c318c563bf3dbabc20ec3b913832c0a731067f007693cb42",
+          "afterSha256": "49acc48e22793963edadb1abed25bc5c599a2f105e78c123b3d167c0e9b23b19",
+          "beforeOccurrences": 1,
+          "afterOccurrences": 1
+        },
+        {
+          "ordinal": 1,
+          "kind": "fixed-reviewed-delta",
+          "beforeOffset": 7517,
+          "afterOffset": 7593,
+          "beforeLine": 218,
+          "afterLine": 220,
+          "before": "  FrozenRuntimeManifest,\n} from \"./contracts/manifest.js\";\n\nimport { irTypeEquals } from \"../core/types.js\";\nimport { REFERENCE_ERROR_SIGNATURE, REFERENCE_ERROR_RUNTIME_PROVIDERS } from \"./callable-declarations.js\";\nimport {\n  VECTOR_CALLABLE_RUNTIME_PROVIDERS,\n  vectorProviderMismatch,\n  vectorCallablePolicyMismatch,\n} from \"./vector-callables.js\";\nexport { REFERENCE_ERROR_RUNTIME_PROVIDERS } from \"./callable-declarations.js\";\nimport {\n  NATIVE_ASYNC_CALLABLE_RUNTIME_PROVIDERS,\n  nativeAsyncProviderMismatch,\n  nativeAsyncCallablePolicyMismatch,\n} from \"./native-async-callables.js\";\nimport {\n  ASYNC_OPTIONAL_RUNTIME_FEATURES,\n  ASYNC_RUNTIME_FEATURES,\n  ASYNC_RUNTIME_PROVIDERS,\n",
+          "after": "  FrozenRuntimeManifest,\n} from \"./contracts/manifest.js\";\n\nimport { irTypeEquals } from \"../core/types.js\";\nimport {\n  REFERENCE_ERROR_SIGNATURE,\n  REFERENCE_ERROR_RUNTIME_PROVIDERS,\n  SEMANTIC_CALLABLE_RUNTIME_PROVIDERS,\n  semanticCallableProviderMismatch,\n  semanticCallablePolicyMismatch,\n} from \"./callable-declarations.js\";\nexport { REFERENCE_ERROR_RUNTIME_PROVIDERS } from \"./callable-declarations.js\";\nimport {\n  ASYNC_OPTIONAL_RUNTIME_FEATURES,\n  ASYNC_RUNTIME_FEATURES,\n  ASYNC_RUNTIME_PROVIDERS,\n",
+          "beforeSha256": "151c0c55c3c9ac93b44075a619c4f974f27520ec256ca3fdd957723aa62b024e",
+          "afterSha256": "77bfbf79d843343c0cb114f3f85e2ff2293cf9aa9951b79a8063a4b6bbbf50ce",
+          "beforeOccurrences": 1,
+          "afterOccurrences": 1
+        },
+        {
+          "ordinal": 2,
+          "kind": "fixed-reviewed-delta",
+          "beforeOffset": 8988,
+          "afterOffset": 8884,
+          "beforeLine": 261,
+          "afterLine": 259,
+          "before": "  EXTERNREF_GLOBAL_INTRINSIC_SIGNATURE,\n  EXTERNREF_I32_TO_F64_INTRINSIC_SIGNATURE,\n  INTRINSIC_DEFINITIONS,\n  I32_TO_EXTERNREF_INTRINSIC_SIGNATURE,\n} from \"../core/intrinsics.js\";\nimport {\n  type IntrinsicSignature,\n  type IntrinsicUse,\n",
+          "after": "  EXTERNREF_GLOBAL_INTRINSIC_SIGNATURE,\n  EXTERNREF_I32_TO_F64_INTRINSIC_SIGNATURE,\n  INTRINSIC_DEFINITIONS,\n  I32_TO_EXTERNREF_INTRINSIC_SIGNATURE,\n  EXTERNREF_TO_BOOLEAN_INTRINSIC_SIGNATURE,\n} from \"../core/intrinsics.js\";\nimport {\n  type IntrinsicSignature,\n  type IntrinsicUse,\n",
+          "beforeSha256": "0279da7a0ce14ac3e333c94195b157156fbf8239076001873423597869f4d999",
+          "afterSha256": "e1848149628879440417bd782c1400a0b5563240565254d2aa53eb3493cbb626",
+          "beforeOccurrences": 1,
+          "afterOccurrences": 1
+        },
+        {
+          "ordinal": 3,
+          "kind": "fixed-reviewed-delta",
+          "beforeOffset": 17798,
+          "afterOffset": 17738,
+          "beforeLine": 486,
+          "afterLine": 485,
+          "before": "  });\n}\n\n/**\n * (#3526 F1-S1) The synchronous number boundary. `js.number.box` is HOST-ONLY\n * by policy in this slice: standalone does define a native `__box_number`\n * through the union-native family, but the current front-end arm is gated on\n * `!nativeStrings`, and support may not be inferred from helper presence. The\n * `$AnyValue` standalone boxing family is explicitly not this intrinsic.\n */\nexport const NUMBER_BOUNDARY_RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.freeze([\n  numberBoundaryProvider(\n    \"host.js.number.box\",\n",
+          "after": "  });\n}\n\n/**\n * Explicit synchronous number-boundary selection. Native boxing additionally\n * requires the physical consumer's actual issued value owner; helper presence\n * or the target alone cannot select it. The disabled default is unchanged.\n */\nexport const NUMBER_BOUNDARY_RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.freeze([\n  numberBoundaryProvider(\n    \"host.js.number.box\",\n",
+          "beforeSha256": "babfc12277bc8e749b6557540b782423c6c3326822c85b5ce4d79e9b94ae7204",
+          "afterSha256": "9f6d3a75ee468ce75fe7431be8c54d619d9d42ff20513640f746fab863744217",
+          "beforeOccurrences": 1,
+          "afterOccurrences": 1
+        },
+        {
+          "ordinal": 4,
+          "kind": "fixed-reviewed-delta",
+          "beforeOffset": 18376,
+          "afterOffset": 18164,
+          "beforeLine": 500,
+          "afterLine": 497,
+          "before": "    F64_TO_EXTERNREF_INTRINSIC_SIGNATURE,\n    { kind: \"host-callable\", capability: \"number.box\" },\n    [\"number.box\"],\n  ),\n  numberBoundaryProvider(\n    \"host.js.number.unbox\",\n    \"js.number.unbox\",\n    EXTERNREF_TO_F64_INTRINSIC_SIGNATURE,\n",
+          "after": "    F64_TO_EXTERNREF_INTRINSIC_SIGNATURE,\n    { kind: \"host-callable\", capability: \"number.box\" },\n    [\"number.box\"],\n  ),\n  Object.freeze({\n    ...numberBoundaryProvider(\n      \"native.js.number.box\",\n      \"js.number.box\",\n      F64_TO_EXTERNREF_INTRINSIC_SIGNATURE,\n      { kind: \"runtime-callable\", symbol: \"__box_number\" },\n      [],\n    ),\n    supportedTargets: Object.freeze([\"standalone\"] as const),\n    supportedBackends: Object.freeze([\"wasmgc\"] as const),\n  }),\n  numberBoundaryProvider(\n    \"host.js.number.unbox\",\n    \"js.number.unbox\",\n    EXTERNREF_TO_F64_INTRINSIC_SIGNATURE,\n",
+          "beforeSha256": "1e0d8889c1b6c0864c63815dee97861856016589ab4f8be955d771e96af5f0e5",
+          "afterSha256": "3eb3a53fe3f9af1ab52d1cf622106567135b32d7717f0cc189b51298bdfd72ba",
+          "beforeOccurrences": 1,
+          "afterOccurrences": 1
+        },
+        {
+          "ordinal": 5,
+          "kind": "fixed-reviewed-delta",
+          "beforeOffset": 18886,
+          "afterOffset": 19024,
+          "beforeLine": 516,
+          "afterLine": 524,
+          "before": "    [],\n  ),\n]);\n\n/**\n * (#3526 F1-S2) The synchronous boolean boundary. Host-only by policy: no\n * native boolean boxer exists, so there is no `runtime-callable` sibling to\n * select. The physical target stays the exact `env.__box_boolean` union import\n * the direct call used, so raw consumers and import order are untouched.\n */\nexport const BOOLEAN_BOUNDARY_RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.freeze([\n  numberBoundaryProvider(\n    \"host.js.boolean.box\",\n    \"js.boolean.box\",\n    I32_TO_EXTERNREF_INTRINSIC_SIGNATURE,\n    { kind: \"host-callable\", capability: \"boolean.box\" },\n    [\"boolean.box\"],\n  ),\n]);\n\n/**\n * (#3526 F1-S4) The externref undefined probe's two arms. Both name the SAME\n",
+          "after": "    [],\n  ),\n]);\n\n/** Explicit Boolean carrier providers. Physical admission still requires the issued native owner. */\nexport const BOOLEAN_BOUNDARY_RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.freeze([\n  numberBoundaryProvider(\n    \"host.js.boolean.box\",\n    \"js.boolean.box\",\n    I32_TO_EXTERNREF_INTRINSIC_SIGNATURE,\n    { kind: \"host-callable\", capability: \"boolean.box\" },\n    [\"boolean.box\"],\n  ),\n  Object.freeze({\n    ...numberBoundaryProvider(\n      \"native.js.boolean.box\",\n      \"js.boolean.box\",\n      I32_TO_EXTERNREF_INTRINSIC_SIGNATURE,\n      { kind: \"runtime-callable\", symbol: \"__box_boolean\" },\n      [],\n    ),\n    supportedBackends: Object.freeze([\"wasmgc\"] as const),\n  }),\n  Object.freeze({\n    ...numberBoundaryProvider(\n      \"native.js.boolean.unbox\",\n      \"js.boolean.unbox\",\n      EXTERNREF_TO_BOOLEAN_INTRINSIC_SIGNATURE,\n      { kind: \"runtime-callable\", symbol: \"__unbox_boolean\" },\n      [],\n    ),\n    supportedBackends: Object.freeze([\"wasmgc\"] as const),\n  }),\n]);\n\n/**\n * (#3526 F1-S4) The externref undefined probe's two arms. Both name the SAME\n",
+          "beforeSha256": "57184f00ebea0ab5310660496b875abef4121460f6a83c0d3f411503b8ef65eb",
+          "afterSha256": "37a1f1cce40a7fc51b6120a6c331d6f9bb3e126a4a449b2d08d392aa5abf7a6e",
+          "beforeOccurrences": 1,
+          "afterOccurrences": 1
+        },
+        {
+          "ordinal": 6,
+          "kind": "fixed-reviewed-delta",
+          "beforeOffset": 39546,
+          "afterOffset": 40064,
+          "beforeLine": 999,
+          "afterLine": 1022,
+          "before": "}\n\n/** The exact provider the admitted boolean arm selects, or `null` when the\n * caller resolved it to unsupported. */\nfunction booleanBoundaryProviderId(policy: BooleanBoundaryPolicy): BooleanBoundaryRuntimeProviderId | null {\n  return policy.box === \"host\" ? \"host.js.boolean.box\" : null;\n}\n\nconst BOOLEAN_BOUNDARY_FEATURE_SET: ReadonlySet<string> = new Set(BOOLEAN_BOUNDARY_RUNTIME_FEATURES);\n\n",
+          "after": "}\n\n/** The exact provider the admitted boolean arm selects, or `null` when the\n * caller resolved it to unsupported. */\nfunction booleanBoundaryProviderId(\n  feature: BooleanBoundaryRuntimeFeature,\n  policy: BooleanBoundaryPolicy,\n): BooleanBoundaryRuntimeProviderId | null {\n  if (feature === \"js.boolean.unbox\") return policy.unbox === \"native\" ? \"native.js.boolean.unbox\" : null;\n  return policy.box === \"host\" ? \"host.js.boolean.box\" : policy.box === \"native\" ? \"native.js.boolean.box\" : null;\n}\n\nconst BOOLEAN_BOUNDARY_FEATURE_SET: ReadonlySet<string> = new Set(BOOLEAN_BOUNDARY_RUNTIME_FEATURES);\n\n",
+          "beforeSha256": "283c5bdbbb6c68fc216b67a0be4f51fe56282711716ac98b7502479edfd97375",
+          "afterSha256": "ecb6299e7210adc778b8e92d42b321c91ea60671db2e5e24301918585d7abfb9",
+          "beforeOccurrences": 1,
+          "afterOccurrences": 1
+        },
+        {
+          "ordinal": 7,
+          "kind": "fixed-reviewed-delta",
+          "beforeOffset": 40856,
+          "afterOffset": 41580,
+          "beforeLine": 1028,
+          "afterLine": 1055,
+          "before": "function numberBoundaryProviderId(\n  feature: NumberBoundaryRuntimeFeature,\n  policy: NumberBoundaryPolicy,\n): NumberBoundaryRuntimeProviderId | null {\n  if (feature === \"js.number.box\") return policy.box === \"host\" ? \"host.js.number.box\" : null;\n  if (policy.unbox === \"host\") return \"host.js.number.unbox\";\n  return policy.unbox === \"native\" ? \"native.js.number.unbox\" : null;\n}\n\n",
+          "after": "function numberBoundaryProviderId(\n  feature: NumberBoundaryRuntimeFeature,\n  policy: NumberBoundaryPolicy,\n): NumberBoundaryRuntimeProviderId | null {\n  if (feature === \"js.number.box\")\n    return policy.box === \"host\" ? \"host.js.number.box\" : policy.box === \"native\" ? \"native.js.number.box\" : null;\n  if (policy.unbox === \"host\") return \"host.js.number.unbox\";\n  return policy.unbox === \"native\" ? \"native.js.number.unbox\" : null;\n}\n\n",
+          "beforeSha256": "ffdfd3bceea173fde9fd20cd3b617060aff27ab4cd31cde2ff8256d3a3d5bf78",
+          "afterSha256": "5a93e1d65910800c3310fb7d0b9f42d78f1f8d4dbbb541c6762723aa855a16f0",
+          "beforeOccurrences": 1,
+          "afterOccurrences": 1
+        },
+        {
+          "ordinal": 8,
+          "kind": "fixed-reviewed-delta",
+          "beforeOffset": 52464,
+          "afterOffset": 53243,
+          "beforeLine": 1342,
+          "afterLine": 1370,
+          "before": "    ...STRING_CONST_RUNTIME_PROVIDERS,\n    ...HOST_CALLBACK_WRAP_RUNTIME_PROVIDERS,\n    ...FUNCTION_PROTOTYPE_CALL_RUNTIME_PROVIDERS,\n    ...REFERENCE_ERROR_RUNTIME_PROVIDERS,\n    ...NATIVE_ASYNC_CALLABLE_RUNTIME_PROVIDERS,\n    ...VECTOR_CALLABLE_RUNTIME_PROVIDERS,\n    ...ASYNC_RUNTIME_PROVIDERS,\n  ].sort((left, right) => left.id.localeCompare(right.id)),\n);\n\n",
+          "after": "    ...STRING_CONST_RUNTIME_PROVIDERS,\n    ...HOST_CALLBACK_WRAP_RUNTIME_PROVIDERS,\n    ...FUNCTION_PROTOTYPE_CALL_RUNTIME_PROVIDERS,\n    ...REFERENCE_ERROR_RUNTIME_PROVIDERS,\n    ...SEMANTIC_CALLABLE_RUNTIME_PROVIDERS,\n    ...ASYNC_RUNTIME_PROVIDERS,\n  ].sort((left, right) => left.id.localeCompare(right.id)),\n);\n\n",
+          "beforeSha256": "50cb532d651093ea29f1ab876e747016abe12acd36ac3f0e3084d3c1b4f022f1",
+          "afterSha256": "31d74f5dc69612681c55a22562433c372652450de0d6670ee977780e802b0df6",
+          "beforeOccurrences": 1,
+          "afterOccurrences": 1
+        },
+        {
+          "ordinal": 9,
+          "kind": "fixed-reviewed-delta",
+          "beforeOffset": 53431,
+          "afterOffset": 54164,
+          "beforeLine": 1367,
+          "afterLine": 1394,
+          "before": "  ...REFERENCE_ERROR_RUNTIME_FEATURES,\n  ...PURE_MATH_RUNTIME_FEATURES,\n  ...NATIVE_ASYNC_CALLABLE_RUNTIME_FEATURES,\n  ...VECTOR_CALLABLE_RUNTIME_FEATURES,\n  ...ASYNC_RUNTIME_FEATURES,\n  ...ASYNC_OPTIONAL_RUNTIME_FEATURES,\n]);\nconst PROVIDER_ID_SET: ReadonlySet<string> = new Set([\n",
+          "after": "  ...REFERENCE_ERROR_RUNTIME_FEATURES,\n  ...PURE_MATH_RUNTIME_FEATURES,\n  ...NATIVE_ASYNC_CALLABLE_RUNTIME_FEATURES,\n  ...VECTOR_CALLABLE_RUNTIME_FEATURES,\n  ...ORDINARY_OBJECT_RUNTIME_FEATURES,\n  \"js.number.from-value\",\n  ...ASYNC_RUNTIME_FEATURES,\n  ...ASYNC_OPTIONAL_RUNTIME_FEATURES,\n]);\nconst PROVIDER_ID_SET: ReadonlySet<string> = new Set([\n",
+          "beforeSha256": "2c706ebd06b0ffc7bc60534cda9733da8ea2b76946186f60a959e0e8701d26c7",
+          "afterSha256": "242665f247e023c6ca766e82cffbb63b9b33b79e35eea5a13d37b760befec3f6",
+          "beforeOccurrences": 1,
+          "afterOccurrences": 1
+        },
+        {
+          "ordinal": 10,
+          "kind": "fixed-reviewed-delta",
+          "beforeOffset": 54323,
+          "afterOffset": 55121,
+          "beforeLine": 1389,
+          "afterLine": 1418,
+          "before": "  ...REFERENCE_ERROR_RUNTIME_PROVIDER_IDS,\n  ...PURE_MATH_RUNTIME_PROVIDER_IDS,\n  ...NATIVE_ASYNC_CALLABLE_RUNTIME_PROVIDER_IDS,\n  ...VECTOR_CALLABLE_RUNTIME_PROVIDER_IDS,\n  ...ASYNC_RUNTIME_PROVIDER_IDS,\n]);\nconst HOST_CAPABILITY_ID_SET: ReadonlySet<string> = new Set(RUNTIME_HOST_CAPABILITY_IDS);\nconst TARGET_SET: ReadonlySet<string> = new Set(ALL_TARGETS);\n",
+          "after": "  ...REFERENCE_ERROR_RUNTIME_PROVIDER_IDS,\n  ...PURE_MATH_RUNTIME_PROVIDER_IDS,\n  ...NATIVE_ASYNC_CALLABLE_RUNTIME_PROVIDER_IDS,\n  ...VECTOR_CALLABLE_RUNTIME_PROVIDER_IDS,\n  ...ORDINARY_OBJECT_RUNTIME_PROVIDER_IDS,\n  ...ASYNC_RUNTIME_PROVIDER_IDS,\n]);\nconst HOST_CAPABILITY_ID_SET: ReadonlySet<string> = new Set(RUNTIME_HOST_CAPABILITY_IDS);\nconst TARGET_SET: ReadonlySet<string> = new Set(ALL_TARGETS);\n",
+          "beforeSha256": "f6c317a3ff293a97025dd2fab5de69f14bac0b0d6c497d4d8d215ecd92d9960f",
+          "afterSha256": "fdbcbd6b1057d32bfabfcdaf3904747a27a8e1fa0b155e08029faca7a83e3046",
+          "beforeOccurrences": 1,
+          "afterOccurrences": 1
+        },
+        {
+          "ordinal": 11,
+          "kind": "fixed-reviewed-delta",
+          "beforeOffset": 64946,
+          "afterOffset": 65787,
+          "beforeLine": 1620,
+          "afterLine": 1650,
+          "before": "    }\n    this.#policy = Object.freeze({\n      ...policy,\n      numberBoundary: Object.freeze({ box: numberBoundary.box, unbox: numberBoundary.unbox }),\n      booleanBoundary: Object.freeze({ box: booleanBoundary.box }),\n      externIsUndefined: Object.freeze({ probe: externIsUndefined.probe }),\n      generatorNumberBox: Object.freeze({ box: generatorNumberBox.box }),\n      stringCompare: Object.freeze({ compare: stringCompare.compare }),\n      stringEq: Object.freeze({ eq: stringEq.eq }),\n",
+          "after": "    }\n    this.#policy = Object.freeze({\n      ...policy,\n      numberBoundary: Object.freeze({ box: numberBoundary.box, unbox: numberBoundary.unbox }),\n      booleanBoundary: Object.freeze({\n        box: booleanBoundary.box,\n        ...(booleanBoundary.unbox === undefined ? {} : { unbox: booleanBoundary.unbox }),\n      }),\n      externIsUndefined: Object.freeze({ probe: externIsUndefined.probe }),\n      generatorNumberBox: Object.freeze({ box: generatorNumberBox.box }),\n      stringCompare: Object.freeze({ compare: stringCompare.compare }),\n      stringEq: Object.freeze({ eq: stringEq.eq }),\n",
+          "beforeSha256": "c2ec4ece44740f52e23a01b741538f7a54185f07be19af58c6f7d08311983423",
+          "afterSha256": "0d26c977796665666da96c8dcf9d46bc89b6b039268753ec23249fb6b664b83e",
+          "beforeOccurrences": 1,
+          "afterOccurrences": 1
+        },
+        {
+          "ordinal": 12,
+          "kind": "fixed-reviewed-delta",
+          "beforeOffset": 74622,
+          "afterOffset": 75568,
+          "beforeLine": 1861,
+          "afterLine": 1894,
+          "before": "  #indexProviders(): ReadonlyMap<RuntimeFeature, readonly RuntimeProviderDefinition[]> {\n    const ids = new Set<RuntimeProviderId>();\n    const byFeature = new Map<RuntimeFeature, RuntimeProviderDefinition[]>();\n    for (const provider of this.#providers) {\n      const nativeMismatch = nativeAsyncProviderMismatch(provider) ?? vectorProviderMismatch(provider);\n      if (nativeMismatch)\n        throw new RuntimeManifestInvariantError(\n          \"provider-signature-mismatch\",\n          nativeMismatch,\n",
+          "after": "  #indexProviders(): ReadonlyMap<RuntimeFeature, readonly RuntimeProviderDefinition[]> {\n    const ids = new Set<RuntimeProviderId>();\n    const byFeature = new Map<RuntimeFeature, RuntimeProviderDefinition[]>();\n    for (const provider of this.#providers) {\n      const nativeMismatch = semanticCallableProviderMismatch(provider);\n      if (nativeMismatch)\n        throw new RuntimeManifestInvariantError(\n          \"provider-signature-mismatch\",\n          nativeMismatch,\n",
+          "beforeSha256": "e03de0895aa164e5d2266b955b376fd7f780e2b35c6431e9bee48a6dfffdc657",
+          "afterSha256": "33b4dc43a368b12fffc807fb373e008239bdb1518023800445e1725b29e6510e",
+          "beforeOccurrences": 1,
+          "afterOccurrences": 1
+        },
+        {
+          "ordinal": 13,
+          "kind": "fixed-reviewed-delta",
+          "beforeOffset": 86118,
+          "afterOffset": 87033,
+          "beforeLine": 2086,
+          "afterLine": 2119,
+          "before": "    feature: RuntimeFeature,\n    providers: ReadonlyMap<RuntimeFeature, readonly RuntimeProviderDefinition[]>,\n  ): RuntimeProviderDefinition {\n    const candidates = providers.get(feature) ?? [];\n    const nativePolicyMismatch = NATIVE_ASYNC_CALLABLE_RUNTIME_FEATURES.some((entry) => entry === feature)\n      ? nativeAsyncCallablePolicyMismatch(feature, this.#policy)\n      : vectorCallablePolicyMismatch(feature, this.#policy);\n    if (nativePolicyMismatch)\n      throw new RuntimeManifestInvariantError(\"provider-target-unavailable\", nativePolicyMismatch);\n    if (candidates.length === 0) {\n      throw new RuntimeManifestInvariantError(\"missing-runtime-provider\", `runtime feature ${feature} has no provider`);\n",
+          "after": "    feature: RuntimeFeature,\n    providers: ReadonlyMap<RuntimeFeature, readonly RuntimeProviderDefinition[]>,\n  ): RuntimeProviderDefinition {\n    const candidates = providers.get(feature) ?? [];\n    const nativePolicyMismatch = semanticCallablePolicyMismatch(feature, this.#policy);\n    if (nativePolicyMismatch)\n      throw new RuntimeManifestInvariantError(\"provider-target-unavailable\", nativePolicyMismatch);\n    if (candidates.length === 0) {\n      throw new RuntimeManifestInvariantError(\"missing-runtime-provider\", `runtime feature ${feature} has no provider`);\n",
+          "beforeSha256": "81f604c1dcef28249244e11cf334397222ded05404a007352f89c68409eb2e1a",
+          "afterSha256": "792fc4f919cf268838f170b34f03d39d908900aab1ec43758a4a42ff2d9d2286",
+          "beforeOccurrences": 1,
+          "afterOccurrences": 1
+        },
+        {
+          "ordinal": 14,
+          "kind": "fixed-reviewed-delta",
+          "beforeOffset": 87948,
+          "afterOffset": 88718,
+          "beforeLine": 2116,
+          "afterLine": 2147,
+          "before": "        // policy, on the same argument: `!nativeStrings` is a lane fact that\n        // `target` cannot express.\n        isBooleanBoundaryFeature(feature)\n        ? ((): readonly RuntimeProviderDefinition[] => {\n            const selectedId = booleanBoundaryProviderId(this.#policy.booleanBoundary);\n            if (selectedId === null) {\n              throw new RuntimeManifestInvariantError(\n                \"provider-target-unavailable\",\n                `semantic intrinsic ${feature} is unavailable under boolean-boundary policy ` +\n                  `box=${this.#policy.booleanBoundary.box}`,\n              );\n            }\n            return candidates.filter((candidate) => candidate.id === selectedId);\n          })()\n",
+          "after": "        // policy, on the same argument: `!nativeStrings` is a lane fact that\n        // `target` cannot express.\n        isBooleanBoundaryFeature(feature)\n        ? ((): readonly RuntimeProviderDefinition[] => {\n            const selectedId = booleanBoundaryProviderId(feature, this.#policy.booleanBoundary);\n            if (selectedId === null) {\n              throw new RuntimeManifestInvariantError(\n                \"provider-target-unavailable\",\n                `semantic intrinsic ${feature} is unavailable under boolean-boundary policy ` +\n                  `box=${this.#policy.booleanBoundary.box}/unbox=${this.#policy.booleanBoundary.unbox ?? \"unsupported\"}`,\n              );\n            }\n            return candidates.filter((candidate) => candidate.id === selectedId);\n          })()\n",
+          "beforeSha256": "8a9bc898eca52667cf35a3ea5364273b6c7998816c6a49ddf02c815173823108",
+          "afterSha256": "9835bd0c9404c9d268d4cd41ec957ae79cadc1a15791a528a34c3473395a1af7",
+          "beforeOccurrences": 1,
+          "afterOccurrences": 1
+        }
+      ],
+      "arithmeticInverseExact": true,
+      "arithmeticForwardExact": true
+    },
+    {
+      "path": "src/ir/intrinsic-support.ts",
+      "beforeFullSha256": "6d404c97436249e65be69d40dc961e284eb2f4900ec184e645aa45486ea0a1d6",
+      "afterFullSha256": "03e5d583b91a7589481c80e1ca1dd5a621fee3e593f5ca9537f9c573b8925e40",
+      "spanCount": 2,
+      "spans": [
+        {
+          "ordinal": 0,
+          "kind": "fixed-reviewed-delta",
+          "beforeOffset": 951,
+          "afterOffset": 951,
+          "beforeLine": 26,
+          "afterLine": 26,
+          "before": "  type RuntimeHostCapabilityValueType,\n} from \"./runtime/host-capabilities.js\";\nimport { IR_ASYNC_CLOCK_SNAPSHOT_FN } from \"./core/async-callables.js\";\nimport { irRuntimeCallableDeclaration } from \"./runtime/callable-declarations.js\";\nimport {\n  assertNativeAsyncCallableDemands,\n  assertNativeAsyncRuntimeCallables,\n  nativeAsyncCallablePolicyMismatch,\n",
+          "after": "  type RuntimeHostCapabilityValueType,\n} from \"./runtime/host-capabilities.js\";\nimport { IR_ASYNC_CLOCK_SNAPSHOT_FN } from \"./core/async-callables.js\";\nimport { irRuntimeCallableDeclaration } from \"./runtime/callable-declarations.js\";\nimport { irOrdinaryObjectCallableDeclaration } from \"./runtime/ordinary-object-callables.js\";\nimport {\n  assertNativeAsyncCallableDemands,\n  assertNativeAsyncRuntimeCallables,\n  nativeAsyncCallablePolicyMismatch,\n",
+          "beforeSha256": "2cd0aa228b19f1d84e07d005b588a91434e40bf6f165dd142c9bad20b0314d86",
+          "afterSha256": "f3c7d5477ca4185ca3166088e58a3c13e755a301a768f5e35b2994489d99a967",
+          "beforeOccurrences": 1,
+          "afterOccurrences": 1
+        },
+        {
+          "ordinal": 1,
+          "kind": "fixed-reviewed-delta",
+          "beforeOffset": 38937,
+          "afterOffset": 39031,
+          "beforeLine": 822,
+          "afterLine": 823,
+          "before": "        for (const root of buffer) {\n          forEachInstrDeep(root, (instr) => {\n            if (instr.kind === \"call\" || instr.kind === \"closure.new\") {\n              const declaration = irRuntimeCallableDeclaration(instr.kind === \"call\" ? instr.target : instr.liftedFunc);\n              if (declaration?.feature === \"error.reference.construct\") runtimeCallFeatures.add(declaration.feature);\n            }\n            if (instr.kind !== \"intrinsic\") return;\n            const argumentTypes = instr.args.map((arg) => {\n              const type = valueTypes.get(arg);\n",
+          "after": "        for (const root of buffer) {\n          forEachInstrDeep(root, (instr) => {\n            if (instr.kind === \"call\" || instr.kind === \"closure.new\") {\n              const declaration = irRuntimeCallableDeclaration(instr.kind === \"call\" ? instr.target : instr.liftedFunc);\n              if (\n                declaration &&\n                (declaration.feature === \"error.reference.construct\" ||\n                  declaration.feature === \"js.number.from-value\" ||\n                  irOrdinaryObjectCallableDeclaration(declaration.ref))\n              )\n                runtimeCallFeatures.add(declaration.feature);\n            }\n            if (instr.kind !== \"intrinsic\") return;\n            const argumentTypes = instr.args.map((arg) => {\n              const type = valueTypes.get(arg);\n",
+          "beforeSha256": "ea3bbc1dbf9449c714f5833cbff299b4449c267d53ebd041db796335370e43b7",
+          "afterSha256": "41d8ed97a37a7dd2c6087c8c5e4fd8a8ce25474c78476cc763848b92f7153a0d",
+          "beforeOccurrences": 1,
+          "afterOccurrences": 1
+        }
+      ],
+      "arithmeticInverseExact": true,
+      "arithmeticForwardExact": true
+    },
+    {
+      "path": "src/ir/program-runtime-abi.ts",
+      "beforeFullSha256": "2d38d6471fa3004ad0e63edc2cbf6d84ee455bb2227de00d5684be496aed7bb5",
+      "afterFullSha256": "0f8eb92a65a87a4fe0275aa4e90f88a600f3f598f9278fd01edd198fff4c41a4",
+      "spanCount": 2,
+      "spans": [
+        {
+          "ordinal": 0,
+          "kind": "fixed-reviewed-delta",
+          "beforeOffset": 0,
+          "afterOffset": 0,
+          "beforeLine": 1,
+          "afterLine": 1,
+          "before": "// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.\n\nimport { irCallableBindingKey } from \"./callable-bindings.js\";\nimport { createIrBindingId } from \"./identity-values.js\";\nimport type { IrBindingId } from \"../shared/contracts/ir-identity.js\";\nimport type { IrSourceRecord, IrUnitInventory } from \"../shared/contracts/ir-unit-inventory.js\";\nimport { forEachInstrDeep } from \"./nodes.js\";\nimport type { IrFuncRef } from \"./core/value-references.js\";\nimport { assertPreparedIrProgramPopulation } from \"./program-population.js\";\nimport { preparedIrDataMismatch, preparedIrProgramOwner, PreparedIrProgramInvariantError } from \"./program.js\";\nimport type { PreparedIrProgramFailure, PreparedIrProgramProducerInput } from \"./program/prepared-contracts.js\";\nimport { irRuntimeCallableDeclaration, type IrRuntimeCallableDeclaration } from \"./runtime-callable-declarations.js\";\n",
+          "after": "// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.\n\nimport { irCallableBindingKey } from \"./callable-bindings.js\";\nimport { forEachInstrDeep } from \"./nodes.js\";\nimport { assertPreparedIrProgramPopulation } from \"./program-population.js\";\nimport { preparedIrDataMismatch, preparedIrProgramOwner, PreparedIrProgramInvariantError } from \"./program.js\";\nimport type { PreparedIrProgramFailure, PreparedIrProgramProducerInput } from \"./program/prepared-contracts.js\";\nimport { irRuntimeCallableDeclaration, type IrRuntimeCallableDeclaration } from \"./runtime-callable-declarations.js\";\n",
+          "beforeSha256": "ed4a4db12598aed01be6a6c06dfeec51108bcc84e0da5866bd82aa37b8475414",
+          "afterSha256": "0ffa9fa8c5f1bbcec64bc25ccee86ad8b131ddce1700e721f955a257aacd34c4",
+          "beforeOccurrences": 1,
+          "afterOccurrences": 1
+        },
+        {
+          "ordinal": 1,
+          "kind": "live-donor-splice-required",
+          "beforeOffset": 1019,
+          "afterOffset": 732,
+          "beforeLine": 14,
+          "afterLine": 10,
+          "before": "import { collectVectorCallableDemands, IrVectorCallableError } from \"./runtime/vector-callables.js\";\n\ntype RuntimeCallableInput = Pick<PreparedIrProgramProducerInput, \"inventory\" | \"ir\" | \"derivedUnits\">;\n\n/** Shared ABI identity is anchored at the entry source, never at a guessed requesting unit. */\nexport function preparedIrRuntimeAbiAnchor(inventory: IrUnitInventory): IrSourceRecord {\n  const entries = inventory.sources.filter((source) => source.kind === \"entry\");\n  if (entries.length !== 1)\n    throw new PreparedIrProgramInvariantError(\"invalid-prepared-data\", \"runtime ABI requires one exact entry source\");\n  return entries[0]!;\n}\n\nexport function preparedIrRuntimeCallableBindingId(inventory: IrUnitInventory, ref: IrFuncRef): IrBindingId {\n  return createIrBindingId({\n    ownerId: preparedIrRuntimeAbiAnchor(inventory).id,\n    domain: \"callable\",\n    role: irCallableBindingKey(ref.binding),\n  });\n}\n\n/** Caller-supplied declaration data cannot replace the canonical runtime catalog. */\nexport function assertPreparedIrRuntimeCallableDeclaration(declaration: IrRuntimeCallableDeclaration): void {\n  const canonical = irRuntimeCallableDeclaration(declaration.ref);\n",
+          "after": "import { collectVectorCallableDemands, IrVectorCallableError } from \"./runtime/vector-callables.js\";\n\ntype RuntimeCallableInput = Pick<PreparedIrProgramProducerInput, \"inventory\" | \"ir\" | \"derivedUnits\">;\n\nexport { preparedIrRuntimeAbiAnchor, preparedIrRuntimeCallableBindingId } from \"./program/runtime-abi-identity.js\";\n\n/** Caller-supplied declaration data cannot replace the canonical runtime catalog. */\nexport function assertPreparedIrRuntimeCallableDeclaration(declaration: IrRuntimeCallableDeclaration): void {\n  const canonical = irRuntimeCallableDeclaration(declaration.ref);\n",
+          "beforeSha256": "7e2dc0329babb1f4c64407f3d94b0883fd1facd517aa61f0cb691f639226b10c",
+          "afterSha256": "ca47473b7d4c194f647d8f70700c8be12a92141f4dcda0ee5f369a0a635d8e2e",
+          "beforeOccurrences": 1,
+          "afterOccurrences": 1
+        }
+      ],
+      "arithmeticInverseExact": true,
+      "arithmeticForwardExact": true
+    },
+    {
+      "path": "src/ir/runtime-program-manifest.ts",
+      "beforeFullSha256": "d9698e66ad1d048e51dd58f6a5b47b2adf65a61da1787c5d543b1ac6437036a9",
+      "afterFullSha256": "d9698e66ad1d048e51dd58f6a5b47b2adf65a61da1787c5d543b1ac6437036a9",
+      "spanCount": 0,
+      "spans": [],
+      "arithmeticInverseExact": true,
+      "arithmeticForwardExact": true
+    }
+  ],
+  "provenance": [
+    {
+      "commit": "ed15de69a9a301793429adee7b0e610a934b101e",
+      "parents": [
+        "194034f0d3b2185c271d62e2ac3a6f5fb3a630e1"
+      ],
+      "ancestorOfRequestedMain": true,
+      "diffBaseline": "explicit first parent; merge commit is not treated as a one-parent linear delta",
+      "touchedPaths": [
+        "src/ir/program-runtime-abi.ts",
+        "src/ir/program/runtime-abi-identity.ts"
+      ],
+      "diffSha256": "2595cddc48b0a8533a2d396b8bb93026e782dee47dd457b8344046e55f41a8e0"
+    },
+    {
+      "commit": "7de4c2f421416b8b521dda0b0c777da140ed81df",
+      "parents": [
+        "2e89b4cf62b3fb28e71cac5ef6fddf2fc1ae118e"
+      ],
+      "ancestorOfRequestedMain": true,
+      "diffBaseline": "explicit first parent; merge commit is not treated as a one-parent linear delta",
+      "touchedPaths": [
+        "src/ir/intrinsic-support.ts",
+        "src/ir/runtime/callable-declarations.ts",
+        "src/ir/runtime/manifest.ts"
+      ],
+      "diffSha256": "2312afac1aafb35ae5f3361d44f5e775f3d342c7e4dd0ccf0afab5f42398a2aa"
+    },
+    {
+      "commit": "cb64af7b0315d59d08809e404c1216c846270654",
+      "parents": [
+        "fdaa94315aeeeab5dc85a3596f2b4997b388ac76"
+      ],
+      "ancestorOfRequestedMain": true,
+      "diffBaseline": "explicit first parent; merge commit is not treated as a one-parent linear delta",
+      "touchedPaths": [
+        "src/ir/runtime/callable-declarations.ts",
+        "src/ir/runtime/manifest.ts"
+      ],
+      "diffSha256": "dec3f7161ee3a1cf44965656f1cff22782b59c6a7b95134407c371c6834d013a"
+    },
+    {
+      "commit": "85750eeee069fcaf7b49f203904086a37c941648",
+      "parents": [
+        "97ee23f340f2094c513cda53d018f394edabde1d",
+        "cb64af7b0315d59d08809e404c1216c846270654"
+      ],
+      "ancestorOfRequestedMain": true,
+      "diffBaseline": "explicit first parent; merge commit is not treated as a one-parent linear delta",
+      "touchedPaths": [
+        "src/ir/runtime/callable-declarations.ts",
+        "src/ir/runtime/manifest.ts"
+      ],
+      "diffSha256": "ae1993aba21f89dc79a906c49af3e1e7430ee404350f54a001cc7e24fda183d6"
+    },
+    {
+      "commit": "c2fb27fed2ae2cbe3559b26acd42d53d61da80d0",
+      "parents": [
+        "041fbe05d7465d75094cedfc74c9711dec39c54d"
+      ],
+      "ancestorOfRequestedMain": true,
+      "diffBaseline": "explicit first parent; merge commit is not treated as a one-parent linear delta",
+      "touchedPaths": [
+        "src/ir/runtime/manifest.ts"
+      ],
+      "diffSha256": "c319344e7eafd5bf9a5e427e3505ab66876af16b76c13317995ddd3242088931"
+    }
+  ]
+}

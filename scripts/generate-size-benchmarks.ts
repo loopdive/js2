@@ -771,6 +771,8 @@ fs.writeFileSync(LOADTIME_RESULTS_PATH, JSON.stringify(loadtimeOutput, null, 2) 
 fs.writeFileSync(LOADTIME_PUBLIC_PATH, JSON.stringify(loadtimeOutput, null, 2) + "\n");
 fs.writeFileSync(path.join(LOADTIME_RESULTS_DIR, "runtime.js"), LOADTIME_RUNTIME_SOURCE);
 fs.writeFileSync(path.join(LOADTIME_PUBLIC_DIR, "runtime.js"), LOADTIME_RUNTIME_SOURCE);
+// The results copy is committed (benchmark-refresh.yml); the public copy is a
+// gitignored build output that only the Vite dev server needs (#6796).
 fs.copyFileSync(BINARYEN_BUNDLE_PATH, path.join(LOADTIME_RESULTS_DIR, "binaryen.js"));
 fs.copyFileSync(BINARYEN_BUNDLE_PATH, path.join(LOADTIME_PUBLIC_DIR, "binaryen.js"));
 

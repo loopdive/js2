@@ -96,6 +96,7 @@
  * answer (`0`), so a skipped fill degrades to exactly today's behaviour instead
  * of trapping.
  */
+import { isSyntheticStructName } from "./emit-helpers.js"; // (#6774 S10)
 import { inheritedSetAnyDirty } from "./inherited-set-gate.js"; // (#4602) per-key #4504 gate
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
@@ -134,11 +135,22 @@ const I32: ValType = { kind: "i32" };
 function userClassStructTypeIdxs(ctx: CodegenContext): number[] {
   const idxs: number[] = [];
   const seen = new Set<number>();
-  for (const className of ctx.classDeclarationMap.keys()) {
-    const typeIdx = ctx.structMap.get(className);
-    if (typeIdx === undefined || seen.has(typeIdx)) continue;
+  const add = (typeIdx: number | undefined): void => {
+    if (typeIdx === undefined || seen.has(typeIdx)) return;
     seen.add(typeIdx);
     idxs.push(typeIdx);
+  };
+  for (const className of ctx.classDeclarationMap.keys()) add(ctx.structMap.get(className));
+  // (#6774 S10) …and, standalone only, every closed OBJECT-LITERAL shape
+  // (`__anon_<N>`, the same user-declared screen instance-props.ts admits).
+  // `{ method() {} }` lowers to a closed struct, so the harness's
+  // `isConfigurable` (`delete obj[name]; !hasOwnProperty(obj, name)`) saw a
+  // no-op delete for every literal member. Only the narrowing direction moves:
+  // a member reads absent after an explicit, successful `delete`.
+  if (ctx.standalone) {
+    for (const [name, typeIdx] of ctx.structMap) {
+      if (name.startsWith("__anon_") && !isSyntheticStructName(name)) add(typeIdx);
+    }
   }
   return idxs;
 }

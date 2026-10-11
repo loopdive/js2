@@ -1,0 +1,11 @@
+{
+  "total": 219,
+  "passed": 212,
+  "failed": 7,
+  "newFailedRows": [],
+  "resolvedFailedRows": [],
+  "sameFirstErrorText": true,
+  "runtimeErrorSuites": null,
+  "workerErrorsObserved": false,
+  "source": "exact first JSON comparison; original failures retained"
+}

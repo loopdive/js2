@@ -5,7 +5,8 @@ import { buildImports } from "../src/runtime.ts";
 async function runTest(src: string): Promise<number> {
   const r = await compile(src, { fileName: "test.ts" });
   if (!r.success) throw new Error("CE: " + (r.errors?.[0]?.message ?? "unknown"));
-  const imports = buildImports(r.imports, undefined, r.stringPool);
+  // (#6779) These tests cover the hostEval policy (the pre-#6779 default).
+  const imports = buildImports(r.imports, undefined, r.stringPool, { dynamicCode: "hostEval" });
   const { instance } = await WebAssembly.instantiate(r.binary, imports as any);
   const test = (instance.exports as any).test;
   return test();
@@ -50,8 +51,12 @@ function assert_sameValue(actual: number, expected: number): void {
   }
 }
 let caught: number = 0;
+// (#6779) Built at runtime so it reaches the host harness shim this case
+// covers. A literal argument is inlined at compile time (#1163) and calls the
+// module's own assert_sameValue, which records the failure without throwing.
+const failing: string = ["assert_sameValue(1, ", "2);"].join("");
 try {
-  eval('assert_sameValue(1, 2);');
+  eval(failing);
 } catch (e) {
   caught = 1;
 }

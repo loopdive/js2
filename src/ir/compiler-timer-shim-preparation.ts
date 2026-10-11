@@ -30,6 +30,7 @@ import {
 } from "./prepared-component-sealing.js";
 import type { PreparedComponentModuleCallableAliasDescriptor } from "./prepared-component-publication.js";
 import type { FuncHandle, Import, ValType } from "./types.js";
+import { readEnv } from "../env.js";
 
 interface CompilerTimerShimEntry extends PreparedComponentArtifactEntry {
   readonly fn: IrFunction;
@@ -336,7 +337,7 @@ export function prepareCompilerTimerShimLateSealTransaction<Entry extends Compil
     );
   }
   let topologyFunctions = input.entries.map((entry) => entry.fn);
-  if (process.env.JS2WASM_TEST_INJECT_IR_TIMER_SHIM_UNIT_EDGE === "1") {
+  if (readEnv("JS2WASM_TEST_INJECT_IR_TIMER_SHIM_UNIT_EDGE") === "1") {
     const timer = timerEntries[0];
     const caller = input.entries.find(
       (entry) =>
@@ -437,7 +438,7 @@ export function prepareCompilerTimerShimLateSealTransaction<Entry extends Compil
     sealDeferred: () => {
       if (timerSealAttempted || deferredTimerEntries.length === 0) return;
       timerSealAttempted = true;
-      if (process.env.JS2WASM_TEST_INJECT_IR_PREPARED_TIMER_SHIM_FAILURE === "seal") {
+      if (readEnv("JS2WASM_TEST_INJECT_IR_PREPARED_TIMER_SHIM_FAILURE") === "seal") {
         for (const terminalOwnerUnitId of new Set(deferredTimerEntries.map((entry) => entry.terminalOwnerUnitId))) {
           input.onSealFailure(
             terminalOwnerUnitId,
@@ -492,7 +493,7 @@ export function createCompilerTimerShimLoweringBoundary<
       if (!owns(entry)) return true;
       input.sealDeferred();
       if (input.ownerFailed(entry.terminalOwnerUnitId)) return false;
-      if (process.env.JS2WASM_TEST_INJECT_IR_PREPARED_TIMER_SHIM_FAILURE === "lower") {
+      if (readEnv("JS2WASM_TEST_INJECT_IR_PREPARED_TIMER_SHIM_FAILURE") === "lower") {
         throw new IrUnsupportedError(
           "late-preparation-unsupported",
           "resolve",

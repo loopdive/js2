@@ -1,0 +1,517 @@
+{
+  "schema": "ir-runtime-preparation-relocation-v1",
+  "baseMain": "3444df3d6d355aa745301ee248ce8f7ea2a80be7",
+  "currentPaths": ["src/ir/intrinsic-support.ts", "src/ir/runtime/intrinsic-preparation.ts"],
+  "restoredPath": "src/ir/intrinsic-support.ts",
+  "before": {
+    "path": "src/ir/intrinsic-support.ts",
+    "bytes": 49626,
+    "sha256": "03e5d583b91a7589481c80e1ca1dd5a621fee3e593f5ca9537f9c573b8925e40"
+  },
+  "implementation": {
+    "path": "src/ir/runtime/intrinsic-preparation.ts",
+    "bytes": 49541,
+    "sha256": "bd27170fd1df4a9bbad2874e5f2db34bc455fb6807b26523da4be8c182f3622b"
+  },
+  "facade": {
+    "path": "src/ir/intrinsic-support.ts",
+    "bytes": 850,
+    "sha256": "584322a7384556a6f3b82dc85cc30c2213510fe70f2cd437ccbef97826156351"
+  },
+  "facadeText": "// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.\n\nexport {\n  preparedGeneratorNumberBoxProvider,\n  preparedStringCompareProvider,\n  preparedStringEqProvider,\n  preparedStringLenProvider,\n  preparedStringConcatProvider,\n  preparedStringCharCodeAtProvider,\n  preparedStringConcatManyProvider,\n  stringConstFeatureFor,\n  preparedStringConstProvider,\n  preparedHostCallbackWrapProvider,\n  preparedFunctionPrototypeCallProvider,\n  IrRuntimeFunctionPreparationError,\n  prepareIrRuntimeManifest,\n} from \"./runtime/intrinsic-preparation.js\";\nexport type { IrRuntimeManifestDemands, PrepareIrRuntimeManifestInput } from \"./runtime/intrinsic-preparation.js\";\nexport type { PreparedIrRuntimeManifest } from \"./runtime/contracts/prepared.js\";\nexport { verifyIrIntrinsicInstruction } from \"./runtime/intrinsic-verification.js\";\n",
+  "literalOccurrences": 23,
+  "segments": [
+    {
+      "kind": "unchanged",
+      "beforeStart": 0,
+      "beforeEnd": 133,
+      "afterStart": 0,
+      "afterEnd": 133,
+      "beforeSha256": "a2db379db5b1ea16c4e003b9428c26753a114d5ba047a9e38f886262e1a554c7",
+      "afterSha256": "a2db379db5b1ea16c4e003b9428c26753a114d5ba047a9e38f886262e1a554c7"
+    },
+    {
+      "kind": "module-literal",
+      "beforeStart": 133,
+      "beforeEnd": 164,
+      "afterStart": 133,
+      "afterEnd": 156,
+      "beforeSha256": "3c4f40848cf41a3954bbf4501fbd2df976801b3f587cb5081bdb85efcf02510f",
+      "afterSha256": "2fb3e3911c7c9d48bdbe904af3ec3a9759601a6da92da82f35a983be2d4f806f",
+      "ordinal": 0,
+      "beforeText": "./runtime/contracts/prepared.js",
+      "afterText": "./contracts/prepared.js"
+    },
+    {
+      "kind": "unchanged",
+      "beforeStart": 164,
+      "beforeEnd": 215,
+      "afterStart": 156,
+      "afterEnd": 207,
+      "beforeSha256": "674120f59d2e9c94c6a1861f8f7619bbf72c4259461793eed8fbc821b878698b",
+      "afterSha256": "674120f59d2e9c94c6a1861f8f7619bbf72c4259461793eed8fbc821b878698b"
+    },
+    {
+      "kind": "module-literal",
+      "beforeStart": 215,
+      "beforeEnd": 246,
+      "afterStart": 207,
+      "afterEnd": 230,
+      "beforeSha256": "3c4f40848cf41a3954bbf4501fbd2df976801b3f587cb5081bdb85efcf02510f",
+      "afterSha256": "2fb3e3911c7c9d48bdbe904af3ec3a9759601a6da92da82f35a983be2d4f806f",
+      "ordinal": 1,
+      "beforeText": "./runtime/contracts/prepared.js",
+      "afterText": "./contracts/prepared.js"
+    },
+    {
+      "kind": "unchanged",
+      "beforeStart": 246,
+      "beforeEnd": 353,
+      "afterStart": 230,
+      "afterEnd": 337,
+      "beforeSha256": "e0bab4687b514f17508648e73a7a302669eece8dc56ba35a81cba1f698cae65e",
+      "afterSha256": "e0bab4687b514f17508648e73a7a302669eece8dc56ba35a81cba1f698cae65e"
+    },
+    {
+      "kind": "module-literal",
+      "beforeStart": 353,
+      "beforeEnd": 380,
+      "afterStart": 337,
+      "afterEnd": 365,
+      "beforeSha256": "e66f56726ff3399c1c85f0bf9b7d7915961057d55ee64a795d1ff4190d8b297b",
+      "afterSha256": "d6986fcb4d8e73352b02b0fe8ff692a4af86a3f2f92a18a32a1f9d7737b61354",
+      "ordinal": 2,
+      "beforeText": "./core/callable-bindings.js",
+      "afterText": "../core/callable-bindings.js"
+    },
+    {
+      "kind": "unchanged",
+      "beforeStart": 380,
+      "beforeEnd": 418,
+      "afterStart": 365,
+      "afterEnd": 403,
+      "beforeSha256": "dc6a271ff93d69161e05c4fdd71d61a3df231bb568ab9ec2dbf74463dd43347a",
+      "afterSha256": "dc6a271ff93d69161e05c4fdd71d61a3df231bb568ab9ec2dbf74463dd43347a"
+    },
+    {
+      "kind": "module-literal",
+      "beforeStart": 418,
+      "beforeEnd": 442,
+      "afterStart": 403,
+      "afterEnd": 428,
+      "beforeSha256": "0f5f661ce7b24c25cf9ffaf94ea8e6e42df77d292ebdf23cb335728c364b7c53",
+      "afterSha256": "9bd7b48a88219548d411ba9824cba0301ff73490bee7152754ed064449cec554",
+      "ordinal": 3,
+      "beforeText": "./analysis/async-plan.js",
+      "afterText": "../analysis/async-plan.js"
+    },
+    {
+      "kind": "unchanged",
+      "beforeStart": 442,
+      "beforeEnd": 491,
+      "afterStart": 428,
+      "afterEnd": 477,
+      "beforeSha256": "3202ffcb3e743b3335939b3dcc988a6a0256f2def17d3c607988a838b87157aa",
+      "afterSha256": "3202ffcb3e743b3335939b3dcc988a6a0256f2def17d3c607988a838b87157aa"
+    },
+    {
+      "kind": "module-literal",
+      "beforeStart": 491,
+      "beforeEnd": 520,
+      "afterStart": 477,
+      "afterEnd": 498,
+      "beforeSha256": "95107d67f259daf0e3d331b7f063c9a7951dc3d04048c4b47342b213e8fe1426",
+      "afterSha256": "0edb09d1227eefa29a7cefeca1e52b2b823a293694ac46c444bc6d9c167c60e8",
+      "ordinal": 4,
+      "beforeText": "./runtime/async-attachment.js",
+      "afterText": "./async-attachment.js"
+    },
+    {
+      "kind": "unchanged",
+      "beforeStart": 520,
+      "beforeEnd": 557,
+      "afterStart": 498,
+      "afterEnd": 535,
+      "beforeSha256": "244becd65759a08394b98221145142b8e01a8455e9ba1ee0cbf47a4d26874420",
+      "afterSha256": "244becd65759a08394b98221145142b8e01a8455e9ba1ee0cbf47a4d26874420"
+    },
+    {
+      "kind": "module-literal",
+      "beforeStart": 557,
+      "beforeEnd": 577,
+      "afterStart": 535,
+      "afterEnd": 556,
+      "beforeSha256": "a9f7b7a6b28969c19f4bfea168177f0af11dd924f65583bf8a0b89fa8a944c35",
+      "afterSha256": "87a7bf0e2e2d5baad2f51ae1c7e2d8953b76c8714116968f339214e7d39ed9a7",
+      "ordinal": 5,
+      "beforeText": "./core/async-plan.js",
+      "afterText": "../core/async-plan.js"
+    },
+    {
+      "kind": "unchanged",
+      "beforeStart": 577,
+      "beforeEnd": 700,
+      "afterStart": 556,
+      "afterEnd": 679,
+      "beforeSha256": "9571dafb0b5fc0279b5b1bc4b49fc3e6a4687357f5d22891cedd2e1d2e8271ac",
+      "afterSha256": "9571dafb0b5fc0279b5b1bc4b49fc3e6a4687357f5d22891cedd2e1d2e8271ac"
+    },
+    {
+      "kind": "module-literal",
+      "beforeStart": 700,
+      "beforeEnd": 728,
+      "afterStart": 679,
+      "afterEnd": 699,
+      "beforeSha256": "e159ec6be492e0c0a69f953727a06628849750bc1625edb827c7da290406cf4f",
+      "afterSha256": "d1f29101aa81109973548b9960b10eda3df2158837ac7da51f28d42999afdda7",
+      "ordinal": 6,
+      "beforeText": "./runtime/async-providers.js",
+      "afterText": "./async-providers.js"
+    },
+    {
+      "kind": "unchanged",
+      "beforeStart": 728,
+      "beforeEnd": 998,
+      "afterStart": 699,
+      "afterEnd": 969,
+      "beforeSha256": "cc0e5d4a3483e4f1bb4fa5f3ef20d574ea39118b362f417960e9f3a3a44e7cf3",
+      "afterSha256": "cc0e5d4a3483e4f1bb4fa5f3ef20d574ea39118b362f417960e9f3a3a44e7cf3"
+    },
+    {
+      "kind": "module-literal",
+      "beforeStart": 998,
+      "beforeEnd": 1028,
+      "afterStart": 969,
+      "afterEnd": 991,
+      "beforeSha256": "5ccb78ee088d2140bf928dd911b86f1e8f7ae4a05168a2d4c27bd15113bc92cb",
+      "afterSha256": "68001b988bc00d9ab5fafb464ebafa28ef875c7529e614a2ecaab7370a3eb781",
+      "ordinal": 7,
+      "beforeText": "./runtime/host-capabilities.js",
+      "afterText": "./host-capabilities.js"
+    },
+    {
+      "kind": "unchanged",
+      "beforeStart": 1028,
+      "beforeEnd": 1075,
+      "afterStart": 991,
+      "afterEnd": 1038,
+      "beforeSha256": "0348690d00458bc3ac7c30610c15c711f5f977d264a0cf549971d1e1cee23713",
+      "afterSha256": "0348690d00458bc3ac7c30610c15c711f5f977d264a0cf549971d1e1cee23713"
+    },
+    {
+      "kind": "module-literal",
+      "beforeStart": 1075,
+      "beforeEnd": 1100,
+      "afterStart": 1038,
+      "afterEnd": 1064,
+      "beforeSha256": "61ed2c5f46b3d996fa3e2f3e6ef9b95e386b2c615047b88effcba1f7dd6693b9",
+      "afterSha256": "2320b0a19af698c6573975d703c8cf82d1d050b2137515ff9edd168c5676311f",
+      "ordinal": 8,
+      "beforeText": "./core/async-callables.js",
+      "afterText": "../core/async-callables.js"
+    },
+    {
+      "kind": "unchanged",
+      "beforeStart": 1100,
+      "beforeEnd": 1149,
+      "afterStart": 1064,
+      "afterEnd": 1113,
+      "beforeSha256": "a8b76ec96257510e01fd23ea01df6fae7978abaf29d45c4712d771b8ade6cd9b",
+      "afterSha256": "a8b76ec96257510e01fd23ea01df6fae7978abaf29d45c4712d771b8ade6cd9b"
+    },
+    {
+      "kind": "module-literal",
+      "beforeStart": 1149,
+      "beforeEnd": 1183,
+      "afterStart": 1113,
+      "afterEnd": 1139,
+      "beforeSha256": "a942a94d0e9575037a451637d568e5f31f88a09f10ed6f48f5f17a53fc536cd7",
+      "afterSha256": "8746eefb4dd6d1c9c7c541f36626068ed845f07565736e1f6af25130dda324d7",
+      "ordinal": 9,
+      "beforeText": "./runtime/callable-declarations.js",
+      "afterText": "./callable-declarations.js"
+    },
+    {
+      "kind": "unchanged",
+      "beforeStart": 1183,
+      "beforeEnd": 1239,
+      "afterStart": 1139,
+      "afterEnd": 1195,
+      "beforeSha256": "e61d6a0533dfceada9bf490a5488fc30ff324988e1013745667df184a12eb499",
+      "afterSha256": "e61d6a0533dfceada9bf490a5488fc30ff324988e1013745667df184a12eb499"
+    },
+    {
+      "kind": "module-literal",
+      "beforeStart": 1239,
+      "beforeEnd": 1277,
+      "afterStart": 1195,
+      "afterEnd": 1225,
+      "beforeSha256": "b7a6daaac5f23feaf6fdbce248bef764ac457f67ea1d106899e733cb9d62015b",
+      "afterSha256": "67a8e6546444233379ceeb86af1e482f4a2a9d45b63590af23fdc6aaa65ff9d5",
+      "ordinal": 10,
+      "beforeText": "./runtime/ordinary-object-callables.js",
+      "afterText": "./ordinary-object-callables.js"
+    },
+    {
+      "kind": "unchanged",
+      "beforeStart": 1277,
+      "beforeEnd": 1474,
+      "afterStart": 1225,
+      "afterEnd": 1422,
+      "beforeSha256": "293c3f24df7c47fc63a4e626dbd616617415fe85af7579fc6b8326c195914bc3",
+      "afterSha256": "293c3f24df7c47fc63a4e626dbd616617415fe85af7579fc6b8326c195914bc3"
+    },
+    {
+      "kind": "module-literal",
+      "beforeStart": 1474,
+      "beforeEnd": 1509,
+      "afterStart": 1422,
+      "afterEnd": 1449,
+      "beforeSha256": "430bfdd1d3aaf61558494030011d6f82cbb42a8feeff1134b1a91d06d0e7b3ee",
+      "afterSha256": "0b22032d532b085e18b86c7ecc058767416d0196f745928c3d853cc6d9befedc",
+      "ordinal": 11,
+      "beforeText": "./runtime/native-async-callables.js",
+      "afterText": "./native-async-callables.js"
+    },
+    {
+      "kind": "unchanged",
+      "beforeStart": 1509,
+      "beforeEnd": 1623,
+      "afterStart": 1449,
+      "afterEnd": 1563,
+      "beforeSha256": "2edc110e2ab5d2a7e8c62bd698a1ae172d49a04f6624b975b3a9060cb7f17886",
+      "afterSha256": "2edc110e2ab5d2a7e8c62bd698a1ae172d49a04f6624b975b3a9060cb7f17886"
+    },
+    {
+      "kind": "module-literal",
+      "beforeStart": 1623,
+      "beforeEnd": 1652,
+      "afterStart": 1563,
+      "afterEnd": 1584,
+      "beforeSha256": "ef6eb1b3a8694721f652a77e7f71ea1a821819eff7092d1fc6c1c5378e8485c0",
+      "afterSha256": "be2a80e255ce5f1044287a34a45b5ce01dce1c672984799f944eefbce421d83f",
+      "ordinal": 12,
+      "beforeText": "./runtime/vector-callables.js",
+      "afterText": "./vector-callables.js"
+    },
+    {
+      "kind": "unchanged",
+      "beforeStart": 1652,
+      "beforeEnd": 1696,
+      "afterStart": 1584,
+      "afterEnd": 1628,
+      "beforeSha256": "4d3186cb5a4c2c51bde86d422050687d8942eb0c81e0e178c54ee2f0d1f96cc0",
+      "afterSha256": "4d3186cb5a4c2c51bde86d422050687d8942eb0c81e0e178c54ee2f0d1f96cc0"
+    },
+    {
+      "kind": "module-literal",
+      "beforeStart": 1696,
+      "beforeEnd": 1718,
+      "afterStart": 1628,
+      "afterEnd": 1651,
+      "beforeSha256": "5162a9cc37c4c8d06c9ca2b53e3c86047f6324e48d5fc3827be028b28d1c81b4",
+      "afterSha256": "a94dd2bf9bee160bacd0dcca2e0baade2351b9757a136b867057d5a9cd1d1443",
+      "ordinal": 13,
+      "beforeText": "./core/string-types.js",
+      "afterText": "../core/string-types.js"
+    },
+    {
+      "kind": "unchanged",
+      "beforeStart": 1718,
+      "beforeEnd": 1762,
+      "afterStart": 1651,
+      "afterEnd": 1695,
+      "beforeSha256": "8181b3d6cf2c6e1d5dc34b6036492f5c9008e97c30e7dcf4ad619696b41eb3c5",
+      "afterSha256": "8181b3d6cf2c6e1d5dc34b6036492f5c9008e97c30e7dcf4ad619696b41eb3c5"
+    },
+    {
+      "kind": "module-literal",
+      "beforeStart": 1762,
+      "beforeEnd": 1786,
+      "afterStart": 1695,
+      "afterEnd": 1720,
+      "beforeSha256": "b9d385d65090a20de37402dcba2ee916266b577651c1a18e0d27d993c4abfb70",
+      "afterSha256": "2fbdde2ee69040f738793efc2c51642c15a66ff940e8f4219b72117e19213947",
+      "ordinal": 14,
+      "beforeText": "./analysis/intrinsics.js",
+      "afterText": "../analysis/intrinsics.js"
+    },
+    {
+      "kind": "unchanged",
+      "beforeStart": 1786,
+      "beforeEnd": 1828,
+      "afterStart": 1720,
+      "afterEnd": 1762,
+      "beforeSha256": "47de683243a15b3a6b3e97be9c66b95daac367f4244b8013ea6b42312f59161d",
+      "afterSha256": "47de683243a15b3a6b3e97be9c66b95daac367f4244b8013ea6b42312f59161d"
+    },
+    {
+      "kind": "module-literal",
+      "beforeStart": 1828,
+      "beforeEnd": 1848,
+      "afterStart": 1762,
+      "afterEnd": 1783,
+      "beforeSha256": "3e23e4f609dff89fbae1fb3572820114656a1fd2b79b17bb3c2f59850be58310",
+      "afterSha256": "cc60a55c14770d16c16c24daad422594e7c1f5834842d7fa6a707db83d4496ef",
+      "ordinal": 15,
+      "beforeText": "./core/intrinsics.js",
+      "afterText": "../core/intrinsics.js"
+    },
+    {
+      "kind": "unchanged",
+      "beforeStart": 1848,
+      "beforeEnd": 1917,
+      "afterStart": 1783,
+      "afterEnd": 1852,
+      "beforeSha256": "cd5e741dbd0b3839aba7d4f975b31b01534e973742ee0be03c53acbe468545b8",
+      "afterSha256": "cd5e741dbd0b3839aba7d4f975b31b01534e973742ee0be03c53acbe468545b8"
+    },
+    {
+      "kind": "module-literal",
+      "beforeStart": 1917,
+      "beforeEnd": 1946,
+      "afterStart": 1852,
+      "afterEnd": 1882,
+      "beforeSha256": "87855a986f36ed365a7b6c7ed7abdf844db7d90a4c6a76853b2446929ad11008",
+      "afterSha256": "5d50abf46d236c4ef762f69c8d57351ef5bac1756c7ac61ce79db641bd35c5fc",
+      "ordinal": 16,
+      "beforeText": "./core/intrinsic-contracts.js",
+      "afterText": "../core/intrinsic-contracts.js"
+    },
+    {
+      "kind": "unchanged",
+      "beforeStart": 1946,
+      "beforeEnd": 2093,
+      "afterStart": 1882,
+      "afterEnd": 2029,
+      "beforeSha256": "0945c7fbba445416dc0ff5e9956dbab218bd6ee3c9de5d5667d1b01048cd6066",
+      "afterSha256": "0945c7fbba445416dc0ff5e9956dbab218bd6ee3c9de5d5667d1b01048cd6066"
+    },
+    {
+      "kind": "module-literal",
+      "beforeStart": 2093,
+      "beforeEnd": 2108,
+      "afterStart": 2029,
+      "afterEnd": 2045,
+      "beforeSha256": "d3e5676039efd2a6969a100653737416cc925e48b96a9167f535162dc8d9d63d",
+      "afterSha256": "89c33db55e0cd29690646062b80f7c086af9a7c22fc852d9b6f99a03f7546fd0",
+      "ordinal": 17,
+      "beforeText": "./core/nodes.js",
+      "afterText": "../core/nodes.js"
+    },
+    {
+      "kind": "unchanged",
+      "beforeStart": 2108,
+      "beforeEnd": 2154,
+      "afterStart": 2045,
+      "afterEnd": 2091,
+      "beforeSha256": "d0b772725e0814126488933dcdfc519b80f8c33da57a938bf3c34b95b90ace15",
+      "afterSha256": "d0b772725e0814126488933dcdfc519b80f8c33da57a938bf3c34b95b90ace15"
+    },
+    {
+      "kind": "module-literal",
+      "beforeStart": 2154,
+      "beforeEnd": 2169,
+      "afterStart": 2091,
+      "afterEnd": 2107,
+      "beforeSha256": "343cbae9013302070a94da823636138fa348e520244095b8600bb85da5a2ce92",
+      "afterSha256": "33e99c77f119513fe1582a8d6c79fe258b40c9bb1e123d4e18247d843c2f305d",
+      "ordinal": 18,
+      "beforeText": "./core/types.js",
+      "afterText": "../core/types.js"
+    },
+    {
+      "kind": "unchanged",
+      "beforeStart": 2169,
+      "beforeEnd": 2204,
+      "afterStart": 2107,
+      "afterEnd": 2142,
+      "beforeSha256": "944df73b57d93ed1b0725f5bf2e2e0cbfb01184534bb304a755ff8a315795604",
+      "afterSha256": "944df73b57d93ed1b0725f5bf2e2e0cbfb01184534bb304a755ff8a315795604"
+    },
+    {
+      "kind": "module-literal",
+      "beforeStart": 2204,
+      "beforeEnd": 2230,
+      "afterStart": 2142,
+      "afterEnd": 2169,
+      "beforeSha256": "73f5a054c73e0a46ca2c2ca52b8f074a8c017768c2825eb3f5e08bec68db2d84",
+      "afterSha256": "994d958f40cacbfa203e6764fcad53039125d4344574ef571e7be957ca3691c7",
+      "ordinal": 19,
+      "beforeText": "./core/value-references.js",
+      "afterText": "../core/value-references.js"
+    },
+    {
+      "kind": "unchanged",
+      "beforeStart": 2230,
+      "beforeEnd": 2288,
+      "afterStart": 2169,
+      "afterEnd": 2227,
+      "beforeSha256": "8b9927bd378fc4f4f91652db1aa6ba9a4949ce19f99e109b99235d1c14eb97ef",
+      "afterSha256": "8b9927bd378fc4f4f91652db1aa6ba9a4949ce19f99e109b99235d1c14eb97ef"
+    },
+    {
+      "kind": "module-literal",
+      "beforeStart": 2288,
+      "beforeEnd": 2319,
+      "afterStart": 2227,
+      "afterEnd": 2250,
+      "beforeSha256": "3c4f40848cf41a3954bbf4501fbd2df976801b3f587cb5081bdb85efcf02510f",
+      "afterSha256": "2fb3e3911c7c9d48bdbe904af3ec3a9759601a6da92da82f35a983be2d4f806f",
+      "ordinal": 20,
+      "beforeText": "./runtime/contracts/prepared.js",
+      "afterText": "./contracts/prepared.js"
+    },
+    {
+      "kind": "unchanged",
+      "beforeStart": 2319,
+      "beforeEnd": 2368,
+      "afterStart": 2250,
+      "afterEnd": 2299,
+      "beforeSha256": "2838ccc4c4a9609de9fc991d26b1f991380c1b074940ec7a315c5c3a6c23275d",
+      "afterSha256": "2838ccc4c4a9609de9fc991d26b1f991380c1b074940ec7a315c5c3a6c23275d"
+    },
+    {
+      "kind": "module-literal",
+      "beforeStart": 2368,
+      "beforeEnd": 2403,
+      "afterStart": 2299,
+      "afterEnd": 2326,
+      "beforeSha256": "45ad87b2aa258050ffca1cf9f1a0fa4c5e37354f02a4a4f3f975a2909252c3bb",
+      "afterSha256": "ac4384bcae6ae702f6a47cfde698c26cc6e54dfbdd5bde97978a698942a5059f",
+      "ordinal": 21,
+      "beforeText": "./runtime/intrinsic-verification.js",
+      "afterText": "./intrinsic-verification.js"
+    },
+    {
+      "kind": "unchanged",
+      "beforeStart": 2403,
+      "beforeEnd": 3034,
+      "afterStart": 2326,
+      "afterEnd": 2957,
+      "beforeSha256": "4e2b5665301929172c9bdc289b97044f1cf2c7e90d2ac6a4efe93a7012f021d7",
+      "afterSha256": "4e2b5665301929172c9bdc289b97044f1cf2c7e90d2ac6a4efe93a7012f021d7"
+    },
+    {
+      "kind": "module-literal",
+      "beforeStart": 3034,
+      "beforeEnd": 3055,
+      "afterStart": 2957,
+      "afterEnd": 2970,
+      "beforeSha256": "cd8c894356caf59406bdcc1dfdbbffd73e11b65d9707714ea3250bf43877e255",
+      "afterSha256": "3d65ede5ee01030d834778d9b2da75ccb820cf659af373df335066c9a995728b",
+      "ordinal": 22,
+      "beforeText": "./runtime/manifest.js",
+      "afterText": "./manifest.js"
+    },
+    {
+      "kind": "unchanged",
+      "beforeStart": 3055,
+      "beforeEnd": 49626,
+      "afterStart": 2970,
+      "afterEnd": 49541,
+      "beforeSha256": "684ce0c58d9598afa91ece0f7c0c22a783809f17c7b994658ad6b99e8056a0b6",
+      "afterSha256": "684ce0c58d9598afa91ece0f7c0c22a783809f17c7b994658ad6b99e8056a0b6"
+    }
+  ]
+}

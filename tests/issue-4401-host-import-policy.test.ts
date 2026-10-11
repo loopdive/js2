@@ -83,17 +83,38 @@ describe("#4401 host import policy inventory", () => {
       }
     `;
 
+    // (#5385 S5) Under the native regime — the default for native-first in a JS
+    // environment — this source lowers on the native Promise provider and
+    // publishes with zero legacy/unknown imports.
     const native = await compile(source, {
-      fileName: "issue-4401-native-first-refusal.ts",
+      fileName: "issue-4401-native-first-regime.ts",
       semanticProviders: "native-first",
     });
-    expect(native.success).toBe(false);
-    expect(native.binary).toHaveLength(0);
-    const diagnostic = native.errors.map((error) => error.message).join("; ");
-    expect(diagnostic).toContain("Native-first semantic-provider policy rejected");
-    expect(diagnostic).toContain("env::__new_Promise (legacy-semantic");
-    expect(diagnostic).toContain("env::__tag_user_class (unknown");
-    expect(diagnostic).not.toContain("FileSystemDirectoryHandle_resolve");
+    expect(native.success, native.errors.map((error) => error.message).join("; ")).toBe(true);
+    expect(native.hostImportSummary?.byClassification["legacy-semantic"]).toBe(0);
+    expect(native.hostImportSummary?.byClassification.unknown).toBe(0);
+
+    // The kill switch restores the pre-regime per-family reroute, where the
+    // same source is refused BEFORE publication rather than silently recovering
+    // the host Promise semantic fallback.
+    const previous = process.env.JS2WASM_NATIVE_REGIME_JS;
+    process.env.JS2WASM_NATIVE_REGIME_JS = "0";
+    try {
+      const refused = await compile(source, {
+        fileName: "issue-4401-native-first-refusal.ts",
+        semanticProviders: "native-first",
+      });
+      expect(refused.success).toBe(false);
+      expect(refused.binary).toHaveLength(0);
+      const diagnostic = refused.errors.map((error) => error.message).join("; ");
+      expect(diagnostic).toContain("Native-first semantic-provider policy rejected");
+      expect(diagnostic).toContain("env::__new_Promise (legacy-semantic");
+      expect(diagnostic).toContain("env::__tag_user_class (unknown");
+      expect(diagnostic).not.toContain("FileSystemDirectoryHandle_resolve");
+    } finally {
+      if (previous === undefined) Reflect.deleteProperty(process.env, "JS2WASM_NATIVE_REGIME_JS");
+      else process.env.JS2WASM_NATIVE_REGIME_JS = previous;
+    }
 
     const compatibility = await compile(source, {
       fileName: "issue-4401-compatibility-promise-subclass.ts",
@@ -104,7 +125,64 @@ describe("#4401 host import policy inventory", () => {
     );
   });
 
-  it("preserves target-derived standalone compatibility fallbacks until native-first is explicitly selected", async () => {
+  describe("#6707 linker-owned shared exception tag", () => {
+    const source = `export function boom(n: number): number { if (n > 0) throw new Error("x"); return n; }`;
+    const compileShared = async (regime: "1" | "0") => {
+      const previous = process.env.JS2WASM_NATIVE_REGIME_JS;
+      process.env.JS2WASM_NATIVE_REGIME_JS = regime;
+      try {
+        return await compile(source, {
+          fileName: `issue-6707-shared-exn-${regime}.ts`,
+          semanticProviders: "native-first",
+          sharedExceptionTag: true,
+        });
+      } finally {
+        if (previous === undefined) Reflect.deleteProperty(process.env, "JS2WASM_NATIVE_REGIME_JS");
+        else process.env.JS2WASM_NATIVE_REGIME_JS = previous;
+      }
+    };
+
+    it("keys on the non-func manifest kind, not on the name alone", () => {
+      const intent = { type: "builtin", name: "__exn" } as const;
+      expect(classifyHostImport({ ...descriptor("__exn", intent), kind: "global" })).toMatchObject({
+        classification: "instance-lifecycle",
+        family: "shared-exception-tag",
+        ownerIssue: 5226,
+        nativeFallback: true,
+      });
+      expect(classifyHostImport(descriptor("__exn", intent))).toMatchObject({ classification: "unknown" });
+    });
+
+    for (const regime of ["1", "0"] as const) {
+      it(`classifies env.__exn as instance-lifecycle and publishes (JS2WASM_NATIVE_REGIME_JS=${regime})`, async () => {
+        const result = await compileShared(regime);
+        expect(result.success, result.errors.map((error) => error.message).join("; ")).toBe(true);
+        expect(result.binary.length).toBeGreaterThan(0);
+        const tags = (result.hostImportInventory ?? []).filter((entry) => entry.name === "__exn");
+        expect(tags).toEqual([
+          expect.objectContaining({
+            module: "env",
+            kind: "tag",
+            classification: "instance-lifecycle",
+            family: "shared-exception-tag",
+            ownerIssue: 5226,
+            nativeFallback: true,
+          }),
+        ]);
+        expect(result.hostImportSummary).toMatchObject({
+          byClassification: { "legacy-semantic": 0, unknown: 0 },
+        });
+      });
+    }
+  });
+
+  it("keeps a standalone generator on the native carrier whether or not native-first is spelled out", async () => {
+    // Historical note: this test once pinned a transitional state in which the
+    // standalone target still leaked `__create_generator` unless native-first
+    // was explicit, and the explicit selection was refused. The native
+    // generator carrier has since landed (#3178 lineage), so both selections
+    // now publish the same host-free module. Kept as a guard against either
+    // arm regressing to a host semantic import.
     const source = `
       export function run(): number {
         const make = function* () { return arguments.length; };
@@ -112,28 +190,18 @@ describe("#4401 host import policy inventory", () => {
       }
     `;
 
-    const compatibility = await compile(source, {
-      fileName: "issue-4401-standalone-generator-fallback.ts",
-      target: "standalone",
-      skipSemanticDiagnostics: true,
-    });
-    expect(compatibility.success, compatibility.errors.map((error) => error.message).join("; ")).toBe(true);
-    expect(compatibility.targetProfile?.semanticProviders).toBe("native-first");
-    expect(compatibility.hostImportInventory).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ name: "__create_generator", classification: "legacy-semantic" }),
-      ]),
-    );
-
-    const explicit = await compile(source, {
-      fileName: "issue-4401-explicit-native-generator-refusal.ts",
-      target: "standalone",
-      semanticProviders: "native-first",
-      skipSemanticDiagnostics: true,
-    });
-    expect(explicit.success).toBe(false);
-    expect(explicit.errors.map((error) => error.message).join("; ")).toContain(
-      "Native-first semantic-provider policy rejected",
-    );
+    for (const semanticProviders of [undefined, "native-first"] as const) {
+      const result = await compile(source, {
+        fileName: `issue-4401-standalone-generator-${semanticProviders ?? "auto"}.ts`,
+        target: "standalone",
+        ...(semanticProviders ? { semanticProviders } : {}),
+        skipSemanticDiagnostics: true,
+      });
+      expect(result.success, result.errors.map((error) => error.message).join("; ")).toBe(true);
+      expect(result.targetProfile?.semanticProviders).toBe("native-first");
+      expect(result.hostImportSummary?.total).toBe(0);
+      expect(result.hostImportSummary?.byClassification["legacy-semantic"]).toBe(0);
+      expect(result.hostImportSummary?.byClassification.unknown).toBe(0);
+    }
   });
 });

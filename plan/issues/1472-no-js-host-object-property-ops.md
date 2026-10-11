@@ -4,7 +4,7 @@ title: "host-independence: eliminate JS host object/property ops for standalone 
 status: ready
 pr: 1047
 created: 2026-05-20
-updated: 2026-06-03
+updated: 2026-10-10
 completed: 2026-06-04
 priority: high
 feasibility: medium
@@ -1315,3 +1315,251 @@ honest refusals (protects the conformance number) before the real generic arm.
 ## Reopened 2026-07-20 (harvest cross-reference)
 
 Marked `status: done` but the test262 harvest shows **942 live failures still citing #1472** in the error field. Premature close — reopened as `ready`. See the sprint-73 harvest note.
+
+## Phase B Slice — standalone `Buffer.m(...)` receiver (axios lane, 2026-09-26)
+
+Narrow arm only; the rest of Phase B (a Wasm-native dynamic-key table for
+builtin receivers in general) is unchanged and still open.
+
+### Implementation Plan (executed)
+
+- **Site.** axios's standalone-dynamic lane refused at
+  `combined-stream/lib/combined_stream.js:37:10`, `!Buffer.isBuffer(stream)`
+  in `CombinedStream.isStreamLike` (reached from form-data). `Buffer` is in
+  `BUILTIN_CLASS_NAMES` for the JS-host lane (#1793), so the generic
+  `(#799 WI3)` static-method arm of `compileReceiverMethodCall` resolved the
+  receiver through `__get_builtin("Buffer")`, which standalone refuses at
+  compile time — for the whole graph.
+- **Semantics.** A standalone module has no `Buffer` (the builtin is
+  JS-host-only by design). The receiver is therefore an ordinary reference to
+  an unresolvable name: `ReferenceError: Buffer is not defined`, thrown before
+  any argument is evaluated (§13.3.6.1). A bare `Buffer` read already lowered
+  that way; only the call arm bypassed it.
+- `src/codegen/standalone-unavailable-globals.ts`:
+  `isHostResolvedBuiltinReceiver(ctx, receiver)` — the `BUILTIN_CLASS_NAMES`
+  test, minus `Buffer` under `ctx.standalone`. `call-receiver-method.ts` uses it
+  in place of the inline test (net 0 lines there), so the receiver compiles via
+  `compileExpression` (ReferenceError, or the owning realm's global in a
+  context-linked module).
+- `"Buffer"` joins `STANDALONE_UNAVAILABLE_CONSTRUCTOR_GLOBALS` (#6664), so the
+  ambient `--emulate node` declaration also folds `typeof Buffer` to
+  `"undefined"` and throws ReferenceError on read / `new` (parent: `typeof`
+  answered non-`"undefined"`, `new Buffer(3)` threw a non-ReferenceError,
+  `Buffer.from("x")` CE'd).
+
+### Resolution
+
+- Regression test `tests/issue-1472-standalone-buffer-receiver.test.ts`:
+  parent **2 failed / 1 passed**, fix **3 / 3** (the user-declared
+  `var Buffer = {...}` row passes both ways — anti-vacuity control).
+- npm-compat axios, `--only axios --no-write --perf-only --lane standalone-dynamic`,
+  same checkout, parent vs fix:
+  - parent: `compile-error` — `Codegen error: '__get_builtin' (dynamic-shape object/property operation) is not yet supported in --target standalone (#1472 Phase B). …`
+  - fix: `compile-error` — `Internal error compiling function 'redactConfig': codegen invariant (#2182): liveBodies unbalanced after compiling 'redactConfig' (entry=1, exit=2) — a detached-body liveBodies.add() is missing its matching .delete(), risking funcIdx over-shift.`
+    Filed as [#6682](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6682-standalone-axios-redactconfig-livebodies-unbalanced).
+- Scoped STANDALONE test262 (`scripts/run-test262-paths.mts --standalone`, 205
+  rows: `language/expressions/typeof`, `language/expressions/call`,
+  `language/identifier-resolution`, `language/global-code`,
+  `built-ins/Array/isArray`, `built-ins/ArrayBuffer/isView`): parent
+  **161 pass / 44 fail**, fix **161 / 44**, identical per-row verdicts (26 of
+  the fails are the local box's missing quickjs eval provider, both sides).
+- JS-host and WASI output byte-identical (sha256 of `gc`/`wasi` compiles of
+  `combined_stream.js` and a `Buffer.isBuffer`/`typeof Buffer`/`Buffer.from`
+  fixture, with and without `emulateNode`). Everything is gated on
+  `ctx.standalone`.
+- JS-host dogfood control: `tests/dogfood/axios-upstream-suite.mjs` 208/231.
+
+### Residuals
+
+- Only `Buffer` is excluded. Every other `BUILTIN_CLASS_NAMES` receiver with a
+  method no native arm recognises (`Math.unknownFn(x)`) still reaches
+  `__get_builtin` and refuses — that is the general Phase B table.
+- A linked standalone module (`standaloneGlobalThisImport`) with an ambient
+  `--emulate node` `Buffer` keeps the pre-existing declared-global read.
+
+## Phase B Slice — standalone `Error.captureStackTrace(...)` receiver (tailwindcss lane, 2026-09-28)
+
+Second narrow arm on the same `isHostResolvedBuiltinReceiver` predicate the
+axios slice (PR #6114) introduced. The general Phase B table is still open.
+
+### Implementation Plan (executed)
+
+- **Site.** tailwindcss's standalone-dynamic lane refused at
+  `package/dist/lib.mjs:3:2884` — the `CssSyntaxError` constructor's
+  `Error.captureStackTrace&&Error.captureStackTrace(this,e)`. `Error` is in
+  `BUILTIN_CLASS_NAMES`, so the generic `(#799 WI3)` static-method arm of
+  `compileReceiverMethodCall` resolved the receiver through
+  `__get_builtin("Error")`, which standalone refuses for the whole graph.
+  (Located with a temporary stack dump in `refuseStandaloneObjectImport`,
+  not committed.)
+- **Semantics.** `captureStackTrace` is a V8 extension, not an ECMAScript
+  static; a host-free realm's native error constructors do not have it.
+  The bare read already answered `undefined` in standalone
+  (`typeof Error.captureStackTrace` → `"undefined"`, so the `&&` guard
+  short-circuits). An unguarded call must therefore evaluate its arguments and
+  then throw `TypeError` (EvaluateCall), which is what the native
+  `__extern_method_call` dispatch on the ordinary `Error` binding does.
+- `src/codegen/standalone-unavailable-globals.ts`:
+  `isHostResolvedBuiltinReceiver(ctx, receiver, methodName)` now also returns
+  false under `ctx.standalone` for `captureStackTrace` on the seven native error
+  constructors (`STANDALONE_ERROR_CONSTRUCTORS`). `call-receiver-method.ts`
+  passes `methodName` (one-line change).
+- **Deliberately NOT widened** to every builtin receiver. Tried and measured:
+  with every standalone builtin receiver made ordinary, `Error.call(this, m)`
+  and `TypeError.apply(null, ["z"])` compile but THROW at run time (the native
+  error constructor value does not expose `Function.prototype.call`/`apply`
+  through the generic dispatch) — a silent wrong answer in place of an honest
+  compile error. They keep the refusal.
+
+### Resolution
+
+- Regression test `tests/issue-1472-standalone-capture-stack-trace.test.ts`:
+  parent **2 failed / 1 passed**, fix **3 / 3** (the user-declared
+  `var Error = {captureStackTrace}` row passes both ways — anti-vacuity
+  control). Covers the guarded tailwind shape, `typeof` absence, the
+  unguarded call (TypeError after `n++` ran), and `RangeError.captureStackTrace`.
+- npm-compat tailwindcss, `--only tailwindcss --no-write --perf-only --lane standalone-dynamic`,
+  same checkout, parent vs fix:
+  - parent: `compile-error` — `Codegen error: '__get_builtin' (dynamic-shape object/property operation) is not yet supported in --target standalone (#1472 Phase B). Use a typed object literal or class instance for fast-path codegen, which compiles to struct.get/struct.set with no JS host imports.`
+  - fix: `compile-error` — `Codegen error: native generator lowering currently supports only sequential numeric yields in standalone/WASI targets (#680). Recompile with a JS host target for complex generator shapes.`
+  - Full fix-side error list (13, none cites #1472): 7 × #680 generator
+    shapes (`lib.mjs` 12:2985, 12:6739, 15:26560, 16:1078, 16:2978, 16:13983,
+    21:2285); 2 × struct hierarchy layout invalid (subtypes `U` /
+    `__anonClass_68` of `Map` no longer an exact mutable-field prefix);
+    1 × stack-balance invariant (`__anon_86_parseCandidate` references local
+    37 of 13); host-import-leak warnings `env.Promise_all`,
+    `env.Intl_ListFormat_new`, `env.Intl_ListFormat_format`.
+- Scoped STANDALONE test262 (`scripts/run-test262-paths.mts --standalone`,
+  187 rows: `built-ins/Error`, `built-ins/NativeErrors`): parent
+  **131 pass / 47 fail / 9 CE**, fix **131 / 47 / 9**, identical per-row
+  verdicts.
+- JS-host and WASI output byte-identical (sha256 of `gc`/`wasi` compiles of the
+  CssSyntaxError fixture and an `Error.call`/`TypeError.apply`/
+  `RangeError.captureStackTrace` fixture). The new branch sits behind
+  `ctx.standalone`.
+- JS-host dogfood control: `tests/dogfood/tailwindcss-upstream-suite.mjs` 13/13.
+
+### Shapes that still reach `__get_builtin` in standalone (remaining Phase B)
+
+- `NativeError.call(this, m)` / `NativeError.apply(o, args)` — the ES5
+  error-subclass pattern; widening the receiver makes it throw instead of CE
+  (see above), so the native error constructor needs a callable
+  `call`/`apply` path through `__extern_method_call` first.
+- Any other `BUILTIN_CLASS_NAMES` receiver with a method no dedicated native arm
+  recognises (`Math.unknownFn(x)`, `Object.<non-folded static>(…)`,
+  `Promise.<static>` outside the handled set) — the general builtin-static
+  table.
+- The other `__get_builtin` call sites are untouched by both slices:
+  `property-access-dispatch.ts` (two builtin-property reads),
+  `fixed-host-method-call.ts`, `call-builtin-static.ts` and
+  `expressions/extern.ts`.
+
+## Octane raytrace evidence — `Object.extend` expando on a builtin constructor (Session C, 2026-10-10)
+
+Found by the Octane triage for
+[#874](https://js2wasm.loopdive.com/dashboard/issue.html?slug=874-benchmark-compare-all-js-to).
+Octane `raytrace.js` (pinned Octane commit
+`570ad1ccfe86e3eecba0636c8f932ac08edec517`) does not compile with
+`target: "standalone"` on `origin/main` 01e4888aae:
+
+```
+Codegen error: '__get_builtin' (dynamic-shape object/property operation) is not yet
+supported in --target standalone (#1472 Phase B). …
+```
+
+(gc host compiles; it fails at RUNTIME instead — see "out of scope" below.)
+This is the "`Object.<non-folded static>(…)`" row of the remaining-shapes list
+above, with a real-world shape attached: Prototype.js 1.5's
+
+```js
+Object.extend = function(destination, source) {       // raytrace.js:41 (top level)
+  for (var property in source) destination[property] = source[property];
+  return destination;
+};
+Flog.RayTracer.Material.Solid.prototype = Object.extend(new Flog.RayTracer.Material.BaseMaterial(), {…}); // :357, :382
+this.options = Object.extend({ … }, options);          // :608, inside a method
+```
+
+### Minimized (standalone; node answers in the right column)
+
+| program | js2 standalone | node |
+|---|---|---|
+| `Object.extend = function(d,s){…}; export function run(){ return Object.extend({}, {a:1}).a; }` | compile error (`__get_builtin` refusal) | `1` |
+| `Object.extend = function(){…}; export function run(){ return typeof Object.extend; }` | `"undefined"` (compiles; the top-level write is DROPPED) | `"function"` |
+| write + call both INSIDE `run()` | compile error (`__get_builtin` refusal) | `1` |
+
+So two separate gaps, both needed for raytrace:
+
+1. **The call.** `Object.extend(a, b)` reaches the generic host-delegated arm
+   (#799 WI3) in `src/codegen/expressions/call-receiver-method.ts` (≈L4799):
+   `isHostResolvedBuiltinReceiver(ctx, "Object", "extend")`
+   (`src/codegen/standalone-unavailable-globals.ts:165`) answers true for every
+   `BUILTIN_CLASS_NAMES` receiver except the two narrow arms already carved out
+   (`Buffer`, `Error.captureStackTrace`), so the receiver is lowered as
+   `__get_builtin("Object")`, which `refuseStandaloneObjectImport`
+   (`src/codegen/expressions/late-imports.ts:112`) turns into the whole-file
+   compile error. The fixed-arity bridge (`fixed-host-method-call.ts`) is
+   host-only and not involved.
+2. **The write.** The top-level `Object.extend = function …` statement is
+   discarded by `collectDeclarations` (`src/codegen/declarations.ts:4438` →
+   `shouldKeepBuiltinReceiverWrite`, `src/codegen/builtin-write-keeps.ts`):
+   the #4199 keep is limited to `EXPANDO_NAMESPACES = {Math, JSON, Reflect}`
+   and excludes `Object`/`Array` because they claim static props. A write
+   inside a function body does land (same as #4199's precondition case), which
+   is why the in-body variant fails only at the call.
+
+### Implementation Plan (standalone only; host/GC output byte-identical)
+
+Owner note: these files are in Session A's WasmGC/shared-IR area; the
+implementation is done by Session C at the project lead's direction. Exact
+functions so A can check overlap:
+
+- `src/codegen/builtin-write-keeps.ts` — `isBuiltinNamespaceExpandoWriteTarget`
+  / `shouldKeepBuiltinReceiverWrite`: also keep a top-level expando write whose
+  receiver is a builtin CONSTRUCTOR carrier (`Object`, `Array`, `Function`,
+  `String`, …, the #3006/#2907 `__builtin_ctor_<N>` set) when the property is
+  NOT on its own static surface (`BUILTIN_STATIC_METHOD_ARITY[ns][prop]`
+  undefined, and not `prototype`/`length`/`name`). `Object.keys = …` stays
+  dropped for the #4199 reason (the static call site never consults the bag);
+  `Object.extend = …` is kept and lands on the carrier through the ordinary
+  property-write arm, which is what the in-body form already does.
+- `src/codegen/standalone-unavailable-globals.ts` —
+  `isHostResolvedBuiltinReceiver`: under `ctx.standalone`, answer false when
+  `BUILTIN_STATIC_METHOD_ARITY[receiver]?.[methodName] === undefined` for a
+  carrier-backed builtin (same test `builtin-static-expando.ts` uses to decide
+  "no modelled value"). The receiver then compiles as the carrier VALUE (the
+  #4639 C2 ordinary [[Get]] in `tryEmitBuiltinStaticExpandoRead` finds the
+  expando), and the call takes the existing dynamic method-call path
+  (`__call_fn_method_N`, receiver = the carrier) — §13.3.6.1 EvaluateCall: a
+  missing expando throws `TypeError: … is not a function` AFTER the arguments
+  are evaluated, not a compile error. Receivers with a modelled static keep
+  their native arm untouched.
+- `src/codegen/expressions/call-receiver-method.ts` (≈L4790–4810): no logic
+  change expected beyond honouring the predicate; verify the
+  `receiverIsBuiltin === false` branch compiles the receiver via
+  `compileExpression` (as it does for `Buffer`).
+
+Regression tests through the public `compile()` vs node
+(`tests/issue-1472-standalone-builtin-ctor-expando.test.ts`): the three rows
+above (expect `1`, `"function"`, `1`); negative controls: `Object.keys({a:1})`
+still takes the native static path (no expando read emitted), `Math.PI = 3`
+still dropped (§21.3.1 non-writable), `Buffer.isBuffer(x)` still
+`ReferenceError`, `Object.nope(1)` throws `TypeError` at runtime (not CE), and
+the gc-host compile of the same programs is byte-identical to before.
+Acceptance for #874: `raytrace.js` + `base.js` compiles with
+`target: "standalone"`.
+
+### Out of scope here (gc-host RUNTIME failures of raytrace, same session)
+
+Both reproduce on the gc host and are NOT #1472 shapes; they need their own
+issues once minimized further:
+
+- `var Class = { create: function(){ return function(){ this.initialize.apply(this, arguments); } } }; var P = Class.create(); P.prototype = { initialize: function(x){ this.x = x; } }; new P(3).x` —
+  gc: `TypeError: Cannot read properties of null (reading 'apply')`
+  (standalone: `… of undefined (reading 'apply')`); node `3`.
+- `var Flog = {}; Flog.RayTracer = {}; Flog.RayTracer.Color = function(r){ this.r = r; }; new Flog.RayTracer.Color(2).r` —
+  gc: Wasm exception; standalone: `TypeError: Cannot access property on null or undefined`; node `2`.
+
+Ledger note: the `1472-getprototypeof-es5` slice claim (codex,
+2026-07-28, `codex/1472-es5-object-getprototypeof`) is for a different slice
+and has been idle since; `pre-dispatch-gate.mjs 1472` reports no live claim.

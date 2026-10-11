@@ -25,6 +25,13 @@ scripts/wasm-exec-worker.mjs
 *.wasm
 *.wat
 
+# (#6717) These are byte-pinned upstream CLDR inputs and a generator-owned
+# derived table. lint-staged's JSON formatter would otherwise rewrite them,
+# invalidating the checked provenance hashes or the generator --check proof.
+# The generator, not Prettier, is the authority for their deterministic bytes.
+assets/intl/pinned-input/**
+assets/intl/generated/**
+
 # Acorn differential-corpus parse inputs (#1712) — deliberate, sometimes
 # non-idiomatic JS (e.g. `new Bar` without parens, octal/hex string escapes)
 # crafted to exercise specific parser node kinds. Prettier would rewrite the

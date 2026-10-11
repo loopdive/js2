@@ -7,6 +7,12 @@ import { allocLocal, getLocalType } from "../context/locals.js";
 import { localGlobalIdx } from "../registry/imports.js";
 import { coerceType, compileExpression, valTypesMatch } from "../shared.js";
 import { emitTdzCheckAtGlobal } from "../statements/tdz.js";
+import {
+  emitGlobalEnvironmentKey,
+  emitGlobalEnvironmentObject,
+  ensureGlobalEnvironmentOperation,
+} from "../global-environment.js";
+import { isStrictContext } from "../helpers/is-strict-function.js";
 import { emitThrowTypeError, isConstIdentifierAssignmentTarget } from "./helpers.js";
 import {
   analyzeTdzAccess as analyzeIdentifierTdzAccess,
@@ -73,6 +79,79 @@ export function tryConstSet(
     fctx.body.push({ op: "unreachable" });
   }
   return isConst || hasTdzFlag;
+}
+
+/**
+ * (#6651 A7) `name = rhs` where `name` is a named function expression's OWN
+ * name: the binding §15.2.5 (and its generator/async twins) creates with
+ * `CreateImmutableBinding(name, false)`. §9.1.1.1.5 SetMutableBinding step 5
+ * ignores the write in sloppy code and throws a TypeError in strict code; the
+ * RHS is evaluated first either way (§13.15.2), and a sloppy write yields it.
+ * Returns `undefined` when `id` does not denote that binding.
+ *
+ * `readOnlyBindings` names the frames where the binding is live; the oracle
+ * confirms `id` still resolves to it, so a same-spelled block `let`/`const`,
+ * catch parameter or loop binding (the block-scope machinery gives it its own
+ * slot) is written normally instead of swallowed. An identifier the oracle
+ * cannot resolve (inline-compiled eval code) keeps the frame's answer.
+ *
+ * (#6651 A11) A NESTED closure's write (`function* g(_ = (f = function () {
+ * g = null; })) {}`, the `scope-name-var-open` rows) runs in a frame without
+ * `readOnlyBindings`, so it overwrote the captured binding. When the oracle
+ * resolves `id` to the enclosing named function expression itself, the write
+ * targets the same immutable binding — unless a `with` or a direct `eval` in
+ * between could supply a different `g` the checker cannot see.
+ */
+export function tryFunctionExpressionOwnNameWrite(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  id: ts.Identifier,
+  right: ts.Expression,
+): ValType | null | undefined {
+  const liveFrame = fctx.readOnlyBindings?.has(id.text) === true;
+  if (!liveFrame && !writeMayTargetEnclosingFunctionName(id)) return undefined;
+  const declaration = ctx.oracle.valueDeclarationOf(id);
+  const ownName = liveFrame
+    ? declaration === undefined || (ts.isFunctionExpression(declaration) && declaration.name?.text === id.text)
+    : declaration !== undefined && nestedWriteToOwnName(id, declaration);
+  if (!ownName) return undefined;
+  const rhsType = compileExpression(ctx, fctx, right);
+  if (!isStrictContext(id, ctx.inferModuleStrictArguments)) return rhsType;
+  if (rhsType) fctx.body.push({ op: "drop" });
+  emitThrowTypeError(ctx, fctx, "Assignment to constant variable.");
+  fctx.body.push({ op: "unreachable" });
+  return { kind: "f64" }; // unreachable, but the expression stack needs a type
+}
+
+/** Cheap pre-check before any oracle query: some enclosing function expression is named `id`. */
+function writeMayTargetEnclosingFunctionName(id: ts.Identifier): boolean {
+  for (let cur = id.parent; cur; cur = cur.parent) {
+    if (ts.isFunctionExpression(cur) && cur.name?.text === id.text) return true;
+  }
+  return false;
+}
+
+/**
+ * `declaration` (the oracle's resolution of `id`) is the named function
+ * expression enclosing the write, reached without a `with` or a call spelled
+ * `eval(…)` anywhere in it (conservative: either can bind the name at runtime).
+ */
+function nestedWriteToOwnName(id: ts.Identifier, declaration: ts.Node): boolean {
+  if (!ts.isFunctionExpression(declaration) || declaration.name?.text !== id.text) return false;
+  for (let cur: ts.Node | undefined = id.parent; cur && cur !== declaration; cur = cur.parent) {
+    if (ts.isWithStatement(cur)) return false;
+  }
+  let evalCall = false;
+  const visit = (node: ts.Node): void => {
+    if (evalCall) return;
+    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "eval") {
+      evalCall = true;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(declaration);
+  return !evalCall;
 }
 
 /**
@@ -214,16 +293,60 @@ export function emitResolvedIdentifierWriteFromStack(
   if (targetType && !valTypesMatch(valueType, targetType)) coerceType(ctx, fctx, valueType, targetType);
   if (currentLocalIdx !== undefined) {
     fctx.body.push({ op: "local.set", index: currentLocalIdx });
+    mirrorImplicitGlobalWrite(ctx, fctx, id, currentLocalIdx); // (#6774 S12)
     return true;
   }
   // A closure-backed top-level binding keeps an externref shadow local for
   // precise same-helper reads. Chunk leaves must still persist the write in
   // the module global for subsequent helpers, so mirror the already-coerced
   // value into that established shadow before the durable store.
-  const shadowLocalIdx =
-    durableModuleGlobalIdx === undefined ? undefined : fctx.moduleBindingShadowLocals?.get(id.text);
+  // (#6492 round 4d) The shadow registry only knows the bindings declared
+  // through the closure-global arm of `statements/variables.ts`. A top-level
+  // `let { value, done } = …` also mirrors global+local, but registers no
+  // shadow — so a later `({ value, done } = …)` stored ONLY to the module
+  // global while every read still resolved the local, and the assignment was
+  // silently lost. Measured in the #3451 linked lane on
+  // `Iterator/prototype/{map,filter}/underlying-iterator-advanced-in-parallel.js`:
+  // `mapped.next()` produced the right result and the test still read the
+  // pre-assignment value. Fall back to the same-named local, but only when its
+  // type matches the global's — a `local.tee` of a mismatched type is invalid
+  // wasm, and those bindings keep the existing global-only store.
+  let shadowLocalIdx = durableModuleGlobalIdx === undefined ? undefined : fctx.moduleBindingShadowLocals?.get(id.text);
+  if (shadowLocalIdx === undefined && durableModuleGlobalIdx !== undefined) {
+    const mirrored = fctx.localMap.get(id.text);
+    if (mirrored !== undefined && targetType && valTypesMatch(getLocalType(fctx, mirrored) ?? targetType, targetType)) {
+      shadowLocalIdx = mirrored;
+    }
+  }
   if (shadowLocalIdx !== undefined) fctx.body.push({ op: "local.tee", index: shadowLocalIdx });
   // Re-read after coercion/guard helpers: either can settle imports/globals.
   fctx.body.push({ op: "global.set", index: ctx.moduleGlobals.get(id.text)! });
   return true;
+}
+
+/**
+ * (#6774 S12) A sloppy destructuring target that names an UNDECLARED binding
+ * (`[arguments, eval] = vals` at script top level) was auto-allocated a frame
+ * local by its caller; the reference is the global object's property
+ * (§9.1.1.4 via PutValue on an unresolvable reference), which the #2726
+ * pre-scan already routes every read to. Mirror the write there.
+ */
+function mirrorImplicitGlobalWrite(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  id: ts.Identifier,
+  localIdx: number,
+): void {
+  if (!ctx.standalone || !ctx.sloppyImplicitGlobals?.has(id.text) || !ctx.oracle.isUnresolvableIdentifier(id)) return;
+  if (!emitGlobalEnvironmentObject(ctx, fctx)) return;
+  const setIdx = ensureGlobalEnvironmentOperation(ctx, fctx, "__extern_set");
+  if (setIdx === undefined) {
+    fctx.body.push({ op: "drop" });
+    return;
+  }
+  emitGlobalEnvironmentKey(ctx, fctx, id.text);
+  fctx.body.push({ op: "local.get", index: localIdx });
+  const localType = getLocalType(fctx, localIdx);
+  if (localType && localType.kind !== "externref") coerceType(ctx, fctx, localType, { kind: "externref" });
+  fctx.body.push({ op: "call", funcIdx: setIdx });
 }

@@ -14,6 +14,8 @@
 import { parentPort } from "node:worker_threads";
 import { readFileSync } from "node:fs";
 import { buildImports } from "./runtime-bundle.mjs";
+// (#6779) test262 rows keep the explicit `hostEval` dynamic-code policy.
+import { TEST262_DYNAMIC_CODE_POLICY } from "./test262-import-object.mjs";
 
 // Suppress unhandled Promise rejections — Promise tests create async
 // operations that reject after the test function returns. Without this,
@@ -70,7 +72,7 @@ parentPort.on("message", async (msg) => {
   let instance;
   try {
     // Build the import object
-    const importObj = buildImports(imports, undefined, stringPool);
+    const importObj = buildImports(imports, undefined, stringPool, { dynamicCode: TEST262_DYNAMIC_CODE_POLICY });
 
     // Instantiate the Wasm module
     try {

@@ -64,6 +64,7 @@ import { addStringConstantGlobal } from "./registry/imports.js";
 import { addFuncType } from "./registry/types.js";
 import { compileExpression } from "./shared.js";
 import { receiverIsPrimitiveWrapper } from "./object-ctor-primitive-receiver.js";
+import { dynamicReadCrossesStandaloneLink } from "./dynamic-read-narrowing.js";
 
 const HELPER = "__dyn_valueOf";
 
@@ -238,6 +239,29 @@ export function ensureDynamicValueOfHelper(ctx: CodegenContext): number {
     },
   ];
 
+  // (#5383) peer-object arm: a resolvable, non-nullish `valueOf` is called
+  // with the receiver as `this`; a miss falls through to the identity below.
+  const linkedArm: Instr[] = [
+    { op: "local.get", index: 0 },
+    ...stringExtern("valueOf"),
+    { op: "call", funcIdx: externGetIdx },
+    ...normalizeMiss,
+    { op: "local.tee", index: M },
+    { op: "ref.is_null" },
+    { op: "i32.eqz" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: M },
+        { op: "local.get", index: 0 },
+        { op: "call", funcIdx: objVecNewIdx },
+        { op: "call", funcIdx: applyClosureIdx },
+        { op: "return" },
+      ],
+    },
+  ];
+
   const body: Instr[] = [
     { op: "local.get", index: 0 },
     { op: "any.convert_extern" },
@@ -267,8 +291,16 @@ export function ensureDynamicValueOfHelper(ctx: CodegenContext): number {
           ],
         },
       ],
-      // Non-`$Object` receiver — unchanged, exactly the blanket fallback.
-      else: [...fnctorValueOfArms, { op: "local.get", index: 0 }],
+      // Non-`$Object` receiver — unchanged, exactly the blanket fallback…
+      // (#5383) …unless the module is one side of a standalone link: there a
+      // non-`$Object` receiver may be the PEER's object (a Temporal instance
+      // from the provider), whose `valueOf` lives on its own prototype and
+      // must run (Temporal's throws a TypeError). Resolve it the generic way.
+      else: [
+        ...fnctorValueOfArms,
+        ...(dynamicReadCrossesStandaloneLink(ctx) ? linkedArm : []),
+        { op: "local.get", index: 0 },
+      ],
     },
   ];
 

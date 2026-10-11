@@ -1,0 +1,43 @@
+{
+  "schema": "prepared-source-forward-v1",
+  "path": "src/codegen/registry/imports.ts",
+  "sourceProvenance": {
+    "base": {
+      "revision": "6ed68535323e0756c3a0b15dde18fd480ad7fc9f",
+      "blob": "08f8f0388dd9602b179a1d03fc61d6956b24cff8",
+      "sha256": "af1153f2486524597d3ac644cee848afb9f7d4ff5ae4b5875641350be6d20d1b"
+    },
+    "preparedOriginal": {
+      "revision": "e24a8d2798da9d4680c0af2660a63c6b80c35593",
+      "blob": "a0cf36ff8bf33a6a6527b04609bd3adc501d7744",
+      "sha256": "fd9be2622bd34fb02cf115e47326771aa9e427792361ef34745b10721849fafb"
+    },
+    "preparedParent": {
+      "revision": "1139297588b9105d5d39b3df278e7320308cdf7e",
+      "blob": "c9ab496eb2f9d20bd5e3d4be52ab33088108c7bc",
+      "sha256": "4b8832ee72d8059b0232fabf668719197f7e2380cda1e2269c621112a529c1dd"
+    },
+    "scanner": {
+      "revision": "1ce5d0575c890d640bc3ef9958c32d662bea9e98",
+      "blob": "fcd3a04776b42e06a9bd98fbd8124ac36049f3ee",
+      "sha256": "03d1011f0a209e273ae5d86d551396742353148a1ec432dde8a774a8bca9639d"
+    }
+  },
+  "derivation": "Two exact insertions from committed base to committed prepared parent, composed onto the independently committed scanner source. The candidate is not an authority input. Original source and comment receipts remain unchanged.",
+  "spans": [
+    {
+      "id": "static-sidecar-global-shift",
+      "before": "  shiftMap(ctx.protoGlobals);\n  shiftMap(ctx.nativeProtoGlobals);\n  shiftMap(ctx.classObjectGlobals); // (#1395) — same shift discipline as protoGlobals\n  shiftMap(ctx.methodClosureGlobals); // (#1394) — cached per-method closure globals\n  shiftMap(ctx.funcClosureGlobals); // (#1340) — cached per-function closure globals\n  // (#4617) Prepared metadata and native names retain absolute global slots.\n",
+      "after": "  shiftMap(ctx.protoGlobals);\n  shiftMap(ctx.nativeProtoGlobals);\n  shiftMap(ctx.classObjectGlobals); // (#1395) — same shift discipline as protoGlobals\n  shiftMap(ctx.classStaticSidecarGlobals); // (#5195 Step 2 / #5383 S2i) — ditto for the static sidecar\n  shiftMap(ctx.methodClosureGlobals); // (#1394) — cached per-method closure globals\n  shiftMap(ctx.funcClosureGlobals); // (#1340) — cached per-function closure globals\n  // (#4617) Prepared metadata and native names retain absolute global slots.\n",
+      "beforeSha256": "e4b126320adaf635a31168a8b683310750a5a035009a0ed9213acfb675a9f05c",
+      "afterSha256": "c99cddcad9682f928ad558d23b83645b3ca882e6c28385cc279ece86367ff443"
+    },
+    {
+      "id": "callable-placeholder-registration",
+      "before": "  //     callable JS functions to the outside, so this is conservatively 0.\n  registerNative(\"__typeof_function\", externrefToI32, [{ op: \"i32.const\", value: 0 }]);\n\n  // 15. __typeof(externref) -> externref — the MATERIALIZED typeof result.\n  //     (#2965) This was a `ref.null.extern` stub (\"defer until a wasi caller\n  //     needs the typeof RESULT as a string\"), which silently broke every\n",
+      "after": "  //     callable JS functions to the outside, so this is conservatively 0.\n  registerNative(\"__typeof_function\", externrefToI32, [{ op: \"i32.const\", value: 0 }]);\n\n  // 14a. __is_callable(externref) -> i32 — deliberately DISTINCT from\n  // `__typeof_function`: class constructors report typeof \"function\" but have\n  // no [[Call]]. `fillStandaloneTypeofClosureArms` fills this conservative\n  // placeholder at finalize from the same host-free carrier inventory, omitting\n  // only class-object singletons.\n  registerNative(\"__is_callable\", externrefToI32, [{ op: \"i32.const\", value: 0 }]);\n\n  // 15. __typeof(externref) -> externref — the MATERIALIZED typeof result.\n  //     (#2965) This was a `ref.null.extern` stub (\"defer until a wasi caller\n  //     needs the typeof RESULT as a string\"), which silently broke every\n",
+      "beforeSha256": "4fcf753aa3e9b373960c08284e9f716ba8f2ee6a34c2333537b291c2d7420b96",
+      "afterSha256": "d1f3cfaf51ec4908ee16ddc605e5c2cd5b3933eeeee874552d801ee64d5fa4d5"
+    }
+  ]
+}

@@ -23,7 +23,13 @@ import {
   bindingUsesOnlyIrPlannedOpenObjectOperations,
 } from "./dynamic-with-shape.js";
 import { collectRedeclarationWidenedModuleVarNames } from "./redeclared-var-widening.js";
+import { collectAssignedShapeDivergentObjects } from "./assigned-shape-divergent-objects.js"; // (#6651 V10c)
 import { sourceContainsWithStatement } from "../source-scan-predicates.js"; // (#5313)
+import {
+  isReflectiveWriterCallArg,
+  markStandaloneReflectiveWriteTargets,
+} from "../object-model/object-literal-reflective-escape.js"; // (#6770 S2)
+import { readEnv } from "../../env.js";
 
 function isUnboxedPrimitiveCarrier(type: ValType): boolean {
   return ["f64", "f32", "i64", "i32", "i16", "i8"].includes(type.kind);
@@ -54,6 +60,19 @@ function propertyChainRoot(pae: ts.PropertyAccessExpression): { root: string; de
     expression = expression.expression;
   }
   return ts.isIdentifier(expression) ? { root: expression.text, depth } : null;
+}
+
+/**
+ * (#6651 B7) A slot seeded by `o.p = undefined`/`null` (the i32 sentinel) cannot
+ * keep that carrier once a PRIMITIVE is written: `r.global = undefined;
+ * r.global = "string"` stored i32 0 (`RegExp/prototype/flags/coercion-*`).
+ * Object-valued later writes keep the #3669 sentinel carve-out.
+ */
+function sentinelSlotTakesPrimitive(existing: WidenedPropCandidate, tsType: ts.Type): boolean {
+  const primitive =
+    ts.TypeFlags.StringLike | ts.TypeFlags.NumberLike | ts.TypeFlags.BooleanLike | ts.TypeFlags.ESSymbolLike;
+  const sentinel = ts.TypeFlags.Undefined | ts.TypeFlags.Void | ts.TypeFlags.Null;
+  return existing.type.kind === "i32" && (tsType.flags & primitive) !== 0 && (tsType.flags & sentinel) === 0;
 }
 
 function isRuntimePrimitiveSeed(type: ValType, tsType: ts.Type): boolean {
@@ -543,6 +562,7 @@ export function collectEmptyObjectWidening(
             for (const s of stmts) {
               markStandaloneDeleteTargets(s, varName, ctx.objectHashConsumerVars);
             }
+            markUseBeforeFirstPropertyWrite(stmts, stmt, varName, ctx.objectHashConsumerVars);
           }
 
           // (#2992 S5, standalone) An ACCESSOR-descriptor
@@ -577,6 +597,7 @@ export function collectEmptyObjectWidening(
           if (ctx.standalone && !ctx.objectHashConsumerVars.has(varName)) {
             for (const s of stmts) {
               markStandaloneObjectMutationTargets(ctx, s, varName, ctx.objectHashConsumerVars);
+              markStandaloneReflectiveWriteTargets(s, varName, ctx.objectHashConsumerVars); // (#6770 S2/S4)
             }
           }
 
@@ -1256,11 +1277,14 @@ export function collectGrowableObjectLiterals(
   collectRepeatedOrdinaryToPrimitiveObjects(ctx, checker, sourceFile);
   collectRedeclaredObjectIdentityLiterals(ctx, checker, sourceFile);
   collectRedeclaredShapeDivergentObjects(ctx, checker, sourceFile); // (#5270 step 3, cluster M)
+  collectAssignedShapeDivergentObjects(ctx, sourceFile, isModuleScopedDeclaration, (d) =>
+    recordOpenObjectConsumerTypes(ctx, checker, d, (d.name as ts.Identifier).text),
+  );
   collectRedeclaredWithTargetObjects(ctx, checker, sourceFile);
   // Emergency rollback for the closed-outer-table refinement below. Keeping
   // this narrow switch makes the performance claim directly A/B measurable:
   // `0` restores the old "every depth-2 write opens the root" policy.
-  const keepClosedOuterForDeclaredNestedWrites = process.env.JS2WASM_KEEP_CLOSED_NESTED_TABLES !== "0";
+  const keepClosedOuterForDeclaredNestedWrites = readEnv("JS2WASM_KEEP_CLOSED_NESTED_TABLES") !== "0";
   const nestedWriteTargetsDeclaredField = createDeclaredNestedWriteClassifier(ctx, sourceFile);
   // (#4206) Names a direct `eval(<literal>)` in this module could mutate.
   const evalMutableNames = collectEvalMutableNames(sourceFile);
@@ -1395,6 +1419,7 @@ export function collectGrowableObjectLiterals(
               // (#4491) `m.foo++` on a field the literal typed non-numerically —
               // or on no field at all — cannot land in the closed struct.
               markStandaloneNumericUpdateKindChangeTargets(s, varName, decl.initializer, mopSet);
+              markStandaloneReflectiveWriteTargets(s, varName, mopSet); // (#6770 S2)
             }
             // (#4491) `for…in` over a literal that out-of-shape writes GREW:
             // the closed struct has no slots for the added keys, so the
@@ -1420,6 +1445,7 @@ export function collectGrowableObjectLiterals(
                   // concrete, but the MOP call is exactly what the `$Object`
                   // rep serves. Only genuine user-typed positions count.
                   !isObjectMopCallArg(node) &&
+                  !isReflectiveWriterCallArg(node) && // #6770 S2
                   !isBorrowedMethodThisArg(node) && // #4524 — borrowed `thisArg: any`
                   typeRequiresStruct(checker.getContextualType(node))
                 ) {
@@ -1462,7 +1488,8 @@ export function collectGrowableObjectLiterals(
               node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
               ts.isPropertyAccessExpression(node.left)
             ) {
-              const info = propertyChainRoot(node.left);
+              const info = propertyChainRoot(node.left); // gc/host `V.__proto__ =` is the setter, not a field add (#2747 d)
+              const isHostProtoWrite = !ctx.standalone && node.left.name.text === "__proto__";
               if (info && info.root === varName) {
                 if (info.depth >= 2) {
                   // A deep write does not necessarily grow the ROOT object.
@@ -1489,7 +1516,7 @@ export function collectGrowableObjectLiterals(
                   if (!targetsDeclaredNestedField) {
                     grows = true;
                   }
-                } else if (info.depth === 1 && !shape.has(node.left.name.text)) {
+                } else if (info.depth === 1 && !shape.has(node.left.name.text) && !isHostProtoWrite) {
                   grows = true; // direct out-of-shape field add
                 }
               }
@@ -1940,6 +1967,55 @@ function markStandaloneEnumeratedGrowthTargets(
   // a per-statement call would never see them together.
   for (const s of stmts) visit(s);
   if (enumerated && grown && !arithmeticFieldRead) poisonSet.add(varName);
+}
+
+/**
+ * (#5383) `var o = {}` that is USED before its first property write cannot be
+ * a widened closed struct: the struct is allocated with every later-written
+ * field already present (a numeric slot at 0), so a callee handed `o` before
+ * `o.minute = 30` runs sees `o.minute === 0` and `"minute" in o` — not the
+ * absent property. Temporal's `ToTemporalTimeRecord` then finds a time unit
+ * on an empty bag and never throws its TypeError (9
+ * `plaintime-propertybag-no-time-units` rows). Poison when a statement between
+ * the declaration and the first statement that writes a property of `o`
+ * references `o` at all; hoisted function declarations do not run there and
+ * are skipped. A use inside the write statement itself is not tracked.
+ */
+function markUseBeforeFirstPropertyWrite(
+  stmts: readonly ts.Statement[],
+  declStmt: ts.Statement,
+  varName: string,
+  poisonSet: Set<string>,
+): void {
+  const start = stmts.indexOf(declStmt);
+  if (start < 0 || poisonSet.has(varName)) return;
+  const isVar = (e: ts.Expression): boolean => ts.isIdentifier(e) && e.text === varName;
+  const contains = (root: ts.Node, pred: (n: ts.Node, parent: ts.Node) => boolean): boolean => {
+    const visit = (n: ts.Node, parent: ts.Node): boolean =>
+      pred(n, parent) || (ts.forEachChild(n, (child) => (visit(child, n) ? true : undefined)) ?? false);
+    return visit(root, root);
+  };
+  const writes = (n: ts.Node): boolean =>
+    ts.isBinaryExpression(n) &&
+    n.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+    n.operatorToken.kind <= ts.SyntaxKind.LastAssignment &&
+    (ts.isPropertyAccessExpression(n.left) || ts.isElementAccessExpression(n.left)) &&
+    isVar(n.left.expression);
+  const references = (n: ts.Node, parent: ts.Node): boolean =>
+    ts.isIdentifier(n) &&
+    n.text === varName &&
+    !(ts.isPropertyAccessExpression(parent) && parent.name === n) &&
+    !(ts.isPropertyAssignment(parent) && parent.name === n);
+  let used = false;
+  for (let i = start + 1; i < stmts.length; i++) {
+    const stmt = stmts[i]!;
+    if (ts.isFunctionDeclaration(stmt)) continue;
+    if (contains(stmt, writes)) {
+      if (used) poisonSet.add(varName);
+      return;
+    }
+    used ||= contains(stmt, references);
+  }
 }
 
 function markStandaloneDeleteTargets(node: ts.Node, varName: string, poisonSet: Set<string>): void {
@@ -2517,7 +2593,12 @@ export function collectPropsFromStatements(
           // widening an anticipated `undefined -> null` property changes its
           // empty-object default and can null-deref reads before the first write.
           const existing = extraProps.find((p) => p.name === propName);
-          if (existing?.primitiveSeed && !valTypesMatch(existing.type, wasmType)) {
+          if (
+            existing &&
+            (existing.primitiveSeed
+              ? !valTypesMatch(existing.type, wasmType)
+              : sentinelSlotTakesPrimitive(existing, rhsType))
+          ) {
             existing.type = { kind: "externref" };
           }
         }

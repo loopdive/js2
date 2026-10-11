@@ -1,0 +1,89 @@
+{
+  "schema": "fixed-source-map-position-inventory-successor-v1",
+  "coordinateUnit": "utf8-byte",
+  "before": {
+    "source": {
+      "bytes": 588351,
+      "sha256": "4b442f641a2a99fd4abffc5ef85271858f4a3ae2337fcde8c380fba076a22d05",
+      "gitBlob": "c5da824f89dded25e85e7e315825d2d61d97f906"
+    },
+    "dataSha256": "56532a3cda4a9a8ec083fc0ebb7d38300fe754dd8f7cc4d49c20784ae77f05e0",
+    "filesSha256": "fdd1e7da8bc2decab20f41771aa30b724a3ecda1929f590f286e2f530171be9c",
+    "fileCount": 1837,
+    "topLevelKeys": [
+      "schema",
+      "description",
+      "sourceRoot",
+      "tsconfig",
+      "requireGitProvenance",
+      "externalAssets",
+      "frontendWrapper",
+      "moduleExtensions",
+      "layers",
+      "allowedEdges",
+      "externalPackages",
+      "activationHistory",
+      "nonModules",
+      "moves",
+      "evidence",
+      "files"
+    ]
+  },
+  "current": {
+    "source": {
+      "bytes": 588471,
+      "sha256": "a2e9c7243c13ae37b293f02ae19eba03f072db30195ce0479f0926488fa3de98",
+      "gitBlob": "d0ff19228046a1bed50bd821194a5f2ffe2f6754"
+    },
+    "dataSha256": "e27bdf5d6dae65b37905253ca8f4383a84eace68a9d99700ae93ed0e83ec42e5",
+    "filesSha256": "0618fa655d6afb12bcb7565ccfc8de5d8d89327f62d760d44fbae37408e358d5",
+    "fileCount": 1838,
+    "topLevelKeys": [
+      "schema",
+      "description",
+      "sourceRoot",
+      "tsconfig",
+      "requireGitProvenance",
+      "externalAssets",
+      "frontendWrapper",
+      "moduleExtensions",
+      "layers",
+      "allowedEdges",
+      "externalPackages",
+      "activationHistory",
+      "nonModules",
+      "moves",
+      "evidence",
+      "files"
+    ]
+  },
+  "nonFilesSha256": "3a4788461bc5c6757c931554be0ec6218711f00814f580d9bb70d26a5929c1ce",
+  "addedRows": [
+    {
+      "index": 85,
+      "row": {
+        "path": "src/ir/program/source-map-position.ts",
+        "state": "clean",
+        "layer": "ir-program"
+      },
+      "previous": {
+        "path": "src/ir/program/errors.ts",
+        "state": "clean",
+        "layer": "ir-program"
+      },
+      "next": {
+        "path": "src/ir/program/data.ts",
+        "state": "clean",
+        "layer": "ir-program"
+      }
+    }
+  ],
+  "rawSpans": [
+    {
+      "beforeOffset": 82745,
+      "afterOffset": 82745,
+      "before": "",
+      "after": "    {\n      \"path\": \"src/ir/program/source-map-position.ts\",\n      \"state\": \"clean\",\n      \"layer\": \"ir-program\"\n    },\n"
+    }
+  ]
+}

@@ -1,0 +1,35 @@
+{
+  "runs": [
+    {
+      "stage": "mixed",
+      "exitCode": 0,
+      "elapsed": 201.4586238861084
+    }
+  ],
+  "pinsBefore": 7427,
+  "pinsAfter": 7427,
+  "drift": [],
+  "trackedPinsBefore": 14559,
+  "trackedPinsAfter": 14559,
+  "trackedDrift": [],
+  "receipt": "/private/tmp/js2-ir-public-native-object-number-graph-20260930/.tmp/public-native-object-number-graph/resume-20261001/mixed-validation-1d95dba6",
+  "tests": {
+    "numTotalTests": 37,
+    "numPassedTests": 37,
+    "numFailedTests": 0,
+    "numPendingTests": 0,
+    "numTodoTests": 0,
+    "success": true
+  },
+  "files": [
+    {
+      "name": "/private/tmp/js2-ir-public-native-object-number-graph-20260930/tests/issue-3518-native-mixed-object-access.test.ts",
+      "status": "passed",
+      "rows": 37,
+      "message": ""
+    }
+  ],
+  "failed": [],
+  "workerErrorLines": [],
+  "strictAcceptance": true
+}

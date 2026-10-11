@@ -1,0 +1,544 @@
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+
+import { spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { describe, expect, it } from "vitest";
+import * as oldVerify from "../src/ir/verify.js";
+import * as verify from "../src/ir/runtime/verify.js";
+import * as oldAlloc from "../src/ir/verify-alloc.js";
+import * as alloc from "../src/ir/analysis/alloc-verification.js";
+import * as oldProgramAlloc from "../src/ir/program-allocations.js";
+import * as programAlloc from "../src/ir/program/allocations.js";
+import * as oldClass from "../src/ir/program-class-layouts.js";
+import * as classes from "../src/ir/program/class-layouts.js";
+import { AllocSiteRegistry as OldRegistry } from "../src/ir/alloc-registry.js";
+import { ALLOC_NAMESPACES, AllocSiteRegistry } from "../src/ir/analysis/alloc-registry.js";
+import { analyzeEncoding, type Encoding } from "../src/ir/analysis/encoding.js";
+import { analyzeOwnership } from "../src/ir/analysis/ownership.js";
+import { analyzeEscape } from "../src/ir/analysis/escape.js";
+import { crossCheckDominance, dominanceOf } from "../src/ir/analysis/dominance.js";
+import { asAsyncStateId, canonicalPromiseAbi, createIrAsyncPlan } from "../src/ir/analysis/async-plan.js";
+import { IrFunctionBuilder } from "../src/ir/builder.js";
+import { asAllocSiteId, asBlockId, asValueId, type IrFunction, type IrInstr } from "../src/ir/core/nodes.js";
+import { irVal, type IrClassShape } from "../src/ir/core/types.js";
+import { irBindingKey } from "../src/ir/core/declared-types.js";
+import { irRuntimeFuncRef } from "../src/ir/core/callable-bindings.js";
+import { irClassTypeRef, irTypeBindingKey } from "../src/ir/abi-bindings.js";
+import { preparedIrClassLayoutKey } from "../src/ir/program/abi-signatures.js";
+import type { PreparedIrAbiEntry } from "../src/ir/program/prepared-contracts.js";
+import type { PreparedIrFunction } from "../src/ir/runtime/contracts/prepared.js";
+import { createIrCountedStringAppendSiteId } from "../src/shared/contracts/ir-counted-string-site-id.js";
+import { IrInvariantError } from "../src/shared/contracts/ir-preparation-errors.js";
+import { createTestIrClassId, createTestIrFunctionIdentityFactory } from "./helpers/ir-identities.js";
+
+const identities = createTestIrFunctionIdentityFactory("issue-3518-verifier-body-relocation");
+const I32 = irVal({ kind: "i32" });
+const F64 = irVal({ kind: "f64" });
+
+function voidFunction(instrs: readonly IrInstr[] = []): IrFunction {
+  return {
+    ...identities.next("body"),
+    params: [],
+    resultTypes: [],
+    blocks: [
+      { id: asBlockId(0), blockArgs: [], blockArgTypes: [], instrs, terminator: { kind: "return", values: [] } },
+    ],
+    exported: false,
+    valueCount: 8,
+  };
+}
+
+function stringFunction(value = "text") {
+  const registry = new AllocSiteRegistry();
+  const builder = new IrFunctionBuilder(identities.next("literal"), [{ kind: "string" }], false, registry);
+  builder.openBlock();
+  const result = builder.emitStringConst(value);
+  builder.terminate({ kind: "return", values: [result] });
+  const fn = builder.finish();
+  const instruction = fn.blocks[0]!.instrs.find((instr) => instr.kind === "string.const")!;
+  if (instruction.alloc === undefined) throw new Error("genuine builder omitted string allocation identity");
+  return { fn, registry, instruction, result, id: instruction.alloc };
+}
+
+function allocationProgram() {
+  const f = stringFunction();
+  analyzeEncoding(f.fn, f.registry);
+  const ownership = analyzeOwnership(f.fn, f.registry);
+  analyzeEscape(f.fn, f.registry, ownership);
+  return { ir: { functions: [f.fn] }, allocations: f.registry.snapshot() };
+}
+
+function asyncFunction(): PreparedIrFunction {
+  const fn = voidFunction();
+  const asyncPlan = createIrAsyncPlan({
+    schemaVersion: 1,
+    ownerUnitId: fn.unitId,
+    kind: "async-function",
+    abi: canonicalPromiseAbi(null),
+    entry: asAsyncStateId(0),
+    params: [],
+    values: [],
+    spills: [],
+    states: [{ id: asAsyncStateId(0), body: [], terminator: { kind: "resolve" } }],
+    handlers: [],
+    runtimeIntents: ["promise.capability.create", "value.undefined", "promise.settle.fulfill", "promise.resolve"],
+  });
+  // This is the verifier's documented structural pre-manifest attachment, not
+  // a completed runtime provider or an authenticated prepared-program issuer.
+  return {
+    ...fn,
+    funcKind: "async",
+    asyncPlan,
+    asyncRuntime: { kind: "standalone-native-wasmgc", states: [], adapters: [] },
+  };
+}
+
+function classProgram() {
+  const fields: { name: string; type: { kind: "class"; shape: IrClassShape } }[] = [];
+  const shape: IrClassShape = {
+    classId: createTestIrClassId("phase-b-recursive"),
+    className: "Recursive",
+    fields,
+    methods: [],
+    constructorParams: [],
+  };
+  fields.push({ name: "next", type: { kind: "class", shape } });
+  const ref = irClassTypeRef(shape.classId, shape.className);
+  const entry: PreparedIrAbiEntry = {
+    plan: {
+      id: ref.binding.bindingId,
+      displayName: shape.className,
+      order: { sourceOrder: 0, declarationOrder: 0 },
+      slotPolicy: "required",
+      slotSpace: "type",
+      structuralReferenceKey: irTypeBindingKey(ref.binding),
+      intent: { kind: "class", classId: shape.classId, layoutKey: preparedIrClassLayoutKey(shape) },
+    },
+    contract: { kind: "class", ref, shape },
+  };
+  const fn: IrFunction = { ...voidFunction(), resultTypes: [{ kind: "class", shape }] };
+  return {
+    shape,
+    program: { abi: { entries: [entry] }, ir: { functions: [fn] }, allocations: new AllocSiteRegistry().snapshot() },
+  };
+}
+
+const aliases = [
+  ["verifyIrFunction", oldVerify.verifyIrFunction, verify.verifyIrFunction],
+  ["irGlobalReferenceProblem", oldVerify.irGlobalReferenceProblem, verify.irGlobalReferenceProblem],
+  ["irTypeReferenceProblem", oldVerify.irTypeReferenceProblem, verify.irTypeReferenceProblem],
+  ["TYPE_RULE_CATEGORIES", oldVerify.TYPE_RULE_CATEGORIES, verify.TYPE_RULE_CATEGORIES],
+  ["typeRuleCategoryOf", oldVerify.typeRuleCategoryOf, verify.typeRuleCategoryOf],
+  ["TYPE_RULE_STATUS", oldVerify.TYPE_RULE_STATUS, verify.TYPE_RULE_STATUS],
+  ["typeRuleCoverageProblem", oldVerify.typeRuleCoverageProblem, verify.typeRuleCoverageProblem],
+  ["verifyAllocProvenance", oldAlloc.verifyAllocProvenance, alloc.verifyAllocProvenance],
+  ["assertFinalAllocProvenance", oldAlloc.assertFinalAllocProvenance, alloc.assertFinalAllocProvenance],
+  [
+    "analyzeIrRuntimeSupportAllocations",
+    oldProgramAlloc.analyzeIrRuntimeSupportAllocations,
+    programAlloc.analyzeIrRuntimeSupportAllocations,
+  ],
+  [
+    "assertPreparedIrProgramAllocations",
+    oldProgramAlloc.assertPreparedIrProgramAllocations,
+    programAlloc.assertPreparedIrProgramAllocations,
+  ],
+  ["assertPreparedIrClassLayouts", oldClass.assertPreparedIrClassLayouts, classes.assertPreparedIrClassLayouts],
+] as const;
+
+describe("#3518 Phase B canonical verifier bodies", () => {
+  it.each(aliases)("shares the actual %s value at both paths", (_name, oldValue, newValue) => {
+    expect(oldValue).toBe(newValue);
+  });
+
+  it("preserves the exact verifier value-export population and one allocation registry", () => {
+    expect(Object.keys(oldVerify).sort()).toEqual(Object.keys(verify).sort());
+    expect(Object.keys(verify).sort()).toEqual(
+      aliases
+        .slice(0, 7)
+        .map(([name]) => name)
+        .sort(),
+    );
+    expect(OldRegistry).toBe(AllocSiteRegistry);
+    expect(ALLOC_NAMESPACES).toEqual({
+      ownership: "ownership",
+      escape: "escape",
+      encoding: "encoding",
+      lifetime: "lifetime",
+    });
+  });
+
+  it.each([
+    ["ascii", "hello"],
+    ["utf8-guaranteed", "café😀"],
+    ["wtf16", "a\ud800b"],
+  ] as const)("shares registry evidence across actual %s string analyses", (encoding, text) => {
+    const f = stringFunction(text);
+    const before = JSON.stringify(f.fn);
+    analyzeEncoding(f.fn, f.registry);
+    const ownership = analyzeOwnership(f.fn, f.registry);
+    const escapeAnalysis = analyzeEscape(f.fn, f.registry, ownership);
+    expect(f.registry.read<Encoding>(f.id, ALLOC_NAMESPACES.encoding)).toBe(encoding);
+    expect(ownership.ownershipOf(f.result)).toBe("escaped");
+    expect(escapeAnalysis.classOf(f.result)).toBe("returned");
+    expect(JSON.stringify(f.fn)).toBe(before);
+    expect(alloc.verifyAllocProvenance(f.fn, f.registry)).toEqual([]);
+    expect(() =>
+      programAlloc.assertPreparedIrProgramAllocations({
+        ir: { functions: [f.fn] },
+        allocations: f.registry.snapshot(),
+      }),
+    ).not.toThrow();
+  });
+
+  it.each([undefined, "0", "false", "1", "true"])(
+    "keeps optional allocation debug flag %s and unconditional final checking",
+    (flag) => {
+      const previous = process.env.IR_VERIFY_ALLOC;
+      try {
+        if (flag === undefined) Reflect.deleteProperty(process.env, "IR_VERIFY_ALLOC");
+        else process.env.IR_VERIFY_ALLOC = flag;
+        const f = stringFunction();
+        expect(() => oldAlloc.assertAllocProvenance(f.fn, f.registry)).not.toThrow();
+        expect(() => alloc.assertFinalAllocProvenance(f.fn, f.registry)).not.toThrow();
+        f.registry.retire(f.id);
+        const enabled = flag === "1" || flag === "true";
+        expect(oldAlloc.allocVerifyEnabled()).toBe(enabled);
+        if (enabled) expect(() => oldAlloc.assertAllocProvenance(f.fn, f.registry)).toThrow(IrInvariantError);
+        else expect(() => oldAlloc.assertAllocProvenance(f.fn, f.registry)).not.toThrow();
+        expect(() => alloc.assertFinalAllocProvenance(f.fn, f.registry)).toThrow(
+          expect.objectContaining({ code: "allocation-provenance-failure", stage: "verify" }),
+        );
+      } finally {
+        if (previous === undefined) Reflect.deleteProperty(process.env, "IR_VERIFY_ALLOC");
+        else process.env.IR_VERIFY_ALLOC = previous;
+      }
+    },
+  );
+
+  it.each(["missing", "foreign", "wrong-kind", "retired"] as const)(
+    "finds %s provenance inside a real nested instruction buffer",
+    (mode) => {
+      const f = stringFunction();
+      expect(alloc.verifyAllocProvenance(f.fn, f.registry)).toEqual([]);
+      let instr: IrInstr = f.instruction;
+      if (mode === "missing") {
+        const { alloc: _alloc, ...rest } = instr;
+        instr = rest;
+      } else if (mode === "foreign") instr = { ...instr, alloc: asAllocSiteId(424242) };
+      else if (mode === "wrong-kind") instr = { ...instr, alloc: f.registry.fresh("object", { kind: "string" }) };
+      else f.registry.retire(f.id);
+      const nested: IrInstr = {
+        kind: "if.stmt",
+        cond: asValueId(7),
+        then: [instr],
+        else: [],
+        result: null,
+        resultType: null,
+      };
+      const condition: IrInstr = {
+        kind: "const",
+        value: { kind: "i32", value: 1 },
+        result: asValueId(7),
+        resultType: I32,
+      };
+      const fn = voidFunction([condition, nested]);
+      const message = {
+        missing: "missing an AllocSiteId",
+        foreign: "unknown AllocSiteId",
+        "wrong-kind": 'expected "string"',
+        retired: "stale provenance",
+      }[mode];
+      expect(alloc.verifyAllocProvenance(fn, f.registry).map((error) => error.message)).toEqual([
+        expect.stringContaining(message),
+      ]);
+      expect(oldAlloc.verifyAllocProvenance(fn, f.registry)).toEqual(alloc.verifyAllocProvenance(fn, f.registry));
+    },
+  );
+
+  it("rechecks final allocation evidence after a successful check", () => {
+    const program = allocationProgram();
+    programAlloc.assertPreparedIrProgramAllocations(program);
+    const original = program.allocations;
+    program.allocations = { ...original, metadata: [] };
+    expect(() => programAlloc.assertPreparedIrProgramAllocations(program)).toThrow("missing or stale encoding");
+    program.allocations = original;
+    const fn = program.ir.functions[0]!;
+    const instr = fn.blocks[0]!.instrs[0]!;
+    const changed = { ...fn, blocks: [{ ...fn.blocks[0]!, instrs: [{ ...instr, resultType: F64 }] }] };
+    expect(() => programAlloc.assertPreparedIrProgramAllocations({ ...program, ir: { functions: [changed] } })).toThrow(
+      "result type",
+    );
+    expect(() => programAlloc.assertPreparedIrProgramAllocations(program)).not.toThrow();
+  });
+
+  it("keeps allocation alias-cycle and unknown metadata namespace refusals", () => {
+    const program = allocationProgram();
+    expect(() => programAlloc.assertPreparedIrProgramAllocations(program)).not.toThrow();
+    expect(() =>
+      programAlloc.assertPreparedIrProgramAllocations({
+        ...program,
+        allocations: { ...program.allocations, entries: [{ state: "aliased", to: asAllocSiteId(0) }] },
+      }),
+    ).toThrow("broken/cyclic provenance");
+    expect(() =>
+      programAlloc.assertPreparedIrProgramAllocations({
+        ...program,
+        allocations: {
+          ...program.allocations,
+          metadata: [{ id: asAllocSiteId(0), entries: [["caller-proof", true]] }],
+        },
+      }),
+    ).toThrow("unverifiable namespace");
+  });
+
+  it("walks allocation provenance in semantic async state buffers", () => {
+    const fn = asyncFunction();
+    const f = stringFunction();
+    const withState = {
+      ...fn,
+      asyncPlan: { ...fn.asyncPlan!, states: [{ ...fn.asyncPlan!.states[0]!, body: [f.instruction] }] },
+    };
+    expect(() =>
+      programAlloc.assertPreparedIrProgramAllocations({
+        ir: { functions: [withState] },
+        allocations: f.registry.snapshot(),
+      }),
+    ).not.toThrow();
+    f.registry.retire(f.id);
+    expect(() =>
+      programAlloc.assertPreparedIrProgramAllocations({
+        ir: { functions: [withState] },
+        allocations: f.registry.snapshot(),
+      }),
+    ).toThrow("stale provenance");
+  });
+
+  it("preserves optional declared-call tables with a positive, wrong and absent signature", () => {
+    const target = irRuntimeFuncRef("__phase_b_external");
+    const fn = voidFunction([{ kind: "call", target, args: [], result: asValueId(0), resultType: F64 }]);
+    const key = irBindingKey(target.binding)!;
+    expect(verify.verifyIrFunction(fn)).toEqual([]);
+    expect(
+      verify.verifyIrFunction(fn, undefined, { declaredSignatures: new Map([[key, { params: [], result: F64 }]]) }),
+    ).toEqual([]);
+    const errors = verify.verifyIrFunction(fn, undefined, {
+      declaredSignatures: new Map([[key, { params: [], result: I32 }]]),
+    });
+    expect(errors.map((error) => error.message).join("\n")).toMatch(/declared.*result|result.*declared/);
+    expect(
+      oldVerify.verifyIrFunction(fn, undefined, { declaredSignatures: new Map([[key, { params: [], result: I32 }]]) }),
+    ).toEqual(errors);
+  });
+
+  it("preserves prepared async attachments and semantic owner checks", () => {
+    const fn = asyncFunction();
+    expect(verify.verifyIrFunction(fn)).toEqual([]);
+    const { asyncPlan: _plan, ...withoutPlan } = fn;
+    expect(verify.verifyIrFunction(withoutPlan).map((error) => error.message)).toContain(
+      "asyncRuntime requires a semantic asyncPlan",
+    );
+    expect(verify.verifyIrFunction({ ...fn, funcKind: "regular" }).map((error) => error.message)).toContain(
+      "asyncPlan requires funcKind=async",
+    );
+    expect(
+      verify
+        .verifyIrFunction({ ...fn, asyncPlan: { ...fn.asyncPlan!, ownerUnitId: identities.next("foreign").unitId } })
+        .map((error) => error.message),
+    ).toContain("asyncPlan ownerUnitId does not match its IrFunction");
+  });
+
+  it("checks counted provenance in prepared runtime state buffers", () => {
+    const fn = asyncFunction();
+    const site = (ownerUnitId: IrFunction["unitId"]) =>
+      createIrCountedStringAppendSiteId({ sourceId: identities.sourceId, ownerUnitId, loopStart: 1, loopEnd: 8 });
+    const body = (ownerUnitId: IrFunction["unitId"]) => {
+      const builder = new IrFunctionBuilder(
+        { unitId: fn.unitId, name: fn.name },
+        [{ kind: "string" }],
+        false,
+        new AllocSiteRegistry(),
+      );
+      builder.openBlock();
+      const value = builder.emitStringConst("x");
+      const count = builder.emitConst({ kind: "f64", value: 2 }, F64);
+      const result = builder.emitStringRepeat(value, count, "ascii", site(ownerUnitId));
+      builder.terminate({ kind: "return", values: [result] });
+      return builder.finish();
+    };
+    const withBody = (instructions: readonly IrInstr[]): PreparedIrFunction => ({
+      ...fn,
+      asyncRuntime: {
+        kind: "standalone-native-wasmgc",
+        adapters: [],
+        states: [{ id: asAsyncStateId(0), body: instructions, terminator: { kind: "resolve" } }],
+      },
+    });
+    const valid = body(fn.unitId);
+    expect(verify.verifyIrFunction(valid)).toEqual([]);
+    expect(verify.verifyIrFunction(withBody(valid.blocks[0]!.instrs))).toEqual([]);
+    const wrong = body(identities.next("other-owner").unitId);
+    expect(verify.verifyIrFunction(withBody(wrong.blocks[0]!.instrs)).map((error) => error.message)).toContain(
+      "asyncRuntime state 0: string.repeat carries malformed or foreign-owner counted-string provenance",
+    );
+  });
+
+  it.each([
+    [undefined, undefined, false],
+    ["1", undefined, true],
+    ["true", undefined, false],
+    ["1", false, false],
+    [undefined, true, true],
+  ] as const)("retains one cached dominance owner with env=%s and explicit=%s", (flag, explicit, enabled) => {
+    const previous = process.env.JS2WASM_IR_VERIFY_DOMINANCE_NAIVE;
+    const fn = voidFunction();
+    const info = dominanceOf(fn);
+    const original = info.dominates;
+    let observed = 0;
+    // Pass-through public analysis query observation; no replacement answer or
+    // private cache access. A void body has no SSA dominance queries itself.
+    info.dominates = (a, b) => {
+      observed++;
+      return original(a, b);
+    };
+    try {
+      if (flag === undefined) Reflect.deleteProperty(process.env, "JS2WASM_IR_VERIFY_DOMINANCE_NAIVE");
+      else process.env.JS2WASM_IR_VERIFY_DOMINANCE_NAIVE = flag;
+      const options = explicit === undefined ? undefined : { verifyDominanceNaive: explicit };
+      for (const check of [oldVerify.verifyIrFunction, verify.verifyIrFunction]) {
+        observed = 0;
+        expect(check(fn, undefined, undefined, options)).toEqual([]);
+        expect(observed > 0).toBe(enabled);
+        expect(dominanceOf(fn)).toBe(info);
+      }
+      expect(crossCheckDominance(fn, info)).toEqual([]);
+    } finally {
+      info.dominates = original;
+      if (previous === undefined) Reflect.deleteProperty(process.env, "JS2WASM_IR_VERIFY_DOMINANCE_NAIVE");
+      else process.env.JS2WASM_IR_VERIFY_DOMINANCE_NAIVE = previous;
+    }
+  });
+
+  it("preserves recursive nominal layouts and refuses contradictory or duplicate authority", () => {
+    const { program, shape } = classProgram();
+    expect(() => classes.assertPreparedIrClassLayouts(program)).not.toThrow();
+    expect(() =>
+      classes.assertPreparedIrClassLayouts({
+        ...program,
+        abi: { entries: [...program.abi.entries, ...program.abi.entries] },
+      }),
+    ).toThrow("duplicate layout authority");
+    const wrong = { ...shape, fields: [{ name: "changed", type: F64 }] };
+    expect(() =>
+      classes.assertPreparedIrClassLayouts({
+        ...program,
+        ir: { functions: [{ ...program.ir.functions[0]!, resultTypes: [{ kind: "class", shape: wrong }] }] },
+      }),
+    ).toThrow("contradicts its declared complete layout");
+    expect(() => classes.assertPreparedIrClassLayouts({ ...program, abi: { entries: [] } })).toThrow(
+      "lacks a declared layout contract",
+    );
+  });
+
+  it("rejects executable class-graph accessors without invoking them", () => {
+    const { program } = classProgram();
+    expect(() => classes.assertPreparedIrClassLayouts(program)).not.toThrow();
+    let invoked = 0;
+    const ir = { ...program.ir };
+    Object.defineProperty(ir, "hiddenPayload", {
+      enumerable: true,
+      get: () => {
+        invoked++;
+        return 0;
+      },
+    });
+    expect(() => classes.assertPreparedIrClassLayouts({ ...program, ir })).toThrow("executable accessors");
+    expect(invoked).toBe(0);
+  });
+
+  it("checks old and canonical public types using the actual root TS7 configuration", () => {
+    const root = resolve(import.meta.dirname, "..");
+    const scratch = resolve(root, ".tmp", "phase-b-type-controls");
+    mkdirSync(scratch, { recursive: true });
+    const directory = mkdtempSync(resolve(scratch, "assignability-"));
+    const source = `
+import * as oldV from "../../../src/ir/verify.js";
+import * as newV from "../../../src/ir/runtime/verify.js";
+import * as oldA from "../../../src/ir/verify-alloc.js";
+import * as newA from "../../../src/ir/analysis/alloc-verification.js";
+import * as oldP from "../../../src/ir/program-allocations.js";
+import * as newP from "../../../src/ir/program/allocations.js";
+import * as oldC from "../../../src/ir/program-class-layouts.js";
+import * as newC from "../../../src/ir/program/class-layouts.js";
+import type { IrFunction } from "../../../src/ir/core/nodes.js";
+import type { PreparedIrFunction } from "../../../src/ir/runtime/contracts/prepared.js";
+type Same<A, B> = [A] extends [B] ? [B] extends [A] ? true : false : false;
+type Must<T extends true> = T;
+type Errors = Must<Same<oldV.IrVerifyError, newV.IrVerifyError>>;
+type Options = Must<Same<oldV.IrVerificationOptions, newV.IrVerificationOptions>>;
+type Status = Must<Same<oldV.TypeRuleStatus, newV.TypeRuleStatus>>;
+type Category = Must<Same<oldV.TypeRuleCategory, newV.TypeRuleCategory>>;
+type AllocErrors = Must<Same<oldA.AllocVerifyError, newA.AllocVerifyError>>;
+const verifyOld: typeof oldV.verifyIrFunction = newV.verifyIrFunction;
+const verifyNew: typeof newV.verifyIrFunction = oldV.verifyIrFunction;
+const allocOld: typeof oldA.verifyAllocProvenance = newA.verifyAllocProvenance;
+const allocNew: typeof newA.verifyAllocProvenance = oldA.verifyAllocProvenance;
+const finalOld: typeof oldA.assertFinalAllocProvenance = newA.assertFinalAllocProvenance;
+const finalNew: typeof newA.assertFinalAllocProvenance = oldA.assertFinalAllocProvenance;
+const programOld: typeof oldP.assertPreparedIrProgramAllocations = newP.assertPreparedIrProgramAllocations;
+const programNew: typeof newP.assertPreparedIrProgramAllocations = oldP.assertPreparedIrProgramAllocations;
+const supportOld: typeof oldP.analyzeIrRuntimeSupportAllocations = newP.analyzeIrRuntimeSupportAllocations;
+const supportNew: typeof newP.analyzeIrRuntimeSupportAllocations = oldP.analyzeIrRuntimeSupportAllocations;
+const classOld: typeof oldC.assertPreparedIrClassLayouts = newC.assertPreparedIrClassLayouts;
+const classNew: typeof newC.assertPreparedIrClassLayouts = oldC.assertPreparedIrClassLayouts;
+declare const core: IrFunction, prepared: PreparedIrFunction;
+verifyOld(core); verifyNew(prepared);
+function runtimeField(fn: Parameters<typeof newV.verifyIrFunction>[0]) { return fn.asyncRuntime; }
+function oldRuntimeField(fn: Parameters<typeof oldV.verifyIrFunction>[0]) { return fn.asyncRuntime; }
+const runtime: typeof prepared.asyncRuntime = runtimeField(prepared);
+const oldRuntime: typeof runtime = oldRuntimeField(prepared);
+declare const options: newV.IrVerificationOptions;
+// @ts-expect-error preserved readonly API
+options.verifyDominanceNaive = false;
+// @ts-expect-error missing required explicit dominance option
+verifyNew(core, undefined, undefined, {});
+// @ts-expect-error invalid prepared runtime discriminant
+verifyNew({ ...prepared, asyncRuntime: { kind: "caller-verified", states: [], adapters: [] } });
+`;
+    try {
+      writeFileSync(resolve(directory, "fixture.ts"), source);
+      writeFileSync(
+        resolve(directory, "tsconfig.json"),
+        JSON.stringify({
+          extends: resolve(root, "tsconfig.ts7.json"),
+          compilerOptions: { rootDir: root, noEmit: true },
+          include: ["fixture.ts"],
+          exclude: [],
+        }),
+      );
+      const child = spawnSync(
+        process.execPath,
+        [
+          resolve(root, "node_modules/typescript7/lib/tsc.js"),
+          "--noEmit",
+          "--project",
+          resolve(directory, "tsconfig.json"),
+          "--pretty",
+          "false",
+        ],
+        {
+          cwd: root,
+          encoding: "utf8",
+          env: { ...process.env, NODE_OPTIONS: "--max-old-space-size=4096" },
+          maxBuffer: 8 * 1024 * 1024,
+        },
+      );
+      expect(child.error).toBeUndefined();
+      expect(child.signal).toBeNull();
+      expect(child.status, child.stdout + child.stderr).toBe(0);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+});

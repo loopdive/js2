@@ -1,0 +1,482 @@
+{
+  "schema": 1,
+  "kind": "authenticated-live-program-pre-a-evolution",
+  "specSha256": "67f6932589898da25be13cd64c07f0408fd8dd1a488037826169999f4f7ea6ce",
+  "receiptProvenance": "f95d8a0bf318e857d981863b1018a9d776483a46",
+  "reconstructedExtractionRevision": "3a119a88b28bb347f4faaaa2146bd991acf61228",
+  "laterCommits": {
+    "identity": "cb64af7b0315d59d08809e404c1216c846270654",
+    "runtimeSupport": "efe352fee8afc3feb6a28c34d00fc658dc1fb205"
+  },
+  "f95Originals": {
+    "src/ir/identity.ts": {
+      "bytes": 65696,
+      "sha256": "dac8028626f9601dfc63e9c9232f583a3f4f2402636dee26b0b4c4296f7dcf6d",
+      "gitBlob": "e5c72b0ef8f8973e3ec54cab22980a3da057e783"
+    },
+    "src/ir/prepared-component-dependencies.ts": {
+      "bytes": 70709,
+      "sha256": "f304fc8522d493c1611534c8c0aa17d2f67c41e6249dba88b3bfbc0415ded0a9",
+      "gitBlob": "dd2f1901c693e94781e9d748924a94d7b459051e"
+    },
+    "src/ir/program-input.ts": {
+      "bytes": 8365,
+      "sha256": "0fcb6c721350974ead36a180d6819cbee41a478c939505220cccc158a8263542",
+      "gitBlob": "25e41a991495be655f8e29ea84eea0822d5f0065"
+    },
+    "src/ir/program.ts": {
+      "bytes": 35282,
+      "sha256": "0e0fcace565dc1ea475067c32c355ff785cc3a5dfb56ed56086f5b4dbb339e36",
+      "gitBlob": "a9622b076f9771e151acdf31e9aaf21b87549e6c"
+    }
+  },
+  "expectedOriginalReceipts": {
+    "identityRetained": {
+      "count": 62,
+      "functions": 34,
+      "sha256": "085e2c77ab3f040ea2aa9b4b215a751bdbef69761c1812687f5fed4f16ff0879"
+    },
+    "dependenciesRetained": {
+      "count": 41,
+      "functions": 28,
+      "sha256": "7645e249fd03cedd881938e7844535d71b333b8679194e7a5d2eaabba6842121"
+    },
+    "TypedIrProgramInput": "1dc69663b93552c16a75cac76486906801e697cb33dcc3cfe1201f1717824805",
+    "PreparedIrProgram": "83eff15645a15944208dbc46f9dd83bace7fc7f74fca8fcfdf450568c6381392"
+  },
+  "dependencies": [
+    {
+      "path": "src/shared/contracts/ir-identity.ts",
+      "bytes": 2741,
+      "sha256": "ef9427c37f81455e06b81cf4f2599601d50e80f0d83abcacda447c9048fa4d0f",
+      "gitBlob": "07f882159a6e688c1ed30c2965a36699d21a0b85"
+    },
+    {
+      "path": "src/shared/contracts/identity-values.ts",
+      "bytes": 1208,
+      "sha256": "df20402d646264c0341a16a0c49bac2db4bdb38b5ac3e3b1e7ab7ef5a17f2412",
+      "gitBlob": "b5dcede80a8be81b35e1442f2229a849cb785931",
+      "byteIdenticalToF95": true
+    },
+    {
+      "path": "src/ir/identity-values.ts",
+      "bytes": 312,
+      "sha256": "3f38d0923826ffa5e3114612a21c7e4c8f4d9c0d3e51c0826e4bc174877acd93",
+      "gitBlob": "ce78e415149dfff0cb447c2b97034f3b819ead23",
+      "byteIdenticalToF95": true
+    },
+    {
+      "path": "src/shared/contracts/ir-unit-inventory.ts",
+      "bytes": 4708,
+      "sha256": "f6f253cefa3b4618bd5f2daf2555b6c0d734a715f2dd44a30a83921c0d9b6496",
+      "gitBlob": "e7f088edffda5ef76b726b6786341e5bcc744078"
+    },
+    {
+      "path": "src/ir/program/abi-lookup.ts",
+      "bytes": 1112,
+      "sha256": "f461b6ed08cfd89e6efec74bddd3f6857e92bc0ab3bea354836292587d04facf",
+      "gitBlob": "a677bd2379ee5ad2439668fec0589ce01d8b13b0"
+    },
+    {
+      "path": "src/ir/program/runtime-support.ts",
+      "bytes": 14807,
+      "sha256": "da7e458acb00449fc57e2e6cace2eea5bcd9f781bc63c93baa29e810d537b1f9",
+      "gitBlob": "f92a1ef2653a66dedb9430371ce83d506a32befb"
+    },
+    {
+      "path": "src/ir/program/formatter-support.ts",
+      "bytes": 2489,
+      "sha256": "e6528c00040027687b3fb3cb887500535f789e14b7914599c168f6a73fc600bf",
+      "gitBlob": "112d4fb48c4556d1e87b9afe6c1ec95709e114e7"
+    },
+    {
+      "path": "src/ir/program/errors.ts",
+      "bytes": 1117,
+      "sha256": "b64c58e9ed9e870aa1fa8b219e413b786b66c6cdf4586adac78a5894fbce5907",
+      "gitBlob": "079dbd626af8dcc207201552095501ba0fd622f1"
+    },
+    {
+      "path": "src/ir/core/types.ts",
+      "bytes": 32296,
+      "sha256": "58d3795e4f38002798fbdb93c7599f74cb422555ba0ed84f160a51aec52543a2",
+      "gitBlob": "db0b740a300009d035b7af28377bf0333e023105"
+    }
+  ],
+  "records": [
+    {
+      "path": "src/ir/identity.ts",
+      "current": {
+        "bytes": 61452,
+        "sha256": "ac9bcf913f1bbe4358f020307b3fd25b47c0fac26be88dfde449ba1d33694e44",
+        "gitBlob": "4a47d555bb511e921e2e9fd70902fa9275d3329a"
+      },
+      "original": {
+        "bytes": 61918,
+        "sha256": "5ce489e877830b546b75f58b32483203f760cc1ec34be2ea4efce04cb19b37a5",
+        "gitBlob": "5e0b2184fd1a45364920f287ec45ee0b76011df1"
+      },
+      "changes": [
+        {
+          "label": "exact import replacement",
+          "current": {
+            "startByte": 85,
+            "endByte": 309,
+            "bytes": 224,
+            "sha256": "d499af6af50d03b63db34a132fc61f67f965cc1b63871588577884074455b338",
+            "gitBlob": "a18f88b77de1f0cbd5f24b8623f5d8216fdc8faa"
+          },
+          "original": {
+            "startByte": 85,
+            "endByte": 263,
+            "bytes": 178,
+            "sha256": "2b3a90a18699400f32125952a48ba1c8e3bddf55f7b12341f6297ed1d1beff6d",
+            "gitBlob": "0337aaebb86499437555d6b7925e0dc35a2e4a0f"
+          },
+          "replacement": {
+            "kind": "scaffold",
+            "text": "import type {\n  IrSourceId,\n  IrUnitId,\n  IrClassId,\n  IrBindingId,\n  IrLexicalOwnerId,\n  IrFunctionIdentity,\n  IrSyntheticUnitRole,\n} from \"../shared/contracts/ir-identity.js\";\n"
+          }
+        },
+        {
+          "label": "exact export replacement",
+          "current": {
+            "startByte": 309,
+            "endByte": 612,
+            "bytes": 303,
+            "sha256": "ec9c5541009273e836be057106cc087c4f956c469899918a59b77557f59a6ad3",
+            "gitBlob": "064e98922ea30ef4a0674c165c18726319e9a197"
+          },
+          "original": {
+            "startByte": 263,
+            "endByte": 498,
+            "bytes": 235,
+            "sha256": "2ee2c606ecf642e1937cd4ce5fec74eb96e963863fc2bfb6dc0fa5f700b02e31",
+            "gitBlob": "c2cdbbaa6fb00fc847fb23ab2b8c2ab9bd483645"
+          },
+          "replacement": {
+            "kind": "scaffold",
+            "text": "export type {\n  IrSourceId,\n  IrUnitId,\n  IrClassId,\n  IrBindingId,\n  IrLexicalOwnerId,\n  IrFunctionIdentity,\n  IrSyntheticUnitRole,\n  CreateDerivedIrUnitIdInput,\n  CreateIrBindingIdInput,\n} from \"../shared/contracts/ir-identity.js\";\n\n"
+          }
+        },
+        {
+          "label": "insert genuine live donor",
+          "current": {
+            "startByte": 2072,
+            "endByte": 2072,
+            "bytes": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "gitBlob": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+          },
+          "original": {
+            "startByte": 1958,
+            "endByte": 2262,
+            "bytes": 304,
+            "sha256": "8e9db4e463c62ad78c397306e62205c54fbf5e9030f3255a2f7c98a27ccc940f",
+            "gitBlob": "4d1572afacb547463a7d221388b8ef31a41a27d0"
+          },
+          "replacement": {
+            "kind": "live",
+            "span": {
+              "path": "src/shared/contracts/ir-identity.ts",
+              "startByte": 1449,
+              "endByte": 1753,
+              "bytes": 304,
+              "sha256": "8e9db4e463c62ad78c397306e62205c54fbf5e9030f3255a2f7c98a27ccc940f",
+              "gitBlob": "4d1572afacb547463a7d221388b8ef31a41a27d0",
+              "declaration": {
+                "path": "src/shared/contracts/ir-identity.ts",
+                "name": "IrLiftedFunctionArtifactIdentity",
+                "kind": "InterfaceDeclaration",
+                "occurrence": 0,
+                "ordinal": 10,
+                "startByte": 1449,
+                "endByte": 1751,
+                "bytes": 302,
+                "sha256": "3b9f969829455e0c34ca45ce28a6253c95f52705b4a73ed453bea72e2793d60d",
+                "gitBlob": "94740819a9f6e69fa3e6ff4a26d18521416d8f7c"
+              }
+            }
+          },
+          "currentAnchor": {
+            "text": "export interface IrLiftedFunctionArtifactOwner",
+            "startByte": 2072
+          }
+        },
+        {
+          "label": "insert genuine live donor with documentation",
+          "current": {
+            "startByte": 2449,
+            "endByte": 2449,
+            "bytes": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "gitBlob": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+          },
+          "original": {
+            "startByte": 2639,
+            "endByte": 2915,
+            "bytes": 276,
+            "sha256": "4f0b4fc36065b1ace8909174a760c42f914142d60ecde9190559641ae3603f89",
+            "gitBlob": "f8f58a18d8cfa200d809236cf5bbb90ef17e5c89"
+          },
+          "replacement": {
+            "kind": "live",
+            "span": {
+              "path": "src/shared/contracts/ir-identity.ts",
+              "startByte": 1753,
+              "endByte": 2029,
+              "bytes": 276,
+              "sha256": "4f0b4fc36065b1ace8909174a760c42f914142d60ecde9190559641ae3603f89",
+              "gitBlob": "f8f58a18d8cfa200d809236cf5bbb90ef17e5c89",
+              "declaration": {
+                "path": "src/shared/contracts/ir-identity.ts",
+                "name": "IrLiftedSourceUnitProvenance",
+                "kind": "InterfaceDeclaration",
+                "occurrence": 0,
+                "ordinal": 11,
+                "startByte": 1830,
+                "endByte": 2027,
+                "bytes": 197,
+                "sha256": "038e88a884d92006cddac659932123eb50e602652bbc06d3e0e5027a71c4cf30",
+                "gitBlob": "4964317d2cd9c94b49899ad48e87a03dfe75510b"
+              }
+            }
+          },
+          "currentAnchor": {
+            "text": "export type IrDerivedUnitProvenance",
+            "startByte": 2449
+          }
+        }
+      ],
+      "retained": {
+        "declarations": 62,
+        "functions": 34,
+        "sha256": "085e2c77ab3f040ea2aa9b4b215a751bdbef69761c1812687f5fed4f16ff0879"
+      }
+    },
+    {
+      "path": "src/ir/prepared-component-dependencies.ts",
+      "current": {
+        "bytes": 74563,
+        "sha256": "0ea7a1b7d7ce5bf0a035d8b3a4c9c5a65aabd841ddd3c7a7c10bf82b11c9b8a7",
+        "gitBlob": "c75052c6c51a824bc1ad0af99155271fb4d30480"
+      },
+      "original": {
+        "bytes": 69950,
+        "sha256": "14e22cc9e8c319d9f2dc4c041ec628f5e04c55e3b86f4d7c10f3891329e2764e",
+        "gitBlob": "57ff11f9b4094a97bf0cf0de7e6dca8420656de8"
+      },
+      "changes": [
+        {
+          "label": "four imports",
+          "current": {
+            "startByte": 1460,
+            "endByte": 1740,
+            "bytes": 280,
+            "sha256": "7ea5905f710ae926fb9acf5231c1c77c8f76fe29a916d9e67bfeb32766bdca91",
+            "gitBlob": "30cfb106feac21f47f87eb1a910135f36583f97a"
+          },
+          "original": {
+            "startByte": 1460,
+            "endByte": 1460,
+            "bytes": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "gitBlob": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+          },
+          "replacement": {
+            "kind": "scaffold",
+            "text": ""
+          },
+          "originalAnchor": {
+            "text": "export type { PreparedComponentAbiEntry, PreparedComponentAbiLookup } from \"./program/abi-lookup.js\";",
+            "startByte": 1460
+          }
+        },
+        {
+          "label": "added function and complete documentation",
+          "current": {
+            "startByte": 1843,
+            "endByte": 5937,
+            "bytes": 4094,
+            "sha256": "e4897263fefa3d9e9d07e1cec84b5e003232917fc5970e214331a2a976b3e9b8",
+            "gitBlob": "8449723e63c23460421063ba184c308c2cb5ed02"
+          },
+          "original": {
+            "startByte": 1563,
+            "endByte": 1563,
+            "bytes": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "gitBlob": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+          },
+          "replacement": {
+            "kind": "scaffold",
+            "text": ""
+          },
+          "originalAnchor": {
+            "text": "export type {\n  PreparedClassAccessorWritebackEvidence,",
+            "startByte": 1563
+          }
+        },
+        {
+          "label": "support-ref arm in recordImplicitTypeRequirement",
+          "current": {
+            "startByte": 16699,
+            "endByte": 16938,
+            "bytes": 239,
+            "sha256": "6844eecb435d6ec323e3dcccc5453986d94bbe9f01906add699ae3070c4141d3",
+            "gitBlob": "4561478d800d6758385aefdfc0a85b5b099ac203"
+          },
+          "original": {
+            "startByte": 12325,
+            "endByte": 12325,
+            "bytes": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "gitBlob": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+          },
+          "replacement": {
+            "kind": "scaffold",
+            "text": ""
+          },
+          "originalAnchor": {
+            "text": "  switch (type.kind) {\n    case \"val\":",
+            "startByte": 12302
+          }
+        }
+      ],
+      "retained": {
+        "declarations": 41,
+        "functions": 28,
+        "sha256": "7645e249fd03cedd881938e7844535d71b333b8679194e7a5d2eaabba6842121"
+      }
+    },
+    {
+      "path": "src/ir/program/input-contracts.ts",
+      "current": {
+        "bytes": 2375,
+        "sha256": "755022df130534f4ddeb0dab4eaebd50a5a1f9790bbc9a98d2e3d74e29e65fe7",
+        "gitBlob": "ae84ebb03ddd7461cf887d1028d558140ecba156"
+      },
+      "original": {
+        "bytes": 2267,
+        "sha256": "35513eb7bbb1c5228da514904d4ed1baf8b904ccd4ba321c0feff5bf80623767",
+        "gitBlob": "cebf4928df125a79f05942469d270200302ad816"
+      },
+      "changes": [
+        {
+          "label": "runtimeSupport import",
+          "current": {
+            "startByte": 839,
+            "endByte": 901,
+            "bytes": 62,
+            "sha256": "fa416c71edc77663d6ae079ace8bf878c4349c046751cdfcb170a50627b17610",
+            "gitBlob": "000459cee585f9b95268a902726654a169c550ad"
+          },
+          "original": {
+            "startByte": 839,
+            "endByte": 839,
+            "bytes": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "gitBlob": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+          },
+          "replacement": {
+            "kind": "scaffold",
+            "text": ""
+          },
+          "originalAnchor": {
+            "text": "/** Only semantic storage facts cross the frontend boundary, never declarations. */",
+            "startByte": 840
+          }
+        },
+        {
+          "label": "runtimeSupport member",
+          "current": {
+            "startByte": 2135,
+            "endByte": 2181,
+            "bytes": 46,
+            "sha256": "225676fe998c77096fb90e523b27ae3d662ded300af913654f3555d53d50ead5",
+            "gitBlob": "7ccce173fb1051840892f47ae45c71dac3b22e07"
+          },
+          "original": {
+            "startByte": 2073,
+            "endByte": 2073,
+            "bytes": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "gitBlob": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+          },
+          "replacement": {
+            "kind": "scaffold",
+            "text": ""
+          },
+          "originalAnchor": {
+            "text": "export interface TypedIrProgramOptions",
+            "startByte": 2076
+          }
+        }
+      ]
+    },
+    {
+      "path": "src/ir/program/prepared-contracts.ts",
+      "current": {
+        "bytes": 4843,
+        "sha256": "889bedc1c23fb8e26db609634ce0a0137da73a9cc85f636b810a86a396173225",
+        "gitBlob": "e8443bbd780aff5284f322d89748b8de691babe3"
+      },
+      "original": {
+        "bytes": 4735,
+        "sha256": "6535893fc7c88d72fb3b0f963dab151f18cf10052f36693d52859a92837e0a20",
+        "gitBlob": "34f66f9f3047739e5020ab9880d3753188d3e484"
+      },
+      "changes": [
+        {
+          "label": "runtimeSupport import",
+          "current": {
+            "startByte": 1085,
+            "endByte": 1147,
+            "bytes": 62,
+            "sha256": "fa416c71edc77663d6ae079ace8bf878c4349c046751cdfcb170a50627b17610",
+            "gitBlob": "000459cee585f9b95268a902726654a169c550ad"
+          },
+          "original": {
+            "startByte": 1085,
+            "endByte": 1085,
+            "bytes": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "gitBlob": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+          },
+          "replacement": {
+            "kind": "scaffold",
+            "text": ""
+          },
+          "originalAnchor": {
+            "text": "/** Semantic contracts enrich the existing ABI entries; there is no second binding authority. */",
+            "startByte": 1086
+          }
+        },
+        {
+          "label": "runtimeSupport member",
+          "current": {
+            "startByte": 4165,
+            "endByte": 4211,
+            "bytes": 46,
+            "sha256": "225676fe998c77096fb90e523b27ae3d662ded300af913654f3555d53d50ead5",
+            "gitBlob": "7ccce173fb1051840892f47ae45c71dac3b22e07"
+          },
+          "original": {
+            "startByte": 4103,
+            "endByte": 4103,
+            "bytes": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "gitBlob": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+          },
+          "replacement": {
+            "kind": "scaffold",
+            "text": ""
+          },
+          "originalAnchor": {
+            "text": "readonly runtime:",
+            "startByte": 4105
+          }
+        }
+      ]
+    }
+  ]
+}

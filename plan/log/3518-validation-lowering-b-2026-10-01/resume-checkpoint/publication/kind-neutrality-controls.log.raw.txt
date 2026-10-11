@@ -1,0 +1,14 @@
+
+ RUN  v3.2.4 /private/tmp/js2-ir-source-contracts-main-20261001
+
+ ✓ tests/issue-5298-kind-neutrality-stable-evidence.test.ts (5 tests) 1263ms
+   ✓ #5298 kind-neutrality evidence is keyed by quote identity, not by line > (a) a line inserted ABOVE a cited quote does not move the record  359ms
+   ✓ #5298 kind-neutrality evidence is keyed by quote identity, not by line > (b) a DELETED quote still fails R2, naming the kind and the quote  355ms
+   ✓ #5298 kind-neutrality evidence is keyed by quote identity, not by line > (d) --update-on-decrease writes prettier-clean JSON without a manual pass  302ms
+
+ Test Files  1 passed (1)
+      Tests  5 passed (5)
+   Start at  07:53:01
+   Duration  1.44s (transform 19ms, setup 0ms, collect 17ms, tests 1.26s, environment 0ms, prepare 41ms)
+
+JSON report written to /private/tmp/js2-ir-source-contracts-main-20261001/.tmp/wrap-final-20261001/kind-neutrality-controls.json

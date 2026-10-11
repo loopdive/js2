@@ -1,0 +1,329 @@
+{
+  "schemaVersion": 1,
+  "base": "bfe31c8bd96d748e867562e3e9b78343b72d1877",
+  "sources": [
+    {
+      "path": "src/codegen/closures/closure-header-layout.ts",
+      "text": "// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.\n/**\n * (#4241) The closure-struct HEADER layout — the single source of truth for the\n * fields every struct in the funcref-wrapper root hierarchy carries before its\n * captures, and for the predicate that recognises that header.\n *\n * ## Why this is its own module\n * The layout used to be stated in TWO places that could not see each other: the\n * mint-site constants in `funcref-wrapper-types.ts`, and a hand-written\n * `type.fields.length === 2 && fields[0] is funcref && fields[1] is i32`\n * validator inside `program-abi-type-planning.ts`'s IR closure-support check.\n * Adding the `$bag` slot satisfied the constants and silently violated the\n * validator, which does not warn — it THROWS, so all five async functions in\n * `website/playground/examples/js/async.ts` failed IR-first with\n * \"non-canonical physical wrapper root\" and the `check:ir-only` readiness gate\n * exited 1. Nothing in the type system connected the two statements.\n *\n * `funcref-wrapper-types.ts` cannot host the predicate, because it imports the\n * codegen barrel (`../index.js`) and `program-abi-type-planning.ts` is reachable\n * from that barrel — importing it there would close an initialization cycle\n * around `const` exports. So this module is a LEAF, importing only TYPES, for\n * the same reason and in the same shape as `closure-classifier.ts`: one\n * definition, many consumers, never two divergent copies.\n *\n * ## The layout\n * ```\n *   0  func    funcref     the lifted function reference\n *   1  $arity  i32         (#3673) declared user formal count\n *   2  $bag    externref   (#4241) carrier-intrinsic expando bag, mutable,\n *                          null until the carrier grows its first property\n *   3+ captures / TDZ flag cells / __constructible / subtype-specific fields\n * ```\n * Every capture read/write and TDZ-slot index derives from\n * {@link CLOSURE_CAPTURE_FIELD_BASE}, never a bare literal — and now so does\n * every VALIDATOR of the header.\n */\nimport type { FieldDef, Instr, ValType } from \"../../ir/types.js\";\n\n/** Field 0 — the lifted function reference. */\nexport const CLOSURE_FUNC_FIELD_IDX = 0;\n/** Field 1 — (#3673) the closure's declared user formal count. */\nexport const CLOSURE_ARITY_FIELD_IDX = 1;\n/** Field 2 — (#4241) the carrier-intrinsic expando-bag slot. */\nexport const CLOSURE_BAG_FIELD_IDX = 2;\n/** First capture field. Also the header's field COUNT, by construction. */\nexport const CLOSURE_CAPTURE_FIELD_BASE = 3;\n\n/** The `$arity` field definition — shared by every closure-struct mint site. */\nexport function closureArityField(): { name: string; type: ValType; mutable: false } {\n  return { name: \"$arity\", type: { kind: \"i32\" }, mutable: false };\n}\n\n/**\n * The `$bag` field definition — shared by every closure-struct mint site.\n * MUTABLE, so a WasmGC subtype must redeclare it with the identical type and\n * mutability (field types are invariant for mutable fields); using this one\n * factory everywhere is what guarantees that. The `$` prefix keeps it out of\n * name enumeration and getter emission, matching `$arity` and `$shape`.\n */\n/**\n * (#4241) The field NAME of the carrier-intrinsic expando bag. Exported so\n * every consumer resolves the slot by NAME rather than by index — the slot does\n * not stay last (`property-access-dispatch.ts` appends fields to already-\n * registered structs) and it sits at different indices in different carrier\n * families (index 2 in the closure header, appended in an instance carrier).\n */\nexport const INSTANCE_BAG_FIELD = \"$bag\";\n\nexport function closureBagField(): { name: string; type: ValType; mutable: true } {\n  return { name: \"$bag\", type: { kind: \"externref\" }, mutable: true };\n}\n\n/**\n * The `struct.new` operand for a freshly-minted closure's `$bag` slot. Sits\n * between the `$arity` i32 and the first capture at EVERY closure allocation\n * site — a missed site is a loud `struct.new` arity/type validation failure,\n * never a silent wrong answer.\n */\nexport function closureBagInitInstr(): Instr {\n  return { op: \"ref.null.extern\" };\n}\n\n/**\n * Does `fields` START with the canonical closure header? True for a bare\n * wrapper root and for any subtype that correctly redeclares the header before\n * its own fields.\n *\n * Checked by KIND rather than by identity with the factories above, because the\n * consumers that ask this question are validating types the allocator already\n * built and canonicalized — a structural question, not a provenance one.\n */\nexport function hasClosureHeaderPrefix(fields: readonly (FieldDef | undefined)[]): boolean {\n  return (\n    fields.length >= CLOSURE_CAPTURE_FIELD_BASE &&\n    fields[CLOSURE_FUNC_FIELD_IDX]?.type.kind === \"funcref\" &&\n    fields[CLOSURE_ARITY_FIELD_IDX]?.type.kind === \"i32\" &&\n    fields[CLOSURE_BAG_FIELD_IDX]?.type.kind === \"externref\"\n  );\n}\n\n/**\n * Is `fields` EXACTLY the canonical header and nothing else — i.e. a bare\n * wrapper root / signature wrapper with no captures?\n */\nexport function isCanonicalClosureHeader(fields: readonly (FieldDef | undefined)[]): boolean {\n  return fields.length === CLOSURE_CAPTURE_FIELD_BASE && hasClosureHeaderPrefix(fields);\n}\n\n/**\n * The field count a captured subtype must have for `captureCount` captures:\n * the header plus one field per capture.\n */\nexport function closureSubtypeFieldCount(captureCount: number): number {\n  return CLOSURE_CAPTURE_FIELD_BASE + captureCount;\n}\n",
+      "sha256": "8b6b7d016ff5c240609b0d63569bd2544bd934fb0850d87aff1efce67824d9b6",
+      "edits": [
+        {
+          "oldStart": 2,
+          "oldCount": 36,
+          "newStart": 1,
+          "newCount": 0,
+          "old": [
+            "/**",
+            " * (#4241) The closure-struct HEADER layout — the single source of truth for the",
+            " * fields every struct in the funcref-wrapper root hierarchy carries before its",
+            " * captures, and for the predicate that recognises that header.",
+            " *",
+            " * ## Why this is its own module",
+            " * The layout used to be stated in TWO places that could not see each other: the",
+            " * mint-site constants in `funcref-wrapper-types.ts`, and a hand-written",
+            " * `type.fields.length === 2 && fields[0] is funcref && fields[1] is i32`",
+            " * validator inside `program-abi-type-planning.ts`'s IR closure-support check.",
+            " * Adding the `$bag` slot satisfied the constants and silently violated the",
+            " * validator, which does not warn — it THROWS, so all five async functions in",
+            " * `website/playground/examples/js/async.ts` failed IR-first with",
+            " * \"non-canonical physical wrapper root\" and the `check:ir-only` readiness gate",
+            " * exited 1. Nothing in the type system connected the two statements.",
+            " *",
+            " * `funcref-wrapper-types.ts` cannot host the predicate, because it imports the",
+            " * codegen barrel (`../index.js`) and `program-abi-type-planning.ts` is reachable",
+            " * from that barrel — importing it there would close an initialization cycle",
+            " * around `const` exports. So this module is a LEAF, importing only TYPES, for",
+            " * the same reason and in the same shape as `closure-classifier.ts`: one",
+            " * definition, many consumers, never two divergent copies.",
+            " *",
+            " * ## The layout",
+            " * ```",
+            " *   0  func    funcref     the lifted function reference",
+            " *   1  $arity  i32         (#3673) declared user formal count",
+            " *   2  $bag    externref   (#4241) carrier-intrinsic expando bag, mutable,",
+            " *                          null until the carrier grows its first property",
+            " *   3+ captures / TDZ flag cells / __constructible / subtype-specific fields",
+            " * ```",
+            " * Every capture read/write and TDZ-slot index derives from",
+            " * {@link CLOSURE_CAPTURE_FIELD_BASE}, never a bare literal — and now so does",
+            " * every VALIDATOR of the header.",
+            " */",
+            "import type { FieldDef, Instr, ValType } from \"../../ir/types.js\";"
+          ],
+          "replacement": []
+        },
+        {
+          "oldStart": 39,
+          "oldCount": 77,
+          "newStart": 3,
+          "newCount": 14,
+          "old": [
+            "/** Field 0 — the lifted function reference. */",
+            "export const CLOSURE_FUNC_FIELD_IDX = 0;",
+            "/** Field 1 — (#3673) the closure's declared user formal count. */",
+            "export const CLOSURE_ARITY_FIELD_IDX = 1;",
+            "/** Field 2 — (#4241) the carrier-intrinsic expando-bag slot. */",
+            "export const CLOSURE_BAG_FIELD_IDX = 2;",
+            "/** First capture field. Also the header's field COUNT, by construction. */",
+            "export const CLOSURE_CAPTURE_FIELD_BASE = 3;",
+            "",
+            "/** The `$arity` field definition — shared by every closure-struct mint site. */",
+            "export function closureArityField(): { name: string; type: ValType; mutable: false } {",
+            "  return { name: \"$arity\", type: { kind: \"i32\" }, mutable: false };",
+            "}",
+            "",
+            "/**",
+            " * The `$bag` field definition — shared by every closure-struct mint site.",
+            " * MUTABLE, so a WasmGC subtype must redeclare it with the identical type and",
+            " * mutability (field types are invariant for mutable fields); using this one",
+            " * factory everywhere is what guarantees that. The `$` prefix keeps it out of",
+            " * name enumeration and getter emission, matching `$arity` and `$shape`.",
+            " */",
+            "/**",
+            " * (#4241) The field NAME of the carrier-intrinsic expando bag. Exported so",
+            " * every consumer resolves the slot by NAME rather than by index — the slot does",
+            " * not stay last (`property-access-dispatch.ts` appends fields to already-",
+            " * registered structs) and it sits at different indices in different carrier",
+            " * families (index 2 in the closure header, appended in an instance carrier).",
+            " */",
+            "export const INSTANCE_BAG_FIELD = \"$bag\";",
+            "",
+            "export function closureBagField(): { name: string; type: ValType; mutable: true } {",
+            "  return { name: \"$bag\", type: { kind: \"externref\" }, mutable: true };",
+            "}",
+            "",
+            "/**",
+            " * The `struct.new` operand for a freshly-minted closure's `$bag` slot. Sits",
+            " * between the `$arity` i32 and the first capture at EVERY closure allocation",
+            " * site — a missed site is a loud `struct.new` arity/type validation failure,",
+            " * never a silent wrong answer.",
+            " */",
+            "export function closureBagInitInstr(): Instr {",
+            "  return { op: \"ref.null.extern\" };",
+            "}",
+            "",
+            "/**",
+            " * Does `fields` START with the canonical closure header? True for a bare",
+            " * wrapper root and for any subtype that correctly redeclares the header before",
+            " * its own fields.",
+            " *",
+            " * Checked by KIND rather than by identity with the factories above, because the",
+            " * consumers that ask this question are validating types the allocator already",
+            " * built and canonicalized — a structural question, not a provenance one.",
+            " */",
+            "export function hasClosureHeaderPrefix(fields: readonly (FieldDef | undefined)[]): boolean {",
+            "  return (",
+            "    fields.length >= CLOSURE_CAPTURE_FIELD_BASE &&",
+            "    fields[CLOSURE_FUNC_FIELD_IDX]?.type.kind === \"funcref\" &&",
+            "    fields[CLOSURE_ARITY_FIELD_IDX]?.type.kind === \"i32\" &&",
+            "    fields[CLOSURE_BAG_FIELD_IDX]?.type.kind === \"externref\"",
+            "  );",
+            "}",
+            "",
+            "/**",
+            " * Is `fields` EXACTLY the canonical header and nothing else — i.e. a bare",
+            " * wrapper root / signature wrapper with no captures?",
+            " */",
+            "export function isCanonicalClosureHeader(fields: readonly (FieldDef | undefined)[]): boolean {",
+            "  return fields.length === CLOSURE_CAPTURE_FIELD_BASE && hasClosureHeaderPrefix(fields);",
+            "}",
+            "",
+            "/**",
+            " * The field count a captured subtype must have for `captureCount` captures:",
+            " * the header plus one field per capture.",
+            " */",
+            "export function closureSubtypeFieldCount(captureCount: number): number {",
+            "  return CLOSURE_CAPTURE_FIELD_BASE + captureCount;",
+            "}"
+          ],
+          "replacement": [
+            "// Compatibility facade; canonical layout, documentation and predicates live below.",
+            "export {",
+            "  CLOSURE_FUNC_FIELD_IDX,",
+            "  CLOSURE_ARITY_FIELD_IDX,",
+            "  CLOSURE_BAG_FIELD_IDX,",
+            "  CLOSURE_CAPTURE_FIELD_BASE,",
+            "  INSTANCE_BAG_FIELD,",
+            "  closureArityField,",
+            "  closureBagField,",
+            "  closureBagInitInstr,",
+            "  hasClosureHeaderPrefix,",
+            "  isCanonicalClosureHeader,",
+            "  closureSubtypeFieldCount,",
+            "} from \"../../runtime/wasmgc/values/closure-layouts.js\";"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "src/codegen/closures/funcref-wrapper-types.ts",
+      "text": "// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.\n/**\n * Funcref-wrapper struct / func-type registry for js2wasm closures.\n *\n * Extracted verbatim from `closures.ts` (issue #3270) — the small, foundational\n * wrapper-struct / lifted-func-type registry that the method-trampoline and\n * funcref-as-closure subsystems both build on. Isolates the isorecursive\n * root-wrapper canonicalization logic (#2873) in one place.\n */\n\nimport type { ClosureInfo, CodegenContext } from \"../context/types.js\";\nimport type { ValType } from \"../../ir/types.js\";\nimport { ts } from \"../../ts-api.js\";\nimport { funcSignatureOf } from \"../func-space.js\"; // (#1916 S2 read chokepoint)\nimport { addFuncType } from \"../registry/types.js\";\nimport { closureArityField, closureBagField } from \"./closure-header-layout.js\";\n\nexport type ClosureAllocationMode = \"support\" | \"ordinary\" | \"host-one-shot\";\n\nfunction observeAllocation(info: ClosureInfo, mode: ClosureAllocationMode): void {\n  if (mode === \"ordinary\") info.hostOneShotOnly = false;\n  else if (mode === \"host-one-shot\" && info.hostOneShotOnly === undefined) info.hostOneShotOnly = true;\n}\n\n/**\n * (#3673/#4241) Closure representation constants and header field factories.\n *\n * These now live in the LEAF module `closure-header-layout.ts` and are\n * re-exported here so the ~10 existing importers are unaffected. The move was\n * forced by a real failure: this module formerly imported the codegen barrel\n * (`../index.js`), and `program-abi-type-planning.ts` — which VALIDATES the\n * header on the IR path — was reachable from that barrel, so it could not import\n * the constants without closing an initialization cycle. It therefore carried\n * its own hand-written copy of the layout (`fields.length === 2 && funcref &&\n * i32`), which the `$bag` insertion silently invalidated. A leaf that both\n * sides can import is the fix; see that module's header for the full story.\n *\n * Capture fields start at CLOSURE_CAPTURE_FIELD_BASE — every capture\n * read/write, TDZ-slot index AND header validator derives from these\n * constants, never a bare literal.\n */\nexport {\n  CLOSURE_ARITY_FIELD_IDX,\n  CLOSURE_BAG_FIELD_IDX,\n  CLOSURE_CAPTURE_FIELD_BASE,\n  CLOSURE_FUNC_FIELD_IDX,\n  closureArityField,\n  closureBagField,\n  closureBagInitInstr,\n  closureSubtypeFieldCount,\n  hasClosureHeaderPrefix,\n  isCanonicalClosureHeader,\n} from \"./closure-header-layout.js\";\n\n/**\n * Look up a function's parameter and result types from its index.\n */\nexport function getFuncSignature(\n  ctx: CodegenContext,\n  funcIdx: number,\n): { params: ValType[]; results: ValType[] } | null {\n  // #1916 S2 — funcSignatureOf is the positional-read chokepoint (func-space.ts).\n  const sig = funcSignatureOf(ctx, funcIdx);\n  return sig ? { params: sig.params, results: sig.results } : null;\n}\n\n/**\n * Get or create the closure struct type and lifted func type for wrapping\n * plain functions with a given signature. Struct type and func type are shared\n * across all functions with the same signature, but each function gets its own\n * trampoline.\n */\nexport function getOrCreateFuncRefWrapperTypes(\n  ctx: CodegenContext,\n  userParams: ValType[],\n  resultTypes: ValType[],\n  allocationMode: ClosureAllocationMode = \"ordinary\",\n): {\n  structTypeIdx: number;\n  liftedFuncTypeIdx: number;\n  liftedSelfTypeIdx: number;\n  closureInfo: ClosureInfo;\n} | null {\n  // Build cache key from param types and result types\n  const sigKey = `${userParams.map((p) => p.kind + ((p as any).typeIdx ?? \"\")).join(\",\")}->${resultTypes.map((r) => r.kind + ((r as any).typeIdx ?? \"\")).join(\",\")}`;\n\n  const cached = ctx.funcRefWrapperCache.get(sigKey);\n  if (cached) {\n    const observedMinimum = ctx.closureMinimumArgumentCountByFuncTypeIdx.get(cached.funcTypeIdx);\n    if (observedMinimum !== undefined) {\n      const current = cached.minimumArgumentCount ?? cached.paramTypes.length;\n      cached.minimumArgumentCount = Math.min(current, observedMinimum);\n    }\n    observeAllocation(cached, allocationMode);\n    return {\n      structTypeIdx: cached.structTypeIdx,\n      liftedFuncTypeIdx: cached.funcTypeIdx,\n      liftedSelfTypeIdx: getFuncRefWrapperRootTypeIdx(ctx) ?? cached.structTypeIdx,\n      closureInfo: cached,\n    };\n  }\n\n  // Create the closure struct type: just (field $func funcref), no captures.\n  // Mark as non-final (superTypeIdx = -1) so closures with captures can be\n  // subtypes of this wrapper struct, enabling ref.cast to succeed at call sites.\n  const closureName = `__fn_wrap_${ctx.closureCounter++}`;\n  const structFields = [\n    { name: \"func\", type: { kind: \"funcref\" as const }, mutable: false },\n    closureArityField(),\n    closureBagField(),\n  ];\n  const structTypeIdx = ctx.mod.types.length;\n  const rootWrapperTypeIdx = (ctx as unknown as { __funcRefWrapperRootTypeIdx?: number }).__funcRefWrapperRootTypeIdx;\n  ctx.mod.types.push({\n    kind: \"struct\",\n    name: `${closureName}_struct`,\n    fields: structFields,\n    superTypeIdx: rootWrapperTypeIdx ?? -1, // first wrapper is the root; later signatures subtype it\n  });\n  const liftedSelfTypeIdx = rootWrapperTypeIdx ?? structTypeIdx;\n  if (rootWrapperTypeIdx === undefined) {\n    (ctx as unknown as { __funcRefWrapperRootTypeIdx?: number }).__funcRefWrapperRootTypeIdx = structTypeIdx;\n  }\n\n  // Cross-module callable ABI: every lifted funcref takes the structurally\n  // canonical ROOT as `self`, never the per-signature allocation wrapper.\n  // Wrapper creation order is module-local, so embedding the latter here\n  // makes identical source signatures disagree across separately compiled\n  // modules. Captured bodies recover their environment with a root→subtype\n  // cast; the user-visible params/results still identify the funcref exactly.\n  const liftedParams: ValType[] = [{ kind: \"ref\", typeIdx: liftedSelfTypeIdx }, ...userParams];\n  const liftedFuncTypeIdx = addFuncType(ctx, liftedParams, resultTypes, `${closureName}_type`);\n\n  const closureInfo: ClosureInfo = {\n    structTypeIdx,\n    funcTypeIdx: liftedFuncTypeIdx,\n    returnType: resultTypes.length > 0 ? resultTypes[0]! : null,\n    paramTypes: userParams,\n    minimumArgumentCount: ctx.closureMinimumArgumentCountByFuncTypeIdx.get(liftedFuncTypeIdx),\n  };\n  observeAllocation(closureInfo, allocationMode);\n  ctx.closureInfoByTypeIdx.set(structTypeIdx, closureInfo);\n  ctx.funcRefWrapperCache.set(sigKey, closureInfo);\n\n  return { structTypeIdx, liftedFuncTypeIdx, liftedSelfTypeIdx, closureInfo };\n}\n\n/**\n * #3371 — Return a nominally-distinct subtype for an ordinary function value.\n *\n * Arrow functions and method closures deliberately keep using the signature\n * wrapper above.  Ordinary function declarations/expressions add one immutable\n * marker field, making their runtime type distinguishable for IsConstructor\n * without changing field 0 or the shared lifted-call ABI.  The subtype still\n * casts to the base wrapper at every existing call site.\n */\nexport function getOrCreateConstructibleFuncRefWrapperTypes(\n  ctx: CodegenContext,\n  userParams: ValType[],\n  resultTypes: ValType[],\n): {\n  structTypeIdx: number;\n  liftedFuncTypeIdx: number;\n  liftedSelfTypeIdx: number;\n  closureInfo: ClosureInfo;\n} | null {\n  const sigKey = `${userParams.map((p) => p.kind + ((p as any).typeIdx ?? \"\")).join(\",\")}->${resultTypes.map((r) => r.kind + ((r as any).typeIdx ?? \"\")).join(\",\")}`;\n  const cached = ctx.constructibleFuncRefWrapperCache.get(sigKey);\n  if (cached) {\n    return {\n      structTypeIdx: cached.structTypeIdx,\n      liftedFuncTypeIdx: cached.funcTypeIdx,\n      liftedSelfTypeIdx: getFuncRefWrapperRootTypeIdx(ctx) ?? cached.structTypeIdx,\n      closureInfo: cached,\n    };\n  }\n\n  const base = getOrCreateFuncRefWrapperTypes(ctx, userParams, resultTypes);\n  if (!base) return null;\n  const structTypeIdx = ctx.mod.types.length;\n  ctx.mod.types.push({\n    kind: \"struct\",\n    name: `__constructible_fn_wrap_${ctx.closureCounter++}_struct`,\n    fields: [\n      { name: \"func\", type: { kind: \"funcref\" as const }, mutable: false },\n      closureArityField(),\n      closureBagField(),\n      { name: \"__constructible\", type: { kind: \"i32\" as const }, mutable: false },\n    ],\n    superTypeIdx: base.structTypeIdx,\n  });\n  const closureInfo: ClosureInfo = {\n    structTypeIdx,\n    funcTypeIdx: base.liftedFuncTypeIdx,\n    returnType: resultTypes.length > 0 ? resultTypes[0]! : null,\n    paramTypes: userParams,\n    minimumArgumentCount:\n      ctx.closureMinimumArgumentCountByFuncTypeIdx.get(base.liftedFuncTypeIdx) ?? base.closureInfo.minimumArgumentCount,\n  };\n  ctx.closureInfoByTypeIdx.set(structTypeIdx, closureInfo);\n  ctx.constructibleFuncRefWrapperCache.set(sigKey, closureInfo);\n  ctx.constructibleClosureTypeIdxs.add(structTypeIdx);\n  return {\n    structTypeIdx,\n    liftedFuncTypeIdx: base.liftedFuncTypeIdx,\n    liftedSelfTypeIdx: base.liftedSelfTypeIdx,\n    closureInfo,\n  };\n}\n\n/**\n * Is `structTypeIdx` one of the SHARED per-signature wrappers (plain or\n * constructible)? Their records in `closureInfoByTypeIdx` describe every\n * captureless allocation of the signature at once, so a `hasRestParam` flag on\n * them cannot single out any one function (#5334).\n */\nexport function isSharedSignatureWrapperStruct(ctx: CodegenContext, structTypeIdx: number): boolean {\n  for (const cache of [ctx.funcRefWrapperCache, ctx.constructibleFuncRefWrapperCache]) {\n    for (const info of cache.values()) if (info.structTypeIdx === structTypeIdx) return true;\n  }\n  return false;\n}\n\n/**\n * (#4616) Get-or-create the rest-marker subtype of a funcref-wrapper struct:\n * the base wrapper's fields plus one immutable f64 marker. The f64 (vs the\n * constructible subtype's i32 marker) keeps the canonical shape distinct, so\n * `ref.test` can discriminate rest-param singleton closures at dispatch time.\n */\nexport function ensureRestFnWrapSubtype(ctx: CodegenContext, baseStructTypeIdx: number): number {\n  const holder = ctx as unknown as { __restFnWrapSubtypeByBase?: Map<number, number> };\n  const cache = (holder.__restFnWrapSubtypeByBase ??= new Map());\n  const hit = cache.get(baseStructTypeIdx);\n  if (hit !== undefined) return hit;\n  const baseDef = ctx.mod.types[baseStructTypeIdx];\n  const baseFields = baseDef?.kind === \"struct\" ? baseDef.fields : [];\n  const idx = ctx.mod.types.length;\n  ctx.mod.types.push({\n    kind: \"struct\",\n    name: `__rest_fn_wrap_${ctx.closureCounter++}_struct`,\n    fields: [...baseFields, { name: \"__rest_marker\", type: { kind: \"f64\" as const }, mutable: false }],\n    superTypeIdx: baseStructTypeIdx,\n  });\n  cache.set(baseStructTypeIdx, idx);\n  return idx;\n}\n\n/**\n * (#5334) Pre-register the rest-marker allocation subtypes a rest DECLARATION's\n * cached singleton (`ensureFuncClosureSingleton`) will allocate, so a call site\n * compiled BEFORE the declaration's first value read — in an earlier source\n * file, say — already knows the struct whose `ref.test` proves the rest\n * reading. The singleton keys the marker on the wrapper it was asked for, and\n * its callers do not all agree on constructibility (#4491 T12), so both bases\n * are registered for an ordinary (constructible) declaration. Async and\n * generator declarations are left alone: their singleton wraps a different\n * result. Types only: no trampoline, no global, no function index moves.\n */\nexport function registerRestDeclarationWrapperShapes(\n  ctx: CodegenContext,\n  declaration: ts.FunctionDeclaration,\n  userParams: ValType[],\n  resultTypes: ValType[],\n): void {\n  if (\n    userParams.length === 0 ||\n    declaration.asteriskToken !== undefined ||\n    (declaration.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) ?? false) ||\n    !declaration.parameters.some((parameter) => parameter.dotDotDotToken !== undefined)\n  ) {\n    return;\n  }\n  const plain = getOrCreateFuncRefWrapperTypes(ctx, userParams, resultTypes, \"support\");\n  if (!plain) return;\n  const bases = [plain.structTypeIdx];\n  const marked = getOrCreateConstructibleFuncRefWrapperTypes(ctx, userParams, resultTypes);\n  if (marked) bases.push(marked.structTypeIdx);\n  for (const base of bases) {\n    const restIdx = ensureRestFnWrapSubtype(ctx, base);\n    if (!ctx.closureInfoByTypeIdx.has(restIdx)) {\n      ctx.closureInfoByTypeIdx.set(restIdx, {\n        structTypeIdx: restIdx,\n        funcTypeIdx: plain.liftedFuncTypeIdx,\n        returnType: resultTypes.length > 0 ? resultTypes[0]! : null,\n        paramTypes: userParams,\n        hasRestParam: true,\n      });\n    }\n    if (base !== plain.structTypeIdx) ctx.constructibleClosureTypeIdxs.add(restIdx);\n  }\n}\n\n/**\n * (#2873 park fix) The ROOT funcref-wrapper struct type — the FIRST wrapper\n * `getOrCreateFuncRefWrapperTypes` created in this module. Every later\n * per-signature wrapper struct is a direct subtype of it. It is also the\n * canonical lifted-function `self` type for EVERY signature, so function type\n * identity does not depend on which signature created the root locally. The\n * finalization pass explicitly keeps this root open even in a minimal module\n * with no child wrapper: WasmGC canonical identity includes finality, so an\n * opportunistically-final root would not match another module's open root.\n * The root is therefore the ONLY wrapper type a `ref.test`/`ref.cast` is\n * guaranteed to accept for a closure value of ANY shared signature wrapper.\n *\n * Why callers need it: wrapper structs are all layout-identical\n * `(struct (field funcref))`, but WasmGC isorecursive canonicalization keys on\n * (fields, supertype, finality) — a direct `$root` subtype does NOT canonicalize\n * with the root or with another sibling. A call site that casts a\n * closure value to the wrapper of its *declared* signature therefore nulls out\n * whenever the value was allocated under a different signature's wrapper\n * (e.g. an activated async closure: its wrapper is minted for the REWRITTEN\n * `... -> externref` Promise signature, while an `fn: () => void` param casts\n * to the void wrapper) — unless creation ORDER happened to make the declared\n * wrapper the root. Cast/read/pass `self` through the root instead and\n * discriminate only on the funcref's exact type (which encodes the true\n * signature).\n */\nexport function getFuncRefWrapperRootTypeIdx(ctx: CodegenContext): number | undefined {\n  return (ctx as unknown as { __funcRefWrapperRootTypeIdx?: number }).__funcRefWrapperRootTypeIdx;\n}\n\n/**\n * Return the concrete struct type used by a closure funcref's leading `self`\n * parameter. Shared wrapper funcs return the canonical root; private/named\n * function-expression funcs return their concrete nullable struct. Dispatch\n * sites use this distinction to avoid foreign per-signature wrapper casts\n * without breaking private closure types.\n */\nexport function getClosureFuncSelfTypeIdx(ctx: CodegenContext, funcTypeIdx: number): number | undefined {\n  const type = ctx.mod.types[funcTypeIdx];\n  if (!type || type.kind !== \"func\") return undefined;\n  const self = type.params[0];\n  return self && (self.kind === \"ref\" || self.kind === \"ref_null\") ? self.typeIdx : undefined;\n}\n",
+      "sha256": "8631bfc6e6ec1e21f62a3effa1d02f0a89f27e51dd60aa6e15d6889969de5e64",
+      "edits": [
+        {
+          "oldStart": 18,
+          "oldCount": 1,
+          "newStart": 18,
+          "newCount": 2,
+          "old": ["export type ClosureAllocationMode = \"support\" | \"ordinary\" | \"host-one-shot\";"],
+          "replacement": [
+            "import { createSignatureWrapperType, type ClosureAllocationMode } from \"../../runtime/wasmgc/values/closure-layouts.js\";",
+            "export type { ClosureAllocationMode } from \"../../runtime/wasmgc/values/closure-layouts.js\";"
+          ]
+        },
+        {
+          "oldStart": 107,
+          "oldCount": 5,
+          "newStart": 108,
+          "newCount": 1,
+          "old": [
+            "  const structFields = [",
+            "    { name: \"func\", type: { kind: \"funcref\" as const }, mutable: false },",
+            "    closureArityField(),",
+            "    closureBagField(),",
+            "  ];"
+          ],
+          "replacement": [""]
+        },
+        {
+          "oldStart": 114,
+          "oldCount": 6,
+          "newStart": 111,
+          "newCount": 1,
+          "old": [
+            "  ctx.mod.types.push({",
+            "    kind: \"struct\",",
+            "    name: `${closureName}_struct`,",
+            "    fields: structFields,",
+            "    superTypeIdx: rootWrapperTypeIdx ?? -1, // first wrapper is the root; later signatures subtype it",
+            "  });"
+          ],
+          "replacement": [
+            "  ctx.mod.types.push(createSignatureWrapperType(`${closureName}_struct`, rootWrapperTypeIdx ?? -1));"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "src/codegen/builtin-fn-meta.ts",
+      "text": "// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.\n/**\n * (#2896) Standalone native function-object metadata.\n *\n * A builtin function value under `--target standalone` is a closure wrapper\n * struct (`getOrCreateFuncRefWrapperTypes`); it carries no `name`/`length`, so\n * every REFLECTIVE read (`Object.getOwnPropertyDescriptor(fn, \"name\")`,\n * `fn[key]` with a runtime key, `hasOwnProperty`, `getOwnPropertyNames`) sees\n * nothing — which fails test262's `propertyHelper.js verifyProperty` for every\n * builtin `name.js` / `length.js` / `prop-desc.js` even where a compile-time\n * direct-access meta fold exists (the helper's receiver/key are runtime params).\n *\n * ## Mechanism — per-(builtin, member) meta SUBTYPE, constant metadata per type\n *\n * For each distinct builtin function we materialize, register a UNIQUE struct\n * subtype of its signature wrapper:\n *\n *   `$__builtinfn_<n> {\n *      funcref func;\n *      (mut i32) bfnstate;\n *      i32 bfnid;\n *    } <: $__fn_wrap_<sig>`\n *\n * - Being a SUBTYPE of the signature wrapper keeps every existing call path\n *   working untouched (static closure calls, reflective `.call`, any-typed\n *   callback dispatch — they cast to the sig wrapper / root, and a subtype\n *   passes).\n * - The metadata itself ({name, length}) is statically known per (builtin,\n *   member), so it lives in `ctx.builtinFnMetaByTypeIdx` keyed by the meta type\n *   index. WasmGC structurally canonicalizes the otherwise-identical meta\n *   subtypes, so `ref.test <metaType>` is not an identity discriminator. The\n *   immutable `bfnid` field anchors each instance to its exact metadata entry;\n *   reflective natives require both the family `ref.test` and matching id.\n * - `bfnstate` is the one piece of per-INSTANCE state: a deleted-bits mask\n *   (bit 0 = `name` deleted, bit 1 = `length` deleted). `verifyProperty`'s\n *   `isConfigurable` arm `delete`s the property and then requires\n *   `hasOwnProperty` to report false, so delete must genuinely work.\n *   `struct.new` sites therefore push an extra `i32.const 0`\n *   (`pushBuiltinFnClosureValueInstrs` below).\n */\nimport type { Instr, ValType } from \"../ir/types.js\";\nimport type { ClosureInfo, CodegenContext, FunctionContext } from \"./context/types.js\";\nimport {\n  closureArityField,\n  closureBagField,\n  closureBagInitInstr,\n  getOrCreateFuncRefWrapperTypes,\n} from \"./closures/funcref-wrapper-types.js\";\nimport { mintDefinedFunc, pushDefinedFunc } from \"./func-space.js\";\n\n/**\n * (#4241) Field indices of the meta-typed closure subtype, derived from the\n * shared closure header rather than spelled as bare literals — the header grew\n * a `$bag` slot at index 2 and these two shifted with it.\n * Layout: `[func, $arity, $bag, bfnstate, bfnid]`.\n */\nexport const BFN_STATE_FIELD_IDX = 3;\nexport const BFN_ID_FIELD_IDX = 4;\n\n/**\n * Spec `{name, length}` for the builtin STATIC method closures wired in\n * `ensureStandaloneBuiltinStaticMethodClosure` (property-access.ts). Keep in\n * sync with its `switch (key)`. Also consumed by the direct-access\n * `.name`/`.length` meta fold so the constant fold and the runtime descriptor\n * agree.\n */\nexport const STANDALONE_STATIC_METHOD_META: Record<string, { name: string; length: number }> = {\n  \"Array.isArray\": { name: \"isArray\", length: 1 },\n  \"Object.assign\": { name: \"assign\", length: 2 },\n  \"Object.keys\": { name: \"keys\", length: 1 },\n  \"Object.getOwnPropertyDescriptor\": { name: \"getOwnPropertyDescriptor\", length: 2 },\n  // (#2933) Fixed-arity Reflect.* namespace static-method value reads. Spec\n  // `length` per §28.1 (receiver arg is optional and not counted).\n  \"Reflect.get\": { name: \"get\", length: 2 },\n  \"Reflect.has\": { name: \"has\", length: 2 },\n  \"Reflect.set\": { name: \"set\", length: 3 },\n  \"Reflect.ownKeys\": { name: \"ownKeys\", length: 1 },\n  \"Reflect.getOwnPropertyDescriptor\": { name: \"getOwnPropertyDescriptor\", length: 2 },\n  \"Reflect.defineProperty\": { name: \"defineProperty\", length: 3 },\n  // (#2933) JSON.stringify as a VALUE — the fixed 1-arg compact form. The value\n  // closure serialises via the native `__json_stringify_root` (host-free), the\n  // SAME entry the direct `JSON.stringify(o)` call path uses. Spec `.length` is\n  // 3 (value, replacer, space); the host-free closure supports only the leading\n  // value arg (replacer/space out of scope, matching the standalone call-path\n  // narrowing), but `.length` reports the spec arity.\n  \"JSON.stringify\": { name: \"stringify\", length: 3 },\n  \"Symbol.for\": { name: \"for\", length: 1 },\n  \"Symbol.keyFor\": { name: \"keyFor\", length: 1 },\n  \"Promise.resolve\": { name: \"resolve\", length: 1 },\n  \"Promise.reject\": { name: \"reject\", length: 1 },\n  // (#2933) Math.max/Math.min as VALUES — genuinely VARIADIC; reified with the\n  // canonical variadic closure convention (one `$vec_externref` args param, see\n  // `ctx.variadicBuiltinClosure`). Spec `.length` is 2 for both (§21.3.2.24/.25).\n  \"Math.max\": { name: \"max\", length: 2 },\n  \"Math.min\": { name: \"min\", length: 2 },\n  // (#2963 Tier 2a) Number.is* fixed 1-arg predicates as VALUES. `.name` === the\n  // property key (§10.2.9); `.length` 1 (§21.1.2.x). These agree byte-for-byte\n  // with the generic `BUILTIN_STATIC_METHOD_ARITY` fallback, listed explicitly\n  // per the file-header sync rule for newly-wired closures.\n  \"Number.isInteger\": { name: \"isInteger\", length: 1 },\n  \"Number.isFinite\": { name: \"isFinite\", length: 1 },\n  \"Number.isNaN\": { name: \"isNaN\", length: 1 },\n  \"Number.isSafeInteger\": { name: \"isSafeInteger\", length: 1 },\n  // (#2963 Tier 2b) Object.is fixed 2-arg SameValue as a VALUE (§20.1.2.13).\n  \"Object.is\": { name: \"is\", length: 2 },\n};\n\n/**\n * (#2896) Spec arity of every standard builtin STATIC method (own\n * function-valued data properties of the global constructors/namespaces), for\n * the direct-access `<Builtin>.<method>.length` / `.name` meta fold. `.name`\n * equals the property key for all of these (§10.2.9); `.length` values are the\n * ECMA-262 declared arities (generated from a conforming host — V8/Node — and\n * spot-checked against the spec). This is a compile-time COMPANION of the\n * runtime metadata substrate above: the fold answers direct syntactic reads\n * (no closure materialization, so it also covers methods whose value-read is\n * not yet wired host-free); the meta subtypes answer reflective/runtime reads\n * for the wired closures.\n *\n * (#3181) The whole table AND every inner record are NULL-PROTOTYPED via\n * `nullProtoDeep`. A plain object literal inherits `Object.prototype`, so an\n * inner lookup of an `Object.prototype` method name (`toString`/`valueOf`/\n * `hasOwnProperty`/`constructor`…) returned the INHERITED FUNCTION rather than\n * `undefined` — making the fold at property-access.ts:1126 treat e.g.\n * `Number.toString.length` as \"found\" and emit the `Function` as an f64 → NaN.\n * With null prototypes, only the explicitly-listed static methods match; every\n * other name resolves `undefined` and routes through the normal path.\n */\nconst nullProtoDeep = (rec: Record<string, Record<string, number>>): Record<string, Record<string, number>> => {\n  const out: Record<string, Record<string, number>> = Object.create(null);\n  for (const key of Object.keys(rec)) {\n    out[key] = Object.assign(Object.create(null) as Record<string, number>, rec[key]);\n  }\n  return out;\n};\n\nexport const BUILTIN_STATIC_METHOD_ARITY: Record<string, Record<string, number>> = nullProtoDeep({\n  Array: { isArray: 1, from: 1, fromAsync: 1, of: 0 },\n  ArrayBuffer: { isView: 1 },\n  BigInt: { asUintN: 2, asIntN: 2 },\n  Date: { now: 0, parse: 1, UTC: 7 },\n  Error: { isError: 1 },\n  Map: { groupBy: 2 },\n  Number: { isFinite: 1, isInteger: 1, isNaN: 1, isSafeInteger: 1, parseFloat: 1, parseInt: 2 },\n  Object: {\n    assign: 2,\n    getOwnPropertyDescriptor: 2,\n    getOwnPropertyDescriptors: 1,\n    getOwnPropertyNames: 1,\n    getOwnPropertySymbols: 1,\n    hasOwn: 2,\n    is: 2,\n    preventExtensions: 1,\n    seal: 1,\n    create: 2,\n    defineProperties: 2,\n    defineProperty: 3,\n    freeze: 1,\n    getPrototypeOf: 1,\n    setPrototypeOf: 2,\n    isExtensible: 1,\n    isFrozen: 1,\n    isSealed: 1,\n    keys: 1,\n    entries: 1,\n    fromEntries: 1,\n    values: 1,\n    groupBy: 2,\n  },\n  Promise: { all: 1, allSettled: 1, any: 1, race: 1, resolve: 1, reject: 1, withResolvers: 0, try: 1 },\n  Proxy: { revocable: 2 },\n  Reflect: {\n    defineProperty: 3,\n    deleteProperty: 2,\n    apply: 3,\n    construct: 2,\n    get: 2,\n    getOwnPropertyDescriptor: 2,\n    getPrototypeOf: 1,\n    has: 2,\n    isExtensible: 1,\n    ownKeys: 1,\n    preventExtensions: 1,\n    set: 3,\n    setPrototypeOf: 2,\n  },\n  RegExp: { escape: 1 },\n  String: { fromCharCode: 1, fromCodePoint: 1, raw: 1 },\n  Symbol: { for: 1, keyFor: 1 },\n  Math: {\n    abs: 1,\n    acos: 1,\n    acosh: 1,\n    asin: 1,\n    asinh: 1,\n    atan: 1,\n    atanh: 1,\n    atan2: 2,\n    ceil: 1,\n    cbrt: 1,\n    expm1: 1,\n    clz32: 1,\n    cos: 1,\n    cosh: 1,\n    exp: 1,\n    floor: 1,\n    fround: 1,\n    hypot: 2,\n    imul: 2,\n    log: 1,\n    log1p: 1,\n    log2: 1,\n    log10: 1,\n    max: 2,\n    min: 2,\n    pow: 2,\n    random: 0,\n    round: 1,\n    sign: 1,\n    sin: 1,\n    sinh: 1,\n    sqrt: 1,\n    tan: 1,\n    tanh: 1,\n    trunc: 1,\n    f16round: 1,\n  },\n  JSON: { parse: 2, stringify: 3, rawJSON: 1, isRawJSON: 1 },\n  Atomics: {\n    load: 2,\n    store: 3,\n    add: 3,\n    sub: 3,\n    and: 3,\n    or: 3,\n    xor: 3,\n    exchange: 3,\n    compareExchange: 4,\n    isLockFree: 1,\n    wait: 4,\n    waitAsync: 4,\n    notify: 3,\n    pause: 0,\n  },\n  Iterator: { from: 1 },\n  Uint8Array: { fromBase64: 1, fromHex: 1 },\n});\n\n/**\n * Register (idempotently, keyed by `cacheKey`) the unique metadata-carrying\n * struct subtype for one builtin function closure and return its type index.\n *\n * - `baseStructTypeIdx` — the signature wrapper struct (the supertype).\n * - `baseClosureInfo` — the signature wrapper's ClosureInfo; a copy with\n *   `structTypeIdx` re-pointed at the meta type is registered in\n *   `ctx.closureInfoByTypeIdx` so the static closure-call path and the\n *   reflective `.call` recovery resolve the meta-typed value exactly like the\n *   base wrapper (the lifted func type takes `(ref $sigWrapper)` self — a meta\n *   instance passes as a subtype).\n */\nexport function ensureBuiltinFnMetaType(\n  ctx: CodegenContext,\n  baseStructTypeIdx: number,\n  baseClosureInfo: ClosureInfo,\n  cacheKey: string,\n  name: string,\n  length: number,\n): number {\n  if (!ctx.builtinFnMetaTypeByKey) ctx.builtinFnMetaTypeByKey = new Map();\n  const existing = ctx.builtinFnMetaTypeByKey.get(cacheKey);\n  if (existing !== undefined) return existing;\n\n  const typeIdx = ctx.mod.types.length;\n  ctx.mod.types.push({\n    kind: \"struct\",\n    name: `__builtinfn_meta_${typeIdx}_struct`,\n    fields: [\n      // Field 0 must mirror the supertype exactly (same type + mutability) —\n      // as must the #3673 $arity slot at index 1.\n      { name: \"func\", type: { kind: \"funcref\" as const }, mutable: false },\n      closureArityField(),\n      closureBagField(),\n      // Deleted-bits mask: bit 0 = \"name\" deleted, bit 1 = \"length\" deleted.\n      { name: \"bfnstate\", type: { kind: \"i32\" as const }, mutable: true },\n      // Stable per-module metadata identity. Structurally-equivalent meta\n      // subtypes cannot be distinguished by ref.test alone.\n      { name: \"bfnid\", type: { kind: \"i32\" as const }, mutable: false },\n    ],\n    superTypeIdx: baseStructTypeIdx,\n  });\n\n  ctx.closureInfoByTypeIdx.set(typeIdx, { ...baseClosureInfo, structTypeIdx: typeIdx });\n  if (!ctx.builtinFnMetaByTypeIdx) ctx.builtinFnMetaByTypeIdx = new Map();\n  ctx.builtinFnMetaByTypeIdx.set(typeIdx, { name, length });\n  ctx.builtinFnMetaTypeByKey.set(cacheKey, typeIdx);\n  return typeIdx;\n}\n\n/**\n * The instruction sequence that materializes a builtin closure VALUE from a\n * factory result. A meta-typed closure struct has the extra `(mut i32)\n * bfnstate` + `bfnid` fields, so its `struct.new` needs two more operands than\n * the plain `ref.func` + `struct.new` sequence; non-meta types keep the old\n * shape.\n */\nexport function pushBuiltinFnClosureValueInstrs(\n  ctx: CodegenContext,\n  closure: { type: { kind: \"ref\"; typeIdx: number }; funcIdx: number },\n): Instr[] {\n  const isMeta = ctx.builtinFnMetaByTypeIdx?.has(closure.type.typeIdx) ?? false;\n  const instrs: Instr[] = [{ op: \"ref.func\", funcIdx: closure.funcIdx }];\n  // (#3673) $arity field 1 — the builtin's spec `length` when meta-typed,\n  // else the registered closure signature's param count.\n  // Receiver-aware variadic native-proto values are the one exception: their\n  // internal lifted signature is `(self, thisValue, argsVec)`, while the\n  // in-Wasm `__apply_closure` selector must see zero positional arguments and\n  // leave the exact vector length to the method dispatcher. Their reflective\n  // JavaScript `.length` still comes from `nativeClosureMeta` / bfn metadata.\n  const closureInfo = ctx.closureInfoByTypeIdx.get(closure.type.typeIdx);\n  const arity =\n    closureInfo?.nativeProtoVariadic === true\n      ? 0\n      : isMeta\n        ? (ctx.builtinFnMetaByTypeIdx?.get(closure.type.typeIdx)?.length ?? 0)\n        : (closureInfo?.paramTypes.length ?? 0);\n  instrs.push({ op: \"i32.const\", value: arity });\n  instrs.push(closureBagInitInstr()); // (#4241) $bag field 2\n  if (isMeta) {\n    instrs.push({ op: \"i32.const\", value: 0 }, { op: \"i32.const\", value: closure.type.typeIdx });\n  }\n  instrs.push({ op: \"struct.new\", typeIdx: closure.type.typeIdx });\n  return instrs;\n}\n\n/**\n * (#2963) IDENTITY-STABLE reified builtin-function value. Instead of a fresh\n * `struct.new` per read (which gives `Promise.resolve !== Promise.resolve` —\n * two distinct closure instances), materialize the closure struct into a\n * MODULE-LEVEL SINGLETON: one `(ref null <structType>)` mutable global per\n * (builtin, member), lazily initialized on first read, so every read of the\n * same builtin value yields the SAME ref.\n *\n * Why a lazy null-guard in the FUNCTION BODY rather than a global const-init:\n * the singleton's `struct.new` takes a `ref.func <closureFuncIdx>` operand, and\n * `closureFuncIdx` is a DEFINED-function index that shifts whenever a late\n * import is added (`addUnionImports` / `shiftLateImportIndices` / the\n * string-import shifter). Those shifters walk function bodies + nested\n * `.then`/`.body`/`.else` arrays (verified) but do NOT walk\n * `ctx.mod.globals[].init`, so a `ref.func` embedded in a const-init would go\n * stale and reference the wrong function. Emitting the materialization inside\n * an `if (ref.is_null) { … }` guard in `fctx.body` keeps the `ref.func` in a\n * shift-covered array — the same discipline as every other funcidx bake site.\n *\n * The mutable `bfnstate` (delete-bits) field being shared across all reads is\n * spec-correct: a builtin method is ONE function object, so `delete fn.name`\n * seen through any reference mutates the same object (test262 `verifyProperty`\n * `isConfigurable` arm).\n *\n * Stack: `[] → [(ref <structType>)]` (non-null, exactly what\n * `pushBuiltinFnClosureValueInstrs` produced, so callers' result type is\n * unchanged).\n */\nexport function pushBuiltinFnSingletonValueInstrs(\n  ctx: CodegenContext,\n  closure: { type: { kind: \"ref\"; typeIdx: number }; funcIdx: number },\n): Instr[] {\n  const typeIdx = closure.type.typeIdx;\n  if (!ctx.builtinFnSingletonGlobalByTypeIdx) ctx.builtinFnSingletonGlobalByTypeIdx = new Map();\n  let globalIdx = ctx.builtinFnSingletonGlobalByTypeIdx.get(typeIdx);\n  if (globalIdx === undefined) {\n    globalIdx = ctx.numImportGlobals + ctx.mod.globals.length;\n    ctx.mod.globals.push({\n      name: `__builtinfn_singleton_${typeIdx}`,\n      // (ref null <structType>) — starts null, set once on first read.\n      type: { kind: \"ref_null\", typeIdx },\n      mutable: true,\n      init: [{ op: \"ref.null\", typeIdx }],\n    });\n    ctx.builtinFnSingletonGlobalByTypeIdx.set(typeIdx, globalIdx);\n  }\n\n  return [\n    { op: \"global.get\", index: globalIdx },\n    { op: \"ref.is_null\" },\n    {\n      op: \"if\",\n      blockType: { kind: \"empty\" },\n      then: [...pushBuiltinFnClosureValueInstrs(ctx, closure), { op: \"global.set\", index: globalIdx }],\n    },\n    { op: \"global.get\", index: globalIdx },\n    { op: \"ref.as_non_null\" },\n  ];\n}\n\n/**\n * (#2984 / #5197) Canonical per-constructor `get [Symbol.species]` closure.\n *\n * Keep this builder beside the builtin-function metadata substrate rather than\n * in `builtin-static-gopd.ts`: both compile-time descriptor synthesis and the\n * reified constructor carrier need the exact same identity-stable accessor,\n * while the latter is imported by `builtin-static-globals.ts`.  Depending on\n * the higher-level property-access module here would close that initialization\n * cycle.\n *\n * The getter's first user parameter is the original receiver (`this`).  Its\n * unique metadata subtype makes the singleton's reflective `.name`/`.length`\n * surface spec-correct and registering that subtype as receiver-aware keeps a\n * reflective `.call(value)` from dropping the receiver.\n */\nexport function ensureStandaloneSpeciesGetterClosure(\n  ctx: CodegenContext,\n  builtinName: string,\n): { type: { kind: \"ref\"; typeIdx: number }; funcIdx: number } | null {\n  const userParams: ValType[] = [{ kind: \"externref\" }];\n  const wrapperTypes = getOrCreateFuncRefWrapperTypes(ctx, userParams, [{ kind: \"externref\" }]);\n  if (!wrapperTypes) return null;\n\n  const funcName = `__builtin_species_get_${builtinName}`;\n  let funcIdx = ctx.funcMap.get(funcName);\n  if (funcIdx === undefined) {\n    const selfType: ValType = { kind: \"ref\", typeIdx: wrapperTypes.liftedSelfTypeIdx };\n    const closureFctx: FunctionContext = {\n      name: funcName,\n      params: [{ name: \"__self\", type: selfType }, ...userParams.map((type, i) => ({ name: `arg${i}`, type }))],\n      locals: [],\n      localMap: new Map(),\n      returnType: { kind: \"externref\" },\n      body: [{ op: \"local.get\", index: 1 }],\n      blockDepth: 0,\n      breakStack: [],\n      continueStack: [],\n      labelMap: new Map(),\n      savedBodies: [],\n    };\n    for (let i = 0; i < closureFctx.params.length; i++) {\n      closureFctx.localMap.set(closureFctx.params[i]!.name, i);\n    }\n    funcIdx = mintDefinedFunc(ctx);\n    pushDefinedFunc(ctx, funcIdx, {\n      name: funcName,\n      typeIdx: wrapperTypes.liftedFuncTypeIdx,\n      locals: closureFctx.locals,\n      body: closureFctx.body,\n      exported: false,\n    });\n    ctx.funcMap.set(funcName, funcIdx);\n    if (!ctx.nativeClosureMeta) ctx.nativeClosureMeta = new Map();\n    ctx.nativeClosureMeta.set(funcIdx, { name: \"get [Symbol.species]\", length: 0 });\n  }\n\n  const metaTypeIdx = ensureBuiltinFnMetaType(\n    ctx,\n    wrapperTypes.structTypeIdx,\n    wrapperTypes.closureInfo,\n    `species:${builtinName}`,\n    \"get [Symbol.species]\",\n    0,\n  );\n  if (!ctx.nativeProtoReceiverClosureStructTypes) ctx.nativeProtoReceiverClosureStructTypes = new Set();\n  ctx.nativeProtoReceiverClosureStructTypes.add(metaTypeIdx);\n  return { type: { kind: \"ref\", typeIdx: metaTypeIdx }, funcIdx };\n}\n",
+      "sha256": "f6da70eacab0e9ba87469f827f309372e3b853ce92e522c7172a5ba47fcdd284",
+      "edits": [
+        {
+          "oldStart": 42,
+          "oldCount": 0,
+          "newStart": 43,
+          "newCount": 1,
+          "old": [],
+          "replacement": ["import { getOrCreateFuncRefWrapperTypes } from \"./closures/funcref-wrapper-types.js\";"]
+        },
+        {
+          "oldStart": 44,
+          "oldCount": 5,
+          "newStart": 45,
+          "newCount": 3,
+          "old": [
+            "  closureArityField,",
+            "  closureBagField,",
+            "  closureBagInitInstr,",
+            "  getOrCreateFuncRefWrapperTypes,",
+            "} from \"./closures/funcref-wrapper-types.js\";"
+          ],
+          "replacement": [
+            "  createBuiltinFunctionMetadataType,",
+            "  buildBuiltinClosureValueInstrs,",
+            "} from \"../runtime/wasmgc/values/closure-layouts.js\";"
+          ]
+        },
+        {
+          "oldStart": 57,
+          "oldCount": 2,
+          "newStart": 56,
+          "newCount": 1,
+          "old": ["export const BFN_STATE_FIELD_IDX = 3;", "export const BFN_ID_FIELD_IDX = 4;"],
+          "replacement": [
+            "export { BFN_STATE_FIELD_IDX, BFN_ID_FIELD_IDX } from \"../runtime/wasmgc/values/closure-layouts.js\";"
+          ]
+        },
+        {
+          "oldStart": 274,
+          "oldCount": 17,
+          "newStart": 272,
+          "newCount": 1,
+          "old": [
+            "  ctx.mod.types.push({",
+            "    kind: \"struct\",",
+            "    name: `__builtinfn_meta_${typeIdx}_struct`,",
+            "    fields: [",
+            "      // Field 0 must mirror the supertype exactly (same type + mutability) —",
+            "      // as must the #3673 $arity slot at index 1.",
+            "      { name: \"func\", type: { kind: \"funcref\" as const }, mutable: false },",
+            "      closureArityField(),",
+            "      closureBagField(),",
+            "      // Deleted-bits mask: bit 0 = \"name\" deleted, bit 1 = \"length\" deleted.",
+            "      { name: \"bfnstate\", type: { kind: \"i32\" as const }, mutable: true },",
+            "      // Stable per-module metadata identity. Structurally-equivalent meta",
+            "      // subtypes cannot be distinguished by ref.test alone.",
+            "      { name: \"bfnid\", type: { kind: \"i32\" as const }, mutable: false },",
+            "    ],",
+            "    superTypeIdx: baseStructTypeIdx,",
+            "  });"
+          ],
+          "replacement": ["  ctx.mod.types.push(createBuiltinFunctionMetadataType(typeIdx, baseStructTypeIdx));"]
+        },
+        {
+          "oldStart": 311,
+          "oldCount": 1,
+          "newStart": 293,
+          "newCount": 1,
+          "old": ["  const instrs: Instr[] = [{ op: \"ref.func\", funcIdx: closure.funcIdx }];"],
+          "replacement": [""]
+        },
+        {
+          "oldStart": 326,
+          "oldCount": 7,
+          "newStart": 308,
+          "newCount": 1,
+          "old": [
+            "  instrs.push({ op: \"i32.const\", value: arity });",
+            "  instrs.push(closureBagInitInstr()); // (#4241) $bag field 2",
+            "  if (isMeta) {",
+            "    instrs.push({ op: \"i32.const\", value: 0 }, { op: \"i32.const\", value: closure.type.typeIdx });",
+            "  }",
+            "  instrs.push({ op: \"struct.new\", typeIdx: closure.type.typeIdx });",
+            "  return instrs;"
+          ],
+          "replacement": [
+            "  return buildBuiltinClosureValueInstrs(closure.type.typeIdx, closure.funcIdx, arity, isMeta);"
+          ]
+        }
+      ]
+    }
+  ],
+  "controls": [
+    {
+      "path": "tests/issue-4241-carrier-bag-slot.test.ts",
+      "sha256": "1309453f41ab1a113711674e90b2a843d01020c6559c9d14abed6585b6b29f2a"
+    },
+    {
+      "path": "tests/issue-2896.test.ts",
+      "sha256": "5c969b35d434de80a322806f4eb04fc708236e0fa8eff2cae9f4f58ff133a8f3"
+    },
+    {
+      "path": "tests/issue-2963-builtin-reification.test.ts",
+      "sha256": "a7fce30adaf18ac87b27e7e0f83a0672cc8ec7cfc1debca3713d234829f271e0"
+    },
+    {
+      "path": "tests/issue-5197-promise-generic-capability.test.ts",
+      "sha256": "4b6b63661b08939b27540ac20f9d2a265c2895aade14d95ba3ce1895a635728e"
+    }
+  ],
+  "minimumObserver": {
+    "path": "src/codegen/expressions/calls.ts",
+    "sourceSha256": "95600315f74c874d203444ce3274ce805d2e59bfd03e900db48192486b931889",
+    "start": 179095,
+    "end": 181752,
+    "text": "  let liveClosureInfosByFuncTypeIdx: Map<number, Set<ClosureInfo>> | undefined;\n  const indexLiveClosureInfo = (info: ClosureInfo): void => {\n    const index = (liveClosureInfosByFuncTypeIdx ??= new Map());\n    const records = index.get(info.funcTypeIdx) ?? new Set<ClosureInfo>();\n    records.add(info);\n    index.set(info.funcTypeIdx, records);\n  };\n  const ensureLiveClosureInfoIndex = (): void => {\n    if (liveClosureInfosByFuncTypeIdx !== undefined) return;\n    liveClosureInfosByFuncTypeIdx = new Map();\n    for (const records of [\n      ctx.funcRefWrapperCache.values(),\n      ctx.constructibleFuncRefWrapperCache.values(),\n      ctx.closureInfoByTypeIdx.values(),\n      ctx.closureMap.values(),\n    ]) {\n      for (const info of records) indexLiveClosureInfo(info);\n    }\n  };\n  const observeMinimumArgumentCount = (\n    wrapper: NonNullable<ReturnType<typeof getOrCreateFuncRefWrapperTypes>>,\n    minimumArgumentCount: number,\n  ): void => {\n    // A captureless arrow/function-expression can allocate the shared base\n    // wrapper and then replace `closureInfoByTypeIdx[base]` with its own\n    // ClosureInfo object.  The signature cache deliberately keeps the original\n    // object, so updating only `wrapper.closureInfo` leaves the dispatcher with\n    // a stale minimum and it rejects an optional-parameter declaration invoked\n    // through a narrower public callback type.  Minimum arity is ABI metadata:\n    // persist the minimum by exact lifted func type and synchronize every live\n    // record, including allocation subtypes and both wrapper caches. The\n    // persistent index is authoritative for dispatchers compiled after a later\n    // record replacement; no other signature is widened.\n    const funcTypeIdx = wrapper.closureInfo.funcTypeIdx;\n    const recordedMinimum = ctx.closureMinimumArgumentCountByFuncTypeIdx.get(funcTypeIdx);\n    const effectiveMinimum = Math.min(recordedMinimum ?? wrapper.closureInfo.paramTypes.length, minimumArgumentCount);\n    ctx.closureMinimumArgumentCountByFuncTypeIdx.set(funcTypeIdx, effectiveMinimum);\n\n    ensureLiveClosureInfoIndex();\n    // A wrapper may have been created by an earlier declaration in this same\n    // registration pass, after the lazy index snapshot above.\n    indexLiveClosureInfo(wrapper.closureInfo);\n    const mapped = ctx.closureInfoByTypeIdx.get(wrapper.closureInfo.structTypeIdx);\n    if (mapped) indexLiveClosureInfo(mapped);\n    for (const info of liveClosureInfosByFuncTypeIdx!.get(funcTypeIdx) ?? []) {\n      const current = info.minimumArgumentCount ?? info.paramTypes.length;\n      info.minimumArgumentCount = Math.min(current, effectiveMinimum);\n    }\n  };\n",
+    "sha256": "058e1607a5fd545c1ec26511d6545ebe4ce045b1e4f5bf8136beba9418376ef7"
+  }
+}

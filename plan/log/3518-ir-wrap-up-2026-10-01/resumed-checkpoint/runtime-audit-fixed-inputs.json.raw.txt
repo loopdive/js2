@@ -1,0 +1,169 @@
+{
+  "head": "1265c47d6fc41300a380ef7e4abc45fdfcfd2c61",
+  "paths": [
+    {
+      "path": "src/runtime/contracts/provider-policy.ts",
+      "sha256": "886c4898fe21558eac4a743cf478a7b9e7ab8edcf460436954dd1f9fda8faa56",
+      "bytes": 21289,
+      "gitBlob": "9e117958237449e8804c1907997f0487c16e3387"
+    },
+    {
+      "path": "src/ir/runtime/contracts/manifest.ts",
+      "sha256": "048358db8d8deeee38bb6d49e9fe9be41189441f6b26221733c832f16ce02cd1",
+      "bytes": 28324,
+      "gitBlob": "a9b945e529e106f61089a29440ae73d114d5d2c0"
+    },
+    {
+      "path": "src/ir/intrinsics.ts",
+      "sha256": "1e037410c4702272ae7f16a3b20b2a352f4c31525feb20419428399dac20e091",
+      "bytes": 2316,
+      "gitBlob": "5e3a09f86e5743867318740e4706607eb0ea30bb"
+    },
+    {
+      "path": "src/ir/core/intrinsic-vocabulary.ts",
+      "sha256": "2aa5c040d09473d683daace9007c4d483cfc76f45eef707b50c7205c7c86854d",
+      "bytes": 3446,
+      "gitBlob": "6e837f8b8b19626a71b13df0f0401921fac073ae"
+    },
+    {
+      "path": "src/ir/runtime/contracts/intrinsics.ts",
+      "sha256": "0392774476fc5beb79f6c0ac22e610fb098c3687e80d653a2aa468f85ef25ed2",
+      "bytes": 3101,
+      "gitBlob": "04e452f4a7041ddd094fa3cac9d579d4280febe7"
+    },
+    {
+      "path": "src/ir/core/intrinsics.ts",
+      "sha256": "96b3368af4b8777f19abd9a0aa7ebf0a25f102075c1ca0db6504a8ec81aa569f",
+      "bytes": 11038,
+      "gitBlob": "a8d550388b00f810017a5e28213480063c70f014"
+    },
+    {
+      "path": "src/ir/analysis/intrinsics.ts",
+      "sha256": "57af60dfaf3f4b8fe5845b053442aab3863383519db48bc705e6dfb89caeba5d",
+      "bytes": 4751,
+      "gitBlob": "1a86a55e9ac08764d0105c288a68147915b4a786"
+    },
+    {
+      "path": "src/ir/runtime/callable-declarations.ts",
+      "sha256": "6632f6ecb4221bf31e4cd733b51baf5095a0d7268da1b4f7d0ffa14c8cf27911",
+      "bytes": 5642,
+      "gitBlob": "81553cf192d6551d7a55b09553ad6cc6ee01e0f8"
+    },
+    {
+      "path": "src/ir/runtime/manifest.ts",
+      "sha256": "ff36567f298b2ef4946caf7159d9e1647e0e9fdf920296735547dffca15a9ec8",
+      "bytes": 104292,
+      "gitBlob": "aadd390ab836833d18daff12282ffc2524f598f5"
+    },
+    {
+      "path": "src/ir/intrinsic-support.ts",
+      "sha256": "03e5d583b91a7589481c80e1ca1dd5a621fee3e593f5ca9537f9c573b8925e40",
+      "bytes": 49626,
+      "gitBlob": "843e50acc3ac00b01e996a8c0bb24ade33c1fb51"
+    },
+    {
+      "path": "src/ir/program-runtime-abi.ts",
+      "sha256": "0f8eb92a65a87a4fe0275aa4e90f88a600f3f598f9278fd01edd198fff4c41a4",
+      "bytes": 4475,
+      "gitBlob": "d10bd411a6030ba898b8febe5bf3d0ff1d99e35f"
+    },
+    {
+      "path": "src/ir/program/runtime-abi-identity.ts",
+      "sha256": "a3d26cbc0e6b8f084825d83786c7c7b2e45714e2335c6c87b8b427c64476dd7f",
+      "bytes": 1242,
+      "gitBlob": "8899261896c18e71fe2226630e6f9a861023ea99"
+    },
+    {
+      "path": "src/ir/runtime-program-manifest.ts",
+      "sha256": "d9698e66ad1d048e51dd58f6a5b47b2adf65a61da1787c5d543b1ac6437036a9",
+      "bytes": 12069,
+      "gitBlob": "bd80eecc4f6937a72757ea0124bea7af92e3cf27"
+    },
+    {
+      "path": "src/ir/core/vector-runtime.ts",
+      "sha256": "936219b3246105de0222c65d06b2503d4f016795eb3a570e7a6e9ad5ffa657a9",
+      "bytes": 2138,
+      "gitBlob": "66276d1960d7d245e33186d966a5246c0807610e"
+    },
+    {
+      "path": "src/ir/vector-runtime.ts",
+      "sha256": "3c55a99f4ded681cb44da3baec4939b80fd958770d966a047d20ec6d87e79c96",
+      "bytes": 418,
+      "gitBlob": "2056a001def37f3b9d21702eb4834432cc325b79"
+    },
+    {
+      "path": "src/ir/runtime/vector-callables.ts",
+      "sha256": "b594f734f6126f5c449b7facef61418f9df7eacce8ebd5bf84560e97eec4d04f",
+      "bytes": 6920,
+      "gitBlob": "63c5ed3eeb7f0dd0fd9ac50ee3dc110b87566113"
+    },
+    {
+      "path": "src/ir/program-runtime-validation.ts",
+      "sha256": "bb4006f9bcdf641f665b6b1ee10ea6fd8ced30e168d09faf8439358d574f2b0c",
+      "bytes": 8186,
+      "gitBlob": "0e514564a61e077baaba01048ad5ca6a5688ebd9"
+    },
+    {
+      "path": "src/ir/core/async-callables.ts",
+      "sha256": "147ae75a6c8a58f25344d96958ef8261af7b06589e4e499d43aa47a9dc98ba95",
+      "bytes": 608,
+      "gitBlob": "1716b9018db4094e01772327e6c561f9868b1db2"
+    },
+    {
+      "path": "src/ir/runtime/native-async-callables.ts",
+      "sha256": "31b3cb6ab351fe33e543d2b95a1b8bac24d920f788b460153decfc8b750d5d27",
+      "bytes": 14710,
+      "gitBlob": "1694f8ed5c46459814b52e93b5bc59d157757449"
+    },
+    {
+      "path": "src/ir/core/intrinsic-contracts.ts",
+      "sha256": "ece37f6c4f48129187e326cdad4fd6207217e50c5078739acae1cf5393aa3932",
+      "bytes": 1210,
+      "gitBlob": "177f7aaf3163c4eb47866ae2a226001795745891"
+    },
+    {
+      "path": "src/ir/core/async-intents.ts",
+      "sha256": "411d7ae2cbfcae0da9c00f2a53e04be4a80ed45906c063c9f9b9ca1692909d0b",
+      "bytes": 1159,
+      "gitBlob": "573dd721ad90c6d3f49df6c1ae86b60ef67a4ccc"
+    },
+    {
+      "path": "src/ir/runtime/async-providers.ts",
+      "sha256": "8bbbe1f71ccc3a234d9bd894173829fb285fd39cb637c617aeea90dc6d3b0100",
+      "bytes": 9201,
+      "gitBlob": "ae8a6f9a76a509be854fee396bd7d068d9d344e3"
+    },
+    {
+      "path": "src/ir/analysis/async-plan.ts",
+      "sha256": "0589c846108f32bc41835f533fc7ef36f4373039849c92d237e2fdcc6483fa93",
+      "bytes": 31637,
+      "gitBlob": "a8bccc41f618c04d976677fe73cbfdfcb283fcd0"
+    },
+    {
+      "path": "src/ir/runtime/async-attachment.ts",
+      "sha256": "d85bb938c33068cafb05f29f5e8c30040ec85f168a616e74fefcfa3d48ff8818",
+      "bytes": 12783,
+      "gitBlob": "0661ee7dee9173baff8a3627c8a6ffa341e41153"
+    },
+    {
+      "path": "src/ir/runtime/intrinsic-verification.ts",
+      "sha256": "2fbc05033b8f62c71f0053ac439590b7f3183701bf855a621027b4ff818bdfbd",
+      "bytes": 4860,
+      "gitBlob": "c91ec8e7e0c088030359fe5ddf696e2a3ee25a3b"
+    },
+    {
+      "path": "src/runtime/contracts/async-provider-schema.ts",
+      "sha256": "5c40a91d9c21a96292a58cfe7d61d87e83ec0b6db916b2c9f714d60c5c93499a",
+      "bytes": 3057,
+      "gitBlob": "28ac7d2773d3b556c935ae3bf4e431d24657a7fd"
+    },
+    {
+      "path": "src/ir/runtime/contracts/prepared.ts",
+      "sha256": "5ad34666195a78cdca49005de505e8cd468af8b04b40d8ff5de88347489515e9",
+      "bytes": 4370,
+      "gitBlob": "6d3e003b0d8ac79060042c402029e830c734f0bd"
+    }
+  ],
+  "population": 27,
+  "driftBefore": []
+}

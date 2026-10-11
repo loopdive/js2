@@ -1,0 +1,18 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/issue-2856-vec-push.test.ts > #2856 — number[] annotation + empty literal (A) > empty literal with number[] annotation reads back pushed values 1088ms
+ ✓ tests/issue-2856-vec-push.test.ts > #2856 — number[] annotation + empty literal (A) > non-empty literal with number[] annotation stays claimed 109ms
+ ✓ tests/issue-2856-vec-push.test.ts > #2856 — arr.push(v) on a growable vec (B) > push grows an empty vec across a C-style loop (bench_array shape, whole fn e2e) 141ms
+ ✓ tests/issue-2856-vec-push.test.ts > #2856 — arr.push(v) on a growable vec (B) > push in expression position returns the NEW length 100ms
+ ✓ tests/issue-2856-vec-push.test.ts > #2856 — arr.push(v) on a growable vec (B) > push appends past a non-empty literal (grow-on-capacity path) 97ms
+ ✓ tests/issue-2856-vec-push.test.ts > #2856 — arr.push(v) on a growable vec (B) > multi-arg push demotes cleanly to legacy (claim-partial residual) 54ms
+ ✓ tests/issue-2856-vec-push.test.ts > #2856 — sibling for-loops re-declaring the counter (C) > two sibling `for (let i...)` loops claim and agree with legacy 67ms
+ ✓ tests/issue-2856-vec-push.test.ts > #2856 — sibling for-loops re-declaring the counter (C) > shadowing a GENUINE outer local still rejects (build-side parity) 44ms
+ ✓ tests/issue-2856-vec-push.test.ts > #2856 — mode cleanliness > standalone / wasi compiles stay clean (pure-WasmGC helper, no host import) 506ms
+
+ Test Files  1 passed (1)
+      Tests  9 passed (9)
+   Start at  20:10:34
+   Duration  33.73s (transform 22.18s, setup 0ms, collect 31.02s, tests 2.21s, environment 0ms, prepare 68ms)
+

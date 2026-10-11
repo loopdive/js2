@@ -1,0 +1,7 @@
+{
+  "kind": "independent fresh syntax token-role comparison",
+  "receiptSha256Before": "5fa8434031d44258392be13d31067829cb954b8bd8d1e5cc69a8b8ae039864c5",
+  "receiptSha256After": "5fa8434031d44258392be13d31067829cb954b8bd8d1e5cc69a8b8ae039864c5",
+  "tokenBoundaryRoles": 166,
+  "allExact": true
+}

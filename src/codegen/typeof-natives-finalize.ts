@@ -14,8 +14,50 @@ import { buildClosureRefTestArms, collectClosureBaseWrapperTypeIdxs } from "./cl
 import { buildBuiltinCallableTestArm, hasBrandedBuiltinCarrier } from "./builtin-callable-brand.js";
 import { installCompiledClosureToStringArm } from "./coercion-engine.js";
 import { unshiftCarrierToPrimitiveArms, unshiftDateToStringArm } from "./carrier-to-primitive.js";
+import { unshiftAnyToStringBigIntArm } from "./bigint-primitive-to-string.js"; // (#6642 S62)
 import { stringConstantExternrefInstrs } from "./native-strings.js";
-import { standaloneLinkBoundaryPeerIndex } from "./standalone-link-boundary.js"; // (#5383 S2f R12)
+import { definedIdxs, standaloneLinkBoundaryPeerIndex } from "./standalone-link-boundary.js"; // (#5383 S2f R12)
+
+/**
+ * (#6882) The callable-kind bits of param 0, OR-ed over every terminal this
+ * module has, or undefined when it has none. (#5383 S2f R12) The JS boundary's
+ * `__boundary_object_callable_kind` answers for a host object this instance
+ * admitted; its standalone wasm→wasm twin answers for a value a linked PROVIDER
+ * owns (without it `typeof Temporal.PlainDate` answered "object"). A
+ * native-regime module in a JavaScript environment has BOTH, so it asks both,
+ * peer first; `boundary ?? peer` asked only the boundary, and `typeof` on a
+ * provider class answered "object" there. One family emits its one call. A
+ * factory, because every arm needs its own instruction objects.
+ */
+function callableKindBitsInstrs(ctx: CodegenContext): (() => Instr[]) | undefined {
+  const idxs = definedIdxs(
+    standaloneLinkBoundaryPeerIndex(ctx, "callableKind"),
+    ctx.funcMap.get("__boundary_object_callable_kind"),
+  );
+  if (idxs.length === 0) return undefined;
+  return () =>
+    idxs.flatMap((funcIdx, i): Instr[] => [
+      { op: "local.get", index: 0 },
+      { op: "call", funcIdx },
+      ...(i > 0 ? ([{ op: "i32.or" }] satisfies Instr[]) : []),
+    ]);
+}
+
+/**
+ * (#3505 harness / #6882) `__typeof_object`'s `$Symbol` exclusion (local 1 =
+ * the anyref param). It must run BEFORE the callable-kind terminal: appended
+ * after it, the arm was unreachable in every module with a JS boundary or a
+ * linked peer, so a Symbol answered "object" there — and the Temporal
+ * polyfill's IsObject accepted a Symbol-valued `options` instead of throwing.
+ */
+function symbolExclusionArm(symbolTypeIdx: number | undefined): Instr[] {
+  if (symbolTypeIdx === undefined) return [];
+  return [
+    { op: "local.get", index: 1 },
+    { op: "ref.test", typeIdx: symbolTypeIdx },
+    { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 0 }, { op: "return" }] },
+  ];
+}
 
 /**
  * #1896 — teach the standalone/WASI native `__typeof_function` and
@@ -62,6 +104,11 @@ export function fillStandaloneTypeofClosureArms(ctx: CodegenContext): void {
   // them before the typeof-only early return.
   unshiftCarrierToPrimitiveArms(ctx);
   unshiftDateToStringArm(ctx);
+  // (#6642 S62) …and the bigint carrier's, for the same reason: `String(1n)`
+  // answered null because `__any_to_string`'s ladder has no `$BigInt` arm. It
+  // self-gates on the carrier type, so it must run before the typeof-only
+  // early return below (a module can box a bigint without compiling a closure).
+  unshiftAnyToStringBigIntArm(ctx);
   const baseTypeIdxs = collectClosureBaseWrapperTypeIdxs(ctx);
   const runtimeEvalCallbackTypeIdx = ctx.runtimeEvalInterpretedCallbackTypeIdx;
   const proxyTypeIdx = ctx.objectRuntimeTypes?.proxyTypeIdx;
@@ -69,8 +116,7 @@ export function fillStandaloneTypeofClosureArms(ctx: CodegenContext): void {
   // value a linked PROVIDER owns is answered by the module that can classify
   // it. Without this a provider-minted class value answered `"object"`, so a
   // consumer could never see `typeof Temporal.PlainDate === "function"`.
-  const boundaryCallableKindIdx =
-    ctx.funcMap.get("__boundary_object_callable_kind") ?? standaloneLinkBoundaryPeerIndex(ctx, "callableKind");
+  const callableKindInstrs = callableKindBitsInstrs(ctx);
   // (#4120) A reified builtin CONSTRUCTOR carrier (`Set`, `TypeError`, `Array`,
   // …) is a `$Object` branded `OBJ_FLAG_CALLABLE`, not a closure wrapper — and a
   // module can reify one without ever compiling a closure, so it must keep this
@@ -98,7 +144,7 @@ export function fillStandaloneTypeofClosureArms(ctx: CodegenContext): void {
     runtimeEvalCallbackTypeIdx === undefined &&
     !hasBrandedBuiltinCarrier(ctx) &&
     proxyTypeIdx === undefined &&
-    boundaryCallableKindIdx === undefined &&
+    callableKindInstrs === undefined &&
     taCtorTypeIdx === undefined &&
     symbolTypeIdx === undefined &&
     revokerTypeIdx === undefined &&
@@ -126,10 +172,18 @@ export function fillStandaloneTypeofClosureArms(ctx: CodegenContext): void {
   // null, and `ref.eq` against a non-null value is false — so the arm degrades
   // to today's answer rather than to a wrong one.
   const EQ_HEAP_TYPE = -19;
-  const classObjectIdentityArms = (anyLocalIdx: number, onMatch: Instr[]): Instr[] => {
-    if (classObjectGlobalIdxs.length === 0) return [];
+  // (#6625) `globalIdxs` defaults to EVERY class object (the `typeof` use);
+  // `__is_class_object` passes a BASE-classes-only subset, since a subclass's
+  // [[Prototype]] is its parent, not %Function.prototype% — see that call
+  // site's own comment.
+  const classObjectIdentityArms = (
+    anyLocalIdx: number,
+    onMatch: Instr[],
+    globalIdxs: number[] = classObjectGlobalIdxs,
+  ): Instr[] => {
+    if (globalIdxs.length === 0) return [];
     const inner: Instr[] = [];
-    for (const globalIdx of classObjectGlobalIdxs) {
+    for (const globalIdx of globalIdxs) {
       // The singleton global is lazy: before its first materialisation it holds
       // a null externref, which is not eq-castable — hence the per-global test
       // rather than a bare cast, which would TRAP on an unmaterialised class.
@@ -169,7 +223,15 @@ export function fillStandaloneTypeofClosureArms(ctx: CodegenContext): void {
   // i32-predicate arm returns `matchValue` on hit. The class singleton arm is a
   // `typeof` fact, not an IsCallable fact: the two modes share every genuine
   // callable carrier but deliberately split there.
-  const callableI32Arms = (anyLocalIdx: number, matchValue: number, mode: CallableArmMode): Instr[] => {
+  // `beforeTerminal` is spliced just ahead of the boundary/peer callable-kind
+  // arm, which RETURNS unconditionally — anything a caller appends after this
+  // ladder is unreachable whenever that arm exists.
+  const callableI32Arms = (
+    anyLocalIdx: number,
+    matchValue: number,
+    mode: CallableArmMode,
+    beforeTerminal: Instr[] = [],
+  ): Instr[] => {
     const onMatch: Instr[] = [{ op: "i32.const", value: matchValue }, { op: "return" }];
     const arms = buildClosureRefTestArms(ctx, anyLocalIdx, onMatch);
     if (runtimeEvalCallbackTypeIdx !== undefined) {
@@ -216,10 +278,10 @@ export function fillStandaloneTypeofClosureArms(ctx: CodegenContext): void {
         { op: "if", blockType: { kind: "empty" }, then: [...onMatch] },
       );
     }
-    if (boundaryCallableKindIdx !== undefined) {
+    arms.push(...beforeTerminal);
+    if (callableKindInstrs !== undefined) {
       arms.push(
-        { op: "local.get", index: 0 },
-        { op: "call", funcIdx: boundaryCallableKindIdx },
+        ...callableKindInstrs(),
         { op: "i32.const", value: mode.boundaryMask },
         { op: "i32.and" },
         // `& 1` was already a boolean. `typeof` must accept a foreign class's
@@ -284,6 +346,58 @@ export function fillStandaloneTypeofClosureArms(ctx: CodegenContext): void {
     ];
   }
 
+  // --- (#6625) __is_class_object: true only for a class-object SINGLETON —
+  // never an instance, a closure, or any other carrier. Reuses
+  // `classObjectIdentityArms` verbatim (the SAME ladder `typeof`'s
+  // includeClassObjects arm above uses) so the two predicates can never
+  // disagree about which values are class objects. The boundary half asks the
+  // linked PROVIDER's own identity ladder for a value this module cannot
+  // decode locally — the "ask the owner" shape #6617/#6624 established, but a
+  // BOOLEAN answer rather than a value: the correct VALUE (`Function.prototype`)
+  // has to be read on THIS side for `ref.eq` identity to hold against the
+  // caller's own read of it (S22's rule, `object-get-prototype-of.ts`).
+  const ico = fnByName("__is_class_object");
+  const boundaryIsClassObjectIdx = standaloneLinkBoundaryPeerIndex(ctx, "isClassObject");
+  // (#6625) BASE classes only (no `extends`). A derived class's [[Prototype]]
+  // is its PARENT's class-object value (§15.7.14 step 6), not
+  // %Function.prototype% — answering %Function.prototype% for one would be a
+  // NEW wrong answer (worse than the pre-#6625 `null`, which at least made
+  // `gPO(D) !== Function.prototype` true by accident for every subclass D).
+  // Excluding a class with a registered parent here is what keeps that
+  // comparison correct; the parent-aware answer itself is an unreduced
+  // residual (plan/issues/6625-*.md).
+  const baseClassObjectGlobalIdxs = [...ctx.classObjectGlobals.entries()]
+    .filter(([className]) => !ctx.classParentMap.has(className))
+    .map(([, globalIdx]) => globalIdx)
+    .sort((a, b) => a - b);
+  if (ico && (baseClassObjectGlobalIdxs.length > 0 || boundaryIsClassObjectIdx !== undefined)) {
+    if (ico.locals.length === 0) {
+      ico.locals.push({ name: "$any_temp", type: { kind: "anyref" } });
+    }
+    const classMatch: Instr[] = [{ op: "i32.const", value: 1 }, { op: "return" }];
+    ico.body = [
+      { op: "local.get", index: 0 },
+      { op: "ref.is_null" },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [{ op: "i32.const", value: 0 }, { op: "return" }],
+      },
+      { op: "local.get", index: 0 },
+      { op: "any.convert_extern" },
+      { op: "local.set", index: 1 },
+      ...classObjectIdentityArms(1, classMatch, baseClassObjectGlobalIdxs),
+      ...(boundaryIsClassObjectIdx !== undefined
+        ? ([
+            { op: "local.get", index: 0 },
+            { op: "call", funcIdx: boundaryIsClassObjectIdx },
+            { op: "return" },
+          ] satisfies Instr[])
+        : []),
+      { op: "i32.const", value: 0 },
+    ];
+  }
+
   // --- __typeof_object: insert closure-exclusion (return 0) before the trailing
   // non-null `i32.const 1`. The existing body already converts the param to
   // anyref into local 1 (`$any_temp`) for its boxed-primitive guards, so reuse it.
@@ -295,16 +409,9 @@ export function fillStandaloneTypeofClosureArms(ctx: CodegenContext): void {
     const lastIdx = b.length - 1;
     const last = b[lastIdx] as { op?: string; value?: number } | undefined;
     if (last && last.op === "i32.const" && last.value === 1) {
-      const exclusionArms: Instr[] = callableI32Arms(1, 0, typeofFunctionMode);
       // (#3505 harness) typeof Symbol() is "symbol", never "object" — exclude
-      // the $Symbol carrier exactly like closures.
-      if (symbolTypeIdx !== undefined) {
-        exclusionArms.push(
-          { op: "local.get", index: 1 },
-          { op: "ref.test", typeIdx: symbolTypeIdx },
-          { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 0 }, { op: "return" }] },
-        );
-      }
+      // the $Symbol carrier exactly like closures (see `symbolExclusionArm`).
+      const exclusionArms: Instr[] = callableI32Arms(1, 0, typeofFunctionMode, symbolExclusionArm(symbolTypeIdx));
       b.splice(lastIdx, 0, ...exclusionArms);
     }
   }
@@ -408,10 +515,9 @@ export function fillStandaloneTypeofClosureArms(ctx: CodegenContext): void {
           },
         );
       }
-      if (boundaryCallableKindIdx !== undefined) {
+      if (callableKindInstrs !== undefined) {
         valueArms.push(
-          { op: "local.get", index: 0 },
-          { op: "call", funcIdx: boundaryCallableKindIdx },
+          ...callableKindInstrs(),
           // A foreign class carries only [[Construct]] (bit 1) but still has
           // `typeof === "function"`; both bits are therefore tag evidence.
           { op: "i32.const", value: 3 },

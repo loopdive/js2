@@ -37,6 +37,7 @@ import {
   commitDefinedFuncOrdinal,
   appendDefinedFunc,
 } from "../wasm/physical/function-handles.js";
+import { readEnv } from "../env.js";
 
 /**
  * Position of a handle's function in `mod.functions`, or a negative number
@@ -165,7 +166,7 @@ export function replaceDefinedFuncAt(ctx: CodegenContext, funcIdx: FuncHandle, f
  */
 function traceSlotWrite(position: number, writer: string, fn: WasmFunction): void {
   if (typeof process === "undefined") return;
-  const target = process.env?.JS2WASM_TRACE_SLOT;
+  const target = readEnv("JS2WASM_TRACE_SLOT");
   if (target === undefined || Number(target) !== position) return;
   const frame = fn.locals.length;
   process.stderr.write(
