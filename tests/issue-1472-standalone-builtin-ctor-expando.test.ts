@@ -106,6 +106,49 @@ describe("#1472 standalone expando methods on builtin carriers", () => {
     ).toBe(15);
   });
 
+  // Review P1: the method is captured BEFORE the arguments are evaluated
+  // (§13.3.6.1). The old head resolved it after them (22 / unexpected throw).
+  it("an argument that replaces the method does not change the callee", async () => {
+    // node: 11
+    expect(
+      await runStandalone(`
+        Object.zzq = function (x) { return 11; };
+        function flip() { Object.zzq = function (x) { return 22; }; return 0; }
+        export function main() { return Object.zzq(flip()); }`),
+    ).toBe(11);
+  });
+
+  it("an argument that nulls the method still calls the captured original", async () => {
+    // node: 11
+    expect(
+      await runStandalone(`
+        Object.zzq = function (x) { return 11; };
+        function flip() { Object.zzq = null; return 0; }
+        export function main() {
+          try { return Object.zzq(flip()); } catch (e) { return e instanceof TypeError ? 1 : 2; }
+        }`),
+    ).toBe(11);
+  });
+
+  it("control: an unchanged method receives the argument value", async () => {
+    // node: 12
+    expect(
+      await runStandalone(`
+        Object.zzq = function (x) { return 11 + x; };
+        function flip() { return 1; }
+        export function main() { return Object.zzq(flip()); }`),
+    ).toBe(12);
+  });
+
+  it("the captured method is called with this = the carrier", async () => {
+    // node: 5
+    expect(
+      await runStandalone(`
+        Object.zzq = function () { return this === Object ? 5 : 6; };
+        export function main() { return Object.zzq(); }`),
+    ).toBe(5);
+  });
+
   it("negative control: a modelled static keeps its native lowering", async () => {
     // node: 2
     expect(

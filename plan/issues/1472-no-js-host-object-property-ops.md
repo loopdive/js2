@@ -17,6 +17,13 @@ sprint: 58
 related: []
 claimed_by: codex-developer
 claimed_at: 2026-06-02T22:34:59.447Z
+# 2026-10-11 (#1472 raytrace review fix): the captured-callee sequence for an expando
+# method on a builtin carrier lives beside the generic `__extern_method_call` arm it
+# replaces for that one shape (two module-level helpers, +2 lines in the dispatcher).
+loc-budget-allow:
+  - src/codegen/expressions/call-receiver-method.ts
+func-budget-allow:
+  - src/codegen/expressions/call-receiver-method.ts::compileReceiverMethodCall
 ---
 # #1472 — Eliminate JS host object/property ops for standalone Wasm
 
@@ -1608,6 +1615,17 @@ Reproduces identically on `c-octane-integ` without this change. It is the
 member-held form of the separately tracked "`P.prototype = {…}` literal on a
 non-fnctor closure" gap (the bare `var P = Class.create()` form drops the
 write instead: `reading 'apply'` of undefined).
+
+### Review fix (2026-10-11): capture the method before the arguments
+
+The expando call fell through to the generic `__extern_method_call` bridge,
+which resolves the name AFTER the arguments. `Object.zzq = f11; Object.zzq(flip())`
+where `flip()` replaces `Object.zzq` returned 22 (node 11); nulling it threw
+(node 11). `isBuiltinCarrierExpandoCall` now routes exactly that shape to
+`emitCapturedCarrierMethodCall` (`call-receiver-method.ts`): `[[Get]](C, "m")`
+into a local, then the arguments, then `__is_callable` → TypeError, then one
+`__apply_closure(callee, C, args)` — §13.3.6.1 order, single evaluation. Every
+other `__extern_method_call` site is unchanged.
 
 ### Remaining
 
