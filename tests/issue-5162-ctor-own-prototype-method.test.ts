@@ -221,8 +221,12 @@ export function test() { var p = new PP(5); return (typeof seen.twice === "funct
 ${PROTO_TWICE}
 export function test() { return new PP(5).v; }`;
 
-  it("XFAIL both lanes: `this.twice.call(this, x)` in a ctor throws (spec says 10)", async () => {
-    expect(await threw(DOT_CALL, "gc")).toBe(true);
+  // (#6970) The gc half was the field auto-register arm minting an own
+  // `$__fnctor_PP.twice` slot for the `this.twice` VALUE read (the "null
+  // receiver read" above); it now reads the prototype member. Standalone still
+  // lacks the prototype method's runtime existence (the gap above).
+  it("`this.twice.call(this, x)` in a ctor: gc reads 10 (#6970); standalone XFAIL throws", async () => {
+    expect(await run(DOT_CALL, "gc")).toBe(10);
     expect(await threw(DOT_CALL, "standalone")).toBe(true);
   });
 });

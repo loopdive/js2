@@ -99,6 +99,47 @@ const CASES: { name: string; expected: number; source: string }[] = [
   },
 ];
 
+// Residual: a fnctor declared INSIDE an IIFE captures its own name as an
+// already-boxed ref cell; the synthesized `__fnctor_w_new` ctor read that cell
+// itself (not its value) for `w.b2T` / `this.constructor === w`.
+const NESTED_CASES: { name: string; expected: number; source: string }[] = [
+  {
+    name: "nested fnctor: static member and constructor identity read in its own ctor",
+    expected: 11,
+    source: `
+      var Box2D = {};
+      var log = 0;
+      (function () {
+        function w() { if (this.constructor === w) log += 10; if (typeof w.b2T === "function") log += 1; }
+        w.b2T = function () {};
+        Box2D.make = function () { return new w(); };
+      })();
+      export function main() { Box2D.make(); return log; }`,
+  },
+  {
+    name: "nested fnctor: static initialiser applied to the new instance (box2dweb wrapper)",
+    expected: 1,
+    source: `
+      var Box2D = {};
+      (function () {
+        function w() { var f = w.b2T; f.apply(this, arguments); }
+        w.b2T = function () { this.position = 1; };
+        Box2D.make = function () { return new w(); };
+      })();
+      export function main() { var x = Box2D.make(); return x.position; }`,
+  },
+];
+
+describe("#6970 nested fnctor reads its own boxed name in the synthesized ctor", () => {
+  for (const octane of [false, true]) {
+    for (const testCase of NESTED_CASES) {
+      it(`${octane ? "octane options" : "module"}: ${testCase.name}`, async () => {
+        expect(await runStandalone(testCase.source, octane)).toBe(testCase.expected);
+      });
+    }
+  }
+});
+
 describe("#6970 this.<m> read of a prototype member inside a fnctor ctor", () => {
   for (const octane of [false, true]) {
     for (const testCase of CASES) {

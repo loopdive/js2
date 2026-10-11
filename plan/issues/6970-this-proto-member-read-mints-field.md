@@ -119,3 +119,26 @@ Measured (standalone, Script goal, no eval provider): `bx18/bx17/bx23/bx10` node
 `true:true`: the in-ctor `__extern_get(this,"init")` misses because `main` lacks #6949/#6951's
 prototype materialization/snapshot). Controls `bx22/bx25/bx11/bx13/bx27/bx29/bx30` unchanged.
 `tests/issue-6970-this-proto-member-read.test.ts`: base 8/16, head 16/16.
+
+### Step 2 — the IIFE-nested residual: a nested fnctor's ctor read its own boxed name as the cell (fnctor-constructor-identity.ts)
+
+Root cause of `bx28` (re-measured; the plan's "prototype not linked during the ctor" suspicion
+was wrong — `n1/n4` probes show `this.b2T` and `Object.getPrototypeOf(this) === w.prototype`
+are right inside a nested ctor). The failing read is the STATIC one, `w.b2T` (`n7/n8`): a
+function declared inside an IIFE and referenced by name from its own body / a sibling closure
+is captured as an already-boxed `__ref_cell_externref`. The lifted closure body (`$w`, the
+plain-call and native-construct-driver path) dereferences that cell (`struct.get $cell 0`),
+but the synthesized static-`new` constructor `__fnctor_w_new` received the cell as a capture
+param and used it AS the value: `w.b2T` became `__extern_get(extern.convert_any(cell), "b2T")`
+→ undefined, and `this.constructor === w` compared the instance's constructor against the
+cell → false. `registerFnctorCaptureParams` does mark an immutable capture whose param is a ref
+cell as a boxed capture, but recognised ref cells by `ctx.typeIdxToStructName` — and
+`getOrRegisterRefCellType` registers ref-cell types only in `ctx.refCellTypeMap`, so the check
+never fired. Fix: also recognise a type index that is one of `ctx.refCellTypeMap`'s values.
+(Out of the plan's named files — one predicate in the file that owns the ctor capture ABI.)
+
+Measured: `n8` (`typeof w.b2T` in the ctor under `new`) and `n11`/`n9` node-identical on
+`main`; on `c-octane-integ` + steps 1–2, `bx28` → `number:number` (node-identical). On `main`
+alone `bx28` still fails at the in-ctor `this.b2T` prototype read, which needs #6949/#6951
+(prototype materialization for every ordinary fnctor + construction-time snapshot), present
+on `c-octane-integ` but not yet on `main`.
