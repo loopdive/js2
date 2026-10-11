@@ -119,6 +119,17 @@ function once(text: string, before: string, after: string): string {
     throw Error("missing/duplicate mapped source: " + before);
   return text.slice(0, at) + after + text.slice(at + before.length);
 }
+// (#6969) The one authorized ADAPTER delta: parseInt/parseFloat run §19.2.5 /
+// §19.2.4 step 1 ToString on a non-string argument (`ref.test` fast path plus a
+// finalize-filled ToString arm) instead of a bare `ref.cast`. Each hunk is an
+// exact [live, donor] text pair; any other adapter change still fails.
+const authorized6969Delta = JSON.parse(
+  readFileSync(resolve(root, "tests/fixtures/issue-6969-parse-number-tostring-delta.json"), "utf8"),
+) as [string, string][];
+function stripAuthorized6969ToStringArm(text: string): string {
+  for (const [live, donor] of authorized6969Delta) text = once(text, live, donor);
+  return text;
+}
 function functionText(text: string, name: string): string {
   return fn(text, name)
     .getFullText()
@@ -515,7 +526,11 @@ function verifyImports(s: Sources): void {
   }
 }
 function verifySources(s: Sources): void {
-  s = { ...s, scanner: stripAuthorizedExponentRepair(s.scanner) };
+  s = {
+    ...s,
+    scanner: stripAuthorizedExponentRepair(s.scanner),
+    adapter: stripAuthorized6969ToStringArm(s.adapter),
+  };
   verifyDeclarations(s);
   verifyScale(s);
   verifyScanner(s);
@@ -583,6 +598,13 @@ function adapterFactory(text: string, trace: string[], fault?: string) {
       ensureNativeStringHelpers: () => {
         trace.push("ensure-strings");
       },
+      // (#6969) Bound by the authorized delta; used only by the finalize fill,
+      // which emission never reaches.
+      ANY_TO_STRING_HELPER: "__any_to_string",
+      EXTERN_TO_STRING_HELPER: "__extern_toString",
+      ensureAnyToStringHelper: () => {
+        throw Error("#6969 fill-only helper reached during emission");
+      },
     },
     "./registry/types.js": {
       addFuncType: (ctx: Recording, params: unknown[], results: unknown[]) => {
@@ -591,6 +613,9 @@ function adapterFactory(text: string, trace: string[], fault?: string) {
       },
     },
     "./func-space.js": {
+      definedFuncAt: () => {
+        throw Error("#6969 fill-only helper reached during emission");
+      },
       mintDefinedFunc: () => {
         trace.push("mint");
         return 99;
@@ -688,6 +713,44 @@ function recordLegacy(text: string, which: readonly string[], imported = 0, faul
   };
 }
 
+// (#6969) Undo exactly the authorized parse prologue in a recorded parseFloat /
+// parseInt: the 6-instruction `ref.test` guard (whose ToString arm is still the
+// unfilled `unreachable` at emission) back to the donor's 4-instruction cast,
+// and the one appended `arg: anyref` local. Recording context: $AnyString = 1,
+// `__str_flatten` = 55; the scratch local is the first index past the donor's.
+function projected6969Prologue(fn: { name: string; body: unknown[]; locals?: unknown }) {
+  const anyLocal = fn.name === "parseFloat" ? 17 : 12;
+  const str = { kind: "ref", typeIdx: 1 };
+  expect(fn.body.slice(0, 6)).toEqual([
+    { op: "local.get", index: 0 },
+    { op: "any.convert_extern" },
+    { op: "local.tee", index: anyLocal },
+    { op: "ref.test", typeIdx: 1 },
+    {
+      op: "if",
+      blockType: { kind: "val", type: str },
+      then: [
+        { op: "local.get", index: anyLocal },
+        { op: "ref.cast", typeIdx: 1 },
+      ],
+      else: [{ op: "unreachable" }],
+    },
+    { op: "call", funcIdx: 55 },
+  ]);
+  const locals = fn.locals as unknown[];
+  expect(locals.at(-1)).toEqual({ name: "arg", type: { kind: "anyref" } });
+  return {
+    ...fn,
+    body: [
+      { op: "local.get", index: 0 },
+      { op: "any.convert_extern" },
+      { op: "ref.cast", typeIdx: 1 },
+      { op: "call", funcIdx: 55 },
+      ...fn.body.slice(6),
+    ],
+    locals: locals.slice(0, -1),
+  };
+}
 function projectedLegacyRecord(candidate: ReturnType<typeof recordLegacy>, original: ReturnType<typeof recordLegacy>) {
   const fullMatch = [
     { op: "local.get", index: 4 },
@@ -725,6 +788,7 @@ function projectedLegacyRecord(candidate: ReturnType<typeof recordLegacy>, origi
     ...candidate,
     functions: candidate.functions.map((raw) => {
       const current = asFunction(raw);
+      if (current.name === "parseFloat" || current.name === "parseInt") return projected6969Prologue(current);
       if (current.name !== "__str_to_number") return raw;
       const matches = original.functions.map(asFunction).filter((f) => f.name === current.name);
       expect(matches).toHaveLength(1);
@@ -769,6 +833,13 @@ describe("scanner complete historical donor receipts", () => {
     ["scaling", "value: Number(", "value: Math.pow("],
     ["adapter", "buildStringToNumberPrelude,", "type buildStringToNumberPrelude,"],
     ["adapter", "buildStringToNumberPrelude,", "buildStringToNumberResult as buildStringToNumberPrelude,"],
+    // (#6969) the authorized delta is exact, not a licence for nearby edits
+    [
+      "adapter",
+      '{ op: "ref.test", typeIdx: ctx.anyStrTypeIdx },',
+      '{ op: "ref.test", typeIdx: ctx.nativeStrTypeIdx },',
+    ],
+    ["adapter", "const L_ANY = 12;", "const L_ANY = 13;"],
   ] as const)("rejects live %s mutation %s", (owner, before, after) => {
     const s = readSources();
     verifySources(s);

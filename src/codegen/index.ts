@@ -554,7 +554,7 @@ import {
   strictBalanceDiagnostics,
   callArgCoercionInstrs,
 } from "./stack-balance.js";
-import { emitNativeParseNumber } from "./parse-number-native.js";
+import { emitNativeParseNumber, fillParseNumberToStringArms } from "./parse-number-native.js";
 import { nullableNativeStringElemBindingType } from "./nullable-native-string-elem-binding.js"; // (#6603)
 import { inferStandaloneRegExpMatchResultType, STANDALONE_REGEXP_REFLECTION_PROPS } from "./regexp-standalone.js";
 import { ensureVecElemSet, ensureVecNewSized } from "./vec-elem-set.js";
@@ -6844,6 +6844,7 @@ export function generateModule(
     // `Proxy.revocable` site compiled.
     fillProxyRevokerFnMeta(ctx);
 
+    fillParseNumberToStringArms(ctx); // (#6969) parseInt/parseFloat ToString arm; may build __any_to_string
     // (#4632) `$Symbol` arm in `__any_to_string` — a carrier reaching the
     // generic ToString terminal renders "Symbol(desc)", not "[object Object]".
     fillSymbolAnyToStringArm(ctx);
@@ -11700,6 +11701,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // Same reserve/fill identity probes as the single-source pipeline.
     profilePhase("fill-native-dynamic-instanceof", () => fillNativeDynamicInstanceOf(ctx));
 
+    profilePhase("fill-parse-number-to-string-arms", () => fillParseNumberToStringArms(ctx)); // (#6969)
     // (#4632) Same `$Symbol` __any_to_string arm on this finalize path.
     profilePhase("fill-symbol-any-to-string-arm", () => fillSymbolAnyToStringArm(ctx));
     // (#4492 wave-5) …and the same CALLABLE arms, on both ToString dispatchers.

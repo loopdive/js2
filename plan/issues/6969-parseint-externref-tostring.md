@@ -1,7 +1,9 @@
 ---
 id: 6969
 title: "standalone: native `parseInt` / `parseFloat` `ref.cast $AnyString` the externref argument without ToString — a boxed number / i31 argument (externref param, `arr[i]`, member-held closure) traps `illegal cast` (Octane box2d `parseInt(e.m_vertexCount)`, `parseInt(-1)` in `postDefs`)"
-status: ready
+status: done
+completed: 2026-10-11
+assignee: ttraenkler/claude-session-d
 sprint: current
 created: 2026-10-11
 priority: high
@@ -13,6 +15,12 @@ area: compiler
 language_feature: parseInt, coercion
 goal: standalone-gap
 related: [874, 1663, 6954, 4492]
+loc-budget-allow:
+  - src/codegen/index.ts
+func-budget-allow:
+  - src/codegen/index.ts::generateModule
+  - src/codegen/index.ts::generateMultiModule
+  - src/codegen/parse-number-native.ts::emitNativeParseNumber
 ---
 
 # `parseInt(<externref holding a number>)` traps instead of ToString-ing
@@ -100,3 +108,45 @@ always unguarded.
 - Then `pnpm run -s benchmark:octane -- --only box2d --lanes node,standalone --timeout 600`
   (needs `--timeout ≥ 300` for the compile).
 - Size: **S**.
+
+## Implementation notes (2026-10-11)
+
+**Deviation from plan step 1 — the ToString arm is filled at finalize, not at emission.**
+Calling `ensureAnyToStringHelper` inside `emitNativeParseNumber` is unsafe: the parse natives are
+minted at IMPORT COLLECTION (measured: at that moment `__any_to_string`, `objectRuntimeTypes`,
+`__to_primitive` and `__extern_toString` do not exist yet), and `__any_to_string` is cached
+module-wide, so building it there would bake it WITHOUT its object / ToPrimitive / class arms for
+the whole module — the first-consumer ordering hazard #3216 / #2875 fixed. So the change uses the
+reserve-then-fill pattern (approved scope extension: one hook in `src/codegen/index.ts`):
+
+- `parse-number-native.ts` `externToFlat` (now shared by `parseFloat` and `parseInt`):
+  `local.get 0; any.convert_extern; local.tee $arg; ref.test $AnyString; if (result ref $AnyString)
+  local.get $arg; ref.cast | else <arm> end; call __str_flatten`. The arm starts as `unreachable`
+  (the old trap) and is recorded per-ctx; each native gets an `anyref` scratch local.
+- `fillParseNumberToStringArms(ctx)` (called next to `fillSymbolAnyToStringArm` in both finalize
+  paths) splices `extern.convert_any; call __extern_toString; any.convert_extern; ref.cast` when the
+  object runtime exists (ToString ∘ ToPrimitive — `parseInt([5])` = 5, `parseInt({toString(){…}})`),
+  else, on standalone/WASI, `call __any_to_string` built then, when every dependency it captures
+  exists. Placed before the symbol/callable `__any_to_string` arm fills so a freshly built helper
+  still receives them. A host-backed native-first lane without a native ToString keeps the trap.
+- `__str_to_number` is untouched (it is only ever handed strings).
+
+**Byte-identity:** modules that never mint the parse natives are byte-identical (8 playground
+`.ts` examples, standalone + gc, hashed base vs head). Standalone JS *scripts* always mint them
+(the realm's global `parseInt`/`parseFloat`), so those grow by ~54 bytes (the guard).
+
+**The #3518 donor receipt now carries the #6969 delta.** `tests/issue-3518-native-string-number-resources.test.ts`
+pins `parse-number-native.ts` to a historical donor. It now strips exactly the 11 hunks in
+`tests/fixtures/issue-6969-parse-number-tostring-delta.json` (exact `[live, donor]` text pairs —
+any other adapter edit still fails), admits only the four new imports (`ANY_TO_STRING_HELPER`, `EXTERN_TO_STRING_HELPER`,
+`ensureAnyToStringHelper`, `definedFuncAt`; the mocks throw if emission reaches them), and
+projects the recorded parseFloat/parseInt back by undoing exactly the 6-instruction guard and
+the appended `arg` local. Two new mutation rows prove the delta is exact.
+
+**Alternatives rejected:** a call-site ToString in `call-identifier.ts` covers the legacy
+`parseInt(<any>)` call (bx8) but not the IR-lowered direct call (`function g(y){return
+parseInt(y)}` with an inferred-f64 `y` boxes straight into the native — bx7/pi3 still trap) nor
+the first-class `parseInt` value / `arr.map(parseInt)` wrappers; fixing the callee covers all.
+
+**Validation:** `tests/issue-6969-parse-number-tostring.test.ts` 36 cases (module + Octane
+options): base 4/36 (the string controls), head 36/36. Repros `bx1/bx4/bx7/bx8` node-identical.

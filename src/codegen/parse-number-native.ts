@@ -17,9 +17,14 @@
  */
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
-import { ensureNativeStringHelpers } from "./native-strings.js";
+import {
+  ANY_TO_STRING_HELPER,
+  EXTERN_TO_STRING_HELPER,
+  ensureAnyToStringHelper,
+  ensureNativeStringHelpers,
+} from "./native-strings.js";
 import { addFuncType } from "./registry/types.js";
-import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3b) stable-regime minting
+import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3b) stable-regime minting
 import { registerEmitNativeParseNumber } from "./registry/parse-number-delegates.js";
 import {
   buildDecimalPowerArrayType,
@@ -131,16 +136,79 @@ function ensurePow10TableGlobal(ctx: CodegenContext): number {
 }
 
 /**
- * Push the instructions that take an `externref` string on the stack and leave
- * a flat `$NativeString` ref. Mirrors the charCodeAt flatten preamble.
+ * (#6969) Non-string ToString arms of the parse natives, filled at finalize by
+ * {@link fillParseNumberToStringArms}. Each entry is the (initially
+ * `unreachable`) `else` arm of a native's prologue plus the `anyref` scratch
+ * local holding the argument.
  */
-function externToFlat(ctx: CodegenContext, flattenIdx: number): Instr[] {
+const pendingToStringArms = new WeakMap<CodegenContext, { arm: Instr[]; anyLocal: number }[]>();
+
+/**
+ * Push the instructions that take the `externref` param 0 and leave a flat
+ * `$NativeString` ref. ECMA-262 §19.2.4 / §19.2.5 step 1 is `ToString(string)`:
+ * a string argument takes the `ref.test` fast path; anything else (a boxed
+ * number held as externref — `F.parseUInt = function (y) { return parseInt(y) }`
+ * — `undefined`, `null`, an object) goes through the arm
+ * {@link fillParseNumberToStringArms} fills. It cannot be filled here: these
+ * natives are minted at import collection, before the object runtime (and so
+ * `__to_primitive` / `__extern_toString`) exists, and building the module-wide
+ * cached `__any_to_string` that early would bake it without its object arms.
+ */
+function externToFlat(ctx: CodegenContext, flattenIdx: number, anyLocal: number): Instr[] {
+  const arm: Instr[] = [{ op: "unreachable" }];
+  let arms = pendingToStringArms.get(ctx);
+  if (!arms) pendingToStringArms.set(ctx, (arms = []));
+  arms.push({ arm, anyLocal });
   return [
     { op: "local.get", index: 0 },
     { op: "any.convert_extern" },
-    { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx },
+    { op: "local.tee", index: anyLocal },
+    { op: "ref.test", typeIdx: ctx.anyStrTypeIdx },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "ref", typeIdx: ctx.anyStrTypeIdx } },
+      then: [
+        { op: "local.get", index: anyLocal },
+        { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx },
+      ],
+      else: arm,
+    },
     { op: "call", funcIdx: flattenIdx },
   ];
+}
+
+/**
+ * (#6969) Finalize-time fill of the parse natives' ToString arms (see
+ * {@link externToFlat}). Prefers the object runtime's `__extern_toString`
+ * (ToString ∘ ToPrimitive, so `parseInt({ valueOf() {…} })` and arrays are
+ * spec-correct); without an object runtime, a standalone/WASI module builds
+ * `__any_to_string` now, when every dependency it captures exists. A module
+ * that never emitted `parseInt`/`parseFloat` returns immediately (byte-identical).
+ */
+export function fillParseNumberToStringArms(ctx: CodegenContext): void {
+  const arms = pendingToStringArms.get(ctx);
+  if (!arms || arms.length === 0) return;
+  pendingToStringArms.delete(ctx);
+  const anyStrTypeIdx = ctx.anyStrTypeIdx;
+  const externToStringIdx = ctx.funcMap.get(EXTERN_TO_STRING_HELPER);
+  let convert: Instr[] | undefined;
+  if (externToStringIdx !== undefined && definedFuncAt(ctx, externToStringIdx) !== undefined) {
+    convert = [
+      { op: "extern.convert_any" },
+      { op: "call", funcIdx: externToStringIdx },
+      { op: "any.convert_extern" },
+      { op: "ref.cast", typeIdx: anyStrTypeIdx },
+    ];
+  } else {
+    const anyToStringIdx =
+      ctx.nativeStrHelpers.get(ANY_TO_STRING_HELPER) ??
+      (ctx.standalone || ctx.wasi ? ensureAnyToStringHelper(ctx) : undefined);
+    if (anyToStringIdx !== undefined) convert = [{ op: "call", funcIdx: anyToStringIdx }];
+  }
+  if (!convert) return; // host-backed lane without a native ToString: keep the trap
+  for (const { arm, anyLocal } of arms) {
+    arm.splice(0, arm.length, { op: "local.get", index: anyLocal }, ...convert);
+  }
 }
 
 /**
@@ -187,6 +255,7 @@ export function emitNativeParseNumber(ctx: CodegenContext, which: Set<string>): 
     const L_TEXP = 14; // i32: total decimal exponent (expSign*exp + intDrop - fracCount)
     const L_POW = 15; // f64: 10^|totalExp|
     const L_INTDROP = 16; // i32: integer digits dropped past the ~15-sig-digit cap
+    const L_ANY = 17; // (#6969) anyref: the argument, for the ToString arm
 
     const getC: Instr[] = [
       { op: "local.get", index: L_DATA },
@@ -197,7 +266,7 @@ export function emitNativeParseNumber(ctx: CodegenContext, which: Set<string>): 
 
     const body: Instr[] = [
       // flat = flatten(s); data = flat.data; len = flat.len; i = 0
-      ...externToFlat(ctx, flattenIdx),
+      ...externToFlat(ctx, flattenIdx, L_ANY),
       { op: "local.set", index: L_FLAT },
       { op: "local.get", index: L_FLAT },
       { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 2 },
@@ -493,6 +562,7 @@ export function emitNativeParseNumber(ctx: CodegenContext, which: Set<string>): 
         { name: "texp", type: i32 },
         { name: "pow", type: f64 },
         { name: "intDrop", type: i32 },
+        { name: "arg", type: { kind: "anyref" } },
       ],
       body,
       exported: false,
@@ -635,7 +705,7 @@ function emitParseInt(ctx: CodegenContext, flattenIdx: number, strTypeIdx: numbe
 
   // params: 0 s:externref, 1 radixF:f64
   // locals: 2 flat 3 data 4 len 5 i 6 c 7 sign:f64 8 radix:i32
-  //         9 value:f64 10 sawDigit:i32 11 dig:i32
+  //         9 value:f64 10 sawDigit:i32 11 dig:i32 12 arg:anyref (#6969)
   const L_FLAT = 2;
   const L_DATA = 3;
   const L_LEN = 4;
@@ -646,6 +716,7 @@ function emitParseInt(ctx: CodegenContext, flattenIdx: number, strTypeIdx: numbe
   const L_VALUE = 9;
   const L_SAW = 10;
   const L_DIG = 11;
+  const L_ANY = 12;
 
   const getC: Instr[] = [
     { op: "local.get", index: L_DATA },
@@ -655,13 +726,8 @@ function emitParseInt(ctx: CodegenContext, flattenIdx: number, strTypeIdx: numbe
   ];
 
   const body: Instr[] = [
-    ...([
-      { op: "local.get", index: 0 },
-      { op: "any.convert_extern" },
-      { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx },
-      { op: "call", funcIdx: flattenIdx },
-      { op: "local.set", index: L_FLAT },
-    ] satisfies Instr[]),
+    ...externToFlat(ctx, flattenIdx, L_ANY),
+    { op: "local.set", index: L_FLAT },
     { op: "local.get", index: L_FLAT },
     { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 2 },
     { op: "local.set", index: L_DATA },
@@ -914,6 +980,7 @@ function emitParseInt(ctx: CodegenContext, flattenIdx: number, strTypeIdx: numbe
       { name: "value", type: f64 },
       { name: "sawDigit", type: i32 },
       { name: "dig", type: i32 },
+      { name: "arg", type: { kind: "anyref" } },
     ],
     body,
     exported: false,

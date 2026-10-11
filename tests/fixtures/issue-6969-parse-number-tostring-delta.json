@@ -1,0 +1,43 @@
+[
+  [
+    "import type { CodegenContext } from \"./context/types.js\";\nimport {\n  ANY_TO_STRING_HELPER,\n  EXTERN_TO_STRING_HELPER,\n  ensureAnyToStringHelper,\n  ensureNativeStringHelpers,\n} from \"./native-strings.js\";\nimport { addFuncType } from \"./registry/types.js\";\nimport { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from \"./func-space.js\"; // (#1916 S3b) stable-regime minting\nimport { registerEmitNativeParseNumber } from \"./registry/parse-number-delegates.js\";\n",
+    "import type { CodegenContext } from \"./context/types.js\";\nimport { ensureNativeStringHelpers } from \"./native-strings.js\";\nimport { addFuncType } from \"./registry/types.js\";\nimport { mintDefinedFunc, pushDefinedFunc } from \"./func-space.js\"; // (#1916 S3b) stable-regime minting\nimport { registerEmitNativeParseNumber } from \"./registry/parse-number-delegates.js\";\n"
+  ],
+  [
+    "/**\n * (#6969) Non-string ToString arms of the parse natives, filled at finalize by\n * {@link fillParseNumberToStringArms}. Each entry is the (initially\n * `unreachable`) `else` arm of a native's prologue plus the `anyref` scratch\n * local holding the argument.\n */\nconst pendingToStringArms = new WeakMap<CodegenContext, { arm: Instr[]; anyLocal: number }[]>();\n\n/**\n * Push the instructions that take the `externref` param 0 and leave a flat\n * `$NativeString` ref. ECMA-262 §19.2.4 / §19.2.5 step 1 is `ToString(string)`:\n * a string argument takes the `ref.test` fast path; anything else (a boxed\n * number held as externref — `F.parseUInt = function (y) { return parseInt(y) }`\n * — `undefined`, `null`, an object) goes through the arm\n * {@link fillParseNumberToStringArms} fills. It cannot be filled here: these\n * natives are minted at import collection, before the object runtime (and so\n * `__to_primitive` / `__extern_toString`) exists, and building the module-wide\n * cached `__any_to_string` that early would bake it without its object arms.\n */\nfunction externToFlat(ctx: CodegenContext, flattenIdx: number, anyLocal: number): Instr[] {\n  const arm: Instr[] = [{ op: \"unreachable\" }];\n  let arms = pendingToStringArms.get(ctx);\n  if (!arms) pendingToStringArms.set(ctx, (arms = []));\n  arms.push({ arm, anyLocal });\n  return [\n",
+    "/**\n * Push the instructions that take an `externref` string on the stack and leave\n * a flat `$NativeString` ref. Mirrors the charCodeAt flatten preamble.\n */\nfunction externToFlat(ctx: CodegenContext, flattenIdx: number): Instr[] {\n  return [\n"
+  ],
+  [
+    "    { op: \"any.convert_extern\" },\n    { op: \"local.tee\", index: anyLocal },\n    { op: \"ref.test\", typeIdx: ctx.anyStrTypeIdx },\n    {\n      op: \"if\",\n      blockType: { kind: \"val\", type: { kind: \"ref\", typeIdx: ctx.anyStrTypeIdx } },\n      then: [\n        { op: \"local.get\", index: anyLocal },\n        { op: \"ref.cast\", typeIdx: ctx.anyStrTypeIdx },\n      ],\n      else: arm,\n    },\n    { op: \"call\", funcIdx: flattenIdx },\n",
+    "    { op: \"any.convert_extern\" },\n    { op: \"ref.cast\", typeIdx: ctx.anyStrTypeIdx },\n    { op: \"call\", funcIdx: flattenIdx },\n"
+  ],
+  [
+    "/**\n * (#6969) Finalize-time fill of the parse natives' ToString arms (see\n * {@link externToFlat}). Prefers the object runtime's `__extern_toString`\n * (ToString ∘ ToPrimitive, so `parseInt({ valueOf() {…} })` and arrays are\n * spec-correct); without an object runtime, a standalone/WASI module builds\n * `__any_to_string` now, when every dependency it captures exists. A module\n * that never emitted `parseInt`/`parseFloat` returns immediately (byte-identical).\n */\nexport function fillParseNumberToStringArms(ctx: CodegenContext): void {\n  const arms = pendingToStringArms.get(ctx);\n  if (!arms || arms.length === 0) return;\n  pendingToStringArms.delete(ctx);\n  const anyStrTypeIdx = ctx.anyStrTypeIdx;\n  const externToStringIdx = ctx.funcMap.get(EXTERN_TO_STRING_HELPER);\n  let convert: Instr[] | undefined;\n  if (externToStringIdx !== undefined && definedFuncAt(ctx, externToStringIdx) !== undefined) {\n    convert = [\n      { op: \"extern.convert_any\" },\n      { op: \"call\", funcIdx: externToStringIdx },\n      { op: \"any.convert_extern\" },\n      { op: \"ref.cast\", typeIdx: anyStrTypeIdx },\n    ];\n  } else {\n    const anyToStringIdx =\n      ctx.nativeStrHelpers.get(ANY_TO_STRING_HELPER) ??\n      (ctx.standalone || ctx.wasi ? ensureAnyToStringHelper(ctx) : undefined);\n    if (anyToStringIdx !== undefined) convert = [{ op: \"call\", funcIdx: anyToStringIdx }];\n  }\n  if (!convert) return; // host-backed lane without a native ToString: keep the trap\n  for (const { arm, anyLocal } of arms) {\n    arm.splice(0, arm.length, { op: \"local.get\", index: anyLocal }, ...convert);\n  }\n}\n\n/**\n * Emit native `parseInt` / `parseFloat` functions and register them in\n",
+    "/**\n * Emit native `parseInt` / `parseFloat` functions and register them in\n"
+  ],
+  [
+    "    const L_INTDROP = 16; // i32: integer digits dropped past the ~15-sig-digit cap\n    const L_ANY = 17; // (#6969) anyref: the argument, for the ToString arm\n\n",
+    "    const L_INTDROP = 16; // i32: integer digits dropped past the ~15-sig-digit cap\n\n"
+  ],
+  [
+    "      // flat = flatten(s); data = flat.data; len = flat.len; i = 0\n      ...externToFlat(ctx, flattenIdx, L_ANY),\n      { op: \"local.set\", index: L_FLAT },\n",
+    "      // flat = flatten(s); data = flat.data; len = flat.len; i = 0\n      ...externToFlat(ctx, flattenIdx),\n      { op: \"local.set\", index: L_FLAT },\n"
+  ],
+  [
+    "        { name: \"intDrop\", type: i32 },\n        { name: \"arg\", type: { kind: \"anyref\" } },\n      ],\n",
+    "        { name: \"intDrop\", type: i32 },\n      ],\n"
+  ],
+  [
+    "  // locals: 2 flat 3 data 4 len 5 i 6 c 7 sign:f64 8 radix:i32\n  //         9 value:f64 10 sawDigit:i32 11 dig:i32 12 arg:anyref (#6969)\n  const L_FLAT = 2;\n",
+    "  // locals: 2 flat 3 data 4 len 5 i 6 c 7 sign:f64 8 radix:i32\n  //         9 value:f64 10 sawDigit:i32 11 dig:i32\n  const L_FLAT = 2;\n"
+  ],
+  ["  const L_DIG = 11;\n  const L_ANY = 12;\n\n", "  const L_DIG = 11;\n\n"],
+  [
+    "  const body: Instr[] = [\n    ...externToFlat(ctx, flattenIdx, L_ANY),\n    { op: \"local.set\", index: L_FLAT },\n    { op: \"local.get\", index: L_FLAT },\n",
+    "  const body: Instr[] = [\n    ...([\n      { op: \"local.get\", index: 0 },\n      { op: \"any.convert_extern\" },\n      { op: \"ref.cast\", typeIdx: ctx.anyStrTypeIdx },\n      { op: \"call\", funcIdx: flattenIdx },\n      { op: \"local.set\", index: L_FLAT },\n    ] satisfies Instr[]),\n    { op: \"local.get\", index: L_FLAT },\n"
+  ],
+  [
+    "      { name: \"dig\", type: i32 },\n      { name: \"arg\", type: { kind: \"anyref\" } },\n    ],\n",
+    "      { name: \"dig\", type: i32 },\n    ],\n"
+  ]
+]
