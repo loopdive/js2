@@ -25,7 +25,7 @@ import { emitHoleToUndefined } from "./array-holes.js"; // (#2001 S1)
 import { tryEmitAnyValueArrayUndefinedOobGet } from "./any-value-element-read.js"; // (#6651 G3)
 import { emitF64HoleToUndef } from "./vec-f64-hole-presence.js"; // (#4491 T11)
 import { interfaceHasClassImplementer } from "./interface-class-implementer.js"; // (#6634)
-import { isConstructedFnctorName } from "./fnctor-instance-names.js"; // (#1058)
+import { isConstructedFnctorName, isFnctorInstanceType } from "./fnctor-instance-names.js"; // (#1058, #6938)
 import {
   PROXY_READ_DECLINE,
   tryProxyReceiverElementRead,
@@ -1050,6 +1050,15 @@ export function resolveStructName(ctx: CodegenContext, tsType: ts.Type): string 
     if (mapped && ctx.structMap.has(mapped)) {
       return mapped;
     }
+  }
+  // (#6938) A fnctor instance type never resolves to a checker-shape `__anon_N`
+  // struct: answer exactly what resolveWasmType lowers it to (the reserved
+  // `__fnctor_<Name>` struct for an approved standalone fnctor, else dynamic).
+  if (isFnctorInstanceType(ctx, tsType)) {
+    const carrier = resolveWasmType(ctx, tsType);
+    return carrier.kind === "ref" || carrier.kind === "ref_null"
+      ? ctx.typeIdxToStructName.get(carrier.typeIdx)
+      : undefined;
   }
   return ctx.anonTypeMap.get(tsType);
 }
