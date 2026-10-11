@@ -155,6 +155,7 @@ import { reserveProtoFunctionValue } from "./proto-function-value.js"; // (#4637
 import { buildFnctorMissingMethodDispatch } from "./fnctor-missing-method-dispatch.js";
 // (#4230 L1) the #3251 overlay companion as a THIRD key source for the vec key walks
 import { buildOverlayPushKeys, buildVecOverlayHasArm, reserveVecOverlayPushKeys } from "./vec-overlay-keys.js";
+import { allowedCarriers } from "./vec-overlay-carriers.js"; // (#6963) element-store key arm
 // (#6485) `__extern_has`'s numeric-key delegation — §13.10.1 ToPropertyKey.
 import { buildVecNumericKeyGetArm, buildVecNumericKeyHasArm } from "./vec-numeric-key-presence.js";
 // (#4194) instance expando substrate — composes AROUND the #3537/#3468 arms and
@@ -10470,6 +10471,57 @@ export function fillDynamicForinVecArms(ctx: CodegenContext): void {
 }
 
 /**
+ * (#6963) Finalize the element-store key canonicaliser `__elem_store_key(obj,
+ * key)` reserved by `emitElementStoreKeyOnce` (computed-member-reference.ts),
+ * whose reserved body is `__to_property_key(key)`. Prepend: a NON-NEGATIVE
+ * i31 key on one of the JS-array carriers the descriptor overlay serves
+ * (`allowedCarriers` — never a TypedArray view or another `$__vec_base`
+ * subtype) is returned unchanged, so the store reaches the overlay's i31
+ * front door and this function's numeric arm without a number→string→index
+ * round trip. Such a key's ToPropertyKey is its decimal string and has no
+ * side effects; every other shape keeps the string canonicalisation.
+ */
+function fillElemStoreKeyArm(ctx: CodegenContext): void {
+  const fn = ctx.mod.functions.find((f) => f.name === "__elem_store_key");
+  if (!fn) return;
+  const carriers = allowedCarriers(ctx);
+  if (carriers.length === 0) return;
+  const carrierTest: Instr[] = [];
+  carriers.forEach((c, i) => {
+    carrierTest.push(
+      { op: "local.get", index: 0 },
+      { op: "any.convert_extern" },
+      { op: "ref.test", typeIdx: c.vecTypeIdx },
+    );
+    if (i > 0) carrierTest.push({ op: "i32.or" });
+  });
+  fn.body.unshift(
+    { op: "local.get", index: 1 },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx: -20 },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: 1 },
+        { op: "any.convert_extern" },
+        { op: "ref.cast", typeIdx: -20 },
+        { op: "i31.get_s" },
+        { op: "i32.const", value: 0 },
+        { op: "i32.ge_s" },
+        ...carrierTest,
+        { op: "i32.and" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [{ op: "local.get", index: 1 }, { op: "return" }],
+        },
+      ],
+    },
+  );
+}
+
+/**
  * (#3190) Finalize-time `$__vec_base` write arms for the standalone dynamic
  * STORE helper `__extern_set`. The write-side sibling of `fillExternGetIdxVecArms`
  * (#2190, the read fill).
@@ -10689,6 +10741,7 @@ export function fillExternSetVecArms(ctx: CodegenContext): void {
     );
   }
   if (carrierArms.length === 0) return; // no writable carriers → leave body untouched
+  fillElemStoreKeyArm(ctx);
 
   fn.locals.push(
     { name: "__vec_set_any", type: { kind: "anyref" } },
