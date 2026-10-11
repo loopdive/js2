@@ -106,75 +106,31 @@ export function resolveUserFnctorName(ctx: CodegenContext, expr: ts.Expression):
   // assignments must therefore be retained even when the standalone escape
   // gate classified the constructor as `keep-typed`/`keep-static`; otherwise a
   // chained write such as `HydrationRoot.prototype.render = Root.prototype.render
-  // = fn` is dropped before the sidecar can observe it. Standalone/WASI keep the
-  // stricter gate below because their native prototype representation is only
-  // sound for the approved population.
+  // = fn` is dropped before the sidecar can observe it. Standalone/WASI use the
+  // native per-fnctor prototype global below instead.
   if (!ctx.standalone && !ctx.wasi) return sym.name;
-  // RECONSTRUCT-GATE (#2660 S2): only materialize the per-fnctor prototype
-  // `$Object` for a constructor S3 will reconstruct (≥1 `reconstruct`-classified
-  // `new F()` site). A `keep-typed` / `keep-static` / never-`new`'d function keeps
-  // its existing prototype behaviour — an UNSCOPED interception clobbered working
-  // paths: the species `Ctor.prototype` IDENTITY in `Array/prototype/*/create-proxy`
-  // (Ctor is never `new`'d in source), and `Test262Error.prototype.toString` once
-  // the keep-in-init made it execute (Test262Error is `keep-typed`). Both ejected
-  // the standalone floor (−40). Gate on the S1 escape-gate result (computed at
-  // index.ts:1076, before collectDeclarations + codegen, so it is always set).
-  const hasRuntimeDescriptorInstall = (() => {
-    let found = false;
-    const visit = (node: ts.Node): void => {
-      if (found) return;
-      if (
-        ts.isCallExpression(node) &&
-        ts.isPropertyAccessExpression(node.expression) &&
-        ts.isIdentifier(node.expression.expression) &&
-        node.expression.expression.text === "Object" &&
-        (node.expression.name.text === "defineProperty" || node.expression.name.text === "defineProperties")
-      ) {
-        const receiver = node.arguments[0];
-        if (
-          receiver &&
-          ts.isPropertyAccessExpression(receiver) &&
-          receiver.name.text === "prototype" &&
-          ts.isIdentifier(receiver.expression)
-        ) {
-          const receiverDeclaration = ctx.oracle.valueDeclarationOf(receiver.expression);
-          if (receiver.expression.text === sym.name && receiverDeclaration === sym.valueDeclaration) {
-            found = true;
-            return;
-          }
-        }
-      }
-      ts.forEachChild(node, visit);
-    };
-    visit(expr.getSourceFile());
-    return found;
-  })();
-  // (#4480 S1) …WIDENED to the §13.2-steps-16-18 population: every user
-  // function owns a `.prototype` object, so a fnctor with NO `new F()` site
-  // anywhere in the module also gets one. That third arm is safe for exactly
-  // the reason the gate exists: the hazard the gate names is a SPLIT BRAIN
-  // between the object `F.prototype` reads and the object `new F()` links its
-  // instances to, and a constructor with no construction site has no instance
-  // to disagree with. It is also the arm that pays: `S13.2_A1`/`S13.2_A4` and
-  // the `.prototype`-only half of the isPrototypeOf family never construct.
+  // (#6949) Standalone/WASI: every ORDINARY user fnctor gets a native
+  // prototype once the escape gate exists. History: #2660 S2 scoped this to
+  // gate-APPROVED fnctors (plus #4480's never-constructed arm and a
+  // defineProperty-install scan), but the gate is a one-hop per-allocation-site
+  // analysis while the runtime dynamic path (`__call_m_*` →
+  // `__extern_method_call` → `__fnctor_proto_start`) is reachable by EVERY
+  // instance. A `keep-static`/`keep-typed` F that later meets an `any`-receiver
+  // `inst.m()` (Octane richards `packet.addTo`, crypto `rng_state.init`) had its
+  // `F.prototype.m = …` dropped at module init and no `$__fnctor_F` arm, so the
+  // call threw `called value is not a function`. `fillFnctorPrototypeDispatchArms`
+  // now adds that arm for every name in `ctx.fnctorPrototypeObject`, so the
+  // instance link and the `F.prototype` global are the same object for every
+  // constructed fnctor — the split brain the old gate guarded against is gone.
+  // Typed twins stay approval-gated (performance tier, not correctness).
   //
-  // A fnctor that IS `new`'d but was NOT approved (`keep-typed` /
-  // `keep-static`) keeps declining — that is precisely the population where
-  // the instance link lives somewhere this global is not, and answering with
-  // the auto-object would be a WRONG answer, not a missing one. `Test262Error`
-  // is that case (`keep-typed`, `new Test262Error(...)` everywhere), so the
-  // harness regression the gate comment records stays structurally excluded
-  // rather than excluded by luck.
-  //
-  // The widened arm requires the gate to EXIST. A missing gate is "I don't
-  // know whether this fnctor is constructed", not "it isn't" (#4235 records
-  // that `generateMultiModule` shipped a null gate for a long time and that
-  // the null was indistinguishable from "no fnctors"), so it keeps today's
-  // decline.
+  // A missing gate is "I don't know whether this fnctor is constructed"
+  // (#4235: `generateMultiModule` shipped a null gate), so it keeps declining.
+  // `isOrdinaryFunctionSymbol` keeps generators/async/arrows out; an APPROVED
+  // name is admitted as before even if its declaration shape is not recognised.
   const gate = ctx.fnctorEscapeGate;
-  const neverConstructed =
-    gate !== undefined && !gate.ctorDeclByName.has(sym.name) && isOrdinaryFunctionSymbol(ctx, sym);
-  if (!gate?.approvedNames.has(sym.name) && !hasRuntimeDescriptorInstall && !neverConstructed) {
+  if (gate === undefined) return undefined;
+  if (!gate.approvedNames.has(sym.name) && (!isOrdinaryFunctionSymbol(ctx, sym) || ctx.classSet.has(sym.name))) {
     return undefined;
   }
   // Key by the stable symbol name so the WRITE site (`F.prototype = …`) and the
