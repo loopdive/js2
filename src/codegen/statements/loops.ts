@@ -18,6 +18,7 @@ import {
   updateLocalType,
 } from "../expressions/helpers.js";
 import { emitAssignToTarget } from "../expressions/assignment.js";
+import { emitConditionalCaptureBoxRepair } from "../closures/conditional-capture-box.js"; // (#6939)
 import { emitForOfArrayIteratorDeletedGuard } from "../expressions/proto-override.js";
 import { emitConstIdentifierUpdateGuard, tryEmitForOfIdentifierWrite } from "../expressions/identifier-assignment.js";
 import { ensureLateImport, flushLateImportShifts, shiftLateImportIndices } from "../expressions/late-imports.js";
@@ -194,6 +195,9 @@ function emitBoxedVarHeadStore(
   const cellIdx = fctx.localMap.get(name)!;
   const tmp = allocLocal(fctx, `__box_init_tmp_${fctx.locals.length}`, cell.valType);
   fctx.body.push({ op: "local.set", index: tmp });
+  // The cell may be unminted: the closure that boxed `name` sat in a skipped
+  // arm. Seed it from the pre-box slot first, or this store silently no-ops.
+  emitConditionalCaptureBoxRepair(fctx, name, cellIdx);
   fctx.body.push({ op: "local.get", index: cellIdx });
   fctx.body.push({ op: "ref.is_null" });
   fctx.body.push({

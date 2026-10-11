@@ -83,6 +83,31 @@ const CASES: [string, string, unknown, Lane?][] = [
     "abb2",
     "gc",
   ],
+  // Review finding (PR #6621): the closure that boxes `dt` sits in a skipped
+  // arm, so on the false path the cell is never minted. The head initializer
+  // must still land (seed the cell from the pre-box slot, then store).
+  [
+    "conditional closure construction skipped: the head initializer still lands",
+    `function g(flag) {
+       var f;
+       if (flag) { f = function () { return ++dt; }; }
+       for (var dt = 3; false;) {}
+       return flag ? f() : dt;
+     }
+     export function run() { return g(0); }`,
+    3,
+  ],
+  [
+    "conditional closure construction taken: the closure sees the head initializer",
+    `function g(flag) {
+       var f;
+       if (flag) { f = function () { return ++dt; }; }
+       for (var dt = 3; false;) {}
+       return flag ? f() : dt;
+     }
+     export function run() { return g(1); }`,
+    4,
+  ],
   [
     "negative control: let head (fresh per-iteration binding) unchanged",
     `function f() { var s = 0; for (let i = 0; i < 4; i++) { s += i; } return s; }
