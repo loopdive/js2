@@ -1,0 +1,342 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ × tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > authenticates independent receipt and full current domain 18ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > detaches semantic input and replays exact row without retained-field changes 7ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > refuses genuine predecessor raw domain 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > refuses genuine predecessor semantic domain 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > refuses missing added row 7ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > refuses duplicate added row 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > refuses extra row schema 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > refuses wrong added row layer 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > refuses changed retained edge 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > refuses changed added row path 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > refuses changed added row state 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > refuses changed added row layer 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > refuses changed added row destination 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > refuses changed added row owner 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > refuses changed added row nextBoundary 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > refuses reordered added row keys 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > refuses reordered added row position 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > refuses changed retained neighbor 5ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > refuses changed retained root 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > refuses changed retained history 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > refuses changed retained moves 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > refuses changed retained following neighbor 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > refuses missing presentation row 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > refuses duplicate presentation row 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > refuses changed presentation row 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > refuses reordered presentation row 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > refuses reordered presentation keys 6ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > refuses changed unrelated original row 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > refuses changed retained schema 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > refuses extra debt row 5ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > refuses raw span 0 missing 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > refuses raw span 0 duplicate 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > refuses raw span 0 relocated 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > refuses semantic-equivalent raw whitespace 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > refuses a valid JSON same-length row field mutation 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > guards boxed raw before missing authority with positive IO witness 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > guards numeric raw before missing authority with positive IO witness 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > guards null semantic before missing authority with positive IO witness 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > guards accessor semantic before missing authority with positive IO witness 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > guards symbol semantic before missing authority with positive IO witness 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > guards hidden semantic before missing authority with positive IO witness 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > guards foreign prototype semantic before missing authority with positive IO witness 5ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > guards fake array semantic before missing authority with positive IO witness 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > guards cyclic semantic before missing authority with positive IO witness 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > fresh raw refuses tests/helpers/ir-runtime-program-policy-arraybuffer-isview-main.json missing after success and admits restored authority 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > fresh semantic refuses tests/helpers/ir-runtime-program-policy-arraybuffer-isview-main.json missing after success and admits restored authority 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > fresh raw refuses tests/helpers/ir-runtime-program-policy-arraybuffer-isview-main.json mutation after success and admits restored authority 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > fresh semantic refuses tests/helpers/ir-runtime-program-policy-arraybuffer-isview-main.json mutation after success and admits restored authority 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > fresh raw refuses tests/helpers/ir-runtime-program-policy-evolution.ts missing after success and admits restored authority 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > fresh semantic refuses tests/helpers/ir-runtime-program-policy-evolution.ts missing after success and admits restored authority 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > fresh raw refuses tests/helpers/ir-runtime-program-policy-evolution.ts mutation after success and admits restored authority 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > fresh semantic refuses tests/helpers/ir-runtime-program-policy-evolution.ts mutation after success and admits restored authority 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > fresh raw refuses tests/helpers/ir-runtime-program-policy-presentation-classification.json missing after success and admits restored authority 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > fresh semantic refuses tests/helpers/ir-runtime-program-policy-presentation-classification.json missing after success and admits restored authority 5ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > fresh raw refuses tests/helpers/ir-runtime-program-policy-presentation-classification.json mutation after success and admits restored authority 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > fresh semantic refuses tests/helpers/ir-runtime-program-policy-presentation-classification.json mutation after success and admits restored authority 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 56 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > authenticates independent receipt and full current domain
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3525-arraybuffer-isview-main-policy.test.ts:170:11
+ ❯ tests/issue-3525-arraybuffer-isview-main-policy.test.ts:383:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/56]⎯
+
+ FAIL  tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > detaches semantic input and replays exact row without retained-field changes
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3525-arraybuffer-isview-main-policy.test.ts:170:11
+ ❯ policy tests/issue-3525-arraybuffer-isview-main-policy.test.ts:177:33
+ ❯ tests/issue-3525-arraybuffer-isview-main-policy.test.ts:403:19
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/56]⎯
+
+ FAIL  tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > refuses genuine predecessor raw domain
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3525-arraybuffer-isview-main-policy.test.ts:170:11
+ ❯ tests/issue-3525-arraybuffer-isview-main-policy.test.ts:419:29
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/56]⎯
+
+ FAIL  tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > refuses genuine predecessor semantic domain
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3525-arraybuffer-isview-main-policy.test.ts:170:11
+ ❯ tests/issue-3525-arraybuffer-isview-main-policy.test.ts:426:41
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/56]⎯
+
+ FAIL  tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > refuses missing added row
+ FAIL  tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > refuses duplicate added row
+ FAIL  tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > refuses extra row schema
+ FAIL  tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > refuses wrong added row layer
+ FAIL  tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > refuses changed retained edge
+ FAIL  tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > refuses changed added row path
+ FAIL  tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > refuses changed added row state
+ FAIL  tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > refuses changed added row layer
+ FAIL  tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > refuses changed added row destination
+ FAIL  tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > refuses changed added row owner
+ FAIL  tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > refuses changed added row nextBoundary
+ FAIL  tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > refuses reordered added row keys
+ FAIL  tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > refuses reordered added row position
+ FAIL  tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > refuses changed retained neighbor
+ FAIL  tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > refuses changed retained root
+ FAIL  tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > refuses changed retained history
+ FAIL  tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > refuses changed retained moves
+ FAIL  tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > refuses changed retained following neighbor
+ FAIL  tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > refuses missing presentation row
+ FAIL  tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > refuses duplicate presentation row
+ FAIL  tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > refuses changed presentation row
+ FAIL  tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > refuses reordered presentation row
+ FAIL  tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > refuses reordered presentation keys
+ FAIL  tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > refuses changed unrelated original row
+ FAIL  tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > refuses changed retained schema
+ FAIL  tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > refuses extra debt row
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3525-arraybuffer-isview-main-policy.test.ts:170:11
+ ❯ policy tests/issue-3525-arraybuffer-isview-main-policy.test.ts:177:33
+ ❯ tests/issue-3525-arraybuffer-isview-main-policy.test.ts:566:21
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/56]⎯
+
+ FAIL  tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > refuses raw span 0 missing
+ FAIL  tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > refuses raw span 0 duplicate
+ FAIL  tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > refuses raw span 0 relocated
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3525-arraybuffer-isview-main-policy.test.ts:170:11
+ ❯ tests/issue-3525-arraybuffer-isview-main-policy.test.ts:574:22
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/56]⎯
+
+ FAIL  tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > refuses semantic-equivalent raw whitespace
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3525-arraybuffer-isview-main-policy.test.ts:170:11
+ ❯ tests/issue-3525-arraybuffer-isview-main-policy.test.ts:590:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/56]⎯
+
+ FAIL  tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > refuses a valid JSON same-length row field mutation
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3525-arraybuffer-isview-main-policy.test.ts:170:11
+ ❯ tests/issue-3525-arraybuffer-isview-main-policy.test.ts:598:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/56]⎯
+
+ FAIL  tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > guards boxed raw before missing authority with positive IO witness
+ FAIL  tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > guards numeric raw before missing authority with positive IO witness
+ FAIL  tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > guards null semantic before missing authority with positive IO witness
+ FAIL  tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > guards accessor semantic before missing authority with positive IO witness
+ FAIL  tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > guards symbol semantic before missing authority with positive IO witness
+ FAIL  tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > guards hidden semantic before missing authority with positive IO witness
+ FAIL  tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > guards foreign prototype semantic before missing authority with positive IO witness
+ FAIL  tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > guards fake array semantic before missing authority with positive IO witness
+ FAIL  tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > guards cyclic semantic before missing authority with positive IO witness
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3525-arraybuffer-isview-main-policy.test.ts:170:11
+ ❯ tests/issue-3525-arraybuffer-isview-main-policy.test.ts:687:20
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/56]⎯
+
+ FAIL  tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > fresh raw refuses tests/helpers/ir-runtime-program-policy-arraybuffer-isview-main.json missing after success and admits restored authority
+ FAIL  tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > fresh semantic refuses tests/helpers/ir-runtime-program-policy-arraybuffer-isview-main.json missing after success and admits restored authority
+ FAIL  tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > fresh raw refuses tests/helpers/ir-runtime-program-policy-arraybuffer-isview-main.json mutation after success and admits restored authority
+ FAIL  tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > fresh semantic refuses tests/helpers/ir-runtime-program-policy-arraybuffer-isview-main.json mutation after success and admits restored authority
+ FAIL  tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > fresh raw refuses tests/helpers/ir-runtime-program-policy-evolution.ts missing after success and admits restored authority
+ FAIL  tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > fresh semantic refuses tests/helpers/ir-runtime-program-policy-evolution.ts missing after success and admits restored authority
+ FAIL  tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > fresh raw refuses tests/helpers/ir-runtime-program-policy-evolution.ts mutation after success and admits restored authority
+ FAIL  tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > fresh semantic refuses tests/helpers/ir-runtime-program-policy-evolution.ts mutation after success and admits restored authority
+ FAIL  tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > fresh raw refuses tests/helpers/ir-runtime-program-policy-presentation-classification.json missing after success and admits restored authority
+ FAIL  tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > fresh semantic refuses tests/helpers/ir-runtime-program-policy-presentation-classification.json missing after success and admits restored authority
+ FAIL  tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > fresh raw refuses tests/helpers/ir-runtime-program-policy-presentation-classification.json mutation after success and admits restored authority
+ FAIL  tests/issue-3525-arraybuffer-isview-main-policy.test.ts > fixed ArrayBuffer isView canonical main insertion policy predecessor capture > fresh semantic refuses tests/helpers/ir-runtime-program-policy-presentation-classification.json mutation after success and admits restored authority
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3525-arraybuffer-isview-main-policy.test.ts:170:11
+ ❯ tests/issue-3525-arraybuffer-isview-main-policy.test.ts:704:24
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/56]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  56 failed (56)
+   Start at  22:28:02
+   Duration  1.19s (transform 470ms, setup 0ms, collect 566ms, tests 194ms, environment 0ms, prepare 74ms)
+

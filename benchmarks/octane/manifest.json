@@ -1,0 +1,161 @@
+{
+  "description": "Octane v9 benchmark selection for the #874 harness. Sources are FETCHED (benchmarks/octane/fetch.mjs) into the gitignored .octane-cache/<commit>/ and verified by SHA256; nothing from Octane is committed. The license column is recorded so the do-not-vendor decision (mixed BSD-3 / MIT / zlib / GPL-2) is not re-decided by accident.",
+  "repo": "chromium/octane",
+  "commit": "570ad1ccfe86e3eecba0636c8f932ac08edec517",
+  "rawUrl": "https://raw.githubusercontent.com/chromium/octane/{commit}/{file}",
+  "octaneVersion": "9",
+  "files": {
+    "LICENSE": {
+      "sha256": "cf853177951c6de1b17c029b66edf71f8b194cca1722339a7b5def4e8165aaaa",
+      "license": "BSD-3-Clause (V8 project authors)"
+    },
+    "base.js": {
+      "sha256": "216612c2e7096a02b3e52b57e9cf9351bbaf180d60938d5c60b85fd756232733",
+      "license": "BSD-3-Clause (V8 project authors)"
+    },
+    "richards.js": {
+      "sha256": "1246a64a24b931158bf01c24640343259fa74b0226e73bad630bd1f686aa0fa7",
+      "license": "BSD-3-Clause (V8 project authors)"
+    },
+    "deltablue.js": {
+      "sha256": "6c4784e82f3e8f5c18306d289653d08b17b38838f1bac16b38611d7318fa5a36",
+      "license": "GPL-2.0-or-later (Maloney/Wolczko) — never redistribute"
+    },
+    "crypto.js": {
+      "sha256": "b01b6b3fe534327fdef05131162927bc5508f100a3208e185d0c5a4efb200a39",
+      "license": "MIT-style (Tom Wu)"
+    },
+    "raytrace.js": {
+      "sha256": "64b8ff90969966dd69659100e28754976dfc3e9a4f8ee55b9232f974c66ed08c",
+      "license": "MIT-style (Prototype) + BSD-3-Clause"
+    },
+    "navier-stokes.js": {
+      "sha256": "27926de809451c60b0c49a4185c08f97081310d0db166a30c1d202fb656556a2",
+      "license": "MIT (Oliver Hunt) + BSD-3-Clause"
+    },
+    "splay.js": {
+      "sha256": "f9a6a60d8f205908f5542ad1180abc1902dcdab3dcb4278017c5ce179ee123f7",
+      "license": "BSD-3-Clause (V8 project authors)"
+    },
+    "regexp.js": {
+      "sha256": "a292d6047900c5296ea9e2628453832cc3bfe397e49fddade8aff7b5876c8263",
+      "license": "BSD-3-Clause (V8 project authors)"
+    },
+    "earley-boyer.js": {
+      "sha256": "8dd28a505f7e705642f86816232b012fd3c770ec8afc9f719ce89ce772dab347",
+      "license": "BSD-3-Clause (Bigloo/Scheme2Js output; header is a redirection note)"
+    },
+    "box2d.js": {
+      "sha256": "83b10c280f004e7b156a9e04d09ce4109892ea92788f7c6c963f7fadf29c7bd4",
+      "license": "zlib (Erin Catto) + Google"
+    }
+  },
+  "benchmarks": {
+    "richards": {
+      "files": ["richards.js"],
+      "suiteName": "Richards",
+      "reference": [35302],
+      "hasValidation": true,
+      "validationMessages": ["Error during execution: queueCount"],
+      "minReps": 1,
+      "preludeVars": [],
+      "tamper": "EXPECTED_QUEUE_COUNT = -1;"
+    },
+    "deltablue": {
+      "files": ["deltablue.js"],
+      "suiteName": "DeltaBlue",
+      "reference": [66118],
+      "hasValidation": true,
+      "validationMessages": [
+        "Chain test failed",
+        "Projection 1 failed",
+        "Projection 2 failed",
+        "Projection 3 failed",
+        "Projection 4 failed"
+      ],
+      "minReps": 1,
+      "preludeVars": []
+    },
+    "crypto": {
+      "files": ["crypto.js"],
+      "suiteName": "Crypto",
+      "reference": [266181],
+      "hasValidation": true,
+      "validationMessages": ["Crypto operation failed"],
+      "minReps": 1,
+      "preludeVars": [
+        "setupEngine",
+        "nValue",
+        "eValue",
+        "dValue",
+        "pValue",
+        "qValue",
+        "dmp1Value",
+        "dmq1Value",
+        "coeffValue"
+      ]
+    },
+    "raytrace": {
+      "files": ["raytrace.js"],
+      "suiteName": "RayTrace",
+      "reference": [739989],
+      "hasValidation": true,
+      "validationMessages": ["Scene rendered incorrectly"],
+      "minReps": 1,
+      "preludeVars": []
+    },
+    "navier-stokes": {
+      "files": ["navier-stokes.js"],
+      "suiteName": "NavierStokes",
+      "reference": [1484000],
+      "hasValidation": true,
+      "validationMessages": ["checksum failed"],
+      "minReps": 15,
+      "preludeVars": []
+    },
+    "splay": {
+      "files": ["splay.js"],
+      "suiteName": "Splay",
+      "reference": [81491, 2739514],
+      "hasValidation": true,
+      "validationMessages": ["Splay tree has wrong size", "Splay tree not sorted"],
+      "minReps": 1,
+      "preludeVars": []
+    },
+    "regexp": {
+      "files": ["regexp.js"],
+      "suiteName": "RegExp",
+      "reference": [910985],
+      "hasValidation": true,
+      "validationMessages": ["Wrong checksum."],
+      "minReps": 1,
+      "preludeVars": []
+    },
+    "earley-boyer": {
+      "files": ["earley-boyer.js"],
+      "suiteName": "EarleyBoyer",
+      "reference": [666463],
+      "hasValidation": true,
+      "validationMessages": ["incorrect number of rewrites"],
+      "minReps": 1,
+      "preludeVars": []
+    },
+    "box2d": {
+      "files": ["box2d.js"],
+      "suiteName": "Box2D",
+      "reference": [5432788],
+      "hasValidation": false,
+      "validationMessages": [],
+      "minReps": 1,
+      "preludeVars": []
+    }
+  },
+  "excluded": [
+    { "bench": "zlib", "reason": "eval (`var zlibEval = eval`) and the d8-only read() builtin" },
+    { "bench": "code-load", "reason": "eval / new Function is the benchmark itself" },
+    { "bench": "typescript", "reason": "eval; 2.5 MB compiler input" },
+    { "bench": "pdfjs", "reason": "GPL, 1.4 MB, new Function, canvas stubs" },
+    { "bench": "mandreel", "reason": "5 MB, eval" },
+    { "bench": "gbemu", "reason": "GPL, 500 KB, canvas/window stubs" }
+  ]
+}

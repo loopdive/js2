@@ -4702,7 +4702,11 @@ export function finalizeStructAndDynamicMemberGet(
   // but NEVER for class struct types — their fields are fixed at collection time
   // — and never for a foreign-return fnctor instance (#2071): its checker shape
   // may not describe the runtime value at all, so no field auto-registration.
-  if (typeName && !ctx.classSet.has(typeName) && !foreignReturnReceiver) {
+  // (#6938) Nor for a non-`this` fnctor receiver named by resolveStructName's
+  // lockstep answer: a prototype member is not a field — read it dynamically.
+  const fnctorProtoMemberRead =
+    typeName?.startsWith("__fnctor_") === true && expr.expression.kind !== ts.SyntaxKind.ThisKeyword;
+  if (typeName && !ctx.classSet.has(typeName) && !foreignReturnReceiver && !fnctorProtoMemberRead) {
     // typeName was already resolved above but field was not found;
     // try auto-registering the property from the TS type
     const props = objType.getProperties?.();
