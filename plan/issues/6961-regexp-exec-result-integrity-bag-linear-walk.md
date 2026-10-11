@@ -1,7 +1,8 @@
 ---
 id: 6961
 title: "standalone: every RegExp exec result array walks the global vec integrity-bag linked list (O(n²)) — Octane regexp 34–49 s/rep vs node 76 ms"
-status: ready
+status: done
+completed: 2026-10-11
 sprint: current
 goal: standalone-gap
 area: compiler
@@ -120,3 +121,32 @@ target.
 ~10–20x on this benchmark (93 % of samples are in the walk). It does not fix
 the second-order cost (3–4 `__defineProperty_value` calls per exec + overlay
 prime), which is why the acceptance is 5 s rather than 100 ms.
+
+## Implementation notes (2026-10-11)
+
+Change 1 only, in `src/codegen/object-integrity-carrier.ts`; Change 2 (fresh
+result-array bypass in `regexp-standalone.ts`) was not needed and was left out.
+
+- `registerIntegrityResolvers` builds three natives from one carrier ladder
+  (vec → closure → Error → instance): `__integrity_bag` (ENSURE, unchanged
+  body, still used by the mutators), `__integrity_bag_lookup` (the arm's
+  `*_bag_lookup`, null on miss) and `__integrity_carrier` (i32: is any arm's
+  carrier predicate true).
+- The six predicates read through the lookup. Why a second native rather than
+  "null bag ⇒ terminal": the terminal of the GENERAL predicates is the ES
+  non-object rule (`isExtensible → false`), but a bag-less Array is a pristine
+  object. So a lookup miss asks `__integrity_carrier`: carrier ⇒ the
+  `flags == 0` decode (extensible 1, frozen/sealed 0) — exactly what a freshly
+  minted bag answered before; non-carrier ⇒ the old terminal / #6624 peer
+  fallback. Answers are therefore unchanged by construction.
+- Effect: a query no longer prepends to the global vec-bag list, so the list
+  only holds arrays that really carry expandos/integrity bits; the walk that
+  remains is over that (small) list. The leak (one retained `$Object` + entry
+  per queried array) is gone for read-only queries.
+- Not fixed here (Change 3, structural): the side tables are still linear
+  identity-keyed lists — programs that put expandos on many distinct arrays
+  still degrade quadratically.
+
+Pre-existing, unchanged by this fix (seen in the probe, base == head):
+`Object.preventExtensions([])` then `Object.isFrozen` answers false (node: true)
+— the carrier-bag arm uses only the stored bit, no §7.3.15 walk.
