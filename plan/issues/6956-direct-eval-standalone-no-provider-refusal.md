@@ -19,8 +19,14 @@ related: [874, 6676, 2960, 4195, 2928]
 # standalone-dynamic-code.ts next to emitRefusedDynamicFunction.
 loc-budget-allow:
   - src/codegen/expressions/calls.ts
+  # 2026-10-11 (#6956): +13 lines, the provider-absent guard on the two
+  # callable-boundary sites and on runtimeEvalConsumer (prettier splits each).
+  - src/codegen/index.ts
 func-budget-allow:
   - src/codegen/expressions/calls.ts::compileCallExpression
+  # 2026-10-11 (#6956): +5 each, the same provider-absent guard.
+  - src/codegen/index.ts::generateModule
+  - src/codegen/index.ts::generateMultiModule
 ---
 
 # Direct eval ignores the "no runtime-eval provider" switch
