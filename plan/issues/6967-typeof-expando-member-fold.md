@@ -1,7 +1,8 @@
 ---
 id: 6967
 title: "typeof fold: `typeof NS.member == \"undefined\"` is constant-folded to false for a JS expando (assignment-declared) member, so the guarded namespace init `if (typeof Flog.RT == \"undefined\") Flog.RT = {}` never runs (Octane raytrace)"
-status: ready
+status: done
+completed: 2026-10-11
 sprint: current
 created: 2026-10-11
 priority: high
@@ -13,6 +14,13 @@ area: compiler
 language_feature: typeof, object-literals
 goal: standalone-gap
 related: [874, 4529, 4204, 2623, 4250, 6951]
+loc-budget-allow:
+  # 2026-10-11 (#6967): the expando-member fold guard sits next to its sibling unsound-fold guards (typeofFoldUnsoundForJsParam); one predicate, +40 lines
+  - src/codegen/typeof-delete.ts
+func-budget-allow:
+  # 2026-10-11 (#6967): one guard line each, mirroring the existing per-guard lines in both folds
+  - src/codegen/typeof-delete.ts::compileTypeofExpression
+  - src/codegen/typeof-delete.ts::compileTypeofComparison
 ---
 
 # `typeof <expando member>` folds from the checker's EVENTUAL type
@@ -115,3 +123,22 @@ EVENTUAL shape, which says nothing about whether the write has executed at the `
 - Regression guard: `tests/issue-4529*`, `issue-4204*`, `issue-2623*` typeof-fold pins and
   `language/expressions/typeof` in the standalone test262 lane.
 - Size: **S**.
+
+## Implementation Notes (2026-10-11)
+
+- `typeofOperandIsAssignmentDeclaredMember` (`src/codegen/typeof-delete.ts`) answers true when
+  the member (property access, or element access with a string-literal key) has oracle
+  declarations and EVERY one is an expando kind — `PropertyAccessExpression`,
+  `ElementAccessExpression`, `BinaryExpression`, `CallExpression` (`Object.defineProperty`
+  in JS) or the container `Identifier` TS records per nested `NS.m.<x> = …` write.
+  This is the plan's predicate phrased as an allow-list of expando kinds instead of a deny-list
+  of real member kinds: identical on every measured shape (rta2/3/4/5/16/17/22), but an
+  unanticipated declaration kind keeps the existing fold instead of silently going dynamic.
+- Wired into `compileTypeofComparison` (after the `runtimeEvalMayRebindIdentifier` guard) and
+  `compileTypeofExpression` (`forceRuntimeTypeof`). Lane-agnostic, as planned.
+- Tests: `tests/issue-6967-typeof-expando-member-fold.test.ts` (standalone vs node values,
+  4 failing on base / 6 passing on head, 2 negative controls).
+- Not fixed here (pre-existing, base and head): inside a FUNCTION, `typeof NS.m` for a member
+  that is absent at call time answers `"object"` on standalone (runtime path; the
+  `__extern_get` result is treated as JS null). `NS.m === undefined` is correct there, and
+  top-level reads are correct. Not on raytrace's path.
