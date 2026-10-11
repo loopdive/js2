@@ -68,6 +68,7 @@ import { buildObjectGetBody } from "../runtime/wasmgc/values/object-get-bodies.j
  */
 import { buildVariadicBuiltinApplyArm } from "./apply-closure-variadic-builtin.js"; // (#6701)
 import { buildRestOnlyApply } from "./closures/rest-only-apply.js";
+import { withApplyTail } from "./closures/apply-extras-tail.js";
 import {
   buildObjectPropertyKeyPrefix,
   prependObjectKeyCoercion,
@@ -6559,7 +6560,7 @@ export function fillApplyClosure(ctx: CodegenContext): void {
       {
         op: "if",
         blockType: { kind: "val", type: { kind: "externref" } },
-        then: buildArm(ordinaryTop),
+        then: withApplyTail(ctx, buildArm(ordinaryTop), ordinaryTop, 2, 3), // (#6959 review) args past top
         else: aboveCap ?? armUnsupported,
       },
     ];

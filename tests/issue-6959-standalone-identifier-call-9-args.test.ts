@@ -106,6 +106,98 @@ const CASES: [name: string, body: string, expected: string][] = [
      export function main() { return c(mk()); }`,
     "abc9",
   ],
+  // Review finding (PR #6636, P2): the n > 8 route into an ORDINARY closure went
+  // through `__call_fn_method_8`, whose slots and extras carrier hold eight
+  // values, so the ninth actual argument was dropped. Every row below failed on
+  // 2d7f6e98f4 (108 / NaN) and matches node now. `calls` witnesses exactly one
+  // invocation.
+  [
+    "arguments-length-nine",
+    `var calls = 0;
+     function make() { var fn; var high; { fn = function () { calls++; return arguments.length; };
+       high = function (a, b, c, d, e, f, g, h, i) { return a + b + c + d + e + f + g + h + i; }; } return [0, fn, high]; }
+     function c(p) { var fn; fn = p[1]; return fn(1, 2, 3, 4, 5, 6, 7, 8, 9); }
+     export function main() { var r = c(make()); return String(calls * 100 + r); }`,
+    "109",
+  ],
+  [
+    "ninth-value-zero-formals",
+    `var calls = 0;
+     function make() { var fn; var high; { fn = function () { calls++; return arguments[8]; };
+       high = function (a, b, c, d, e, f, g, h, i) { return a + b + c + d + e + f + g + h + i; }; } return [0, fn, high]; }
+     function c(p) { var fn; fn = p[1]; return fn(1, 2, 3, 4, 5, 6, 7, 8, 9); }
+     export function main() { var r = c(make()); return String(calls * 100 + r); }`,
+    "109",
+  ],
+  [
+    "ninth-value-eight-formals",
+    `var calls = 0;
+     function make() { var fn; var high; { fn = function (a, b, c, d, e, f, g, h) { calls++; return arguments.length * 1000 + arguments[8]; };
+       high = function (a, b, c, d, e, f, g, h, i) { return a + b + c + d + e + f + g + h + i; }; } return [0, fn, high]; }
+     function c(p) { var fn; fn = p[1]; return fn(1, 2, 3, 4, 5, 6, 7, 8, 9); }
+     export function main() { var r = c(make()); return String(calls * 100 + r); }`,
+    "9109",
+  ],
+  // Control: a nine-formal callee keeps working (above-cap dispatcher).
+  [
+    "nine-formals-control",
+    `var calls = 0;
+     function make() { var fn; { fn = function (a, b, c, d, e, f, g, h, i) { calls++; return arguments.length * 1000 + i; }; } return [0, fn]; }
+     function c(p) { var fn; fn = p[1]; return fn(1, 2, 3, 4, 5, 6, 7, 8, 9); }
+     export function main() { var r = c(make()); return String(calls * 100 + r); }`,
+    "9109",
+  ],
+  [
+    "rest-only",
+    `var calls = 0;
+     function make() { var fn; var high; { fn = (...r) => { calls++; return r.length * 1000 + r[8]; };
+       high = function (a, b, c, d, e, f, g, h, i) { return a + b + c + d + e + f + g + h + i; }; } return [0, fn, high]; }
+     function c(p) { var fn; fn = p[1]; return fn(1, 2, 3, 4, 5, 6, 7, 8, 9); }
+     export function main() { var r = c(make()); return String(calls * 100 + r); }`,
+    "9109",
+  ],
+  [
+    "rest-after-formal",
+    `var calls = 0;
+     function make() { var fn; var high; { fn = function (a, ...r) { calls++; return r.length * 1000 + r[7]; };
+       high = function (a, b, c, d, e, f, g, h, i) { return a + b + c + d + e + f + g + h + i; }; } return [0, fn, high]; }
+     function c(p) { var fn; fn = p[1]; return fn(1, 2, 3, 4, 5, 6, 7, 8, 9); }
+     export function main() { var r = c(make()); return String(calls * 100 + r); }`,
+    "8109",
+  ],
+  // Ten actuals into a zero-formal closure in a module with NO closure above
+  // eight formals (the ordinary top is the only dispatcher).
+  [
+    "ten-into-zero-no-high-closure",
+    `var calls = 0;
+     function make() { var fn; { fn = function () { calls++; return arguments.length * 1000 + arguments[9]; }; } return [0, fn]; }
+     function c(p) { var fn; fn = p[1]; return fn(1, 2, 3, 4, 5, 6, 7, 8, 9, 10); }
+     export function main() { var r = c(make()); return String(calls * 100 + r); }`,
+    "10110",
+  ],
+  // The receiver survives the tail route (`o.m(…)` through the bridge).
+  [
+    "receiver-kept",
+    `var calls = 0;
+     function make() { var o = { k: 5 }; var fn; var high;
+       { fn = function () { calls++; return this.k * 10000 + arguments.length * 100 + arguments[8]; };
+         high = function (a, b, c, d, e, f, g, h, i) { return a + b + c + d + e + f + g + h + i; }; }
+       o.m = fn; return [0, o, high]; }
+     function c(p) { var o; o = p[1]; return o.m(1, 2, 3, 4, 5, 6, 7, 8, 9); }
+     export function main() { var r = c(make()); return String(calls * 1000000 + r); }`,
+    "1050909",
+  ],
+  // Arguments evaluated once each, in order, and the callee runs once.
+  [
+    "tail-args-single-evaluation",
+    `var calls = 0; var ev = 0;
+     function k() { return ++ev; }
+     function make() { var fn; var high; { fn = function (a, b) { calls++; return arguments.length * 100 + arguments[8] + a; };
+       high = function (a, b, c, d, e, f, g, h, i) { return a + b + c + d + e + f + g + h + i; }; } return [0, fn, high]; }
+     function c(p) { var fn; fn = p[1]; return fn(k(), k(), k(), k(), k(), k(), k(), k(), k()); }
+     export function main() { var r = c(make()); return String(calls * 100000 + ev * 1000 + r); }`,
+    "109910",
+  ],
 ];
 
 describe("#6959 standalone 9+-argument call through an untyped local", () => {

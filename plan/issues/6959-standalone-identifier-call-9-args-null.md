@@ -17,10 +17,17 @@ goal: standalone-gap
 related: [874, 6655, 4640, 5148, 4096, 3310, 6949, 6958]
 # 2026-10-11: one shared admission predicate + the n>8 over-application route
 # into an ordinary closure (+26 LOC in the bridge file, +12 in fillApplyClosure).
+# 2026-10-11 (PR #6636 review P2, +9 LOC / +8 in emitClosureMethodCallExportN):
+# the ordinary dispatcher consumes `__apply_closure`'s n > 8 argument tail in
+# its prologue, appends it to the extras / rest vec, and declares the tail
+# local. The tail machinery itself lives in closures/apply-extras-tail.ts;
+# only these four call sites stay in the dispatcher emitter.
 loc-budget-allow:
   - src/codegen/object-runtime.ts
+  - src/codegen/closure-exports.ts
 func-budget-allow:
   - src/codegen/object-runtime.ts::fillApplyClosure
+  - src/codegen/closure-exports.ts::emitClosureMethodCallExportN
 ---
 
 # standalone: 9+-argument call through an untyped local never invokes the callee
@@ -200,3 +207,20 @@ Size: **S** (one 5-line export + five one-line substitutions; step 2 adds ~10 li
 - Test: `tests/issue-6959-standalone-identifier-call-9-args.test.ts` (14 rows, module + sloppy
   script): base 10 fail / 4 pass (the 4 are controls), head 14/14.
 
+
+### Review fix (2026-10-11, PR #6636 P2): the "known limit" above was a real defect
+- Reviewer counterexample: a zero-formal `fn(1..9)` returning `arguments.length` answered 8
+  (node 9); `arguments[8]` answered undefined. The ordinary route selected the callee correctly
+  but `__call_fn_method_<top>` has only `top` argument slots, and its #820l setup rebuilds
+  `__extras_argv` from those slots, so actual arguments past `top` were lost.
+- Fix (`src/codegen/closures/apply-extras-tail.ts`): the bridge slices `args[top..n)` into a
+  vec, stores it in `__apply_extras_tail`, and calls the dispatcher immediately (slice first, so
+  a re-entrant getter cannot see or clobber it). Ordinary dispatchers 5..8 (the only possible
+  ordinary tops) consume the global in their first instructions — before any arm can decline or
+  run user code — and append it to `__extras_argv`, and to an externref-element rest vec.
+  `__argc` already holds the exact `n`, so `arguments.length == n`. The receiver and single
+  evaluation of the arguments are unchanged. Gated on the reserved bridge (standalone/wasi);
+  host/gc output is unchanged.
+- Residual: a rest parameter with a NON-externref element type (typed `...r: number[]` in TS
+  source) is not extended — its elements need per-element conversion. JS sources always lower
+  `...r` with externref elements.
