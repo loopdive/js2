@@ -1,0 +1,16 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/issue-3520-vec-support-callable-abi.test.ts (19 tests) 10610ms
+   ✓ #3520 vec host-bridge Program ABI ownership > publishes all six bridges beneath the entry source with fixed ordinals and exact final slots  729ms
+   ✓ #3520 vec host-bridge Program ABI ownership > keeps collision-free GC, standalone, and WASI binaries byte-identical with tracking  992ms
+   ✓ #3520 vec host-bridge Program ABI ownership > strips exact compiler-owned suffixed aliases without deleting standalone or WASI user collisions  738ms
+   ✓ #3520 vec host-bridge Program ABI ownership > retains exact logical and physical user collisions in standalone and WASI  1540ms
+   ✓ #3520 vec host-bridge Program ABI ownership > retains exact prefix-only user collisions in standalone and WASI  1483ms
+   ✓ #3520 vec host-bridge Program ABI ownership > keeps tracked output and structural ownership stable across the exact five-entry corpus  4088ms
+
+ Test Files  1 passed (1)
+      Tests  19 passed (19)
+   Start at  22:50:21
+   Duration  34.86s (transform 17.04s, setup 0ms, collect 23.82s, tests 10.61s, environment 0ms, prepare 63ms)
+

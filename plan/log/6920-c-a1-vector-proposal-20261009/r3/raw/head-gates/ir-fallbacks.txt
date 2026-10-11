@@ -1,0 +1,15 @@
+
+Unintended (gated; must not increase): (none)
+
+Deferred (informational):
+  reason                    baseline   current     delta
+  ------------------------  --------  --------  --------
+  string-builder-candidate         2         2         0
+Module-level rejections (#3142; gated; must not increase): (none)
+
+Module-level units: 2 claimable, 11 empty (declarations-only)
+
+Post-claim demotions (gated; must not increase): (none)
+
+
+IR fallback gate: OK (no unintended/post-claim/module-level increases vs. baseline).
