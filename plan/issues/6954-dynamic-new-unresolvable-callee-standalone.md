@@ -151,6 +151,15 @@ still construct. Two pinned residuals in existing tests flipped to node's answer
 `issue-6651-sp1` "new on a closure read out of a property" (11 → 7) and `issue-6611` bound-identifier pair
 (-2/-2 → 55/36).
 
+Octane, standalone (`pnpm run -s benchmark:octane -- --only box2d,raytrace --lanes standalone --timeout 400`,
+measured on a throwaway local merge of this branch into `c-octane-integ`, base = the same merge with
+`c-octane-integ`'s `new-super.ts`):
+
+| bench | base | head |
+| --- | --- | --- |
+| box2d | runtime-error: opaque wasm exception at module init (`new F` in `b2Mat22.FromVV`) | runtime-error: `illegal cast` in `$parseInt`, reached from a user closure via `__apply_closure` → `__call_fn_method_1` (past module-init construction; next blocker, not a `new` site) |
+| raytrace | compile-error (#1472) | compile-error (#1472), unchanged; with `.tmp/patch-rt-extend.mjs` base and head fail identically at `Flog.RayTracer.Color = …` (`__set_member_nonstrict_Color` → TypeError), before any `new` |
+
 ## Remaining
 
 - **rt5 / rt2b (raytrace) — out of this file's scope.** After step 2 they construct, but the instance's
