@@ -1,0 +1,17 @@
+typecheck exit=0 cmd: npm run -s typecheck
+loc-budget exit=0 cmd: node scripts/check-loc-budget.mjs
+loc-budget-base exit=0 cmd: env LOC_GATE_BASE=dbf5b4f74b37d67e525b2af36fd1fe49803b1348 node scripts/check-loc-budget.mjs
+func-budget exit=0 cmd: node scripts/check-func-budget.mjs
+func-budget-base exit=0 cmd: env LOC_GATE_BASE=dbf5b4f74b37d67e525b2af36fd1fe49803b1348 node scripts/check-func-budget.mjs
+coercion-sites exit=0 cmd: node scripts/check-coercion-sites.mjs
+oracle-ratchet exit=0 cmd: npm run -s check:oracle-ratchet
+dead-exports exit=0 cmd: npm run -s check:dead-exports
+ir-fallbacks exit=0 cmd: pnpm run -s check:ir-fallbacks
+compiler-boundaries-inventory-base exit=0 cmd: node --max-old-space-size=2048 scripts/check-compiler-boundaries.mjs --mode inventory --base dbf5b4f74b37d67e525b2af36fd1fe49803b1348
+compiler-boundaries-inventory-headparent exit=0 cmd: node --max-old-space-size=2048 scripts/check-compiler-boundaries.mjs --mode inventory --base HEAD^1
+compiler-boundaries-inventory-nobase exit=0 cmd: node --max-old-space-size=2048 scripts/check-compiler-boundaries.mjs --mode inventory
+compiler-boundaries-complete-default exit=1 cmd: node --max-old-space-size=2048 scripts/check-compiler-boundaries.mjs
+lowering-cycle-3518 exit=0 cmd: npx vitest run tests/issue-3518-lowering-cycle.test.ts --reporter=verbose
+issue-3299 exit=0 cmd: npx vitest run tests/issue-3299.test.ts --reporter=verbose
+issue-6920 exit=1 cmd: npx vitest run tests/issue-6920-vector-representation.test.ts --reporter=verbose
+DONE
