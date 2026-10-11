@@ -1,4 +1,5 @@
 import { captureDenoPostPositionMainPredecessorPolicySource } from "./helpers/ir-deno-post-position-main-successor.js";
+import { captureGeometryCurrentMainPredecessorPolicySource } from "./helpers/ir-c1-historical-authority.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { capturePositionFinallyMainPredecessorPolicySource } from "./helpers/ir-position-finally-main-successor.js";
 import { capturePositionClassFieldsMainPredecessorPolicySource } from "./helpers/ir-position-class-fields-main-successor.js";
@@ -29,6 +30,11 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setImmediate } from "node:timers/promises";
 import { afterEach, describe, expect, it } from "vitest";
+import {
+  independentlyAcquireHistoricalPolicyHelper,
+  independentlyAcquirePolicyGeometryEpoch,
+  independentlyAcquireRemainderPolicyPrefix,
+} from "./helpers/ir-independent-policy-history-fixture.js";
 import {
   authenticateNestedStackificationPolicyEvolution,
   captureNestedStackificationPredecessorPolicy,
@@ -347,7 +353,9 @@ const raw = (): string => {
               captureSourceMapPositionInventoryPredecessorPolicySource(
                 capturePositionClassFieldsMainPredecessorPolicySource(
                   capturePositionFinallyMainPredecessorPolicySource(
-                    captureDenoPostPositionMainPredecessorPolicySource(read("scripts/compiler-boundaries.json")),
+                    captureDenoPostPositionMainPredecessorPolicySource(
+                      captureGeometryCurrentMainPredecessorPolicySource(read("scripts/compiler-boundaries.json")),
+                    ),
                   ),
                 ),
               ),
@@ -425,6 +433,15 @@ function expectMissingAuthority(action: () => void, path: string): void {
   expect(failure).toMatchObject({ code: "ENOENT", path: physical(path) });
 }
 /** Synchronous, checkout-exclusive real faults; retain recovery bytes/lock on any unsafe restore. */
+function acquireFixedPolicyHelperPrefix(original: Buffer): Buffer {
+  if (!Buffer.isBuffer(original)) throw new Error("policy fixture helper operand must be a Buffer");
+  const current = original.toString("utf8");
+  if (!Buffer.from(current, "utf8").equals(original))
+    throw new Error("policy fixture helper operand must round-trip UTF8");
+  const historical = Buffer.from(independentlyAcquireHistoricalPolicyHelper(current), "utf8");
+  return historical.subarray(0, 228005);
+}
+
 function withAuthorityFault(path: string, kind: "mutation" | "missing", action: () => void, byte: 0 = 0): void {
   if (!physicalFaultAuthorities.includes(path)) throw new Error("unapproved current-main authority fault: " + path);
   if (
@@ -467,7 +484,7 @@ function withAuthorityFault(path: string, kind: "mutation" | "missing", action: 
         : path === helperPath
           ? expected.helperPrefix
           : expected.sourcePins.find((item) => item.path === path)!;
-    const authenticated = path === helperPath ? original.subarray(0, 228005) : original;
+    const authenticated = path === helperPath ? acquireFixedPolicyHelperPrefix(original) : original;
     expect(authenticated.length).toBe(pin.bytes);
     expect(createHash("sha256").update(authenticated).digest("hex")).toBe(pin.sha256);
     const mode = initial.mode & 0o7777;
@@ -815,13 +832,28 @@ describe("fixed nested stackification policy relocation", () => {
               expectMissingAuthority(() => {
                 api.run(text);
               }, path);
-            else
+            else if (path === helperPath) {
+              const expectObservedGeometryHelperMutation = (action: () => unknown): void => {
+                let normalReturns = 0;
+                let actualError: unknown;
+                try {
+                  action();
+                  normalReturns += 1;
+                } catch (error) {
+                  actualError = error;
+                }
+                expect(normalReturns).toBe(0);
+                expect(actualError).toBeInstanceOf(Error);
+                expect((actualError as Error).message).toBe(
+                  "C1 historical authority: full-file pin changed: tests/helpers/ir-runtime-program-policy-evolution.ts geometry current",
+                );
+              };
+              expectObservedGeometryHelperMutation(() => api.run(text));
+            } else
               expect(() => api.run(text)).toThrow(
                 path === receiptPath
                   ? "nested stackification policy evolution: receipt digest mismatch"
-                  : path === helperPath
-                    ? "nested stackification policy evolution: complete predecessor helper prefix changed"
-                    : "nested stackification policy evolution: current source changed: " + path,
+                  : "nested stackification policy evolution: current source changed: " + path,
               );
           });
           profile(api.run(text), false);
@@ -844,5 +876,142 @@ describe("fixed nested stackification policy relocation", () => {
       "complete raw source profile mismatch",
     );
     profile(JSON.parse(captureNestedStackificationPredecessorPolicySource(raw())) as Policy, false);
+  });
+});
+
+// Acquisition-only successor: original fault callbacks and their priority assertions remain intact.
+const fixtureCurrentHelperPin = {
+  bytes: 411837,
+  sha256: "8575d0f4f66632cb606caf2f94538bd5cb8ef74e89f655e3c1f8f0930de8038c",
+  gitBlob: "15ae96d3887a5eb61fc6404df098d58f0d96b2f4",
+} as const;
+const fixtureHistoricalHelperPin = {
+  bytes: 402646,
+  sha256: "0ddf7556360e8937b25ba58b23629533c8042e026a4b6e6fc05df3d1263c97b8",
+  gitBlob: "201e131a7a67df8a34256f63ee0205b407794ad1",
+} as const;
+const fixtureDependencyPin: { readonly bytes: number; readonly sha256: string; readonly gitBlob: string } = {
+  bytes: 24394,
+  sha256: "09bf4df558c226a1291ec07d279f0c6f3172beefff6a61f588395a367231bff7",
+  gitBlob: "a3d9aca3efd83bfdecc9001b38d8bf7c84b071ce",
+};
+function fixtureHelperPin(bytes: Buffer) {
+  return {
+    bytes: bytes.length,
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+    gitBlob: createHash("sha1").update(`blob ${bytes.length}\0`).update(bytes).digest("hex"),
+  };
+}
+function pairedFixtureHelperAcquisition(original: Buffer): Buffer {
+  const saved = Buffer.from(original);
+  expect(fixtureHelperPin(original)).toEqual(fixtureCurrentHelperPin);
+  const prefix = acquireFixedPolicyHelperPrefix(original);
+  expect({ path: helperPath, ...fixtureHelperPin(prefix) }).toEqual(expected.helperPrefix);
+  expect(original).toEqual(saved);
+  expect(acquireFixedPolicyHelperPrefix(original)).toEqual(prefix);
+  expect(original).toEqual(saved);
+  return prefix;
+}
+describe("nested-stackification fixed historical helper acquisition successor", () => {
+  it("authenticates complete current and historical helper bytes before the unchanged fixture prefix", () => {
+    const original = readFileSync(physical(helperPath));
+    const saved = Buffer.from(original);
+    const prefix = pairedFixtureHelperAcquisition(original);
+    const historical = Buffer.from(independentlyAcquireHistoricalPolicyHelper(original.toString("utf8")), "utf8");
+    expect(fixtureHelperPin(historical)).toEqual(fixtureHistoricalHelperPin);
+    expect(original).toEqual(saved);
+    expect(pairedFixtureHelperAcquisition(original)).toEqual(prefix);
+  });
+  it.each([
+    [
+      "geometry409599",
+      {
+        bytes: 409599,
+        sha256: "e3bd76cbcee13e469f8c5c6ec6bafb08e6fc786efa410bd8572b56f9d5193170",
+        gitBlob: "2dbe6d7fa227cb7463d73d20d847c433a933dfbc",
+      },
+    ],
+    [
+      "remainder403311",
+      {
+        bytes: 403311,
+        sha256: "a38d46359693dd3b63dfd79642a241385e347273bb4cfb06dad177c063a1c375",
+        gitBlob: "763d42a7d7ab7278149cbc7258f3e90d19371408",
+      },
+    ],
+    [
+      "historical402646",
+      {
+        bytes: 402646,
+        sha256: "0ddf7556360e8937b25ba58b23629533c8042e026a4b6e6fc05df3d1263c97b8",
+        gitBlob: "201e131a7a67df8a34256f63ee0205b407794ad1",
+      },
+    ],
+  ] as const)("refuses exact %s as a new current helper operand with paired healthy acquisition", (stage, fixed) => {
+    const original = readFileSync(physical(helperPath));
+    const saved = Buffer.from(original);
+    const healthy = pairedFixtureHelperAcquisition(original);
+    const current = original.toString("utf8");
+    const stale = Buffer.from(
+      stage === "geometry409599"
+        ? independentlyAcquirePolicyGeometryEpoch(current)
+        : stage === "remainder403311"
+          ? independentlyAcquireRemainderPolicyPrefix(current)
+          : independentlyAcquireHistoricalPolicyHelper(current),
+      "utf8",
+    );
+    expect(fixtureHelperPin(stale)).toEqual(fixed);
+    expect(() => acquireFixedPolicyHelperPrefix(stale)).toThrow();
+    expect(original).toEqual(saved);
+    expect(pairedFixtureHelperAcquisition(original)).toEqual(healthy);
+  });
+  it.each([0, 411836] as const)(
+    "refuses detached current helper byte %s before slicing and preserves custody",
+    (at) => {
+      const original = readFileSync(physical(helperPath));
+      const saved = Buffer.from(original);
+      const healthy = pairedFixtureHelperAcquisition(original);
+      const mutant = Buffer.from(original);
+      mutant[at] = mutant[at]! ^ 1;
+      expect(mutant.length).toBe(411837);
+      expect(mutant[at]).toBe(original[at]! ^ 1);
+      expect(mutant.subarray(0, at)).toEqual(original.subarray(0, at));
+      expect(mutant.subarray(at + 1)).toEqual(original.subarray(at + 1));
+      expect(() => acquireFixedPolicyHelperPrefix(mutant)).toThrow();
+      expect(original).toEqual(saved);
+      expect(pairedFixtureHelperAcquisition(original)).toEqual(healthy);
+    },
+  );
+  it("refuses the raw physical prefix domain and restores genuine complete acquisition", () => {
+    const original = readFileSync(physical(helperPath));
+    const saved = Buffer.from(original);
+    const healthy = pairedFixtureHelperAcquisition(original);
+    const rawPrefix = original.subarray(0, 228005);
+    expect(fixtureHelperPin(rawPrefix)).not.toEqual(fixtureHelperPin(healthy));
+    expect({ path: helperPath, ...fixtureHelperPin(healthy) }).toEqual(expected.helperPrefix);
+    expect(() => acquireFixedPolicyHelperPrefix(rawPrefix)).toThrow();
+    expect(original).toEqual(saved);
+    expect(pairedFixtureHelperAcquisition(original)).toEqual(healthy);
+  });
+  it("pins the reviewed complete helper dependency and the actual import adapter and wrapper association", () => {
+    if (fixtureDependencyPin.bytes === 0)
+      throw new Error("ROOT_FREEZE_REQUIRED: final shared history helper P1/P2 source pin and review pending");
+    const original = readFileSync(physical(helperPath));
+    const saved = Buffer.from(original);
+    const healthy = pairedFixtureHelperAcquisition(original);
+    const dependency = readFileSync(new URL("./helpers/ir-independent-policy-history-fixture.ts", import.meta.url));
+    expect(fixtureHelperPin(dependency)).toEqual(fixtureDependencyPin);
+    const caller = readFileSync(fileURLToPath(import.meta.url), "utf8");
+    const importAssociation =
+      'import {\n  independentlyAcquireHistoricalPolicyHelper,\n  independentlyAcquirePolicyGeometryEpoch,\n  independentlyAcquireRemainderPolicyPrefix,\n} from "./helpers/ir-independent-policy-history-fixture.js";\n';
+    const adapterAssociation =
+      'function acquireFixedPolicyHelperPrefix(original: Buffer): Buffer {\n  if (!Buffer.isBuffer(original)) throw new Error("policy fixture helper operand must be a Buffer");\n  const current = original.toString("utf8");\n  if (!Buffer.from(current, "utf8").equals(original))\n    throw new Error("policy fixture helper operand must round-trip UTF8");\n  const historical = Buffer.from(independentlyAcquireHistoricalPolicyHelper(current), "utf8");\n  return historical.subarray(0, 228005);\n}\n';
+    const wrapperAssociation =
+      "    const authenticated = path === helperPath ? acquireFixedPolicyHelperPrefix(original) : original;\n";
+    expect(caller.split(importAssociation)).toHaveLength(2);
+    expect(caller.split(adapterAssociation)).toHaveLength(2);
+    expect(caller.split(wrapperAssociation)).toHaveLength(2);
+    expect(original).toEqual(saved);
+    expect(pairedFixtureHelperAcquisition(original)).toEqual(healthy);
   });
 });

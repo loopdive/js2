@@ -1,4 +1,6 @@
+import { realpathSync } from "node:fs";
 import { availableParallelism, freemem } from "node:os";
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 import { resolveVitestMaxConcurrency } from "./scripts/test262-concurrency.mjs";
 
@@ -54,8 +56,19 @@ const maxForks = isTest262Run
   ? 1
   : Math.max(1, Number(process.env.VITEST_MAX_FORKS) || Math.min(availableParallelism() - 1, forksByRam));
 
+// Keep the inert authority root as a genuine native ESM namespace.
+// Match only this checkout's independently resolved file; all other TS stays transformed.
+const authorityRootPath = fileURLToPath(new URL("./tests/helpers/ir-c1-authority-root.ts", import.meta.url));
+const authorityRootPaths = [...new Set([authorityRootPath, realpathSync(authorityRootPath)])].map((path) =>
+  path.replaceAll("\\", "/"),
+);
+const authorityRootExternal = new RegExp(
+  `^(?:${authorityRootPaths.map((path) => path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})$`,
+);
+
 export default defineConfig({
   test: {
+    server: { deps: { external: [authorityRootExternal] } },
     include: ["tests/**/*.test.ts"],
     // The dogfood upstream suites extract a real npm/git checkout under
     // `tests/dogfood/.<name>-upstream-suite/` (#3958 React, #3977 lit). Those

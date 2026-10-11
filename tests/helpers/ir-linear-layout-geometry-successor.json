@@ -1,0 +1,1851 @@
+{
+  "schema": "ir-linear-layout-geometry-successor-v1",
+  "sourceBase": "b932e3a05e353acc59e7b547ef4e417a5d8637e1",
+  "currentInputs": [
+    {
+      "path": "src/ir/analysis/linear-memory-plan.ts",
+      "bytes": 45359,
+      "sha256": "08f844117ef1b6e0eb17a87555d00db5be89257e5817ad76322320fa837ae7fc",
+      "gitBlob": "3db990eb21e3ed216cd798548af6d076e32ed9e1"
+    },
+    {
+      "path": "src/ir/analysis/contracts/linear-memory-layout.ts",
+      "bytes": 3161,
+      "sha256": "83e6b8a07bdc8e8b93fed590bc0aed5c5f779bde98466e9cbbe3feb7a825cb91",
+      "gitBlob": "0dd2108962236a64e2b96479309b5b1e9735c90e"
+    },
+    {
+      "path": "src/shared/contracts/linear-memory-layout.ts",
+      "bytes": 7580,
+      "sha256": "08c85d9e8c9891a74b9c0c02a1310b67b16832980849dc0e7b6d511d91350937",
+      "gitBlob": "59450b9ad09d7ebf16af04a8a1ab655a5c81b0ee"
+    }
+  ],
+  "geometryBeforeInputs": [
+    {
+      "path": "src/ir/analysis/linear-memory-plan.ts",
+      "bytes": 49040,
+      "sha256": "5f2f5ded3a788e2cc1b70dceb01afe97d249e0e5407e555ced11c5aedb0dbc52",
+      "gitBlob": "a44148b86cf60d75a8ebcd9decd2f0fc3a5aad1c"
+    },
+    {
+      "path": "src/ir/analysis/contracts/linear-memory-layout.ts",
+      "bytes": 4763,
+      "sha256": "977e572b62737c3459df08c15e4d3f6ce7f461f9fc5b1aac344ad676690e3754",
+      "gitBlob": "280a72ab47f43584f93efb664e3e64b55dc896b5"
+    }
+  ],
+  "sharedAbsentBefore": true,
+  "oldAuthority": {
+    "helperPrefix": {
+      "path": "tests/helpers/ir-lowering-analysis-relocation.ts",
+      "bytes": 18956,
+      "sha256": "253eda01462fad0ab84a940965a083eaf80b0ca8a3e10a4ca012fbafaaf30e99"
+    },
+    "receipt": {
+      "path": "tests/helpers/ir-lowering-analysis-relocation.json",
+      "bytes": 111423,
+      "sha256": "dc8241d36da5b2fe29abe12ed6ee348fc456ef22939c61aabe05d09daad92134",
+      "gitBlob": "6fee96e10bb22a1f3071ddc41b4a2af39ee96763"
+    }
+  },
+  "geometry": {
+    "inverse": [
+      {
+        "path": "src/ir/analysis/linear-memory-plan.ts",
+        "pin": {
+          "bytes": 49040,
+          "sha256": "5f2f5ded3a788e2cc1b70dceb01afe97d249e0e5407e555ced11c5aedb0dbc52",
+          "gitBlob": "a44148b86cf60d75a8ebcd9decd2f0fc3a5aad1c"
+        },
+        "pieces": [
+          {
+            "kind": "copy",
+            "name": "// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 0,
+            "length": 523,
+            "sourceSha256": "6ec910fb153015e3fb03ed21250ec0efa3d480c8836c023b47b1a52a4f9ec57b",
+            "outputOffset": 0
+          },
+          {
+            "kind": "copy",
+            "name": "ALLOC_NAMESPACES,",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 1673,
+            "length": 791,
+            "sourceSha256": "04c0e72b5aab7736b7af31fa9c8a799e459f53e6c5e1b551454ddf8b54726547",
+            "outputOffset": 523
+          },
+          {
+            "kind": "copy",
+            "name": "LinearFieldPlan,",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 2760,
+            "length": 19,
+            "sourceSha256": "02f56e33c4b713ccc269ab3129ae40d9197dc96ccc105ebebd73b69e18f58626",
+            "outputOffset": 1314
+          },
+          {
+            "kind": "copy",
+            "name": "LinearLayoutBase,",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 2464,
+            "length": 595,
+            "sourceSha256": "af91dfb03810d41264415a75e1ab4fc3cc34795b6f3f5b6256e2c44b466704c1",
+            "outputOffset": 1333
+          },
+          {
+            "kind": "copy",
+            "name": "separator/declaration at 1928",
+            "path": "src/shared/contracts/linear-memory-layout.ts",
+            "offset": 2335,
+            "length": 120,
+            "sourceSha256": "8a196475ba4fb176eeb69edbb819eabea3b2acc94e77d21cb462b4a9f30e88ea",
+            "outputOffset": 1928
+          },
+          {
+            "kind": "copy",
+            "name": "export const LINEAR_STACK_ARENA_BYTES = 64 * 1024;",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 3059,
+            "length": 51,
+            "sourceSha256": "be075303330adae137608721fff20b4aef27fcfd9ea13e5948ba20f04fb7672d",
+            "outputOffset": 2048
+          },
+          {
+            "kind": "copy",
+            "name": "export const LINEAR_RECORD_ALIGNMENT = 8;",
+            "path": "src/shared/contracts/linear-memory-layout.ts",
+            "offset": 2456,
+            "length": 42,
+            "sourceSha256": "e33f6889d7abd7dad3ea6623c556167bd5e5d93eacbeebf084a1c2b9d8129d7a",
+            "outputOffset": 2099
+          },
+          {
+            "kind": "copy",
+            "name": "export const LINEAR_RECORD_HEADER_BYTES = 8;",
+            "path": "src/shared/contracts/linear-memory-layout.ts",
+            "offset": 2499,
+            "length": 45,
+            "sourceSha256": "e6fde218f3a16de27506e0fb8e75d7617725bab8331c8a75766ef99b48b147f6",
+            "outputOffset": 2141
+          },
+          {
+            "kind": "copy",
+            "name": "export const LINEAR_RECORD_FIELD_SLOT_BYTES = 8;",
+            "path": "src/shared/contracts/linear-memory-layout.ts",
+            "offset": 2545,
+            "length": 49,
+            "sourceSha256": "b529cfb8a302198621a98330b85efcfcba5687af8c868e45e1d370ea8f067806",
+            "outputOffset": 2186
+          },
+          {
+            "kind": "copy",
+            "name": "export const LINEAR_RECORD_TAG_OFFSET = 0;",
+            "path": "src/shared/contracts/linear-memory-layout.ts",
+            "offset": 2595,
+            "length": 43,
+            "sourceSha256": "8dfc36fd6b529b5589140ef693c96f05040ef2fcb014b3093d911a672b2d169d",
+            "outputOffset": 2235
+          },
+          {
+            "kind": "copy",
+            "name": "export const LINEAR_RECORD_PAYLOAD_SIZE_OFFSET = 4;",
+            "path": "src/shared/contracts/linear-memory-layout.ts",
+            "offset": 2639,
+            "length": 52,
+            "sourceSha256": "192a55f23c5151dac02a1f3511a0a5c4138c142c26e916d173e2fe42ae27cd26",
+            "outputOffset": 2278
+          },
+          {
+            "kind": "copy",
+            "name": "/**",
+            "path": "src/shared/contracts/linear-memory-layout.ts",
+            "offset": 2692,
+            "length": 555,
+            "sourceSha256": "95a8665de7a7e2fc113dc5384da716e59425020357474e3c047f895176e49a0e",
+            "outputOffset": 2330
+          },
+          {
+            "kind": "copy",
+            "name": "export const LINEAR_VECTOR_LENGTH_OFFSET = 8;",
+            "path": "src/shared/contracts/linear-memory-layout.ts",
+            "offset": 3248,
+            "length": 46,
+            "sourceSha256": "646928b729086c502c409b12c00f95e27c57b568d7cb2df5930d839fb72a79fa",
+            "outputOffset": 2885
+          },
+          {
+            "kind": "copy",
+            "name": "export const LINEAR_VECTOR_CAPACITY_OFFSET = 12;",
+            "path": "src/shared/contracts/linear-memory-layout.ts",
+            "offset": 3295,
+            "length": 49,
+            "sourceSha256": "e179205114051f7171322438b85365b354a421bbad8804c32e935c39b74a1fc7",
+            "outputOffset": 2931
+          },
+          {
+            "kind": "copy",
+            "name": "export const LINEAR_VECTOR_ELEMENTS_OFFSET = 16;",
+            "path": "src/shared/contracts/linear-memory-layout.ts",
+            "offset": 3345,
+            "length": 49,
+            "sourceSha256": "91e71d706310f0d9c0b6c0271de2e65446658761a82fe74589f19879beaf56d3",
+            "outputOffset": 2980
+          },
+          {
+            "kind": "copy",
+            "name": "export const LINEAR_VECTOR_MINIMUM_CAPACITY = 16;",
+            "path": "src/shared/contracts/linear-memory-layout.ts",
+            "offset": 3395,
+            "length": 50,
+            "sourceSha256": "c725b488ce9cbf8cdf6d387e927cc920454e09762b9001c17f9256cd271221d1",
+            "outputOffset": 3029
+          },
+          {
+            "kind": "copy",
+            "name": "export const LINEAR_STRING_LENGTH_OFFSET = 8;",
+            "path": "src/shared/contracts/linear-memory-layout.ts",
+            "offset": 3446,
+            "length": 46,
+            "sourceSha256": "6a6b4d9b60c356c428f6bb958e4ae5ba61ec777d1474020710e007e1d2872189",
+            "outputOffset": 3079
+          },
+          {
+            "kind": "copy",
+            "name": "export const LINEAR_STRING_ELEMENTS_OFFSET = 12;",
+            "path": "src/shared/contracts/linear-memory-layout.ts",
+            "offset": 3493,
+            "length": 49,
+            "sourceSha256": "83ddac1a14d53d566d5a27c581a12da1c2d24e037130973c81485b360b4eea0b",
+            "outputOffset": 3125
+          },
+          {
+            "kind": "copy",
+            "name": "export const LINEAR_STRING_PAYLOAD_SIZE_OFFSET = LINEAR_RECORD_PAYLOAD_SIZE_OFFSET;",
+            "path": "src/shared/contracts/linear-memory-layout.ts",
+            "offset": 3543,
+            "length": 84,
+            "sourceSha256": "1741ebee13746ee62a69e47f735a63b58ffcaca48590c3f4fa364aad80492b39",
+            "outputOffset": 3174
+          },
+          {
+            "kind": "copy",
+            "name": "/** Bytes between the record header and the first string element (the length field). */",
+            "path": "src/shared/contracts/linear-memory-layout.ts",
+            "offset": 3628,
+            "length": 198,
+            "sourceSha256": "e0277286865de75f01c2c11c5480bd0e5018fe0a86d12a816b10a678baf2d4ee",
+            "outputOffset": 3258
+          },
+          {
+            "kind": "copy",
+            "name": "export type LinearAllocatorPolicyId = \"arena-v1\" | \"analysis-stack-arena-v1\";",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 3110,
+            "length": 79,
+            "sourceSha256": "554a43cd1cf57a17b219deb9248c4b742d9b8154e45794426a50374c3ce57ace",
+            "outputOffset": 3456
+          },
+          {
+            "kind": "copy",
+            "name": "export interface LinearStringLayoutPlan extends LinearLayoutBase {",
+            "path": "src/shared/contracts/linear-memory-layout.ts",
+            "offset": 2020,
+            "length": 316,
+            "sourceSha256": "c6d13156233d04aa82b01f999ab2e8e6e9b590b461cf2fc316391885b72ee502",
+            "outputOffset": 3535
+          },
+          {
+            "kind": "copy",
+            "name": "export interface LinearOpaqueLayoutPlan extends LinearLayoutBase {",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 3189,
+            "length": 28142,
+            "sourceSha256": "61a2eb26c76c34136644c80566d49fdeca5c4d0b6a65e0faf33ddd0899c692d1",
+            "outputOffset": 3851
+          },
+          {
+            "kind": "copy",
+            "name": "/** Shared record-layout primitive consumed by IR and direct linear-Wasm paths. */",
+            "path": "src/shared/contracts/linear-memory-layout.ts",
+            "offset": 4244,
+            "length": 1285,
+            "sourceSha256": "0a84fbfc6a8b3a88d485783e8305ab43174452106faf5163df1ed3a5b2a29b64",
+            "outputOffset": 31993
+          },
+          {
+            "kind": "copy",
+            "name": "export function planLinearVectorLayout(element: IrType): LinearVectorLayoutPlan {",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 31331,
+            "length": 133,
+            "sourceSha256": "3eb540b88e0dc1a08dc362456eac2c40160a14539859566d6134120c7fa57fde",
+            "outputOffset": 33278
+          },
+          {
+            "kind": "copy",
+            "name": "const stride = storageBytes(storage);",
+            "path": "src/shared/contracts/linear-memory-layout.ts",
+            "offset": 6546,
+            "length": 51,
+            "sourceSha256": "b3edfe0fe2b36cb286c28f6e243fd6081689f3232c4bf8ded6919e7e090def0d",
+            "outputOffset": 33411
+          },
+          {
+            "kind": "literal",
+            "name": "vector delegation adapter at src/ir/analysis/linear-memory-plan.ts:33462",
+            "text": "    id: linearVectorLayoutId(element),\n",
+            "outputOffset": 33462
+          },
+          {
+            "kind": "copy",
+            "name": "kind: \"vector\",",
+            "path": "src/shared/contracts/linear-memory-layout.ts",
+            "offset": 6652,
+            "length": 745,
+            "sourceSha256": "3ebe2002bd61c64d6fe02a39385bfa0ccfbed84b6c33b94cdc41f87830b4fad4",
+            "outputOffset": 33501
+          },
+          {
+            "kind": "copy",
+            "name": "export function planLinearStringLayout(): LinearStringLayoutPlan {",
+            "path": "src/shared/contracts/linear-memory-layout.ts",
+            "offset": 5614,
+            "length": 586,
+            "sourceSha256": "964c3c674e1f0fd4c08baff2d0273b7a231def52e37cf1df6ab20e25b57247ce",
+            "outputOffset": 34246
+          },
+          {
+            "kind": "copy",
+            "name": "export function linearObjectLayoutId(shape: IrObjectShape): string {",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 31618,
+            "length": 514,
+            "sourceSha256": "6080ae31cf93d2d2aaa524ea22f4f242662ca32fbc117d125a8cd2f77270216e",
+            "outputOffset": 34832
+          },
+          {
+            "kind": "literal",
+            "name": "vector delegation adapter at src/ir/analysis/linear-memory-plan.ts:35346",
+            "text": "  return `vector:${linearIrTypeKey(element)}`;\n",
+            "outputOffset": 35346
+          },
+          {
+            "kind": "copy",
+            "name": "}",
+            "path": "src/shared/contracts/linear-memory-layout.ts",
+            "offset": 5526,
+            "length": 88,
+            "sourceSha256": "1e36fe61cc7bf744a662bed193acf699693c713e37c9a080a06eb1ffb6961e00",
+            "outputOffset": 35393
+          },
+          {
+            "kind": "copy",
+            "name": "export function linearStringDataSegmentId(value: string): string {",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 32205,
+            "length": 564,
+            "sourceSha256": "827151c0a445f2c42731ee023c1e5550491895c79fd33ebbbb746daf9022f6b0",
+            "outputOffset": 35481
+          },
+          {
+            "kind": "copy",
+            "name": "export function storageBytes(storage: LinearStorageKind): number {",
+            "path": "src/shared/contracts/linear-memory-layout.ts",
+            "offset": 3827,
+            "length": 417,
+            "sourceSha256": "21df0ae1a709c663af0a7cae3c4bc1fb0b92dbcb6a17e1c25edd80111f2a9e0b",
+            "outputOffset": 36045
+          },
+          {
+            "kind": "copy",
+            "name": "export function linearRuntimeOperationKey(operation: LinearRuntimeOperation): string {",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 32769,
+            "length": 10895,
+            "sourceSha256": "04214db1b9b0bd41adf605c150f23834f4faf38dc92dbbe27ef554e89be221e9",
+            "outputOffset": 36462
+          },
+          {
+            "kind": "literal",
+            "name": "scalar key factoring at src/ir/analysis/linear-memory-plan.ts:47357",
+            "text": "      return `scalar:${linearStorageForIrType(type)}`;\n",
+            "outputOffset": 47357
+          },
+          {
+            "kind": "copy",
+            "name": "case \"string\":",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 43731,
+            "length": 1628,
+            "sourceSha256": "0034340668a8afa2e8cbb0b716895cd1a52d43c1ea7911aa2833694337d82970",
+            "outputOffset": 47412
+          }
+        ]
+      },
+      {
+        "path": "src/ir/analysis/contracts/linear-memory-layout.ts",
+        "pin": {
+          "bytes": 4763,
+          "sha256": "977e572b62737c3459df08c15e4d3f6ce7f461f9fc5b1aac344ad676690e3754",
+          "gitBlob": "280a72ab47f43584f93efb664e3e64b55dc896b5"
+        },
+        "pieces": [
+          {
+            "kind": "copy",
+            "name": "// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.",
+            "path": "src/ir/analysis/contracts/linear-memory-layout.ts",
+            "offset": 0,
+            "length": 85,
+            "sourceSha256": "56bf88dc4c3a627fc20affb2ea7a4b4b8792a9cdf66df0f0d07691edc0a298f5",
+            "outputOffset": 0
+          },
+          {
+            "kind": "copy",
+            "name": "import type { AllocKind, AllocSiteId, IrSiteId } from \"../../core/nodes.js\";",
+            "path": "src/ir/analysis/contracts/linear-memory-layout.ts",
+            "offset": 418,
+            "length": 223,
+            "sourceSha256": "e5fec11a14c911c316e264369bf6c72805ac15840e8bc240b50f0a444c85373f",
+            "outputOffset": 85
+          },
+          {
+            "kind": "copy",
+            "name": "/** Storage vocabulary independent of a machine instruction set. */",
+            "path": "src/shared/contracts/linear-memory-layout.ts",
+            "offset": 85,
+            "length": 171,
+            "sourceSha256": "1dc62cde907558516215a3a457a809195f1fcce324fc718b40f563160ec25e99",
+            "outputOffset": 308
+          },
+          {
+            "kind": "copy",
+            "name": "export type LinearAllocationClass = \"static\" | \"stack\" | \"arena\" | \"managed\";",
+            "path": "src/ir/analysis/contracts/linear-memory-layout.ts",
+            "offset": 641,
+            "length": 79,
+            "sourceSha256": "6ff29f384e9066c24f4640802d2f655d242c1d825fdf4e597b4abb8a725b053b",
+            "outputOffset": 479
+          },
+          {
+            "kind": "copy",
+            "name": "export type LinearSizePlan =",
+            "path": "src/shared/contracts/linear-memory-layout.ts",
+            "offset": 256,
+            "length": 1764,
+            "sourceSha256": "69c71aea5910b631d352d63f54041f013fb7ded841bb82a51104032fe8547656",
+            "outputOffset": 558
+          },
+          {
+            "kind": "copy",
+            "name": "/** Semantic operations that a backend may bind to its own runtime. */",
+            "path": "src/ir/analysis/contracts/linear-memory-layout.ts",
+            "offset": 720,
+            "length": 2441,
+            "sourceSha256": "41f39214ac798c4e00f4823c3837822de6d914fb164fbee794b49d8c8b32f69f",
+            "outputOffset": 2322
+          }
+        ]
+      }
+    ],
+    "inverseCoverage": [
+      {
+        "path": "src/ir/analysis/linear-memory-plan.ts",
+        "spans": [
+          {
+            "offset": 0,
+            "length": 523,
+            "sha256": "6ec910fb153015e3fb03ed21250ec0efa3d480c8836c023b47b1a52a4f9ec57b",
+            "uses": 1
+          },
+          {
+            "offset": 523,
+            "length": 1150,
+            "sha256": "c02907dbb3b2592809b98fce20493cbfd5f6d5dd300a967616d402df54439472",
+            "uses": 0
+          },
+          {
+            "offset": 1673,
+            "length": 791,
+            "sha256": "04c0e72b5aab7736b7af31fa9c8a799e459f53e6c5e1b551454ddf8b54726547",
+            "uses": 1
+          },
+          {
+            "offset": 2464,
+            "length": 296,
+            "sha256": "e8dba8cee17c804dfe63ce8ee42781b6d0ae11d316dbc434e8b147bbc8071d2f",
+            "uses": 1
+          },
+          {
+            "offset": 2760,
+            "length": 19,
+            "sha256": "02f56e33c4b713ccc269ab3129ae40d9197dc96ccc105ebebd73b69e18f58626",
+            "uses": 2
+          },
+          {
+            "offset": 2779,
+            "length": 280,
+            "sha256": "9c40959b1f2768898462a7978b3ba106a566fdcbe338dd2bae1b34718cae7490",
+            "uses": 1
+          },
+          {
+            "offset": 3059,
+            "length": 51,
+            "sha256": "be075303330adae137608721fff20b4aef27fcfd9ea13e5948ba20f04fb7672d",
+            "uses": 1
+          },
+          {
+            "offset": 3110,
+            "length": 79,
+            "sha256": "554a43cd1cf57a17b219deb9248c4b742d9b8154e45794426a50374c3ce57ace",
+            "uses": 1
+          },
+          {
+            "offset": 3189,
+            "length": 28142,
+            "sha256": "61a2eb26c76c34136644c80566d49fdeca5c4d0b6a65e0faf33ddd0899c692d1",
+            "uses": 1
+          },
+          {
+            "offset": 31331,
+            "length": 133,
+            "sha256": "3eb540b88e0dc1a08dc362456eac2c40160a14539859566d6134120c7fa57fde",
+            "uses": 1
+          },
+          {
+            "offset": 31464,
+            "length": 154,
+            "sha256": "c872cd0370aa37df737066e5ea0898806c7ccb330e7450ce6fb4dde2dcfd57ba",
+            "uses": 0
+          },
+          {
+            "offset": 31618,
+            "length": 514,
+            "sha256": "6080ae31cf93d2d2aaa524ea22f4f242662ca32fbc117d125a8cd2f77270216e",
+            "uses": 1
+          },
+          {
+            "offset": 32132,
+            "length": 73,
+            "sha256": "3c6d692c2a87616237783ce06d8c91dd9b9043d0d15a1123fe7cbe95fa6fefe0",
+            "uses": 0
+          },
+          {
+            "offset": 32205,
+            "length": 564,
+            "sha256": "827151c0a445f2c42731ee023c1e5550491895c79fd33ebbbb746daf9022f6b0",
+            "uses": 1
+          },
+          {
+            "offset": 32769,
+            "length": 10895,
+            "sha256": "04214db1b9b0bd41adf605c150f23834f4faf38dc92dbbe27ef554e89be221e9",
+            "uses": 1
+          },
+          {
+            "offset": 43664,
+            "length": 67,
+            "sha256": "3c9d6e8e7e52ec2d2c1749f74a9daaabe69f705dfe31d6d787d7b5d07ef7d093",
+            "uses": 0
+          },
+          {
+            "offset": 43731,
+            "length": 1628,
+            "sha256": "0034340668a8afa2e8cbb0b716895cd1a52d43c1ea7911aa2833694337d82970",
+            "uses": 1
+          }
+        ]
+      },
+      {
+        "path": "src/ir/analysis/contracts/linear-memory-layout.ts",
+        "spans": [
+          {
+            "offset": 0,
+            "length": 85,
+            "sha256": "56bf88dc4c3a627fc20affb2ea7a4b4b8792a9cdf66df0f0d07691edc0a298f5",
+            "uses": 1
+          },
+          {
+            "offset": 85,
+            "length": 333,
+            "sha256": "5effb5a4a73b7b84ee76e186434f5c4c76aad6be7c61d19264d9d8514ab9ef91",
+            "uses": 0
+          },
+          {
+            "offset": 418,
+            "length": 223,
+            "sha256": "e5fec11a14c911c316e264369bf6c72805ac15840e8bc240b50f0a444c85373f",
+            "uses": 1
+          },
+          {
+            "offset": 641,
+            "length": 79,
+            "sha256": "6ff29f384e9066c24f4640802d2f655d242c1d825fdf4e597b4abb8a725b053b",
+            "uses": 1
+          },
+          {
+            "offset": 720,
+            "length": 2441,
+            "sha256": "41f39214ac798c4e00f4823c3837822de6d914fb164fbee794b49d8c8b32f69f",
+            "uses": 1
+          }
+        ]
+      },
+      {
+        "path": "src/shared/contracts/linear-memory-layout.ts",
+        "spans": [
+          {
+            "offset": 0,
+            "length": 85,
+            "sha256": "56bf88dc4c3a627fc20affb2ea7a4b4b8792a9cdf66df0f0d07691edc0a298f5",
+            "uses": 0
+          },
+          {
+            "offset": 85,
+            "length": 171,
+            "sha256": "1dc62cde907558516215a3a457a809195f1fcce324fc718b40f563160ec25e99",
+            "uses": 1
+          },
+          {
+            "offset": 256,
+            "length": 1764,
+            "sha256": "69c71aea5910b631d352d63f54041f013fb7ded841bb82a51104032fe8547656",
+            "uses": 1
+          },
+          {
+            "offset": 2020,
+            "length": 315,
+            "sha256": "88cd063a02904e402b7c19d0904453d6c5de1c97df5fa8c8981625070c90afc8",
+            "uses": 1
+          },
+          {
+            "offset": 2335,
+            "length": 1,
+            "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+            "uses": 2
+          },
+          {
+            "offset": 2336,
+            "length": 119,
+            "sha256": "69e189221465ff16729575d97a0982c118e7d5c44c6c7da54b1505aa8a65cdec",
+            "uses": 1
+          },
+          {
+            "offset": 2455,
+            "length": 1,
+            "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+            "uses": 0
+          },
+          {
+            "offset": 2456,
+            "length": 42,
+            "sha256": "e33f6889d7abd7dad3ea6623c556167bd5e5d93eacbeebf084a1c2b9d8129d7a",
+            "uses": 1
+          },
+          {
+            "offset": 2498,
+            "length": 1,
+            "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+            "uses": 0
+          },
+          {
+            "offset": 2499,
+            "length": 45,
+            "sha256": "e6fde218f3a16de27506e0fb8e75d7617725bab8331c8a75766ef99b48b147f6",
+            "uses": 1
+          },
+          {
+            "offset": 2544,
+            "length": 1,
+            "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+            "uses": 0
+          },
+          {
+            "offset": 2545,
+            "length": 49,
+            "sha256": "b529cfb8a302198621a98330b85efcfcba5687af8c868e45e1d370ea8f067806",
+            "uses": 1
+          },
+          {
+            "offset": 2594,
+            "length": 1,
+            "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+            "uses": 0
+          },
+          {
+            "offset": 2595,
+            "length": 43,
+            "sha256": "8dfc36fd6b529b5589140ef693c96f05040ef2fcb014b3093d911a672b2d169d",
+            "uses": 1
+          },
+          {
+            "offset": 2638,
+            "length": 1,
+            "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+            "uses": 0
+          },
+          {
+            "offset": 2639,
+            "length": 52,
+            "sha256": "192a55f23c5151dac02a1f3511a0a5c4138c142c26e916d173e2fe42ae27cd26",
+            "uses": 1
+          },
+          {
+            "offset": 2691,
+            "length": 1,
+            "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+            "uses": 0
+          },
+          {
+            "offset": 2692,
+            "length": 555,
+            "sha256": "95a8665de7a7e2fc113dc5384da716e59425020357474e3c047f895176e49a0e",
+            "uses": 1
+          },
+          {
+            "offset": 3247,
+            "length": 1,
+            "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+            "uses": 0
+          },
+          {
+            "offset": 3248,
+            "length": 46,
+            "sha256": "646928b729086c502c409b12c00f95e27c57b568d7cb2df5930d839fb72a79fa",
+            "uses": 1
+          },
+          {
+            "offset": 3294,
+            "length": 1,
+            "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+            "uses": 0
+          },
+          {
+            "offset": 3295,
+            "length": 49,
+            "sha256": "e179205114051f7171322438b85365b354a421bbad8804c32e935c39b74a1fc7",
+            "uses": 1
+          },
+          {
+            "offset": 3344,
+            "length": 1,
+            "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+            "uses": 0
+          },
+          {
+            "offset": 3345,
+            "length": 49,
+            "sha256": "91e71d706310f0d9c0b6c0271de2e65446658761a82fe74589f19879beaf56d3",
+            "uses": 1
+          },
+          {
+            "offset": 3394,
+            "length": 1,
+            "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+            "uses": 0
+          },
+          {
+            "offset": 3395,
+            "length": 50,
+            "sha256": "c725b488ce9cbf8cdf6d387e927cc920454e09762b9001c17f9256cd271221d1",
+            "uses": 1
+          },
+          {
+            "offset": 3445,
+            "length": 1,
+            "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+            "uses": 0
+          },
+          {
+            "offset": 3446,
+            "length": 46,
+            "sha256": "6a6b4d9b60c356c428f6bb958e4ae5ba61ec777d1474020710e007e1d2872189",
+            "uses": 1
+          },
+          {
+            "offset": 3492,
+            "length": 1,
+            "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+            "uses": 0
+          },
+          {
+            "offset": 3493,
+            "length": 49,
+            "sha256": "83ddac1a14d53d566d5a27c581a12da1c2d24e037130973c81485b360b4eea0b",
+            "uses": 1
+          },
+          {
+            "offset": 3542,
+            "length": 1,
+            "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+            "uses": 0
+          },
+          {
+            "offset": 3543,
+            "length": 84,
+            "sha256": "1741ebee13746ee62a69e47f735a63b58ffcaca48590c3f4fa364aad80492b39",
+            "uses": 1
+          },
+          {
+            "offset": 3627,
+            "length": 1,
+            "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+            "uses": 0
+          },
+          {
+            "offset": 3628,
+            "length": 198,
+            "sha256": "e0277286865de75f01c2c11c5480bd0e5018fe0a86d12a816b10a678baf2d4ee",
+            "uses": 1
+          },
+          {
+            "offset": 3826,
+            "length": 1,
+            "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+            "uses": 0
+          },
+          {
+            "offset": 3827,
+            "length": 417,
+            "sha256": "21df0ae1a709c663af0a7cae3c4bc1fb0b92dbcb6a17e1c25edd80111f2a9e0b",
+            "uses": 1
+          },
+          {
+            "offset": 4244,
+            "length": 1282,
+            "sha256": "909dd742db018fec75ab03a0331c9a6b09bda46437aa115c90ccedfa8ffc4a56",
+            "uses": 1
+          },
+          {
+            "offset": 5526,
+            "length": 3,
+            "sha256": "938de74be97bf3aba7872a61ba0e42084008c81e8a202a612134c755aaf7fa06",
+            "uses": 2
+          },
+          {
+            "offset": 5529,
+            "length": 85,
+            "sha256": "04f45239729c87739fac01b9e3d2cc5303cfc8d56bf76ac247a759899131db8c",
+            "uses": 1
+          },
+          {
+            "offset": 5614,
+            "length": 586,
+            "sha256": "964c3c674e1f0fd4c08baff2d0273b7a231def52e37cf1df6ab20e25b57247ce",
+            "uses": 1
+          },
+          {
+            "offset": 6200,
+            "length": 346,
+            "sha256": "d08fcfb2331a63b23a98819812af0ca94f4b204a0cb943a96ed354051986c6ab",
+            "uses": 0
+          },
+          {
+            "offset": 6546,
+            "length": 51,
+            "sha256": "b3edfe0fe2b36cb286c28f6e243fd6081689f3232c4bf8ded6919e7e090def0d",
+            "uses": 1
+          },
+          {
+            "offset": 6597,
+            "length": 55,
+            "sha256": "942ddf8717097f580e06b354bde899db7918fd42431b430b44bd0b129611b64b",
+            "uses": 0
+          },
+          {
+            "offset": 6652,
+            "length": 745,
+            "sha256": "3ebe2002bd61c64d6fe02a39385bfa0ccfbed84b6c33b94cdc41f87830b4fad4",
+            "uses": 1
+          },
+          {
+            "offset": 7397,
+            "length": 183,
+            "sha256": "b5378620f02fdb2957d0eb580c53ea74c0e415e54f1392e1550eebb16cf47ee3",
+            "uses": 0
+          }
+        ]
+      }
+    ],
+    "forward": [
+      {
+        "path": "src/ir/analysis/linear-memory-plan.ts",
+        "pin": {
+          "bytes": 45359,
+          "sha256": "08f844117ef1b6e0eb17a87555d00db5be89257e5817ad76322320fa837ae7fc",
+          "gitBlob": "3db990eb21e3ed216cd798548af6d076e32ed9e1"
+        },
+        "pieces": [
+          {
+            "kind": "copy",
+            "name": "// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 0,
+            "length": 523,
+            "sourceSha256": "6ec910fb153015e3fb03ed21250ec0efa3d480c8836c023b47b1a52a4f9ec57b",
+            "outputOffset": 0
+          },
+          {
+            "kind": "literal",
+            "name": "shared owner import/reexport at src/ir/analysis/linear-memory-plan.ts:523",
+            "text": "  LINEAR_POINTER_BYTES,\n  storageBytes,\n  storageAlignment,\n  planLinearRecordLayout,\n  planLinearStringLayout,\n  linearScalarStorageKey,\n  linearVectorLayoutIdForElementKey,\n  planLinearVectorStorageLayout,\n  planLinearScalarVectorLayout,\n} from \"../../shared/contracts/linear-memory-layout.js\";\nexport {\n  LINEAR_POINTER_BYTES,\n  LINEAR_RECORD_ALIGNMENT,\n  LINEAR_RECORD_HEADER_BYTES,\n  LINEAR_RECORD_FIELD_SLOT_BYTES,\n  LINEAR_RECORD_TAG_OFFSET,\n  LINEAR_RECORD_PAYLOAD_SIZE_OFFSET,\n  LINEAR_ARRAY_FORWARDING,\n  LINEAR_VECTOR_LENGTH_OFFSET,\n  LINEAR_VECTOR_CAPACITY_OFFSET,\n  LINEAR_VECTOR_ELEMENTS_OFFSET,\n  LINEAR_VECTOR_MINIMUM_CAPACITY,\n  LINEAR_STRING_LENGTH_OFFSET,\n  LINEAR_STRING_ELEMENTS_OFFSET,\n  LINEAR_STRING_PAYLOAD_SIZE_OFFSET,\n  LINEAR_STRING_PAYLOAD_PREFIX_BYTES,\n  storageBytes,\n  storageAlignment,\n  planLinearRecordLayout,\n  linearStringLayoutId,\n  planLinearStringLayout,\n} from \"../../shared/contracts/linear-memory-layout.js\";\nimport type { LinearStringLayoutPlan } from \"../../shared/contracts/linear-memory-layout.js\";\nexport type { LinearStringLayoutPlan } from \"../../shared/contracts/linear-memory-layout.js\";\n\n",
+            "outputOffset": 523
+          },
+          {
+            "kind": "copy",
+            "name": "import {",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 514,
+            "length": 800,
+            "sourceSha256": "caa1463f3ef5e9bb1948dd5ef367aab95448b607604ef68ec1a9dfc38b7f5186",
+            "outputOffset": 1664
+          },
+          {
+            "kind": "copy",
+            "name": "LinearLayoutBase,",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 1333,
+            "length": 595,
+            "sourceSha256": "af91dfb03810d41264415a75e1ab4fc3cc34795b6f3f5b6256e2c44b466704c1",
+            "outputOffset": 2464
+          },
+          {
+            "kind": "copy",
+            "name": "export const LINEAR_STACK_ARENA_BYTES = 64 * 1024;",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 2048,
+            "length": 51,
+            "sourceSha256": "be075303330adae137608721fff20b4aef27fcfd9ea13e5948ba20f04fb7672d",
+            "outputOffset": 3059
+          },
+          {
+            "kind": "copy",
+            "name": "export type LinearAllocatorPolicyId = \"arena-v1\" | \"analysis-stack-arena-v1\";",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 3456,
+            "length": 79,
+            "sourceSha256": "554a43cd1cf57a17b219deb9248c4b742d9b8154e45794426a50374c3ce57ace",
+            "outputOffset": 3110
+          },
+          {
+            "kind": "copy",
+            "name": "export interface LinearOpaqueLayoutPlan extends LinearLayoutBase {",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 3851,
+            "length": 28142,
+            "sourceSha256": "61a2eb26c76c34136644c80566d49fdeca5c4d0b6a65e0faf33ddd0899c692d1",
+            "outputOffset": 3189
+          },
+          {
+            "kind": "copy",
+            "name": "export function planLinearVectorLayout(element: IrType): LinearVectorLayoutPlan {",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 33278,
+            "length": 133,
+            "sourceSha256": "3eb540b88e0dc1a08dc362456eac2c40160a14539859566d6134120c7fa57fde",
+            "outputOffset": 31331
+          },
+          {
+            "kind": "literal",
+            "name": "vector delegation adapter at src/ir/analysis/linear-memory-plan.ts:31464",
+            "text": "  if (element.kind === \"val\") return planLinearScalarVectorLayout(storage);\n  return planLinearVectorStorageLayout(linearIrTypeKey(element), storage);\n",
+            "outputOffset": 31464
+          },
+          {
+            "kind": "copy",
+            "name": "}",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 34829,
+            "length": 517,
+            "sourceSha256": "7606a21986ad38f8a6816e0e5c96d0c82bf7a16ab92f6f26b832e8084b7636f9",
+            "outputOffset": 31615
+          },
+          {
+            "kind": "literal",
+            "name": "vector delegation adapter at src/ir/analysis/linear-memory-plan.ts:32132",
+            "text": "  return linearVectorLayoutIdForElementKey(linearIrTypeKey(element));\n",
+            "outputOffset": 32132
+          },
+          {
+            "kind": "copy",
+            "name": "}",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 35478,
+            "length": 567,
+            "sourceSha256": "a94287aeaaaedbfb3b44094dc9bc6b857b78382d89e984ce4aa18c1cc19bb822",
+            "outputOffset": 32202
+          },
+          {
+            "kind": "copy",
+            "name": "export function linearRuntimeOperationKey(operation: LinearRuntimeOperation): string {",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 36462,
+            "length": 10895,
+            "sourceSha256": "04214db1b9b0bd41adf605c150f23834f4faf38dc92dbbe27ef554e89be221e9",
+            "outputOffset": 32769
+          },
+          {
+            "kind": "literal",
+            "name": "scalar key factoring at src/ir/analysis/linear-memory-plan.ts:43664",
+            "text": "      return linearScalarStorageKey(linearStorageForIrType(type));\n",
+            "outputOffset": 43664
+          },
+          {
+            "kind": "copy",
+            "name": "case \"string\":",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 47412,
+            "length": 1628,
+            "sourceSha256": "0034340668a8afa2e8cbb0b716895cd1a52d43c1ea7911aa2833694337d82970",
+            "outputOffset": 43731
+          }
+        ]
+      },
+      {
+        "path": "src/ir/analysis/contracts/linear-memory-layout.ts",
+        "pin": {
+          "bytes": 3161,
+          "sha256": "83e6b8a07bdc8e8b93fed590bc0aed5c5f779bde98466e9cbbe3feb7a825cb91",
+          "gitBlob": "0dd2108962236a64e2b96479309b5b1e9735c90e"
+        },
+        "pieces": [
+          {
+            "kind": "copy",
+            "name": "// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.",
+            "path": "src/ir/analysis/contracts/linear-memory-layout.ts",
+            "offset": 0,
+            "length": 85,
+            "sourceSha256": "56bf88dc4c3a627fc20affb2ea7a4b4b8792a9cdf66df0f0d07691edc0a298f5",
+            "outputOffset": 0
+          },
+          {
+            "kind": "literal",
+            "name": "shared owner import/reexport at src/ir/analysis/contracts/linear-memory-layout.ts:85",
+            "text": "import type { LinearStorageKind, LinearSizePlan } from \"../../../shared/contracts/linear-memory-layout.js\";\n",
+            "outputOffset": 85
+          },
+          {
+            "kind": "copy",
+            "name": "export type {",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 1551,
+            "length": 35,
+            "sourceSha256": "49fd83768881c6388a1a5bc93312bcc859caf66e88028b00a79b2cbf2cf31677",
+            "outputOffset": 193
+          },
+          {
+            "kind": "copy",
+            "name": "LinearSizePlan,",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 1611,
+            "length": 57,
+            "sourceSha256": "3cb89ad513866f4695e425992a8c15459f774d3a8f5353d4328b70f131dec9bd",
+            "outputOffset": 228
+          },
+          {
+            "kind": "copy",
+            "name": "LinearLayoutBase,",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 1333,
+            "length": 72,
+            "sourceSha256": "b091d121c8348307b644afa855965d9a9794cc65d098bf1e6d5bc8244358b95c",
+            "outputOffset": 285
+          },
+          {
+            "kind": "literal",
+            "name": "shared owner import/reexport at src/ir/analysis/contracts/linear-memory-layout.ts:357",
+            "text": "} from \"../../../shared/contracts/linear-memory-layout.js\";\n\n",
+            "outputOffset": 357
+          },
+          {
+            "kind": "copy",
+            "name": "import type { AllocKind, AllocSiteId, IrSiteId } from \"../../core/nodes.js\";",
+            "path": "src/ir/analysis/contracts/linear-memory-layout.ts",
+            "offset": 85,
+            "length": 223,
+            "sourceSha256": "e5fec11a14c911c316e264369bf6c72805ac15840e8bc240b50f0a444c85373f",
+            "outputOffset": 418
+          },
+          {
+            "kind": "copy",
+            "name": "export type LinearAllocationClass = \"static\" | \"stack\" | \"arena\" | \"managed\";",
+            "path": "src/ir/analysis/contracts/linear-memory-layout.ts",
+            "offset": 479,
+            "length": 79,
+            "sourceSha256": "6ff29f384e9066c24f4640802d2f655d242c1d825fdf4e597b4abb8a725b053b",
+            "outputOffset": 641
+          },
+          {
+            "kind": "copy",
+            "name": "/** Semantic operations that a backend may bind to its own runtime. */",
+            "path": "src/ir/analysis/contracts/linear-memory-layout.ts",
+            "offset": 2322,
+            "length": 2441,
+            "sourceSha256": "41f39214ac798c4e00f4823c3837822de6d914fb164fbee794b49d8c8b32f69f",
+            "outputOffset": 720
+          }
+        ]
+      },
+      {
+        "path": "src/shared/contracts/linear-memory-layout.ts",
+        "pin": {
+          "bytes": 7580,
+          "sha256": "08c85d9e8c9891a74b9c0c02a1310b67b16832980849dc0e7b6d511d91350937",
+          "gitBlob": "59450b9ad09d7ebf16af04a8a1ab655a5c81b0ee"
+        },
+        "pieces": [
+          {
+            "kind": "copy",
+            "name": "// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.",
+            "path": "src/ir/analysis/contracts/linear-memory-layout.ts",
+            "offset": 0,
+            "length": 85,
+            "sourceSha256": "56bf88dc4c3a627fc20affb2ea7a4b4b8792a9cdf66df0f0d07691edc0a298f5",
+            "outputOffset": 0
+          },
+          {
+            "kind": "copy",
+            "name": "/** Storage vocabulary independent of a machine instruction set. */",
+            "path": "src/ir/analysis/contracts/linear-memory-layout.ts",
+            "offset": 308,
+            "length": 171,
+            "sourceSha256": "1dc62cde907558516215a3a457a809195f1fcce324fc718b40f563160ec25e99",
+            "outputOffset": 85
+          },
+          {
+            "kind": "copy",
+            "name": "export type LinearSizePlan =",
+            "path": "src/ir/analysis/contracts/linear-memory-layout.ts",
+            "offset": 558,
+            "length": 1764,
+            "sourceSha256": "69c71aea5910b631d352d63f54041f013fb7ded841bb82a51104032fe8547656",
+            "outputOffset": 256
+          },
+          {
+            "kind": "copy",
+            "name": "export interface LinearStringLayoutPlan extends LinearLayoutBase {",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 3535,
+            "length": 316,
+            "sourceSha256": "c6d13156233d04aa82b01f999ab2e8e6e9b590b461cf2fc316391885b72ee502",
+            "outputOffset": 2020
+          },
+          {
+            "kind": "copy",
+            "name": "/** JS2's current linear address width. Kept here rather than in an emitter. */",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 1929,
+            "length": 119,
+            "sourceSha256": "69e189221465ff16729575d97a0982c118e7d5c44c6c7da54b1505aa8a65cdec",
+            "outputOffset": 2336
+          },
+          {
+            "kind": "literal",
+            "name": "declaration separator at src/shared/contracts/linear-memory-layout.ts:2455",
+            "text": "\n",
+            "outputOffset": 2455
+          },
+          {
+            "kind": "copy",
+            "name": "export const LINEAR_RECORD_ALIGNMENT = 8;",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 2099,
+            "length": 42,
+            "sourceSha256": "e33f6889d7abd7dad3ea6623c556167bd5e5d93eacbeebf084a1c2b9d8129d7a",
+            "outputOffset": 2456
+          },
+          {
+            "kind": "literal",
+            "name": "declaration separator at src/shared/contracts/linear-memory-layout.ts:2498",
+            "text": "\n",
+            "outputOffset": 2498
+          },
+          {
+            "kind": "copy",
+            "name": "export const LINEAR_RECORD_HEADER_BYTES = 8;",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 2141,
+            "length": 45,
+            "sourceSha256": "e6fde218f3a16de27506e0fb8e75d7617725bab8331c8a75766ef99b48b147f6",
+            "outputOffset": 2499
+          },
+          {
+            "kind": "literal",
+            "name": "declaration separator at src/shared/contracts/linear-memory-layout.ts:2544",
+            "text": "\n",
+            "outputOffset": 2544
+          },
+          {
+            "kind": "copy",
+            "name": "export const LINEAR_RECORD_FIELD_SLOT_BYTES = 8;",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 2186,
+            "length": 49,
+            "sourceSha256": "b529cfb8a302198621a98330b85efcfcba5687af8c868e45e1d370ea8f067806",
+            "outputOffset": 2545
+          },
+          {
+            "kind": "literal",
+            "name": "declaration separator at src/shared/contracts/linear-memory-layout.ts:2594",
+            "text": "\n",
+            "outputOffset": 2594
+          },
+          {
+            "kind": "copy",
+            "name": "export const LINEAR_RECORD_TAG_OFFSET = 0;",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 2235,
+            "length": 43,
+            "sourceSha256": "8dfc36fd6b529b5589140ef693c96f05040ef2fcb014b3093d911a672b2d169d",
+            "outputOffset": 2595
+          },
+          {
+            "kind": "literal",
+            "name": "declaration separator at src/shared/contracts/linear-memory-layout.ts:2638",
+            "text": "\n",
+            "outputOffset": 2638
+          },
+          {
+            "kind": "copy",
+            "name": "export const LINEAR_RECORD_PAYLOAD_SIZE_OFFSET = 4;",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 2278,
+            "length": 52,
+            "sourceSha256": "192a55f23c5151dac02a1f3511a0a5c4138c142c26e916d173e2fe42ae27cd26",
+            "outputOffset": 2639
+          },
+          {
+            "kind": "copy",
+            "name": "separator/declaration at 2691",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 4408,
+            "length": 5,
+            "sourceSha256": "da60c8914ad6da096a6c73a7b7061e825ba1fc2da17a0da8d9c07f70823dfc30",
+            "outputOffset": 2691
+          },
+          {
+            "kind": "copy",
+            "name": "* Shared forwarding-record representation for relocated linear arrays.",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 2334,
+            "length": 551,
+            "sourceSha256": "67528fe3071684ab9efbf1e04434aeaf075b916fe9f11a9a05b68d1430c9ed03",
+            "outputOffset": 2696
+          },
+          {
+            "kind": "literal",
+            "name": "declaration separator at src/shared/contracts/linear-memory-layout.ts:3247",
+            "text": "\n",
+            "outputOffset": 3247
+          },
+          {
+            "kind": "copy",
+            "name": "export const LINEAR_VECTOR_LENGTH_OFFSET = 8;",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 2885,
+            "length": 46,
+            "sourceSha256": "646928b729086c502c409b12c00f95e27c57b568d7cb2df5930d839fb72a79fa",
+            "outputOffset": 3248
+          },
+          {
+            "kind": "literal",
+            "name": "declaration separator at src/shared/contracts/linear-memory-layout.ts:3294",
+            "text": "\n",
+            "outputOffset": 3294
+          },
+          {
+            "kind": "copy",
+            "name": "export const LINEAR_VECTOR_CAPACITY_OFFSET = 12;",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 2931,
+            "length": 49,
+            "sourceSha256": "e179205114051f7171322438b85365b354a421bbad8804c32e935c39b74a1fc7",
+            "outputOffset": 3295
+          },
+          {
+            "kind": "literal",
+            "name": "declaration separator at src/shared/contracts/linear-memory-layout.ts:3344",
+            "text": "\n",
+            "outputOffset": 3344
+          },
+          {
+            "kind": "copy",
+            "name": "export const LINEAR_VECTOR_ELEMENTS_OFFSET = 16;",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 2980,
+            "length": 49,
+            "sourceSha256": "91e71d706310f0d9c0b6c0271de2e65446658761a82fe74589f19879beaf56d3",
+            "outputOffset": 3345
+          },
+          {
+            "kind": "literal",
+            "name": "declaration separator at src/shared/contracts/linear-memory-layout.ts:3394",
+            "text": "\n",
+            "outputOffset": 3394
+          },
+          {
+            "kind": "copy",
+            "name": "export const LINEAR_VECTOR_MINIMUM_CAPACITY = 16;",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 3029,
+            "length": 50,
+            "sourceSha256": "c725b488ce9cbf8cdf6d387e927cc920454e09762b9001c17f9256cd271221d1",
+            "outputOffset": 3395
+          },
+          {
+            "kind": "literal",
+            "name": "declaration separator at src/shared/contracts/linear-memory-layout.ts:3445",
+            "text": "\n",
+            "outputOffset": 3445
+          },
+          {
+            "kind": "copy",
+            "name": "export const LINEAR_STRING_LENGTH_OFFSET = 8;",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 3079,
+            "length": 46,
+            "sourceSha256": "6a6b4d9b60c356c428f6bb958e4ae5ba61ec777d1474020710e007e1d2872189",
+            "outputOffset": 3446
+          },
+          {
+            "kind": "literal",
+            "name": "declaration separator at src/shared/contracts/linear-memory-layout.ts:3492",
+            "text": "\n",
+            "outputOffset": 3492
+          },
+          {
+            "kind": "copy",
+            "name": "export const LINEAR_STRING_ELEMENTS_OFFSET = 12;",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 3125,
+            "length": 49,
+            "sourceSha256": "83ddac1a14d53d566d5a27c581a12da1c2d24e037130973c81485b360b4eea0b",
+            "outputOffset": 3493
+          },
+          {
+            "kind": "literal",
+            "name": "declaration separator at src/shared/contracts/linear-memory-layout.ts:3542",
+            "text": "\n",
+            "outputOffset": 3542
+          },
+          {
+            "kind": "copy",
+            "name": "export const LINEAR_STRING_PAYLOAD_SIZE_OFFSET = LINEAR_RECORD_PAYLOAD_SIZE_OFFSET;",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 3174,
+            "length": 84,
+            "sourceSha256": "1741ebee13746ee62a69e47f735a63b58ffcaca48590c3f4fa364aad80492b39",
+            "outputOffset": 3543
+          },
+          {
+            "kind": "literal",
+            "name": "declaration separator at src/shared/contracts/linear-memory-layout.ts:3627",
+            "text": "\n",
+            "outputOffset": 3627
+          },
+          {
+            "kind": "copy",
+            "name": "/** Bytes between the record header and the first string element (the length field). */",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 3258,
+            "length": 198,
+            "sourceSha256": "e0277286865de75f01c2c11c5480bd0e5018fe0a86d12a816b10a678baf2d4ee",
+            "outputOffset": 3628
+          },
+          {
+            "kind": "copy",
+            "name": "separator/declaration at 3826",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 36044,
+            "length": 418,
+            "sourceSha256": "79bf6011122de68b9f1c9dcb3b47f2c7d7e80675e4764c917866329734a77ae5",
+            "outputOffset": 3826
+          },
+          {
+            "kind": "copy",
+            "name": "/** Shared record-layout primitive consumed by IR and direct linear-Wasm paths. */",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 31993,
+            "length": 1285,
+            "sourceSha256": "0a84fbfc6a8b3a88d485783e8305ab43174452106faf5163df1ed3a5b2a29b64",
+            "outputOffset": 4244
+          },
+          {
+            "kind": "copy",
+            "name": "export function linearStringLayoutId(): string {",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 35396,
+            "length": 85,
+            "sourceSha256": "04f45239729c87739fac01b9e3d2cc5303cfc8d56bf76ac247a759899131db8c",
+            "outputOffset": 5529
+          },
+          {
+            "kind": "copy",
+            "name": "export function planLinearStringLayout(): LinearStringLayoutPlan {",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 34246,
+            "length": 586,
+            "sourceSha256": "964c3c674e1f0fd4c08baff2d0273b7a231def52e37cf1df6ab20e25b57247ce",
+            "outputOffset": 5614
+          },
+          {
+            "kind": "literal",
+            "name": "scalar key factoring at src/shared/contracts/linear-memory-layout.ts:6200",
+            "text": "export function linearScalarStorageKey(storage: LinearStorageKind): string {\n  return `scalar:${storage}`;\n",
+            "outputOffset": 6200
+          },
+          {
+            "kind": "copy",
+            "name": "}",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 3848,
+            "length": 3,
+            "sourceSha256": "938de74be97bf3aba7872a61ba0e42084008c81e8a202a612134c755aaf7fa06",
+            "outputOffset": 6307
+          },
+          {
+            "kind": "literal",
+            "name": "vector delegation adapter at src/shared/contracts/linear-memory-layout.ts:6310",
+            "text": "export function linearVectorLayoutIdForElementKey(elementKey: string): string {\n  return `vector:${elementKey}`;\n",
+            "outputOffset": 6310
+          },
+          {
+            "kind": "copy",
+            "name": "}",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 3848,
+            "length": 3,
+            "sourceSha256": "938de74be97bf3aba7872a61ba0e42084008c81e8a202a612134c755aaf7fa06",
+            "outputOffset": 6423
+          },
+          {
+            "kind": "literal",
+            "name": "vector delegation adapter at src/shared/contracts/linear-memory-layout.ts:6426",
+            "text": "export function planLinearVectorStorageLayout(elementKey: string, storage: LinearStorageKind): LinearVectorLayoutPlan {\n",
+            "outputOffset": 6426
+          },
+          {
+            "kind": "copy",
+            "name": "const stride = storageBytes(storage);",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 33411,
+            "length": 51,
+            "sourceSha256": "b3edfe0fe2b36cb286c28f6e243fd6081689f3232c4bf8ded6919e7e090def0d",
+            "outputOffset": 6546
+          },
+          {
+            "kind": "literal",
+            "name": "vector delegation adapter at src/shared/contracts/linear-memory-layout.ts:6597",
+            "text": "    id: linearVectorLayoutIdForElementKey(elementKey),\n",
+            "outputOffset": 6597
+          },
+          {
+            "kind": "copy",
+            "name": "kind: \"vector\",",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 33501,
+            "length": 745,
+            "sourceSha256": "3ebe2002bd61c64d6fe02a39385bfa0ccfbed84b6c33b94cdc41f87830b4fad4",
+            "outputOffset": 6652
+          },
+          {
+            "kind": "literal",
+            "name": "vector delegation adapter at src/shared/contracts/linear-memory-layout.ts:7397",
+            "text": "export function planLinearScalarVectorLayout(storage: LinearStorageKind): LinearVectorLayoutPlan {\n  return planLinearVectorStorageLayout(linearScalarStorageKey(storage), storage);\n",
+            "outputOffset": 7397
+          },
+          {
+            "kind": "copy",
+            "name": "}",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 3848,
+            "length": 2,
+            "sourceSha256": "412ca345ccf75bf9c0806bce695be8de808b79984251a7a54d202cf6101dd451",
+            "outputOffset": 7578
+          }
+        ]
+      }
+    ],
+    "forwardCoverage": [
+      {
+        "path": "src/ir/analysis/linear-memory-plan.ts",
+        "spans": [
+          {
+            "offset": 0,
+            "length": 514,
+            "sha256": "d1d3dde9b2b282dcbfa4ca76e119efe850f23ce415555e3f21bee4b6b22594ae",
+            "uses": 1
+          },
+          {
+            "offset": 514,
+            "length": 9,
+            "sha256": "e8200964a978635522b2ab090c65065d8ef8e85c4730bb2eb0460d34c677ddbb",
+            "uses": 2
+          },
+          {
+            "offset": 523,
+            "length": 791,
+            "sha256": "04c0e72b5aab7736b7af31fa9c8a799e459f53e6c5e1b551454ddf8b54726547",
+            "uses": 1
+          },
+          {
+            "offset": 1314,
+            "length": 19,
+            "sha256": "02f56e33c4b713ccc269ab3129ae40d9197dc96ccc105ebebd73b69e18f58626",
+            "uses": 0
+          },
+          {
+            "offset": 1333,
+            "length": 72,
+            "sha256": "b091d121c8348307b644afa855965d9a9794cc65d098bf1e6d5bc8244358b95c",
+            "uses": 2
+          },
+          {
+            "offset": 1405,
+            "length": 146,
+            "sha256": "f43301dfc0824454d226158add32ae4d46f61b06f223695dc26b6fc6e2557ecc",
+            "uses": 1
+          },
+          {
+            "offset": 1551,
+            "length": 35,
+            "sha256": "49fd83768881c6388a1a5bc93312bcc859caf66e88028b00a79b2cbf2cf31677",
+            "uses": 2
+          },
+          {
+            "offset": 1586,
+            "length": 25,
+            "sha256": "e271f88ea36d5f7baa6cb90c7097a0175ef7981c16513f4bad3bc49c64f94490",
+            "uses": 1
+          },
+          {
+            "offset": 1611,
+            "length": 57,
+            "sha256": "3cb89ad513866f4695e425992a8c15459f774d3a8f5353d4328b70f131dec9bd",
+            "uses": 2
+          },
+          {
+            "offset": 1668,
+            "length": 260,
+            "sha256": "b5da595b61ae9319f50f151f10a51b76ffacff7c4e92a81ca9146f16d8a516cb",
+            "uses": 1
+          },
+          {
+            "offset": 1928,
+            "length": 1,
+            "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+            "uses": 0
+          },
+          {
+            "offset": 1929,
+            "length": 119,
+            "sha256": "69e189221465ff16729575d97a0982c118e7d5c44c6c7da54b1505aa8a65cdec",
+            "uses": 1
+          },
+          {
+            "offset": 2048,
+            "length": 51,
+            "sha256": "be075303330adae137608721fff20b4aef27fcfd9ea13e5948ba20f04fb7672d",
+            "uses": 1
+          },
+          {
+            "offset": 2099,
+            "length": 42,
+            "sha256": "e33f6889d7abd7dad3ea6623c556167bd5e5d93eacbeebf084a1c2b9d8129d7a",
+            "uses": 1
+          },
+          {
+            "offset": 2141,
+            "length": 45,
+            "sha256": "e6fde218f3a16de27506e0fb8e75d7617725bab8331c8a75766ef99b48b147f6",
+            "uses": 1
+          },
+          {
+            "offset": 2186,
+            "length": 49,
+            "sha256": "b529cfb8a302198621a98330b85efcfcba5687af8c868e45e1d370ea8f067806",
+            "uses": 1
+          },
+          {
+            "offset": 2235,
+            "length": 43,
+            "sha256": "8dfc36fd6b529b5589140ef693c96f05040ef2fcb014b3093d911a672b2d169d",
+            "uses": 1
+          },
+          {
+            "offset": 2278,
+            "length": 52,
+            "sha256": "192a55f23c5151dac02a1f3511a0a5c4138c142c26e916d173e2fe42ae27cd26",
+            "uses": 1
+          },
+          {
+            "offset": 2330,
+            "length": 4,
+            "sha256": "eaf22cf0732592c247141cbe61efa11012612f5a3122b9af9bbaf52f5724d194",
+            "uses": 0
+          },
+          {
+            "offset": 2334,
+            "length": 551,
+            "sha256": "67528fe3071684ab9efbf1e04434aeaf075b916fe9f11a9a05b68d1430c9ed03",
+            "uses": 1
+          },
+          {
+            "offset": 2885,
+            "length": 46,
+            "sha256": "646928b729086c502c409b12c00f95e27c57b568d7cb2df5930d839fb72a79fa",
+            "uses": 1
+          },
+          {
+            "offset": 2931,
+            "length": 49,
+            "sha256": "e179205114051f7171322438b85365b354a421bbad8804c32e935c39b74a1fc7",
+            "uses": 1
+          },
+          {
+            "offset": 2980,
+            "length": 49,
+            "sha256": "91e71d706310f0d9c0b6c0271de2e65446658761a82fe74589f19879beaf56d3",
+            "uses": 1
+          },
+          {
+            "offset": 3029,
+            "length": 50,
+            "sha256": "c725b488ce9cbf8cdf6d387e927cc920454e09762b9001c17f9256cd271221d1",
+            "uses": 1
+          },
+          {
+            "offset": 3079,
+            "length": 46,
+            "sha256": "6a6b4d9b60c356c428f6bb958e4ae5ba61ec777d1474020710e007e1d2872189",
+            "uses": 1
+          },
+          {
+            "offset": 3125,
+            "length": 49,
+            "sha256": "83ddac1a14d53d566d5a27c581a12da1c2d24e037130973c81485b360b4eea0b",
+            "uses": 1
+          },
+          {
+            "offset": 3174,
+            "length": 84,
+            "sha256": "1741ebee13746ee62a69e47f735a63b58ffcaca48590c3f4fa364aad80492b39",
+            "uses": 1
+          },
+          {
+            "offset": 3258,
+            "length": 198,
+            "sha256": "e0277286865de75f01c2c11c5480bd0e5018fe0a86d12a816b10a678baf2d4ee",
+            "uses": 1
+          },
+          {
+            "offset": 3456,
+            "length": 79,
+            "sha256": "554a43cd1cf57a17b219deb9248c4b742d9b8154e45794426a50374c3ce57ace",
+            "uses": 1
+          },
+          {
+            "offset": 3535,
+            "length": 313,
+            "sha256": "1a69478826ae3346d0df0795a0320963b2557301beb8ebd694c1dc35be7c3672",
+            "uses": 1
+          },
+          {
+            "offset": 3848,
+            "length": 2,
+            "sha256": "412ca345ccf75bf9c0806bce695be8de808b79984251a7a54d202cf6101dd451",
+            "uses": 4
+          },
+          {
+            "offset": 3850,
+            "length": 1,
+            "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+            "uses": 3
+          },
+          {
+            "offset": 3851,
+            "length": 557,
+            "sha256": "6673c8035bca9539e0ace6704f6265511e64d7f798eeb906a3ac7e7515c1a1f5",
+            "uses": 1
+          },
+          {
+            "offset": 4408,
+            "length": 5,
+            "sha256": "da60c8914ad6da096a6c73a7b7061e825ba1fc2da17a0da8d9c07f70823dfc30",
+            "uses": 2
+          },
+          {
+            "offset": 4413,
+            "length": 27580,
+            "sha256": "811aae7ff571d8125b4062d9d4fc55a739d2c5790de2d038cbf92fd517a52652",
+            "uses": 1
+          },
+          {
+            "offset": 31993,
+            "length": 1285,
+            "sha256": "0a84fbfc6a8b3a88d485783e8305ab43174452106faf5163df1ed3a5b2a29b64",
+            "uses": 1
+          },
+          {
+            "offset": 33278,
+            "length": 133,
+            "sha256": "3eb540b88e0dc1a08dc362456eac2c40160a14539859566d6134120c7fa57fde",
+            "uses": 1
+          },
+          {
+            "offset": 33411,
+            "length": 51,
+            "sha256": "b3edfe0fe2b36cb286c28f6e243fd6081689f3232c4bf8ded6919e7e090def0d",
+            "uses": 1
+          },
+          {
+            "offset": 33462,
+            "length": 39,
+            "sha256": "1a1b28a3ff2087132eec2bed72f4b2431d5fb18618bb12d02f086e6c115fb3f2",
+            "uses": 0
+          },
+          {
+            "offset": 33501,
+            "length": 745,
+            "sha256": "3ebe2002bd61c64d6fe02a39385bfa0ccfbed84b6c33b94cdc41f87830b4fad4",
+            "uses": 1
+          },
+          {
+            "offset": 34246,
+            "length": 583,
+            "sha256": "a45bcc76f1417003c3979041760e51f4869562c13b13070188e563d315870aa2",
+            "uses": 1
+          },
+          {
+            "offset": 34829,
+            "length": 3,
+            "sha256": "938de74be97bf3aba7872a61ba0e42084008c81e8a202a612134c755aaf7fa06",
+            "uses": 2
+          },
+          {
+            "offset": 34832,
+            "length": 514,
+            "sha256": "6080ae31cf93d2d2aaa524ea22f4f242662ca32fbc117d125a8cd2f77270216e",
+            "uses": 1
+          },
+          {
+            "offset": 35346,
+            "length": 50,
+            "sha256": "a2106f5f59a537decda91c98932a99081172c14187249f85eefd5a5982421172",
+            "uses": 0
+          },
+          {
+            "offset": 35396,
+            "length": 82,
+            "sha256": "939074d9cc31df27c54847cddb3f8e374d5583959648dc9939b05c2c5967edd6",
+            "uses": 1
+          },
+          {
+            "offset": 35478,
+            "length": 3,
+            "sha256": "938de74be97bf3aba7872a61ba0e42084008c81e8a202a612134c755aaf7fa06",
+            "uses": 2
+          },
+          {
+            "offset": 35481,
+            "length": 563,
+            "sha256": "35f494976282c6158c0a2a02ddfc0d1e63bd084885a2b4eb8fd20c5c09023779",
+            "uses": 1
+          },
+          {
+            "offset": 36044,
+            "length": 1,
+            "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+            "uses": 2
+          },
+          {
+            "offset": 36045,
+            "length": 417,
+            "sha256": "21df0ae1a709c663af0a7cae3c4bc1fb0b92dbcb6a17e1c25edd80111f2a9e0b",
+            "uses": 1
+          },
+          {
+            "offset": 36462,
+            "length": 10895,
+            "sha256": "04214db1b9b0bd41adf605c150f23834f4faf38dc92dbbe27ef554e89be221e9",
+            "uses": 1
+          },
+          {
+            "offset": 47357,
+            "length": 55,
+            "sha256": "ef6d1500a1e82f9014b2a426b388cc1aba2dbba6510e6e193bc529c046c3e128",
+            "uses": 0
+          },
+          {
+            "offset": 47412,
+            "length": 1628,
+            "sha256": "0034340668a8afa2e8cbb0b716895cd1a52d43c1ea7911aa2833694337d82970",
+            "uses": 1
+          }
+        ]
+      },
+      {
+        "path": "src/ir/analysis/contracts/linear-memory-layout.ts",
+        "spans": [
+          {
+            "offset": 0,
+            "length": 85,
+            "sha256": "56bf88dc4c3a627fc20affb2ea7a4b4b8792a9cdf66df0f0d07691edc0a298f5",
+            "uses": 2
+          },
+          {
+            "offset": 85,
+            "length": 223,
+            "sha256": "e5fec11a14c911c316e264369bf6c72805ac15840e8bc240b50f0a444c85373f",
+            "uses": 1
+          },
+          {
+            "offset": 308,
+            "length": 171,
+            "sha256": "1dc62cde907558516215a3a457a809195f1fcce324fc718b40f563160ec25e99",
+            "uses": 1
+          },
+          {
+            "offset": 479,
+            "length": 79,
+            "sha256": "6ff29f384e9066c24f4640802d2f655d242c1d825fdf4e597b4abb8a725b053b",
+            "uses": 1
+          },
+          {
+            "offset": 558,
+            "length": 1764,
+            "sha256": "69c71aea5910b631d352d63f54041f013fb7ded841bb82a51104032fe8547656",
+            "uses": 1
+          },
+          {
+            "offset": 2322,
+            "length": 2441,
+            "sha256": "41f39214ac798c4e00f4823c3837822de6d914fb164fbee794b49d8c8b32f69f",
+            "uses": 1
+          }
+        ]
+      }
+    ]
+  },
+  "forwarding": {
+    "commit": "2a98b75de993bdc568e3668a2965c026876fe322",
+    "parent": "6c88d157444ea4ae377a7ef1b82b15ef2f4f6603",
+    "path": "src/ir/analysis/contracts/linear-memory-layout.ts",
+    "offset": 2820,
+    "length": 93,
+    "beforePin": {
+      "bytes": 4670,
+      "sha256": "dba3ca2121063a52b0ae1130f48c0acc70e0f819a9e665a2a2744572eddfae72",
+      "gitBlob": "cac9d1e33659380a6ee8d8e03014af53e1123533"
+    },
+    "afterPin": {
+      "bytes": 4763,
+      "sha256": "977e572b62737c3459df08c15e4d3f6ce7f461f9fc5b1aac344ad676690e3754",
+      "gitBlob": "280a72ab47f43584f93efb664e3e64b55dc896b5"
+    },
+    "inverseText": "  | {\n      readonly family: \"vector\";\n      readonly operation: \"resolve-forwarding\";\n    }\n",
+    "forwardText": "  | {\n      readonly family: \"vector\";\n      readonly operation: \"resolve-forwarding\";\n    }\n"
+  }
+}

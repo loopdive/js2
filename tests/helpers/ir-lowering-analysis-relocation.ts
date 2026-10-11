@@ -460,3 +460,413 @@ export function captureCurrentLoweringLegalityPredecessor(rawCurrent: string, re
     return predecessor.toString("utf8");
   });
 }
+export interface LinearLayoutGeometryCapture {
+  readonly currentPlanner: string;
+  readonly currentLayout: string;
+  readonly currentShared: string;
+  readonly geometryBeforePlanner: string;
+  readonly geometryBeforeLayout: string;
+  readonly loweringBeforePlanner: string;
+  readonly loweringBeforeLayout: string;
+  readonly originalPlanner: string;
+}
+
+interface GeometryCopy {
+  readonly kind: "copy";
+  readonly name: string;
+  readonly path: string;
+  readonly offset: number;
+  readonly length: number;
+  readonly sourceSha256: string;
+  readonly outputOffset: number;
+}
+interface GeometryLiteral {
+  readonly kind: "literal";
+  readonly name: string;
+  readonly text: string;
+  readonly outputOffset: number;
+}
+interface GeometryRecipe {
+  readonly path: string;
+  readonly pin: Pin;
+  readonly pieces: readonly (GeometryCopy | GeometryLiteral)[];
+}
+interface GeometryCoverage {
+  readonly path: string;
+  readonly spans: readonly {
+    readonly offset: number;
+    readonly length: number;
+    readonly sha256: string;
+    readonly uses: number;
+  }[];
+}
+interface GeometryReceipt {
+  readonly schema: string;
+  readonly sourceBase: string;
+  readonly currentInputs: readonly (Pin & { readonly path: string })[];
+  readonly geometryBeforeInputs: readonly (Pin & { readonly path: string })[];
+  readonly sharedAbsentBefore: boolean;
+  readonly oldAuthority: unknown;
+  readonly geometry: {
+    readonly inverse: readonly GeometryRecipe[];
+    readonly inverseCoverage: readonly GeometryCoverage[];
+    readonly forward: readonly GeometryRecipe[];
+    readonly forwardCoverage: readonly GeometryCoverage[];
+  };
+  readonly forwarding: {
+    readonly commit: string;
+    readonly parent: string;
+    readonly path: string;
+    readonly offset: number;
+    readonly length: number;
+    readonly beforePin: Pin;
+    readonly afterPin: Pin;
+    readonly inverseText: string;
+    readonly forwardText: string;
+  };
+}
+
+const geometryReceiptPath = "tests/helpers/ir-linear-layout-geometry-successor.json";
+// ROOT supplies the reviewed finite receipt pin in the explicit activation step.
+// The authoring entry is fail-closed; candidate bytes cannot grant themselves trust.
+const geometryReceiptPin: Pin | null = {
+  bytes: 69621,
+  sha256: "e4af32c53ea548b693fbcee78c55b3af47b7985e2dc1b340ddf9c28e0a8f573f",
+};
+
+const geometryCurrentInputs = [
+  {
+    path: "src/ir/analysis/linear-memory-plan.ts",
+    bytes: 45359,
+    sha256: "08f844117ef1b6e0eb17a87555d00db5be89257e5817ad76322320fa837ae7fc",
+    gitBlob: "3db990eb21e3ed216cd798548af6d076e32ed9e1",
+  },
+  {
+    path: "src/ir/analysis/contracts/linear-memory-layout.ts",
+    bytes: 3161,
+    sha256: "83e6b8a07bdc8e8b93fed590bc0aed5c5f779bde98466e9cbbe3feb7a825cb91",
+    gitBlob: "0dd2108962236a64e2b96479309b5b1e9735c90e",
+  },
+  {
+    path: "src/shared/contracts/linear-memory-layout.ts",
+    bytes: 7580,
+    sha256: "08c85d9e8c9891a74b9c0c02a1310b67b16832980849dc0e7b6d511d91350937",
+    gitBlob: "59450b9ad09d7ebf16af04a8a1ab655a5c81b0ee",
+  },
+] as const;
+
+const geometryBeforeInputs = [
+  {
+    path: "src/ir/analysis/linear-memory-plan.ts",
+    bytes: 49040,
+    sha256: "5f2f5ded3a788e2cc1b70dceb01afe97d249e0e5407e555ced11c5aedb0dbc52",
+    gitBlob: "a44148b86cf60d75a8ebcd9decd2f0fc3a5aad1c",
+  },
+  {
+    path: "src/ir/analysis/contracts/linear-memory-layout.ts",
+    bytes: 4763,
+    sha256: "977e572b62737c3459df08c15e4d3f6ce7f461f9fc5b1aac344ad676690e3754",
+    gitBlob: "280a72ab47f43584f93efb664e3e64b55dc896b5",
+  },
+] as const;
+
+const geometryOldAuthority = {
+  helperPrefix: {
+    path: "tests/helpers/ir-lowering-analysis-relocation.ts",
+    bytes: 18956,
+    sha256: "253eda01462fad0ab84a940965a083eaf80b0ca8a3e10a4ca012fbafaaf30e99",
+  },
+  receipt: {
+    path: "tests/helpers/ir-lowering-analysis-relocation.json",
+    bytes: 111423,
+    sha256: "dc8241d36da5b2fe29abe12ed6ee348fc456ef22939c61aabe05d09daad92134",
+    gitBlob: "6fee96e10bb22a1f3071ddc41b4a2af39ee96763",
+  },
+} as const;
+
+const geometryForwarding = {
+  commit: "2a98b75de993bdc568e3668a2965c026876fe322",
+  parent: "6c88d157444ea4ae377a7ef1b82b15ef2f4f6603",
+  path: "src/ir/analysis/contracts/linear-memory-layout.ts",
+  offset: 2820,
+  length: 93,
+  beforePin: {
+    bytes: 4670,
+    sha256: "dba3ca2121063a52b0ae1130f48c0acc70e0f819a9e665a2a2744572eddfae72",
+    gitBlob: "cac9d1e33659380a6ee8d8e03014af53e1123533",
+  },
+  afterPin: {
+    bytes: 4763,
+    sha256: "977e572b62737c3459df08c15e4d3f6ce7f461f9fc5b1aac344ad676690e3754",
+    gitBlob: "280a72ab47f43584f93efb664e3e64b55dc896b5",
+  },
+  inverseText: '  | {\n      readonly family: "vector";\n      readonly operation: "resolve-forwarding";\n    }\n',
+  forwardText: '  | {\n      readonly family: "vector";\n      readonly operation: "resolve-forwarding";\n    }\n',
+} as const;
+
+const geometryInverseCounts = [37, 6] as const;
+const geometryForwardCounts = [15, 9, 47] as const;
+const geometryInverseCoverageCounts = [17, 5, 45] as const;
+const geometryForwardCoverageCounts = [52, 6] as const;
+const geometryInverseLiteralBytes = [141, 0] as const;
+const geometryForwardLiteralBytes = [1429, 169, 589] as const;
+
+function geometryRead(path: string, reader: AuthorityReader): Buffer {
+  requireProof(
+    path === geometryReceiptPath || geometryCurrentInputs.some((source) => source.path === path),
+    "fixed geometry reader path required",
+  );
+  const raw = reader(path);
+  requireProof(typeof raw === "string", `primitive geometry authority text required ${path}`);
+  return Buffer.from(raw, "utf8");
+}
+
+function authenticateGeometryReceipt(reader: AuthorityReader): GeometryReceipt {
+  const authority: Pin | null = geometryReceiptPin;
+  requireProof(authority !== null, "geometry receipt authority not activated");
+  const bytes = geometryRead(geometryReceiptPath, reader);
+  pin(bytes, authority, geometryReceiptPath);
+  const receipt = JSON.parse(bytes.toString("utf8")) as GeometryReceipt;
+  keys(receipt, [
+    "schema",
+    "sourceBase",
+    "currentInputs",
+    "geometryBeforeInputs",
+    "sharedAbsentBefore",
+    "oldAuthority",
+    "geometry",
+    "forwarding",
+  ]);
+  requireProof(receipt.schema === "ir-linear-layout-geometry-successor-v1", "fixed geometry receipt schema required");
+  requireProof(
+    receipt.sourceBase === "b932e3a05e353acc59e7b547ef4e417a5d8637e1",
+    "fixed geometry source base required",
+  );
+  exact(receipt.currentInputs, geometryCurrentInputs, "exact ordered three geometry source pins required");
+  exact(receipt.geometryBeforeInputs, geometryBeforeInputs, "exact ordered two geometry predecessor pins required");
+  requireProof(receipt.sharedAbsentBefore === true, "shared owner must be absent at geometry predecessor");
+  exact(receipt.oldAuthority, geometryOldAuthority, "immutable old helper and receipt authority required");
+  keys(receipt.geometry, ["inverse", "inverseCoverage", "forward", "forwardCoverage"]);
+  exact(receipt.forwarding, geometryForwarding, "separate authentic 93-byte forwarding epoch required");
+  return receipt;
+}
+
+function geometryPieceName(name: string): void {
+  requireProof(typeof name === "string" && name.length > 0, "named geometry span or local literal reason required");
+}
+
+function geometryFragment(bytes: Buffer, piece: GeometryCopy): Buffer {
+  integer(piece.offset);
+  integer(piece.length);
+  requireProof(piece.length > 0, "nonempty geometry source span required");
+  requireProof(
+    Number.isSafeInteger(piece.offset + piece.length) && piece.offset + piece.length <= bytes.length,
+    "geometry source span in range required",
+  );
+  const part = bytes.subarray(piece.offset, piece.offset + piece.length);
+  requireProof(digest(part) === piece.sourceSha256, "exact geometry source span pin required");
+  requireProof(Buffer.from(part.toString("utf8"), "utf8").equals(part), "whole UTF8 geometry source span required");
+  return part;
+}
+
+function geometryReplay(
+  recipes: readonly GeometryRecipe[],
+  inputs: ReadonlyMap<string, Buffer>,
+  outputs: readonly (Pin & { readonly path: string })[],
+  counts: readonly number[],
+  literalBytes: readonly number[],
+): ReadonlyMap<string, Buffer> {
+  requireProof(
+    Array.isArray(recipes) && recipes.length === outputs.length,
+    "exact geometry output population required",
+  );
+  const result = new Map<string, Buffer>();
+  for (const [index, recipe] of recipes.entries()) {
+    const expected = outputs[index];
+    requireProof(expected, "fixed geometry output required");
+    keys(recipe, ["path", "pin", "pieces"]);
+    requireProof(recipe.path === expected.path, "fixed ordered geometry output path required");
+    const { path: _path, ...expectedPin } = expected;
+    exact(recipe.pin, expectedPin, "full geometry output pin required");
+    requireProof(
+      Array.isArray(recipe.pieces) && recipe.pieces.length === counts[index],
+      "exact geometry piece population required",
+    );
+    let offset = 0;
+    let literals = 0;
+    const parts: Buffer[] = [];
+    for (const piece of recipe.pieces) {
+      integer(piece.outputOffset);
+      requireProof(piece.outputOffset === offset, "complete ordered geometry output coverage required");
+      geometryPieceName(piece.name);
+      let part: Buffer;
+      if (piece.kind === "copy") {
+        keys(piece, ["kind", "name", "path", "offset", "length", "sourceSha256", "outputOffset"]);
+        const source = inputs.get(piece.path);
+        requireProof(source, "fixed captured geometry donor path required");
+        part = geometryFragment(source, piece);
+      } else {
+        requireProof(piece.kind === "literal", "fixed geometry piece kind required");
+        keys(piece, ["kind", "name", "text", "outputOffset"]);
+        requireProof(typeof piece.text === "string", "primitive local geometry literal required");
+        part = Buffer.from(piece.text, "utf8");
+        requireProof(part.length > 0 && part.length <= 1141, "bounded nonempty local geometry literal required");
+        literals += part.length;
+        integer(literals);
+      }
+      parts.push(part);
+      offset += part.length;
+      integer(offset);
+    }
+    requireProof(literals === literalBytes[index], "exact local geometry literal byte population required");
+    requireProof(offset === expected.bytes, "complete geometry output byte population required");
+    const replay = Buffer.concat(parts);
+    pin(replay, expected, expected.path);
+    result.set(expected.path, replay);
+  }
+  return result;
+}
+
+function geometryCoverage(
+  coverage: readonly GeometryCoverage[],
+  recipes: readonly GeometryRecipe[],
+  inputs: ReadonlyMap<string, Buffer>,
+  counts: readonly number[],
+): void {
+  requireProof(
+    Array.isArray(coverage) && coverage.length === inputs.size,
+    "complete geometry donor population required",
+  );
+  const paths = [...inputs.keys()];
+  for (const [index, record] of coverage.entries()) {
+    keys(record, ["path", "spans"]);
+    requireProof(record.path === paths[index], "fixed ordered geometry donor coverage required");
+    const source = inputs.get(record.path);
+    requireProof(source, "captured geometry coverage source required");
+    requireProof(
+      Array.isArray(record.spans) && record.spans.length === counts[index],
+      "exact geometry coverage span population required",
+    );
+    const copies = recipes
+      .flatMap((recipe) => recipe.pieces)
+      .filter((piece): piece is GeometryCopy => piece.kind === "copy" && piece.path === record.path);
+    let offset = 0;
+    const boundaries = new Set<number>([0]);
+    for (const span of record.spans) {
+      keys(span, ["offset", "length", "sha256", "uses"]);
+      integer(span.offset);
+      integer(span.length);
+      integer(span.uses);
+      requireProof(span.offset === offset && span.length > 0, "no holes or overlaps in geometry donor spans required");
+      offset += span.length;
+      integer(offset);
+      requireProof(offset <= source.length, "geometry donor coverage in range required");
+      boundaries.add(offset);
+      const uses = copies.filter(
+        (piece) => piece.offset <= span.offset && offset <= piece.offset + piece.length,
+      ).length;
+      requireProof(uses === span.uses, "exact geometry source span multiplicity required");
+      requireProof(
+        digest(source.subarray(span.offset, offset)) === span.sha256,
+        "full geometry coverage span pin required",
+      );
+    }
+    requireProof(offset === source.length, "complete geometry donor byte consumption required");
+    for (const piece of copies) {
+      requireProof(
+        boundaries.has(piece.offset) && boundaries.has(piece.offset + piece.length),
+        "geometry copy endpoints must coincide with declared coverage boundaries",
+      );
+    }
+  }
+}
+
+/** Capture the finite current geometry, separate forwarding predecessor and unchanged old donor proof. */
+export function captureLinearLayoutGeometry(
+  rawCurrentPlanner: string,
+  readAuthority?: (path: string) => string,
+): LinearLayoutGeometryCapture {
+  primitive(rawCurrentPlanner);
+  const reader = readerFor(readAuthority);
+  const receipt = authenticateGeometryReceipt(reader);
+  const current = new Map<string, Buffer>();
+  for (const source of geometryCurrentInputs) {
+    const bytes = geometryRead(source.path, reader);
+    pin(bytes, source, source.path);
+    if (source.path === sources[0].path) {
+      requireProof(
+        Buffer.from(rawCurrentPlanner, "utf8").equals(bytes),
+        `supplied current geometry source differs ${source.path}`,
+      );
+    }
+    current.set(source.path, bytes);
+  }
+  const before = geometryReplay(
+    receipt.geometry.inverse,
+    current,
+    geometryBeforeInputs,
+    geometryInverseCounts,
+    geometryInverseLiteralBytes,
+  );
+  geometryCoverage(receipt.geometry.inverseCoverage, receipt.geometry.inverse, current, geometryInverseCoverageCounts);
+  const geometryPlanner = before.get(sources[0].path)!;
+  const geometryLayout = before.get(sources[1].path)!;
+  const forwarding = receipt.forwarding;
+  const inverseInsertion = Buffer.from(forwarding.inverseText, "utf8");
+  requireProof(
+    inverseInsertion.length === forwarding.length &&
+      geometryLayout.subarray(forwarding.offset, forwarding.offset + forwarding.length).equals(inverseInsertion),
+    "exact separate forwarding inverse insertion required",
+  );
+  const loweringLayout = Buffer.concat([
+    geometryLayout.subarray(0, forwarding.offset),
+    geometryLayout.subarray(forwarding.offset + forwarding.length),
+  ]);
+  pin(loweringLayout, forwarding.beforePin, forwarding.path);
+  const forwardInsertion = Buffer.from(forwarding.forwardText, "utf8");
+  requireProof(forwardInsertion.length === forwarding.length, "exact separate forwarding forward insertion required");
+  const forwardingReplay = Buffer.concat([
+    loweringLayout.subarray(0, forwarding.offset),
+    forwardInsertion,
+    loweringLayout.subarray(forwarding.offset),
+  ]);
+  pin(forwardingReplay, forwarding.afterPin, forwarding.path);
+  requireProof(forwardingReplay.equals(geometryLayout), "independent forwarding full equality required");
+  const forwardInputs = new Map([
+    [sources[0].path, geometryPlanner],
+    [sources[1].path, forwardingReplay],
+  ]);
+  const replay = geometryReplay(
+    receipt.geometry.forward,
+    forwardInputs,
+    geometryCurrentInputs,
+    geometryForwardCounts,
+    geometryForwardLiteralBytes,
+  );
+  geometryCoverage(
+    receipt.geometry.forwardCoverage,
+    receipt.geometry.forward,
+    forwardInputs,
+    geometryForwardCoverageCounts,
+  );
+  for (const [path, actual] of current) {
+    requireProof(replay.get(path)?.equals(actual), `independent geometry complete current equality required ${path}`);
+  }
+  const loweringPlannerText = geometryPlanner.toString("utf8");
+  const loweringLayoutText = loweringLayout.toString("utf8");
+  const originalPlanner = captureLinearLayoutPredecessor(loweringPlannerText, (path) => {
+    if (path === receiptPath) return reader(path);
+    if (path === sources[1].path) return loweringLayoutText;
+    requireProof(false, "closed geometry predecessor reader path required");
+  });
+  return Object.freeze({
+    currentPlanner: current.get(sources[0].path)!.toString("utf8"),
+    currentLayout: current.get(sources[1].path)!.toString("utf8"),
+    currentShared: current.get(geometryCurrentInputs[2].path)!.toString("utf8"),
+    geometryBeforePlanner: loweringPlannerText,
+    geometryBeforeLayout: geometryLayout.toString("utf8"),
+    loweringBeforePlanner: loweringPlannerText,
+    loweringBeforeLayout: loweringLayoutText,
+    originalPlanner,
+  });
+}

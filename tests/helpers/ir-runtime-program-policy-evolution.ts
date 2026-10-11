@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { authenticateIrValidationPolicy, type IrValidationPolicy } from "./ir-validation-policy-evolution.js";
 import {
   captureC1HistoricalAuthority,
+  c1GeometryInstrumentPredecessor,
   type C1HistoricalCapture,
   type C1HistoricalLogicalPath,
 } from "./ir-c1-historical-authority.js";
@@ -7263,6 +7264,7 @@ export function captureWasmGcHelperPredecessorPolicySource(raw: string): string 
 }
 
 import {
+  captureLinearLayoutGeometry as loweringAnalysisGeometryProof,
   captureLinearLayoutPredecessor as loweringAnalysisLayoutProof,
   captureCurrentLoweringLegalityPredecessor as loweringAnalysisLegalityProof,
 } from "./ir-lowering-analysis-relocation.js";
@@ -7586,6 +7588,28 @@ function loweringAnalysisRead(path: string): string {
     loweringAnalysisFail("source proof path outside fixed domain: " + path);
   return bytes.toString("utf8");
 }
+const loweringAnalysisGeometryComponentPin = {
+  bytes: 35439,
+  sha256: "87bf7de1961b821cf303b5d7e686a5e44614b08b7b371ee6afe4a16172a7851e",
+  gitBlob: "4260f7bdb92344a9b20427b75113020b6d9e31a9",
+};
+function loweringAnalysisGeometryRead(path: string): string {
+  if (
+    ![
+      "tests/helpers/ir-linear-layout-geometry-successor.json",
+      "src/ir/analysis/linear-memory-plan.ts",
+      "src/ir/analysis/contracts/linear-memory-layout.ts",
+      "src/shared/contracts/linear-memory-layout.ts",
+      loweringAnalysisExpected.sourceReceipt.path,
+    ].includes(path)
+  )
+    loweringAnalysisFail("geometry source proof path outside fixed domain: " + path);
+  const url = new URL(`../../${path}`, import.meta.url);
+  const info = wasmGcHelperLstat(url);
+  if (!info.isFile() || info.isSymbolicLink() || (info.mode & 0o7777) !== 0o644)
+    loweringAnalysisFail("geometry source mode/identity changed: " + path);
+  return readFileSync(url, "utf8");
+}
 function authenticateLoweringAnalysisPolicy(): LoweringAnalysisReceipt {
   captureC1HistoricalAuthority();
   const bytes = readFileSync(new URL(`../../${loweringAnalysisReceiptPath}`, import.meta.url));
@@ -7619,7 +7643,18 @@ function authenticateLoweringAnalysisPolicy(): LoweringAnalysisReceipt {
     (implementationStat.mode & 0o7777) !== receipt.componentImplementation.mode
   )
     loweringAnalysisFail("component implementation mode/identity changed: " + receipt.componentImplementation.path);
-  loweringAnalysisPin(implementation, earlyReturnComponentPin, receipt.componentImplementation.path);
+  loweringAnalysisPin(
+    implementation,
+    implementation.length === earlyReturnComponentPin.bytes
+      ? earlyReturnComponentPin
+      : loweringAnalysisGeometryComponentPin,
+    receipt.componentImplementation.path,
+  );
+  loweringAnalysisPin(
+    implementation.subarray(0, earlyReturnComponentPin.bytes),
+    earlyReturnComponentPin,
+    receipt.componentImplementation.path + " immutable geometry predecessor",
+  );
   loweringAnalysisPin(
     implementation.subarray(0, receipt.componentImplementation.bytes),
     receipt.componentImplementation,
@@ -7639,10 +7674,22 @@ function authenticateLoweringAnalysisPolicy(): LoweringAnalysisReceipt {
     },
     "legality authentic predecessor",
   );
-  const planner = loweringAnalysisLayoutProof(
-    loweringAnalysisRead("src/ir/analysis/linear-memory-plan.ts"),
-    loweringAnalysisRead,
-  );
+  // This physical channel is current-only; the proof closes its own historical layout reader.
+  const currentPlanner = loweringAnalysisGeometryRead("src/ir/analysis/linear-memory-plan.ts");
+  const historicalPlannerPin = receipt.sourceInputs.find(
+    (entry) => entry.path === "src/ir/analysis/linear-memory-plan.ts",
+  )!;
+  const planner =
+    sha(currentPlanner) === historicalPlannerPin.sha256
+      ? loweringAnalysisLayoutProof(loweringAnalysisRead(historicalPlannerPin.path), loweringAnalysisRead)
+      : (() => {
+          loweringAnalysisPin(
+            implementation,
+            loweringAnalysisGeometryComponentPin,
+            receipt.componentImplementation.path,
+          );
+          return loweringAnalysisGeometryProof(currentPlanner, loweringAnalysisGeometryRead).originalPlanner;
+        })();
   loweringAnalysisPin(
     Buffer.from(planner),
     {
@@ -8955,5 +9002,14 @@ export function runtimePreparationRemainderHistoricalSource(source: unknown): st
 /** Normalize one physical self-read before the unchanged historical prefix algorithms. */
 function remainderPolicyHistoricalPrefix(source: Buffer): Buffer {
   if (!Buffer.isBuffer(source)) preparationFail("primitive current remainder policy buffer required");
-  return earlyReturnHistoricalPrefix(source, remainderPolicyPrefixProof, currentMainInventoryPin, preparationFail);
+  const predecessor = c1GeometryInstrumentPredecessor(
+    "tests/helpers/ir-runtime-program-policy-evolution.ts",
+    source.toString("utf8"),
+  );
+  return earlyReturnHistoricalPrefix(
+    Buffer.from(predecessor),
+    remainderPolicyPrefixProof,
+    currentMainInventoryPin,
+    preparationFail,
+  );
 }
