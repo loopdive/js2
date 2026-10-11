@@ -393,7 +393,8 @@ export interface VecDeleteDeps {
   dpValueIdx: number;
   objFindIdx: number;
   ensureIdx: number;
-  numericFlagGlobalIdx: number;
+  /** (#6964) `__vec_overlay_mark_num(vec, comp)` — numeric flag + numeric table. */
+  markNumIdx: number;
   /** `FLAG_DELETED_INDEX | FLAG_COMPANION_VALUE` — owned by `vec-overlay.ts`. */
   deletedIndexFlags: number;
   /** Fresh undefined-sentinel instrs (never a shared array — #DCE double-remap). */
@@ -588,8 +589,9 @@ export function buildVecDeletePrologue(ctx: CodegenContext, fn: WasmFunction, d:
             { op: "return" },
           ],
         },
-        { op: "i32.const", value: 1 },
-        { op: "global.set", index: d.numericFlagGlobalIdx },
+        { op: "local.get", index: anyLocal },
+        { op: "local.get", index: compLocal },
+        { op: "call", funcIdx: d.markNumIdx },
         { op: "local.get", index: compLocal },
         { op: "extern.convert_any" },
         { op: "local.get", index: keyLocal },

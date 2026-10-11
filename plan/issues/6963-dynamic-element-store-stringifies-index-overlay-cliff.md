@@ -8,6 +8,17 @@ area: compiler
 priority: high
 horizon: m
 feasibility: medium
+# 2026-10-11 (Stage 1): the fast path belongs next to the overlay WRITE
+# prologue it short-circuits (vec-overlay.ts) and the numeric vec arm it
+# falls through to (object-runtime.ts fillExternSetVecArms); a new module
+# would be outside the files this change was scoped to.
+loc-budget-allow:
+  - src/codegen/vec-overlay.ts
+  - src/codegen/object-runtime.ts
+  - src/codegen/expressions/assignment.ts
+func-budget-allow:
+  - src/codegen/vec-overlay.ts::fillVecOverlayHelpers
+  - src/codegen/object-runtime.ts::fillExternSetVecArms
 ---
 
 # Problem

@@ -1,6 +1,9 @@
 ---
+id: 6964
 title: "standalone: the vec-overlay companion table is append-only and every sloppy `arguments` object adds an entry, so indexed reads get linearly slower per run (Octane earley-boyer 1.5 s -> 13 s over five runs)"
-status: ready
+status: done
+completed: 2026-10-11
+assignee: ttraenkler/claude-session-d
 sprint: current
 goal: standalone-gap
 area: compiler
@@ -8,6 +11,16 @@ priority: high
 horizon: m
 feasibility: medium
 depends_on: [6963]
+# 2026-10-11: the numeric-only companion table, its lookup and the mark helper
+# live with the overlay core they mirror (vec-overlay.ts ensureOverlayCore);
+# the fresh-arguments define natives live with the arguments brand
+# (arguments-length-brand.ts). Both are the plan's owner files.
+loc-budget-allow:
+  - src/codegen/vec-overlay.ts
+  - src/codegen/arguments-length-brand.ts
+func-budget-allow:
+  - src/codegen/vec-overlay.ts::ensureOverlayCore
+  - src/codegen/vec-overlay.ts::fillVecOverlayHelpers
 ---
 
 # Problem
@@ -130,3 +143,64 @@ would stop most programs from ever setting `__vec_overlay_numeric`.
 - No change in `tests/equivalence/`, the arguments-object tests
   (`grep -l "arguments" tests/issue-4243* tests/issue-4658* tests/issue-6651*`)
   and the #2666/#2668/#3251/#6963 overlay tests.
+
+# Implementation notes (2026-10-11)
+
+Stacked on #6963 (PR #6640, `claude/standalone-element-store-index`).
+
+**Step 1 (as planned).** `ensureOverlayCore` mints a second `$__overlay_state`
+global, `__vec_overlay_num_state`, and builds both lookups from one helper
+(`__vec_overlay_lookup` over the full table, `__vec_overlay_lookup_num` over
+the numeric one). `__vec_overlay_mark_num(vec, comp)` replaces every bare
+`global.set __vec_overlay_numeric` (value define index arm + canonical-numeric
+named key, accessor define index arm + named key, `buildVecDeletePrologue`):
+it arms the flag and registers the pair once, test-and-setting
+`$Object.flags` bit `0x100` (`OBJ_FLAG_OVERLAY_NUMERIC`) on the companion.
+`markNumericLikeNamedKey` (vec-overlay-high-index.ts) now takes the mark
+instructions instead of the flag global — the one edit outside the plan's file
+list, a signature change of a helper only vec-overlay.ts calls.
+The `__extern_get_idx` READ prologue and the `__extern_has_idx` presence
+prologue use the numeric lookup (both only ever ask a numeric key, so a
+companion absent from that table always misses — exact). The #6963 WRITE fast
+path now asks "does THIS vec have a numeric entry" (`flag == 0 ||
+lookup_num(vec) == null`) instead of the module-wide flag.
+
+**Why Step 1 alone did not flatten eb-probe** (measured: 63/196/820/476/1034
+ms). Profiling showed the per-call cost was not the read scan but the SEED:
+`__defineProperty_value(arguments, "callee")` runs the vec define preamble —
+`__vec_overlay_ensure` (a full newest-first MISS scan for a brand-new vec) and
+the §10.1.6.3 extensibility guard, whose `__integrity_bag` →
+`__vec_bag_ensure` walks the expando-bag list and prepends a bag per arguments
+object (39 % self time in `__vec_bag_ensure`).
+
+**Step 2 (variant).** The seeds (`@@iterator`, sloppy `callee`, strict poison
+`callee`) call `__args_own_define_value` / `__args_own_define_accessor`
+(arguments-length-brand.ts; placeholder = forward to the generic define). The
+finalize fill resolves the companion with `__vec_overlay_ensure_newest` (the
+newest pair if it is this vec, else an append — never a scan) for the branded
+`$__arguments_vec`, which is always freshly built, and the scanning `ensure`
+for an unbranded vec (a non-observable arguments object may alias the extras
+vec), then runs the ordinary `$Object` define on the companion. Same result as
+the vec preamble for a fresh, extensible arguments object with a non-index,
+non-`length` key. The sloppy `callee` seed is now also gated on the #4578
+observability proof (it already gated `@@iterator` / strict poison): an
+arguments object used only via `.length` and proven-numeric indices cannot
+reach `callee`.
+
+**Deviation from the plan's Step 2.** The plan asks for `callee`/`@@iterator`
+slots on `$__arguments_vec` so no arguments object enters the companion table.
+That needs new struct fields, and the only `struct.new $__arguments_vec` is in
+`arguments-vector-tail.ts`, outside the plan's file list — so it is not done.
+Consequence: each OBSERVABLE arguments object still appends one companion
+(memory is retained, and a string-key overlay probe on a vec WITHOUT a
+companion still scans the table). The per-call time no longer grows: eb-probe
+and earley-boyer are flat (numbers in the PR report).
+
+## Remaining
+
+- Plan Step 2 proper (callee / @@iterator in `$__arguments_vec` fields,
+  companion only on user redefinition) to stop the table/memory growth; needs
+  `arguments-vector-tail.ts` (`struct.new` operands).
+- Step 3 (bounded/hashed table) not attempted.
+- Pre-existing, unchanged: `delete args.callee; "callee" in args` answers
+  `true` on standalone (node `false`), base and head alike.
