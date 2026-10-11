@@ -1,10 +1,11 @@
 {
   "id": "5157",
   "assignee": "codex-pr-shepherd-root",
-  "requested_by": "codex-pr-shepherd-root",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "",
   "claimed_at": "2026-10-11T21:25:32Z",
-  "updated_at": "2026-10-11T21:25:32Z",
-  "write_id": "94984-jambi0ab"
+  "updated_at": "2026-10-11T21:28:10Z",
+  "write_id": "96109-ekklaaue",
+  "released_at": "2026-10-11T21:28:10Z"
 }
