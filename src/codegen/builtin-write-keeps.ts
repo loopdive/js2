@@ -80,6 +80,8 @@
  *    the reader never consults. Silent divergence is worse than an honest
  *    no-op; patching builtin statics is separate, measured work (cf. the
  *    #2623 P-7b `Promise.resolve` arm, host/GC-only for the same reason).
+ *    (#6957) `Math.<method> = fn` is the exception: standalone Math calls and
+ *    value reads of a patched member now consult the carrier, so it is kept.
  *
  * **Shadowing**: declines when a user binding shadows the name; those are
  * caught by the collection's own module-global / top-level-function arms.
