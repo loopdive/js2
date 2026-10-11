@@ -150,3 +150,29 @@ the first-class `parseInt` value / `arr.map(parseInt)` wrappers; fixing the call
 
 **Validation:** `tests/issue-6969-parse-number-tostring.test.ts` 36 cases (module + Octane
 options): base 4/36 (the string controls), head 36/36. Repros `bx1/bx4/bx7/bx8` node-identical.
+
+## Review fix (2026-10-11): a Symbol argument must throw a TypeError
+
+Review P1 on PR #6649: `F.pi = function (y, r) { return parseInt(y, r) }; F.pi(Symbol("5"))`
+returned normally (0 from the `try`) where node throws a TypeError (1); `parseFloat` alike. Step 1
+of §19.2.4 / §19.2.5 is ABSTRACT ToString (§7.1.17), which throws for a Symbol. The fill used
+`__extern_toString`, which renders `Symbol(5)` because it also backs `String(sym)` (§22.1.1.1
+step 1.a, SymbolDescriptiveString) — the wrong contract here.
+
+**Fix:** the fill now calls the existing throwing provider `__extern_to_string_spec`
+(`ensureSpecExternrefToStringProvider`, coercion-engine.ts, #6651 B6 — the RegExp `@@` protocol's
+ToString). It throws for a Symbol input, a Symbol wrapper (`Object(sym)`), and a Symbol produced by
+ToPrimitive, and otherwise delegates to `__extern_toString` (ToPrimitive runs once, so an object's
+own conversion exception still propagates unchanged). Outside standalone/WASI or in a module with no
+`$Symbol` carrier it returns `__extern_toString` itself, so those modules are unchanged. Its `fctx`
+parameter is widened to `FunctionContext | null`: the finalize fill has no body to flush, and the
+standalone lanes it builds for carry no imports to shift.
+
+The `__any_to_string` arm (no object runtime) is not changed: every Symbol-carrying shape probed
+(member-held, plain helper, `any`-typed and `.ts` callers) builds the object runtime and takes the
+`__extern_toString` arm.
+
+**Not fixed here (pre-existing, outside this PR):** a DIRECT `parseInt(sym)` on a Symbol-typed
+binding is stringified at the call site (`call-identifier.ts` scalar-arg `emitToString`), not in the
+native; and `parseInt(x, radix)` converts `radix` at the call site before the native's ToString,
+so `parseInt(Symbol(), { valueOf() {…} })` runs `valueOf` first (node does not).

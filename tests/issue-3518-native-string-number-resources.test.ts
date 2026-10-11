@@ -626,6 +626,12 @@ function adapterFactory(text: string, trace: string[], fault?: string) {
         ctx.mod.functions.push(definition);
       },
     },
+    // (#6969 review) The throwing §7.1.17 ToString for the fill; never emission.
+    "./coercion-engine.js": {
+      ensureSpecExternrefToStringProvider: () => {
+        throw Error("#6969 fill-only helper reached during emission");
+      },
+    },
     "./registry/parse-number-delegates.js": {
       registerEmitNativeParseNumber: () => {
         trace.push("register-delegate");
@@ -840,6 +846,7 @@ describe("scanner complete historical donor receipts", () => {
       '{ op: "ref.test", typeIdx: ctx.nativeStrTypeIdx },',
     ],
     ["adapter", "const L_ANY = 12;", "const L_ANY = 13;"],
+    ["adapter", "ensureSpecExternrefToStringProvider(ctx, null) ?? externToStringIdx;", "externToStringIdx;"],
   ] as const)("rejects live %s mutation %s", (owner, before, after) => {
     const s = readSources();
     verifySources(s);

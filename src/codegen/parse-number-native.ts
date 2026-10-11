@@ -26,6 +26,7 @@ import {
 import { addFuncType } from "./registry/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3b) stable-regime minting
 import { registerEmitNativeParseNumber } from "./registry/parse-number-delegates.js";
+import { ensureSpecExternrefToStringProvider } from "./coercion-engine.js";
 import {
   buildDecimalPowerArrayType,
   buildDecimalPowerArrayInitializer,
@@ -193,9 +194,12 @@ export function fillParseNumberToStringArms(ctx: CodegenContext): void {
   const externToStringIdx = ctx.funcMap.get(EXTERN_TO_STRING_HELPER);
   let convert: Instr[] | undefined;
   if (externToStringIdx !== undefined && definedFuncAt(ctx, externToStringIdx) !== undefined) {
+    // Abstract ToString throws a TypeError for a Symbol (input, wrapper, or
+    // ToPrimitive result); `__extern_toString` renders one, as `String(sym)` must.
+    const toStringIdx = ensureSpecExternrefToStringProvider(ctx, null) ?? externToStringIdx;
     convert = [
       { op: "extern.convert_any" },
-      { op: "call", funcIdx: externToStringIdx },
+      { op: "call", funcIdx: toStringIdx },
       { op: "any.convert_extern" },
       { op: "ref.cast", typeIdx: anyStrTypeIdx },
     ];

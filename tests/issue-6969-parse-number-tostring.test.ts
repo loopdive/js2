@@ -59,6 +59,34 @@ const CASES: { name: string; expected: number; body: string }[] = [
     expected: 567,
     body: 'var a = [5, "6", 7.5]; function g(y) { return parseInt(y); } return g(a[0]) * 100 + g(a[1]) * 10 + g(a[2]);',
   },
+  // Review P1: step 1 is ABSTRACT ToString, which throws a TypeError for a
+  // Symbol (unlike `String(sym)`). The head rendered "Symbol(5)" and returned 0.
+  {
+    name: "member-held parseInt(Symbol) throws TypeError",
+    expected: 1,
+    body: 'try { F.pi(Symbol("5")); return 0; } catch (e) { return e instanceof TypeError ? 1 : 2; }',
+  },
+  {
+    name: "member-held parseFloat(Symbol) throws TypeError",
+    expected: 1,
+    body: 'try { F.pf(Symbol("5")); return 0; } catch (e) { return e instanceof TypeError ? 1 : 2; }',
+  },
+  {
+    name: "Symbol produced by ToPrimitive throws TypeError",
+    expected: 1,
+    body: 'try { F.pf({ toString: function () { return Symbol("5"); } }); return 0; } catch (e) { return e instanceof TypeError ? 1 : 2; }',
+  },
+  {
+    name: "control: the object conversion's own TypeError propagates",
+    expected: 1,
+    body: 'try { F.pi({ toString: function () { throw new TypeError("t"); } }); return 0; } catch (e) { return e instanceof TypeError && e.message === "t" ? 1 : 2; }',
+  },
+  {
+    name: "control: the object conversion's RangeError propagates unchanged",
+    expected: 1,
+    body: 'try { F.pf({ toString: function () { throw new RangeError("r"); } }); return 0; } catch (e) { return e instanceof RangeError ? 1 : 2; }',
+  },
+  { name: "control: parseFloat of a number value", expected: 72.5, body: "return n(F.pf(72.5));" },
   { name: "control: string argument", expected: 31, body: 'return n(F.pi("0x1F"));' },
   { name: "control: parseFloat string prefix", expected: 3.5, body: 'return n(F.pf(" 3.5x"));' },
 ];
