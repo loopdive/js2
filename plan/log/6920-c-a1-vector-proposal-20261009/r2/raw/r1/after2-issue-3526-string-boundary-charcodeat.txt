@@ -1,0 +1,13 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/issue-3526-string-boundary-charcodeat.test.ts (31 tests) 2075ms
+   ✓ #3526 F2-S7 end-to-end behaviour is unchanged > keeps the host lane's two wasm:js-string builtins in the same positions  782ms
+   ✓ #3526 F2-S7 end-to-end behaviour is unchanged > defines __str_charCodeAt with no wasm:js-string import on every native lane  406ms
+   ✓ #3526 F2-S7 end-to-end behaviour is unchanged > leaves the hoist/trusted arms byte-for-byte alone  622ms
+
+ Test Files  1 passed (1)
+      Tests  31 passed (31)
+   Start at  23:04:14
+   Duration  28.98s (transform 18.50s, setup 0ms, collect 26.48s, tests 2.08s, environment 0ms, prepare 70ms)
+
