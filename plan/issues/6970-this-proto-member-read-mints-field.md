@@ -142,3 +142,60 @@ Measured: `n8` (`typeof w.b2T` in the ctor under `new`) and `n11`/`n9` node-iden
 alone `bx28` still fails at the in-ctor `this.b2T` prototype read, which needs #6949/#6951
 (prototype materialization for every ordinary fnctor + construction-time snapshot), present
 on `c-octane-integ` but not yet on `main`.
+
+## Remaining (2026-10-11)
+
+**Octane box2d, measured on `c-octane-integ` (f7c1e86465) + #6969 + both #6970 commits**
+(`pnpm run -s benchmark:octane -- --only box2d --lanes node,standalone --timeout 900`; harness
+uses Script goal + `runtimeEvalProvider: false`): compiles (≈180 s), instantiates and passes
+module init (the #6969 `parseInt` trap is gone), then `octane_run` throws
+`TypeError: Cannot read properties of undefined (reading 'SetV')` — still the plan's
+`this.m_xf.position` site (`k.prototype.b2Body`), but for a NEW root cause, not this issue's:
+
+1. **Name-keyed fnctor ctor cache resolves a `var` alias to an unrelated same-named fnctor
+   (next box2d blocker; recommend a new issue).** `k.b2Body = function () { this.m_xf = new K; … }`
+   where `K` is `var K = Box2D.Common.Math.b2Transform` (the IIFE-nested wrapper `m`). The
+   execution trace (wasm-opt `--log-execution`) shows `new K` running `$__fnctor_K_new` — the
+   synthesized ctor of a DIFFERENT function named `K` declared in another IIFE (box2d's
+   minifier reuses `K`, `F`, `w`, `m` … in every IIFE). Instrumented: the object `new K` returns
+   is not the `this` the `w.b2Transform` initializer wrote `position`/`R` on, but carries
+   `constructor === b2Transform` (the hidden identity param is the real callee). Minimal repro
+   (`.tmp/n19.js`, fails on `main` too — node `number:undefined`, standalone `undefined:number`):
+   ```js
+   var NS = {};
+   (function () { function K() { this.wrong = 1; } NS.k = new K(); })();
+   (function () { function m() { this.right = 1; } NS.T = m; })();
+   (function () { var K = NS.T; NS.make = function () { return new K; }; })();
+   export function main() { var x = NS.make(); return typeof x.right + ":" + typeof x.wrong; }
+   ```
+   Cause: `compileNewExpression` (`expressions/new-super.ts`, identifier arm ~L7637) takes
+   `ctx.funcConstructorMap.get(calleeIdent.text)` — a cache keyed by identifier TEXT — before
+   checking that the callee's symbol is that function at all. The name keying runs through the
+   whole fnctor substrate (`__fnctor_<name>` structs, `funcConstructorMap`,
+   `nestedFuncCaptures`, `fnctorPrototypeObject` via `resolveUserFnctorName` → `sym.name`), so a
+   cache-only guard is not enough: a throwaway simulation that skips the cache when the callee's
+   declarations include no function declaration/expression made `new K` fall through to the
+   native construct driver, which then returned null for `n19` (the driver's
+   `resolveUserFnctorName` also answers by `sym.name`). Plan: key the fnctor registries by
+   declaration node (or a per-declaration unique name such as `K$<pos>`), and make the `new`
+   identifier arm resolve `getSymbolAtLocation(calleeIdent)` → declaration first, taking the
+   static fnctor path only when it IS a function declaration/expression and otherwise the native
+   construct driver with `proto = null`.
+
+2. **Split prototype brain for an IIFE-nested fnctor constructed through an alias** (`bx21`,
+   `.tmp/n10.js`; not on box2d's path — box2d writes `X.prototype.m` through the same aliases it
+   constructs with). `w.prototype.m = …` inside `w`'s own IIFE resolves to the per-fnctor
+   prototype global; `new Alias()` elsewhere goes through the native construct driver with
+   `proto = null` → `__extern_get(closure, "prototype")`, the closure side table — a different
+   object. `__closure_proto_of` (closure-prototype-edge.ts) only keys top-level singletons. Plan:
+   when a nested fnctor's closure value is materialised, seed its side-table `prototype` with the
+   (vivified) per-fnctor global, or add a per-closure arm to `__closure_proto_of`.
+
+3. On `main` alone `bx28` still fails at the in-ctor `this.b2T` prototype read; it passes once
+   #6949/#6951 (on `c-octane-integ`) land.
+
+Out-of-scope observations while measuring (all fail on `main` before this change):
+`function G(){this.v=7} G.prototype.get=function(){return this.v}; new G().get()` → standalone
+`NaN` (node 7); `function F(){var a=this.x; this.x=1; …}` reads the pre-write `this.x` as a
+number. `tests/issue-5162` standalone XFAIL rows and `tests/issue-2652` both lanes fail on
+`main` independently.
