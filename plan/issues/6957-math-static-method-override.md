@@ -1,7 +1,9 @@
 ---
 id: 6957
 title: "standalone: `Math.random = fn` (any `Math.<modelled method> = …` write) is accepted but every `Math.random()` call and `Math.random` value read still resolves to the builtin — Octane regexp `Wrong checksum.` (seeded RNG never used)"
-status: ready
+status: done
+completed: 2026-10-10
+assignee: ttraenkler/senior-dev
 sprint: current
 created: 2026-10-10
 priority: high
@@ -13,6 +15,14 @@ area: compiler
 language_feature: builtins, property-assignment
 goal: standalone-gap
 related: [874, 4199, 4639, 4565, 2907, 2984]
+loc-budget-allow:
+  - src/codegen/builtin-value-read.ts
+  - src/codegen/expressions/call-builtin-static.ts
+func-budget-allow:
+  - src/codegen/builtin-value-read.ts::ensureStandaloneBuiltinStaticMethodClosure
+  - src/codegen/expressions/call-builtin-static.ts::compileBuiltinStaticCall
+import-cycles-allow:
+  - largestSccSize: 704 # 2026-10-10 (#6957): new expressions/builtin-static-patched-call.ts joins the codegen SCC like every expressions/ sibling
 ---
 
 # `Math.<method>` patched by the program is ignored by the static Math lowering
@@ -93,3 +103,42 @@ Math.foo = function () { return 7; }; Math.foo()  // standalone: compile error `
 - `pnpm run -s benchmark:octane -- --only regexp --lanes standalone --timeout 300` → pass (also needs the
   harness Script-goal flag, #6937 step 4; measured: regexp compiles in ~32 s).
 - Size: **M**.
+
+## Implementation notes (2026-10-10)
+
+- **Predicate** — `isPatchedBuiltinStaticMember(ctx, ns, name)` (`source-scan-predicates.ts`)
+  scans every `ctx.callableSourceFiles` entry once (WeakMap per `SourceFile`) for writes to
+  `Math|JSON|Reflect.<name>` (`=`, compound, `++/--`, `delete`, literal-key element form). It
+  returns false outside standalone, so the gc lane and the #3437 harness compile-work budget
+  (a gc compile) never pay the walk. Scanning the whole source set (not the call site's file)
+  keeps multi-module programs correct.
+- **Call arm** — `expressions/builtin-static-patched-call.ts`, hooked at the `Math` arm of
+  `compileBuiltinStaticCall`: carrier (`emitBuiltinNamespaceObject`) → `__extern_get(carrier,
+  name)` → `__apply_closure(callee, this = Math, argsVec)`. Spread arguments decline to the
+  static lowering.
+- **Shadow test deviation** — the arm cannot use `isGlobalBuiltinIdentifier`: a top-level
+  `Math.random = fn` in a JS file makes TypeScript append the `Math` identifier to the lib
+  symbol's declarations, so that helper reads `Math` as user-declared exactly in the program
+  this fix is for. The arm filters those synthetic receiver declarations
+  (`isSyntheticPropertyAssignmentReceiverDeclaration`, now exported from `builtin-write-keeps.ts`).
+- **Value read** — `ensureStandaloneBuiltinStaticMethodClosure` declines for a patched member
+  only when called from the source read site (the one caller that passes `expr`), so the read
+  falls to `tryEmitBuiltinStaticExpandoRead`, whose static-method refusal is relaxed for patched
+  members. The carrier seeding still gets the closure.
+- **`Math.random` kernel** — the value closure gets the `Math_random` kernel (`() -> f64`) ONLY
+  in programs that patch `Math.random`; every other program keeps the generic throw body, so it
+  compiles byte-identically (the kernel would otherwise change every program that materializes
+  the Math carrier). Ungating it is a one-line follow-up if `var r = Math.random` in unpatched
+  programs is wanted.
+- **Top-level keep** — `isBuiltinNamespaceExpandoWriteTarget` keeps a top-level
+  `Math.<modelled method> = …` (the write now has a reader); constants stay dropped.
+
+### Pre-existing defects found (not fixed here, reproduce on base)
+- `Math.max = function (a, b) {…}` (top level or in a body) → `Binary emit error: RangeError:
+  Invalid array length` on standalone (contextual typing from the variadic lib signature).
+- `function g() { var Math = { random() { return 3; } }; return Math.random(); }` returns the
+  builtin PRNG: the `Math` arm of `compileBuiltinStaticCall` calls `compileMathCall` with no
+  shadow check.
+- Unverified (blocked by the `Math.max` crash above): a plain alias of a patched variadic
+  static (`var m = Math.max; m(…)`) may still route through `builtin-static-plain-alias.ts`'s
+  static closure ABI rather than the carrier.

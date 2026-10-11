@@ -194,6 +194,10 @@ export function isBuiltinNamespaceExpandoWriteTarget(left: ts.Expression, ctx: B
   const ns = base.text;
   if (!EXPANDO_NAMESPACES.has(ns)) return false;
   if (ctx.moduleGlobals.has(ns) || ctx.topLevelFunctionNames.has(ns) || ctx.classSet.has(ns)) return false;
+  // (#6957) `Math.random = fn` now HAS a reader: this very write marks the
+  // member patched (`isPatchedBuiltinStaticMember`), so its call sites and value
+  // reads consult the carrier the write lands on. The constants stay dropped.
+  if (ns === "Math" && BUILTIN_STATIC_METHOD_ARITY.Math?.[propName] !== undefined) return true;
   return !isOwnStaticSurface(ns, propName);
 }
 
@@ -213,7 +217,7 @@ export function shouldKeepBuiltinReceiverWrite(ctx: BuiltinWriteKeepCtx, left: t
  * Identifier to an ambient symbol's `declarations`. That is an assignment use,
  * not a shadowing declaration.
  */
-function isSyntheticPropertyAssignmentReceiverDeclaration(declaration: ts.Declaration): boolean {
+export function isSyntheticPropertyAssignmentReceiverDeclaration(declaration: ts.Declaration): boolean {
   if (!ts.isIdentifier(declaration)) return false;
   const member = declaration.parent;
   if (!ts.isPropertyAccessExpression(member) || member.expression !== declaration) return false;
