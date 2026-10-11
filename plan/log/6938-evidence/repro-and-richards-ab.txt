@@ -1,0 +1,60 @@
+== base r11
+[gc] RUNTIME WebAssembly.Exception payload=TypeError: Cannot access property on null or undefined at 33:10
+[standalone] RUNTIME TypeError: Cannot access property on null or undefined at 33:10
+== base r15
+[gc] RUNTIME WebAssembly.Exception payload=TypeError: Cannot access property on null or undefined at 39:10
+[standalone] RUNTIME TypeError: Cannot access property on null or undefined at 39:10
+== base r0c
+[gc] main -> 1
+[standalone] main -> 1
+== base m1
+[gc] main -> 11
+[standalone] main -> 11
+== base m2
+[gc] main -> 11
+[standalone] main -> 0
+== base m3
+[gc] main -> 2
+[standalone] RUNTIME TypeError: Cannot access property on null or undefined at 12:3
+== base m5
+[gc] main -> 7
+[standalone] RUNTIME TypeError: called value is not a function
+== base m6
+[gc] main -> 1
+[standalone] main -> 1
+== base rich-stub
+[gc] RUNTIME TypeError: Cannot access property on null or undefined at 534:3
+[standalone] RUNTIME dereferencing a null pointer
+== base rich-base
+[gc] RUNTIME TypeError: Cannot access property on null or undefined at 925:3
+[standalone] RUNTIME dereferencing a null pointer
+== new r11
+[gc] main -> 2
+[standalone] main -> 2
+== new r15
+[gc] main -> 3
+[standalone] main -> 3
+== new r0c
+[gc] main -> 1
+[standalone] main -> 1
+== new m1
+[gc] main -> 11
+[standalone] main -> 11
+== new m2
+[gc] main -> 11
+[standalone] main -> 11
+== new m3
+[gc] main -> 23
+[standalone] main -> 23
+== new m5
+[gc] main -> 7
+[standalone] RUNTIME TypeError: called value is not a function
+== new m6
+[gc] main -> 1
+[standalone] main -> 0
+== new rich-stub
+[gc] main -> 1
+[standalone] RUNTIME TypeError: called value is not a function
+== new rich-base
+[gc] main -> 1
+[standalone] RUNTIME TypeError: called value is not a function
