@@ -1,7 +1,8 @@
 ---
 id: 6951
 title: "Standalone: a dynamic `ctor.prototype = v` write lands in the closure's property bag, and `[[Prototype]]` is resolved live through the per-name global instead of snapshotted at construction (Octane deltablue; standalone half of #6945)"
-status: ready
+status: in-progress
+assignee: ttraenkler/senior-dev
 sprint: current
 created: 2026-10-10
 priority: high
@@ -13,6 +14,14 @@ area: compiler
 language_feature: constructor-functions, prototype-chain
 goal: standalone-gap
 related: [874, 6945, 6949, 6944]
+loc-budget-allow:
+  # 2026-10-11 (+26): the per-fnctor method-cache arm in
+  # `fillFnctorPrototypeDispatchArms` must compare its cache owner against the
+  # RECEIVER's snapshot link (a new local + an `$Object` test before the casts),
+  # and `__fnctor_proto_start` gains its snapshot read. The link builder and the
+  # reservation predicate live in fnctor-identity-fields.ts; only the call
+  # sites and the arm rewiring stay in object-runtime.ts.
+  - src/codegen/object-runtime.ts
 ---
 
 # #6951 — standalone dynamic prototype write and construction-time prototype snapshot
@@ -119,3 +128,67 @@ GetPrototypeFromConstructor exactly.
 `fnctor-constructor-identity.ts`, `object-runtime.ts`, `dynamic-proto.ts`,
 `program-abi-fnctor-*.ts`, `carrier-bag-delete.ts` — all Session A's area; needs
 A's release. Size: L (G2 ~60 lines, G3 ~120 lines + ABI/test updates).
+
+## Implementation notes (2026-10-11, branch `claude/standalone-dynamic-proto-write`, stacked on #6949)
+
+**G2** (`closure-prototype-edge.ts`, `closure-props.ts`). New reserve-then-fill
+`__closure_proto_set(target, value) -> i32`, the write twin of
+`__closure_proto_of`: an `ref.eq` identity match against each FNCTOR prototype
+edge stores `__proto_from_function(value)` into that fnctor's global (the same
+store `tryCompileFnctorPrototypeAssign` performs) and answers 1. The
+closure-props `prototype` write arm calls it before the bag write; 0 keeps the
+bag write. Class edges are excluded (a class `prototype` is non-writable).
+Non-object values are stored as-is, matching the static path.
+
+**G3** (`fnctor-identity-fields.ts`, `fnctor-constructor-identity.ts`,
+`object-runtime.ts`, `program-abi-fnctor-{planning,producer}.ts`).
+- Layout: standalone fnctor structs gain `$__fnctorProto` (mutable externref)
+  right after `$constructor`. Not named `$proto`: a user `this.$proto` field
+  would collide by name. `exposedClosedStructFieldName` hides it (`$` prefix);
+  `carrier-bag-delete.ts` needs no change (not source-recorded ⇒ no physical
+  name). The program-ABI Parser layout is now input/`$constructor`/
+  `$__fnctorProto`/`$bag`.
+- Init: `emitFnctorFieldInitializers` resolves the ctor's fnctor name from
+  `fctx.newTargetValueNode` (no signature change at the new-super.ts call
+  site), builds `emitFnctorProtoGet` into a detached body that only runs while
+  the global is null, and snapshots `global.get` (canonical storage form) into a
+  local BEFORE any `struct.new` operand is pushed.
+- Lookup: `fnctorProtoLinkInstrs` reads the snapshot, falling back to the live
+  global when the slot is null — the split-layout path
+  (`emitLayoutSelectingStructNew`, not in this issue's file list) default-inits
+  the slot to null and therefore keeps the pre-#6951 live answer.
+  `__fnctor_proto_start` and the per-fnctor inline method cache in
+  `__extern_method_call` both use it; the cache now also `ref.test`s the link as
+  `$Object` before its two casts.
+- **Widening that the plan did not name:** `__fnctor_proto_start` was reserved
+  only when the escape gate APPROVED some fnctor. Since #6949 every constructed
+  ordinary fnctor has a global, so a module whose `new F()` sites are all
+  keep-static (db30's `return new Inheriter()`) had no ladder at all — reads
+  missed and `Object.getPrototypeOf` answered null. It is now reserved when the
+  gate has any constructed fnctor (`fnctorProtoStartNeeded`). Four existing
+  tests pinned the old wrong answers and were tightened to node's
+  (es5-standalone-instanceof residual → 1, #2660 S3 struct-binding guard → 7,
+  #4155 two `it.fails` → `it`, #5162 standalone XFAILs → 10).
+
+**Measured** (base = this branch's #6949 commit, head = G2+G3, file-copy A/B):
+- `tests/issue-6951-dynamic-proto-write-snapshot.test.ts`: base 4/10, head 10/10.
+- Related tests (374 top-level files grepping fnctor/program-abi/closure-prop/
+  setPrototypeOf/`.prototype =`, plus 5 under tests/ir and tests/equivalence):
+  pass→fail 0 after the test updates above; fail→pass: the 4 pinned files plus
+  #5162's four former XFAILs. `issue-3518-native-mixed-object-access` fails
+  identically on base (timeouts).
+- `node scripts/equivalence-gate.mjs`: no new regressions (22 known failures).
+
+### Remaining
+- `Object.setPrototypeOf(inst, p)` / `__proto__ =` on a `$__fnctor_F` receiver
+  (plan item for `dynamic-proto.ts`) is NOT implemented: the slot is mutable,
+  but an explicit null link needs a sentinel distinct from "no snapshot".
+- A CLOSED object-literal prototype installed dynamically (`var p = {t:7};
+  setp(D, p)`) is linked correctly (`getPrototypeOf(d) === p`) but `d.t` reads
+  undefined on this branch: the `__extern_get` walk only continues through an
+  `$Object` link. #6944 (`fnctor-struct-proto-hop.ts`, not on main) re-enters
+  the walker on struct links; db19/db27 (deltablue `inheritsFrom`) likewise
+  need #6944.
+- The array-prototype helpers (`fnctor-array-prototype.ts`) and
+  `fnctor-missing-method-dispatch.ts` still read the live global.
+- The acorn +4 bytes/instance measurement (acceptance 4) was not taken.
