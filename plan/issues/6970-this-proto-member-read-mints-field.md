@@ -1,7 +1,8 @@
 ---
 id: 6970
 title: "standalone: a `this.<m>` VALUE read inside a fnctor constructor (`this.init.apply(this, arguments)`) auto-registers `m` as an OWN struct field from the TS instance type, shadowing `F.prototype.m` → undefined (box2dweb `K.b2X.apply(this,arguments); this.constructor===K&&this.b2X.apply(this,arguments)` idiom, 48 sites in Octane box2d)"
-status: ready
+status: in-progress
+assignee: ttraenkler/claude-session-d
 sprint: current
 created: 2026-10-11
 priority: high
@@ -13,6 +14,8 @@ area: compiler
 language_feature: constructor-functions, prototype
 goal: standalone-gap
 related: [874, 6938, 5180, 2660, 6951, 6954]
+loc-budget-allow:
+  - src/codegen/property-access-dispatch.ts
 ---
 
 # `finalizeStructAndDynamicMemberGet` mints a struct field for a prototype method read through `this`
@@ -96,3 +99,23 @@ reaches this arm (method-call dispatch has prototype arms), which is why only VA
   .tmp/patch-box2d-parseint.mjs` (compile ≈200 s) must pass `m_xf.position`; then the harness
   `pnpm run -s benchmark:octane -- --only box2d --lanes node,standalone --timeout 600`.
 - Size: **M** (S for step 1 alone; the nested-fnctor residual is the M half).
+
+## Implementation notes (2026-10-11)
+
+### Step 1 — `this.<m>` read of a prototype member (property-access-dispatch.ts)
+
+On `origin/main` the #6938 guard (`fnctorProtoMemberRead`, non-`this` receivers) is not present
+(it lives on `c-octane-integ`), so the step-1 decline is NOT a widening of that guard: it is a
+separate module-level predicate `isThisReadOfFnctorPrototypeMember(typeName, expr, tsProp)`
+consulted at the field auto-register arm (`if (tsProp && !isThisReadOfFnctorPrototypeMember(…))`).
+That keeps the change orthogonal to #6938 — the two compose without a textual conflict on the
+`if (typeName && …)` line. The predicate is true for a `__fnctor_*` struct, a `this` receiver,
+and a TS property whose declarations are non-empty and include no `this`-rooted write
+(`this.p = …` / `this[p] = …`); the read then takes the existing dynamic `__extern_get` route.
+No checker query is added (it reads `tsProp.declarations` of the symbol the arm already holds).
+
+Measured (standalone, Script goal, no eval provider): `bx18/bx17/bx23/bx10` node-identical on
+`main`; on `c-octane-integ` additionally `bx26` → `true:false` (on `main` `bx26` reads
+`true:true`: the in-ctor `__extern_get(this,"init")` misses because `main` lacks #6949/#6951's
+prototype materialization/snapshot). Controls `bx22/bx25/bx11/bx13/bx27/bx29/bx30` unchanged.
+`tests/issue-6970-this-proto-member-read.test.ts`: base 8/16, head 16/16.
