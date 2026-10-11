@@ -1,11 +1,10 @@
 {
   "id": "6971",
-  "assignee": "",
+  "assignee": "ttraenkler/claude-session-d",
   "requested_by": "ttraenkler/claude-session-d",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-10-11T13:30:06Z",
-  "updated_at": "2026-10-11T13:30:06Z",
-  "write_id": "7247-l3f04838",
-  "pr_scan": "degraded"
+  "status": "in-progress",
+  "branch": "claude/standalone-closure-bag-perf",
+  "claimed_at": "2026-10-11T13:30:11Z",
+  "updated_at": "2026-10-11T13:30:11Z",
+  "write_id": "7369-5vf4qno9"
 }
