@@ -1,7 +1,7 @@
 ---
 id: 6949
 title: "standalone: a constructed fnctor that the escape gate does not APPROVE gets no prototype object — its `F.prototype.m = …` statements are dropped at module init and `__fnctor_proto_start` has no arm for `$__fnctor_F`, so any instance reaching a dynamic `inst.m()` throws `called value is not a function` (Octane richards, crypto)"
-status: in-progress
+status: ready
 sprint: current
 created: 2026-10-10
 priority: high
@@ -174,48 +174,3 @@ Standalone only (`ctx.standalone || ctx.wasi`); host lane already returns early 
 `src/codegen/expressions/fnctor-prototype.ts` (`resolveUserFnctorName`,
 `isOrdinaryFunctionSymbol`) is in Session A's WasmGC/shared-IR area; needs A's
 release. No other file changes.
-
-## Implementation notes (2026-10-11)
-
-`resolveUserFnctorName` (standalone/WASI) now admits an APPROVED name (as before)
-or any ordinary, non-class user function once the escape gate exists. Approved
-names stay admitted unconditionally, so an approved fnctor whose declaration
-shape `isOrdinaryFunctionSymbol` does not recognise keeps its prototype. The
-defineProperty-install scan and the #4480 never-constructed arm are subsumed by
-the ordinary arm and deleted (file: +22 / −66).
-
-Why it is safe now: `fillFnctorPrototypeDispatchArms` emits the
-`$__fnctor_F → __fnctor_proto_F` arm for every name in `ctx.fnctorPrototypeObject`,
-so the instance link and the `F.prototype` global are the same object for every
-constructed fnctor. The split brain the #2660 S2 gate protected against no
-longer exists. Typed twins (`resolveLiftedMethodThisStruct`) stay approval-gated.
-
-Measured (base = origin/main + plan, head = this fix, file-copy A/B):
-- `tests/issue-6949-fnctor-proto-unapproved.test.ts`: base 4/7, head 7/7.
-- test262 standalone targeted sample (1,351 rows: every test262 file assigning
-  `X.prototype[.p] =`, all `harness/*.js`, `Array/prototype/*/create-*`, plus the
-  prototype/constructor/instanceof/getPrototypeOf rows): base 1193 pass / 139
-  fail / 19 CE, head identical, zero per-row flips (criterion 4 holds on the sample).
-- 167 related fnctor/prototype test files: 0 pass→fail, 15 fail→pass.
-- equivalence gate: no new regressions (1748 passing, floor 1740).
-- Octane, on `c-octane-integ` + this fix, `--lanes node,standalone`:
-  richards runtime-error → pass (338, node 31421); crypto runtime-error → pass
-  (57, node 16105). Criterion 3: crypto completes.
-
-## Remaining
-
-- **A module with NO approved fnctor has no `__fnctor_proto_start` ladder at all.**
-  `ensureObjectRuntime` (`src/codegen/object-runtime.ts`, the
-  `(ctx.fnctorEscapeGate?.approvedNames.size ?? 0) > 0` reservation) reserves it
-  only when at least one fnctor is approved. So `.tmp/c1.js` verbatim (Arcfour is
-  the only fnctor, constructed only in `return` position) still throws `called
-  value is not a function`; adding any approved fnctor to the module makes it
-  print `11,12`. Fix: reserve the ladder when the gate has any constructed
-  ordinary fnctor (e.g. `ctorDeclByName.size > 0`). That is outside the released
-  file scope (needs `object-runtime.ts`). Real Octane benchmarks always have an
-  approved fnctor, so richards and crypto are unaffected.
-- `.tmp/r4.js` verbatim prints `2,true` only with the other `c-octane-integ` fixes
-  (on plain main it fails earlier with a null dereference, same on base and head).
-- `.tmp/db30a.js` (`function mk(p){ function Inheriter(){} Inheriter.prototype = p; return new Inheriter(); }`)
-  still answers `undefined`: a function-scope fnctor whose prototype is
-  reassigned per call. That is the #6945 standalone half, not this gate.
