@@ -1,8 +1,9 @@
 ---
 id: 6950
 title: "A top-level `o.F.prototype.m = …` statement (constructor held in a member, `T.Node = function…`) is dropped by the module-init keep gate on both lanes — `new T.Node().m()` throws `called value is not a function` (Octane splay teardown; #6943 follow-up)"
-status: in-progress
-assignee: ttraenkler/senior-dev
+status: done
+completed: 2026-10-11
+assignee: ttraenkler/claude-session-d
 sprint: current
 created: 2026-10-10
 priority: high
@@ -125,3 +126,11 @@ The generic "assignment to a module global" check then drops the statement.
 
 `src/codegen/declarations.ts` (`collectDeclarations` top-level assignment arms) is
 Session A's area; needs A's release. ~15 lines.
+
+## Result (2026-10-11)
+
+Octane splay passes on `--target standalone`: `pnpm run -s benchmark:octane -- --only splay --lanes standalone`
+reports `pass`, measured on this fix merged with the other open Octane fix PRs.
+- New test: `tests/issue-6950-member-held-fnctor-proto-keep.test.ts`, 7/7.
+- `tests/issue-3518-native-invocation-consumer.test.ts`: 61/61. Under load, 7 rows exceeded the 35 s timeout; they pass with `--testTimeout=180000`.
+- Every quality gate passes, including with `LOC_GATE_BASE` set to the origin/main tip.
