@@ -1,10 +1,11 @@
 ---
 id: 6777
 title: "codegen: `in` on array carriers — type-confused lowering (invalid module on `any[]`), wrong answers on holes/`delete`, non-boolean result"
-status: in-progress
+status: done
 sprint: Backlog
 created: 2026-09-30
 updated: 2026-10-11
+completed: 2026-10-11
 assignee: "ttraenkler/pr6383-repair"
 branch: "claude/issue-6777-in-array-carrier"
 priority: critical
@@ -342,3 +343,28 @@ exists, rerun the ordinary full changed-root hook with correct ancestry;
 no hook/script/baseline/expectation is weakened. Logs and exact failure-name
 comparison are `.tmp/publication-commit.log`, `.tmp/main-c1-control.log` and
 `.tmp/precommit-main-control-comparison.json`.
+
+### Merge-ready implementation diff (2026-10-11)
+
+The source reconciliation is committed as
+`726af5cae2b57e2c711ec951aa39d274dd338ed1`, preserving both original PR
+`ee3eaeb5035eb6a23f7f2f7f2f96fc64e460cd7b` and canonical main 324df7 as
+parents. The ordinary full changed-root hook, rerun with the corrected
+ancestry and no skip option, now selects only the actual PR regression file
+and passes **39/39**; the ordinary oracle ratchet also passes. The authorized
+tracked inventory and its guard suite pass (**261/261**). Both newer source
+gates remain unchanged: largest SCC **703**, top-level codegen files **830**.
+
+Fresh canonical main is `74949505ddda90b7dba112197a9c7880cf002e3d`.
+Its incoming changes are README and benchmark artifacts only; the ordinary
+catch-up merge retains that history and the same validated compiler source.
+The original four reviewed observable rows are covered by the retained
+regressions. The previously recorded general raw-boolean export/grow-gap
+and carrier-store limitations remain explicitly outside this finite repair.
+
+Per the implementation-PR lifecycle rule this merge-ready diff carries
+`status: done` and `completed: 2026-10-11`. It does **not** claim that the
+change has landed on main: publication, CI and protected queue/merge are
+owned by the parent shepherd. The source and final catch-up commits use the
+human's PR-specific unsigned exception; normal hooks and all required gates
+stay active. Earlier failed-hook/signing/main-control logs are preserved.
