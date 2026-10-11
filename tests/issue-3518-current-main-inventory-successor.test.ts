@@ -543,10 +543,12 @@ function withAuthorityFault(
   if (failures.length === 1) throw failures[0];
 }
 
-function acceptAll(p = policy(), text = raw()): void {
+function acceptAll(p?: Policy, text?: string): void {
+  const currentText = text === undefined ? raw() : text;
+  const currentPolicy = p === undefined ? (text === undefined ? (JSON.parse(currentText) as Policy) : policy()) : p;
   expect(authenticateCurrentMainInventoryEvolution()).toEqual(expected);
-  const previous = beforeCurrentMainInventoryPolicy(p);
-  const previousRaw = beforeCurrentMainInventoryPolicySource(text);
+  const previous = beforeCurrentMainInventoryPolicy(currentPolicy);
+  const previousRaw = beforeCurrentMainInventoryPolicySource(currentText);
   expect(JSON.parse(previousRaw)).toEqual(previous);
   expect(authenticateGeneratorInventoryPolicy(previous)).toEqual(previous);
 }
