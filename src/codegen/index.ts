@@ -5334,7 +5334,10 @@ export function generateModule(
     ctx.runtimeEvalCallableBoundaryEnabled = true;
   }
   const sourceFileInternal = ast.sourceFile as ts.SourceFile & { externalModuleIndicator?: ts.Node };
-  ctx.sourceIsModule = sourceFileInternal.externalModuleIndicator !== undefined;
+  // (#6937) `inferModuleStrictArguments: false` = synthetic `export` on a SCRIPT; the
+  // top-level goal must follow it like function strictness does (see #6937).
+  ctx.sourceIsModule =
+    sourceFileInternal.externalModuleIndicator !== undefined && ctx.inferModuleStrictArguments !== false;
   recordSourceGlobalEnvironment(ctx, ast.sourceFile);
   // (#5383 S23 / #6610) Demand for the number-PRIMITIVE method-call arm.
   noteNumberPrimitiveMethodDemand(ctx, ast.sourceFile);
