@@ -7,7 +7,7 @@ import {
   parseUnicodeBcp47LocaleIdentifier,
   type IntlLocaleCanonicalizationData,
   validateIntlLocaleCanonicalizationData,
-} from "../src/codegen/helpers/intl-locale-canonicalization.js";
+} from "../src/shared/intl-locale-canonicalization.js";
 
 const localeData: IntlLocaleCanonicalizationData = {
   schemaVersion: 1,

@@ -28,7 +28,7 @@ This is a bounded prerequisite for the standalone user-visible `Intl` work in
 It owns only a new pure compiler-consumable semantic module, its focused unit
 tests, and this record:
 
-- `src/codegen/helpers/intl-locale-canonicalization.ts`;
+- `src/shared/intl-locale-canonicalization.ts`;
 - `tests/issue-6809-intl-locale-canonicalization.test.ts`; and
 - this issue file.
 
@@ -292,7 +292,7 @@ It must coordinate the held identifier/static-call/array-like/object-runtime
 surfaces before editing them. No claim in this record changes #6717's broader
 completion status.
 
-Inventory note: `src/codegen/helpers/intl-locale-canonicalization.ts` is recorded as
+Inventory note: `src/shared/intl-locale-canonicalization.ts` is recorded as
 `unmigrated` migration debt targeting `backend-wasmgc`. The module is a pure,
 data-injected kernel with no imports, but it is not a clean-layer activation:
 there is still no generated source table, `%Intl%` route, generic locale-list
