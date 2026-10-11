@@ -45,6 +45,7 @@
  *     slot and re-open the split from the other side.
  */
 import { ts } from "../ts-api.js";
+import type { CodegenContext } from "./context/types.js";
 
 /** Per-`ts.Symbol` memo; entries die with the program the symbols came from. */
 const cache = new WeakMap<ts.Symbol, ts.FunctionExpression | null>();
@@ -150,7 +151,17 @@ export function fnctorDeclFromSymbol(
   sym: ts.Symbol,
   checker?: ts.TypeChecker,
 ): ts.FunctionDeclaration | ts.FunctionExpression | undefined {
-  for (const decl of sym.getDeclarations() ?? []) {
+  return (
+    fnctorDeclFromDeclarations(sym.getDeclarations() ?? []) ??
+    (checker ? lateAssignedFunctionExpression(checker, sym) : undefined)
+  );
+}
+
+/** The syntactic arms of {@link fnctorDeclFromSymbol}, over a binding's declarations. */
+function fnctorDeclFromDeclarations(
+  decls: readonly ts.Declaration[],
+): ts.FunctionDeclaration | ts.FunctionExpression | undefined {
+  for (const decl of decls) {
     if (ts.isFunctionDeclaration(decl) && decl.body) return decl;
     if (ts.isFunctionExpression(decl) && decl.body) return decl;
     if (ts.isVariableDeclaration(decl) && decl.initializer) {
@@ -159,5 +170,36 @@ export function fnctorDeclFromSymbol(
       if (ts.isFunctionExpression(init) && init.body) return init;
     }
   }
-  return checker ? lateAssignedFunctionExpression(checker, sym) : undefined;
+  return undefined;
+}
+
+type FuncConstructorEntry = CodegenContext["funcConstructorMap"] extends Map<string, infer V> ? V : never;
+
+/** The fnctor body a `new <ident>` callee binds to, resolved through import aliases. */
+function calleeFnctorDecl(ctx: CodegenContext, ident: ts.Identifier): ts.Node | undefined {
+  const direct = fnctorDeclFromDeclarations(ctx.oracle.declarationsOf(ident));
+  if (direct !== undefined) return direct;
+  const aliased = ctx.oracle.aliasedValueDeclarationOf(ident);
+  return aliased === undefined ? undefined : fnctorDeclFromDeclarations([aliased]);
+}
+
+/**
+ * (#6974) The cached synthesized constructor for `new <ident>` — but only when
+ * `ident` itself binds a function body.
+ *
+ * `funcConstructorMap` is keyed by bare identifier text, and a bare name does
+ * not identify a function: Octane box2d's minifier declares `function K(){}` in
+ * one IIFE and `var K = Box2D.Common.Math.b2Transform` in many others, so a
+ * name-only hit made every `new K` run the empty `K`'s synthesized ctor. An
+ * alias, a parameter or any other non-function binding now answers `undefined`
+ * and constructs from its runtime value (the native construct driver).
+ *
+ * A DIFFERENT same-named function declaration still shares the entry: the
+ * reserved struct, the checker-type → struct mapping and the prototype edges
+ * are all keyed by the same name, so routing it elsewhere only trades one wrong
+ * answer for another (see the issue file's "Remaining").
+ */
+export function funcConstructorForCallee(ctx: CodegenContext, ident: ts.Identifier): FuncConstructorEntry | undefined {
+  const entry = ctx.funcConstructorMap.get(ident.text);
+  return entry !== undefined && calleeFnctorDecl(ctx, ident) !== undefined ? entry : undefined;
 }
