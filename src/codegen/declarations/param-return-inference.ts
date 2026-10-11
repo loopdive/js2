@@ -14,6 +14,7 @@ import { numericAdmissionEnabled } from "../analysis/mixed-assignment-carrier.js
 import { isStandalonePromiseActive } from "../async-scheduler.js";
 import { isStandaloneClassProtoObjectExpression } from "../class-proto-object.js"; // (#6767) C.prototype is an $Object
 import { hasAsyncModifier, resolveWasmType } from "../index.js";
+import { newExpressionReconstructsAsObject } from "../fnctor-instance-object-slot.js"; // (#6958)
 import { overlayRouteActive } from "../typed-lane-overlay-route.js";
 import { getVecInfo } from "../type-coercion.js";
 import { paramReceivesOnlyProvenanceClosedArrayLiterals } from "./provenance-closed-arrays.js";
@@ -938,10 +939,144 @@ export function inferParamTypeFromCallSites(
   // (already-accepted) risk profile, so the blast radius stays confined to the
   // trapping case.
   const escapesAsValue = functionNameEscapesAsValue(funcName, sourceFile);
-  if (escapesAsValue && type !== null && (type.kind === "ref" || type.kind === "ref_null")) {
-    type = null;
-  }
+  if (escapesAsValue && type !== null && (type.kind === "ref" || type.kind === "ref_null")) type = null;
+  if (type !== null && userObjectStructDomainUnproven(ctx, type, funcName, paramIndex, sourceFile)) type = null;
   return { type, sawCallSite, escapesAsValue, sawUnderApplied };
+}
+
+/**
+ * (#6958) Soundness for a parameter narrowed to a USER object struct
+ * (`$__fnctor_F` or a class struct) from call-site argument types. The checker
+ * type at a call site is a hint about the argument, not a fact about the
+ * parameter's runtime domain, and the ABI boundary for a struct narrowing is a
+ * GUARDED cast that turns a violating value into a silent `ref.null` — which
+ * surfaced as Octane earley-boyer's `sc_display(o, p)` reading
+ * `p.appendJSString` of undefined. Two holes, each withdrawing to `externref`
+ * (the method call then takes the dynamic dispatch route):
+ *
+ *  1. the body WRITES the parameter (`if (p === undefined) p = OUT;`): its
+ *     domain is then also whatever the body stores, which the call sites say
+ *     nothing about (earley-boyer stores an instance of a different fnctor);
+ *  2. some `new F()` site of the agreed fnctor is lowered to a native `$Object`
+ *     (#2660 S3a), so `F` has two runtime representations and the struct-typed
+ *     parameter accepts only one of them (`var OUT = new Port(); f(OUT)`).
+ *
+ * Scalar and non-user-struct narrowings (strings, vecs) are untouched.
+ */
+function userObjectStructDomainUnproven(
+  ctx: CodegenContext,
+  type: ValType,
+  funcName: string,
+  paramIndex: number,
+  sourceFile: ts.SourceFile,
+): boolean {
+  if (type.kind !== "ref" && type.kind !== "ref_null") return false;
+  const structName = ctx.typeIdxToStructName.get(type.typeIdx);
+  if (structName === undefined) return false;
+  const fnctorName = structName.startsWith("__fnctor_") ? structName.slice("__fnctor_".length) : undefined;
+  if (fnctorName === undefined && !ctx.classSet.has(structName)) return false;
+  if (fnctorName !== undefined && fnctorHasReconstructedObjectSite(ctx, fnctorName)) return true;
+  return paramWrittenInBody(ctx, funcName, paramIndex, sourceFile);
+}
+
+/** (#6958 hole 2) Does any `new <fnctorName>()` site lower to a native `$Object`? */
+function fnctorHasReconstructedObjectSite(ctx: CodegenContext, fnctorName: string): boolean {
+  const gate = ctx.fnctorEscapeGate;
+  if (gate === undefined) return false;
+  for (const [site, name] of gate.siteCtorName) {
+    if (name === fnctorName && newExpressionReconstructsAsObject(ctx, site)) return true;
+  }
+  return false;
+}
+
+/**
+ * (#6958 hole 1) Is parameter `paramIndex` of any function declaration named
+ * `funcName` written anywhere in its body (nested closures included)? Fails
+ * closed: a non-identifier (destructured) parameter answers false only because
+ * it cannot be narrowed to a struct as a whole, and any `arguments[…]` write
+ * counts as a write (sloppy mapped arguments alias the parameters).
+ */
+function paramWrittenInBody(
+  ctx: CodegenContext,
+  funcName: string,
+  paramIndex: number,
+  sourceFile: ts.SourceFile,
+): boolean {
+  let written = false;
+  const scanBody = (param: ts.ParameterDeclaration, body: ts.Node): void => {
+    const paramName = ts.isIdentifier(param.name) ? param.name.text : undefined;
+    const visit = (node: ts.Node): void => {
+      if (written) return;
+      if (ts.isIdentifier(node) && isIdentifierWritePosition(node)) {
+        if (node.text === "arguments") written = true;
+        else if (node.text === paramName && ctx.oracle.valueDeclarationOf(node) === param) written = true;
+      } else if (
+        ts.isElementAccessExpression(node) &&
+        ts.isIdentifier(node.expression) &&
+        node.expression.text === "arguments" &&
+        isIdentifierWritePositionExpr(node)
+      ) {
+        written = true;
+      }
+      forEachChild(node, visit);
+    };
+    visit(body);
+  };
+  const find = (node: ts.Node): void => {
+    if (written) return;
+    if (ts.isFunctionDeclaration(node) && node.name?.text === funcName && node.body) {
+      const param = node.parameters[paramIndex];
+      if (param !== undefined) scanBody(param, node.body);
+    }
+    forEachChild(node, find);
+  };
+  find(sourceFile);
+  return written;
+}
+
+function isIdentifierWritePosition(id: ts.Identifier): boolean {
+  const parent = id.parent;
+  if (parent !== undefined && ts.isVariableDeclaration(parent) && parent.name === id) {
+    return parent.initializer !== undefined;
+  }
+  if (parent !== undefined && ts.isShorthandPropertyAssignment(parent) && parent.name === id) {
+    return isIdentifierWritePositionExpr(parent.parent);
+  }
+  return isIdentifierWritePositionExpr(id);
+}
+
+/** Is `expr` (possibly nested inside a destructuring pattern) an assignment target? */
+function isIdentifierWritePositionExpr(expr: ts.Node): boolean {
+  let node: ts.Node = expr;
+  let direct = true; // only parentheses between `expr` and `node` so far
+  for (let parent = node.parent; parent !== undefined; node = parent, parent = parent.parent) {
+    if (ts.isParenthesizedExpression(parent)) continue;
+    if (ts.isPrefixUnaryExpression(parent) || ts.isPostfixUnaryExpression(parent)) {
+      const op = parent.operator;
+      return direct && (op === ts.SyntaxKind.PlusPlusToken || op === ts.SyntaxKind.MinusMinusToken);
+    }
+    if (ts.isForInStatement(parent) || ts.isForOfStatement(parent)) return parent.initializer === node;
+    if (ts.isBinaryExpression(parent)) {
+      const kind = parent.operatorToken.kind;
+      if (parent.left === node && kind >= ts.SyntaxKind.FirstAssignment && kind <= ts.SyntaxKind.LastAssignment) {
+        return true;
+      }
+      return false;
+    }
+    direct = false;
+    if (
+      ts.isArrayLiteralExpression(parent) ||
+      ts.isObjectLiteralExpression(parent) ||
+      ts.isSpreadElement(parent) ||
+      ts.isSpreadAssignment(parent) ||
+      ts.isShorthandPropertyAssignment(parent) ||
+      (ts.isPropertyAssignment(parent) && parent.initializer === node)
+    ) {
+      continue;
+    }
+    return false;
+  }
+  return false;
 }
 
 /**

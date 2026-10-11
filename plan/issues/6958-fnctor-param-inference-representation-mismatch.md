@@ -1,7 +1,7 @@
 ---
 id: 6958
 title: "standalone: call-site parameter inference types a param as `$__fnctor_F` from one typed call site, but the body (or another allocation site) supplies a non-`F`-struct instance — the externref→struct coercion silently yields null (Octane earley-boyer `sc_display(o, p)`: `p = SC_DEFAULT_OUT` after a `new sc_StringOutputPort()` site)"
-status: ready
+status: in-progress
 sprint: current
 created: 2026-10-10
 priority: high
@@ -13,6 +13,12 @@ area: compiler
 language_feature: constructor-functions, type-inference
 goal: standalone-gap
 related: [874, 743, 3548, 4530, 2660, 4506, 6949]
+# (2026-10-11) The withdrawal lives next to the other call-site soundness rules
+# it composes with (#3548/#4530/#4630/#2867 S2); splitting ~120 lines of
+# write-position scanning into a new module would need a new boundaries row for
+# a single private consumer.
+loc-budget-allow:
+  - src/codegen/declarations/param-return-inference.ts
 ---
 
 # Fnctor-struct parameter inference is unsound against the param's real runtime domain
@@ -113,3 +119,47 @@ native-proto args (#5151). Two facts it does not consult:
 ## Ownership / overlap
 `param-return-inference.ts` is shared-IR territory; #6949 (`fnctor-prototype.ts`) and #6950 (`declarations.ts`) do
 not touch it. Related but distinct from #6949: there the prototype is missing; here the INSTANCE is lost at the ABI edge.
+
+## Implementation notes (2026-10-11)
+
+Steps 1 and 2 of the plan, in `inferParamTypeFromCallSites` (one new tail rule,
+`userObjectStructDomainUnproven`). It applies only when the agreed type is a
+`ref`/`ref_null` to a USER object struct (`__fnctor_*` or a `classSet` name);
+strings, vecs and scalars are untouched. Withdrawal means `externref`, so the
+method call takes the dynamic dispatch route.
+
+- **Hole 1, body writes.** `paramWrittenInBody` scans every function declaration
+  named `funcName` (nested closures included). A write is `=`/`op=`, `++`/`--`, a
+  destructuring target, a `for-in/of` head, or a redeclaring `var p = …`, resolved
+  with `ctx.oracle.valueDeclarationOf(id) === param`. Any `arguments[…]` write also
+  counts (sloppy mapped arguments alias the params). Why every write and not just
+  writes of a different type: the RHS's checker type is a hint, the same as the
+  call-site argument's, so a same-typed RHS proves nothing about representation.
+- **Hole 2, `$Object` representation.** Withdraw if any `new F()` site of the
+  agreed fnctor satisfies `newExpressionReconstructsAsObject`, iterating
+  `ctx.fnctorEscapeGate.siteCtorName`. That predicate is imported, not edited, and
+  is standalone-only, so this arm is a no-op on gc.
+- **Step 3 (coercion hardening) was not done.** It lives in `type-coercion.ts`,
+  which is outside this slice's scope.
+
+Validation: `tests/issue-6958-fnctor-param-inference-representation.test.ts` has
+5 cases that fail on base and pass on head, plus 4 controls that pass on both.
+One control checks that a param with no body write keeps its `(ref null $…)`
+signature. The related-test set (257 tests) shows the same 9 pre-existing
+failures on base and head. The equivalence gate shows no new regressions.
+
+### Known gaps (not this slice)
+- A JSDoc-annotated param (`@param {F} p`) never reaches this inference, so a body
+  write to it is not covered.
+- A `/** @type {F} */` cast at a call site is still trusted as the argument's
+  representation.
+- An under-applied struct param keeps `ref_null` (#3548). Inside the callee,
+  `p === undefined` then folds to `false`, because a null ref is never undefined.
+  Repro: `function P(){this.v=3} function g(o,p){return p===undefined?100:p.v}
+  g(1,new P())+g(2)` — node returns `103`, standalone throws. This needs a fix in
+  the equality lowering or in #3548's rule; neither is in this file's scope.
+- The issue's own `eb22` repro (A non-empty body, `OUT` used only through the
+  param) now gets past the null. It then throws `called value is not a function`,
+  because `A` is not escape-gate approved and has no prototype object. That is
+  #6949. A variant where `OUT` escapes (`keep(OUT)`) gives node's `23`, and that
+  variant is the test case.
