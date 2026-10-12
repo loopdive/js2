@@ -5,7 +5,7 @@ status: done
 completed: 2026-10-10
 sprint: current
 created: 2026-10-10
-updated: 2026-10-10
+updated: 2026-10-12
 priority: high
 horizon: s
 feasibility: medium
@@ -21,6 +21,11 @@ loc-budget-allow:
   #   (`receiverHasNoOwnKeyGuard`, documented) and its two call sites in the
   #   #3673 prototype-cache arms that live in this file.
   - src/codegen/object-runtime.ts
+  # 2026-10-12 (#6946 regression follow-up) +1 each: the import of
+  #   `closedReflectiveStructName` (helper lives in fnctor-instance-names.ts);
+  #   the call sites themselves are line-neutral.
+  - src/codegen/object-ops.ts
+  - src/codegen/expressions/call-builtin-static.ts
 ---
 
 # #6946 — standalone: own write does not shadow a previously-read prototype default
@@ -162,3 +167,33 @@ call-site symptom — instead of never growing the tree.
   never shadows the prototype one on standalone (`111` vs node `121`), on base
   and head alike — the dispatch does not reach the cache arms this issue
   guards, so the method-arm guard here is defensive.
+
+## Regression follow-up (2026-10-12)
+
+`tests/issue-6946-own-write-shadows-proto-default.test.ts` "standalone:
+noPriorRead" failed on main (`Object.keys(t)` → `$constructor$__fnctorProto$bag`
+instead of `v`). Culprit: a semantic merge interaction, not a textual one —
+this issue's PR (#6625, head `452c37a243`) passes alone, and so does it merged
+with main up to `0555ac93e4`; it fails once merged with #6623 (`ed1c9e2dc2`,
+#6938 "phantom anon struct for fnctor instance types"). #6938 made
+`resolveStructName` answer the reserved `__fnctor_<Name>` struct for an approved
+standalone fnctor instance type (it answered nothing before), which sent
+`Object.keys/values/entries` (`compileObjectKeysOrValues`) and the literal-key
+`Object.getOwnPropertyDescriptor` fold into their closed-struct field
+expansion. That carrier is open — expandos in `$bag`, ctor fields gated by
+`$presence_N`, `$constructor`/`$__fnctorProto` internal — so the expansion listed
+the internals and missed the bag.
+
+Fix: `closedReflectiveStructName` (`fnctor-instance-names.ts`) drops a
+`__fnctor_*` name at those two consumers, restoring the runtime own-key route
+they took before #6938. `resolveStructName` keeps #6938's answer for member
+get/set/call dispatch. Tests: `tests/issue-6946-keys-leak.test.ts`.
+
+Still wrong on standalone, pre-existing (same on the pre-#6938 merge), not
+fixed here: `JSON.stringify(t)` → `null` once a prototype method writing
+`this.x` exists for the fnctor and is called; `t.hasOwnProperty("set")` → `true`
+for a prototype method; for-in omits inherited prototype keys on an instance
+with no own expando (`new T()` → nothing, node `v;set;`; `new U(3)` → `a;`,
+node `a;m;`);
+`delete t.v` leaves `hasOwnProperty("v")` true; `Object.assign({}, t)` copies
+nothing (`Object.assign({}, u)` with a ctor field traps `illegal cast`).
