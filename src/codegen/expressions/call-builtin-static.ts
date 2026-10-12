@@ -3090,7 +3090,7 @@ export function compileBuiltinStaticCall(
       isStandaloneArraySubclass(ctx, arg0SymName) ||
       (arg0SymName !== undefined && newSiteBuiltinParent(ctx, arg0SymName) !== undefined)
         ? undefined
-        : closedReflectiveStructName(resolveStructName(ctx, arg0TsType));
+        : closedReflectiveStructName(ctx, arg0TsType, resolveStructName(ctx, arg0TsType));
     const literalKeyText = (e: ts.Expression): string | undefined => {
       if (ts.isStringLiteral(e)) return e.text;
       if (!ctx.standalone) return undefined;

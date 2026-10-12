@@ -197,3 +197,22 @@ with no own expando (`new T()` → nothing, node `v;set;`; `new U(3)` → `a;`,
 node `a;m;`);
 `delete t.v` leaves `hasOwnProperty("v")` true; `Object.assign({}, t)` copies
 nothing (`Object.assign({}, u)` with a ctor field traps `illegal cast`).
+
+## Approved bounded ownership refinement (October 12, 2026)
+
+The human approved takeover and delivery of the existing #6655 follow-up as
+a bounded exception to the frontend freeze. Its authored reflection routing,
+24 controls, original #6946 controls and all limitations above are retained.
+
+The reflective helper now uses the existing `isFnctorInstanceType` authority
+before declining an internal fnctor name. A legitimate user class may be named
+`__fnctor_User`; the prefix alone is not proof of constructor-function ownership.
+The predicate excludes actual class declarations and uses the existing escape-gate
+constructor registry before any `new` site has populated the emitted constructor
+cache. Member get/set/call resolution remains unchanged.
+
+Four separate Node-oracle controls compare ordinary and prefixed class names
+with the same dollar-prefixed and ordinary own fields on gc and standalone.
+The original 24 + original 11 + four added controls total 39. Their current-main
+qualification is pending; no pre-existing descriptor, delete, JSON or inherited
+enumeration limitation is waived or claimed repaired by this refinement.

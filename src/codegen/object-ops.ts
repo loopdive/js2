@@ -4452,6 +4452,11 @@ export function compileObjectDefineProperties(
 
 // ── Object.keys / Object.values ───────────────────────────────────────
 
+/** Resolve reflection's closed-shape proof through the existing fnctor owner authority. */
+function resolveClosedReflectiveStructName(ctx: CodegenContext, tsType: ts.Type): string | undefined {
+  return closedReflectiveStructName(ctx, tsType, resolveStructName(ctx, tsType));
+}
+
 /**
  * Compile Object.keys(obj) or Object.values(obj) by expanding struct fields
  * at compile time. Object.keys returns a string[] of field names,
@@ -4511,7 +4516,7 @@ export function compileObjectKeysOrValues(
     (ts.isIdentifier(arg) && ctx.externrefAccessorVars.has(arg.text)) ||
     typeIsRuntimeKeyedObjectLiteral(ctx, argType, _hasRuntimeComputedKey);
   // Resolve struct name from the argument type (an open fnctor carrier enumerates at runtime)
-  const structName = argIsHostObjectVar ? undefined : closedReflectiveStructName(resolveStructName(ctx, argType));
+  const structName = argIsHostObjectVar ? undefined : resolveClosedReflectiveStructName(ctx, argType);
   if (!structName) {
     // Only a FRESH syntactic `{}` proves an empty own-key set. A variable or
     // parameter whose checker type has zero declared properties is not such a

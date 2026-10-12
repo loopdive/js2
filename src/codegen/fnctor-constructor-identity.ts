@@ -92,9 +92,14 @@ export function registerFnctorCaptureParams(
     const capture = layout.captures[i]!;
     if (!capture.mutable) {
       const valueType = layout.valueParamTypes[i]!;
+      // (#6970) Ref-cell struct types are registered by `getOrRegisterRefCellType`
+      // in `ctx.refCellTypeMap` only — never in `typeIdxToStructName` — so the
+      // name lookup alone never fired and an already-boxed capture (a nested
+      // fnctor's own name, read in its body as `w.b2T`) was read as the cell.
       const isRefCell =
         (valueType.kind === "ref" || valueType.kind === "ref_null") &&
-        ctx.typeIdxToStructName.get(valueType.typeIdx)?.startsWith("__ref_cell_");
+        (ctx.typeIdxToStructName.get(valueType.typeIdx)?.startsWith("__ref_cell_") ||
+          [...ctx.refCellTypeMap.values()].includes(valueType.typeIdx));
       if (isRefCell) {
         const inner = refCellValueType(ctx, valueType.typeIdx);
         if (inner) {

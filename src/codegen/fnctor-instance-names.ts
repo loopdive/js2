@@ -44,8 +44,14 @@ export function isConstructedFnctorName(ctx: CodegenContext, name: string): bool
  * standalone fnctor instance type; before it answered nothing, so those
  * consumers were on the runtime route (#6946 regression follow-up, 2026-10-12).
  */
-export function closedReflectiveStructName(structName: string | undefined): string | undefined {
-  return structName?.startsWith("__fnctor_") === true ? undefined : structName;
+export function closedReflectiveStructName(
+  ctx: CodegenContext,
+  tsType: ts.Type,
+  structName: string | undefined,
+): string | undefined {
+  // Class declarations may legally use the same prefix. Ask the existing
+  // declaration/escape-gate authority, which also works before a new site.
+  return isFnctorInstanceType(ctx, tsType) && structName?.startsWith("__fnctor_") === true ? undefined : structName;
 }
 
 /**
