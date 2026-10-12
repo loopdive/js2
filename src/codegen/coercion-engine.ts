@@ -638,9 +638,13 @@ export function getExternrefToStringProvider(ctx: CodegenContext): number | unde
  * throws a TypeError; every other value takes `__extern_toString` unchanged
  * (ToPrimitive runs ONCE — `__extern_toString` of the primitive result does not
  * re-enter user code). Falls back to `__extern_toString` outside
- * standalone/wasi or in a module with no `$Symbol` carrier.
+ * standalone/wasi or in a module with no `$Symbol` carrier. `fctx` is null for a
+ * finalize-time caller (#6969's parse arms) with no body to flush.
  */
-export function ensureSpecExternrefToStringProvider(ctx: CodegenContext, fctx: FunctionContext): number | undefined {
+export function ensureSpecExternrefToStringProvider(
+  ctx: CodegenContext,
+  fctx: FunctionContext | null,
+): number | undefined {
   const NAME = "__extern_to_string_spec";
   const existing = ctx.funcMap.get(NAME);
   if (existing !== undefined) return existing;
@@ -649,7 +653,9 @@ export function ensureSpecExternrefToStringProvider(ctx: CodegenContext, fctx: F
   if (getToPrimitiveProvider(ctx) === undefined) return plain;
   addStringConstantGlobal(ctx, "string");
   const throwSym = (): Instr[] =>
-    buildThrowJsErrorInstrs(ctx, "TypeError", "Cannot convert a Symbol value to a string", { flush: fctx });
+    buildThrowJsErrorInstrs(ctx, "TypeError", "Cannot convert a Symbol value to a string", {
+      flush: fctx ?? undefined,
+    });
   const inputThrow = throwSym();
   const primitiveThrow = throwSym();
   const wrapperThrow = throwSym();
