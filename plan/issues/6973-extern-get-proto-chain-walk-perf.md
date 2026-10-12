@@ -19,6 +19,13 @@ related: [6971, 6966, 6951, 6949, 6944]
 # unshiftExternGetProtoCacheArm) — the new arm lives in fnctor-fast-get.ts (#6973).
 loc-budget-allow:
   - src/codegen/object-runtime.ts
+  # 2026-10-12 (#6973 stage 2): +14 — the `__extern_set` overlay prologue routes a
+  # present-element overwrite to `directOwnElementStore` (vec-overlay-carriers.ts)
+  # instead of minting a descriptor companion (the deltablue leak).
+  - src/codegen/vec-overlay.ts
+func-budget-allow:
+  # 2026-10-12 (#6973 stage 2): same change, inside the fill.
+  - src/codegen/vec-overlay.ts::fillVecOverlayHelpers
 flat-dir-budget-allow:
   - src/codegen/fnctor-fast-get.ts # 2026-10-11 (#6973): the fnctor-instance __extern_get fast arm; sits with its flat fnctor-* siblings (fnctor-struct-proto-hop.ts, fnctor-identity-fields.ts) whose helpers it composes
 ---
