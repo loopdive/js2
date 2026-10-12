@@ -161,3 +161,88 @@ Raytrace does not move: its receivers are `$Object`s (`Class.create()` /
   reads (`var f = c.m`) are correct. Two re-links in one program throw.
 - `Object.defineProperty(<struct-link prototype>, k, { get })` getters read as 0/absent.
 - `p.hasOwnProperty("m")` answers true for an inherited method of a declared-field fnctor.
+
+## Stage 2 (2026-10-12): dispatch perf
+
+Branch `claude/standalone-deltablue-dispatch-perf`, stacked on
+`claude/standalone-proto-chain-lookup-perf` (stage 1 above). Goal: deltablue
+passes the default 180 s cap with node-calibrated reps (~1244 on the
+coordinator's box) with margin — target ≤ 12 ms/rep.
+
+### What the profile actually showed
+
+1. **A leak, not a slow path.** Per-rep time GREW with elapsed reps (40 → 187
+   ms/rep over 800 reps, RSS +14 MB / 50 reps). `__vec_overlay_lookup` was 49 %
+   self: in a descriptor-dirty module (deltablue defines
+   `Object.prototype.inheritsFrom`), `__extern_set`'s overlay prologue sent every
+   indexed write on a vec — including an overwrite of an existing element —
+   through `__vec_dp_value`, which `__vec_overlay_ensure`s a companion. The
+   companion table is append-only, strongly held and scanned linearly by every
+   dynamic read of every array; `OrderedCollection.remove`'s
+   `this.elms[index] = value` added one entry per call.
+2. **Own fields living in the expando bag.** ~60 k of ~83 k `__extern_get`
+   calls per rep were `this.direction` / `this.v1` / `this.v2`: fields the
+   `BinaryConstraint` body assigns when run through
+   `EqualityConstraint.superConstructor.call(this, …)`, which
+   `deriveFnctorFields` never saw.
+3. Smaller: `this.v.size()` / `this.v.at(i)` on fnctor-typed fields went
+   through `__extern_method_call` + a fresh `$ObjVec`; `elms[index]` with an
+   untyped index stringified the number for `__extern_get` to parse back;
+   `this.direction == Direction.FORWARD` ran a ~10-call ToPrimitive / typeof
+   cascade; static reads (`Strength.weaker`) ran the 1.9 k-instruction
+   `__hasOwnProperty` on the function's bag; every `__call_fn_method_N` call
+   tested 7 native-proto receiver arms one by one.
+
+### Changes (one commit each)
+
+| Commit | Change |
+|---|---|
+| vec overlay | backed, present element of an externref carrier with no companion → plain `array.set` (`directOwnElementStore`) |
+| field receivers | `this.<field>.m()` with a `(ref null $__fnctor_X)` slot takes the guarded direct-call trampoline; trampolines decline a receiver with an own expando bag; `vec[untypedKey]` reads integer Numbers via `__extern_get_idx` |
+| call-grown fields | `fnctor-call-grown-fields.ts`: delegate fields of `F.call(this, …)` / `G.p.call(this, …)` (G.p bound by `G.p = F` or an `inheritsFrom`-style helper) become presence-tracked slots; names a slot could not mirror exactly (prototype-written, defineProperty'd, deleted, Object.prototype members) stay in the bag, and files with computed non-numeric writes / computed deletes / for-in / key enumeration / relinking reserve nothing |
+| i31 equality | standalone externref `==`/`===` of two i31 Numbers is integer equality (also skips the loose ToPrimitive step) |
+| closure bag | `__closure_prop_get` answers a live DATA bag entry directly |
+| native-proto guard | the #3992 receiver arms sit behind one `ref.test` (one canonical shape) |
+
+### Measurements (this container, 4 cores; min / median ms per rep over interleaved 20-rep batches)
+
+| deltablue standalone | min | median |
+|---|---|---|
+| branch base (`a3898caa14`) | 30.2 | 44.1 (grows with reps — the leak) |
+| + vec overlay | ~23 | ~25 (flat) |
+| + field receivers | ~17 | ~18.5 |
+| + call-grown fields | ~12.8 | ~14.5 |
+| + i31 equality | ~10.8–11.6 | ~12.6 |
+| + closure bag | ~10.1–10.7 | ~11.6 |
+| + native-proto guard | ~9.4–10.4 | ~11.4 |
+
+`benchmark:octane --only deltablue --lanes standalone --reps 1244` (default
+180 s cap): **pass, 97 s wall, 11.3 ms/rep min, 11.8 mean.**
+
+Other benchmarks, head vs base (same harness, `--reps 12`, min µs/run):
+richards 6131 → 3681, navier-stokes 1 823 821 → 304 088 (the overlay fix),
+splay 6361 → 5826, crypto 472 k → 487 k and regexp 473 k → 486 k (interleaved
+A/B: within noise).
+
+### Not fixed here (same on the branch base)
+
+- raytrace and earley-boyer standalone time out, box2d traps `illegal cast` —
+  identical on `a3898caa14`. Raytrace's time is `__vec_overlay_ensure` again
+  (87 %): every `arguments` object built for `Class.create`'s
+  `this.initialize.apply(this, arguments)` defines own properties through
+  `__defineProperty_value`, minting a companion per call into the same
+  append-only, linearly scanned table. The table itself is the structural
+  problem (no identity hash, no weak refs); the integration build reportedly
+  has a raytrace fix.
+- Remaining deltablue cost: `__fnctor_fast_get` (~20 % — inherited method
+  lookups `output`/`input`/`execute` walking 2–3 struct links per call) and
+  `__call_fn_method_0` (~14 %). A per-site method cache would need an
+  invalidation epoch bumped at every prototype/bag/link write site; not done.
+- Pre-existing divergences seen while testing (unchanged): reads of a
+  presence-tracked fnctor slot whose bit is clear answer `undefined` without
+  consulting the prototype; `delete` does not clear a slot's bit; own-key
+  enumeration of a fnctor instance lists internal `$`-fields; `vec[1.5]` reads
+  element 1; `hasOwnProperty` misses a conditional bag expando (`t.big`); an
+  inherited `defineProperty` setter on a delegate-assigned name is bypassed;
+  `delete f.p` of a function's own property leaves it readable; loose `==`
+  against an object with `valueOf` traps `illegal cast`.
