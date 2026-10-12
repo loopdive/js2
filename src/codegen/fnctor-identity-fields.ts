@@ -1,11 +1,70 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
-import type { FieldDef } from "../ir/types.js";
+import type { FieldDef, Instr } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { presenceWordName } from "./fnctor-presence-bits.js";
 import { readEnv } from "../env.js";
 
 export const FNCTOR_CONSTRUCTOR_FIELD = "$constructor";
+
+/**
+ * (#6951 G3) Construction-time `[[Prototype]]` snapshot slot for standalone
+ * fnctor instances. §10.1.14 GetPrototypeFromConstructor reads `F.prototype`
+ * once, at `new F()`; a later `F.prototype = …` must not re-link instances
+ * that already exist. A null slot (an allocation path that does not snapshot,
+ * e.g. a split layout family) means "use the live per-fnctor global", which is
+ * the pre-#6951 answer.
+ */
+export const FNCTOR_PROTO_FIELD = "$__fnctorProto";
+
+/** The snapshot slot definition — mutable so `Object.setPrototypeOf` can re-link. */
+export function fnctorProtoField(): FieldDef {
+  return { name: FNCTOR_PROTO_FIELD, type: { kind: "externref" }, mutable: true };
+}
+
+/**
+ * (#6951) Whether `__fnctor_proto_start` (the instance → `[[Prototype]]`
+ * ladder) is reserved. It used to require a gate-APPROVED fnctor, but since
+ * #6949 every constructed ordinary fnctor has a prototype global, so a module
+ * whose `new F()` sites are all keep-static/keep-typed needs the ladder too —
+ * without it `new F().inherited` and `Object.getPrototypeOf(new F())` never
+ * consult F's prototype at all.
+ */
+export function fnctorProtoStartNeeded(ctx: CodegenContext): boolean {
+  const gate = ctx.fnctorEscapeGate;
+  return ctx.standalone && ((gate?.approvedNames.size ?? 0) > 0 || (gate?.ctorDeclByName.size ?? 0) > 0);
+}
+
+/**
+ * (#6951 G3) Leave a `__fnctor_<F>` instance's `[[Prototype]]` link on the
+ * stack: its construction-time snapshot, or — when the slot is null (an
+ * allocation path that did not snapshot, e.g. a split layout family) or the
+ * struct has no slot — the live per-fnctor global, the pre-#6951 answer.
+ * `receiverAsStruct` leaves the receiver as `(ref $__fnctor_<F>)`.
+ */
+export function fnctorProtoLinkInstrs(
+  ctx: CodegenContext,
+  fnctorName: string,
+  typeIdx: number,
+  protoGlobalIdx: number,
+  scratchSlot: number,
+  receiverAsStruct: Instr[],
+): Instr[] {
+  const fieldIdx = ctx.structFields.get(`__fnctor_${fnctorName}`)?.findIndex((f) => f.name === FNCTOR_PROTO_FIELD);
+  if (fieldIdx === undefined || fieldIdx < 0) return [{ op: "global.get", index: protoGlobalIdx }];
+  return [
+    ...receiverAsStruct,
+    { op: "struct.get", typeIdx, fieldIdx },
+    { op: "local.tee", index: scratchSlot },
+    { op: "ref.is_null" },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "externref" } },
+      then: [{ op: "global.get", index: protoGlobalIdx }],
+      else: [{ op: "local.get", index: scratchSlot }],
+    },
+  ];
+}
 
 /** Canonical compiler-owned constructor identity slot for standalone fnctors. */
 export function fnctorConstructorField(): FieldDef {
@@ -62,6 +121,7 @@ export function appendFnctorInternalFields(
   }
   if (ctx.standalone) {
     fields.push(fnctorConstructorField());
+    fields.push(fnctorProtoField());
   }
 }
 
