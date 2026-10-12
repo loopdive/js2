@@ -1458,29 +1458,40 @@ export function analyzeNumericPropertyNames(
         changed = true;
       }
     }
-  }
-
-  // Groundedness: at least one write must be provably numeric while reads of
-  // the name ITSELF count for nothing, so a slot that only ever recycles its
-  // own value (`this.keyword = conf.keyword`) or is written solely through
-  // opaque parameters is never promoted. And: a slot whose every write is a
-  // BOOLEAN stays with #2847's boolean brand rather than becoming an f64.
-  for (const name of [...numericProperties]) {
-    const writes = writesByName.get(name) ?? [];
-    const grounded = prover.withoutSelf(name, () =>
-      writes.some(
-        (write) => write.forcedNumeric === true || (write.value !== undefined && prover.isNumeric(write.value)),
-      ),
-    );
-    // ANY boolean write, not just an all-boolean set: a mixed number/boolean
-    // slot is exactly where the representation question is ambiguous, #2847 may
-    // still brand it, and an unbranded f64 would make `node.flag === false`
-    // answer `false` (JS says `true`). The hot tokenizer set has no boolean
-    // writes at all, so this costs nothing where it matters.
-    const anyBoolean =
-      host.excludeNames?.has(name) === true ||
-      writes.some((write) => write.value !== undefined && prover.isBooleanish(write.value));
-    if (!grounded || anyBoolean) numericProperties.delete(name);
+    // Groundedness: at least one write must be provably numeric while reads of
+    // the name ITSELF count for nothing, so a slot that only ever recycles its
+    // own value (`this.keyword = conf.keyword`) or is written solely through
+    // opaque parameters is never promoted. And: a slot whose every write is a
+    // BOOLEAN stays with #2847's boolean brand rather than becoming an f64.
+    //
+    // (#6966) This filter runs INSIDE the fixpoint, not after it. Run once
+    // after convergence it withdrew a name (deltablue's `v2`, written only as
+    // `this.v2 = var2`) that `numericFunctions` and `numericSlots` had already
+    // been settled against — so `BC.prototype.input = function () { return
+    // this.v2; }` stayed "numeric", got an f64 typed-this twin, and unboxed the
+    // `Variable` object to NaN. Both predicates only consult `isNumeric` /
+    // `isBooleanish`, which can only flip true -> false as the three sets
+    // shrink, so the loop still converges — to a subset of the old verdict.
+    for (const name of [...numericProperties]) {
+      const writes = writesByName.get(name) ?? [];
+      const grounded = prover.withoutSelf(name, () =>
+        writes.some(
+          (write) => write.forcedNumeric === true || (write.value !== undefined && prover.isNumeric(write.value)),
+        ),
+      );
+      // ANY boolean write, not just an all-boolean set: a mixed number/boolean
+      // slot is exactly where the representation question is ambiguous, #2847 may
+      // still brand it, and an unbranded f64 would make `node.flag === false`
+      // answer `false` (JS says `true`). The hot tokenizer set has no boolean
+      // writes at all, so this costs nothing where it matters.
+      const anyBoolean =
+        host.excludeNames?.has(name) === true ||
+        writes.some((write) => write.value !== undefined && prover.isBooleanish(write.value));
+      if (!grounded || anyBoolean) {
+        numericProperties.delete(name);
+        changed = true;
+      }
+    }
   }
 
   // (#3765) A GROUNDED slot set, for the one consumer that types a wasm local.

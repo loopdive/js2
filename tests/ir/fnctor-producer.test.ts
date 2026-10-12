@@ -14,7 +14,7 @@ import {
 import { irFnctorConstructorFuncRef } from "../../src/ir/callable-bindings.js";
 import { irFnctorLayoutTypeRef } from "../../src/ir/abi-bindings.js";
 import type { IrFnctorShape } from "../../src/ir/fnctor-abi.js";
-import { fnctorConstructorField } from "../../src/codegen/fnctor-identity-fields.js";
+import { fnctorConstructorField, fnctorProtoField } from "../../src/codegen/fnctor-identity-fields.js";
 import { closureBagField } from "../../src/codegen/closures/closure-header-layout.js";
 
 function fixture(): {
@@ -144,6 +144,7 @@ function standalonePhysicalFixture(data: ReturnType<typeof fixture>): {
   const fields = [
     { name: "input", type: { kind: "ref_null" as const, typeIdx: 9 }, mutable: true },
     fnctorConstructorField(),
+    fnctorProtoField(),
     closureBagField(),
   ];
   const constructorFunction = {

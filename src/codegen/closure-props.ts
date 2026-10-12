@@ -67,7 +67,12 @@ import type { ClosureReadBinding } from "../runtime/wasmgc/values/object-get-arm
 import type { FieldDef, Instr, ValType, WasmFunction } from "../ir/types.js";
 import { undefinedExternInstrs } from "./any-helpers.js";
 import { collectClosureBaseWrapperTypeIdxs } from "./closure-classifier.js";
-import { closurePrototypeEdgeGetArm } from "./closure-prototype-edge.js"; // (#2660 M3)
+import {
+  CLOSURE_PROTO_SET,
+  closurePrototypeEdgeGetArm,
+  closurePrototypeOwnDescriptorGuard,
+  hasClosurePrototypeEdges,
+} from "./closure-prototype-edge.js"; // (#2660 M3; #6951 G2 write twin + own-descriptor gate)
 import type { CodegenContext } from "./context/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { nativeStringLiteralInstrs } from "./native-strings.js";
@@ -362,6 +367,32 @@ function buildFnctorPrototypeWriteArm(
 
   if (sharedSetAvailable && (setOwnIdx === undefined || setResultGlobalIdx === undefined)) return [];
   const defineValueIdx = ctx.funcMap.get("__defineProperty_value");
+  // (#6951 G2) A fnctor with a prototype EDGE owns its `prototype` in the
+  // per-fnctor global that `new F()` links instances through; the bag would be
+  // a split brain the constructor never reads. `__closure_proto_set` stores it
+  // there (identity-matched, canonical form) and answers 1; 0 ⇒ bag write.
+  const protoSetIdx = hasClosurePrototypeEdges(ctx) ? ctx.funcMap.get(CLOSURE_PROTO_SET) : undefined;
+  const writeEdge = (): Instr[] =>
+    protoSetIdx === undefined
+      ? []
+      : [
+          { op: "local.get", index: 0 },
+          { op: "local.get", index: 2 },
+          { op: "call", funcIdx: protoSetIdx },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              ...(sharedSetAvailable
+                ? ([
+                    { op: "i32.const", value: 1 }, // SET_RESULT_SUCCESS
+                    { op: "global.set", index: setResultGlobalIdx! },
+                  ] satisfies Instr[])
+                : []),
+              { op: "return" },
+            ],
+          },
+        ];
   const writeOwn = (): Instr[] =>
     defineValueIdx !== undefined
       ? [
@@ -421,6 +452,9 @@ function buildFnctorPrototypeWriteArm(
           op: "if",
           blockType: { kind: "empty" },
           then: [
+            // (#6951 G2 review) an own re-described `prototype` decides first.
+            ...(sharedSetAvailable ? closurePrototypeOwnDescriptorGuard(ctx, setResultGlobalIdx) : []),
+            ...writeEdge(),
             ...constructibleTypeIdxs.flatMap((typeIdx): Instr[] => [
               { op: "local.get", index: 0 },
               { op: "any.convert_extern" },

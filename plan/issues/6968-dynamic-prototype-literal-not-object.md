@@ -1,7 +1,8 @@
 ---
 id: 6968
 title: "standalone: `<non-fnctor expr>.prototype = { … }` (closure returned from a call / member-held `Class.create()` ctor) stores a CLOSED-struct literal; the native construct driver's `__object_create(proto)` then seeds `$proto = null` → instances get `%Object.prototype%` (Octane raytrace `Flog.RT.Color.prototype = {…}`)"
-status: ready
+status: done
+completed: 2026-10-11
 sprint: current
 created: 2026-10-11
 priority: high
@@ -114,3 +115,16 @@ Bisection (all node-identical unless noted):
   PERFORMANCE (~390× node), not correctness; the acceptance for THIS issue is that
   `octane-sa.mjs raytrace` completes and the harness row is no longer an error row.
 - Size: **S**.
+
+## Implementation Notes (2026-10-11)
+
+- `scanForDynamicProto` (`src/codegen/dynamic-proto.ts`): new `sym === undefined &&
+  ctx.standalone` disjunct on the `.prototype =` arm, exactly step 1 of the plan. A direct
+  object-literal RHS (after unwrapping parens / `as` / `!` / `satisfies` / `<T>`) is added to
+  `ctx.dynamicProtoLiteralNodes`; anything else goes through `markProtoSource` (identifier →
+  literal initializer). Resolved-but-unapproved fnctors are unchanged (#2660 S2 floor note).
+- Tests: `tests/issue-6968-dynamic-prototype-literal.test.ts` (standalone vs node values,
+  4 failing on base / 8 passing on head, 4 controls).
+- On `main` alone the member-held `Class.create()` shapes (`.tmp/rta1/rta2/rta3/rta16`) still
+  stop at `new: is not a constructor` / a null member read; those are fixed by the #6949/#6951
+  commits on the Octane integration branch, where all four are node-identical with this fix.

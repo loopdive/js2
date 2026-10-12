@@ -544,9 +544,29 @@ export function closurePrecedesBindingInitializerStore(
     // that outer function runs, not while the declarator evaluates. The outer
     // function value itself will independently capture this binding at the
     // actual initializer site.
-    if (current !== closure && ts.isFunctionLike(current)) return false;
+    if (current !== closure && ts.isFunctionLike(current)) break;
   }
-  return false;
+  return hoistedVarInitializerFollowsClosure(closure, declaration);
+}
+
+/**
+ * (#6955) `o.f = function () { return dt; }; var dt = 0.1;` — the hoisted `var`
+ * slot still holds its default when the closure is built and the initializer
+ * stores afterwards, so a by-value capture would never see it. Only a `var`
+ * declarator textually after the closure in the SAME frame qualifies (`let`/
+ * `const` take the #1177 TDZ path); every other capture keeps the by-value path.
+ */
+function hoistedVarInitializerFollowsClosure(closure: ts.Node, declaration: ts.VariableDeclaration): boolean {
+  const list = declaration.parent;
+  if (!ts.isVariableDeclarationList(list) || (list.flags & ts.NodeFlags.BlockScoped) !== 0) return false;
+  return declaration.pos >= closure.end && enclosingFrame(closure.parent) === enclosingFrame(list);
+}
+
+function enclosingFrame(node: ts.Node | undefined): ts.Node | undefined {
+  while (node && !ts.isFunctionLike(node) && !ts.isSourceFile(node) && !ts.isClassStaticBlockDeclaration(node)) {
+    node = node.parent;
+  }
+  return node;
 }
 
 /**

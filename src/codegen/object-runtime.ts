@@ -1,3 +1,4 @@
+import ts from "typescript";
 import { installableReceiverInstrs } from "./helpers/undefined-receiver.js";
 import { buildClosureResultBoxing } from "./closures/result-boxing.js";
 import { classifyClosureDispatchRest } from "./closures/closure-dispatch-rest.js";
@@ -67,6 +68,7 @@ import { buildObjectGetBody } from "../runtime/wasmgc/values/object-get-bodies.j
  */
 import { buildVariadicBuiltinApplyArm } from "./apply-closure-variadic-builtin.js"; // (#6701)
 import { buildRestOnlyApply } from "./closures/rest-only-apply.js";
+import { withApplyTail } from "./closures/apply-extras-tail.js";
 import {
   buildObjectPropertyKeyPrefix,
   prependObjectKeyCoercion,
@@ -217,6 +219,7 @@ import {
 } from "./any-helpers.js";
 import { reserveClassToPrimitive } from "./class-to-primitive.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2/S3) positional-read chokepoint + stable-regime minting
+import { fnctorProtoLinkInstrs, fnctorProtoStartNeeded } from "./fnctor-identity-fields.js"; // (#6951 G3) [[Prototype]] snapshot
 import { emitSelfHostedFunc } from "./stdlib-selfhost.js"; // (#3160) self-hosted object-runtime slice
 import { SELF_HOSTED_OBJECT_RUNTIME } from "../stdlib/object-runtime.js"; // (#3160) TS-source builtins
 import { buildObjectDescriptorHelpers } from "./object-runtime-descriptors.js";
@@ -1913,16 +1916,15 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   // `$Object`. Reserve a tiny classifier before `__extern_get` bakes its call
   // index; finalize fills the complete ref.test/global.get ladder after all
   // fnctor structs and prototype globals are known.
-  const fnctorProtoStartIdx =
-    ctx.standalone && (ctx.fnctorEscapeGate?.approvedNames.size ?? 0) > 0
-      ? registerNative(
-          "__fnctor_proto_start",
-          [{ kind: "externref" }],
-          [{ kind: "externref" }],
-          [{ name: "any", type: { kind: "anyref" } }],
-          [{ op: "ref.null.extern" }],
-        )
-      : undefined;
+  const fnctorProtoStartIdx = fnctorProtoStartNeeded(ctx) // (#6951) every constructed fnctor
+    ? registerNative(
+        "__fnctor_proto_start",
+        [{ kind: "externref" }],
+        [{ kind: "externref" }],
+        [{ name: "any", type: { kind: "anyref" } }],
+        [{ op: "ref.null.extern" }],
+      )
+    : undefined;
 
   // (#3673 round 9b) Table generation for the per-key prototype-lookup cache
   // (see the `$HashedString` cacheGen/cacheOwner/cacheEntry fields). Bumped
@@ -6227,6 +6229,19 @@ export function ensureExternRestObject(ctx: CodegenContext): number {
 }
 
 /**
+ * (#6959) Call-site admission for `__apply_closure`. The bridge dispatches
+ * 0..8 per arm and, since #6655, every n > 8 through the module's top minted
+ * `__call_fn_method_<top>`; an n with no dispatcher answers the undefined
+ * sentinel, which is exactly what a declining arm's graceful fallback
+ * produces. Admitting any non-spread argc is therefore monotone: it can only
+ * turn a silent `undefined` into a real invocation. Spread calls lower through
+ * `standalone-dynamic-spread-call.ts` instead.
+ */
+export function applyClosureAdmitsCall(expr: ts.CallExpression): boolean {
+  return !expr.arguments.some((a) => ts.isSpreadElement(a));
+}
+
+/**
  * (#1888 Slice 1) Reserve the `__apply_closure(externref fn, externref recv,
  * externref args) -> externref` arity-bridge funcIdx with a placeholder
  * `unreachable` body, registered in `funcMap`. The real body (an arity switch
@@ -6528,17 +6543,34 @@ export function fillApplyClosure(ctx: CodegenContext): void {
   // An unmatched callee is not lost: the dispatcher's own terminal is the
   // linked-peer apply on the standalone lane, the same destination the
   // fall-through `armUnsupported` has.
-  if (applyClosureTopArity > APPLY_CLOSURE_MAX_ARITY) {
+  //
+  // (#6959) n > 8 into an ORDINARY closure (declared 0..8) is over-application
+  // (§7.3.14: extras are ignored). The above-cap dispatcher carries only
+  // above-cap closures, so such a callee must go to the highest ordinary
+  // dispatcher, which admits every closure up to its arity. `-1` (not a
+  // closure) is huge unsigned and keeps the existing route.
+  let ordinaryTop = APPLY_CLOSURE_MAX_ARITY;
+  while (ordinaryTop >= 0 && callMethod(ordinaryTop) === undefined) ordinaryTop--;
+  let aboveCap = applyClosureTopArity > APPLY_CLOSURE_MAX_ARITY ? buildArm(applyClosureTopArity) : undefined;
+  if (widen.length > 0 && ordinaryTop >= 0) {
+    aboveCap = [
+      { op: "local.get", index: declaredArityLocal },
+      { op: "i32.const", value: ordinaryTop },
+      { op: "i32.le_u" },
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "externref" } },
+        then: withApplyTail(ctx, buildArm(ordinaryTop), ordinaryTop, 2, 3), // (#6959 review) args past top
+        else: aboveCap ?? armUnsupported,
+      },
+    ];
+  }
+  if (aboveCap !== undefined) {
     dispatch = [
       { op: "local.get", index: 3 },
       { op: "i32.const", value: APPLY_CLOSURE_MAX_ARITY },
       { op: "i32.gt_s" },
-      {
-        op: "if",
-        blockType: { kind: "val", type: { kind: "externref" } },
-        then: buildArm(applyClosureTopArity),
-        else: dispatch,
-      },
+      { op: "if", blockType: { kind: "val", type: { kind: "externref" } }, then: aboveCap, else: dispatch },
     ];
   }
   for (let n = APPLY_CLOSURE_MAX_ARITY; n >= 0; n--) {
@@ -9511,6 +9543,8 @@ export function fillFnctorPrototypeDispatchArms(ctx: CodegenContext): void {
   const protoStartFn = protoStartIdx === undefined ? undefined : definedFuncAt(ctx, protoStartIdx);
   if (protoStartFn) {
     const protoArms: Instr[] = [];
+    // (#6951 G3) local 2: the instance's construction-time snapshot.
+    const snapshotSlot = 2;
     for (const [fnctorName, protoGlobalIdx] of ctx.fnctorPrototypeObject) {
       const typeIdx = ctx.structMap.get(`__fnctor_${fnctorName}`);
       if (typeIdx === undefined) continue;
@@ -9520,10 +9554,17 @@ export function fillFnctorPrototypeDispatchArms(ctx: CodegenContext): void {
         {
           op: "if",
           blockType: { kind: "empty" },
-          then: [{ op: "global.get", index: protoGlobalIdx }, { op: "return" }],
+          then: [
+            ...fnctorProtoLinkInstrs(ctx, fnctorName, typeIdx, protoGlobalIdx, snapshotSlot, [
+              { op: "local.get", index: 1 },
+              { op: "ref.cast", typeIdx },
+            ]),
+            { op: "return" },
+          ],
         },
       );
     }
+    if (protoStartFn.locals.length < 2) protoStartFn.locals.push({ name: "__snap", type: { kind: "externref" } });
     protoStartFn.body = [
       { op: "local.get", index: 0 },
       { op: "any.convert_extern" },
@@ -9553,12 +9594,17 @@ export function fillFnctorPrototypeDispatchArms(ctx: CodegenContext): void {
   const inlineCacheReady = HSTR >= 0 && objTypes !== undefined && hasOwnIdxForCache !== undefined;
   let khLocal = -1;
   let entryLocal = -1;
+  let protoLocal = -1;
   if (inlineCacheReady) {
     khLocal = 3 + fn.locals.length;
     entryLocal = khLocal + 1;
+    protoLocal = khLocal + 2;
     fn.locals.push(
       { name: "__mc_kh", type: { kind: "ref_null", typeIdx: HSTR } },
       { name: "__mc_entry", type: { kind: "ref_null", typeIdx: objTypes.propEntryTypeIdx } },
+      // (#6951 G3) the receiver's [[Prototype]] link — its construction-time
+      // snapshot, not the live global — which the cache owner must match.
+      { name: "__mc_proto", type: { kind: "externref" } },
     );
   }
   // (#3673 round 21) props-array type for the per-object staleness cast.
@@ -9579,9 +9625,21 @@ export function fillFnctorPrototypeDispatchArms(ctx: CodegenContext): void {
     const cacheTry: Instr[] =
       inlineCacheReady && propMapIdxForCache !== undefined
         ? [
+            // (#6951 G3) The owner check runs against THIS receiver's link, and
+            // only when that link is an `$Object` (a dynamic `F.prototype = v`
+            // can install any value; the slow path below handles the rest).
+            ...fnctorProtoLinkInstrs(ctx, fnctorName, typeIdx, protoGlobalIdx, protoLocal, [
+              { op: "local.get", index: 0 },
+              { op: "any.convert_extern" },
+              { op: "ref.cast", typeIdx },
+            ]),
+            { op: "local.tee", index: protoLocal },
+            { op: "any.convert_extern" },
+            { op: "ref.test", typeIdx: objTypes!.objectTypeIdx },
             { op: "local.get", index: 1 },
             { op: "any.convert_extern" },
             { op: "ref.test", typeIdx: HSTR },
+            { op: "i32.and" },
             {
               op: "if",
               blockType: { kind: "empty" },
@@ -9601,13 +9659,13 @@ export function fillFnctorPrototypeDispatchArms(ctx: CodegenContext): void {
                     { op: "ref.as_non_null" },
                     { op: "struct.get", typeIdx: HSTR, fieldIdx: 5 }, // cacheOwner
                     { op: "ref.cast", typeIdx: objTypes!.objectTypeIdx },
-                    { op: "global.get", index: protoGlobalIdx },
+                    { op: "local.get", index: protoLocal },
                     { op: "any.convert_extern" },
                     { op: "ref.cast", typeIdx: objTypes!.objectTypeIdx },
                     { op: "ref.eq" },
                     // (#3673 round 21) per-object staleness: proto.props must be
                     // the SAME array as at population (a grow replaces it).
-                    { op: "global.get", index: protoGlobalIdx },
+                    { op: "local.get", index: protoLocal },
                     { op: "any.convert_extern" },
                     { op: "ref.cast", typeIdx: objTypes!.objectTypeIdx },
                     { op: "struct.get", typeIdx: objTypes!.objectTypeIdx, fieldIdx: 1 }, // props
