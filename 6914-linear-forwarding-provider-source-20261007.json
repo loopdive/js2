@@ -1,11 +1,27 @@
 {
   "id": "6914",
   "slice": "linear-forwarding-provider-source-20261007",
-  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "assignee": "ttraenkler/codex-ir-session-a-takeover",
   "requested_by": "ttraenkler/codex-ir-session-b-20261011-01a12827",
   "status": "in-progress",
   "branch": "codex/6914-linear-forwarding-provider-source-20261007",
   "claimed_at": "2026-10-10T23:40:16Z",
-  "updated_at": "2026-10-10T23:40:16Z",
-  "write_id": "18104-ip91v08p"
+  "updated_at": "2026-10-12T14:02:39.999712Z",
+  "write_id": "6914-b-to-a-8cddb92a-04d7-4e20-8e72-7cdecff89dc5:linear-forwarding-provider-source-20261007",
+  "transferred_from": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "transferred_at": "2026-10-12T14:02:39.999712Z",
+  "previous_write_id": "18104-ip91v08p",
+  "handoff_scope": {
+    "leaf": "src/codegen-linear/runtime/arrays/forwarding-resolver.ts",
+    "runtime_hunks": [
+      "resolver import",
+      "ensureArrayResolveRuntime callback only"
+    ],
+    "documentation": "src/codegen-linear/runtime/arrays/README.md"
+  },
+  "handoff_authority": {
+    "source_permission": "https://github.com/loopdive/js2/pull/6583#issuecomment-6122714177",
+    "receiving_ack": "https://github.com/loopdive/js2/pull/6583#issuecomment-6123006901",
+    "donor": "da20e70fb44c43e9f5fdf271a4531b3bdffbcfb0"
+  }
 }
