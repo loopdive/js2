@@ -172,15 +172,17 @@ describe("#3451 slice 6 — the authoritative host lane runs the linked oracle",
     expect(workflow).toContain("TEST262_RESULT_PREFIX: ${{ matrix.result_prefix }}");
   });
 
-  it("the honest lane is the renamed, never-required AUDIT job", () => {
+  it("the retired honest host audit job cannot run", () => {
     expect(workflow).toContain("  test262-honest-audit:");
     expect(workflow).toContain("  merge-honest-audit-report:");
     expect(workflow).toContain("TEST262_RESULT_PREFIX: test262-honest");
     expect(workflow).toContain("RUN_TIMESTAMP: ${{ github.run_id }}-honest-chunk${{ matrix.chunk }}");
     // Schedule + opt-in dispatch only: never pull_request / merge_group / push.
-    expect(workflow).toContain(
-      "if: github.event_name == 'schedule' || " + "(github.event_name == 'workflow_dispatch' && inputs.honest_audit)",
+    const audit = workflow.slice(
+      workflow.indexOf("  test262-honest-audit:"),
+      workflow.indexOf("  merge-honest-audit-report:"),
     );
+    expect(audit).toContain("if: false # JS-host Test262 is retired.");
     expect(workflow).toContain("      honest_audit:");
     expect(workflow).not.toContain("inputs.linked_lane");
   });

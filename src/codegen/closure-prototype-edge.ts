@@ -285,6 +285,97 @@ function reserveClosurePrototypeSet(ctx: CodegenContext): void {
 }
 
 /**
+ * (#6951 G2 review) The own-descriptor gate `__closure_prop_set`'s `prototype`
+ * write arm runs BEFORE it mutates anything — before the
+ * {@link CLOSURE_PROTO_SET} edge store (the canonical per-fnctor global that
+ * `new F()` links through) and before the bag define.
+ *
+ * §10.1.9.2 OrdinarySetWithOwnDescriptor: an OWN `prototype` the program
+ * re-described (`Object.defineProperty(F, "prototype", {writable: false})`,
+ * which Babel's `_createClass` emits) decides the write. Without this the edge
+ * arm stored the new value and reported success, so the forbidden replacement
+ * was observed by every later `new F()` and strict code got no TypeError.
+ *
+ *  - HANDLED (an own setter ran) → SET_RESULT_SUCCESS, return.
+ *  - REFUSED (non-writable) → SET_RESULT_REFUSED, return: strict callers throw
+ *    the TypeError, sloppy ones no-op — the shared #4504 result channel.
+ *  - allowed → the own entry is updated too (a later read must not answer a
+ *    stale value), then the caller's edge/bag arms run unchanged.
+ *
+ * Only a bag that already HAS the own key consults the resolver: without one
+ * the property is the mandatory writable one (§20.2.4.2), and an inherited
+ * descriptor must not claim it. Empty — the arm stays as it was — when the
+ * shared [[Set]] runtime is absent (such a module cannot hold a non-writable
+ * descriptor, #4504) or a helper is unregistered.
+ *
+ * Slot layout is `__closure_prop_set`'s: 0 target, 1 key, 2 value,
+ * 3 `__bag`, 4 `__decision`.
+ */
+export function closurePrototypeOwnDescriptorGuard(
+  ctx: CodegenContext,
+  setResultGlobalIdx: number | undefined,
+): Instr[] {
+  const bagLookupIdx = ctx.funcMap.get("__closure_bag_lookup");
+  const hasOwnIdx = ctx.funcMap.get("__hasOwnProperty");
+  const setDecideIdx = ctx.funcMap.get("__extern_set_decide");
+  const setOwnIdx = ctx.funcMap.get("__extern_set_own");
+  if (
+    setResultGlobalIdx === undefined ||
+    bagLookupIdx === undefined ||
+    hasOwnIdx === undefined ||
+    setDecideIdx === undefined ||
+    setOwnIdx === undefined
+  ) {
+    return [];
+  }
+  const settle = (decision: number, result: number): Instr[] => [
+    { op: "local.get", index: 4 },
+    { op: "i32.const", value: decision },
+    { op: "i32.eq" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [{ op: "i32.const", value: result }, { op: "global.set", index: setResultGlobalIdx }, { op: "return" }],
+    },
+  ];
+  return [
+    { op: "local.get", index: 0 },
+    { op: "call", funcIdx: bagLookupIdx },
+    { op: "local.tee", index: 3 },
+    { op: "ref.is_null" },
+    { op: "i32.eqz" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: 3 },
+        { op: "local.get", index: 1 },
+        { op: "call", funcIdx: hasOwnIdx },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            { op: "local.get", index: 0 },
+            { op: "local.get", index: 3 },
+            { op: "local.get", index: 1 },
+            { op: "local.get", index: 2 },
+            { op: "call", funcIdx: setDecideIdx },
+            { op: "local.set", index: 4 },
+            ...settle(2, 1), // SET_DECISION_HANDLED → SET_RESULT_SUCCESS
+            ...settle(3, 2), // SET_DECISION_REFUSED → SET_RESULT_REFUSED
+            { op: "local.get", index: 3 },
+            { op: "local.get", index: 1 },
+            { op: "local.get", index: 2 },
+            { op: "call", funcIdx: setOwnIdx },
+            { op: "global.set", index: setResultGlobalIdx },
+          ],
+        },
+      ],
+    },
+  ];
+}
+
+/**
  * (#6951 G2) Fill `__closure_proto_set`: route a DYNAMIC `<closure>.prototype
  * = v` on a fnctor that owns a prototype edge into the SAME per-fnctor global
  * the static `F.prototype = v` (`tryCompileFnctorPrototypeAssign`) stores, in

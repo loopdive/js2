@@ -1,3 +1,4 @@
+import ts from "typescript";
 import { installableReceiverInstrs } from "./helpers/undefined-receiver.js";
 import { buildClosureResultBoxing } from "./closures/result-boxing.js";
 import { classifyClosureDispatchRest } from "./closures/closure-dispatch-rest.js";
@@ -67,6 +68,7 @@ import { buildObjectGetBody } from "../runtime/wasmgc/values/object-get-bodies.j
  */
 import { buildVariadicBuiltinApplyArm } from "./apply-closure-variadic-builtin.js"; // (#6701)
 import { buildRestOnlyApply } from "./closures/rest-only-apply.js";
+import { withApplyTail } from "./closures/apply-extras-tail.js";
 import {
   buildObjectPropertyKeyPrefix,
   prependObjectKeyCoercion,
@@ -6254,6 +6256,19 @@ export function ensureExternRestObject(ctx: CodegenContext): number {
 }
 
 /**
+ * (#6959) Call-site admission for `__apply_closure`. The bridge dispatches
+ * 0..8 per arm and, since #6655, every n > 8 through the module's top minted
+ * `__call_fn_method_<top>`; an n with no dispatcher answers the undefined
+ * sentinel, which is exactly what a declining arm's graceful fallback
+ * produces. Admitting any non-spread argc is therefore monotone: it can only
+ * turn a silent `undefined` into a real invocation. Spread calls lower through
+ * `standalone-dynamic-spread-call.ts` instead.
+ */
+export function applyClosureAdmitsCall(expr: ts.CallExpression): boolean {
+  return !expr.arguments.some((a) => ts.isSpreadElement(a));
+}
+
+/**
  * (#1888 Slice 1) Reserve the `__apply_closure(externref fn, externref recv,
  * externref args) -> externref` arity-bridge funcIdx with a placeholder
  * `unreachable` body, registered in `funcMap`. The real body (an arity switch
@@ -6555,17 +6570,34 @@ export function fillApplyClosure(ctx: CodegenContext): void {
   // An unmatched callee is not lost: the dispatcher's own terminal is the
   // linked-peer apply on the standalone lane, the same destination the
   // fall-through `armUnsupported` has.
-  if (applyClosureTopArity > APPLY_CLOSURE_MAX_ARITY) {
+  //
+  // (#6959) n > 8 into an ORDINARY closure (declared 0..8) is over-application
+  // (§7.3.14: extras are ignored). The above-cap dispatcher carries only
+  // above-cap closures, so such a callee must go to the highest ordinary
+  // dispatcher, which admits every closure up to its arity. `-1` (not a
+  // closure) is huge unsigned and keeps the existing route.
+  let ordinaryTop = APPLY_CLOSURE_MAX_ARITY;
+  while (ordinaryTop >= 0 && callMethod(ordinaryTop) === undefined) ordinaryTop--;
+  let aboveCap = applyClosureTopArity > APPLY_CLOSURE_MAX_ARITY ? buildArm(applyClosureTopArity) : undefined;
+  if (widen.length > 0 && ordinaryTop >= 0) {
+    aboveCap = [
+      { op: "local.get", index: declaredArityLocal },
+      { op: "i32.const", value: ordinaryTop },
+      { op: "i32.le_u" },
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "externref" } },
+        then: withApplyTail(ctx, buildArm(ordinaryTop), ordinaryTop, 2, 3), // (#6959 review) args past top
+        else: aboveCap ?? armUnsupported,
+      },
+    ];
+  }
+  if (aboveCap !== undefined) {
     dispatch = [
       { op: "local.get", index: 3 },
       { op: "i32.const", value: APPLY_CLOSURE_MAX_ARITY },
       { op: "i32.gt_s" },
-      {
-        op: "if",
-        blockType: { kind: "val", type: { kind: "externref" } },
-        then: buildArm(applyClosureTopArity),
-        else: dispatch,
-      },
+      { op: "if", blockType: { kind: "val", type: { kind: "externref" } }, then: aboveCap, else: dispatch },
     ];
   }
   for (let n = APPLY_CLOSURE_MAX_ARITY; n >= 0; n--) {
@@ -9585,7 +9617,8 @@ export function fillFnctorPrototypeDispatchArms(ctx: CodegenContext): void {
   // key/entry locals are appended once below.
   const HSTR = ctx.hashedStrTypeIdx;
   const objTypes = ctx.objectRuntimeTypes;
-  const inlineCacheReady = HSTR >= 0 && objTypes !== undefined;
+  const hasOwnIdxForCache = ctx.funcMap.get("__hasOwnProperty");
+  const inlineCacheReady = HSTR >= 0 && objTypes !== undefined && hasOwnIdxForCache !== undefined;
   let khLocal = -1;
   let entryLocal = -1;
   let protoLocal = -1;
@@ -9643,6 +9676,7 @@ export function fillFnctorPrototypeDispatchArms(ctx: CodegenContext): void {
                 { op: "ref.cast", typeIdx: HSTR },
                 { op: "local.tee", index: khLocal },
                 { op: "struct.get", typeIdx: HSTR, fieldIdx: 4 }, // populated flag
+                ...receiverHasNoOwnKeyGuard(ctx, hasOwnIdxForCache!), // (#6946) own method shadows the cached proto one
                 {
                   op: "if",
                   blockType: { kind: "empty" },
@@ -9945,6 +9979,34 @@ export function unshiftExternGetStringExoticArm(ctx: CodegenContext): void {
  * entry flags) confines hits to receivers of that same class. MUST be called
  * LAST among the `__extern_get` body fills.
  */
+/**
+ * (#6946) AND "receiver (param 0) has no own `key` (param 1)" into the i32 on
+ * the stack — the guard both prototype-cache hit arms need before answering from
+ * the prototype (§10.1.8.1 OrdinaryGet consults own storage first). Only reached
+ * for fnctor receivers, whose own expandos live in the carrier `$bag`
+ * (#4194/#4241): `__closure_bag_lookup` is a per-carrier `struct.get`, so the
+ * common no-expando receiver pays one call + null test and keeps the hit; a
+ * receiver WITH a bag skips the cache for the exact slow path. Without that
+ * helper, fall back to the full `__hasOwnProperty` predicate.
+ */
+function receiverHasNoOwnKeyGuard(ctx: CodegenContext, hasOwnIdx: number): Instr[] {
+  const bagLookupIdx = ctx.funcMap.get("__closure_bag_lookup");
+  if (bagLookupIdx !== undefined)
+    return [
+      { op: "local.get", index: 0 },
+      { op: "call", funcIdx: bagLookupIdx },
+      { op: "ref.is_null" },
+      { op: "i32.and" },
+    ];
+  return [
+    { op: "local.get", index: 0 },
+    { op: "local.get", index: 1 },
+    { op: "call", funcIdx: hasOwnIdx },
+    { op: "i32.eqz" },
+    { op: "i32.and" },
+  ];
+}
+
 export function unshiftExternGetProtoCacheArm(ctx: CodegenContext): void {
   unshiftFnctorFastGetArm(ctx); // (#6973) BEFORE the cache arm, which must stay the prefix
   if (!ctx.standalone || ctx.hashedStrTypeIdx < 0) return;
@@ -9955,6 +10017,9 @@ export function unshiftExternGetProtoCacheArm(ctx: CodegenContext): void {
   const { objectTypeIdx, propEntryTypeIdx } = objTypes;
   const fn = ctx.mod.functions.find((candidate) => candidate.name === "__extern_get");
   if (!fn || !fn.locals.some((l) => l.name === "kh")) return;
+  // (#6946) Own-shadow guard for fnctor receivers; no own-presence probe, no cache.
+  const hasOwnIdx = ctx.funcMap.get("__hasOwnProperty");
+  if (hasOwnIdx === undefined) return;
   // (#3673 round 21) props-array type for the per-object staleness cast.
   const objDefForArm = ctx.mod.types[objectTypeIdx];
   const propMapIdxForArm =
@@ -10010,6 +10075,13 @@ export function unshiftExternGetProtoCacheArm(ctx: CodegenContext): void {
                 // (#6944) a struct link is never a cache owner: test, not null-check.
                 { op: "any.convert_extern" },
                 { op: "ref.test", typeIdx: objectTypeIdx },
+                // (#6946) §10.1.8.1 OrdinaryGet consults OWN storage first: a
+                // fnctor receiver that has since gained an own `key` (an expando
+                // `this.v = x` shadowing an inherited default already cached for
+                // the class) must not take the prototype hit. The cache's
+                // staleness tracking is per OWNER (the prototype), so a write on
+                // the receiver never invalidates it — check the receiver here.
+                ...receiverHasNoOwnKeyGuard(ctx, hasOwnIdx),
                 {
                   op: "if",
                   blockType: { kind: "empty" },

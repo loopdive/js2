@@ -1,0 +1,21 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/issue-3518-startup-boundary.test.ts > #3518 startup contract: actual D0 boundary enforcement > resolves the three real data modules without pretending the legacy producer is migrated 1138ms
+ ✓ tests/issue-3518-startup-boundary.test.ts > #3518 startup contract: actual D0 boundary enforcement > rejects a type import back edge in the canonical startup module 1136ms
+ ✓ tests/issue-3518-startup-boundary.test.ts > #3518 startup contract: actual D0 boundary enforcement > rejects a type query back edge in the canonical startup module 1121ms
+ ✓ tests/issue-3518-startup-boundary.test.ts > #3518 startup contract: actual D0 boundary enforcement > rejects a alias back edge in the canonical startup module 1076ms
+ ✓ tests/issue-3518-startup-boundary.test.ts > #3518 startup contract: actual D0 boundary enforcement > rejects a re-export back edge in the canonical startup module 1131ms
+ ✓ tests/issue-3518-startup-boundary.test.ts > #3518 startup contract: actual D0 boundary enforcement > rejects a dynamic import back edge in the canonical startup module 1132ms
+ ✓ tests/issue-3518-startup-boundary.test.ts > #3518 startup contract: actual D0 boundary enforcement > follows an added clean barrel to a forbidden old-path dependency 1176ms
+ ✓ tests/issue-3518-startup-boundary.test.ts > #3518 startup contract: actual D0 boundary enforcement > does not treat nonliteral import as a closed dependency graph 1127ms
+ ✓ tests/issue-3518-startup-boundary.test.ts > #3518 startup contract: actual D0 boundary enforcement > does not treat unresolved import as a closed dependency graph 1077ms
+ ✓ tests/issue-3518-startup-boundary.test.ts > #3518 startup contract: actual D0 boundary enforcement > does not treat parse failure as a closed dependency graph 1072ms
+ ✓ tests/issue-3518-startup-boundary.test.ts > #3518 startup contract: actual D0 boundary enforcement > fails when the required startup entry is missing 1076ms
+ ✓ tests/issue-3518-startup-boundary.test.ts > #3518 startup contract: actual D0 boundary enforcement > keeps the real policy activation and pending full-schema obligation visible 5ms
+
+ Test Files  1 passed (1)
+      Tests  12 passed (12)
+   Start at  22:27:39
+   Duration  12.70s (transform 49ms, setup 0ms, collect 47ms, tests 12.27s, environment 0ms, prepare 72ms)
+

@@ -1,0 +1,601 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ × tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > independently pins the complete current, predecessor, receipt, sources, prefix and fixed four-row domain 17ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > derives genuine1780 bytes and proves exact semantic and raw generator-chain agreement 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses the exact successfully derived old raw profile on a later outer action 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ ✓ tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses duplicate receipt keys before parsing or authority IO 6ms
+ × tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > returns fresh detached predecessors and freshly frozen receipt snapshots 6ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses stale predecessor without accepting a partial epoch 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses first addition only absent without accepting a partial epoch 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses second addition only absent without accepting a partial epoch 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses third addition only absent without accepting a partial epoch 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses containment restoration only without accepting a partial epoch 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses double first addition without accepting a partial epoch 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses unknown extra row without accepting a partial epoch 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed path in fixed current row 366 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed state in fixed current row 366 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed layer in fixed current row 366 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed destination in fixed current row 366 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed owner in fixed current row 366 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed nextBoundary in fixed current row 366 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses missing fixed current row 366 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses duplicate fixed current row 366 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses reordered fixed current row 366 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed path in fixed current row 367 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed state in fixed current row 367 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed layer in fixed current row 367 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed destination in fixed current row 367 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed owner in fixed current row 367 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed nextBoundary in fixed current row 367 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses missing fixed current row 367 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses duplicate fixed current row 367 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses reordered fixed current row 367 5ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed path in fixed current row 514 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed state in fixed current row 514 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed layer in fixed current row 514 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed destination in fixed current row 514 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed owner in fixed current row 514 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed nextBoundary in fixed current row 514 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses missing fixed current row 514 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses duplicate fixed current row 514 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses reordered fixed current row 514 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed path on an attempted containment restoration 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed state on an attempted containment restoration 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed layer on an attempted containment restoration 5ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed destination on an attempted containment restoration 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed owner on an attempted containment restoration 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed nextBoundary on an attempted containment restoration 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed retained row or neighbor 365 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed retained row or neighbor 368 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed retained row or neighbor 513 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed retained row or neighbor 515 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed retained row or neighbor 1383 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed retained row or neighbor 1384 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed retained row or neighbor 0 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed retained row or neighbor 1781 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses top-level description mutation 5ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses unknown top-level field mutation 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses activation mutation 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses edge mutation 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses layer mutation 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses row key order mutation 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses whitespace raw source 8ms
+   → expected [Function] to throw error including 'current main inventory evolution: com…' but got 'Deno post-position main successor: co…'
+ × tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses reformatted current raw source 4ms
+   → expected [Function] to throw error including 'current main inventory evolution: com…' but got 'Deno post-position main successor: co…'
+ ✓ tests/issue-3518-current-main-inventory-successor.test.ts > fixed policy-capture kernel prefix authority > freshly refuses actual policy-capture prefix byte 0 and restores 415ms
+ × tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses missing first raw block raw source 5ms
+   → expected [Function] to throw error including 'current main inventory evolution: com…' but got 'Deno post-position main successor: co…'
+ × tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses duplicated third raw block raw source 4ms
+   → expected [Function] to throw error including 'current main inventory evolution: com…' but got 'Deno post-position main successor: co…'
+ × tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses restored containment raw block raw source 3ms
+   → expected [Function] to throw error including 'current main inventory evolution: com…' but got 'Deno post-position main successor: co…'
+ ✓ tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses missing or unknown receipt field schema 1ms
+ ✓ tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses missing or unknown receipt field kind 0ms
+ ✓ tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses missing or unknown receipt field provenance 0ms
+ ✓ tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses missing or unknown receipt field before 0ms
+ ✓ tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses missing or unknown receipt field current 0ms
+ ✓ tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses missing or unknown receipt field helperPrefix 0ms
+ ✓ tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses missing or unknown receipt field predecessorReceipt 0ms
+ ✓ tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses missing or unknown receipt field sourcePins 0ms
+ ✓ tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses missing or unknown receipt field rowChanges 3ms
+ ✓ tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses missing or unknown receipt field raw 1ms
+ ✓ tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed receipt row0 coordinate or neighbor beforeIndex 1ms
+ ✓ tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed receipt row0 coordinate or neighbor currentIndex 0ms
+ ✓ tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed receipt row0 coordinate or neighbor beforePrevious 1ms
+ ✓ tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed receipt row0 coordinate or neighbor beforeNext 0ms
+ ✓ tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed receipt row0 coordinate or neighbor currentPrevious 0ms
+ ✓ tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed receipt row0 coordinate or neighbor currentNext 0ms
+ ✓ tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed receipt row1 coordinate or neighbor beforeIndex 0ms
+ ✓ tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed receipt row1 coordinate or neighbor currentIndex 0ms
+ ✓ tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed receipt row1 coordinate or neighbor beforePrevious 0ms
+ ✓ tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed receipt row1 coordinate or neighbor beforeNext 0ms
+ ✓ tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed receipt row1 coordinate or neighbor currentPrevious 0ms
+ ✓ tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed receipt row1 coordinate or neighbor currentNext 0ms
+ ✓ tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed receipt row2 coordinate or neighbor beforeIndex 0ms
+ ✓ tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed receipt row2 coordinate or neighbor currentIndex 0ms
+ ✓ tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed receipt row2 coordinate or neighbor beforePrevious 0ms
+ ✓ tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed receipt row2 coordinate or neighbor beforeNext 0ms
+ ✓ tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed receipt row2 coordinate or neighbor currentPrevious 0ms
+ ✓ tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed receipt row2 coordinate or neighbor currentNext 0ms
+ ✓ tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed receipt row3 coordinate or neighbor beforeIndex 0ms
+ ✓ tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed receipt row3 coordinate or neighbor currentIndex 1ms
+ ✓ tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed receipt row3 coordinate or neighbor beforePrevious 1ms
+ ✓ tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed receipt row3 coordinate or neighbor beforeNext 2ms
+ ✓ tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed receipt row3 coordinate or neighbor currentPrevious 0ms
+ ✓ tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed receipt row3 coordinate or neighbor currentNext 0ms
+ ✓ tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed raw span0 beforeOffset 1ms
+ ✓ tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed raw span0 afterOffset 0ms
+ ✓ tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed raw span0 before 0ms
+ ✓ tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed raw span0 after 0ms
+ ✓ tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed raw span0 beforeSha256 0ms
+ ✓ tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed raw span0 afterSha256 0ms
+ ✓ tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed raw span1 beforeOffset 0ms
+ ✓ tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed raw span1 afterOffset 0ms
+ ✓ tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed raw span1 before 0ms
+ ✓ tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed raw span1 after 0ms
+ ✓ tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed raw span1 beforeSha256 0ms
+ ✓ tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed raw span1 afterSha256 0ms
+ ✓ tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed raw span2 beforeOffset 0ms
+ ✓ tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed raw span2 afterOffset 0ms
+ ✓ tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed raw span2 before 0ms
+ ✓ tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed raw span2 after 0ms
+ ✓ tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed raw span2 beforeSha256 0ms
+ ✓ tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed raw span2 afterSha256 0ms
+ ✓ tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses reordered rowChanges receipt domain 0ms
+ ✓ tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses reordered sourcePins receipt domain 0ms
+ ✓ tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses reordered raw spans and source/span coordinate confusion 0ms
+ × tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses nonprimitive raw operand [object Null] before authority IO 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses nonprimitive raw operand [object Number] before authority IO 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses nonprimitive raw operand [object Object] before authority IO 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses nonprimitive raw operand [object String] before authority IO 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses accessor descriptors without caller reads or authority IO 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > propagates proxy descriptor refusal before authority IO 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > does not invoke caller JSON or primitive conversion hooks 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > freshly refuses mutated physical authority tests/helpers/ir-runtime-program-policy-main-inventory-20261002.json after success and restores 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > propagates missing physical authority tests/helpers/ir-runtime-program-policy-main-inventory-20261002.json without stale fallback 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > freshly refuses mutated physical authority tests/helpers/ir-runtime-program-policy-evolution.ts after success and restores 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > propagates missing physical authority tests/helpers/ir-runtime-program-policy-evolution.ts without stale fallback 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > freshly refuses mutated physical authority tests/helpers/ir-runtime-program-policy-generator-eager-refusal.json after success and restores 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > propagates missing physical authority tests/helpers/ir-runtime-program-policy-generator-eager-refusal.json without stale fallback 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > freshly refuses mutated physical authority src/codegen/class-builtin-species-read.ts after success and restores 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > propagates missing physical authority src/codegen/class-builtin-species-read.ts without stale fallback 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > freshly refuses mutated physical authority src/codegen/date-proto-to-json.ts after success and restores 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > propagates missing physical authority src/codegen/date-proto-to-json.ts without stale fallback 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > freshly refuses mutated physical authority src/codegen/expressions/to-primitive-method-call.ts after success and restores 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > propagates missing physical authority src/codegen/expressions/to-primitive-method-call.ts without stale fallback 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ ✓ tests/issue-3518-current-main-inventory-successor.test.ts > fixed policy-capture kernel prefix authority > freshly refuses actual policy-capture prefix byte 5477 and restores 375ms
+ ✓ tests/issue-3518-current-main-inventory-successor.test.ts > fixed policy-capture kernel prefix authority > freshly refuses actual policy-capture prefix byte 5585 and restores 391ms
+ ✓ tests/issue-3518-current-main-inventory-successor.test.ts > fixed policy-capture kernel prefix authority > freshly refuses actual policy-capture prefix byte 94640 and restores 387ms
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 82 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > independently pins the complete current, predecessor, receipt, sources, prefix and fixed four-row domain
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-current-main-inventory-successor.test.ts:62:27
+ ❯ tests/issue-3518-current-main-inventory-successor.test.ts:557:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/82]⎯
+
+ FAIL  tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > derives genuine1780 bytes and proves exact semantic and raw generator-chain agreement
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-current-main-inventory-successor.test.ts:62:27
+ ❯ tests/issue-3518-current-main-inventory-successor.test.ts:631:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/82]⎯
+
+ FAIL  tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses the exact successfully derived old raw profile on a later outer action
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-current-main-inventory-successor.test.ts:62:27
+ ❯ tests/issue-3518-current-main-inventory-successor.test.ts:661:61
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/82]⎯
+
+ FAIL  tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > returns fresh detached predecessors and freshly frozen receipt snapshots
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-current-main-inventory-successor.test.ts:62:27
+ ❯ policy tests/issue-3518-current-main-inventory-successor.test.ts:75:41
+ ❯ tests/issue-3518-current-main-inventory-successor.test.ts:681:15
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/82]⎯
+
+ FAIL  tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses stale predecessor without accepting a partial epoch
+ FAIL  tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses first addition only absent without accepting a partial epoch
+ FAIL  tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses second addition only absent without accepting a partial epoch
+ FAIL  tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses third addition only absent without accepting a partial epoch
+ FAIL  tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses containment restoration only without accepting a partial epoch
+ FAIL  tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses double first addition without accepting a partial epoch
+ FAIL  tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses unknown extra row without accepting a partial epoch
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-current-main-inventory-successor.test.ts:62:27
+ ❯ policy tests/issue-3518-current-main-inventory-successor.test.ts:75:41
+ ❯ tests/issue-3518-current-main-inventory-successor.test.ts:705:17
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/82]⎯
+
+ FAIL  tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed path in fixed current row 366
+ FAIL  tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed state in fixed current row 366
+ FAIL  tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed layer in fixed current row 366
+ FAIL  tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed destination in fixed current row 366
+ FAIL  tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed owner in fixed current row 366
+ FAIL  tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed nextBoundary in fixed current row 366
+ FAIL  tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed path in fixed current row 367
+ FAIL  tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed state in fixed current row 367
+ FAIL  tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed layer in fixed current row 367
+ FAIL  tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed destination in fixed current row 367
+ FAIL  tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed owner in fixed current row 367
+ FAIL  tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed nextBoundary in fixed current row 367
+ FAIL  tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed path in fixed current row 514
+ FAIL  tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed state in fixed current row 514
+ FAIL  tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed layer in fixed current row 514
+ FAIL  tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed destination in fixed current row 514
+ FAIL  tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed owner in fixed current row 514
+ FAIL  tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed nextBoundary in fixed current row 514
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-current-main-inventory-successor.test.ts:62:27
+ ❯ policy tests/issue-3518-current-main-inventory-successor.test.ts:75:41
+ ❯ tests/issue-3518-current-main-inventory-successor.test.ts:712:19
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/82]⎯
+
+ FAIL  tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses missing fixed current row 366
+ FAIL  tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses duplicate fixed current row 366
+ FAIL  tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses reordered fixed current row 366
+ FAIL  tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses missing fixed current row 367
+ FAIL  tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses duplicate fixed current row 367
+ FAIL  tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses reordered fixed current row 367
+ FAIL  tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses missing fixed current row 514
+ FAIL  tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses duplicate fixed current row 514
+ FAIL  tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses reordered fixed current row 514
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-current-main-inventory-successor.test.ts:62:27
+ ❯ policy tests/issue-3518-current-main-inventory-successor.test.ts:75:41
+ ❯ tests/issue-3518-current-main-inventory-successor.test.ts:718:19
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/82]⎯
+
+ FAIL  tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed path on an attempted containment restoration
+ FAIL  tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed state on an attempted containment restoration
+ FAIL  tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed layer on an attempted containment restoration
+ FAIL  tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed destination on an attempted containment restoration
+ FAIL  tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed owner on an attempted containment restoration
+ FAIL  tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed nextBoundary on an attempted containment restoration
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-current-main-inventory-successor.test.ts:62:27
+ ❯ policy tests/issue-3518-current-main-inventory-successor.test.ts:75:41
+ ❯ tests/issue-3518-current-main-inventory-successor.test.ts:727:17
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/82]⎯
+
+ FAIL  tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed retained row or neighbor 365
+ FAIL  tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed retained row or neighbor 368
+ FAIL  tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed retained row or neighbor 513
+ FAIL  tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed retained row or neighbor 515
+ FAIL  tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed retained row or neighbor 1383
+ FAIL  tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed retained row or neighbor 1384
+ FAIL  tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed retained row or neighbor 0
+ FAIL  tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses changed retained row or neighbor 1781
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-current-main-inventory-successor.test.ts:62:27
+ ❯ policy tests/issue-3518-current-main-inventory-successor.test.ts:75:41
+ ❯ tests/issue-3518-current-main-inventory-successor.test.ts:735:17
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/82]⎯
+
+ FAIL  tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses top-level description mutation
+ FAIL  tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses unknown top-level field mutation
+ FAIL  tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses activation mutation
+ FAIL  tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses edge mutation
+ FAIL  tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses layer mutation
+ FAIL  tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses row key order mutation
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-current-main-inventory-successor.test.ts:62:27
+ ❯ policy tests/issue-3518-current-main-inventory-successor.test.ts:75:41
+ ❯ tests/issue-3518-current-main-inventory-successor.test.ts:786:17
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/82]⎯
+
+ FAIL  tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses whitespace raw source
+ FAIL  tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses reformatted current raw source
+ FAIL  tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses missing first raw block raw source
+ FAIL  tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses duplicated third raw block raw source
+ FAIL  tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses restored containment raw block raw source
+AssertionError: expected [Function] to throw error including 'current main inventory evolution: com…' but got 'Deno post-position main successor: co…'
+
+Expected: [32m"[7mcurrent main inventory evolution[27m: complete raw source profile mismatch"[39m
+Received: [31m"[7mDeno post-position main successor[27m: complete raw source profile mismatch"[39m
+
+ ❯ tests/issue-3518-current-main-inventory-successor.test.ts:805:75
+    803|   ] as const)
+    804|     it(`refuses ${name} raw source`, () => {
+    805|       expect(() => beforeCurrentMainInventoryPolicySource(mutate(raw()…
+       |                                                                           ^
+    806|         "current main inventory evolution: complete raw source profile…
+    807|       );
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[11/82]⎯
+
+ FAIL  tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses nonprimitive raw operand [object Null] before authority IO
+ FAIL  tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses nonprimitive raw operand [object Number] before authority IO
+ FAIL  tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses nonprimitive raw operand [object Object] before authority IO
+ FAIL  tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses nonprimitive raw operand [object String] before authority IO
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-current-main-inventory-successor.test.ts:62:27
+ ❯ tests/issue-3518-current-main-inventory-successor.test.ts:861:24
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[12/82]⎯
+
+ FAIL  tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > refuses accessor descriptors without caller reads or authority IO
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-current-main-inventory-successor.test.ts:62:27
+ ❯ policy tests/issue-3518-current-main-inventory-successor.test.ts:75:41
+ ❯ tests/issue-3518-current-main-inventory-successor.test.ts:873:15
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[13/82]⎯
+
+ FAIL  tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > propagates proxy descriptor refusal before authority IO
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-current-main-inventory-successor.test.ts:62:27
+ ❯ policy tests/issue-3518-current-main-inventory-successor.test.ts:75:41
+ ❯ tests/issue-3518-current-main-inventory-successor.test.ts:891:25
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[14/82]⎯
+
+ FAIL  tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > does not invoke caller JSON or primitive conversion hooks
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-current-main-inventory-successor.test.ts:62:27
+ ❯ policy tests/issue-3518-current-main-inventory-successor.test.ts:75:41
+ ❯ tests/issue-3518-current-main-inventory-successor.test.ts:906:15
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[15/82]⎯
+
+ FAIL  tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > freshly refuses mutated physical authority tests/helpers/ir-runtime-program-policy-main-inventory-20261002.json after success and restores
+ FAIL  tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > freshly refuses mutated physical authority tests/helpers/ir-runtime-program-policy-evolution.ts after success and restores
+ FAIL  tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > freshly refuses mutated physical authority tests/helpers/ir-runtime-program-policy-generator-eager-refusal.json after success and restores
+ FAIL  tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > freshly refuses mutated physical authority src/codegen/class-builtin-species-read.ts after success and restores
+ FAIL  tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > freshly refuses mutated physical authority src/codegen/date-proto-to-json.ts after success and restores
+ FAIL  tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > freshly refuses mutated physical authority src/codegen/expressions/to-primitive-method-call.ts after success and restores
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-current-main-inventory-successor.test.ts:62:27
+ ❯ policy tests/issue-3518-current-main-inventory-successor.test.ts:75:41
+ ❯ tests/issue-3518-current-main-inventory-successor.test.ts:942:17
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[16/82]⎯
+
+ FAIL  tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > propagates missing physical authority tests/helpers/ir-runtime-program-policy-main-inventory-20261002.json without stale fallback
+ FAIL  tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > propagates missing physical authority tests/helpers/ir-runtime-program-policy-evolution.ts without stale fallback
+ FAIL  tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > propagates missing physical authority tests/helpers/ir-runtime-program-policy-generator-eager-refusal.json without stale fallback
+ FAIL  tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > propagates missing physical authority src/codegen/class-builtin-species-read.ts without stale fallback
+ FAIL  tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > propagates missing physical authority src/codegen/date-proto-to-json.ts without stale fallback
+ FAIL  tests/issue-3518-current-main-inventory-successor.test.ts > fixed current-main four-row inventory successor > propagates missing physical authority src/codegen/expressions/to-primitive-method-call.ts without stale fallback
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-current-main-inventory-successor.test.ts:62:27
+ ❯ policy tests/issue-3518-current-main-inventory-successor.test.ts:75:41
+ ❯ tests/issue-3518-current-main-inventory-successor.test.ts:956:17
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[17/82]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  82 failed | 60 passed (142)
+   Start at  22:49:05
+   Duration  2.73s (transform 422ms, setup 0ms, collect 509ms, tests 1.86s, environment 0ms, prepare 63ms)
+

@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# A/B swap of the three #6931 source files. Usage: bash .tmp/ab.sh save|base|new
+cd "$(dirname "$0")/.."
+FILES="any-eq-helpers coercion-engine binary-ops-typed-dispatch"
+mkdir -p .tmp/ab
+case "$1" in
+  save)
+    for f in $FILES; do
+      cp "src/codegen/$f.ts" ".tmp/ab/$f.new.ts"
+      git show "dbf5b4f74b37d67e525b2af36fd1fe49803b1348:src/codegen/$f.ts" > ".tmp/ab/$f.base.ts"
+    done ;;
+  base) for f in $FILES; do cp ".tmp/ab/$f.base.ts" "src/codegen/$f.ts"; done ;;
+  new) for f in $FILES; do cp ".tmp/ab/$f.new.ts" "src/codegen/$f.ts"; done ;;
+esac
+ls -la .tmp/ab

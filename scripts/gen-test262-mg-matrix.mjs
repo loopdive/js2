@@ -29,107 +29,13 @@
 // therefore bought 4 extra shards and paid for them with ~89 s of start skew
 // on the critical path. 18 is the honest number.
 //
-// js-host and standalone get DIFFERENT counts because their measured work is
-// not equal. RATIO (re-derived from merge_group run 30631849709, 2026-07-31,
-// the 72/34 matrix). `Run shard` step timings:
-//   js-host:    29,353 runner-seconds total, mean 408 s, max 468 s (72 jobs)
-//   standalone: 16,000 runner-seconds total, mean 471 s, max 542 s (34 jobs)
-// That is a **1.835** work ratio, NOT the 2.13 the 72/34 split was scaled
-// from (measured on run 29807524490 at 34/19, before the lanes' relative cost
-// shifted). At 72/34 the lanes are therefore inverted again: standalone is the
-// long pole by ~74 s of `Run shard` time. 66/36 = 1.833 matches the measured
-// ratio, and at 102 shards both lanes land on ~444 s of mean shard work —
-// ~510 s at the observed per-lane max/mean skew (1.147 host, 1.151
-// standalone), i.e. within ~2 s of each other, with a ~39 s fixed per-job
-// overhead (setup + checkout + install + bundle + upload, median measured)
-// on top. Ample margin under the 25-minute job timeout.
-//
-// Net expected effect vs. 72/34 + reserve 14: the critical shard job goes from
-// "starts t+134 s, ends t+709 s" to "starts t+45 s, ends t+~596 s" — about
-// 113 s off every src-touching merge_group run. Under a serial queue that is
-// a direct throughput gain.
-//
-// The host lane is costlier primarily because both lanes still compile the
-// honest full in-Wasm harness, while the host target emits JS/Wasm interop glue.
-// In run 29807524490 host compilation totaled 77.7M ms vs. 42.3M ms for
-// standalone; execution was only 2.4M vs. 0.7M ms. Host also reaches more
-// passing tests and therefore performs more strict-mode recompilations.
-//
-// RE-DERIVING THIS: pull the `Run shard` step durations for a completed
-// merge_group run, sum them per lane, and split the shard budget by the two
-// sums. If one lane's max job is consistently more than ~1 min past the
-// other's, the ratio has drifted again — that is the signal to redo it, and
-// it has now drifted four times (2.13 -> 1.835 -> 1.31 -> 1.03), so treat it
-// as a recurring check rather than a constant.
-//
-// The underlying partition (assignBalancedChunk, test262-shared.ts) is a
-// pure function of (chunkIndex, totalChunks): it re-derives the FULL test262
-// corpus and greedily bin-packs it into `totalChunks` bins by historical
-// duration, so it produces a strict, non-overlapping, full-coverage
-// partition for ANY totalChunks >= 1 — changing the shard count here cannot
-// drop or duplicate tests. See tests/issue-3431-mg-matrix.test.ts for a
-// dry-run check of this script's output shape, and
-// tests/test262-chunk-dynamic.test.ts for the runtime entry point each
-// matrix cell invokes (index/total supplied via env vars instead of being
-// baked into a per-shard filename).
-
+// JS-host Test262 is retired. Its former share of the existing budget now
+// belongs to standalone; keep the 18-runner reserve for other required checks.
+// Baseline, dispatch, refresh and merge-group runs all use this partition.
 export const MERGE_GROUP_RUNNER_CAPACITY = 120;
 export const MERGE_GROUP_RESERVED_RUNNERS = 18;
-// THIRD ratio drift (2026-08-14, the #4157 tuned-defaults flip): standalone
-// `Run shard` work grew ~40 % under tuned emission (#4157 entry 43) while
-// js-host medians stayed flat (8.1 -> 8.2 min measured across the flip in
-// merge_group runs 31741566801 vs 31743784768). Re-derived split: host
-// 29,353 rs vs standalone 16,000 x 1.4 = 22,400 rs -> ratio 1.31 -> 58/44 of
-// the same 102-shard budget (means ~506 s vs ~509 s, balanced). The practical
-// stake is wave survival, not just throughput: GitHub-hosted runner shutdown
-// waves (five windows on 2026-08-13) kill long jobs preferentially, and
-// post-flip 36-way standalone shards ran 20-36+ min — 2-4x the exposure of
-// every PR that merged through the same windows. 44-way puts standalone jobs
-// back at the ~15-min profile that demonstrably survives.
-// FOURTH ratio drift (2026-08-15): the THIRD split above was an ESTIMATE
-// (standalone 16,000 rs x 1.4 for the tuned-emission flip) and it overshot.
-// Measured `Run shard` totals across three green merge_group runs at 58/44:
-//   run 31870031833 (pr-4536): js-host 22,923 rs, mean 395 s, max 536 s
-//                              standalone 21,769 rs, mean 495 s, max 568 s
-//   run 31872537807 (pr-4537): js-host 22,452 rs, mean 387 s, max 445 s
-//                              standalone 21,384 rs, mean 486 s, max 576 s
-//   run 31873778381 (pr-4538): js-host 22,261 rs, mean 384 s, max 431 s
-//                              standalone 21,730 rs, mean 494 s, max 560 s
-// True work ratio is **1.02-1.05** (call it 1.03), not the assumed 1.31.
-// BOTH lanes moved, which is why the estimate missed: standalone grew roughly
-// as predicted (16,000 -> ~21.6k rs) but js-host also FELL hard (29,353 ->
-// ~22.5k rs) as the compile-speedup work landed (#4425/#4431/#4432 among
-// others), so scaling only the standalone side could not land on the right
-// ratio. At 58/44 standalone is therefore still the tail of every run (~490 s
-// vs ~385 s per shard, i.e. ~105 s of avoidable tail; the last finisher was a
-// standalone shard on all three runs). 52/50 of the same 102-shard budget puts
-// both lanes at ~428-441 s mean. Unchanged: MERGE_GROUP_RUNNER_CAPACITY (120)
-// and MERGE_GROUP_RESERVED_RUNNERS (18). Shorter standalone shards also cut
-// exposure to the hosted-runner shutdown waves the THIRD note was worried
-// about (~495 -> ~435 s).
-// FIFTH ratio drift (2026-09-28): the #3451 slice 6 flip (2026-09-17) moved
-// the js-host lane onto the LINKED harness oracle — the harness prefix is
-// compiled once per include-set instead of once per row — while standalone
-// kept the whole-assembly (honest) compile. js-host work fell ~4x; standalone
-// did not move. At 52/50 standalone was the long pole of every run by ~11 min.
-// Measured `Run shard` totals, six consecutive green merge_group runs at 52/50:
-//   36375344400: js-host 8,294 rs (mean 160 s, max 229 s)
-//                standalone 40,189 rs (mean 804 s, max 938 s)
-//   36373666471: js-host 8,570 rs / standalone 40,285 rs
-//   36372049678: js-host 8,968 rs / standalone 39,451 rs
-//   36371437444: js-host 8,505 rs / standalone 38,702 rs
-//   36370111071: js-host 8,538 rs / standalone 40,059 rs
-//   36368683255: js-host 8,401 rs / standalone 38,434 rs
-// Work ratio js-host:standalone = **0.21-0.23** (call it 0.215). The exact
-// balance of the same 102-shard budget is ~18/84; 20/82 is used because the
-// js-host lane's max/mean skew is higher (~1.38 vs ~1.17 standalone), so a
-// slightly larger host share keeps its slowest shard under standalone's.
-// Projected means: js-host ~425 s, standalone ~485 s (max ~570 s, down from
-// ~920 s). Unchanged: MERGE_GROUP_RUNNER_CAPACITY (120) and
-// MERGE_GROUP_RESERVED_RUNNERS (18). If a standalone linked oracle lands, the
-// ratio moves again — re-derive with the procedure above.
-export const JS_HOST_CHUNKS = 20;
-export const STANDALONE_CHUNKS = 82;
+export const JS_HOST_CHUNKS = 0;
+export const STANDALONE_CHUNKS = MERGE_GROUP_RUNNER_CAPACITY - MERGE_GROUP_RESERVED_RUNNERS;
 
 /**
  * @param {string} targetName matrix job-name suffix, e.g. "js-host"
@@ -155,36 +61,12 @@ export function buildTargetEntries(targetName, test262Target, resultPrefix, chun
 }
 
 /**
- * Build the merge_group matrix, optionally restricted to the lanes whose
- * results the queued change can actually move.
- *
- * The `changes` job classifies the queued diff with
- * `scripts/test262-paths-match.sh --target host|standalone` and passes the
- * verdict in; a lane that provably cannot move (e.g. js-host for a change that
- * only refreshes tests/test262-slow-tests-standalone.json) is dropped from the
- * matrix entirely rather than scheduled and thrown away.
- *
- * SHARD COUNTS ARE NOT REBALANCED when a lane is dropped. Each lane keeps its
- * own chunk_total so its partition (assignBalancedChunk, a pure function of
- * (chunkIndex, totalChunks)) stays IDENTICAL to a full run — a single-lane run
- * must be directly comparable to the baseline that a two-lane run produced.
- * Spending the freed runners on more shards for the surviving lane would
- * re-partition it, which is a change we have no measurement for; the win here
- * is the ~66 or ~36 jobs not run at all.
- *
- * @param {{ host?: boolean, standalone?: boolean }} [lanes]
+ * Build the active standalone lane. A retired host selection cannot revive
+ * JS-host shards, and an empty selection stays well-formed for skipped jobs.
+ * @param {{ host?: boolean, standalone?: boolean }} [_lanes]
  */
-export function buildMergeGroupMatrix(lanes = {}) {
-  const { host = true, standalone = true } = lanes;
-  // Neither lane selected should be unreachable (the caller gates the whole
-  // job on run_shards), but an EMPTY matrix is a workflow-level error in
-  // GitHub Actions, not a skipped job — so fail safe to the full matrix and
-  // let the job's own `if:` decide whether to run at all.
-  if (!host && !standalone) return buildMergeGroupMatrix({ host: true, standalone: true });
-  return [
-    ...(host ? buildTargetEntries("js-host", "gc", "test262", JS_HOST_CHUNKS) : []),
-    ...(standalone ? buildTargetEntries("standalone", "standalone", "test262-standalone", STANDALONE_CHUNKS) : []),
-  ];
+export function buildMergeGroupMatrix(_lanes = {}) {
+  return buildTargetEntries("standalone", "standalone", "test262-standalone", STANDALONE_CHUNKS);
 }
 
 /**

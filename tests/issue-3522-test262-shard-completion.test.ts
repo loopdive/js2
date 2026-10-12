@@ -33,6 +33,19 @@ describe("#3522 Test262 shard completion evidence", () => {
     expect(job(refresh, "test262-shard")).toContain('VITEST_FORK_MAX_OLD_SPACE_SIZE: "1024"');
   });
 
+  it("all active matrices use the dynamic runner's actual index/total contract", () => {
+    const dynamic = readFileSync(resolve(ROOT, "tests/test262-chunk-dynamic.test.ts"), "utf8");
+    expect(dynamic).toContain("process.env.TEST262_CHUNK_INDEX");
+    expect(dynamic).toContain("process.env.TEST262_CHUNK_TOTAL");
+    for (const workflowJob of [job(sharded, "test262-shard"), job(refresh, "test262-shard")]) {
+      expect(workflowJob).toContain('TEST262_CHUNK_TOTAL: "102"');
+      expect(workflowJob).toContain("export TEST262_CHUNK_INDEX=$(( ${{ matrix.chunk }} - 1 ))");
+      expect(workflowJob).toContain("run tests/test262-chunk-dynamic.test.ts");
+      expect(workflowJob).not.toContain("TEST262_TOTAL_CHUNKS");
+    }
+    expect(job(sharded, "test262-shard-mg")).toContain("TEST262_CHUNK_TOTAL: ${{ matrix.chunk_total }}");
+  });
+
   it("writes the completion marker only from the shard afterAll hook", () => {
     const afterAllStart = runner.indexOf("  afterAll(() => {");
     expect(afterAllStart).toBeGreaterThan(-1);
