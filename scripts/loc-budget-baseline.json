@@ -1,7 +1,7 @@
 {
   "generated": "2026-10-12",
   "threshold": 1500,
-  "totalCeiling": 1019829,
+  "totalCeiling": 1019858,
   "files": {
     "src/codegen-linear/index.ts": 5791,
     "src/codegen-linear/runtime.ts": 4448,
@@ -32,7 +32,7 @@
     "src/codegen/expressions.ts": 1803,
     "src/codegen/expressions/assignment.ts": 6652,
     "src/codegen/expressions/builtins.ts": 3884,
-    "src/codegen/expressions/call-builtin-static.ts": 4760,
+    "src/codegen/expressions/call-builtin-static.ts": 4761,
     "src/codegen/expressions/call-identifier.ts": 4450,
     "src/codegen/expressions/call-namespace-static.ts": 4549,
     "src/codegen/expressions/call-receiver-method.ts": 4983,
@@ -62,7 +62,7 @@
     "src/codegen/native-strings.ts": 2149,
     "src/codegen/normalize-tables.ts": 3644,
     "src/codegen/numeric-property-analysis.ts": 1694,
-    "src/codegen/object-ops.ts": 5596,
+    "src/codegen/object-ops.ts": 5602,
     "src/codegen/object-runtime-descriptors.ts": 2948,
     "src/codegen/object-runtime-enumeration.ts": 1628,
     "src/codegen/object-runtime-proxy.ts": 2728,
