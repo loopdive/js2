@@ -1,7 +1,8 @@
 ---
 id: 6976
 title: "standalone: `e.m_force` / `typeof e` constant-fold on the checker's declared `number` type of a `var e = 0` whose slot is widened to externref by a later object assignment (Octane box2d `b2Island.Solve`)"
-status: in-progress
+status: done
+completed: 2026-10-12
 assignee: ttraenkler/senior-dev
 sprint: current
 created: 2026-10-12
@@ -73,3 +74,55 @@ node `object:object:object`; standalone and gc `number:undefined:object`.
   it, or that the result is identical); and a parameter case.
 - **Octane box2d `--lanes node,standalone`** on c-octane-integ + #6974 + #6975 + this: a PASS row.
 - gc output is unchanged except for widened-var sites.
+
+## Implementation notes (2026-10-12, senior-dev)
+
+`primitiveFactContradictedBySlot` (`src/codegen/primitive-absent-property.ts`) resolves the
+operand identifier (parentheses unwrapped) to its allocated slot, in the order the identifier read
+itself uses:
+- a `fctx.localMap` local, or its ref cell's `valType` when it is a boxed capture;
+- then `ctx.capturedBoxGlobals`;
+- then the module global.
+
+A slot whose kind is not `i32`/`i64`/`f32`/`f64` contradicts a `number`/`boolean` fact, and the fold
+declines. An identifier with no slot keeps the fold.
+- **Property read:** `tryEmitPrimitiveAbsentPropertyRead` checks it after its existing narrowing.
+- **typeof:** both lowerings, `compileTypeofExpression` and the separate `compileTypeofComparison`
+  ladder, now call `typeofFold` (`src/codegen/typeof-delete.ts`). That is `staticTypeofForType`
+  plus `typeofFoldContradictedBySlot`, which judges only a `"number"`/`"boolean"` answer, so every
+  other fold (string, object, function, undefined) is untouched.
+
+Why the slot and not a wider checker query: the slot typer already decided the binding holds
+non-numbers, and declining is always sound. The runtime path reads the value, and a boxed number in
+an externref slot still answers `"number"`.
+
+## Results
+
+- `tests/issue-6976-primitive-fold-widened-var.test.ts` (standalone, Script goal, no eval provider):
+  - Widened rows: the box2d-shaped local, a boolean local plus a module global, a closure-captured
+    var, and a parameter with a numeric default. All 4 fail on base and pass on head.
+  - Unwidened control: runs right on both. Its binary is byte-identical to the same source with each
+    folded operand spelled as a literal (`typeof 0`, `typeof true`), so the folds still happen.
+    A mutant that disables the fold fails this check.
+- Binary hashes base vs head, gc and standalone:
+  - Changed: only the four widened-var probes and Octane box2d.
+  - Byte-identical: the numeric control, the four #6975 probes, and Octane richards, deltablue,
+    raytrace, navier-stokes, crypto, splay.
+- Related tests (63 files: `*typeof*`, primitive-absent/#4483, #4204/#4491/#2623/#5360, widening),
+  file-copy A/B: no pass→fail; the only flips are the four new rows.
+- `node scripts/equivalence-gate.mjs`: 1748 passing, 22 known failures, no new regressions.
+- All quality gates pass, including loc/func with `LOC_GATE_BASE` = the `origin/main` tip, after
+  merging `origin/main` 4594f0adc4.
+- Octane on a throwaway branch = `c-octane-integ` 3dc4b64076 + #6974 (net diff
+  fcda5c1bb3..ada13070a9) + #6975 (599a3b265c) + this fix, `--lanes node,standalone --timeout 900`:
+  - **box2d PASS** (`pass-unvalidated`), standalone 1584 = 0.01x of node 134808.
+  - deltablue pass, 274 (node 81983).
+  - raytrace pass, 233 (node 68662).
+
+## Remaining
+
+- **Not this issue: a parameter whose slot is inferred `f64` from its call sites loses a later
+  object assignment.** `function h(e) { e = 0; e = obj; return typeof e.f } h(1)` gives `h` a
+  `(param f64)`, and `e = obj` is coerced into it. The slot is numeric, so the fold is consistent
+  with it, but the value is already lost. Both lanes; node answers `object`. The cause is the param
+  slot typer, not a fold.
