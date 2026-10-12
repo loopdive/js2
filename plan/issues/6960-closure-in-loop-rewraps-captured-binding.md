@@ -1,7 +1,9 @@
 ---
 id: 6960
 title: "codegen: a closure constructed INSIDE a while/do-while/for body that captures a parameter (or, for while/do-while, any outer var) the loop mutates re-wraps the RAW slot into a fresh ref cell every iteration — the loop condition never sees the write and spins forever (Octane earley-boyer `deriv_trees` loop2/sc_loop1; the #1589 for-loop pre-box skips params and does not exist for while/do-while)"
-status: ready
+status: done
+completed: 2026-10-11
+assignee: ttraenkler/senior-dev
 sprint: current
 created: 2026-10-11
 priority: high
@@ -13,6 +15,14 @@ area: compiler
 language_feature: closures, loops, capture-boxing
 goal: standalone-gap
 related: [874, 1589, 1617, 996, 2118, 6958]
+# 2026-10-11: the #1589 pre-box lifted into shared helpers applied to every loop
+# kind (+100 LOC in loops.ts); `compileForInStatement` became a thin wrapper, so
+# its unchanged 433-line body is reported as a NEW over-budget function under
+# the `compileForInStatementInner` name (a rename, not growth).
+loc-budget-allow:
+  - src/codegen/statements/loops.ts
+func-budget-allow:
+  - src/codegen/statements/loops.ts::compileForInStatementInner
 ---
 
 # Closure in a loop body re-boxes a loop-mutated captured binding from the raw slot each iteration
@@ -172,3 +182,53 @@ not reach (a closure site inside a nested block of a loop that the scanner exclu
 - `tests/issue-1589*`, `tests/issue-1617*`, `tests/issue-2120*`, `tests/issue-5109*` stay green (for-loop pre-box twins).
 
 Size: **S/M** — ~40 lines moved into helpers + 2 call sites + 1 deleted guard + 1 scanner signature; step 3 ~10 lines.
+
+## Implementation notes (2026-10-11)
+
+- `loops.ts`: the #1589 pre-box is lifted into `preBoxLoopCapturedBindings` /
+  `writeBackPreBoxedBindings` / `restoreSavedBoxedCaptures` and applied to `for`, `while`,
+  `do-while`, and (via `withPreBoxedLoopCaptures` around the whole lowering dispatch) `for-in` /
+  `for-of`. `loop-shape.ts`: `findAllNamesCapturedByClosuresInLoop(stmt: IterationStatement)`
+  (renamed, sole importer updated), `findBodyLocalLexicalNames` widened, plus
+  `findNamesWrittenInLoop` and `findForInOfHeadNames`.
+- **Admission (perf).** A parameter, and any binding of a non-`for` loop, is boxed only when it
+  is both captured by a closure built in the loop AND written somewhere in the loop (assignment,
+  update, `var` declarator, for-in/of head, including inside nested closures). Read-only captures
+  keep their raw slot. `for` locals keep the unchanged #1589 admission and write-back.
+- **Deviation: function-wide rebind instead of write-back for the new admissions.** The #1589
+  write-back restores the raw slot after the loop, so a write after the loop is invisible to a
+  closure built in it (`while(k>0){f=()=>k;k--} k=7; f()` gave 0, node 7). For the write-gated
+  admissions the pre-box now does exactly what the construction site would have done, only
+  hoisted to the loop entry: the cell stays the binding's storage function-wide, and after the
+  loop `boxedCaptures` records `rawLocalIdx` so `closures/conditional-capture-box.ts` repairs a
+  null cell on a path that skipped the loop. Inside the loop the cell dominates every access, so no
+  repair checks are emitted there.
+- Also admitted on the new paths: a non-null `ref` slot (a native-string parameter), boxed with
+  the same `getOrRegisterRefCellType(ctx, type)` cell the construction site uses. Excluded:
+  parameters of a function with a mapped `arguments` object, and for-in/for-of head bindings (the
+  lowering may retype them into a fresh local).
+- Plan step 3 (idempotent construction site in `arrow-phases.ts`) was not needed for the
+  measured shapes and is not implemented.
+- Test: `tests/issue-6960-closure-in-loop-captured-binding.test.ts` (19 rows x module/sloppy):
+  base 25 fail / 13 pass (controls), head 38/38.
+
+## Remaining (pre-existing, not changed here)
+
+- **Octane earley-boyer on standalone (local merge with `c-octane-integ`, 2026-10-11):** passes
+  and validates (`octane_run(1) -> 2`, teardown ok; Earley returns 132 trees). The node-calibrated
+  harness row still reports `skipped: timeout (run, reps 6)` (180 s and 1500 s budgets) because
+  the **Earley** half gets slower on every call: `octane_run(1)` x5, Earley only = 1.0 / 1.7 / 4.5
+  / 7.6 / 8.8 s (Boyer only: 0.4 / 0.2 / 0.2 / 0.1 s; node: ~4 ms per earley+boyer run). The
+  source-level simulation of both fixes on `c-octane-integ` without this codegen change
+  (`patch-d10-simfix2.mjs`) shows the same growth (1.0 / 2.1 / 3.8 / 5.9 / 7.4 s), so it is a
+  separate defect (state that accumulates across Earley runs), not a cost of the pre-box. Needs
+  its own issue.
+- `for (var x of xs) fs.push(() => x)` / the for-in twin give per-iteration values (node: one
+  shared `var` binding). The for-of/for-in lowerings bind a `var` head like a per-iteration
+  binding; base and head both answer `13`/`"ac"` where node answers `33`/`"cc"`.
+- Generator bodies: `function* C(k) { while (k > 0) { f = () => k; k--; yield f(); } }` still
+  never terminates (the generator lowering does not go through `compileWhileStatement`).
+- `var f = function(){return -5}; if (c) f = function(){return k}; f()` traps with a null
+  dereference in all lanes (base too, no loop involved). The B2/B3 loop shapes that used to hang
+  now reach this trap instead.
+

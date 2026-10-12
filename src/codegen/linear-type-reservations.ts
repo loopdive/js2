@@ -148,7 +148,14 @@ export function reserveObjVecArrType(ctx: CodegenContext): void {
  * NAME everywhere and never by index: `property-access-dispatch.ts` can append
  * further fields to an already-registered struct, so `$bag` does not stay last.
  */
-function appendInstanceBagSlot(ctx: CodegenContext, fnctorName: string, fields: FieldDef[]): void {
+/*
+ * (#6971) Also applied by the ON-DEMAND registration in `new-super.ts` (a fnctor
+ * the escape gate did not approve, e.g. Octane deltablue's `EqualityConstraint`
+ * / `ScaleConstraint` / `StayConstraint`). Without the slot every such instance
+ * that grew an expando was prepended to the never-pruned registry and every
+ * bag lookup walked it — ~35% self-time in `__closure_bag_lookup` on deltablue.
+ */
+export function appendInstanceBagSlot(ctx: CodegenContext, fnctorName: string, fields: FieldDef[]): void {
   if (!ctx.standalone) return;
   if (fnctorLayoutPlanFor(ctx, fnctorName) !== undefined) return; // split family — excluded
   // Cold-tailed fnctors ARE eligible. The presence-word hazard does not reach

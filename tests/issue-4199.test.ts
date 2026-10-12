@@ -176,7 +176,9 @@ describe("#4199 keep predicate scope", () => {
     // non-namespace receivers stay owned by the #4176 / #2671 / #3468 arms
     ["Object.prototype.zzz = 1;", false],
     ["Array.isArray = f;", false],
-    ["TypeError.thrower = f;", false],
+    // (#1472) constructor carriers (`TypeError.thrower = f`) are kept now;
+    // typed-array constructors are still outside the carrier set.
+    ["Uint8Array.thrower = f;", false],
     ["o.value = 1;", false],
     // a computed key cannot be decided at compile time
     ["Math[k] = 1;", false],
