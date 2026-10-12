@@ -149,3 +149,37 @@ as a follow-up with its own measurement; expected to bring the rep to
   180 s).
 - No change in `tests/equivalence/` and the #2666/#2668 regression tests;
   gc lane byte-identical (standalone-only paths).
+
+## Regression fix (2026-10-12): shortcut fired for carriers with no store arm
+
+The merge queue parked #6643 (and #6650, #6639 and #6643's re-run, whose groups
+all contained this branch) with the same 28 standalone test262 regressions,
+bucket signature `f6493c3664245200`. Every row was an `assertion_fail`.
+
+**Rows:** the standalone Temporal provider is the `@js-temporal/polyfill`
+compiled by this compiler. 22 of the 68 baseline-passing
+`built-ins/Temporal/**/order-of-operations.js` rows fail on the merge group
+`f515aa8a80` and pass on main `a87e4b905a`, for example
+`PlainDate/from/order-of-operations.js`. The run used the same QuickJS eval
+provider and a freshly prewarmed standalone Temporal provider on both sides.
+These rows read the property bag in source order rather than sorted order,
+because `PrepareCalendarFields` does `const a = n.concat(r, i); a.sort();` and
+the sort had no effect.
+
+**Root cause:** `Array.prototype.concat` on an untyped receiver returns a
+`$ObjVec`. `allowedCarriers` lists `$ObjVec` and `__regexp_match_vec`, so the
+overlay WRITE prologue accepts them. Both #6963 shortcuts (the i31 fast set and
+the two plain-overwrite fall-throughs) then `br` out to
+`fillExternSetVecArms`'s numeric arm. That arm has `array.set` cases only for
+the `ctx.vecTypeMap` carriers, so for a `$ObjVec` the store was silently
+dropped. The runtime sort writes elements back through `__extern_set(arr, i31,
+v)`, so the array stayed unsorted. The bug shows only when the module arms the
+inherited-set descriptor decision, which the polyfill does.
+
+**Fix:** `fillExternSetVecArms` records the carriers it gave a store arm
+(`recordExternSetStoreCarriers`). `valueFitsCarrierInstrs` answers 0 for any
+other carrier, which keeps them on the pre-#6963 `__vec_dp_value` path.
+`__elem_store_key` keeps a numeric key only for those same carriers.
+Regression rows: `tests/issue-6963-element-store-numeric-key.test.ts`, which
+uses a tagged template to arm the gate. Two of those rows fail on the old head
+and pass with the fix.

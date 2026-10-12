@@ -15,7 +15,7 @@ import { registerAnnexBGlobalLiveBindings } from "./annexb-global-live-binding.j
 import { exactClassExpressionTypeName } from "./class-expression-identity.js";
 import { emitToBoolean } from "./coercion-engine.js";
 import { interfaceHasClassImplementer } from "./interface-class-implementer.js";
-import { isConstructedFnctorName } from "./fnctor-instance-names.js";
+import { isFnctorInstanceType } from "./fnctor-instance-names.js";
 import {
   emitNativeErrorBoundaryBridge,
   emitWasiErrorConstructor,
@@ -5330,11 +5330,19 @@ export function generateModule(
   ctx.irBodyRouteAuditSession?.registerGenerator("single", "generateModule");
   const standaloneCalendar = planSingleSourceStandaloneCalendar(ctx, ast.checker, ast.sourceFile, inventoryOptions);
   ctx.runtimeEvalBoundaryPlan = buildIrRuntimeEvalBoundaryPlan([ast.sourceFile], ctx.oracle);
-  if ((ctx.standalone || ctx.wasi) && ctx.runtimeEvalBoundaryPlan.callableBoundaryRequired) {
+  // (#6956) No runtime-eval provider linked: eval refuses in-module, so no callable boundary.
+  if (
+    (ctx.standalone || ctx.wasi) &&
+    ctx.runtimeEvalProviderAbsent !== true &&
+    ctx.runtimeEvalBoundaryPlan.callableBoundaryRequired
+  ) {
     ctx.runtimeEvalCallableBoundaryEnabled = true;
   }
   const sourceFileInternal = ast.sourceFile as ts.SourceFile & { externalModuleIndicator?: ts.Node };
-  ctx.sourceIsModule = sourceFileInternal.externalModuleIndicator !== undefined;
+  // (#6937) `inferModuleStrictArguments: false` = synthetic `export` on a SCRIPT; the
+  // top-level goal must follow it like function strictness does (see #6937).
+  ctx.sourceIsModule =
+    sourceFileInternal.externalModuleIndicator !== undefined && ctx.inferModuleStrictArguments !== false;
   recordSourceGlobalEnvironment(ctx, ast.sourceFile);
   // (#5383 S23 / #6610) Demand for the number-PRIMITIVE method-call arm.
   noteNumberPrimitiveMethodDemand(ctx, ast.sourceFile);
@@ -9858,7 +9866,10 @@ function registerReassignedFunctionGlobals(
 ): void {
   const reassigned = new Set<string>();
   const reassignedDeclarations = new Set<ts.FunctionDeclaration>();
-  const runtimeEvalConsumer = (ctx.standalone || ctx.wasi) && runtimeEvalPlan.sharedRealmMayContainCanonicalValues;
+  const runtimeEvalConsumer =
+    (ctx.standalone || ctx.wasi) &&
+    ctx.runtimeEvalProviderAbsent !== true &&
+    runtimeEvalPlan.sharedRealmMayContainCanonicalValues; // (#6956)
   const dynamicSourceFragments = runtimeEvalPlan.dynamicSourceFragments;
   const hasUnknownDynamicSource = runtimeEvalPlan.unknownDynamicSource;
   const varEnvironment = (node: ts.Node): ts.Node => {
@@ -10666,7 +10677,12 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
   const multiPreparedProgram = initializeMultiPreparedProgram(ctx, multiAst, options, explicitlyDisabledEnv);
   const standaloneCalendar = planMultiCalendar(ctx, multiAst.checker, multiAst.sourceFiles, multiAst.entryFile);
   ctx.runtimeEvalBoundaryPlan = buildIrRuntimeEvalBoundaryPlan(multiAst.sourceFiles, ctx.oracle);
-  if ((ctx.standalone || ctx.wasi) && ctx.runtimeEvalBoundaryPlan.callableBoundaryRequired) {
+  // (#6956) No runtime-eval provider linked: eval refuses in-module, so no callable boundary.
+  if (
+    (ctx.standalone || ctx.wasi) &&
+    ctx.runtimeEvalProviderAbsent !== true &&
+    ctx.runtimeEvalBoundaryPlan.callableBoundaryRequired
+  ) {
     ctx.runtimeEvalCallableBoundaryEnabled = true;
   }
   // Multi-file compilation is linked through import/export module records.
@@ -13008,17 +13024,10 @@ export function resolveWasmType(ctx: CodegenContext, tsType: ts.Type, _depth = 0
     // in compileNewFunctionDeclaration — both read the same pure-AST predicate.
     const foreignReturnFnctor = (ctx.standalone || ctx.wasi) && typeIsForeignReturnFnctorInstance(tsType);
     if ((!ctx.standalone && !ctx.wasi) || approvedStandaloneFnctor || foreignReturnFnctor) {
-      const fnDecl = sym?.valueDeclaration;
-      const isFnCtorType =
-        (sym?.name !== undefined && isConstructedFnctorName(ctx, sym.name)) ||
-        (!!fnDecl &&
-          (ts.isFunctionDeclaration(fnDecl) ||
-            ts.isFunctionExpression(fnDecl) ||
-            (ts.isVariableDeclaration(fnDecl) && !!fnDecl.initializer && ts.isFunctionExpression(fnDecl.initializer))));
       // Only when the type is an INSTANCE shape (has properties but is not
       // itself callable) — the function VALUE type (callable) must keep its
-      // closure-wrapper resolution.
-      if (isFnCtorType && tsType.getCallSignatures().length === 0) {
+      // closure-wrapper resolution. Shared with ensureStructForType (#6938).
+      if (isFnctorInstanceType(ctx, tsType)) {
         // (#2071) Foreign-return-capable: always dynamic, never the reserved
         // struct — the value at runtime may not BE that struct. This WINS over
         // escape-gate approval: approval says the struct layout is stable, not
@@ -13473,6 +13482,8 @@ export function ensureStructForType(ctx: CodegenContext, tsType: ts.Type): void 
   if (tsType.symbol?.name === "globalThis" && (dtsDecls?.length ?? 0) === 0) {
     return;
   }
+  // (#6938) Never a checker-shape struct (never allocated) — lockstep with resolveWasmType.
+  if (isFnctorInstanceType(ctx, tsType)) return;
   // #1247: Array types compile to vec structs (length+data) via getOrRegisterVecType,
   // not anonymous structs that pull in every Array.prototype method as a field. Without
   // this guard, `string[]` registers an anonymous struct named after Array.prototype's

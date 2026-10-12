@@ -2566,7 +2566,39 @@ function shouldCollectTopLevelAssignment(ctx: CodegenContext, target: ts.Express
 }
 
 function isTopLevelFunctionPropertyReceiver(ctx: CodegenContext, receiver: ts.Expression): boolean {
-  let current = receiver;
+  const current = skipReceiverWrappers(receiver);
+  if (ts.isIdentifier(current)) return ctx.topLevelFunctionNames.has(current.text);
+  if (!ts.isPropertyAccessExpression(current) && !ts.isElementAccessExpression(current)) return false;
+  const rootName = getAssignmentRootIdentifier(current);
+  return (
+    rootName !== undefined && ctx.topLevelFunctionNames.has(rootName) && ctx.oracle.signatureOf(current) !== undefined
+  );
+}
+
+/**
+ * (#6950) A top-level `<recv>.prototype.<m> = …` or `<recv>.prototype = …`
+ * whose `<recv>` is a member chain (NOT a bare identifier — those are owned by
+ * #2660/#4618) rooted at a top-level function and proven callable by the
+ * oracle (`SplayTree.Node`). Every other keep arm misses it, so the statement
+ * compiled to nothing. The same write inside a function body already lowers
+ * through the dynamic member path (bag-vivified prototype), so keeping it is
+ * the whole fix. `<recv>.prototype[expr] = …` stays dropped.
+ */
+function isMemberHeldFnctorPrototypeWrite(ctx: CodegenContext, target: ts.Expression): boolean {
+  if (!ts.isPropertyAccessExpression(target) || ts.isPrivateIdentifier(target.name)) return false;
+  let proto: ts.Expression = target;
+  if (target.name.text !== "prototype") {
+    if (STANDALONE_FN_STATIC_KEEP_EXCLUDED.has(target.name.text)) return false;
+    proto = skipReceiverWrappers(target.expression);
+  }
+  if (!ts.isPropertyAccessExpression(proto) || ts.isPrivateIdentifier(proto.name)) return false;
+  if (proto.name.text !== "prototype") return false;
+  const recv = skipReceiverWrappers(proto.expression);
+  return !ts.isIdentifier(recv) && isTopLevelFunctionPropertyReceiver(ctx, recv);
+}
+
+function skipReceiverWrappers(expr: ts.Expression): ts.Expression {
+  let current = expr;
   while (
     ts.isParenthesizedExpression(current) ||
     ts.isAsExpression(current) ||
@@ -2575,12 +2607,7 @@ function isTopLevelFunctionPropertyReceiver(ctx: CodegenContext, receiver: ts.Ex
   ) {
     current = current.expression;
   }
-  if (ts.isIdentifier(current)) return ctx.topLevelFunctionNames.has(current.text);
-  if (!ts.isPropertyAccessExpression(current) && !ts.isElementAccessExpression(current)) return false;
-  const rootName = getAssignmentRootIdentifier(current);
-  return (
-    rootName !== undefined && ctx.topLevelFunctionNames.has(rootName) && ctx.oracle.signatureOf(current) !== undefined
-  );
+  return current;
 }
 
 function inferNativeTaViewFunctionResult(ctx: CodegenContext, declaration: ts.FunctionDeclaration): ValType | null {
@@ -4476,6 +4503,12 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
         // keep, so the statement compiled to NOTHING. Measurement and scope:
         // class-proto-toplevel-write.ts.
         if (isTopLevelClassPrototypeWrite(ctx, expr.left)) {
+          ctx.moduleInitStatements.push(stmt);
+          continue;
+        }
+        // (#6950) `o.F.prototype.m = …`, `o.F` a callable member of a top-level
+        // function (Octane splay). Both lanes; scope: isMemberHeldFnctorPrototypeWrite.
+        if (isMemberHeldFnctorPrototypeWrite(ctx, expr.left)) {
           ctx.moduleInitStatements.push(stmt);
           continue;
         }

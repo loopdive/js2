@@ -14,6 +14,26 @@ export interface OverlayCarrier {
 
 export type CarrierDefaultMode = "default" | "undefined" | "holes";
 
+/**
+ * (#6963) The carriers `fillExternSetVecArms` gave a numeric `array.set` arm
+ * in `__extern_set`. The overlay's plain-overwrite shortcuts `br` out to that
+ * arm, so they may fire only for these. `allowedCarriers` is wider: `$ObjVec`
+ * (e.g. an `Array.prototype.concat` result) and `__regexp_match_vec` have no
+ * store arm there, and a shortcut taken for one of them silently dropped the
+ * store (a sorted concat result stayed unsorted in the compiled Temporal
+ * polyfill).
+ */
+const externSetStoreCarriers = new WeakMap<CodegenContext, ReadonlySet<number>>();
+
+export function recordExternSetStoreCarriers(ctx: CodegenContext, vecTypeIdxs: Iterable<number>): void {
+  externSetStoreCarriers.set(ctx, new Set(vecTypeIdxs));
+}
+
+/** Empty until `fillExternSetVecArms` has installed its arms. */
+export function externSetStoreCarrierSet(ctx: CodegenContext): ReadonlySet<number> {
+  return externSetStoreCarriers.get(ctx) ?? new Set();
+}
+
 export function allowedCarriers(ctx: CodegenContext): OverlayCarrier[] {
   const seen = new Set<number>();
   const out: OverlayCarrier[] = [];

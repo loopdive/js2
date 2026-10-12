@@ -66,6 +66,7 @@ import { emitStandaloneHeritageCheck } from "../class-heritage-check.js"; // (#5
 import { emitStandaloneCommaHeritageEffects } from "../classes/class-heritage-comma.js"; // (#6772 S6)
 import { emitStandaloneHeritagePrototypeGet } from "../classes/class-heritage-runtime-get.js"; // (#6772 S11)
 import { emitLocalTdzInit, emitTdzInit } from "./tdz.js";
+import { emitConditionalCaptureBoxRepair } from "../closures/conditional-capture-box.js"; // (#6955)
 import { ensureNativeStringHelpers, flatStringType } from "../native-strings.js";
 import { compileStringBuilderInit } from "../string-builder.js";
 import { tryEmitLinearU8New } from "../linear-uint8-codegen.js";
@@ -1608,6 +1609,7 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
           }
           const tmpVal = allocLocal(fctx, `__box_init_tmp_${fctx.locals.length}`, boxedClosureCell.valType);
           fctx.body.push({ op: "local.set", index: tmpVal });
+          emitConditionalCaptureBoxRepair(fctx, name, boxedCellLocalIdx); // (#6955) mint a skipped-arm cell
           fctx.body.push({ op: "local.get", index: boxedCellLocalIdx });
           fctx.body.push({ op: "ref.is_null" });
           fctx.body.push({
@@ -2573,6 +2575,9 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
         }
         const tmpVal = allocLocal(fctx, `__box_init_tmp_${fctx.locals.length}`, boxedForInit.valType);
         fctx.body.push({ op: "local.set", index: tmpVal });
+        // (#6955) The cell may be unminted: its closure sat in a skipped arm.
+        // Seed it from the pre-box slot first, or this store silently no-ops.
+        emitConditionalCaptureBoxRepair(fctx, name, boxedLocalIdx);
         fctx.body.push({ op: "local.get", index: boxedLocalIdx });
         fctx.body.push({ op: "ref.is_null" });
         fctx.body.push({
@@ -2627,6 +2632,7 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
         if (boxedNoInit && !dropStaleBindingBox(fctx, name, boxedNoInit, localIdx)) {
           const tmpVal = allocLocal(fctx, `__box_init_tmp_${fctx.locals.length}`, boxedNoInit.valType);
           fctx.body.push({ op: "local.set", index: tmpVal });
+          emitConditionalCaptureBoxRepair(fctx, name, localIdx); // (#6955) mint a skipped-arm cell
           fctx.body.push({ op: "local.get", index: localIdx });
           fctx.body.push({ op: "ref.is_null" });
           fctx.body.push({

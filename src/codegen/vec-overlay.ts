@@ -122,6 +122,7 @@ import {
   allowedCarriers,
   carrierDefaultInstrs,
   carrierRefWriteBack,
+  externSetStoreCarrierSet,
   type CarrierDefaultMode,
   type OverlayCarrier,
 } from "./vec-overlay-carriers.js";
@@ -186,9 +187,12 @@ const MARK_NUM_NAME = "__vec_overlay_mark_num"; // (#6964)
  * (#6964) `$Object.flags` bit on a COMPANION: it has been registered in the
  * numeric-entry table (`__vec_overlay_num_state`). Above the eight bits the
  * object runtime documents (object-runtime.ts flag table); never set on a
- * user-visible object, and every reader masks its own bits.
+ * user-visible object, and every reader masks its own bits. NOT 0x100 (the
+ * module-namespace exotic brand, module-namespace-exotic.ts) nor 0x200 (the
+ * global-var binding brand): their prepended [[Get]]/[[Set]] arms test the
+ * bit on any `$Object`, so sharing one would route a companion through them.
  */
-const OBJ_FLAG_OVERLAY_NUMERIC = 0x100;
+const OBJ_FLAG_OVERLAY_NUMERIC = 0x400;
 /** `$Object.flags` field index (object-runtime.ts `objectFields`). */
 const OBJ_FLAGS_FIELD = 4;
 const ENSURE_NAME = "__vec_overlay_ensure";
@@ -794,11 +798,15 @@ export function reserveVecOverlayPrime(ctx: CodegenContext): number | undefined 
  * the carrier `anyLocal` holds? Mirrors the `__vec_dp_value` write-back rule:
  * an externref carrier takes anything, an f64 carrier only a strict number
  * (`$__box_number_struct` or i31); every other carrier answers 0 so the
- * overlay keeps the kind-incompatible value in its companion.
+ * overlay keeps the kind-incompatible value in its companion. A carrier with
+ * no `fillExternSetVecArms` store arm (`$ObjVec`, `__regexp_match_vec`) also
+ * answers 0: every caller `br`s out to that arm, which would skip the store.
  */
 function valueFitsCarrierInstrs(ctx: CodegenContext, carriers: readonly OverlayCarrier[], anyLocal: number): Instr[] {
   const boxNumTypeIdx = ctx.nativeBoxNumberTypeIdx;
+  const stored = externSetStoreCarrierSet(ctx);
   const fits = (c: OverlayCarrier): Instr[] => {
+    if (!stored.has(c.vecTypeIdx)) return [{ op: "i32.const", value: 0 }];
     if (c.kind === "externref") return [{ op: "i32.const", value: 1 }];
     if (c.kind !== "f64" || boxNumTypeIdx === undefined || boxNumTypeIdx < 0) return [{ op: "i32.const", value: 0 }];
     return [

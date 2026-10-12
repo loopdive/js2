@@ -1,7 +1,7 @@
 ---
 id: 1472
 title: "host-independence: eliminate JS host object/property ops for standalone Wasm"
-status: ready
+status: in-progress
 pr: 1047
 created: 2026-05-20
 updated: 2026-10-10
@@ -17,6 +17,13 @@ sprint: 58
 related: []
 claimed_by: codex-developer
 claimed_at: 2026-06-02T22:34:59.447Z
+# 2026-10-11 (#1472 raytrace review fix): the captured-callee sequence for an expando
+# method on a builtin carrier lives beside the generic `__extern_method_call` arm it
+# replaces for that one shape (two module-level helpers, +2 lines in the dispatcher).
+loc-budget-allow:
+  - src/codegen/expressions/call-receiver-method.ts
+func-budget-allow:
+  - src/codegen/expressions/call-receiver-method.ts::compileReceiverMethodCall
 ---
 # #1472 — Eliminate JS host object/property ops for standalone Wasm
 
@@ -1563,3 +1570,64 @@ issues once minimized further:
 Ledger note: the `1472-getprototypeof-es5` slice claim (codex,
 2026-07-28, `codex/1472-es5-object-getprototypeof`) is for a different slice
 and has been idle since; `pre-dispatch-gate.mjs 1472` reports no live claim.
+
+## Raytrace slice — implemented (2026-10-11)
+
+Branch `claude/standalone-raytrace-get-builtin`. Both gaps from the Session C
+plan, plus refinement 1 of the Session D triage (`Math.foo()`):
+
+- `isHostResolvedBuiltinReceiver` (`standalone-unavailable-globals.ts`): under
+  standalone it now answers true only when the method has a modelled static
+  (`BUILTIN_STATIC_METHOD_ARITY[recv][m]`). Every other `Builtin.m(…)` compiles
+  the receiver as the carrier VALUE and takes the ordinary dynamic method-call
+  path, so `Object.extend(…)` / `Math.foo()` find the expando, and a missing
+  one throws `TypeError` after the arguments are evaluated (§13.3.6.1) rather
+  than failing the whole compile. Why not "always false": a modelled static
+  that reaches this arm was declined by its native arm for a reason; leaving
+  it on the refusal keeps that visible.
+- `builtin-write-keeps.ts`: the #4199 top-level keep now also covers the
+  builtin CONSTRUCTOR carriers measured to round-trip an in-body expando
+  (Object, Array, Function, Symbol, Proxy, BigInt, Date, RegExp, ArrayBuffer,
+  DataView, Promise, Weak*, FinalizationRegistry, Map, Set, the Error family,
+  String, Number, Boolean). Excluded: their own static surface (modelled
+  statics, `prototype`/`length`/`name`/`caller`/`arguments`, Number constants,
+  well-known symbols), typed-array constructors (their in-body expando does
+  not round-trip yet), and shadowed names. `tests/issue-4199.test.ts`'s
+  `TypeError.thrower = f` "declines" row moved to `Uint8Array.thrower`.
+
+Measured (Octane harness on a local, unpushed merge with `c-octane-integ`,
+`--lanes standalone`): raytrace goes from `compile-error` (`__get_builtin`
+refusal) to compiling (~6 s) and failing at RUNTIME in module init.
+First runtime failure: raytrace.js `Flog.RayTracer.Color.prototype = {…}`
+(the first prototype-literal write on a `Class.create()` result) throws
+`TypeError: Cannot access property on null or undefined`, although
+`typeof Flog.RayTracer.Color === "function"`. Minimal repro:
+
+```js
+var Class = { create: function () { return function () { this.initialize.apply(this, arguments); }; } };
+var Flog = {}; Flog.RT = {};
+Flog.RT.Color = Class.create();
+Flog.RT.Color.prototype = { red: 0, initialize: function (r) { this.red = r; } }; // standalone: TypeError
+export function main() { return new Flog.RT.Color(2).red; }                     // node: 2
+```
+
+Reproduces identically on `c-octane-integ` without this change. It is the
+member-held form of the separately tracked "`P.prototype = {…}` literal on a
+non-fnctor closure" gap (the bare `var P = Class.create()` form drops the
+write instead: `reading 'apply'` of undefined).
+
+### Review fix (2026-10-11): capture the method before the arguments
+
+The expando call fell through to the generic `__extern_method_call` bridge,
+which resolves the name AFTER the arguments. `Object.zzq = f11; Object.zzq(flip())`
+where `flip()` replaces `Object.zzq` returned 22 (node 11); nulling it threw
+(node 11). `isBuiltinCarrierExpandoCall` now routes exactly that shape to
+`emitCapturedCarrierMethodCall` (`call-receiver-method.ts`): `[[Get]](C, "m")`
+into a local, then the arguments, then `__is_callable` → TypeError, then one
+`__apply_closure(callee, C, args)` — §13.3.6.1 order, single evaluation. Every
+other `__extern_method_call` site is unchanged.
+
+### Remaining
+
+- #1472 itself stays open (Phase B and the other `__get_builtin` sites).
+- Raytrace next: the prototype-literal write on a call-result closure (above).

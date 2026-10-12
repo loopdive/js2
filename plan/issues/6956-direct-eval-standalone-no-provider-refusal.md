@@ -1,7 +1,8 @@
 ---
 id: 6956
 title: "standalone with `runtimeEvalProvider: false`: a direct `eval(nonConstant)` still imports `js2wasm:runtime-eval.{__runtime_direct_eval,__runtime_apply_interpreted}` (only `Function(...)` is refused) — module cannot instantiate (Octane earley-boyer `sc_jsNew`)"
-status: ready
+status: in-progress
+assignee: ttraenkler/senior-dev
 sprint: current
 created: 2026-10-10
 priority: high
@@ -13,6 +14,19 @@ area: compiler
 language_feature: eval
 goal: standalone-gap
 related: [874, 6676, 2960, 4195, 2928]
+# 2026-10-10: the refusal helper (+51 lines) and its one-line guard live in calls.ts because the
+# Session C file release for this issue covered calls.ts only; candidate to move into
+# standalone-dynamic-code.ts next to emitRefusedDynamicFunction.
+loc-budget-allow:
+  - src/codegen/expressions/calls.ts
+  # 2026-10-11 (#6956): +13 lines, the provider-absent guard on the two
+  # callable-boundary sites and on runtimeEvalConsumer (prettier splits each).
+  - src/codegen/index.ts
+func-budget-allow:
+  - src/codegen/expressions/calls.ts::compileCallExpression
+  # 2026-10-11 (#6956): +5 each, the same provider-absent guard.
+  - src/codegen/index.ts::generateModule
+  - src/codegen/index.ts::generateMultiModule
 ---
 
 # Direct eval ignores the "no runtime-eval provider" switch
@@ -75,3 +89,57 @@ simply never reached because the carrier materialises first.
   (`.tmp/#6958`) — measured with `.tmp/patch-eb-noeval.mjs`:
   `TypeError: Cannot read properties of undefined (reading 'appendJSString')`.
 - Size: **S** (two guards + harness flag).
+
+## Implementation Notes (2026-10-10)
+
+Done in `src/codegen/expressions/calls.ts` only (`emitRefusedEvalCall`, called from the eval branch of
+`compileCallExpression` right after the compile-away shapes — constant inline, comment/RegExp peepholes,
+spread — and before the runtime-eval route is chosen). Deviations from the plan, and why:
+
+- **One guard instead of two.** The single `isRuntimeEvalProviderAbsent(ctx)` check sits before the
+  direct/indirect/script-global selection, so it covers `emitStandaloneDirectEvalRuntime`,
+  `ensureRuntimeEvalCallableCarrier` and `emitStandaloneIndirectEvalRuntime` at once; plan step 2
+  (`eval-inline.ts`) is not needed for the call forms. The `ctx.directEvalMode === "reified-host"` route is
+  host-only and unaffected (`isRuntimeEvalProviderAbsent` is false off standalone).
+- **EvalError only for a string source.** PerformEval (§19.2.1.1 step 2) returns a non-String argument
+  unchanged before HostEnsureCanCompileStrings runs, so `eval(42)` is `42`, `eval(o) === o`, `eval()` is
+  `undefined`. The emitted code evaluates every argument in order, keeps the first, and throws the
+  `Function(...)` refusal EvalError (`emitRefusedDynamicFunction`, same message) only when it is a native
+  string (`any.convert_extern; ref.test $AnyString`). A host string passed in across the zero-import
+  boundary is opaque without an import and passes through unchanged.
+- **Harness step 4 not done here** — `benchmarks/octane/worker-js2.mjs` is out of this PR's scope; the harness
+  branch (`claude/874-octane-harness`) already passes `runtimeEvalProvider: false` on standalone.
+- Spread `eval(...args)` (`eval-spread-args.ts`) is not touched.
+
+### Found, out of scope
+- A compound `s += "x"` on a `var` of a function that contains a direct eval (the binding is reified into a
+  `__direct_eval_cell_*` externref cell) miscompiles on standalone, with or without the provider:
+  `function f(){ var s = "a"; s += ")"; if (0) eval(s); return s; }` → `NaN` (numeric `f64.add` on the
+  cell value); `var r = "a"; r += eval("1+1") + ";"` → `null`. gc lane is correct. So `sc_jsNew` with its
+  real `evalStr += …` build returns `NaN` instead of throwing — harmless for earley-boyer (never called).
+- On `origin/main` alone, earley-boyer's `sc_jsNew` loop also fails validation
+  (`local.tee expected (ref null cell), found i32`); fixed by #6955.
+
+## Remaining (2026-10-10) — needs `src/codegen/index.ts`, outside this slice's file release
+
+Measured on a local merge of this branch into `c-octane-integ` (with #6950/#6955), harness flags
+`target: standalone, runtimeEvalProvider: false, inferModuleStrictArguments: false`:
+
+- earley-boyer now **instantiates** (zero imports), but the run is **SIGKILLed** (memory blow-up, ~25 s after
+  compile; `--max-old-space-size` does not turn it into a V8 OOM). The plan's `.tmp/patch-eb-noeval.mjs`
+  measurement did not see this because it deletes the `eval` token; any surviving eval call — direct or
+  indirect `(0, eval)(evalStr)` — triggers it, while `return String(evalStr)` does not.
+- Cause: program-wide runtime-eval pessimizations in `src/codegen/index.ts` stay switched on although no
+  provider can ever run code:
+  - `runtimeEvalConsumer` (`index.ts` ~L9864; sets `ctx.runtimeEvalGlobalFunctionBindings` and keeps script
+    `var` storage representation-neutral) — **this one causes the kill**;
+  - `ctx.runtimeEvalCallableBoundaryEnabled` (`index.ts` ~L5333 and ~L10672, `callableBoundaryRequired`).
+- Local experiment (not committed), adding `&& ctx.runtimeEvalProviderAbsent !== true` to:
+  - `runtimeEvalConsumer` only → `Error: Earley or Boyer did incorrect number of rewrites`;
+  - `runtimeEvalConsumer` and both callable-boundary sites → `TypeError: Cannot read properties of
+    undefined (reading 'appendJSString')`, the expected #6958 blocker (acceptance met);
+  - the callable-boundary sites only → still killed.
+- Follow-up: gate those three `index.ts` sites on `!isRuntimeEvalProviderAbsent(ctx)` (an eval refused
+  in-module cannot observe or replace any binding), then re-measure. Separately, `runtimeEvalConsumer`
+  mode itself blows up on earley-boyer — a provider-present standalone bug.
+

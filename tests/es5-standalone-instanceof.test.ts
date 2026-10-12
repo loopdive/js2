@@ -223,16 +223,16 @@ describe("#2916 Slice B — fully-dynamic instanceof RHS, host-free", () => {
     expect(o.imports).toEqual([]);
   });
 
-  it("answers a callable RHS with an unmodelled prototype `false`, never a throw", async () => {
-    // THE DOCUMENTED RESIDUAL. A standalone closure has no runtime edge to its
-    // per-fnctor prototype global, so §7.3.20 step 4 is unanswerable. Both
-    // alternatives are worse than `false`: `1` asserts membership and `2`
-    // asserts "F.prototype really is a non-object" — neither is known.
+  it("answers a dynamically-held fnctor RHS through its prototype edge, never a throw", async () => {
+    // Formerly THE DOCUMENTED RESIDUAL (answered `false`): the closure's edge
+    // to its per-fnctor prototype global existed, but the instance side had no
+    // `[[Prototype]]` ladder unless some fnctor was gate-approved. (#6951) every
+    // constructed ordinary fnctor now gets the ladder, so §7.3.20 answers `true`.
     const o = await run(
       `function F(){ this.x = 1; }\nvar C: any = F;\nvar f: any = new F();\n` +
         `try { result = (f instanceof C) ? 1 : 0; } catch (e) { result = 9; }`,
     );
-    expect(o.result).toBe(0);
+    expect(o.result).toBe(1);
     expect(o.imports).toEqual([]);
   });
 

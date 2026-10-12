@@ -121,6 +121,36 @@ describe("#6963 standalone dynamic element store keeps numeric keys numeric", ()
       "21120",
     ],
   ];
+  // A tagged template makes the module arm the inherited-set descriptor
+  // decision (`inheritedSetDescriptorDirty`), the overlay mode the compiled
+  // Temporal polyfill runs in. A `concat` result on an untyped receiver is a
+  // `$ObjVec`: an overlay carrier WITHOUT a `__extern_set` numeric store arm.
+  // The plain-overwrite shortcut used to `br` past the store for it, so the
+  // in-place sort left the array unsorted (standalone Temporal
+  // `*/order-of-operations.js` rows read the property bag unsorted).
+  const TAG = "(function (s) { return s; })`t`; ";
+  rows.push(
+    [
+      "in-place sort of a $ObjVec concat result under the inherited-set gate",
+      `${TAG}function cat(n, r) { var a = n.concat(r); a.sort(); return a.join(','); } return cat(['c', 'a', 'b'], ['e', 'd']);`,
+      "a,b,c,d,e",
+    ],
+    [
+      "$ObjVec element store under the inherited-set gate",
+      `${TAG}function st(n) { var a = n.concat([]); a[0] = 'z'; return a.join(','); } return st(['x', 'y']);`,
+      "z,y",
+    ],
+    [
+      "RegExp match vec element store under the inherited-set gate",
+      `${TAG}function rx(s) { var m = /(a)(b)/.exec(s); m[1] = 'x'; return m[1] + m[2]; } return rx('ab');`,
+      "xb",
+    ],
+    [
+      "$ObjVec element store without the gate",
+      "function st2(n) { var a = n.concat([]); a[1] = 'q'; return a.join(','); } return st2(['x', 'y']);",
+      "x,q",
+    ],
+  );
   for (const [name, body, expected] of rows) {
     it(name, async () => {
       expect((await runMain(body)).value).toBe(expected);
