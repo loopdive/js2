@@ -1,0 +1,171 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ × tests/issue-3518-native-string-no-demand-emitter-forward.test.ts > authenticates the landed import pair and exact repaired-emitter inverse 16ms
+   → expected 'af060f423ca0f00de7df82faac73ca8403367…' to be 'a23bbcb037bf8bb0fd2b22bc4c85a86d43e87…' // Object.is equality
+ × tests/issue-3518-native-string-no-demand-emitter-forward.test.ts > rejects a different fixed commit or parent after the canonical positive 5ms
+   → expected 'af060f423ca0f00de7df82faac73ca8403367…' to be 'a23bbcb037bf8bb0fd2b22bc4c85a86d43e87…' // Object.is equality
+ × tests/issue-3518-native-string-no-demand-emitter-forward.test.ts > rejects altered before or after authority bytes after the canonical positive 4ms
+   → expected 'af060f423ca0f00de7df82faac73ca8403367…' to be 'a23bbcb037bf8bb0fd2b22bc4c85a86d43e87…' // Object.is equality
+ × tests/issue-3518-native-string-no-demand-emitter-forward.test.ts > rejects absent forwarding and a missing import after the canonical positive 2ms
+   → expected 'af060f423ca0f00de7df82faac73ca8403367…' to be 'a23bbcb037bf8bb0fd2b22bc4c85a86d43e87…' // Object.is equality
+ × tests/issue-3518-native-string-no-demand-emitter-forward.test.ts > rejects duplicate forwarded imports after the canonical positive 3ms
+   → expected 'af060f423ca0f00de7df82faac73ca8403367…' to be 'a23bbcb037bf8bb0fd2b22bc4c85a86d43e87…' // Object.is equality
+ × tests/issue-3518-native-string-no-demand-emitter-forward.test.ts > rejects retargeted, value-kind and attributed imports after the canonical positive 2ms
+   → expected 'af060f423ca0f00de7df82faac73ca8403367…' to be 'a23bbcb037bf8bb0fd2b22bc4c85a86d43e87…' // Object.is equality
+ × tests/issue-3518-native-string-no-demand-emitter-forward.test.ts > rejects a missing or duplicate nullability guard after the canonical positive 2ms
+   → expected 'af060f423ca0f00de7df82faac73ca8403367…' to be 'a23bbcb037bf8bb0fd2b22bc4c85a86d43e87…' // Object.is equality
+ × tests/issue-3518-native-string-no-demand-emitter-forward.test.ts > rejects unrelated candidate edits and a matching forged repaired pair 2ms
+   → expected 'af060f423ca0f00de7df82faac73ca8403367…' to be 'a23bbcb037bf8bb0fd2b22bc4c85a86d43e87…' // Object.is equality
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 8 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/issue-3518-native-string-no-demand-emitter-forward.test.ts > authenticates the landed import pair and exact repaired-emitter inverse
+AssertionError: expected 'af060f423ca0f00de7df82faac73ca8403367…' to be 'a23bbcb037bf8bb0fd2b22bc4c85a86d43e87…' // Object.is equality
+
+Expected: [32m"a[7m23bbcb037bf8bb0fd2b22bc4c85a86d43e87ce90b77c8a2f1b0588ccbac1167[27m"[39m
+Received: [31m"a[7mf060f423ca0f00de7df82faac73ca840336726de185de2c1ee3281462aba4c4[27m"[39m
+
+ ❯ canonicalProof tests/issue-3518-native-string-no-demand-emitter-forward.test.ts:26:30
+     24|   // current file only supplies bytes; it cannot choose the expected i…
+     25|   // No historical Git checkout or lazy fetch is needed by an ordinary…
+     26|   expect(hash(beforeSource)).toBe("a23bbcb037bf8bb0fd2b22bc4c85a86d43e…
+       |                              ^
+     27|   expect(hash(afterSource)).toBe("49a1de064065e161f911b1d79492231b9b7b…
+     28|   expect(hash(repairedSource)).toBe("caba0379bf1a1515b5d8966d51a90064a…
+ ❯ tests/issue-3518-native-string-no-demand-emitter-forward.test.ts:53:17
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/8]⎯
+
+ FAIL  tests/issue-3518-native-string-no-demand-emitter-forward.test.ts > rejects a different fixed commit or parent after the canonical positive
+AssertionError: expected 'af060f423ca0f00de7df82faac73ca8403367…' to be 'a23bbcb037bf8bb0fd2b22bc4c85a86d43e87…' // Object.is equality
+
+Expected: [32m"a[7m23bbcb037bf8bb0fd2b22bc4c85a86d43e87ce90b77c8a2f1b0588ccbac1167[27m"[39m
+Received: [31m"a[7mf060f423ca0f00de7df82faac73ca840336726de185de2c1ee3281462aba4c4[27m"[39m
+
+ ❯ canonicalProof tests/issue-3518-native-string-no-demand-emitter-forward.test.ts:26:30
+     24|   // current file only supplies bytes; it cannot choose the expected i…
+     25|   // No historical Git checkout or lazy fetch is needed by an ordinary…
+     26|   expect(hash(beforeSource)).toBe("a23bbcb037bf8bb0fd2b22bc4c85a86d43e…
+       |                              ^
+     27|   expect(hash(afterSource)).toBe("49a1de064065e161f911b1d79492231b9b7b…
+     28|   expect(hash(repairedSource)).toBe("caba0379bf1a1515b5d8966d51a90064a…
+ ❯ rejects tests/issue-3518-native-string-no-demand-emitter-forward.test.ts:45:17
+ ❯ tests/issue-3518-native-string-no-demand-emitter-forward.test.ts:59:3
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/8]⎯
+
+ FAIL  tests/issue-3518-native-string-no-demand-emitter-forward.test.ts > rejects altered before or after authority bytes after the canonical positive
+AssertionError: expected 'af060f423ca0f00de7df82faac73ca8403367…' to be 'a23bbcb037bf8bb0fd2b22bc4c85a86d43e87…' // Object.is equality
+
+Expected: [32m"a[7m23bbcb037bf8bb0fd2b22bc4c85a86d43e87ce90b77c8a2f1b0588ccbac1167[27m"[39m
+Received: [31m"a[7mf060f423ca0f00de7df82faac73ca840336726de185de2c1ee3281462aba4c4[27m"[39m
+
+ ❯ canonicalProof tests/issue-3518-native-string-no-demand-emitter-forward.test.ts:26:30
+     24|   // current file only supplies bytes; it cannot choose the expected i…
+     25|   // No historical Git checkout or lazy fetch is needed by an ordinary…
+     26|   expect(hash(beforeSource)).toBe("a23bbcb037bf8bb0fd2b22bc4c85a86d43e…
+       |                              ^
+     27|   expect(hash(afterSource)).toBe("49a1de064065e161f911b1d79492231b9b7b…
+     28|   expect(hash(repairedSource)).toBe("caba0379bf1a1515b5d8966d51a90064a…
+ ❯ rejects tests/issue-3518-native-string-no-demand-emitter-forward.test.ts:45:17
+ ❯ tests/issue-3518-native-string-no-demand-emitter-forward.test.ts:64:3
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/8]⎯
+
+ FAIL  tests/issue-3518-native-string-no-demand-emitter-forward.test.ts > rejects absent forwarding and a missing import after the canonical positive
+AssertionError: expected 'af060f423ca0f00de7df82faac73ca8403367…' to be 'a23bbcb037bf8bb0fd2b22bc4c85a86d43e87…' // Object.is equality
+
+Expected: [32m"a[7m23bbcb037bf8bb0fd2b22bc4c85a86d43e87ce90b77c8a2f1b0588ccbac1167[27m"[39m
+Received: [31m"a[7mf060f423ca0f00de7df82faac73ca840336726de185de2c1ee3281462aba4c4[27m"[39m
+
+ ❯ canonicalProof tests/issue-3518-native-string-no-demand-emitter-forward.test.ts:26:30
+     24|   // current file only supplies bytes; it cannot choose the expected i…
+     25|   // No historical Git checkout or lazy fetch is needed by an ordinary…
+     26|   expect(hash(beforeSource)).toBe("a23bbcb037bf8bb0fd2b22bc4c85a86d43e…
+       |                              ^
+     27|   expect(hash(afterSource)).toBe("49a1de064065e161f911b1d79492231b9b7b…
+     28|   expect(hash(repairedSource)).toBe("caba0379bf1a1515b5d8966d51a90064a…
+ ❯ rejects tests/issue-3518-native-string-no-demand-emitter-forward.test.ts:45:17
+ ❯ tests/issue-3518-native-string-no-demand-emitter-forward.test.ts:72:3
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/8]⎯
+
+ FAIL  tests/issue-3518-native-string-no-demand-emitter-forward.test.ts > rejects duplicate forwarded imports after the canonical positive
+AssertionError: expected 'af060f423ca0f00de7df82faac73ca8403367…' to be 'a23bbcb037bf8bb0fd2b22bc4c85a86d43e87…' // Object.is equality
+
+Expected: [32m"a[7m23bbcb037bf8bb0fd2b22bc4c85a86d43e87ce90b77c8a2f1b0588ccbac1167[27m"[39m
+Received: [31m"a[7mf060f423ca0f00de7df82faac73ca840336726de185de2c1ee3281462aba4c4[27m"[39m
+
+ ❯ canonicalProof tests/issue-3518-native-string-no-demand-emitter-forward.test.ts:26:30
+     24|   // current file only supplies bytes; it cannot choose the expected i…
+     25|   // No historical Git checkout or lazy fetch is needed by an ordinary…
+     26|   expect(hash(beforeSource)).toBe("a23bbcb037bf8bb0fd2b22bc4c85a86d43e…
+       |                              ^
+     27|   expect(hash(afterSource)).toBe("49a1de064065e161f911b1d79492231b9b7b…
+     28|   expect(hash(repairedSource)).toBe("caba0379bf1a1515b5d8966d51a90064a…
+ ❯ rejects tests/issue-3518-native-string-no-demand-emitter-forward.test.ts:45:17
+ ❯ tests/issue-3518-native-string-no-demand-emitter-forward.test.ts:80:3
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/8]⎯
+
+ FAIL  tests/issue-3518-native-string-no-demand-emitter-forward.test.ts > rejects retargeted, value-kind and attributed imports after the canonical positive
+AssertionError: expected 'af060f423ca0f00de7df82faac73ca8403367…' to be 'a23bbcb037bf8bb0fd2b22bc4c85a86d43e87…' // Object.is equality
+
+Expected: [32m"a[7m23bbcb037bf8bb0fd2b22bc4c85a86d43e87ce90b77c8a2f1b0588ccbac1167[27m"[39m
+Received: [31m"a[7mf060f423ca0f00de7df82faac73ca840336726de185de2c1ee3281462aba4c4[27m"[39m
+
+ ❯ canonicalProof tests/issue-3518-native-string-no-demand-emitter-forward.test.ts:26:30
+     24|   // current file only supplies bytes; it cannot choose the expected i…
+     25|   // No historical Git checkout or lazy fetch is needed by an ordinary…
+     26|   expect(hash(beforeSource)).toBe("a23bbcb037bf8bb0fd2b22bc4c85a86d43e…
+       |                              ^
+     27|   expect(hash(afterSource)).toBe("49a1de064065e161f911b1d79492231b9b7b…
+     28|   expect(hash(repairedSource)).toBe("caba0379bf1a1515b5d8966d51a90064a…
+ ❯ rejects tests/issue-3518-native-string-no-demand-emitter-forward.test.ts:45:17
+ ❯ tests/issue-3518-native-string-no-demand-emitter-forward.test.ts:95:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/8]⎯
+
+ FAIL  tests/issue-3518-native-string-no-demand-emitter-forward.test.ts > rejects a missing or duplicate nullability guard after the canonical positive
+AssertionError: expected 'af060f423ca0f00de7df82faac73ca8403367…' to be 'a23bbcb037bf8bb0fd2b22bc4c85a86d43e87…' // Object.is equality
+
+Expected: [32m"a[7m23bbcb037bf8bb0fd2b22bc4c85a86d43e87ce90b77c8a2f1b0588ccbac1167[27m"[39m
+Received: [31m"a[7mf060f423ca0f00de7df82faac73ca840336726de185de2c1ee3281462aba4c4[27m"[39m
+
+ ❯ canonicalProof tests/issue-3518-native-string-no-demand-emitter-forward.test.ts:26:30
+     24|   // current file only supplies bytes; it cannot choose the expected i…
+     25|   // No historical Git checkout or lazy fetch is needed by an ordinary…
+     26|   expect(hash(beforeSource)).toBe("a23bbcb037bf8bb0fd2b22bc4c85a86d43e…
+       |                              ^
+     27|   expect(hash(afterSource)).toBe("49a1de064065e161f911b1d79492231b9b7b…
+     28|   expect(hash(repairedSource)).toBe("caba0379bf1a1515b5d8966d51a90064a…
+ ❯ rejects tests/issue-3518-native-string-no-demand-emitter-forward.test.ts:45:17
+ ❯ tests/issue-3518-native-string-no-demand-emitter-forward.test.ts:110:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/8]⎯
+
+ FAIL  tests/issue-3518-native-string-no-demand-emitter-forward.test.ts > rejects unrelated candidate edits and a matching forged repaired pair
+AssertionError: expected 'af060f423ca0f00de7df82faac73ca8403367…' to be 'a23bbcb037bf8bb0fd2b22bc4c85a86d43e87…' // Object.is equality
+
+Expected: [32m"a[7m23bbcb037bf8bb0fd2b22bc4c85a86d43e87ce90b77c8a2f1b0588ccbac1167[27m"[39m
+Received: [31m"a[7mf060f423ca0f00de7df82faac73ca840336726de185de2c1ee3281462aba4c4[27m"[39m
+
+ ❯ canonicalProof tests/issue-3518-native-string-no-demand-emitter-forward.test.ts:26:30
+     24|   // current file only supplies bytes; it cannot choose the expected i…
+     25|   // No historical Git checkout or lazy fetch is needed by an ordinary…
+     26|   expect(hash(beforeSource)).toBe("a23bbcb037bf8bb0fd2b22bc4c85a86d43e…
+       |                              ^
+     27|   expect(hash(afterSource)).toBe("49a1de064065e161f911b1d79492231b9b7b…
+     28|   expect(hash(repairedSource)).toBe("caba0379bf1a1515b5d8966d51a90064a…
+ ❯ rejects tests/issue-3518-native-string-no-demand-emitter-forward.test.ts:45:17
+ ❯ tests/issue-3518-native-string-no-demand-emitter-forward.test.ts:118:3
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/8]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  8 failed (8)
+   Start at  19:48:35
+   Duration  513ms (transform 51ms, setup 0ms, collect 55ms, tests 39ms, environment 0ms, prepare 68ms)
+

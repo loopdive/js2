@@ -670,6 +670,12 @@
       <a href="./spec-compliance.html" style="color: #6db3ff">Section-by-section spec compliance audit</a>
       — per-§ status (conforming / partial / not implemented) with linked gap issues.
     </p>
+    <label class="filter-toggle" id="conformance-ir-toggle" hidden style="display: none">
+      <input type="checkbox" />
+      <span>IR</span>
+    </label>
+    <p id="conformance-ir-provenance" role="status" hidden></p>
+    <a id="conformance-overview-link" href="../../#goals" hidden>Conformance overview</a>
     <div id="app"><div class="no-data">Loading report data…</div></div>
 
     <script src="../components/site-nav.js"></script>
@@ -705,6 +711,31 @@
       // state a moment before it was read. Shared with the landing page —
       // components/t262-view-state.js.
       const initialViewState = window.t262ViewState?.read?.() ?? { mode: null, edition: null };
+      const IR_SELECTED = initialViewState.ir === true;
+      window.t262ViewState.bindIrToggle(document.getElementById("conformance-ir-toggle"));
+      const irProvenance = document.getElementById("conformance-ir-provenance");
+      const overviewLink = document.getElementById("conformance-overview-link");
+      if (initialViewState.irAvailable) {
+        overviewLink.hidden = false;
+        overviewLink.href = window.t262ViewState.linkTo(`${BASE_PATH || ""}/#goals`, initialViewState);
+      }
+      if (IR_SELECTED) {
+        irProvenance.hidden = false;
+        irProvenance.textContent = "IR conformance is unmeasured until verified IR data is available.";
+        document.getElementById("app").textContent = "IR conformance is unmeasured. Loading its separate status…";
+      }
+      const showIrUnavailable = (container, mode) => {
+        const message = el(
+          "div",
+          { className: "no-data", role: "status" },
+          `IR ${mode} conformance is unmeasured. No verified IR results are available.`,
+        );
+        container.appendChild(message);
+        irProvenance.textContent = `IR · ${mode} · unmeasured`;
+        window.t262ViewState.irStatus("results", mode).then((reason) => {
+          if (reason) message.textContent = `IR ${mode} conformance is unmeasured. ${reason}`;
+        });
+      };
 
       function assetPath(path) {
         if (!BASE_PATH) return `/${path}`;
@@ -715,6 +746,7 @@
       async function loadReportWithFallback() {
         const report = await loadJSON(REPORT_JSON);
         if (report && report.summary && report.summary.total > 0) return report;
+        if (IR_SELECTED) return null;
         // Fallback: build report from JSONL
         console.warn("Report JSON empty/corrupt, rebuilding from JSONL...");
         try {
@@ -803,7 +835,7 @@
       // (host vs standalone). Set by renderConformance; read by toggleDetail.
       let activeFileResultsSrc = RESULTS_JSONL;
       async function loadFileResults(src = RESULTS_JSONL) {
-        if (!src) return null;
+        if (!src || IR_SELECTED) return null;
         if (_fileResultsCache.has(src)) return _fileResultsCache.get(src);
         try {
           const resp = await fetch(src);
@@ -857,8 +889,8 @@
 
       async function loadJSON(url) {
         try {
-          const r = await fetch(url);
-          return r.ok ? r.json() : null;
+          const mapping = url === CATEGORY_EDITIONS_JSON || url === FILE_EDITIONS_JSON;
+          return await window.t262ViewState.fetchData(url, mapping ? "data" : undefined);
         } catch {
           return null;
         }
@@ -1492,7 +1524,7 @@
           // lane and the strict filter, so a standalone or strict number is
           // never presented as if it were the plain host one. This matters
           // more now that standalone is the default view.
-          donutEl.setAttribute("caption-sub", conformanceCaptionSub());
+          donutEl.setAttribute("caption-sub", IR_SELECTED ? `IR ${conformanceCaptionSub()}` : conformanceCaptionSub());
         }
 
         // Mirrors the landing page's `conformanceOptions().captionSub`.
@@ -2510,7 +2542,7 @@
         // per-edition slider, which is already generated with --host-free).
         applyStandaloneHostFree(standaloneReport);
 
-        if (conformance) {
+        if (conformance || IR_SELECTED) {
           // (#2871 #1) Host (JS) vs Standalone (pure Wasm) views. Both share the
           // same report schema; standalone ships no per-file JSONL, so the
           // per-test error-pattern list degrades to the root-cause buckets.
@@ -2535,7 +2567,7 @@
             report: conformance,
             editionsSrc: HOST_EDITIONS_JSON,
             categoryEditions: categoryEditions || null,
-            fileResultsSrc: RESULTS_JSONL,
+            fileResultsSrc: IR_SELECTED ? null : RESULTS_JSONL,
           };
           const standaloneView = standaloneReport
             ? {
@@ -2557,7 +2589,13 @@
           // report was published.
           const conformanceHost = el("div");
           const preferredMode = initialViewState.mode || localStorage.getItem("t262-mode") || "standalone";
-          let activeMode = standaloneView && preferredMode !== "host" ? "standalone" : "host";
+          let activeMode = IR_SELECTED
+            ? preferredMode === "host"
+              ? "host"
+              : "standalone"
+            : standaloneView && preferredMode !== "host"
+              ? "standalone"
+              : "host";
           const renderActive = () => {
             const filterInputs = {
               strict: conformanceHost.querySelector('[data-report-toggle="strict"] input'),
@@ -2571,10 +2609,29 @@
               includeLegacy: filterInputs.legacy?.checked,
             };
             conformanceHost.textContent = "";
-            const view = activeMode === "standalone" && standaloneView ? standaloneView : hostView;
+            const view = IR_SELECTED
+              ? activeMode === "standalone"
+                ? standaloneView
+                : hostView
+              : activeMode === "standalone" && standaloneView
+                ? standaloneView
+                : hostView;
+            if (IR_SELECTED) {
+              window.t262ViewState.write({ mode: activeMode });
+              overviewLink.href = window.t262ViewState.linkTo(`${BASE_PATH || ""}/#goals`, {
+                mode: activeMode,
+                edition: initialViewState.edition,
+              });
+              if (!view?.report) {
+                showIrUnavailable(conformanceHost, activeMode);
+                return;
+              }
+              const filename = activeMode === "host" ? "test262-ir-report.json" : "test262-standalone-ir-report.json";
+              irProvenance.textContent = `IR · ${activeMode} · results/${filename}`;
+            }
             renderConformance(view, conformanceHost, preservedState);
           };
-          if (standaloneView) {
+          if (standaloneView || IR_SELECTED) {
             const modeSwitch = el("div", { className: "mode-switch" });
             const mkBtn = (mode, main, sub) => {
               const b = el(

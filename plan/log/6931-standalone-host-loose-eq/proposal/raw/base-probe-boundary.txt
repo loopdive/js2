@@ -1,0 +1,44 @@
+== target=gc irOutcomes: eqUsed:emitted+body eqStr:emitted+body nativeObj:unsupported nativeStr:unsupported nativeNum:unsupported <module-init>:non-executable
+  eqUsed(1) wasm=1 node=1
+  eqUsed(5) wasm=0 node=0
+  eqUsed("1") wasm=1 node=1
+  eqUsed("x") wasm=0 node=0
+  eqUsed({}) wasm=0 node=0
+  eqUsed({valueOf:()=>1}) wasm=1 node=1
+  eqUsed(null) wasm=0 node=0
+  eqUsed(undefined) wasm=0 node=0
+  eqUsed(true) wasm=1 node=1
+  eqStr(1) wasm=1 node=1
+  eqStr(5) wasm=0 node=0
+  eqStr("1") wasm=1 node=1
+  eqStr("x") wasm=0 node=0
+  eqStr({}) wasm=0 node=0
+  eqStr({valueOf:()=>1}) wasm=1 node=1
+  eqStr(null) wasm=0 node=0
+  eqStr(undefined) wasm=0 node=0
+  eqStr(true) wasm=1 node=1
+  nativeObj() wasm=0 node=0
+  nativeStr() wasm=1 node=1
+  nativeNum() wasm=1 node=1
+== target=standalone irOutcomes: eqUsed:emitted+body eqStr:emitted+body nativeObj:unsupported nativeStr:unsupported nativeNum:unsupported <module-init>:non-executable
+  eqUsed(1) wasm=1 node=1
+  eqUsed(5) wasm=0 node=0
+  eqUsed("1") wasm=THROW RuntimeError: illegal cast node=1
+  eqUsed("x") wasm=THROW RuntimeError: illegal cast node=0
+  eqUsed({}) wasm=THROW RuntimeError: illegal cast node=0
+  eqUsed({valueOf:()=>1}) wasm=THROW RuntimeError: illegal cast node=1
+  eqUsed(null) wasm=0 node=0
+  eqUsed(undefined) wasm=THROW RuntimeError: illegal cast node=0
+  eqUsed(true) wasm=THROW RuntimeError: illegal cast node=1
+  eqStr(1) wasm=1 node=1
+  eqStr(5) wasm=0 node=0
+  eqStr("1") wasm=0 node=1
+  eqStr("x") wasm=0 node=0
+  eqStr({}) wasm=0 node=0
+  eqStr({valueOf:()=>1}) wasm=0 node=1
+  eqStr(null) wasm=0 node=0
+  eqStr(undefined) wasm=0 node=0
+  eqStr(true) wasm=0 node=1
+  nativeObj() wasm=0 node=0
+  nativeStr() wasm=1 node=1
+  nativeNum() wasm=1 node=1

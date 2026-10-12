@@ -6,6 +6,16 @@
 - Start with [MEMORY.md](.claude/memory/MEMORY.md), then read any task-relevant files in the same directory.
 - Treat those memory files as repo-specific operating context, especially around test262 workflow, agent coordination, cleanup rules, and user preferences.
 
+## IR-only development policy
+
+- Development of the old direct-AST compilation path is frozen. Follow
+  [the development-freeze policy](plan/method/ir-only-development-freeze.md).
+- Put new language features and semantic fixes in IR or the genuinely shared
+  runtime. Preserve the old path/CI and historical measurements, existing
+  source ownership and holds; shared infrastructure and measurement work remain permitted.
+- An IR flag or IR_FIRST label is not proof of complete IR admission. Keep
+  explicitly selected IR Test262 numbers separate from default/historical results.
+
 ## Commit Messages
 
 - Use Claude Code-style commit messages.
@@ -53,16 +63,16 @@ Model: Codex GPT-5.6 Sol Max
 Model: Claude Opus 5 High
 ```
 
-  - Effort is the level your session/task was configured with — the dispatch
-    brief or the issue's `reasoning_effort` frontmatter; if genuinely
-    unknown, write `Default`. Do not guess a higher tier than you know.
-  - Auto-generated subjects (`Merge …`, `Revert …`, `fixup!`, `squash!`,
-    `chore(assign)…`) are exempt.
-  - Why: PR #5204 shipped three codegen regressions in one agent commit and
-    the model that produced it was unrecoverable from git. This trailer makes
-    that question answerable per commit.
-  - This project rule deliberately **overrides** any ambient harness default
-    of keeping model identifiers out of pushed artifacts (same precedence as
-    the "always open a PR" rule in CLAUDE.md).
+- Effort is the level your session/task was configured with — the dispatch
+  brief or the issue's `reasoning_effort` frontmatter; if genuinely
+  unknown, write `Default`. Do not guess a higher tier than you know.
+- Auto-generated subjects (`Merge …`, `Revert …`, `fixup!`, `squash!`,
+  `chore(assign)…`) are exempt.
+- Why: PR #5204 shipped three codegen regressions in one agent commit and
+  the model that produced it was unrecoverable from git. This trailer makes
+  that question answerable per commit.
+- This project rule deliberately **overrides** any ambient harness default
+  of keeping model identifiers out of pushed artifacts (same precedence as
+  the "always open a PR" rule in CLAUDE.md).
 - Before committing, verify `git config user.name` and `git config user.email`
   still identify Thomas Tränkler.

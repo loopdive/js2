@@ -159,7 +159,7 @@
     {
       "name": "delete operator",
       "testCategories": ["language/expressions/delete"],
-      "passCount": 62,
+      "passCount": 63,
       "totalCount": 69,
       "editionSpread": [
         {
@@ -169,7 +169,7 @@
         },
         {
           "edition": "Unclassified (untagged)",
-          "pass": 59,
+          "pass": 60,
           "total": 66
         }
       ]
@@ -423,7 +423,7 @@
     {
       "name": "Functions & closures",
       "testCategories": ["language/statements/function", "language/function-code", "built-ins/Function"],
-      "passCount": 1132,
+      "passCount": 1133,
       "totalCount": 1177,
       "editionSpread": [
         {
@@ -433,7 +433,7 @@
         },
         {
           "edition": "ES2015",
-          "pass": 243,
+          "pass": 244,
           "total": 262
         },
         {
@@ -1061,7 +1061,7 @@
         "language/expressions/new",
         "language/expressions/new.target"
       ],
-      "passCount": 442,
+      "passCount": 443,
       "totalCount": 461
     },
     {
@@ -1168,7 +1168,7 @@
         "language/expressions/async-function",
         "language/statements/async-function"
       ],
-      "passCount": 321,
+      "passCount": 322,
       "totalCount": 348
     },
     {
@@ -1216,7 +1216,7 @@
         "language/expressions/async-generator",
         "language/statements/async-generator"
       ],
-      "passCount": 2961,
+      "passCount": 2962,
       "totalCount": 3812
     },
     {
@@ -1246,7 +1246,7 @@
     {
       "name": "Dynamic import()",
       "testCategories": ["language/expressions/dynamic-import"],
-      "passCount": 245,
+      "passCount": 246,
       "totalCount": 557
     },
     {
@@ -1258,7 +1258,7 @@
     {
       "name": "Class fields (public, private, static)",
       "testCategories": ["language/statements/class/fields"],
-      "passCount": 3826,
+      "passCount": 3828,
       "totalCount": 4979
     },
     {
@@ -1564,12 +1564,12 @@
     {
       "name": "Temporal",
       "testCategories": ["built-ins/Temporal"],
-      "passCount": 4501,
+      "passCount": 169,
       "totalCount": 4603,
       "editionSpread": [
         {
           "edition": "ES2026",
-          "pass": 4501,
+          "pass": 169,
           "total": 4603
         }
       ]

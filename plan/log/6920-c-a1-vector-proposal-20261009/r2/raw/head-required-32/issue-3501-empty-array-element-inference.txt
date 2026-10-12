@@ -1,0 +1,20 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/issue-3501-empty-array-element-inference.test.ts > #3501 empty-array element inference > closes aliases and control-flow joins before selecting the numeric vector type 542ms
+ ✓ tests/issue-3501-empty-array-element-inference.test.ts > #3501 empty-array element inference > rejects mixed, escaping, and unresolved groups with stable diagnostics 31ms
+ ✓ tests/issue-3501-empty-array-element-inference.test.ts > #3501 empty-array element inference > keeps mixed and unresolved source functions on stable conservative demotions 97ms
+ ✓ tests/issue-3501-empty-array-element-inference.test.ts > #3501 shared planned-vector backend operations > derives reusable grow/set/get/length operations from source and the shared plan 101ms
+ ✓ tests/issue-3501-empty-array-element-inference.test.ts > #3501 shared planned-vector backend operations > rejects an ambiguous second allocation with the same f64 vector layout 44ms
+ ✓ tests/issue-3501-empty-array-element-inference.test.ts > #3501 shared planned-vector backend operations > rejects non-f64 vector helper suffixes instead of mapping them to the f64 runtime 0ms
+ ✓ tests/issue-3501-empty-array-element-inference.test.ts > #3501 shared planned-vector backend operations > does not treat a builtin-looking source unit as an intrinsic 0ms
+ ✓ tests/issue-3501-empty-array-element-inference.test.ts > #3501 shared planned-vector backend operations > demotes inferred array reads without an in-bounds proof 23ms
+ ↓ tests/issue-3501-empty-array-element-inference.test.ts > #3501 shared planned-vector backend operations > executes allocation growth and alias-forwarded reads in native Porffor C under ASan/UBSan
+ ✓ tests/issue-3501-empty-array-element-inference.test.ts > #3501 exact landing array-sum source > matches Node through WasmGC and source-derived shared linear IR 363ms
+ ↓ tests/issue-3501-empty-array-element-inference.test.ts > #3501 exact landing array-sum source > matches Node for the untouched public source in native Porffor C under ASan/UBSan
+
+ Test Files  1 passed (1)
+      Tests  9 passed | 2 skipped (11)
+   Start at  19:34:01
+   Duration  33.41s (transform 22.34s, setup 0ms, collect 31.72s, tests 1.20s, environment 0ms, prepare 70ms)
+

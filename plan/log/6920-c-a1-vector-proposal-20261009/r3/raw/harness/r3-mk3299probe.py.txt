@@ -1,0 +1,27 @@
+"""Derive a Porffor-free probe of the EDITED issue-3299 linear proof fixture.
+
+The probe is a verbatim copy of tests/issue-3299.test.ts with relative imports
+re-rooted for .tmp/, plus one extra test that runs ONLY the linear-Wasm half of
+the optional proof (`instantiateLinearProof` with the edited `linearResolver`
+handle and verbatim locals) and compares it with the JS oracles. The Porffor
+half is not executed.
+"""
+
+s = open("tests/issue-3299.test.ts").read()
+s = s.replace('from "../src/', 'from "../src/').replace('from "./helpers/', 'from "../tests/helpers/')
+marker = 'describe("#3299 shared heap/layout plan", () => {'
+assert s.count(marker) == 1
+probe = '''describe("#6920 r3 probe — edited 3299 linear fixture without Porffor", () => {
+  it("linear-Wasm half of the optional proof runs with the genuine i32 handle and verbatim locals", async () => {
+    const { module, plan } = proofFixture();
+    const linear = await instantiateLinearProof(module, plan);
+    const values = [linear.objectProof(), linear.vectorProof(1), linear.vectorProof(-1), linear.vectorProof(8)];
+    expect([objectOracle(), vectorOracle(1), vectorOracle(-1), vectorOracle(8)]).toEqual([911, 309, 300, 300]);
+    expect(values).toStrictEqual([911, 309, 300, 300]);
+  });
+});
+
+'''
+s = s.replace(marker, probe + marker)
+open(".tmp/probe-3299-linear.test.ts", "w").write(s)
+print("written")

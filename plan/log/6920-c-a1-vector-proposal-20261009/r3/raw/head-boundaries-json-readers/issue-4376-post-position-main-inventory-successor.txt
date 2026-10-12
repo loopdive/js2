@@ -1,0 +1,1860 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > independently proves all three complete inverses and replays 24ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > detaches both semantic routes and preserves every frozen input byte 4ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses the exact stale previousCurrent profile as current 3ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses the exact stale main431 profile as current 3ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses the exact stale formerCurrent1863 profile as current 3ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses the exact stale oldPosition profile as current 3ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses the exact stale oldDeno profile as current 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses the exact stale main6998 profile as current 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses the exact stale main58d profile as current 6ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses the exact stale formerCurrent1864 profile as current 3ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main accepts fresh current1866 after exact two-row insertion replay 3ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses the exact stale formerCurrent1866 profile as current 3ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main accepts fresh current1868 after exact two-row insertion replay 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main accepts productive current1870 and reciprocally preserves the complete former1868 epoch 7ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses the exact stale formerCurrent1868 profile as current 3ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses new-row accessors and hidden data without observation and restores healthy input 3ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main accepts productive current1872 with complete prior1871 and checkpoint1870 inverse/replay 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses exact stale checkpoint1870 incoming predecessor as current 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses exact stale prior1871 incoming predecessor as current 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses both incoming-row accessors and hidden data with zero observation and healthy restoration 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main accepts productive current1873 with complete former1872 inverse/replay and commuting remainder append 3ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses exact stale former1872 as current and restores healthy current1873 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses f087 incoming-row accessors and hidden data with zero observation and healthy restoration 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main accepts productive current1874 with exact former1873 inverse/replay, split old333 span and commuting remainder append 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses exact stale former1873 as current and restores healthy current1874 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses e24 incoming-row accessors and hidden data with zero observation and healthy restoration 3ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses the exact stale main1850 profile as current 8ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses complete semantic duplicate drift 3ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses complete semantic missing drift 3ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses complete semantic reordered drift 3ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses complete semantic foreign drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses complete semantic non-files drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses complete semantic ordered keys drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 47 row profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 47 previous profile drift 3ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 47 next profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 48 row profile drift 3ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 48 previous profile drift 3ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 48 next profile drift 3ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 196 row profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 196 previous profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 196 next profile drift 3ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 268 row profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 268 previous profile drift 3ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 268 next profile drift 3ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 327 row profile drift 3ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 327 previous profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 327 next profile drift 3ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 329 row profile drift 3ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 329 previous profile drift 3ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 329 next profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 381 row profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 381 previous profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 381 next profile drift 3ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 396 row profile drift 6ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 396 previous profile drift 3ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 396 next profile drift 3ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 710 row profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 710 previous profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 710 next profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 712 row profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 712 previous profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 712 next profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition e24-751 row profile drift 4ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition e24-751 previous profile drift 3ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition e24-751 next profile drift 4ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 750 row profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 750 previous profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 750 next profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 843 row profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 843 previous profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 843 next profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 880 row profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 880 previous profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 880 next profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 899 row profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 899 previous profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 899 next profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 900 row profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 900 previous profile drift 6ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 900 next profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 901 row profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 901 previous profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 901 next profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 944 row profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 944 previous profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 944 next profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 960 row profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 960 previous profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 960 next profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1052 row profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1052 previous profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1052 next profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1060 row profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1060 previous profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1060 next profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1154 row profile drift 3ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1154 previous profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1154 next profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1503 row profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1503 previous profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1503 next profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1527 row profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1527 previous profile drift 3ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1527 next profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1657 row profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1657 previous profile drift 10ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1657 next profile drift 5ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition f087-1662 row profile drift 4ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition f087-1662 previous profile drift 6ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition f087-1662 next profile drift 3ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1662 row profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1662 previous profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1662 next profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1663 row profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1663 previous profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1663 next profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1783 row profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1783 previous profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1783 next profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1784 row profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1784 previous profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1784 next profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1785 row profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1785 previous profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1785 next profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1794 row profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1794 previous profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1794 next profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1868 row profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1868 previous profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1868 next profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1869 row profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1869 previous profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1869 next profile drift 3ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 87 row profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 87 previous profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 87 next profile drift 6ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 381 row profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 381 previous profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 381 next profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 396 row profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 396 previous profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 396 next profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno e24-751 row profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno e24-751 previous profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno e24-751 next profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 750 row profile drift 5ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 750 previous profile drift 3ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 750 next profile drift 3ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 899 row profile drift 3ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 899 previous profile drift 3ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 899 next profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 900 row profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 900 previous profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 900 next profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 997 row profile drift 3ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 997 previous profile drift 3ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 997 next profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 1052 row profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 1052 previous profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 1052 next profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 1060 row profile drift 6ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 1060 previous profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 1060 next profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 1154 row profile drift 3ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 1154 previous profile drift 4ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 1154 next profile drift 3ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 1657 row profile drift 3ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 1657 previous profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 1657 next profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno f087-1662 row profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno f087-1662 previous profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno f087-1662 next profile drift 3ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 1783 row profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 1783 previous profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 1783 next profile drift 3ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 1784 row profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 1784 previous profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 1784 next profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 1785 row profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 1785 previous profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 1785 next profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 1868 row profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 1868 previous profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 1868 next profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 1869 row profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 1869 previous profile drift 8ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 1869 next profile drift 3ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses raw whitespace drift 3ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses raw span drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses malicious getter without observation 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses malicious coercion without observation 3ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses malicious hole without observation 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses malicious boxed without observation 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses malicious nonplain without observation 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses malicious symbol without observation 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses malicious hidden without observation 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses malicious hidden index without observation 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses malicious cycle without observation 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main authenticates wrong path receipt afresh after warm capture 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main authenticates missing receipt afresh after warm capture 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main authenticates corrupt receipt afresh after warm capture 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main authenticates span receipt afresh after warm capture 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main authenticates nonprimitive receipt afresh after warm capture 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main authenticates absent receipt afresh after warm capture 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses physically missing receipt after warm capture and restores exact original 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses physically corrupt receipt after warm capture and restores exact original 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main faults actual current policy after warm capture and restores exact original bytes 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses the exact stale previousCurrent profile as current 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses the exact stale main431 profile as current 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses the exact stale formerCurrent1863 profile as current 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses the exact stale oldPosition profile as current 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses the exact stale oldDeno profile as current 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses the exact stale main6998 profile as current 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses the exact stale main58d profile as current 5ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses the exact stale formerCurrent1864 profile as current 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno accepts fresh current1866 after exact two-row insertion replay 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses the exact stale formerCurrent1866 profile as current 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno accepts fresh current1868 after exact two-row insertion replay 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno accepts productive current1870 and reciprocally preserves the complete former1868 epoch 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses the exact stale formerCurrent1868 profile as current 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses new-row accessors and hidden data without observation and restores healthy input 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno accepts productive current1872 with complete prior1871 and checkpoint1870 inverse/replay 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses exact stale checkpoint1870 incoming predecessor as current 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses exact stale prior1871 incoming predecessor as current 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses both incoming-row accessors and hidden data with zero observation and healthy restoration 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno accepts productive current1873 with complete former1872 inverse/replay and commuting remainder append 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses exact stale former1872 as current and restores healthy current1873 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses f087 incoming-row accessors and hidden data with zero observation and healthy restoration 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno accepts productive current1874 with exact former1873 inverse/replay, split old333 span and commuting remainder append 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses exact stale former1873 as current and restores healthy current1874 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses e24 incoming-row accessors and hidden data with zero observation and healthy restoration 5ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses the exact stale main1850 profile as current 3ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses complete semantic duplicate drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses complete semantic missing drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses complete semantic reordered drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses complete semantic foreign drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses complete semantic non-files drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses complete semantic ordered keys drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 47 row profile drift 5ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 47 previous profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 47 next profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 48 row profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 48 previous profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 48 next profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 196 row profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 196 previous profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 196 next profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 268 row profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 268 previous profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 268 next profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 327 row profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 327 previous profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 327 next profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 329 row profile drift 3ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 329 previous profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 329 next profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 381 row profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 381 previous profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 381 next profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 396 row profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 396 previous profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 396 next profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 710 row profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 710 previous profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 710 next profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 712 row profile drift 6ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 712 previous profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 712 next profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition e24-751 row profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition e24-751 previous profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition e24-751 next profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 750 row profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 750 previous profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 750 next profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 843 row profile drift 5ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 843 previous profile drift 3ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 843 next profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 880 row profile drift 3ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 880 previous profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 880 next profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 899 row profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 899 previous profile drift 3ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 899 next profile drift 3ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 900 row profile drift 3ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 900 previous profile drift 3ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 900 next profile drift 3ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 901 row profile drift 3ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 901 previous profile drift 3ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 901 next profile drift 3ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 944 row profile drift 3ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 944 previous profile drift 6ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 944 next profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 960 row profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 960 previous profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 960 next profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1052 row profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1052 previous profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1052 next profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1060 row profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1060 previous profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1060 next profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1154 row profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1154 previous profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1154 next profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1503 row profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1503 previous profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1503 next profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1527 row profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1527 previous profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1527 next profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1657 row profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1657 previous profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1657 next profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition f087-1662 row profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition f087-1662 previous profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition f087-1662 next profile drift 8ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1662 row profile drift 3ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1662 previous profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1662 next profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1663 row profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1663 previous profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1663 next profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1783 row profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1783 previous profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1783 next profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1784 row profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1784 previous profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1784 next profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1785 row profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1785 previous profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1785 next profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1794 row profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1794 previous profile drift 3ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1794 next profile drift 3ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1868 row profile drift 3ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1868 previous profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1868 next profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1869 row profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1869 previous profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1869 next profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 87 row profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 87 previous profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 87 next profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 381 row profile drift 5ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 381 previous profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 381 next profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 396 row profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 396 previous profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 396 next profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno e24-751 row profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno e24-751 previous profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno e24-751 next profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 750 row profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 750 previous profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 750 next profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 899 row profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 899 previous profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 899 next profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 900 row profile drift 4ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 900 previous profile drift 3ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 900 next profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 997 row profile drift 3ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 997 previous profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 997 next profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 1052 row profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 1052 previous profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 1052 next profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 1060 row profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 1060 previous profile drift 6ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 1060 next profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 1154 row profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 1154 previous profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 1154 next profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 1657 row profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 1657 previous profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 1657 next profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno f087-1662 row profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno f087-1662 previous profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno f087-1662 next profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 1783 row profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 1783 previous profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 1783 next profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 1784 row profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 1784 previous profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 1784 next profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 1785 row profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 1785 previous profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 1785 next profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 1868 row profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 1868 previous profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 1868 next profile drift 3ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 1869 row profile drift 4ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 1869 previous profile drift 3ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 1869 next profile drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses raw whitespace drift 2ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses raw span drift 8ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses malicious getter without observation 4ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses malicious coercion without observation 9ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses malicious hole without observation 7ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses malicious boxed without observation 5ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses malicious nonplain without observation 4ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses malicious symbol without observation 3ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses malicious hidden without observation 3ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses malicious hidden index without observation 3ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses malicious cycle without observation 3ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno authenticates wrong path receipt afresh after warm capture 4ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno authenticates missing receipt afresh after warm capture 3ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno authenticates corrupt receipt afresh after warm capture 3ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno authenticates span receipt afresh after warm capture 3ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno authenticates nonprimitive receipt afresh after warm capture 3ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno authenticates absent receipt afresh after warm capture 3ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses physically missing receipt after warm capture and restores exact original 3ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses physically corrupt receipt after warm capture and restores exact original 3ms
+   → expected 607422 to be 599721 // Object.is equality
+ × tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno faults actual current policy after warm capture and restores exact original bytes 3ms
+   → expected 607422 to be 599721 // Object.is equality
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 416 ⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > independently proves all three complete inverses and replays
+AssertionError: expected 607422 to be 599721 // Object.is equality
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- 599721[39m
+[31m+ 607422[39m
+
+ ❯ profile tests/issue-4376-post-position-main-inventory-successor.test.ts:3346:34
+    3344|   | typeof formerCurrentProfile;
+    3345| function profile(raw: string, target: Profile): Policy {
+    3346|   expect(Buffer.byteLength(raw)).toBe(target.source.bytes);
+       |                                  ^
+    3347|   expect(sha(raw)).toBe(target.source.sha256);
+    3348|   expect(
+ ❯ healthy tests/issue-4376-post-position-main-inventory-successor.test.ts:3494:15
+ ❯ tests/issue-4376-post-position-main-inventory-successor.test.ts:3529:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/416]⎯
+
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > detaches both semantic routes and preserves every frozen input byte
+AssertionError: expected 607422 to be 599721 // Object.is equality
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- 599721[39m
+[31m+ 607422[39m
+
+ ❯ profile tests/issue-4376-post-position-main-inventory-successor.test.ts:3346:34
+    3344|   | typeof formerCurrentProfile;
+    3345| function profile(raw: string, target: Profile): Policy {
+    3346|   expect(Buffer.byteLength(raw)).toBe(target.source.bytes);
+       |                                  ^
+    3347|   expect(sha(raw)).toBe(target.source.sha256);
+    3348|   expect(
+ ❯ healthy tests/issue-4376-post-position-main-inventory-successor.test.ts:3494:15
+ ❯ tests/issue-4376-post-position-main-inventory-successor.test.ts:3550:25
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/416]⎯
+
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses the exact stale previousCurrent profile as current
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses the exact stale previousCurrent profile as current
+AssertionError: expected 607422 to be 599721 // Object.is equality
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- 599721[39m
+[31m+ 607422[39m
+
+ ❯ profile tests/issue-4376-post-position-main-inventory-successor.test.ts:3346:34
+    3344|   | typeof formerCurrentProfile;
+    3345| function profile(raw: string, target: Profile): Policy {
+    3346|   expect(Buffer.byteLength(raw)).toBe(target.source.bytes);
+       |                                  ^
+    3347|   expect(sha(raw)).toBe(target.source.sha256);
+    3348|   expect(
+ ❯ healthy tests/issue-4376-post-position-main-inventory-successor.test.ts:3494:15
+ ❯ tests/issue-4376-post-position-main-inventory-successor.test.ts:3564:30
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/416]⎯
+
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses the exact stale main431 profile as current
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses the exact stale main431 profile as current
+AssertionError: expected 607422 to be 599721 // Object.is equality
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- 599721[39m
+[31m+ 607422[39m
+
+ ❯ profile tests/issue-4376-post-position-main-inventory-successor.test.ts:3346:34
+    3344|   | typeof formerCurrentProfile;
+    3345| function profile(raw: string, target: Profile): Policy {
+    3346|   expect(Buffer.byteLength(raw)).toBe(target.source.bytes);
+       |                                  ^
+    3347|   expect(sha(raw)).toBe(target.source.sha256);
+    3348|   expect(
+ ❯ healthy tests/issue-4376-post-position-main-inventory-successor.test.ts:3494:15
+ ❯ tests/issue-4376-post-position-main-inventory-successor.test.ts:3586:23
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/416]⎯
+
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses the exact stale formerCurrent1863 profile as current
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses the exact stale formerCurrent1863 profile as current
+AssertionError: expected 607422 to be 599721 // Object.is equality
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- 599721[39m
+[31m+ 607422[39m
+
+ ❯ profile tests/issue-4376-post-position-main-inventory-successor.test.ts:3346:34
+    3344|   | typeof formerCurrentProfile;
+    3345| function profile(raw: string, target: Profile): Policy {
+    3346|   expect(Buffer.byteLength(raw)).toBe(target.source.bytes);
+       |                                  ^
+    3347|   expect(sha(raw)).toBe(target.source.sha256);
+    3348|   expect(
+ ❯ healthy tests/issue-4376-post-position-main-inventory-successor.test.ts:3494:15
+ ❯ tests/issue-4376-post-position-main-inventory-successor.test.ts:3600:23
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/416]⎯
+
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses the exact stale oldPosition profile as current
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses the exact stale oldDeno profile as current
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses the exact stale main6998 profile as current
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses the exact stale main58d profile as current
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses the exact stale oldPosition profile as current
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses the exact stale oldDeno profile as current
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses the exact stale main6998 profile as current
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses the exact stale main58d profile as current
+AssertionError: expected 607422 to be 599721 // Object.is equality
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- 599721[39m
+[31m+ 607422[39m
+
+ ❯ profile tests/issue-4376-post-position-main-inventory-successor.test.ts:3346:34
+    3344|   | typeof formerCurrentProfile;
+    3345| function profile(raw: string, target: Profile): Policy {
+    3346|   expect(Buffer.byteLength(raw)).toBe(target.source.bytes);
+       |                                  ^
+    3347|   expect(sha(raw)).toBe(target.source.sha256);
+    3348|   expect(
+ ❯ healthy tests/issue-4376-post-position-main-inventory-successor.test.ts:3494:15
+ ❯ tests/issue-4376-post-position-main-inventory-successor.test.ts:3615:25
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/416]⎯
+
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses the exact stale formerCurrent1864 profile as current
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses the exact stale formerCurrent1864 profile as current
+AssertionError: expected 607422 to be 599721 // Object.is equality
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- 599721[39m
+[31m+ 607422[39m
+
+ ❯ profile tests/issue-4376-post-position-main-inventory-successor.test.ts:3346:34
+    3344|   | typeof formerCurrentProfile;
+    3345| function profile(raw: string, target: Profile): Policy {
+    3346|   expect(Buffer.byteLength(raw)).toBe(target.source.bytes);
+       |                                  ^
+    3347|   expect(sha(raw)).toBe(target.source.sha256);
+    3348|   expect(
+ ❯ healthy tests/issue-4376-post-position-main-inventory-successor.test.ts:3494:15
+ ❯ tests/issue-4376-post-position-main-inventory-successor.test.ts:3621:23
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/416]⎯
+
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main accepts fresh current1866 after exact two-row insertion replay
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno accepts fresh current1866 after exact two-row insertion replay
+AssertionError: expected 607422 to be 599721 // Object.is equality
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- 599721[39m
+[31m+ 607422[39m
+
+ ❯ profile tests/issue-4376-post-position-main-inventory-successor.test.ts:3346:34
+    3344|   | typeof formerCurrentProfile;
+    3345| function profile(raw: string, target: Profile): Policy {
+    3346|   expect(Buffer.byteLength(raw)).toBe(target.source.bytes);
+       |                                  ^
+    3347|   expect(sha(raw)).toBe(target.source.sha256);
+    3348|   expect(
+ ❯ healthy tests/issue-4376-post-position-main-inventory-successor.test.ts:3494:15
+ ❯ tests/issue-4376-post-position-main-inventory-successor.test.ts:3631:32
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/416]⎯
+
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses the exact stale formerCurrent1866 profile as current
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses the exact stale formerCurrent1866 profile as current
+AssertionError: expected 607422 to be 599721 // Object.is equality
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- 599721[39m
+[31m+ 607422[39m
+
+ ❯ profile tests/issue-4376-post-position-main-inventory-successor.test.ts:3346:34
+    3344|   | typeof formerCurrentProfile;
+    3345| function profile(raw: string, target: Profile): Policy {
+    3346|   expect(Buffer.byteLength(raw)).toBe(target.source.bytes);
+       |                                  ^
+    3347|   expect(sha(raw)).toBe(target.source.sha256);
+    3348|   expect(
+ ❯ healthy tests/issue-4376-post-position-main-inventory-successor.test.ts:3494:15
+ ❯ tests/issue-4376-post-position-main-inventory-successor.test.ts:3644:23
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/416]⎯
+
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main accepts fresh current1868 after exact two-row insertion replay
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno accepts fresh current1868 after exact two-row insertion replay
+AssertionError: expected 607422 to be 599721 // Object.is equality
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- 599721[39m
+[31m+ 607422[39m
+
+ ❯ profile tests/issue-4376-post-position-main-inventory-successor.test.ts:3346:34
+    3344|   | typeof formerCurrentProfile;
+    3345| function profile(raw: string, target: Profile): Policy {
+    3346|   expect(Buffer.byteLength(raw)).toBe(target.source.bytes);
+       |                                  ^
+    3347|   expect(sha(raw)).toBe(target.source.sha256);
+    3348|   expect(
+ ❯ healthy tests/issue-4376-post-position-main-inventory-successor.test.ts:3494:15
+ ❯ tests/issue-4376-post-position-main-inventory-successor.test.ts:3650:32
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/416]⎯
+
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main accepts productive current1870 and reciprocally preserves the complete former1868 epoch
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno accepts productive current1870 and reciprocally preserves the complete former1868 epoch
+AssertionError: expected 607422 to be 599721 // Object.is equality
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- 599721[39m
+[31m+ 607422[39m
+
+ ❯ profile tests/issue-4376-post-position-main-inventory-successor.test.ts:3346:34
+    3344|   | typeof formerCurrentProfile;
+    3345| function profile(raw: string, target: Profile): Policy {
+    3346|   expect(Buffer.byteLength(raw)).toBe(target.source.bytes);
+       |                                  ^
+    3347|   expect(sha(raw)).toBe(target.source.sha256);
+    3348|   expect(
+ ❯ healthy tests/issue-4376-post-position-main-inventory-successor.test.ts:3494:15
+ ❯ tests/issue-4376-post-position-main-inventory-successor.test.ts:3657:32
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[11/416]⎯
+
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses the exact stale formerCurrent1868 profile as current
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses the exact stale formerCurrent1868 profile as current
+AssertionError: expected 607422 to be 599721 // Object.is equality
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- 599721[39m
+[31m+ 607422[39m
+
+ ❯ profile tests/issue-4376-post-position-main-inventory-successor.test.ts:3346:34
+    3344|   | typeof formerCurrentProfile;
+    3345| function profile(raw: string, target: Profile): Policy {
+    3346|   expect(Buffer.byteLength(raw)).toBe(target.source.bytes);
+       |                                  ^
+    3347|   expect(sha(raw)).toBe(target.source.sha256);
+    3348|   expect(
+ ❯ healthy tests/issue-4376-post-position-main-inventory-successor.test.ts:3494:15
+ ❯ tests/issue-4376-post-position-main-inventory-successor.test.ts:3675:23
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[12/416]⎯
+
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses new-row accessors and hidden data without observation and restores healthy input
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses new-row accessors and hidden data without observation and restores healthy input
+AssertionError: expected 607422 to be 599721 // Object.is equality
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- 599721[39m
+[31m+ 607422[39m
+
+ ❯ profile tests/issue-4376-post-position-main-inventory-successor.test.ts:3346:34
+    3344|   | typeof formerCurrentProfile;
+    3345| function profile(raw: string, target: Profile): Policy {
+    3346|   expect(Buffer.byteLength(raw)).toBe(target.source.bytes);
+       |                                  ^
+    3347|   expect(sha(raw)).toBe(target.source.sha256);
+    3348|   expect(
+ ❯ healthy tests/issue-4376-post-position-main-inventory-successor.test.ts:3494:15
+ ❯ tests/issue-4376-post-position-main-inventory-successor.test.ts:3682:32
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[13/416]⎯
+
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main accepts productive current1872 with complete prior1871 and checkpoint1870 inverse/replay
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno accepts productive current1872 with complete prior1871 and checkpoint1870 inverse/replay
+AssertionError: expected 607422 to be 599721 // Object.is equality
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- 599721[39m
+[31m+ 607422[39m
+
+ ❯ profile tests/issue-4376-post-position-main-inventory-successor.test.ts:3346:34
+    3344|   | typeof formerCurrentProfile;
+    3345| function profile(raw: string, target: Profile): Policy {
+    3346|   expect(Buffer.byteLength(raw)).toBe(target.source.bytes);
+       |                                  ^
+    3347|   expect(sha(raw)).toBe(target.source.sha256);
+    3348|   expect(
+ ❯ healthy tests/issue-4376-post-position-main-inventory-successor.test.ts:3494:15
+ ❯ tests/issue-4376-post-position-main-inventory-successor.test.ts:3715:32
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[14/416]⎯
+
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses exact stale checkpoint1870 incoming predecessor as current
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses exact stale prior1871 incoming predecessor as current
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses exact stale checkpoint1870 incoming predecessor as current
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses exact stale prior1871 incoming predecessor as current
+AssertionError: expected 607422 to be 599721 // Object.is equality
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- 599721[39m
+[31m+ 607422[39m
+
+ ❯ profile tests/issue-4376-post-position-main-inventory-successor.test.ts:3346:34
+    3344|   | typeof formerCurrentProfile;
+    3345| function profile(raw: string, target: Profile): Policy {
+    3346|   expect(Buffer.byteLength(raw)).toBe(target.source.bytes);
+       |                                  ^
+    3347|   expect(sha(raw)).toBe(target.source.sha256);
+    3348|   expect(
+ ❯ healthy tests/issue-4376-post-position-main-inventory-successor.test.ts:3494:15
+ ❯ tests/issue-4376-post-position-main-inventory-successor.test.ts:3737:25
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[15/416]⎯
+
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses both incoming-row accessors and hidden data with zero observation and healthy restoration
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses both incoming-row accessors and hidden data with zero observation and healthy restoration
+AssertionError: expected 607422 to be 599721 // Object.is equality
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- 599721[39m
+[31m+ 607422[39m
+
+ ❯ profile tests/issue-4376-post-position-main-inventory-successor.test.ts:3346:34
+    3344|   | typeof formerCurrentProfile;
+    3345| function profile(raw: string, target: Profile): Policy {
+    3346|   expect(Buffer.byteLength(raw)).toBe(target.source.bytes);
+       |                                  ^
+    3347|   expect(sha(raw)).toBe(target.source.sha256);
+    3348|   expect(
+ ❯ healthy tests/issue-4376-post-position-main-inventory-successor.test.ts:3494:15
+ ❯ tests/issue-4376-post-position-main-inventory-successor.test.ts:3744:32
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[16/416]⎯
+
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main accepts productive current1873 with complete former1872 inverse/replay and commuting remainder append
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno accepts productive current1873 with complete former1872 inverse/replay and commuting remainder append
+AssertionError: expected 607422 to be 599721 // Object.is equality
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- 599721[39m
+[31m+ 607422[39m
+
+ ❯ profile tests/issue-4376-post-position-main-inventory-successor.test.ts:3346:34
+    3344|   | typeof formerCurrentProfile;
+    3345| function profile(raw: string, target: Profile): Policy {
+    3346|   expect(Buffer.byteLength(raw)).toBe(target.source.bytes);
+       |                                  ^
+    3347|   expect(sha(raw)).toBe(target.source.sha256);
+    3348|   expect(
+ ❯ healthy tests/issue-4376-post-position-main-inventory-successor.test.ts:3494:15
+ ❯ tests/issue-4376-post-position-main-inventory-successor.test.ts:3778:32
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[17/416]⎯
+
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses exact stale former1872 as current and restores healthy current1873
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses exact stale former1872 as current and restores healthy current1873
+AssertionError: expected 607422 to be 599721 // Object.is equality
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- 599721[39m
+[31m+ 607422[39m
+
+ ❯ profile tests/issue-4376-post-position-main-inventory-successor.test.ts:3346:34
+    3344|   | typeof formerCurrentProfile;
+    3345| function profile(raw: string, target: Profile): Policy {
+    3346|   expect(Buffer.byteLength(raw)).toBe(target.source.bytes);
+       |                                  ^
+    3347|   expect(sha(raw)).toBe(target.source.sha256);
+    3348|   expect(
+ ❯ healthy tests/issue-4376-post-position-main-inventory-successor.test.ts:3494:15
+ ❯ tests/issue-4376-post-position-main-inventory-successor.test.ts:3797:23
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[18/416]⎯
+
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses f087 incoming-row accessors and hidden data with zero observation and healthy restoration
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses f087 incoming-row accessors and hidden data with zero observation and healthy restoration
+AssertionError: expected 607422 to be 599721 // Object.is equality
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- 599721[39m
+[31m+ 607422[39m
+
+ ❯ profile tests/issue-4376-post-position-main-inventory-successor.test.ts:3346:34
+    3344|   | typeof formerCurrentProfile;
+    3345| function profile(raw: string, target: Profile): Policy {
+    3346|   expect(Buffer.byteLength(raw)).toBe(target.source.bytes);
+       |                                  ^
+    3347|   expect(sha(raw)).toBe(target.source.sha256);
+    3348|   expect(
+ ❯ healthy tests/issue-4376-post-position-main-inventory-successor.test.ts:3494:15
+ ❯ tests/issue-4376-post-position-main-inventory-successor.test.ts:3804:32
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[19/416]⎯
+
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main accepts productive current1874 with exact former1873 inverse/replay, split old333 span and commuting remainder append
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno accepts productive current1874 with exact former1873 inverse/replay, split old333 span and commuting remainder append
+AssertionError: expected 607422 to be 599721 // Object.is equality
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- 599721[39m
+[31m+ 607422[39m
+
+ ❯ profile tests/issue-4376-post-position-main-inventory-successor.test.ts:3346:34
+    3344|   | typeof formerCurrentProfile;
+    3345| function profile(raw: string, target: Profile): Policy {
+    3346|   expect(Buffer.byteLength(raw)).toBe(target.source.bytes);
+       |                                  ^
+    3347|   expect(sha(raw)).toBe(target.source.sha256);
+    3348|   expect(
+ ❯ healthy tests/issue-4376-post-position-main-inventory-successor.test.ts:3494:15
+ ❯ tests/issue-4376-post-position-main-inventory-successor.test.ts:3837:32
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[20/416]⎯
+
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses exact stale former1873 as current and restores healthy current1874
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses exact stale former1873 as current and restores healthy current1874
+AssertionError: expected 607422 to be 599721 // Object.is equality
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- 599721[39m
+[31m+ 607422[39m
+
+ ❯ profile tests/issue-4376-post-position-main-inventory-successor.test.ts:3346:34
+    3344|   | typeof formerCurrentProfile;
+    3345| function profile(raw: string, target: Profile): Policy {
+    3346|   expect(Buffer.byteLength(raw)).toBe(target.source.bytes);
+       |                                  ^
+    3347|   expect(sha(raw)).toBe(target.source.sha256);
+    3348|   expect(
+ ❯ healthy tests/issue-4376-post-position-main-inventory-successor.test.ts:3494:15
+ ❯ tests/issue-4376-post-position-main-inventory-successor.test.ts:3864:23
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[21/416]⎯
+
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses e24 incoming-row accessors and hidden data with zero observation and healthy restoration
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses e24 incoming-row accessors and hidden data with zero observation and healthy restoration
+AssertionError: expected 607422 to be 599721 // Object.is equality
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- 599721[39m
+[31m+ 607422[39m
+
+ ❯ profile tests/issue-4376-post-position-main-inventory-successor.test.ts:3346:34
+    3344|   | typeof formerCurrentProfile;
+    3345| function profile(raw: string, target: Profile): Policy {
+    3346|   expect(Buffer.byteLength(raw)).toBe(target.source.bytes);
+       |                                  ^
+    3347|   expect(sha(raw)).toBe(target.source.sha256);
+    3348|   expect(
+ ❯ healthy tests/issue-4376-post-position-main-inventory-successor.test.ts:3494:15
+ ❯ tests/issue-4376-post-position-main-inventory-successor.test.ts:3871:32
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[22/416]⎯
+
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses the exact stale main1850 profile as current
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses the exact stale main1850 profile as current
+AssertionError: expected 607422 to be 599721 // Object.is equality
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- 599721[39m
+[31m+ 607422[39m
+
+ ❯ profile tests/issue-4376-post-position-main-inventory-successor.test.ts:3346:34
+    3344|   | typeof formerCurrentProfile;
+    3345| function profile(raw: string, target: Profile): Policy {
+    3346|   expect(Buffer.byteLength(raw)).toBe(target.source.bytes);
+       |                                  ^
+    3347|   expect(sha(raw)).toBe(target.source.sha256);
+    3348|   expect(
+ ❯ healthy tests/issue-4376-post-position-main-inventory-successor.test.ts:3494:15
+ ❯ tests/issue-4376-post-position-main-inventory-successor.test.ts:3904:23
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[23/416]⎯
+
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses complete semantic duplicate drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses complete semantic missing drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses complete semantic reordered drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses complete semantic foreign drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses complete semantic non-files drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses complete semantic ordered keys drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses complete semantic duplicate drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses complete semantic missing drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses complete semantic reordered drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses complete semantic foreign drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses complete semantic non-files drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses complete semantic ordered keys drift
+AssertionError: expected 607422 to be 599721 // Object.is equality
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- 599721[39m
+[31m+ 607422[39m
+
+ ❯ profile tests/issue-4376-post-position-main-inventory-successor.test.ts:3346:34
+    3344|   | typeof formerCurrentProfile;
+    3345| function profile(raw: string, target: Profile): Policy {
+    3346|   expect(Buffer.byteLength(raw)).toBe(target.source.bytes);
+       |                                  ^
+    3347|   expect(sha(raw)).toBe(target.source.sha256);
+    3348|   expect(
+ ❯ healthy tests/issue-4376-post-position-main-inventory-successor.test.ts:3494:15
+ ❯ tests/issue-4376-post-position-main-inventory-successor.test.ts:3911:29
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[24/416]⎯
+
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 47 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 47 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 47 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 48 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 48 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 48 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 196 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 196 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 196 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 268 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 268 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 268 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 327 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 327 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 327 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 329 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 329 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 329 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 381 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 381 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 381 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 396 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 396 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 396 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 710 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 710 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 710 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 712 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 712 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 712 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition e24-751 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition e24-751 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition e24-751 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 750 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 750 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 750 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 843 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 843 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 843 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 880 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 880 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 880 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 899 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 899 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 899 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 900 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 900 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 900 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 901 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 901 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 901 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 944 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 944 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 944 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 960 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 960 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 960 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1052 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1052 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1052 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1060 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1060 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1060 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1154 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1154 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1154 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1503 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1503 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1503 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1527 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1527 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1527 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1657 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1657 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1657 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition f087-1662 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition f087-1662 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition f087-1662 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1662 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1662 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1662 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1663 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1663 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1663 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1783 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1783 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1783 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1784 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1784 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1784 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1785 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1785 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1785 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1794 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1794 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1794 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1868 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1868 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1868 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1869 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1869 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldPosition 1869 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 87 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 87 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 87 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 381 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 381 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 381 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 396 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 396 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 396 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno e24-751 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno e24-751 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno e24-751 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 750 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 750 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 750 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 899 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 899 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 899 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 900 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 900 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 900 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 997 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 997 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 997 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 1052 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 1052 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 1052 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 1060 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 1060 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 1060 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 1154 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 1154 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 1154 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 1657 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 1657 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 1657 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno f087-1662 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno f087-1662 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno f087-1662 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 1783 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 1783 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 1783 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 1784 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 1784 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 1784 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 1785 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 1785 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 1785 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 1868 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 1868 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 1868 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 1869 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 1869 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses oldDeno 1869 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 47 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 47 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 47 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 48 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 48 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 48 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 196 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 196 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 196 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 268 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 268 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 268 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 327 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 327 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 327 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 329 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 329 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 329 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 381 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 381 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 381 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 396 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 396 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 396 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 710 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 710 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 710 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 712 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 712 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 712 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition e24-751 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition e24-751 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition e24-751 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 750 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 750 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 750 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 843 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 843 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 843 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 880 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 880 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 880 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 899 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 899 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 899 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 900 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 900 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 900 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 901 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 901 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 901 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 944 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 944 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 944 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 960 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 960 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 960 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1052 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1052 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1052 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1060 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1060 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1060 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1154 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1154 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1154 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1503 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1503 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1503 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1527 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1527 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1527 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1657 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1657 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1657 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition f087-1662 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition f087-1662 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition f087-1662 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1662 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1662 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1662 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1663 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1663 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1663 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1783 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1783 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1783 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1784 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1784 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1784 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1785 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1785 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1785 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1794 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1794 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1794 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1868 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1868 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1868 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1869 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1869 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldPosition 1869 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 87 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 87 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 87 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 381 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 381 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 381 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 396 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 396 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 396 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno e24-751 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno e24-751 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno e24-751 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 750 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 750 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 750 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 899 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 899 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 899 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 900 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 900 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 900 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 997 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 997 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 997 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 1052 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 1052 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 1052 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 1060 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 1060 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 1060 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 1154 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 1154 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 1154 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 1657 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 1657 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 1657 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno f087-1662 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno f087-1662 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno f087-1662 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 1783 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 1783 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 1783 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 1784 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 1784 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 1784 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 1785 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 1785 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 1785 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 1868 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 1868 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 1868 next profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 1869 row profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 1869 previous profile drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses oldDeno 1869 next profile drift
+AssertionError: expected 607422 to be 599721 // Object.is equality
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- 599721[39m
+[31m+ 607422[39m
+
+ ❯ profile tests/issue-4376-post-position-main-inventory-successor.test.ts:3346:34
+    3344|   | typeof formerCurrentProfile;
+    3345| function profile(raw: string, target: Profile): Policy {
+    3346|   expect(Buffer.byteLength(raw)).toBe(target.source.bytes);
+       |                                  ^
+    3347|   expect(sha(raw)).toBe(target.source.sha256);
+    3348|   expect(
+ ❯ healthy tests/issue-4376-post-position-main-inventory-successor.test.ts:3494:15
+ ❯ tests/issue-4376-post-position-main-inventory-successor.test.ts:3926:38
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[25/416]⎯
+
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses raw whitespace drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses raw span drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses raw whitespace drift
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses raw span drift
+AssertionError: expected 607422 to be 599721 // Object.is equality
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- 599721[39m
+[31m+ 607422[39m
+
+ ❯ profile tests/issue-4376-post-position-main-inventory-successor.test.ts:3346:34
+    3344|   | typeof formerCurrentProfile;
+    3345| function profile(raw: string, target: Profile): Policy {
+    3346|   expect(Buffer.byteLength(raw)).toBe(target.source.bytes);
+       |                                  ^
+    3347|   expect(sha(raw)).toBe(target.source.sha256);
+    3348|   expect(
+ ❯ healthy tests/issue-4376-post-position-main-inventory-successor.test.ts:3494:15
+ ❯ tests/issue-4376-post-position-main-inventory-successor.test.ts:3946:25
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[26/416]⎯
+
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses malicious getter without observation
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses malicious coercion without observation
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses malicious hole without observation
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses malicious boxed without observation
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses malicious nonplain without observation
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses malicious symbol without observation
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses malicious hidden without observation
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses malicious hidden index without observation
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses malicious cycle without observation
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses malicious getter without observation
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses malicious coercion without observation
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses malicious hole without observation
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses malicious boxed without observation
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses malicious nonplain without observation
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses malicious symbol without observation
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses malicious hidden without observation
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses malicious hidden index without observation
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses malicious cycle without observation
+AssertionError: expected 607422 to be 599721 // Object.is equality
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- 599721[39m
+[31m+ 607422[39m
+
+ ❯ profile tests/issue-4376-post-position-main-inventory-successor.test.ts:3346:34
+    3344|   | typeof formerCurrentProfile;
+    3345| function profile(raw: string, target: Profile): Policy {
+    3346|   expect(Buffer.byteLength(raw)).toBe(target.source.bytes);
+       |                                  ^
+    3347|   expect(sha(raw)).toBe(target.source.sha256);
+    3348|   expect(
+ ❯ healthy tests/issue-4376-post-position-main-inventory-successor.test.ts:3494:15
+ ❯ tests/issue-4376-post-position-main-inventory-successor.test.ts:3966:34
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[27/416]⎯
+
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main authenticates wrong path receipt afresh after warm capture
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main authenticates missing receipt afresh after warm capture
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main authenticates corrupt receipt afresh after warm capture
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main authenticates span receipt afresh after warm capture
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main authenticates nonprimitive receipt afresh after warm capture
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main authenticates absent receipt afresh after warm capture
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno authenticates wrong path receipt afresh after warm capture
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno authenticates missing receipt afresh after warm capture
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno authenticates corrupt receipt afresh after warm capture
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno authenticates span receipt afresh after warm capture
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno authenticates nonprimitive receipt afresh after warm capture
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno authenticates absent receipt afresh after warm capture
+AssertionError: expected 607422 to be 599721 // Object.is equality
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- 599721[39m
+[31m+ 607422[39m
+
+ ❯ profile tests/issue-4376-post-position-main-inventory-successor.test.ts:3346:34
+    3344|   | typeof formerCurrentProfile;
+    3345| function profile(raw: string, target: Profile): Policy {
+    3346|   expect(Buffer.byteLength(raw)).toBe(target.source.bytes);
+       |                                  ^
+    3347|   expect(sha(raw)).toBe(target.source.sha256);
+    3348|   expect(
+ ❯ healthy tests/issue-4376-post-position-main-inventory-successor.test.ts:3494:15
+ ❯ tests/issue-4376-post-position-main-inventory-successor.test.ts:4013:25
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[28/416]⎯
+
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses physically missing receipt after warm capture and restores exact original
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main refuses physically corrupt receipt after warm capture and restores exact original
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses physically missing receipt after warm capture and restores exact original
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno refuses physically corrupt receipt after warm capture and restores exact original
+AssertionError: expected 607422 to be 599721 // Object.is equality
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- 599721[39m
+[31m+ 607422[39m
+
+ ❯ profile tests/issue-4376-post-position-main-inventory-successor.test.ts:3346:34
+    3344|   | typeof formerCurrentProfile;
+    3345| function profile(raw: string, target: Profile): Policy {
+    3346|   expect(Buffer.byteLength(raw)).toBe(target.source.bytes);
+       |                                  ^
+    3347|   expect(sha(raw)).toBe(target.source.sha256);
+    3348|   expect(
+ ❯ healthy tests/issue-4376-post-position-main-inventory-successor.test.ts:3494:15
+ ❯ tests/issue-4376-post-position-main-inventory-successor.test.ts:4036:25
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[29/416]⎯
+
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > main faults actual current policy after warm capture and restores exact original bytes
+ FAIL  tests/issue-4376-post-position-main-inventory-successor.test.ts > fixed post-position main and Deno predecessor routes > deno faults actual current policy after warm capture and restores exact original bytes
+AssertionError: expected 607422 to be 599721 // Object.is equality
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- 599721[39m
+[31m+ 607422[39m
+
+ ❯ profile tests/issue-4376-post-position-main-inventory-successor.test.ts:3346:34
+    3344|   | typeof formerCurrentProfile;
+    3345| function profile(raw: string, target: Profile): Policy {
+    3346|   expect(Buffer.byteLength(raw)).toBe(target.source.bytes);
+       |                                  ^
+    3347|   expect(sha(raw)).toBe(target.source.sha256);
+    3348|   expect(
+ ❯ healthy tests/issue-4376-post-position-main-inventory-successor.test.ts:3494:15
+ ❯ tests/issue-4376-post-position-main-inventory-successor.test.ts:4056:23
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[30/416]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  416 failed (416)
+   Start at  22:28:11
+   Duration  1.84s (transform 266ms, setup 0ms, collect 301ms, tests 1.08s, environment 0ms, prepare 70ms)
+

@@ -10,6 +10,7 @@
 // chain. Moved verbatim: the emitted Wasm is byte-identical.
 import { classStaticSidecarApplies } from "../class-static-sidecar.js"; // (#6774 S6)
 import { ts } from "../../ts-api.js";
+import { tryEmitPatchedBuiltinStaticCall } from "./builtin-static-patched-call.js"; // (#6957)
 import { emitProxyAwareOwnKeysCall } from "../object-model/proxy-own-keys-surfaces.js"; // (#6770 S7)
 import { isBooleanType, isNumberType, isStringType } from "../../checker/type-mapper.js";
 import { ensureIntegrityPredicate } from "../object-integrity-carrier.js"; // (#4032)
@@ -154,6 +155,7 @@ import { expectedArgumentCountOfParams } from "../function-expected-argument-cou
 import { mayStaticallyExpandCreateDescriptor, staticDescriptorTypeError } from "../descriptor-shape.js";
 import { emitUndefined, ensureGetUndefined, ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { resolveStructName } from "./misc.js";
+import { closedReflectiveStructName } from "../fnctor-instance-names.js";
 import * as objectGetPrototypeOf from "./object-get-prototype-of.js";
 import { tryCompileFnctorInstanceGetPrototypeOf } from "../fnctor-instance-prototype.js";
 import { recordStandaloneRuntimeKeyClassMemberRead } from "../standalone-class-dyn-member.js"; // (#6617)
@@ -572,6 +574,8 @@ export function compileBuiltinStaticCall(
   }
 
   if (ts.isIdentifier(propAccess.expression) && propAccess.expression.text === "Math") {
+    const patched = tryEmitPatchedBuiltinStaticCall(ctx, fctx, propAccess.expression, propAccess.name.text, expr); // (#6957)
+    if (patched !== undefined) return patched;
     const mathResult = compileMathCall(ctx, fctx, propAccess.name.text, expr);
     if (mathResult !== undefined) return mathResult;
     // Unknown Math method — fall through to generic call handling
@@ -3079,14 +3083,14 @@ export function compileBuiltinStaticCall(
     // (#2917) A standalone Array subclass's struct is vestigial — the instance
     // is a vec — so the struct fold answered `undefined` for `length`/indices.
     // (#6772 S10) Same for a new-site builtin subclass (`class RE extends RegExp {}`):
-    // the instance IS the parent's carrier, so only the dynamic native knows its own keys.
+    // the instance IS the parent's carrier, so only the dynamic native knows its own keys. Ditto a fnctor carrier.
     const arg0SymName = arg0TsType.getSymbol()?.name;
     const structName =
       isScriptGlobalThisReceiver ||
       isStandaloneArraySubclass(ctx, arg0SymName) ||
       (arg0SymName !== undefined && newSiteBuiltinParent(ctx, arg0SymName) !== undefined)
         ? undefined
-        : resolveStructName(ctx, arg0TsType);
+        : closedReflectiveStructName(ctx, arg0TsType, resolveStructName(ctx, arg0TsType));
     const literalKeyText = (e: ts.Expression): string | undefined => {
       if (ts.isStringLiteral(e)) return e.text;
       if (!ctx.standalone) return undefined;

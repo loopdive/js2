@@ -69,7 +69,7 @@ jobs:
           CHANGED=$(git diff --name-only "$BASE"...HEAD)
           echo "Changed files:"; echo "$CHANGED"
           # Run the heavy suites iff any compiler / test / build-config path changed.
-          if echo "$CHANGED" | grep -qE '^(src/|tests/|scripts/|package\.json$|pnpm-lock\.yaml$|tsconfig.*\.json$|vitest\.config\.ts$|\.github/actions/setup-node-pnpm/action\.yml$|\.github/workflows/ci\.yml$)'; then
+          if echo "$CHANGED" | grep -qE '^(src/|tests/|scripts/|website/playground/|package\.json$|pnpm-lock\.yaml$|tsconfig.*\.json$|vitest\.config\.ts$|\.github/actions/setup-node-pnpm/action\.yml$|\.github/workflows/ci\.yml$)'; then
             echo "code/test/build paths changed -> run heavy suites"
             echo "code=true" >> "$GITHUB_OUTPUT"
           else
@@ -113,6 +113,10 @@ jobs:
 
       - if: steps.npm_compat.outputs.only != 'true'
         run: pnpm install --frozen-lockfile
+
+      - name: Compile and run the playground default example
+        if: steps.npm_compat.outputs.only != 'true'
+        run: pnpm exec vitest run tests/playground-example.test.ts --no-file-parallelism
 
       - name: Lint, format, and typecheck (parallel)
         if: steps.npm_compat.outputs.only != 'true'
@@ -881,6 +885,12 @@ jobs:
           fetch-depth: 0
       - name: Verify issue-test scheduling controls
         run: node --test scripts/select-changed-issue-tests.test.mjs
+      - name: Verify Test262 compiler-path and website IR controls
+        run: >-
+          node --test --test-concurrency=1
+          scripts/test262-compiler-path.test.mjs
+          scripts/website-ir-view-state.test.mjs
+          scripts/test262-ir-pages-artifacts.test.mjs
       - name: Select changed issue test files
         id: select
         env:

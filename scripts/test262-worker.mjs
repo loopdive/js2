@@ -1,4 +1,5 @@
 import { parseTest262SemanticProviders } from "./test262-lane.mjs";
+import { requireTest262CompilerPath } from "./test262-compiler-path.mjs";
 /**
  * Unified test262 worker — compiles AND executes a test in one process.
  * Uses child_process.fork for full memory isolation.
@@ -33,7 +34,10 @@ import { hasPinnedEntryValueSelfImport, hasPinnedNamespaceSelfModuleImport } fro
 // behaviour is unchanged — these bodies moved here verbatim; it is the LOCAL
 // runner that was missing the tryNativeExnRender step.
 import { safeStringifyThrown, tryNativeExnRender } from "./lib/wasm-exn-render.mjs";
-import { startNativeEvalBoundaryObservation, NATIVE_EVAL_OBSERVATION_FIELD } from "./lib/native-eval-boundary-observation.mjs";
+import {
+  startNativeEvalBoundaryObservation,
+  NATIVE_EVAL_OBSERVATION_FIELD,
+} from "./lib/native-eval-boundary-observation.mjs";
 import { SANDBOX_GLOBAL_NAMES, applySandboxGlobalFunctionAttributes } from "./test262-sandbox-globals.mjs";
 import {
   restoreOwnKeyOrder,
@@ -148,6 +152,8 @@ function buildOriginalHarnessSandbox(consoleProxy) {
   sandbox.$DONE = () => {};
   return sandbox;
 }
+
+requireTest262CompilerPath(process.env.TEST262_COMPILER_PATH);
 
 let compileCount = 0;
 const GC_INTERVAL = 25;
@@ -404,16 +410,7 @@ const _METHOD_SNAPSHOTS = [
   [
     "RegExp.prototype",
     RegExp.prototype,
-    [
-      "exec",
-      "test",
-      "toString",
-      Symbol.match,
-      Symbol.matchAll,
-      Symbol.replace,
-      Symbol.search,
-      Symbol.split,
-    ],
+    ["exec", "test", "toString", Symbol.match, Symbol.matchAll, Symbol.replace, Symbol.search, Symbol.split],
   ],
   [
     "Map.prototype",
@@ -638,7 +635,11 @@ const _symbolMetaOrig = _STATIC_SNAPSHOTS.flatMap(([name, obj]) => {
   if (proto != null && (typeof proto === "object" || typeof proto === "function")) {
     targets.push([`${name}.prototype`, proto]);
   }
-  return targets.map(([label, target]) => ({ name: label, obj: target, snapshot: snapshotSymbolAndAccessorMeta(target) }));
+  return targets.map(([label, target]) => ({
+    name: label,
+    obj: target,
+    snapshot: snapshotSymbolAndAccessorMeta(target),
+  }));
 });
 
 const _accessorOrig = _ACCESSOR_SNAPSHOTS.map(([name, obj, keys]) => ({
@@ -1207,7 +1208,9 @@ function summarizeImports(imports) {
 function classifyHostImportLeak(importNames) {
   if (!Array.isArray(importNames) || importNames.length === 0) return undefined;
   const joined = importNames.join(" ");
-  if (/__extern_|__object_|__defineProperty|__get_builtin|__new_plain_object|__register_|__proto_method_call/.test(joined)) {
+  if (
+    /__extern_|__object_|__defineProperty|__get_builtin|__new_plain_object|__register_|__proto_method_call/.test(joined)
+  ) {
     return "dynamic_object_property";
   }
   if (/__iterator|__array_from_iter|__gen_|generator|async_iterator/.test(joined)) return "iterator_protocol";
@@ -1236,11 +1239,7 @@ function makeWorkerRecycleError(reason) {
 }
 
 function isFixtureFileRecord(fixtureFiles) {
-  return (
-    fixtureFiles &&
-    typeof fixtureFiles === "object" &&
-    !Array.isArray(fixtureFiles)
-  );
+  return fixtureFiles && typeof fixtureFiles === "object" && !Array.isArray(fixtureFiles);
 }
 
 function hasFixtureGraph(fixtureFiles) {
@@ -1257,7 +1256,13 @@ function hasValidatedSelfNamespaceGraph({ selfModuleGraph, originalHarness, entr
   );
 }
 
-function hasValidatedEntrySelfImportGraph({ requiresEntrySelfImportGraph, originalHarness, entryFile, fixtureFiles, source }) {
+function hasValidatedEntrySelfImportGraph({
+  requiresEntrySelfImportGraph,
+  originalHarness,
+  entryFile,
+  fixtureFiles,
+  source,
+}) {
   return (
     requiresEntrySelfImportGraph === true &&
     originalHarness === true &&
@@ -1755,7 +1760,11 @@ async function doCompile(
 
 let currentNativeEvalBoundaryObservation = null;
 
-function extractWasmExceptionMessage(err, instance, observation = currentNativeEvalBoundaryObservation?.reader("negative-match")) {
+function extractWasmExceptionMessage(
+  err,
+  instance,
+  observation = currentNativeEvalBoundaryObservation?.reader("negative-match"),
+) {
   observation?.("consumer-instance", Boolean(instance));
   if (err instanceof WebAssembly.Exception) {
     observation?.("exception-kind", "wasm");
@@ -2109,6 +2118,7 @@ async function buildInvalidBinaryError(source, sourceMapUrl, result, target) {
 }
 
 process.on("message", async (msg) => {
+  requireTest262CompilerPath(msg.compilerPath ?? process.env.TEST262_COMPILER_PATH);
   currentNativeEvalBoundaryObservation = startNativeEvalBoundaryObservation(msg.source);
   runtimeIntrinsicCanarySnapshot = null;
   currentLinkedFallback = false;
@@ -2123,7 +2133,9 @@ process.on("message", async (msg) => {
   const nativeHarness = originalHarness && msg.nativeHarness === true && typeof msg.harnessPrefix === "string";
   const harnessPrefix = nativeHarness ? msg.harnessPrefix : "";
   const target = compileTargetFromMessage(msg.target);
-  const semanticProviders = parseTest262SemanticProviders(msg.semanticProviders ?? process.env.TEST262_SEMANTIC_PROVIDERS);
+  const semanticProviders = parseTest262SemanticProviders(
+    msg.semanticProviders ?? process.env.TEST262_SEMANTIC_PROVIDERS,
+  );
   const staticFixtureGraph = hasFixtureGraph(msg.fixtureFiles);
   const selfNamespaceGraph = hasValidatedSelfNamespaceGraph({
     selfModuleGraph: msg.selfModuleGraph,
@@ -2583,13 +2595,24 @@ process.on("message", async (msg) => {
           isRuntimeNegative &&
           (!originalHarness || originalHarnessExceptionMatches(initErr, instance, expectedErrorType))
         ) {
-          sendResult({ id, status: "pass", compileMs, execMs, runtimeNegativePass: true, ...buildResultMetadata(result, true) });
+          sendResult({
+            id,
+            status: "pass",
+            compileMs,
+            execMs,
+            runtimeNegativePass: true,
+            ...buildResultMetadata(result, true),
+          });
           return;
         }
         sendResult({
           id,
           status: "fail",
-          error: extractWasmExceptionMessage(initErr, instance, currentNativeEvalBoundaryObservation?.reader("deferred-module-init")),
+          error: extractWasmExceptionMessage(
+            initErr,
+            instance,
+            currentNativeEvalBoundaryObservation?.reader("deferred-module-init"),
+          ),
           isException: true,
           compileMs,
           execMs,
@@ -2789,18 +2812,36 @@ process.on("message", async (msg) => {
           ...buildResultMetadata(result, true),
         });
       } else {
-        sendResult({ id, status: ret === 1 ? "pass" : "fail", ret, compileMs, execMs, ...buildResultMetadata(result, true) });
+        sendResult({
+          id,
+          status: ret === 1 ? "pass" : "fail",
+          ret,
+          compileMs,
+          execMs,
+          ...buildResultMetadata(result, true),
+        });
       }
       return;
     } catch (execErr) {
       const execMs = performance.now() - execStart;
 
       if (isRuntimeNegative) {
-        sendResult({ id, status: "pass", compileMs, execMs, runtimeNegativePass: true, ...buildResultMetadata(result, true) });
+        sendResult({
+          id,
+          status: "pass",
+          compileMs,
+          execMs,
+          runtimeNegativePass: true,
+          ...buildResultMetadata(result, true),
+        });
         return;
       }
 
-      let errInfo = extractWasmExceptionMessage(execErr, instance, currentNativeEvalBoundaryObservation?.reader("exported-test"));
+      let errInfo = extractWasmExceptionMessage(
+        execErr,
+        instance,
+        currentNativeEvalBoundaryObservation?.reader("exported-test"),
+      );
 
       // Annotate with source location via source map
       const byteOffset = extractWasmByteOffset(execErr);
@@ -2835,7 +2876,11 @@ process.on("message", async (msg) => {
       sendResult({
         id,
         status: "fail",
-        error: extractWasmExceptionMessage(outerErr, instance ?? null, currentNativeEvalBoundaryObservation?.reader("outer-wasm")),
+        error: extractWasmExceptionMessage(
+          outerErr,
+          instance ?? null,
+          currentNativeEvalBoundaryObservation?.reader("outer-wasm"),
+        ),
         isException: true,
         compileMs,
         execMs: performance.now() - execStart,
@@ -3004,11 +3049,41 @@ function collectIntrinsicSurface() {
     }
   };
   const ctors = [
-    Array, Object, String, Number, Boolean, Function, RegExp, Date, Symbol, Promise,
-    Map, Set, WeakMap, WeakSet, Error, TypeError, RangeError, SyntaxError,
-    ReferenceError, EvalError, URIError, ArrayBuffer, DataView, Int8Array,
-    Uint8Array, Uint8ClampedArray, Int16Array, Uint16Array, Int32Array,
-    Uint32Array, Float32Array, Float64Array, BigInt, BigInt64Array, BigUint64Array,
+    Array,
+    Object,
+    String,
+    Number,
+    Boolean,
+    Function,
+    RegExp,
+    Date,
+    Symbol,
+    Promise,
+    Map,
+    Set,
+    WeakMap,
+    WeakSet,
+    Error,
+    TypeError,
+    RangeError,
+    SyntaxError,
+    ReferenceError,
+    EvalError,
+    URIError,
+    ArrayBuffer,
+    DataView,
+    Int8Array,
+    Uint8Array,
+    Uint8ClampedArray,
+    Int16Array,
+    Uint16Array,
+    Int32Array,
+    Uint32Array,
+    Float32Array,
+    Float64Array,
+    BigInt,
+    BigInt64Array,
+    BigUint64Array,
   ];
   for (const c of ctors) {
     add(c.name, c);
@@ -3121,14 +3196,7 @@ function describeOwnSurface(obj) {
 }
 
 function sameDescriptor(a, b) {
-  return (
-    Object.is(a.v, b.v) &&
-    Object.is(a.g, b.g) &&
-    Object.is(a.s, b.s) &&
-    a.w === b.w &&
-    a.e === b.e &&
-    a.c === b.c
-  );
+  return Object.is(a.v, b.v) && Object.is(a.g, b.g) && Object.is(a.s, b.s) && a.w === b.w && a.e === b.e && a.c === b.c;
 }
 
 function appendFunctionMetadataDrift(drift, label, expected, current) {
