@@ -112,6 +112,7 @@ import { resolvePromiseSubclassName } from "./promise-subclass.js"; // (#5197 r3
 import { armExternF64ArgTypeGuard, armExternRefArgTypeGuard } from "../extern-arg-marshal.js"; // (#6615 / #5383 S28, #6619 / #5383 S32)
 import { armConstructIsConstructorGuard, primitiveWrapperConstructThrow } from "../construct-is-constructor-guard.js"; // (#6612 / #5383 S25)
 import { linkCompatibleDeclaredStructAncestor } from "../struct-hierarchy-layout.js";
+import { appendInstanceBagSlot } from "../linear-type-reservations.js"; // (#6971)
 import { admitBoundValueConstruct, emitBoundConstructOnNull } from "../construct-bound.js"; // (#4196) §10.4.1.2
 import { emitOrdinaryFunctionConstructOnNull, emitRuntimeEvalConstructOnNull } from "../runtime-eval-construct.js"; // (#4438) §10.2.2, (#6651 W2a)
 import * as bcv from "../builtin-ctor-value-invoke.js"; // (#6713) RegExp / Error-family carriers as values
@@ -2803,6 +2804,7 @@ function compileNewFunctionDeclaration(
     fields = [...ctx.structFields.get(structName)!];
   } else {
     fields = deriveFnctorFields(ctx, funcDecl);
+    appendInstanceBagSlot(ctx, funcName, fields); // (#6971) slotted bag, not the global registry
     structTypeIdx = ctx.mod.types.length;
     ctx.mod.types.push({
       kind: "struct",
