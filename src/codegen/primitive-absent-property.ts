@@ -53,6 +53,8 @@ import type { ValType } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { emitUndefined } from "./expressions/late-imports.js";
 import { compileExpression } from "./shared.js";
+import { getLocalType } from "./context/locals.js";
+import { localGlobalIdx } from "./registry/imports.js";
 
 /**
  * Everything reachable from a number/boolean primitive through its wrapper
@@ -169,6 +171,50 @@ function scanProtoExtension(
   return found;
 }
 
+const NUMERIC_SLOT_KINDS: ReadonlySet<ValType["kind"]> = new Set(["i32", "i64", "f32", "f64"]);
+
+/**
+ * (#6976) Does the slot behind a `number`/`boolean`-typed identifier say it can
+ * hold something else? In a JS file the checker types `var e = 0` as `number`
+ * from its initializer and keeps that type after `e = obj`, while the slot typer
+ * widens `e`'s local to externref. A fold on the checker's type (`e.f` →
+ * `undefined`, `typeof e` → `"number"`) then answers for the initializer, not
+ * for the value (Octane box2d `b2Island.Solve`'s `e.m_force`). The allocated
+ * slot is the authority: a non-numeric slot declines the fold, and the runtime
+ * path reads the value. An identifier with no slot here keeps the fold.
+ */
+export function primitiveFactContradictedBySlot(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  operand: ts.Expression,
+): boolean {
+  let id = operand;
+  while (ts.isParenthesizedExpression(id)) id = id.expression;
+  if (!ts.isIdentifier(id)) return false;
+  const slot = bindingSlotType(ctx, fctx, id.text);
+  return slot !== undefined && !NUMERIC_SLOT_KINDS.has(slot.kind);
+}
+
+/** (#6976) The `typeof` twin: only a "number"/"boolean" fold is judged by the slot. */
+export function typeofFoldContradictedBySlot(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  operand: ts.Expression,
+  folded: string,
+): boolean {
+  return (folded === "number" || folded === "boolean") && primitiveFactContradictedBySlot(ctx, fctx, operand);
+}
+
+/** The value type of the slot `name` reads in this function: local or ref-cell, then module global. */
+function bindingSlotType(ctx: CodegenContext, fctx: FunctionContext, name: string): ValType | undefined {
+  const localIdx = fctx.localMap.get(name);
+  if (localIdx !== undefined) return fctx.boxedCaptures?.get(name)?.valType ?? getLocalType(fctx, localIdx);
+  const boxedGlobal = ctx.capturedBoxGlobals?.get(name);
+  if (boxedGlobal !== undefined) return boxedGlobal.valType;
+  const globalIdx = ctx.moduleGlobals.get(name);
+  return globalIdx === undefined ? undefined : ctx.mod.globals[localGlobalIdx(ctx, globalIdx)]?.type;
+}
+
 /** True when this member expression is being written to or deleted. */
 export function isWriteOrDeleteTarget(expr: ts.PropertyAccessExpression): boolean {
   const parent = expr.parent as ts.Node | undefined;
@@ -207,6 +253,7 @@ export function tryEmitPrimitiveAbsentPropertyRead(
   if (fact.kind !== "number" && fact.kind !== "boolean") return undefined;
 
   if (moduleExtendsPrimitiveProtos(expr.getSourceFile())) return undefined;
+  if (primitiveFactContradictedBySlot(ctx, fctx, expr.expression)) return undefined; // (#6976)
 
   // Evaluate the receiver for its side effects, then answer `undefined`.
   const recvType = compileExpression(ctx, fctx, expr.expression);

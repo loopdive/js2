@@ -1,7 +1,8 @@
 ---
 id: 6976
 title: "standalone: `e.m_force` / `typeof e` constant-fold on the checker's declared `number` type of a `var e = 0` whose slot is widened to externref by a later object assignment (Octane box2d `b2Island.Solve`)"
-status: ready
+status: in-progress
+assignee: ttraenkler/senior-dev
 sprint: current
 created: 2026-10-12
 priority: high
@@ -13,6 +14,11 @@ area: compiler
 language_feature: var, typeof, property-access, type-facts
 goal: standalone-gap
 related: [6975, 6974, 4483, 6967]
+loc-budget-allow:
+  # 2026-10-12 (#6976) typeof-delete.ts +7: the import of the slot predicate and
+  #   the 4-line `typeofFold` wrapper both typeof folds call. The predicate
+  #   itself lives in primitive-absent-property.ts beside the property-read fold.
+  - src/codegen/typeof-delete.ts
 ---
 
 # A static `number` fold on a var whose slot was widened

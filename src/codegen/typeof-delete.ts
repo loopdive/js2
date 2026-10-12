@@ -70,6 +70,7 @@ import { maybeRecordArrayProtoIteratorTombstone } from "./expressions/proto-over
 import { isStandaloneUnavailableTimerGlobal } from "./standalone-timers.js";
 import { isReturnOverrideMemberRead } from "./classes/ctor-return-override.js"; // (#6772 S2)
 import { strictThisMayBePrimitive } from "./expressions/bool-to-locale-string.js"; // (#6771 S6)
+import { typeofFoldContradictedBySlot } from "./primitive-absent-property.js"; // (#6976) the slot outranks the checker
 
 // (#2726 group (b), partial) The only value properties of the global object with
 // `[[Configurable]]: false` (ECMA-262 §19.1). `delete <bareIdentifier>` of any of
@@ -1333,6 +1334,12 @@ function isEmptyAnonymousObjectType(tsType: ts.Type): boolean {
   return withIndex.getStringIndexType?.() === undefined && withIndex.getNumberIndexType?.() === undefined;
 }
 
+/** (#6976) `staticTypeofForType`, unless the operand's slot contradicts a "number"/"boolean" fold. */
+function typeofFold(ctx: CodegenContext, fctx: FunctionContext, expr: ts.Expression, tsType: ts.Type): string | null {
+  const folded = staticTypeofForType(ctx, tsType);
+  return folded !== null && typeofFoldContradictedBySlot(ctx, fctx, expr, folded) ? null : folded;
+}
+
 function staticTypeofForType(ctx: CodegenContext, tsType: ts.Type): string | null {
   // (#4529) The empty anonymous object type `{}` admits EVERY non-nullish
   // value — number, string, function, symbol — not just objects. It is what
@@ -2066,7 +2073,7 @@ export function compileTypeofExpression(
     if (classStaticMethodTypeofOverride(ctx, operand)) {
       return compileStringLiteral(ctx, fctx, "function");
     }
-    const staticResult = staticTypeofForType(ctx, tsType);
+    const staticResult = typeofFold(ctx, fctx, operand, tsType);
     // (#4250) Unsound-fold guard: the checker types a fnctor field from the
     // constructor's write, so the fold ignores every OTHER write reaching the
     // field. Killed on a PROVEN write-kind contradiction only.
@@ -2330,7 +2337,7 @@ export function compileTypeofComparison(
     // do not let the checker keep folding those members to string/number.
     staticTypeof = "function";
   } else {
-    staticTypeof = tf.staticFunctionPrototypeTypeof(ctx, fctx, operand) ?? staticTypeofForType(ctx, tsType);
+    staticTypeof = tf.staticFunctionPrototypeTypeof(ctx, fctx, operand) ?? typeofFold(ctx, fctx, operand, tsType);
   }
   if (staticTypeof !== null && runtimeEvalMayRebindIdentifier(ctx, fctx, operand)) {
     staticTypeof = null;
