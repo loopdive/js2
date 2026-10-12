@@ -1,7 +1,8 @@
 ---
 id: 6966
 title: "standalone: `numericFunctions` verdict is settled against the PRE-groundedness property set — a method returning an opaque-param-written field (`return this.v2`) gets an f64 twin and unboxes the object to NaN (Octane deltablue `BinaryConstraint.prototype.input`)"
-status: ready
+status: done
+completed: 2026-10-11
 sprint: current
 created: 2026-10-11
 priority: high
@@ -13,6 +14,10 @@ area: compiler
 language_feature: constructor-functions, type-inference
 goal: standalone-gap
 related: [874, 3683, 3753, 4406, 4122, 6951]
+# 2026-10-11: the groundedness filter moves INTO the fixpoint (+11 lines: the
+# filter becomes a changed=true shrink step and carries a #6966 rationale comment).
+loc-budget-allow:
+  - src/codegen/numeric-property-analysis.ts
 ---
 
 # `numericFunctions` is not re-settled after the groundedness filter shrinks `numericProperties`
@@ -113,3 +118,21 @@ disagree — a split brain inside one analysis.
   timeout after 180s (run, reps 736)` — standalone deltablue is correct but ~2500× slower than
   node (10 reps ≈ 2 s vs node 0.7 ms); that is a separate perf issue, see the triage report.
 - Size: **S**.
+
+## Implementation notes (2026-10-11)
+
+- Done as planned: the groundedness + `anyBoolean` filter is now the fourth shrink step inside
+  the `while (changed …)` fixpoint and sets `changed = true`; the post-loop pass is deleted.
+  WHY this is safe: both predicates only call `isNumeric`/`isBooleanish`, which can only flip
+  true → false as the three sets shrink, so every removal is permanent and the existing `safety`
+  bound (sum of the three set sizes + 4) still covers one removal per changed pass. The result is
+  a subset of the old verdict, and the three sets now agree with each other (the fnctor field
+  typer and the twin result typer no longer split-brain).
+- `typed-this.ts` untouched — once `input` leaves `numericFunctions` its twin keeps the
+  `externref` result.
+- Test: `tests/issue-6966-numeric-functions-groundedness.test.ts` (standalone only, per the gc
+  lane sunset): 3 cases fail on base, pass on head; the grounded-field control keeps its
+  `(result f64)` twin on both.
+- Related pin suites (16 files, 543 tests): identical failure set base vs head (259; 249 are the
+  environment-dependent #3518 inventory suites, the rest pre-existing, incl. the stale #3683
+  "reflection arms" pin, left untouched).

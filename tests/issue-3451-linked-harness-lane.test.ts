@@ -29,6 +29,7 @@ import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
 import { assembleLinkedHarness, assembleOriginalHarness } from "./test262-original-harness.js";
 import { parseMeta } from "./test262-runner.js";
+import { ORACLE_VERSION, ORACLE_VERSION_HISTORY } from "./test262-oracle-version.js";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const read = (relative: string) => readFileSync(join(ROOT, relative), "utf8");
@@ -131,11 +132,17 @@ describe("#3451 P3 — linked-harness shadow lane is opt-in", () => {
   });
 
   it("the oracle version is bumped so the first main run is a forward re-baseline", () => {
-    const oracle = read("tests/test262-oracle-version.ts");
-    expect(oracle).toContain("export const ORACLE_VERSION = 14;");
-    // The bump is what makes `rebaseMode` true and therefore the ONLY thing
-    // that makes the #3303 ceiling in the issue file readable at all.
-    expect(oracle).toContain("#3451 slice 6");
+    // The v14 linked-lane flip must remain recorded independently of the
+    // current epoch. Later reviewed epochs may advance without erasing it.
+    expect(Array.isArray(ORACLE_VERSION_HISTORY)).toBe(true);
+    const flip = ORACLE_VERSION_HISTORY.filter((entry) => entry.version === 14);
+    expect(flip).toHaveLength(1);
+    expect(typeof flip[0]?.note).toBe("string");
+    expect(flip[0]?.note).toContain("#3451 slice 6");
+    expect(Number.isSafeInteger(ORACLE_VERSION)).toBe(true);
+    expect(ORACLE_VERSION).toBeGreaterThanOrEqual(14);
+    // The historical bump supplied the forward rebase signal that made the
+    // #3303 ceiling in the issue file readable; its allowance stays guarded.
     const issue = read("plan/issues/3451-linked-harness-wasm-separate-compilation.md");
     expect(issue).toContain("regressions-allow:");
     expect(issue).toContain("count: 422");
@@ -172,15 +179,17 @@ describe("#3451 slice 6 — the authoritative host lane runs the linked oracle",
     expect(workflow).toContain("TEST262_RESULT_PREFIX: ${{ matrix.result_prefix }}");
   });
 
-  it("the honest lane is the renamed, never-required AUDIT job", () => {
+  it("the retired honest host audit job cannot run", () => {
     expect(workflow).toContain("  test262-honest-audit:");
     expect(workflow).toContain("  merge-honest-audit-report:");
     expect(workflow).toContain("TEST262_RESULT_PREFIX: test262-honest");
     expect(workflow).toContain("RUN_TIMESTAMP: ${{ github.run_id }}-honest-chunk${{ matrix.chunk }}");
     // Schedule + opt-in dispatch only: never pull_request / merge_group / push.
-    expect(workflow).toContain(
-      "if: github.event_name == 'schedule' || " + "(github.event_name == 'workflow_dispatch' && inputs.honest_audit)",
+    const audit = workflow.slice(
+      workflow.indexOf("  test262-honest-audit:"),
+      workflow.indexOf("  merge-honest-audit-report:"),
     );
+    expect(audit).toContain("if: false # JS-host Test262 is retired.");
     expect(workflow).toContain("      honest_audit:");
     expect(workflow).not.toContain("inputs.linked_lane");
   });

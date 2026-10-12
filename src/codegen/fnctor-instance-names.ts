@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { ts } from "../ts-api.js";
 import type { CodegenContext } from "./context/types.js";
 import type { FnctorEscapeGateResult } from "./fnctor-escape-gate.js";
 
@@ -29,4 +30,54 @@ export function isConstructedFnctorName(ctx: CodegenContext, name: string): bool
     siteNamesByGate.set(gate, names);
   }
   return names.has(name);
+}
+
+/**
+ * `structName`, unless it is a fnctor carrier struct (`__fnctor_<Name>`).
+ *
+ * That carrier is an OPEN object, not a closed shape: own expandos live in its
+ * `$bag`, constructor fields are gated by `$presence_N` bits, and `$constructor`
+ * / `$__fnctorProto` are runtime-internal. A reflective consumer that folds own
+ * keys or descriptors from the static field list (`Object.keys/values/entries`,
+ * the literal-key gOPD fold) must decline it and take the runtime own-key
+ * route. Since #6938, `resolveStructName` answers this name for an approved
+ * standalone fnctor instance type; before it answered nothing, so those
+ * consumers were on the runtime route (#6946 regression follow-up, 2026-10-12).
+ */
+export function closedReflectiveStructName(
+  ctx: CodegenContext,
+  tsType: ts.Type,
+  structName: string | undefined,
+): string | undefined {
+  // Class declarations may legally use the same prefix. Ask the existing
+  // declaration/escape-gate authority, which also works before a new site.
+  return isFnctorInstanceType(ctx, tsType) && structName?.startsWith("__fnctor_") === true ? undefined : structName;
+}
+
+/**
+ * (#6938) Is `tsType` the INSTANCE type of a function constructor ("fnctor")?
+ *
+ * True when the type's symbol names a constructed fnctor, or its value
+ * declaration is a function declaration / function expression /
+ * `var F = function () {}` — and the type is not itself callable (the function
+ * VALUE type keeps its closure-wrapper resolution). Class names are excluded:
+ * a class owns its struct.
+ *
+ * The checker's instance shape (ctor fields PLUS prototype methods) has no
+ * subtype relation to the runtime `$__fnctor_<Name>` struct (#1712), so such a
+ * type must never be lowered to — or registered as — a checker-shape struct.
+ * `resolveWasmType` and `ensureStructForType` share this predicate so the
+ * lowering and registration sites cannot drift apart.
+ */
+export function isFnctorInstanceType(ctx: CodegenContext, tsType: ts.Type): boolean {
+  const sym = tsType.symbol;
+  if (sym?.name !== undefined && ctx.classSet.has(sym.name)) return false;
+  const fnDecl = sym?.valueDeclaration;
+  const isFnCtorType =
+    (sym?.name !== undefined && isConstructedFnctorName(ctx, sym.name)) ||
+    (!!fnDecl &&
+      (ts.isFunctionDeclaration(fnDecl) ||
+        ts.isFunctionExpression(fnDecl) ||
+        (ts.isVariableDeclaration(fnDecl) && !!fnDecl.initializer && ts.isFunctionExpression(fnDecl.initializer))));
+  return isFnCtorType && tsType.getCallSignatures().length === 0;
 }

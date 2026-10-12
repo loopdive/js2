@@ -1,7 +1,8 @@
 ---
 id: 6961
 title: "standalone: every RegExp exec result array walks the global vec integrity-bag linked list (O(n²)) — Octane regexp 34–49 s/rep vs node 76 ms"
-status: ready
+status: done
+completed: 2026-10-11
 sprint: current
 goal: standalone-gap
 area: compiler
@@ -120,3 +121,51 @@ target.
 ~10–20x on this benchmark (93 % of samples are in the walk). It does not fix
 the second-order cost (3–4 `__defineProperty_value` calls per exec + overlay
 prime), which is why the acceptance is 5 s rather than 100 ms.
+
+## Implementation notes (2026-10-11)
+
+Change 1 only, in `src/codegen/object-integrity-carrier.ts`; Change 2 (fresh
+result-array bypass in `regexp-standalone.ts`) was not needed and was left out.
+
+- `registerIntegrityResolvers` builds three natives from one carrier ladder
+  (vec → closure → Error → instance): `__integrity_bag` (ENSURE, unchanged
+  body, still used by the mutators), `__integrity_bag_lookup` (the arm's
+  `*_bag_lookup`, null on miss) and `__integrity_carrier` (i32: is any arm's
+  carrier predicate true).
+- The six predicates read through the lookup. Why a second native rather than
+  "null bag ⇒ terminal": the terminal of the GENERAL predicates is the ES
+  non-object rule (`isExtensible → false`), but a bag-less Array is a pristine
+  object. So a lookup miss asks `__integrity_carrier`: carrier ⇒ the
+  `flags == 0` decode (extensible 1, frozen/sealed 0) — exactly what a freshly
+  minted bag answered before; non-carrier ⇒ the old terminal / #6624 peer
+  fallback. Answers are therefore unchanged by construction.
+- Effect: a query no longer prepends to the global vec-bag list, so the list
+  only holds arrays that really carry expandos/integrity bits; the walk that
+  remains is over that (small) list. The leak (one retained `$Object` + entry
+  per queried array) is gone for read-only queries.
+- Not fixed here (Change 3, structural): the side tables are still linear
+  identity-keyed lists — programs that put expandos on many distinct arrays
+  still degrade quadratically.
+
+Pre-existing, unchanged by this fix (seen in the probe, base == head):
+`Object.preventExtensions([])` then `Object.isFrozen` answers false (node: true)
+— the carrier-bag arm uses only the stored bit, no §7.3.15 walk.
+
+### Measured (2026-10-11, 4-core box at load ~8, c-octane-integ 9274689806 ± this fix)
+
+`pnpm run -s benchmark:octane -- --only regexp --lanes node,standalone --timeout 600`:
+
+| | node | standalone |
+|---|---|---|
+| base | pass, 6 reps, 11.6 ms/rep min | **skipped — timeout after 180 s** (6 reps ⇒ > 30 s/rep) |
+| head | pass, 8 reps, 10.6 ms/rep min | **pass**, 8 reps, 492 ms/rep min (556 mean; 3.9–4.8 s per 8-rep call) |
+
+~60x+ per rep; acceptance (≤ 5 s/rep, standalone `ok` within budget) met.
+Standalone is still ~46x node — the remaining cost is the per-exec defines +
+overlay work (Change 2/3 territory), not the integrity bag.
+
+Earley-boyer (asked by the coordinator — growth across consecutive
+`octane_run(1)` calls): NOT this bug. Head still grows 1.6 / 2.4 / 5.0 / 7.4 /
+10.1 s; a profile of the 5th call is 84 % `__extern_get_idx` self time and 11 %
+`__vec_overlay_ensure` — the vec-overlay side table (Change 3), not
+`__integrity_bag`. Needs its own issue.

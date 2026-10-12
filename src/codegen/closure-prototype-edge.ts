@@ -101,12 +101,20 @@ import { ts } from "../ts-api.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { nativeStringLiteralInstrs } from "./native-strings.js";
 import { addFuncType } from "./registry/types.js";
+import { PROTO_FROM_FUNCTION } from "./proto-function-value.js";
 
 /** WasmGC `eq` abstract heap type — the key domain for the identity match. */
 const EQ_HEAP_TYPE = -19;
 
 /** `__closure_proto_of(value) -> externref` — null when the value has no edge. */
 export const CLOSURE_PROTO_OF = "__closure_proto_of";
+
+/**
+ * (#6951 G2) `__closure_proto_set(target, value) -> i32` — the WRITE twin of
+ * {@link CLOSURE_PROTO_OF}: 1 when `target` is a fnctor with a prototype edge
+ * and `value` was stored into its per-fnctor prototype global, 0 otherwise.
+ */
+export const CLOSURE_PROTO_SET = "__closure_proto_set";
 
 /** Param / local slots of the helper body. */
 const P_TARGET = 0;
@@ -253,6 +261,197 @@ export function reserveClosurePrototypeEdge(ctx: CodegenContext): void {
   };
   pushDefinedFunc(ctx, funcIdx, placeholder);
   ctx.funcMap.set(CLOSURE_PROTO_OF, funcIdx);
+  reserveClosurePrototypeSet(ctx);
+}
+
+/**
+ * (#6951 G2) Reserve `__closure_proto_set` beside its read twin with an
+ * `i32.const 0` body — "no edge, keep the bag write" — which is the right
+ * answer for every module whose fill finds no fnctor edge.
+ */
+function reserveClosurePrototypeSet(ctx: CodegenContext): void {
+  if (ctx.funcMap.get(CLOSURE_PROTO_SET) !== undefined) return;
+  const externref: ValType = { kind: "externref" };
+  const typeIdx = addFuncType(ctx, [externref, externref], [{ kind: "i32" }], `$${CLOSURE_PROTO_SET}_type`);
+  const funcIdx = mintDefinedFunc(ctx);
+  pushDefinedFunc(ctx, funcIdx, {
+    name: CLOSURE_PROTO_SET,
+    typeIdx,
+    locals: [],
+    body: [{ op: "i32.const", value: 0 }],
+    exported: false,
+  });
+  ctx.funcMap.set(CLOSURE_PROTO_SET, funcIdx);
+}
+
+/**
+ * (#6951 G2 review) The own-descriptor gate `__closure_prop_set`'s `prototype`
+ * write arm runs BEFORE it mutates anything — before the
+ * {@link CLOSURE_PROTO_SET} edge store (the canonical per-fnctor global that
+ * `new F()` links through) and before the bag define.
+ *
+ * §10.1.9.2 OrdinarySetWithOwnDescriptor: an OWN `prototype` the program
+ * re-described (`Object.defineProperty(F, "prototype", {writable: false})`,
+ * which Babel's `_createClass` emits) decides the write. Without this the edge
+ * arm stored the new value and reported success, so the forbidden replacement
+ * was observed by every later `new F()` and strict code got no TypeError.
+ *
+ *  - HANDLED (an own setter ran) → SET_RESULT_SUCCESS, return.
+ *  - REFUSED (non-writable) → SET_RESULT_REFUSED, return: strict callers throw
+ *    the TypeError, sloppy ones no-op — the shared #4504 result channel.
+ *  - allowed → the own entry is updated too (a later read must not answer a
+ *    stale value), then the caller's edge/bag arms run unchanged.
+ *
+ * Only a bag that already HAS the own key consults the resolver: without one
+ * the property is the mandatory writable one (§20.2.4.2), and an inherited
+ * descriptor must not claim it. Empty — the arm stays as it was — when the
+ * shared [[Set]] runtime is absent (such a module cannot hold a non-writable
+ * descriptor, #4504) or a helper is unregistered.
+ *
+ * Slot layout is `__closure_prop_set`'s: 0 target, 1 key, 2 value,
+ * 3 `__bag`, 4 `__decision`.
+ */
+export function closurePrototypeOwnDescriptorGuard(
+  ctx: CodegenContext,
+  setResultGlobalIdx: number | undefined,
+): Instr[] {
+  const bagLookupIdx = ctx.funcMap.get("__closure_bag_lookup");
+  const hasOwnIdx = ctx.funcMap.get("__hasOwnProperty");
+  const setDecideIdx = ctx.funcMap.get("__extern_set_decide");
+  const setOwnIdx = ctx.funcMap.get("__extern_set_own");
+  if (
+    setResultGlobalIdx === undefined ||
+    bagLookupIdx === undefined ||
+    hasOwnIdx === undefined ||
+    setDecideIdx === undefined ||
+    setOwnIdx === undefined
+  ) {
+    return [];
+  }
+  const settle = (decision: number, result: number): Instr[] => [
+    { op: "local.get", index: 4 },
+    { op: "i32.const", value: decision },
+    { op: "i32.eq" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [{ op: "i32.const", value: result }, { op: "global.set", index: setResultGlobalIdx }, { op: "return" }],
+    },
+  ];
+  return [
+    { op: "local.get", index: 0 },
+    { op: "call", funcIdx: bagLookupIdx },
+    { op: "local.tee", index: 3 },
+    { op: "ref.is_null" },
+    { op: "i32.eqz" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: 3 },
+        { op: "local.get", index: 1 },
+        { op: "call", funcIdx: hasOwnIdx },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            { op: "local.get", index: 0 },
+            { op: "local.get", index: 3 },
+            { op: "local.get", index: 1 },
+            { op: "local.get", index: 2 },
+            { op: "call", funcIdx: setDecideIdx },
+            { op: "local.set", index: 4 },
+            ...settle(2, 1), // SET_DECISION_HANDLED → SET_RESULT_SUCCESS
+            ...settle(3, 2), // SET_DECISION_REFUSED → SET_RESULT_REFUSED
+            { op: "local.get", index: 3 },
+            { op: "local.get", index: 1 },
+            { op: "local.get", index: 2 },
+            { op: "call", funcIdx: setOwnIdx },
+            { op: "global.set", index: setResultGlobalIdx },
+          ],
+        },
+      ],
+    },
+  ];
+}
+
+/**
+ * (#6951 G2) Fill `__closure_proto_set`: route a DYNAMIC `<closure>.prototype
+ * = v` on a fnctor that owns a prototype edge into the SAME per-fnctor global
+ * the static `F.prototype = v` (`tryCompileFnctorPrototypeAssign`) stores, in
+ * the same canonical form (`__proto_from_function`).
+ *
+ * Before this the dynamic write landed in the closure's own-property bag. The
+ * `F.prototype` GET arm agreed with it (an own bag entry wins), but `new F()`
+ * links its instance through the global, so the write was invisible to every
+ * instance — deltablue's `inheritsFrom` (`this.prototype = new Inheriter()`,
+ * `this` the constructor) built no chain at all. Only fnctor edges are routed:
+ * a class's `prototype` is non-writable and keeps its existing answer. A value
+ * with no edge (arrow, member-held or anonymous function, bound function)
+ * answers 0 and keeps the bag write, which is what `__native_construct` reads.
+ *
+ * Params: 0 target, 1 value. Locals: 2 `__targetEq`, 3 `__cand`.
+ */
+function fillClosurePrototypeSet(ctx: CodegenContext, edges: readonly PrototypeEdge[]): void {
+  const funcIdx = ctx.funcMap.get(CLOSURE_PROTO_SET);
+  if (funcIdx === undefined) return;
+  const fn = definedFuncAt(ctx, funcIdx);
+  if (!fn) return;
+  const fnctorEdges = edges.filter((edge) => edge.vivify);
+  if (fnctorEdges.length === 0) return;
+  const toProtoIdx = ctx.funcMap.get(PROTO_FROM_FUNCTION);
+  const targetEq = 2;
+  const cand = 3;
+  const miss = (): Instr[] => [{ op: "i32.const", value: 0 }, { op: "return" }];
+  const body: Instr[] = [
+    { op: "local.get", index: P_TARGET },
+    { op: "ref.is_null" },
+    { op: "if", blockType: { kind: "empty" }, then: miss() },
+    { op: "local.get", index: P_TARGET },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx: EQ_HEAP_TYPE },
+    { op: "i32.eqz" },
+    { op: "if", blockType: { kind: "empty" }, then: miss() },
+    { op: "local.get", index: P_TARGET },
+    { op: "any.convert_extern" },
+    { op: "ref.cast", typeIdx: EQ_HEAP_TYPE },
+    { op: "local.set", index: targetEq },
+  ];
+  for (const edge of fnctorEdges) {
+    body.push(
+      { op: "global.get", index: edge.valueGlobalIdx },
+      { op: "any.convert_extern" },
+      { op: "local.tee", index: cand },
+      { op: "ref.test", typeIdx: EQ_HEAP_TYPE },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "local.get", index: cand },
+          { op: "ref.cast", typeIdx: EQ_HEAP_TYPE },
+          { op: "local.get", index: targetEq },
+          { op: "ref.eq" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "local.get", index: 1 },
+              ...(toProtoIdx === undefined ? [] : ([{ op: "call", funcIdx: toProtoIdx }] satisfies Instr[])),
+              { op: "global.set", index: edge.protoGlobalIdx },
+              { op: "i32.const", value: 1 },
+              { op: "return" },
+            ],
+          },
+        ],
+      },
+    );
+  }
+  body.push({ op: "i32.const", value: 0 });
+  fn.locals = [
+    { name: "__targetEq", type: { kind: "eqref" } },
+    { name: "__cand", type: { kind: "anyref" } },
+  ];
+  fn.body = body;
 }
 
 /**
@@ -268,6 +467,7 @@ export function fillClosurePrototypeEdge(ctx: CodegenContext): void {
   if (!fn) return;
   const edges = collectPrototypeEdges(ctx);
   if (edges.length === 0) return;
+  fillClosurePrototypeSet(ctx, edges);
 
   const newPlainObjectIdx = ctx.funcMap.get("__new_plain_object");
   const defineValueIdx = ctx.funcMap.get("__defineProperty_value");

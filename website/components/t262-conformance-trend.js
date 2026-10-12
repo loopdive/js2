@@ -60,9 +60,13 @@ const fetchRuns = (url) => {
       url,
       (async () => {
         try {
-          const resp = await fetch(url);
-          if (!resp.ok) return null;
-          const data = await resp.json();
+          let data;
+          if (globalThis.t262ViewState) data = await globalThis.t262ViewState.fetchData(url, "runs");
+          else {
+            const response = await fetch(url);
+            if (!response.ok) return null;
+            data = await response.json();
+          }
           return Array.isArray(data) ? data : null;
         } catch {
           return null;
@@ -350,6 +354,9 @@ class T262ConformanceTrend extends HTMLElement {
     if (!points) {
       this._chart.hidden = true;
       this._empty.hidden = false;
+      this._empty.textContent = globalThis.t262ViewState?.read().ir
+        ? "IR conformance history is unmeasured or unavailable."
+        : "No conformance history available yet.";
       return;
     }
     this._empty.hidden = true;
