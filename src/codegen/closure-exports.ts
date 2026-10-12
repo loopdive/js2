@@ -56,6 +56,7 @@ import {
   type ClosureDispatchRestCarrier,
 } from "./closures/closure-dispatch-rest.js";
 import { buildMethodDispatchPrologue } from "./closures/method-dispatch-prologue.js";
+import { applyTailDispatch } from "./closures/apply-extras-tail.js"; // (#6959 review)
 import { isSyntheticStructName } from "./emit-helpers.js";
 export { buildTransferredCharAtApplyArm } from "./char-at-transfer.js";
 import {
@@ -1462,7 +1463,12 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number,
   // Closure externref → anyref, then (#4197) the runtime-eval carrier
   // front-guard, then the `__current_this` save/install. That order is a
   // contract — see `buildMethodDispatchPrologue`.
-  const body: Instr[] = buildMethodDispatchPrologue(ctx, arity, anyLocal, prevThisLocal, currentThisGlobalIdx);
+  // (#6959 review) `__apply_closure`'s n > 8 tail — consumed FIRST; see apply-extras-tail.ts.
+  const applyTail = applyTailDispatch(ctx, arity, minHostArity, prevThisLocal + 4, extrasVecTypeIdx);
+  const body: Instr[] = [
+    ...(applyTail?.prologue() ?? []),
+    ...buildMethodDispatchPrologue(ctx, arity, anyLocal, prevThisLocal, currentThisGlobalIdx),
+  ];
 
   const npArgs = {
     anyLocal,
@@ -1527,16 +1533,17 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number,
       argInstrs.push(...buildArgConversion(i + 2, i, closureDispatchParamType(ctx, paramType)));
     }
     if (entry.rest) {
-      argInstrs.push(
-        ...materializeClosureDispatchRest(
-          entry.rest,
-          arity,
-          entry.closureArity,
-          extrasVecTypeIdx,
-          extrasArrTypeIdx,
-          (argumentIndex, elemType) => buildArgConversion(argumentIndex + 2, argumentIndex, elemType),
-        ),
+      const restInstrs = materializeClosureDispatchRest(
+        entry.rest,
+        arity,
+        entry.closureArity,
+        extrasVecTypeIdx,
+        extrasArrTypeIdx,
+        (argumentIndex, elemType) => buildArgConversion(argumentIndex + 2, argumentIndex, elemType),
       );
+      const r = entry.rest;
+      const tailVec = r.kind === "externref" ? extrasVecTypeIdx : r.kind === "vec" ? r.vecTypeIdx : undefined;
+      argInstrs.push(...(applyTail ? applyTail.appendRest(restInstrs, tailVec) : restInstrs));
     }
 
     // (#2745) #820l argc/extras plumbing (clamped-to-formals convention; see
@@ -1554,6 +1561,7 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number,
       extrasVecTypeIdx,
       extrasArrTypeIdx,
     });
+    if (applyTail) setupInstrs.push(...applyTail.appendExtras(extrasArgvGlobalIdx));
     const callBody = buildClosureMethodCallBody(entry, anyLocal, funcLocal, setupInstrs, argInstrs);
     callBody.push(...buildClosureResultBoxing(ctx, entry.returnType, boxNumberIdx));
 
@@ -1768,6 +1776,7 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number,
       // arity-bucketed signature dispatch (-1 = not root-readable).
       { name: "__declared_arity", type: { kind: "i32" } },
       { name: "__fallback_args", type: { kind: "externref" } },
+      ...(applyTail ? [applyTail.local] : []),
     ],
     body,
     exported: !internalOnly,

@@ -22,7 +22,7 @@ import { makeIrFnctorAdmissionResolver, makeIrFnctorArgumentProjectionAuthority 
 import type { FnctorCaptureLayout } from "./fnctor-constructor-identity.js";
 import type { ProgramAbiFnctorObservation } from "./program-abi-fnctor-planning.js";
 import { canonicalProgramAbiValType } from "./program-abi-signatures.js";
-import { fnctorConstructorField } from "./fnctor-identity-fields.js";
+import { fnctorConstructorField, fnctorProtoField } from "./fnctor-identity-fields.js";
 import { closureBagField } from "./closures/closure-header-layout.js";
 import { proveIrFnctorInputConstructorSyntax } from "../ir/fnctor-argument-projection.js";
 import { ts } from "../ts-api.js";
@@ -228,7 +228,7 @@ export function buildStandaloneIrFnctorObservation(
   }
   const inputField = input.fields[0];
   if (
-    input.fields.length !== 3 ||
+    input.fields.length !== 4 ||
     !inputField ||
     inputField.name !== "input" ||
     inputField.mutable !== true ||
@@ -239,7 +239,8 @@ export function buildStandaloneIrFnctorObservation(
     inputField.jsBoolean === true ||
     inputField.presenceBit !== undefined ||
     !exactField(input.fields[1], fnctorConstructorField()) ||
-    !exactField(input.fields[2], closureBagField())
+    !exactField(input.fields[2], fnctorProtoField()) ||
+    !exactField(input.fields[3], closureBagField())
   ) {
     return undefined;
   }
