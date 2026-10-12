@@ -30,6 +30,7 @@ import { buildThrowJsErrorInstrs, noJsHost } from "./js-errors.js"; // (#3177 sl
 import { emitEvolvingNullishReceiverGuard, evolvingVarNullishNarrowed } from "./builtin-prototype-brand.js"; // (#5197 review F1)
 import { emitMappedArgReverseSync } from "./expressions/logical-ops.js";
 import { resolveStructName } from "./expressions/misc.js";
+import { closedReflectiveStructName } from "./fnctor-instance-names.js";
 import { widenedStructNameForUse, integrityVarKey } from "./widened-var-key.js";
 import { addUnionImports, cacheStringLiterals, getOrRegisterTupleType, resolveWasmType } from "./index.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
@@ -4451,6 +4452,11 @@ export function compileObjectDefineProperties(
 
 // ── Object.keys / Object.values ───────────────────────────────────────
 
+/** Resolve reflection's closed-shape proof through the existing fnctor owner authority. */
+function resolveClosedReflectiveStructName(ctx: CodegenContext, tsType: ts.Type): string | undefined {
+  return closedReflectiveStructName(ctx, tsType, resolveStructName(ctx, tsType));
+}
+
 /**
  * Compile Object.keys(obj) or Object.values(obj) by expanding struct fields
  * at compile time. Object.keys returns a string[] of field names,
@@ -4509,8 +4515,8 @@ export function compileObjectKeysOrValues(
   const argIsHostObjectVar =
     (ts.isIdentifier(arg) && ctx.externrefAccessorVars.has(arg.text)) ||
     typeIsRuntimeKeyedObjectLiteral(ctx, argType, _hasRuntimeComputedKey);
-  // Resolve struct name from the argument type
-  const structName = argIsHostObjectVar ? undefined : resolveStructName(ctx, argType);
+  // Resolve struct name from the argument type (an open fnctor carrier enumerates at runtime)
+  const structName = argIsHostObjectVar ? undefined : resolveClosedReflectiveStructName(ctx, argType);
   if (!structName) {
     // Only a FRESH syntactic `{}` proves an empty own-key set. A variable or
     // parameter whose checker type has zero declared properties is not such a
