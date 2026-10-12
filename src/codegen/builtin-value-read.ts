@@ -76,6 +76,8 @@ import { emitJsonStringifyValue } from "./json-codec-native.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { ensureExtrasArgvGlobal } from "./statements/nested-declarations.js";
 import { getArrTypeIdxFromVec } from "./registry/types.js";
+import { emitInlineMathFunctions } from "./math-helpers.js"; // (#6957)
+import { isPatchedBuiltinStaticMember } from "./source-scan-predicates.js"; // (#6957)
 import { emitMathValueReadBody, prepareMathValueRead } from "./math-value-read.js"; // (#4565, #5383)
 import { ensureHostArrayCarrierPredicate } from "./host-array-carrier.js"; // (#4649)
 import {
@@ -1003,12 +1005,17 @@ function tryCompileStandaloneBuiltinProtoIteratorRead(
  */
 const BOOLEAN_PREDICATE_RESULT: ValType = { kind: "i32", boolean: true };
 
+const PATCHED_MATH_RANDOM = "#6957 patched Math.random";
+
 export function ensureStandaloneBuiltinStaticMethodClosure(
   ctx: CodegenContext,
   builtinName: string,
   propName: string,
-  _expr?: ts.PropertyAccessExpression,
+  expr?: ts.PropertyAccessExpression,
 ): { type: { kind: "ref"; typeIdx: number }; funcIdx: number } | null {
+  // (#6957) A patched member's source VALUE read (only that site passes `expr`)
+  // declines to the carrier [[Get]]; seeding and other callers keep the closure.
+  if (expr && isPatchedBuiltinStaticMember(ctx, builtinName, propName)) return null;
   const key = `${builtinName}.${propName}`;
   let paramTypes: ValType[];
   let returnType: ValType | null;
@@ -1016,7 +1023,7 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
   // they reify with a catchable-TypeError body instead of returning null.
   let genericThrowBody = false;
 
-  switch (key) {
+  switch (key === "Math.random" && isPatchedBuiltinStaticMember(ctx, "Math", "random") ? PATCHED_MATH_RANDOM : key) {
     case "Array.isArray":
       paramTypes = [{ kind: "externref" }];
       returnType = BOOLEAN_PREDICATE_RESULT;
@@ -1313,6 +1320,11 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
     case "Date.now":
       paramTypes = [];
       returnType = { kind: "f64" };
+      break;
+    // (#6957) The `Math_random` kernel as `() -> f64` — the carrier seed a
+    // patching program calls before its override; others keep the generic body.
+    case PATCHED_MATH_RANDOM:
+      [paramTypes, returnType] = [[], { kind: "f64" }];
       break;
     default: {
       // (#2984 Phase 3) Any OTHER standard builtin static method — the
@@ -1774,6 +1786,9 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
       );
     } else if (key === "Date.now") {
       emitStandaloneDateNowValue(ctx, closureFctx);
+    } else if (key === "Math.random" && !genericThrowBody) {
+      if (!ctx.funcMap.has("Math_random")) emitInlineMathFunctions(ctx, new Set(["random"]));
+      closureFctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("Math_random")! });
     } else if (genericThrowBody && builtinName === "Math" && emitMathValueReadBody(ctx, closureFctx, propName)) {
       // (#4565; supersedes the #4491 wave-4 lane G arm, same defect) — the
       // upstream module mints the `Math_<fn>` kernel late itself, so it needs

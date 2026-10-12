@@ -154,9 +154,9 @@ describe("#5162 constructor → own prototype method", () => {
     expect(await run(src, "standalone")).toBe(expected);
   });
 
-  // Former XFAIL pins (they threw in standalone until #6970 made a `this.<m>`
-  // read of a fnctor prototype member resolve through the prototype instead of
-  // minting an own field). Tightened to the spec value, as this file asked.
+  // Former XFAIL PINS, tightened to the spec value: these stopped throwing once
+  // every ordinary fnctor got a runtime prototype (#6949) and its instances a
+  // `[[Prototype]]` ladder (#6951).
   it.each([
     ["method assigned AFTER the constructor (the filed shape)", AFTER],
     ["method assigned BEFORE the constructor", BEFORE],
@@ -204,11 +204,12 @@ export function test() { var p = new PP(5); return (typeof seen.twice === "funct
     expect(await run(VIA_UNTYPED, "gc")).toBe(1);
   });
 
-  it("standalone XFAIL: the same object resolves `twice` only through the TYPED binding", async () => {
+  it("standalone: the same object resolves `twice` through either binding", async () => {
     expect(await run(VIA_TYPED, "standalone")).toBe(1);
-    // Spec says 1 — `seen` and `p` are the same object. Reads 0 because the
-    // prototype method has no runtime existence in standalone.
-    expect(await run(VIA_UNTYPED, "standalone")).toBe(0);
+    // (#6951) `seen` and `p` are the same object. This read 0 while
+    // `__fnctor_proto_start` was reserved only for modules with a gate-APPROVED
+    // fnctor; every constructed ordinary fnctor now gets the ladder.
+    expect(await run(VIA_UNTYPED, "standalone")).toBe(1);
   });
 
   // A second, INDEPENDENT hole found while measuring, recorded so it is not
@@ -223,10 +224,11 @@ export function test() { return new PP(5).v; }`;
 
   // (#6970) The gc half was the field auto-register arm minting an own
   // `$__fnctor_PP.twice` slot for the `this.twice` VALUE read (the "null
-  // receiver read" above); it now reads the prototype member. Standalone still
-  // lacks the prototype method's runtime existence (the gap above).
-  it("`this.twice.call(this, x)` in a ctor: gc reads 10 (#6970); standalone XFAIL throws", async () => {
+  // receiver read" above); it now reads the prototype member. The standalone
+  // half closed once every ordinary fnctor got a runtime prototype (#6949) and
+  // its instances a `[[Prototype]]` ladder (#6951). Both lanes give the spec 10.
+  it("`this.twice.call(this, x)` in a ctor returns 10 in both lanes (#6970, #6949, #6951)", async () => {
     expect(await run(DOT_CALL, "gc")).toBe(10);
-    expect(await threw(DOT_CALL, "standalone")).toBe(true);
+    expect(await run(DOT_CALL, "standalone")).toBe(10);
   });
 });

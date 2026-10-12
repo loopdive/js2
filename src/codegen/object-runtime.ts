@@ -217,6 +217,7 @@ import {
 } from "./any-helpers.js";
 import { reserveClassToPrimitive } from "./class-to-primitive.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2/S3) positional-read chokepoint + stable-regime minting
+import { fnctorProtoLinkInstrs, fnctorProtoStartNeeded } from "./fnctor-identity-fields.js"; // (#6951 G3) [[Prototype]] snapshot
 import { emitSelfHostedFunc } from "./stdlib-selfhost.js"; // (#3160) self-hosted object-runtime slice
 import { SELF_HOSTED_OBJECT_RUNTIME } from "../stdlib/object-runtime.js"; // (#3160) TS-source builtins
 import { buildObjectDescriptorHelpers } from "./object-runtime-descriptors.js";
@@ -1913,16 +1914,15 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   // `$Object`. Reserve a tiny classifier before `__extern_get` bakes its call
   // index; finalize fills the complete ref.test/global.get ladder after all
   // fnctor structs and prototype globals are known.
-  const fnctorProtoStartIdx =
-    ctx.standalone && (ctx.fnctorEscapeGate?.approvedNames.size ?? 0) > 0
-      ? registerNative(
-          "__fnctor_proto_start",
-          [{ kind: "externref" }],
-          [{ kind: "externref" }],
-          [{ name: "any", type: { kind: "anyref" } }],
-          [{ op: "ref.null.extern" }],
-        )
-      : undefined;
+  const fnctorProtoStartIdx = fnctorProtoStartNeeded(ctx) // (#6951) every constructed fnctor
+    ? registerNative(
+        "__fnctor_proto_start",
+        [{ kind: "externref" }],
+        [{ kind: "externref" }],
+        [{ name: "any", type: { kind: "anyref" } }],
+        [{ op: "ref.null.extern" }],
+      )
+    : undefined;
 
   // (#3673 round 9b) Table generation for the per-key prototype-lookup cache
   // (see the `$HashedString` cacheGen/cacheOwner/cacheEntry fields). Bumped
@@ -9511,6 +9511,8 @@ export function fillFnctorPrototypeDispatchArms(ctx: CodegenContext): void {
   const protoStartFn = protoStartIdx === undefined ? undefined : definedFuncAt(ctx, protoStartIdx);
   if (protoStartFn) {
     const protoArms: Instr[] = [];
+    // (#6951 G3) local 2: the instance's construction-time snapshot.
+    const snapshotSlot = 2;
     for (const [fnctorName, protoGlobalIdx] of ctx.fnctorPrototypeObject) {
       const typeIdx = ctx.structMap.get(`__fnctor_${fnctorName}`);
       if (typeIdx === undefined) continue;
@@ -9520,10 +9522,17 @@ export function fillFnctorPrototypeDispatchArms(ctx: CodegenContext): void {
         {
           op: "if",
           blockType: { kind: "empty" },
-          then: [{ op: "global.get", index: protoGlobalIdx }, { op: "return" }],
+          then: [
+            ...fnctorProtoLinkInstrs(ctx, fnctorName, typeIdx, protoGlobalIdx, snapshotSlot, [
+              { op: "local.get", index: 1 },
+              { op: "ref.cast", typeIdx },
+            ]),
+            { op: "return" },
+          ],
         },
       );
     }
+    if (protoStartFn.locals.length < 2) protoStartFn.locals.push({ name: "__snap", type: { kind: "externref" } });
     protoStartFn.body = [
       { op: "local.get", index: 0 },
       { op: "any.convert_extern" },
@@ -9549,15 +9558,21 @@ export function fillFnctorPrototypeDispatchArms(ctx: CodegenContext): void {
   // key/entry locals are appended once below.
   const HSTR = ctx.hashedStrTypeIdx;
   const objTypes = ctx.objectRuntimeTypes;
-  const inlineCacheReady = HSTR >= 0 && objTypes !== undefined;
+  const hasOwnIdxForCache = ctx.funcMap.get("__hasOwnProperty");
+  const inlineCacheReady = HSTR >= 0 && objTypes !== undefined && hasOwnIdxForCache !== undefined;
   let khLocal = -1;
   let entryLocal = -1;
+  let protoLocal = -1;
   if (inlineCacheReady) {
     khLocal = 3 + fn.locals.length;
     entryLocal = khLocal + 1;
+    protoLocal = khLocal + 2;
     fn.locals.push(
       { name: "__mc_kh", type: { kind: "ref_null", typeIdx: HSTR } },
       { name: "__mc_entry", type: { kind: "ref_null", typeIdx: objTypes.propEntryTypeIdx } },
+      // (#6951 G3) the receiver's [[Prototype]] link — its construction-time
+      // snapshot, not the live global — which the cache owner must match.
+      { name: "__mc_proto", type: { kind: "externref" } },
     );
   }
   // (#3673 round 21) props-array type for the per-object staleness cast.
@@ -9578,9 +9593,21 @@ export function fillFnctorPrototypeDispatchArms(ctx: CodegenContext): void {
     const cacheTry: Instr[] =
       inlineCacheReady && propMapIdxForCache !== undefined
         ? [
+            // (#6951 G3) The owner check runs against THIS receiver's link, and
+            // only when that link is an `$Object` (a dynamic `F.prototype = v`
+            // can install any value; the slow path below handles the rest).
+            ...fnctorProtoLinkInstrs(ctx, fnctorName, typeIdx, protoGlobalIdx, protoLocal, [
+              { op: "local.get", index: 0 },
+              { op: "any.convert_extern" },
+              { op: "ref.cast", typeIdx },
+            ]),
+            { op: "local.tee", index: protoLocal },
+            { op: "any.convert_extern" },
+            { op: "ref.test", typeIdx: objTypes!.objectTypeIdx },
             { op: "local.get", index: 1 },
             { op: "any.convert_extern" },
             { op: "ref.test", typeIdx: HSTR },
+            { op: "i32.and" },
             {
               op: "if",
               blockType: { kind: "empty" },
@@ -9590,6 +9617,7 @@ export function fillFnctorPrototypeDispatchArms(ctx: CodegenContext): void {
                 { op: "ref.cast", typeIdx: HSTR },
                 { op: "local.tee", index: khLocal },
                 { op: "struct.get", typeIdx: HSTR, fieldIdx: 4 }, // populated flag
+                ...receiverHasNoOwnKeyGuard(ctx, hasOwnIdxForCache!), // (#6946) own method shadows the cached proto one
                 {
                   op: "if",
                   blockType: { kind: "empty" },
@@ -9599,13 +9627,13 @@ export function fillFnctorPrototypeDispatchArms(ctx: CodegenContext): void {
                     { op: "ref.as_non_null" },
                     { op: "struct.get", typeIdx: HSTR, fieldIdx: 5 }, // cacheOwner
                     { op: "ref.cast", typeIdx: objTypes!.objectTypeIdx },
-                    { op: "global.get", index: protoGlobalIdx },
+                    { op: "local.get", index: protoLocal },
                     { op: "any.convert_extern" },
                     { op: "ref.cast", typeIdx: objTypes!.objectTypeIdx },
                     { op: "ref.eq" },
                     // (#3673 round 21) per-object staleness: proto.props must be
                     // the SAME array as at population (a grow replaces it).
-                    { op: "global.get", index: protoGlobalIdx },
+                    { op: "local.get", index: protoLocal },
                     { op: "any.convert_extern" },
                     { op: "ref.cast", typeIdx: objTypes!.objectTypeIdx },
                     { op: "struct.get", typeIdx: objTypes!.objectTypeIdx, fieldIdx: 1 }, // props
@@ -9883,6 +9911,34 @@ export function unshiftExternGetStringExoticArm(ctx: CodegenContext): void {
  * entry flags) confines hits to receivers of that same class. MUST be called
  * LAST among the `__extern_get` body fills.
  */
+/**
+ * (#6946) AND "receiver (param 0) has no own `key` (param 1)" into the i32 on
+ * the stack — the guard both prototype-cache hit arms need before answering from
+ * the prototype (§10.1.8.1 OrdinaryGet consults own storage first). Only reached
+ * for fnctor receivers, whose own expandos live in the carrier `$bag`
+ * (#4194/#4241): `__closure_bag_lookup` is a per-carrier `struct.get`, so the
+ * common no-expando receiver pays one call + null test and keeps the hit; a
+ * receiver WITH a bag skips the cache for the exact slow path. Without that
+ * helper, fall back to the full `__hasOwnProperty` predicate.
+ */
+function receiverHasNoOwnKeyGuard(ctx: CodegenContext, hasOwnIdx: number): Instr[] {
+  const bagLookupIdx = ctx.funcMap.get("__closure_bag_lookup");
+  if (bagLookupIdx !== undefined)
+    return [
+      { op: "local.get", index: 0 },
+      { op: "call", funcIdx: bagLookupIdx },
+      { op: "ref.is_null" },
+      { op: "i32.and" },
+    ];
+  return [
+    { op: "local.get", index: 0 },
+    { op: "local.get", index: 1 },
+    { op: "call", funcIdx: hasOwnIdx },
+    { op: "i32.eqz" },
+    { op: "i32.and" },
+  ];
+}
+
 export function unshiftExternGetProtoCacheArm(ctx: CodegenContext): void {
   if (!ctx.standalone || ctx.hashedStrTypeIdx < 0) return;
   const HSTR = ctx.hashedStrTypeIdx;
@@ -9892,6 +9948,9 @@ export function unshiftExternGetProtoCacheArm(ctx: CodegenContext): void {
   const { objectTypeIdx, propEntryTypeIdx } = objTypes;
   const fn = ctx.mod.functions.find((candidate) => candidate.name === "__extern_get");
   if (!fn || !fn.locals.some((l) => l.name === "kh")) return;
+  // (#6946) Own-shadow guard for fnctor receivers; no own-presence probe, no cache.
+  const hasOwnIdx = ctx.funcMap.get("__hasOwnProperty");
+  if (hasOwnIdx === undefined) return;
   // (#3673 round 21) props-array type for the per-object staleness cast.
   const objDefForArm = ctx.mod.types[objectTypeIdx];
   const propMapIdxForArm =
@@ -9946,6 +10005,13 @@ export function unshiftExternGetProtoCacheArm(ctx: CodegenContext): void {
                 { op: "local.tee", index: 7 },
                 { op: "ref.is_null" },
                 { op: "i32.eqz" },
+                // (#6946) §10.1.8.1 OrdinaryGet consults OWN storage first: a
+                // fnctor receiver that has since gained an own `key` (an expando
+                // `this.v = x` shadowing an inherited default already cached for
+                // the class) must not take the prototype hit. The cache's
+                // staleness tracking is per OWNER (the prototype), so a write on
+                // the receiver never invalidates it — check the receiver here.
+                ...receiverHasNoOwnKeyGuard(ctx, hasOwnIdx),
                 {
                   op: "if",
                   blockType: { kind: "empty" },

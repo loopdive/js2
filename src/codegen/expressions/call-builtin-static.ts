@@ -10,6 +10,7 @@
 // chain. Moved verbatim: the emitted Wasm is byte-identical.
 import { classStaticSidecarApplies } from "../class-static-sidecar.js"; // (#6774 S6)
 import { ts } from "../../ts-api.js";
+import { tryEmitPatchedBuiltinStaticCall } from "./builtin-static-patched-call.js"; // (#6957)
 import { emitProxyAwareOwnKeysCall } from "../object-model/proxy-own-keys-surfaces.js"; // (#6770 S7)
 import { isBooleanType, isNumberType, isStringType } from "../../checker/type-mapper.js";
 import { ensureIntegrityPredicate } from "../object-integrity-carrier.js"; // (#4032)
@@ -572,6 +573,8 @@ export function compileBuiltinStaticCall(
   }
 
   if (ts.isIdentifier(propAccess.expression) && propAccess.expression.text === "Math") {
+    const patched = tryEmitPatchedBuiltinStaticCall(ctx, fctx, propAccess.expression, propAccess.name.text, expr); // (#6957)
+    if (patched !== undefined) return patched;
     const mathResult = compileMathCall(ctx, fctx, propAccess.name.text, expr);
     if (mathResult !== undefined) return mathResult;
     // Unknown Math method — fall through to generic call handling
