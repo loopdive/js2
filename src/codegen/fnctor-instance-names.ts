@@ -33,6 +33,28 @@ export function isConstructedFnctorName(ctx: CodegenContext, name: string): bool
 }
 
 /**
+ * `structName`, unless it is a fnctor carrier struct (`__fnctor_<Name>`).
+ *
+ * That carrier is an OPEN object, not a closed shape: own expandos live in its
+ * `$bag`, constructor fields are gated by `$presence_N` bits, and `$constructor`
+ * / `$__fnctorProto` are runtime-internal. A reflective consumer that folds own
+ * keys or descriptors from the static field list (`Object.keys/values/entries`,
+ * the literal-key gOPD fold) must decline it and take the runtime own-key
+ * route. Since #6938, `resolveStructName` answers this name for an approved
+ * standalone fnctor instance type; before it answered nothing, so those
+ * consumers were on the runtime route (#6946 regression follow-up, 2026-10-12).
+ */
+export function closedReflectiveStructName(
+  ctx: CodegenContext,
+  tsType: ts.Type,
+  structName: string | undefined,
+): string | undefined {
+  // Class declarations may legally use the same prefix. Ask the existing
+  // declaration/escape-gate authority, which also works before a new site.
+  return isFnctorInstanceType(ctx, tsType) && structName?.startsWith("__fnctor_") === true ? undefined : structName;
+}
+
+/**
  * (#6938) Is `tsType` the INSTANCE type of a function constructor ("fnctor")?
  *
  * True when the type's symbol names a constructed fnctor, or its value

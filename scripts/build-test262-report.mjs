@@ -1,6 +1,11 @@
 #!/usr/bin/env node
 
 import { parseTest262SemanticProviders } from "./test262-lane.mjs";
+import {
+  parseTest262CompilerPath,
+  requireTest262CompilerPath,
+  summarizeTest262CompilerPaths,
+} from "./test262-compiler-path.mjs";
 import { createReadStream, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
@@ -32,6 +37,7 @@ function parseArgs(argv) {
     baselineSha: "",
     baselineGeneratedAt: "",
     target: "",
+    compilerPath: undefined,
     maxUnclassifiedRootCauses: undefined,
     fileEditions: DEFAULT_FILE_EDITIONS,
   };
@@ -48,6 +54,10 @@ function parseArgs(argv) {
       args.baselineSha = argv[++i] || "";
     } else if (arg === "--baseline-generated-at") {
       args.baselineGeneratedAt = argv[++i] || "";
+    } else if (arg === "--compiler-path") {
+      const value = argv[++i];
+      if (!value) throw new Error("--compiler-path requires legacy or ir");
+      args.compilerPath = parseTest262CompilerPath(value);
     } else if (arg === "--target") {
       args.target = argv[++i] || "";
     } else if (arg === "--file-editions") {
@@ -981,6 +991,8 @@ function buildStandaloneRootCauseMap(records, maxUnclassified, fileEditions) {
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const target = inferTarget(args);
+  if (args.compilerPath !== undefined) requireTest262CompilerPath(args.compilerPath);
+  const compilerPathRows = [];
 
   const statuses = createCounts();
   const officialStatuses = createCounts();
@@ -1034,6 +1046,12 @@ async function main() {
   for await (const line of rl) {
     if (!line.trim()) continue;
     const record = JSON.parse(line);
+    compilerPathRows.push({
+      compilerPath: record.compilerPath,
+      executionCompilerPath: record.executionCompilerPath,
+      compilerPathVerified: record.compilerPathVerified,
+      configuredCompilerPath: record.configuredCompilerPath,
+    });
     const rowProviders = parseTest262SemanticProviders(record.semantic_providers);
     if (semanticProviders !== undefined && semanticProviders !== rowProviders) {
       throw new Error("Cannot merge test262 rows from different semantic providers");
@@ -1153,6 +1171,7 @@ async function main() {
   const fullSummaryBuilt = buildSummary(statuses, target);
 
   const report = {
+    ...summarizeTest262CompilerPaths(compilerPathRows, args.compilerPath),
     timestamp: new Date().toISOString(),
     baseline_generated_at: args.baselineGeneratedAt || new Date().toISOString(),
     baseline_sha: args.baselineSha || "",
@@ -1234,6 +1253,11 @@ async function main() {
   const categoriesFile = target === "standalone" ? "test262-standalone-categories.json" : "test262-categories.json";
   const categoriesPath = outputDir + categoriesFile;
   const categoriesPayload = {
+    compilerPath: report.compilerPath,
+    compilerPathVerified: report.compilerPathVerified,
+    executionCompilerPath: report.executionCompilerPath,
+    configuredCompilerPath: report.configuredCompilerPath,
+    ...(report.requestedCompilerPath === undefined ? {} : { requestedCompilerPath: report.requestedCompilerPath }),
     timestamp: report.timestamp,
     baseline_generated_at: report.baseline_generated_at,
     baseline_sha: report.baseline_sha,
