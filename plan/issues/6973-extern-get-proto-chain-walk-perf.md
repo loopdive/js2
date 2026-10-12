@@ -49,6 +49,9 @@ func-budget-allow:
   - src/codegen/fnctor-escape-gate.ts::deriveFnctorFields
   # 2026-10-12 (#6973 stage 2): +1 — the two i31 fast-path call sites.
   - src/codegen/binary-ops-typed-dispatch.ts::compileTypedBinaryDispatch
+  # 2026-10-12 (#6973 stage 2): +11 — `__closure_prop_get` answers a live DATA bag
+  # entry before the generic own-property predicate (`bagOwnDataHitInstrs`).
+  - src/codegen/closure-props.ts::fillClosurePropHelpers
 flat-dir-budget-allow:
   - src/codegen/fnctor-call-grown-fields.ts # 2026-10-12 (#6973 stage 2): `Parent.call(this, …)` delegate-field analysis, beside its fnctor-* siblings
   - src/codegen/fnctor-fast-get.ts # 2026-10-11 (#6973): the fnctor-instance __extern_get fast arm; sits with its flat fnctor-* siblings (fnctor-struct-proto-hop.ts, fnctor-identity-fields.ts) whose helpers it composes

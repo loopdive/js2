@@ -737,3 +737,84 @@ function buildHelper(ctx: CodegenContext, types: readonly LadderArm[], d: Helper
   });
   return funcIdx;
 }
+
+/**
+ * (#6973 stage 2) `if (bag is $Object && e = __obj_find(bag, key) is a live DATA
+ * entry whose value is not the bag itself) return e.value`. The bag is an
+ * internal `$Object` standing in for the carrier's own-property table, so such
+ * an entry is exactly the own data property `__hasOwnProperty` + the
+ * receiver-bound `__extern_get` would find (a data read never consults the
+ * receiver). `[]` without the object runtime.
+ */
+export function bagOwnDataHitInstrs(ctx: CodegenContext, l: { bag: number; key: number; entry: number }): Instr[] {
+  const types = ctx.objectRuntimeTypes;
+  const objFindIdx = ctx.funcMap.get("__obj_find");
+  if (types === undefined || objFindIdx === undefined) return [];
+  const { objectTypeIdx: OBJ, propEntryTypeIdx: PE } = types;
+  const EQ = -19;
+  return [
+    { op: "local.get", index: l.bag },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx: OBJ },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: l.bag },
+        { op: "any.convert_extern" },
+        { op: "ref.cast", typeIdx: OBJ },
+        { op: "local.get", index: l.key },
+        { op: "call", funcIdx: objFindIdx },
+        { op: "local.tee", index: l.entry },
+        { op: "ref.is_null" },
+        { op: "i32.eqz" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            { op: "local.get", index: l.entry },
+            { op: "struct.get", typeIdx: PE, fieldIdx: 2 }, // flags
+            { op: "i32.const", value: 0x08 | 0x80 }, // FLAG_ACCESSOR | FLAG_TOMBSTONE
+            { op: "i32.and" },
+            { op: "i32.eqz" },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [
+                // The deleted-declared-field sentinel stores the bag itself.
+                { op: "local.get", index: l.entry },
+                { op: "struct.get", typeIdx: PE, fieldIdx: 1 },
+                { op: "ref.test", typeIdx: EQ },
+                {
+                  op: "if",
+                  blockType: { kind: "val", type: { kind: "i32" } },
+                  then: [
+                    { op: "local.get", index: l.entry },
+                    { op: "struct.get", typeIdx: PE, fieldIdx: 1 },
+                    { op: "ref.cast", typeIdx: EQ },
+                    { op: "local.get", index: l.bag },
+                    { op: "any.convert_extern" },
+                    { op: "ref.cast", typeIdx: EQ },
+                    { op: "ref.eq" },
+                  ],
+                  else: [{ op: "i32.const", value: 0 }],
+                },
+                { op: "i32.eqz" },
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  then: [
+                    { op: "local.get", index: l.entry },
+                    { op: "struct.get", typeIdx: PE, fieldIdx: 1 },
+                    { op: "extern.convert_any" },
+                    { op: "return" },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+  ];
+}
