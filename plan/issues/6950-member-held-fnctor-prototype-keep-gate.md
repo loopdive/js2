@@ -1,7 +1,9 @@
 ---
 id: 6950
 title: "A top-level `o.F.prototype.m = …` statement (constructor held in a member, `T.Node = function…`) is dropped by the module-init keep gate on both lanes — `new T.Node().m()` throws `called value is not a function` (Octane splay teardown; #6943 follow-up)"
-status: ready
+status: done
+completed: 2026-10-11
+assignee: ttraenkler/claude-session-d
 sprint: current
 created: 2026-10-10
 priority: high
@@ -13,6 +15,14 @@ area: compiler
 language_feature: constructor-functions, prototype-chain
 goal: correctness
 related: [874, 6943, 6947, 4618, 2660, 3666, 4394]
+loc-budget-allow:
+  # 2026-10-10 (#6950): +~33 lines — the lane-neutral keep arm + its
+  # predicate helper; the receiver-unwrap loop is shared with
+  # isTopLevelFunctionPropertyReceiver (net -7 there).
+  - src/codegen/declarations.ts
+func-budget-allow:
+  # 2026-10-10 (#6950): +3 lines — one keep arm (predicate lives outside).
+  - src/codegen/declarations.ts::collectDeclarations
 ---
 
 # top-level `o.F.prototype.m = …` is never compiled (module-init keep gate)
@@ -116,3 +126,11 @@ The generic "assignment to a module global" check then drops the statement.
 
 `src/codegen/declarations.ts` (`collectDeclarations` top-level assignment arms) is
 Session A's area; needs A's release. ~15 lines.
+
+## Result (2026-10-11)
+
+Octane splay passes on `--target standalone`: `pnpm run -s benchmark:octane -- --only splay --lanes standalone`
+reports `pass`, measured on this fix merged with the other open Octane fix PRs.
+- New test: `tests/issue-6950-member-held-fnctor-proto-keep.test.ts`, 7/7.
+- `tests/issue-3518-native-invocation-consumer.test.ts`: 61/61. Under load, 7 rows exceeded the 35 s timeout; they pass with `--testTimeout=180000`.
+- Every quality gate passes, including with `LOC_GATE_BASE` set to the origin/main tip.

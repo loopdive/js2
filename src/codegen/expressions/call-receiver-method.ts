@@ -110,7 +110,13 @@ import {
   tryEmitStandaloneTrailingSpreadCall,
 } from "../standalone-dynamic-spread-call.js"; // (#6645/#6646)
 import { compilePropertyIntrospection } from "../object-ops.js";
-import { ensureObjVecBuilders, ensureObjectRuntime, reserveBindDynHelper } from "../object-runtime.js";
+import {
+  ensureBoundaryCallableKind,
+  ensureObjVecBuilders,
+  ensureObjectRuntime,
+  reserveApplyClosure,
+  reserveBindDynHelper,
+} from "../object-runtime.js";
 import {
   emitNullCheckThrow,
   receiverIsCaughtErrorStringRead,
@@ -267,7 +273,7 @@ function sourceDeletesBuiltinPrototypeMember(
 import { promiseSubclassNameOfType } from "./promise-subclass.js";
 import { ensureTaToStringHelper, taToStringApplies } from "../ta-to-string.js"; // (#6651 E7)
 import { reserveTaToLocaleString, taToLocaleStringApplies } from "../to-locale-string-element.js"; // (#6651 TA1)
-import { isHostResolvedBuiltinReceiver } from "../standalone-unavailable-globals.js"; // (#1472)
+import { isBuiltinCarrierExpandoCall, isHostResolvedBuiltinReceiver } from "../standalone-unavailable-globals.js"; // (#1472)
 import { guardedCastBackup, publishNonInstanceSuperReceiver } from "./super-receiver-publish.js"; // (#5350 r2)
 import { tryEmitPrimitiveToLocaleStringInvoke } from "../object-model/object-proto-to-locale-string.js"; // (#6770 S5)
 import { tryEmitTaggedToStringInvoke } from "../object-proto-symbol-tag.js"; // (#6770 S6)
@@ -4800,6 +4806,7 @@ export function compileReceiverMethodCall(
         const getBuiltinIdx = receiverIsBuiltin
           ? ensureLateImport(ctx, "__get_builtin", [{ kind: "externref" }], [{ kind: "externref" }])
           : undefined;
+        const captureCallee = prepareCapturedCarrierMethodCall(ctx, propAccess.expression, methodName);
         flushLateImportShifts(ctx, fctx);
 
         if (methodCallIdx !== undefined && arrNewIdx !== undefined && arrPushIdx !== undefined) {
@@ -4825,6 +4832,7 @@ export function compileReceiverMethodCall(
           // (#4656) Same §13.3.6.1 ordering fix for the generic
           // `__extern_method_call` arm; the receiver already has a local here.
           fctx.body.push(...buildCallSiteNullishReceiverGuard(ctx, recvLocal, methodName));
+          if (captureCallee) return emitCapturedCarrierMethodCall(ctx, fctx, expr, recvLocal, methodName, arrPushName);
 
           // Build args array
           fctx.body.push({ op: "call", funcIdx: arrNewIdx });
@@ -4919,4 +4927,57 @@ export function compileReceiverMethodCall(
     }
   }
   return undefined;
+}
+
+/**
+ * (#1472 review) Register the captured-callee pieces for an expando method on a
+ * builtin carrier (`Object.extend(…)`) before any funcIdx is captured. False
+ * (nothing registered) for every other generic `__extern_method_call` site.
+ */
+function prepareCapturedCarrierMethodCall(ctx: CodegenContext, receiver: ts.Expression, methodName: string): boolean {
+  if (!isBuiltinCarrierExpandoCall(ctx, receiver, methodName)) return false;
+  ensureBoundaryCallableKind(ctx);
+  ensureLateImport(ctx, "__extern_get", [{ kind: "externref" }, { kind: "externref" }], [{ kind: "externref" }]);
+  ensureLateImport(ctx, "__is_callable", [{ kind: "externref" }], [{ kind: "i32" }]);
+  reserveApplyClosure(ctx);
+  return ctx.funcMap.has("__extern_get") && ctx.funcMap.has("__is_callable");
+}
+
+/**
+ * §13.3.6.1 EvaluateCall for `C.m(args)` on a builtin carrier: the method is
+ * read (`[[Get]](C, "m")`) BEFORE the arguments, so an argument that replaces
+ * or nulls `C.m` cannot change which function runs; IsCallable is checked after
+ * the arguments; the captured callee is invoked exactly once with `this = C`.
+ * `__extern_method_call` resolves the name after the arguments, hence the
+ * dedicated sequence. Stack: `[] → [externref]`.
+ */
+function emitCapturedCarrierMethodCall(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+  recvLocal: number,
+  methodName: string,
+  arrPushName: string,
+): ValType {
+  const calleeLocal = allocLocal(fctx, `__emc_callee_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push({ op: "local.get", index: recvLocal });
+  fctx.body.push(...staticHostPropertyKeyInstrs(ctx, methodName));
+  fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__extern_get")! });
+  fctx.body.push({ op: "local.set", index: calleeLocal });
+  fctx.body.push({ op: "call", funcIdx: ensureObjVecBuilders(ctx).newIdx });
+  const argsLocal = allocLocal(fctx, `__emc_args_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push({ op: "local.set", index: argsLocal });
+  emitHostMethodCallArgs(ctx, fctx, expr, argsLocal, arrPushName, ensureObjVecBuilders(ctx).pushIdx);
+  const throwInstrs = buildThrowJsErrorInstrs(ctx, "TypeError", "called value is not a function", { flush: fctx });
+  fctx.body.push(
+    { op: "local.get", index: calleeLocal },
+    { op: "call", funcIdx: ctx.funcMap.get("__is_callable")! },
+    { op: "i32.eqz" },
+    { op: "if", blockType: { kind: "empty" }, then: throwInstrs },
+    { op: "local.get", index: calleeLocal },
+    { op: "local.get", index: recvLocal },
+    { op: "local.get", index: argsLocal },
+    { op: "call", funcIdx: reserveApplyClosure(ctx) },
+  );
+  return { kind: "externref" };
 }

@@ -76,7 +76,7 @@ import type { Instr, ValType } from "../../ir/types.js";
 import { allocLocal } from "../context/locals.js";
 import { stringConstantExternrefInstrs } from "../native-strings.js";
 import { buildThrowJsErrorInstrs } from "../js-errors.js";
-import { ensureObjVecBuilders, reserveApplyClosure } from "../object-runtime.js";
+import { applyClosureAdmitsCall, ensureObjVecBuilders, reserveApplyClosure } from "../object-runtime.js";
 import { addStringConstantGlobal } from "../registry/imports.js";
 import { coerceType, compileExpression } from "../shared.js";
 import { BUILTIN_CLASS_NAMES } from "./builtin-class-names.js";
@@ -84,14 +84,6 @@ import { sourceHasMethodOverride } from "./member-override-scan.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { compileArrayConcatNativeSpec } from "../array-concat-spec.js";
 import { tryEmitClassInstanceMemberCall } from "./class-instance-member-call.js";
-
-/**
- * `fillApplyClosure` dispatches arities 0..8 and answers the undefined sentinel
- * above that. Declining here instead keeps the fallback's behaviour verbatim
- * for the (vanishingly rare) 9+-argument case rather than routing it through a
- * bridge that would only return the same `undefined` more expensively.
- */
-const APPLY_CLOSURE_MAX_ARITY = 8;
 
 /**
  * The tail of `compileTailDispatch`: the stored-member-closure arm, then the
@@ -218,8 +210,8 @@ export function tryEmitNullishIdentifierCalleeTypeError(
   // slot). Dispatch it through the native open-`any` `__apply_closure`
   // classifier instead: a genuine non-callable still degrades to the same
   // undefined sentinel, while a real closure value is now actually applied.
-  const canApply =
-    !expr.arguments.some((a) => ts.isSpreadElement(a)) && expr.arguments.length <= APPLY_CLOSURE_MAX_ARITY;
+  // (#6959) Any non-spread argc: the bridge has an above-8 arm since #6655.
+  const canApply = applyClosureAdmitsCall(expr);
   const applyIdx = canApply ? reserveApplyClosure(ctx) : undefined;
   const vecBuilders = canApply ? ensureObjVecBuilders(ctx) : { newIdx: undefined, pushIdx: undefined };
   flushLateImportShifts(ctx, fctx);
@@ -340,8 +332,7 @@ export function tryEmitStoredMemberClosureCall(
   // re-routed through the dynamic bridge if one of them ever declines.
   if (BUILTIN_CLASS_NAMES.has(recvExpr.text)) return undefined;
 
-  if (expr.arguments.some((a) => ts.isSpreadElement(a))) return undefined;
-  if (expr.arguments.length > APPLY_CLOSURE_MAX_ARITY) return undefined;
+  if (!applyClosureAdmitsCall(expr)) return undefined;
 
   // THE ADMISSION TEST — the source must contain an `<expr>.<memberName> = …`
   // assignment somewhere. This is the #1397 scan that already gates the
@@ -553,8 +544,7 @@ function tryEmitProtoInheritedMethodCall(
   // `__apply_closure` when the static member read resolves).
   if (ts.isIdentifier(callee.expression)) return undefined;
   if (BUILTIN_CLASS_NAMES.has(callee.expression.getText())) return undefined;
-  if (expr.arguments.some((a) => ts.isSpreadElement(a))) return undefined;
-  if (expr.arguments.length > APPLY_CLOSURE_MAX_ARITY) return undefined;
+  if (!applyClosureAdmitsCall(expr)) return undefined;
 
   const memberName = callee.name.text;
   // (#4482) `defineProperty`-installed members too — see the note on the
