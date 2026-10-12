@@ -18,6 +18,7 @@ import {
   updateLocalType,
 } from "../expressions/helpers.js";
 import { emitAssignToTarget } from "../expressions/assignment.js";
+import { emitConditionalCaptureBoxRepair } from "../closures/conditional-capture-box.js"; // (#6939)
 import { emitForOfArrayIteratorDeletedGuard } from "../expressions/proto-override.js";
 import { emitConstIdentifierUpdateGuard, tryEmitForOfIdentifierWrite } from "../expressions/identifier-assignment.js";
 import { ensureLateImport, flushLateImportShifts, shiftLateImportIndices } from "../expressions/late-imports.js";
@@ -154,6 +155,85 @@ function compileLoopBodyWithShadows(ctx: CodegenContext, fctx: FunctionContext, 
   } else {
     compileStatement(ctx, fctx, body);
   }
+}
+
+type BoxedVarCell = { refCellTypeIdx: number; valType: ValType };
+
+/**
+ * (#6939) The live ref cell a `var` for-head binding is stored in, if any.
+ * Direct-eval reification (`__direct_eval_cell_*`) and closure capture boxing
+ * (#1177/#3396) re-aim `localMap[name]` at a ref-cell local BEFORE the loop
+ * compiles, so the head must write through the cell rather than re-type the
+ * slot to the counter type. Same liveness rule as variables.ts
+ * `dropStaleBindingBox` (#5148): an entry whose live storage local is not that
+ * cell type belongs to a different (shadowing) binding and is dropped.
+ */
+function liveBoxedVarCell(fctx: FunctionContext, name: string): BoxedVarCell | undefined {
+  const entry = fctx.boxedCaptures?.get(name);
+  const storageIdx = fctx.localMap.get(name);
+  if (!entry || storageIdx === undefined) return entry;
+  const t = getLocalType(fctx, storageIdx);
+  if ((t?.kind === "ref" || t?.kind === "ref_null") && t.typeIdx === entry.refCellTypeIdx) return entry;
+  fctx.boxedCaptures?.delete(name);
+  return undefined;
+}
+
+/**
+ * (#6939) Store the value on the stack (of `stackType`) into a boxed `var`
+ * for-head binding: `cell.value = v`, null-guarded exactly like the
+ * variables.ts `boxedForInitStore` arm. The cell local is re-resolved here, after
+ * the initializer compiled (#4368: the initializer can be what boxes the name).
+ */
+function emitBoxedVarHeadStore(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  name: string,
+  cell: BoxedVarCell,
+  stackType: ValType,
+): void {
+  if (!valTypesMatch(stackType, cell.valType)) coerceType(ctx, fctx, stackType, cell.valType);
+  const cellIdx = fctx.localMap.get(name)!;
+  const tmp = allocLocal(fctx, `__box_init_tmp_${fctx.locals.length}`, cell.valType);
+  fctx.body.push({ op: "local.set", index: tmp });
+  // The cell may be unminted: the closure that boxed `name` sat in a skipped
+  // arm. Seed it from the pre-box slot first, or this store silently no-ops.
+  emitConditionalCaptureBoxRepair(fctx, name, cellIdx);
+  fctx.body.push({ op: "local.get", index: cellIdx });
+  fctx.body.push({ op: "ref.is_null" });
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "empty" },
+    then: [],
+    else: [
+      { op: "local.get", index: cellIdx },
+      { op: "local.get", index: tmp },
+      { op: "struct.set", typeIdx: cell.refCellTypeIdx, fieldIdx: 0 },
+    ],
+  });
+}
+
+/**
+ * (#6939) `var` for-head declarator over a live boxed cell (eval-visible
+ * binding / closure capture): evaluate the initializer once (cell `valType`
+ * hint) — or take the already-compiled value of `stackType` — and store it
+ * through the cell. Only the storage differs from the plain arm; ECMA-262
+ * §14.7.4.2 evaluation order is unchanged. Returns false when not boxed.
+ */
+function tryStoreBoxedVarHead(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  name: string,
+  init: ts.Expression | ValType | undefined,
+): boolean {
+  const cell = liveBoxedVarCell(fctx, name);
+  if (!cell) return false;
+  if (init === undefined) return true;
+  const stackType =
+    typeof init.kind === "string" // ValType (a ts.Node's kind is a number)
+      ? (init as ValType)
+      : (compileExpression(ctx, fctx, init as ts.Expression, cell.valType) ?? cell.valType);
+  emitBoxedVarHeadStore(ctx, fctx, name, liveBoxedVarCell(fctx, name) ?? cell, stackType);
+  return true;
 }
 
 /** Emit the unobserved step of an already-promoted i32 induction variable. */
@@ -464,6 +544,7 @@ export function compileForStatement(ctx: CodegenContext, fctx: FunctionContext, 
         if (decl.initializer && (ts.isArrowFunction(decl.initializer) || ts.isFunctionExpression(decl.initializer))) {
           const actualType = compileExpression(ctx, fctx, decl.initializer);
           const closureType = actualType ?? { kind: "externref" as const };
+          if (isVar && tryStoreBoxedVarHead(ctx, fctx, name, closureType)) continue; // (#6939) never re-type a cell
           // Reuse existing local for var re-declaration
           const existingIdx = fctx.localMap.get(name);
           const localIdx =
@@ -479,6 +560,7 @@ export function compileForStatement(ctx: CodegenContext, fctx: FunctionContext, 
           continue;
         }
 
+        if (isVar && tryStoreBoxedVarHead(ctx, fctx, name, decl.initializer)) continue; // (#6939) keep the cell
         const varType = ctx.checker.getTypeAtLocation(decl);
         let wasmType = resolveWasmType(ctx, varType);
 

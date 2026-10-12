@@ -9549,7 +9549,8 @@ export function fillFnctorPrototypeDispatchArms(ctx: CodegenContext): void {
   // key/entry locals are appended once below.
   const HSTR = ctx.hashedStrTypeIdx;
   const objTypes = ctx.objectRuntimeTypes;
-  const inlineCacheReady = HSTR >= 0 && objTypes !== undefined;
+  const hasOwnIdxForCache = ctx.funcMap.get("__hasOwnProperty");
+  const inlineCacheReady = HSTR >= 0 && objTypes !== undefined && hasOwnIdxForCache !== undefined;
   let khLocal = -1;
   let entryLocal = -1;
   if (inlineCacheReady) {
@@ -9590,6 +9591,7 @@ export function fillFnctorPrototypeDispatchArms(ctx: CodegenContext): void {
                 { op: "ref.cast", typeIdx: HSTR },
                 { op: "local.tee", index: khLocal },
                 { op: "struct.get", typeIdx: HSTR, fieldIdx: 4 }, // populated flag
+                ...receiverHasNoOwnKeyGuard(ctx, hasOwnIdxForCache!), // (#6946) own method shadows the cached proto one
                 {
                   op: "if",
                   blockType: { kind: "empty" },
@@ -9883,6 +9885,34 @@ export function unshiftExternGetStringExoticArm(ctx: CodegenContext): void {
  * entry flags) confines hits to receivers of that same class. MUST be called
  * LAST among the `__extern_get` body fills.
  */
+/**
+ * (#6946) AND "receiver (param 0) has no own `key` (param 1)" into the i32 on
+ * the stack — the guard both prototype-cache hit arms need before answering from
+ * the prototype (§10.1.8.1 OrdinaryGet consults own storage first). Only reached
+ * for fnctor receivers, whose own expandos live in the carrier `$bag`
+ * (#4194/#4241): `__closure_bag_lookup` is a per-carrier `struct.get`, so the
+ * common no-expando receiver pays one call + null test and keeps the hit; a
+ * receiver WITH a bag skips the cache for the exact slow path. Without that
+ * helper, fall back to the full `__hasOwnProperty` predicate.
+ */
+function receiverHasNoOwnKeyGuard(ctx: CodegenContext, hasOwnIdx: number): Instr[] {
+  const bagLookupIdx = ctx.funcMap.get("__closure_bag_lookup");
+  if (bagLookupIdx !== undefined)
+    return [
+      { op: "local.get", index: 0 },
+      { op: "call", funcIdx: bagLookupIdx },
+      { op: "ref.is_null" },
+      { op: "i32.and" },
+    ];
+  return [
+    { op: "local.get", index: 0 },
+    { op: "local.get", index: 1 },
+    { op: "call", funcIdx: hasOwnIdx },
+    { op: "i32.eqz" },
+    { op: "i32.and" },
+  ];
+}
+
 export function unshiftExternGetProtoCacheArm(ctx: CodegenContext): void {
   if (!ctx.standalone || ctx.hashedStrTypeIdx < 0) return;
   const HSTR = ctx.hashedStrTypeIdx;
@@ -9892,6 +9922,9 @@ export function unshiftExternGetProtoCacheArm(ctx: CodegenContext): void {
   const { objectTypeIdx, propEntryTypeIdx } = objTypes;
   const fn = ctx.mod.functions.find((candidate) => candidate.name === "__extern_get");
   if (!fn || !fn.locals.some((l) => l.name === "kh")) return;
+  // (#6946) Own-shadow guard for fnctor receivers; no own-presence probe, no cache.
+  const hasOwnIdx = ctx.funcMap.get("__hasOwnProperty");
+  if (hasOwnIdx === undefined) return;
   // (#3673 round 21) props-array type for the per-object staleness cast.
   const objDefForArm = ctx.mod.types[objectTypeIdx];
   const propMapIdxForArm =
@@ -9946,6 +9979,13 @@ export function unshiftExternGetProtoCacheArm(ctx: CodegenContext): void {
                 { op: "local.tee", index: 7 },
                 { op: "ref.is_null" },
                 { op: "i32.eqz" },
+                // (#6946) §10.1.8.1 OrdinaryGet consults OWN storage first: a
+                // fnctor receiver that has since gained an own `key` (an expando
+                // `this.v = x` shadowing an inherited default already cached for
+                // the class) must not take the prototype hit. The cache's
+                // staleness tracking is per OWNER (the prototype), so a write on
+                // the receiver never invalidates it — check the receiver here.
+                ...receiverHasNoOwnKeyGuard(ctx, hasOwnIdx),
                 {
                   op: "if",
                   blockType: { kind: "empty" },
