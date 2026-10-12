@@ -1651,6 +1651,46 @@ function runtimeEvalMayRebindIdentifier(
 }
 
 /**
+ * (#6967) Unsound-fold guard: `typeof NS.m` where `m` exists ONLY through JS
+ * assignment (`NS.m = {}` — a TS "expando" member). The checker types such a
+ * member with its EVENTUAL shape, which says nothing about whether the write
+ * has run at the `typeof` site, so the Prototype-style namespace guard
+ * `if (typeof Flog.RT == "undefined") Flog.RT = {}` folded to `false` and the
+ * init never ran (Octane raytrace). Expando declarations are the assignment's
+ * access/binary expression plus one container `Identifier` per nested
+ * `NS.m.<x> = …` write; any other declaration kind (object-literal property,
+ * class field, interface member, variable, …) means the member exists before
+ * any read and the fold stays sound.
+ */
+function typeofOperandIsAssignmentDeclaredMember(ctx: CodegenContext, operandRaw: ts.Expression): boolean {
+  let op = operandRaw;
+  while (
+    ts.isParenthesizedExpression(op) ||
+    ts.isAsExpression(op) ||
+    ts.isTypeAssertionExpression(op) ||
+    ts.isNonNullExpression(op) ||
+    ts.isSatisfiesExpression(op)
+  ) {
+    op = op.expression;
+  }
+  let nameNode: ts.Node;
+  if (ts.isPropertyAccessExpression(op) && !ts.isPrivateIdentifier(op.name)) nameNode = op.name;
+  else if (ts.isElementAccessExpression(op) && ts.isStringLiteralLike(op.argumentExpression)) {
+    nameNode = op.argumentExpression;
+  } else return false;
+  const decls = ctx.oracle.declarationsOf(nameNode);
+  if (decls.length === 0) return false;
+  return decls.every(
+    (d) =>
+      ts.isPropertyAccessExpression(d) ||
+      ts.isElementAccessExpression(d) ||
+      ts.isBinaryExpression(d) ||
+      ts.isCallExpression(d) ||
+      ts.isIdentifier(d),
+  );
+}
+
+/**
  * (#4394) Unsound-fold guard: a PARAMETER in a JavaScript source file whose
  * type comes only from JSDoc (`@param {Function} testFunc`) has no runtime
  * enforcement whatsoever — `asyncTest(null)` flows null straight into a
@@ -2067,6 +2107,7 @@ export function compileTypeofExpression(
   if (!forceRuntimeTypeof && paramUndefinedTypeIsDefaultArtifact(ctx, operand)) {
     forceRuntimeTypeof = true;
   }
+  if (!forceRuntimeTypeof && typeofOperandIsAssignmentDeclaredMember(ctx, operand)) forceRuntimeTypeof = true; // #6967
 
   // Try static resolution first via the shared helper
   if (!forceRuntimeTypeof) {
@@ -2342,6 +2383,7 @@ export function compileTypeofComparison(
   if (staticTypeof !== null && runtimeEvalMayRebindIdentifier(ctx, fctx, operand)) {
     staticTypeof = null;
   }
+  if (staticTypeof !== null && typeofOperandIsAssignmentDeclaredMember(ctx, guardOperand)) staticTypeof = null; // #6967
   if (strictWrapperThisTypeofIsDynamic(ctx, operand, tsType)) staticTypeof = null; // (#6770 S5)
   if (
     staticTypeof !== null &&

@@ -1,0 +1,201 @@
+---
+id: 6970
+title: "standalone: a `this.<m>` VALUE read inside a fnctor constructor (`this.init.apply(this, arguments)`) auto-registers `m` as an OWN struct field from the TS instance type, shadowing `F.prototype.m` → undefined (box2dweb `K.b2X.apply(this,arguments); this.constructor===K&&this.b2X.apply(this,arguments)` idiom, 48 sites in Octane box2d)"
+status: in-progress
+assignee: ttraenkler/claude-session-d
+sprint: current
+created: 2026-10-11
+priority: high
+horizon: m
+feasibility: medium
+reasoning_effort: high
+task_type: bugfix
+area: compiler
+language_feature: constructor-functions, prototype
+goal: standalone-gap
+related: [874, 6938, 5180, 2660, 6951, 6954]
+loc-budget-allow:
+  - src/codegen/property-access-dispatch.ts
+---
+
+# `finalizeStructAndDynamicMemberGet` mints a struct field for a prototype method read through `this`
+
+Found by the Octane standalone triage (Session D, 2026-10-11), one failure past the parseInt
+blocker (`.tmp/#6969`): box2d then fails with
+`Cannot read properties of undefined (reading 'SetV')` — instrumented (`.tmp/patch-box2d-setv.mjs`)
+the undefined receiver is `this.m_xf.position`, i.e. a `b2Transform` instance whose box2dweb
+"constructor body" never ran.
+
+## Minimized (`.tmp/bx18.js`, node `5`, standalone `TypeError: Cannot read properties of undefined (reading 'apply')`)
+
+```js
+function K() { this.init.apply(this, arguments); }
+K.prototype.init = function (v) { this.r = v; };
+export function main() { return new K(5).r; }
+```
+
+- `.tmp/bx26.js` (fold-proof): `var x = this.init; this.same = x === K.prototype.init; this.und =
+  x === undefined` → node `true:false`, standalone `false:false` — `x` is the struct field's NULL.
+- Controls: `.tmp/bx25.js` (`this.init(v)` CALL form) passes; `.tmp/bx22.js` (`var p =
+  K.prototype; p.init = …`) passes; `.tmp/bx11/12/13` (static `K.s`, `K.init.apply`) pass.
+- WAT (`.tmp/bx18.js.wat`): `(type $__fnctor_K (struct … (field $init (mut externref))))` vs
+  bx22/bx25 without `$init`.
+
+## Root cause
+
+`src/codegen/property-access-dispatch.ts` `finalizeStructAndDynamicMemberGet` (~4701-4800): when the
+receiver resolves to a struct type and the property is not a known field, it "auto-registers the
+property from the TS type" — `objType.getProperties()` of a JS constructor-function instance type
+INCLUDES the prototype methods, so `init` is appended as an own field (`fields.push(newField)`,
+line 4765; traced with a Proxy on the reserved field list) and the read becomes a `struct.get` of a
+never-written slot. The #6938 guard `fnctorProtoMemberRead` declines this only for NON-`this`
+receivers (`expr.expression.kind !== ts.SyntaxKind.ThisKeyword`); `this.<m>` inside the ctor body
+(`fctx.thisStructName = __fnctor_K`) still takes the auto-registration arm. The call form never
+reaches this arm (method-call dispatch has prototype arms), which is why only VALUE reads break.
+
+## Implementation Plan
+
+**File: `src/codegen/property-access-dispatch.ts`, `finalizeStructAndDynamicMemberGet` (~4707)**
+
+1. Widen the #6938 guard: also decline auto-registration for a `this` receiver when the TS property
+   is NOT declared by a `this.<p> = …` write — i.e. compute `tsProp = objType.getProperties().find(
+   p => p.name === propName)` and treat it as a prototype member when `tsProp.declarations` is
+   non-empty and none of them is a `this`-rooted `PropertyAccessExpression` (or a `BinaryExpression`
+   whose LHS is one). Then `fnctorProtoMemberRead = isFnctor && (receiverIsNotThis ||
+   thisReadOfNonOwnMember)` and the read takes the existing dynamic route (`__extern_get` →
+   `__fnctor_proto_start`), exactly as a non-`this` receiver does today.
+   Simulated patch: `/home/user/js2/.claude/worktrees/agent-af047ca9deb401f6e/.tmp/sim-fix-5-this-proto-member-read.diff`.
+2. Prefer `ctx.oracle.declarationsOf(expr.name)` over `tsProp.declarations` if the oracle ratchet
+   complains (the function already uses the checker heavily; check `check-coercion-sites`/oracle
+   gates before choosing).
+3. Do NOT touch `deriveFnctorFields` — the ctor-write derivation is correct; the leak is only the
+   read-site auto-registration.
+
+### Measured with the simulated fix
+- `.tmp/bx18/bx17/bx23/bx10` → node-identical; `.tmp/bx26.js` → `true:false`; controls
+  `bx25/bx11/bx13/bx22` unchanged.
+- **Residual, NOT fixed by this change — separate sub-cause (`.tmp/bx28.js`, node `number:number`,
+  standalone `reading 'apply'`):** the same idiom with the fnctor declared INSIDE an IIFE
+  (`(function(){ function w(){ … this.b2T.apply(this, arguments) } w.prototype.b2T = …; Box2D.make
+  = function(){ return new w(); } })()`). Top-level twin `.tmp/bx27.js` passes; nested fnctor call
+  form `.tmp/bx30.js` and outside reads/calls `.tmp/bx31/bx32.js` pass. WAT (`.tmp/bx28.js.wat`):
+  `$__fnctor_w_new` is `unreachable` (instances are driver-created `$Object`s), the struct has no
+  `b2T` field, and the in-ctor read goes through `__extern_get(this, "b2T")` (`$w` ~93542/93708)
+  and still answers undefined → the instance's [[Prototype]] is not linked to `w.prototype` DURING
+  the ctor body, while the outside route (`__fnctor_proto_start`) recovers it. Suspect:
+  `__object_create(__extern_get(wClosure, "prototype"))` seeds a null proto because
+  `closurePrototypeEdgeGetArm` only knows top-level singletons (closure-prototype-edge.ts header:
+  "a nested function memoized in a LOCAL … absent from the table"). Next step: probe
+  `Object.getPrototypeOf(this) === w.prototype` inside vs after the ctor in bx28, then route the
+  nested-fnctor `prototype` read through the per-fnctor prototype global the outside route uses.
+  Octane box2d's 48 wrappers are ALL IIFE-nested declarations, so box2d needs this residual too.
+
+### Acceptance
+- `tests/issue-<id>.test.ts` standalone vs node: `.tmp/bx18.js` → `5`; `.tmp/bx26.js` →
+  `true:false`; `.tmp/bx21.js`/`.tmp/bx28.js` → node-identical (residual); controls
+  `bx22/bx25/bx30/bx31/bx32` unchanged; a fnctor with a REAL own field written in the ctor and
+  read before the write (`function F(){ var a = this.x; this.x = 1; }`) still types `x` as a field.
+- box2d: `node --import tsx .tmp/octane-sa.mjs box2d --script --no-eval --patch
+  .tmp/patch-box2d-parseint.mjs` (compile ≈200 s) must pass `m_xf.position`; then the harness
+  `pnpm run -s benchmark:octane -- --only box2d --lanes node,standalone --timeout 600`.
+- Size: **M** (S for step 1 alone; the nested-fnctor residual is the M half).
+
+## Implementation notes (2026-10-11)
+
+### Step 1 — `this.<m>` read of a prototype member (property-access-dispatch.ts)
+
+On `origin/main` the #6938 guard (`fnctorProtoMemberRead`, non-`this` receivers) is not present
+(it lives on `c-octane-integ`), so the step-1 decline is NOT a widening of that guard: it is a
+separate module-level predicate `isThisReadOfFnctorPrototypeMember(typeName, expr, tsProp)`
+consulted at the field auto-register arm (`if (tsProp && !isThisReadOfFnctorPrototypeMember(…))`).
+That keeps the change orthogonal to #6938 — the two compose without a textual conflict on the
+`if (typeName && …)` line. The predicate is true for a `__fnctor_*` struct, a `this` receiver,
+and a TS property whose declarations are non-empty and include no `this`-rooted write
+(`this.p = …` / `this[p] = …`); the read then takes the existing dynamic `__extern_get` route.
+No checker query is added (it reads `tsProp.declarations` of the symbol the arm already holds).
+
+Measured (standalone, Script goal, no eval provider): `bx18/bx17/bx23/bx10` node-identical on
+`main`; on `c-octane-integ` additionally `bx26` → `true:false` (on `main` `bx26` reads
+`true:true`: the in-ctor `__extern_get(this,"init")` misses because `main` lacks #6949/#6951's
+prototype materialization/snapshot). Controls `bx22/bx25/bx11/bx13/bx27/bx29/bx30` unchanged.
+`tests/issue-6970-this-proto-member-read.test.ts`: base 8/16, head 16/16.
+
+### Step 2 — the IIFE-nested residual: a nested fnctor's ctor read its own boxed name as the cell (fnctor-constructor-identity.ts)
+
+Root cause of `bx28` (re-measured; the plan's "prototype not linked during the ctor" suspicion
+was wrong — `n1/n4` probes show `this.b2T` and `Object.getPrototypeOf(this) === w.prototype`
+are right inside a nested ctor). The failing read is the STATIC one, `w.b2T` (`n7/n8`): a
+function declared inside an IIFE and referenced by name from its own body / a sibling closure
+is captured as an already-boxed `__ref_cell_externref`. The lifted closure body (`$w`, the
+plain-call and native-construct-driver path) dereferences that cell (`struct.get $cell 0`),
+but the synthesized static-`new` constructor `__fnctor_w_new` received the cell as a capture
+param and used it AS the value: `w.b2T` became `__extern_get(extern.convert_any(cell), "b2T")`
+→ undefined, and `this.constructor === w` compared the instance's constructor against the
+cell → false. `registerFnctorCaptureParams` does mark an immutable capture whose param is a ref
+cell as a boxed capture, but recognised ref cells by `ctx.typeIdxToStructName` — and
+`getOrRegisterRefCellType` registers ref-cell types only in `ctx.refCellTypeMap`, so the check
+never fired. Fix: also recognise a type index that is one of `ctx.refCellTypeMap`'s values.
+(Out of the plan's named files — one predicate in the file that owns the ctor capture ABI.)
+
+Measured: `n8` (`typeof w.b2T` in the ctor under `new`) and `n11`/`n9` node-identical on
+`main`; on `c-octane-integ` + steps 1–2, `bx28` → `number:number` (node-identical). On `main`
+alone `bx28` still fails at the in-ctor `this.b2T` prototype read, which needs #6949/#6951
+(prototype materialization for every ordinary fnctor + construction-time snapshot), present
+on `c-octane-integ` but not yet on `main`.
+
+## Remaining (2026-10-11)
+
+**Octane box2d, measured on `c-octane-integ` (f7c1e86465) + #6969 + both #6970 commits**
+(`pnpm run -s benchmark:octane -- --only box2d --lanes node,standalone --timeout 900`; harness
+uses Script goal + `runtimeEvalProvider: false`): compiles (≈180 s), instantiates and passes
+module init (the #6969 `parseInt` trap is gone), then `octane_run` throws
+`TypeError: Cannot read properties of undefined (reading 'SetV')` — still the plan's
+`this.m_xf.position` site (`k.prototype.b2Body`), but for a NEW root cause, not this issue's:
+
+1. **Name-keyed fnctor ctor cache resolves a `var` alias to an unrelated same-named fnctor
+   (next box2d blocker; recommend a new issue).** `k.b2Body = function () { this.m_xf = new K; … }`
+   where `K` is `var K = Box2D.Common.Math.b2Transform` (the IIFE-nested wrapper `m`). The
+   execution trace (wasm-opt `--log-execution`) shows `new K` running `$__fnctor_K_new` — the
+   synthesized ctor of a DIFFERENT function named `K` declared in another IIFE (box2d's
+   minifier reuses `K`, `F`, `w`, `m` … in every IIFE). Instrumented: the object `new K` returns
+   is not the `this` the `w.b2Transform` initializer wrote `position`/`R` on, but carries
+   `constructor === b2Transform` (the hidden identity param is the real callee). Minimal repro
+   (`.tmp/n19.js`, fails on `main` too — node `number:undefined`, standalone `undefined:number`):
+   ```js
+   var NS = {};
+   (function () { function K() { this.wrong = 1; } NS.k = new K(); })();
+   (function () { function m() { this.right = 1; } NS.T = m; })();
+   (function () { var K = NS.T; NS.make = function () { return new K; }; })();
+   export function main() { var x = NS.make(); return typeof x.right + ":" + typeof x.wrong; }
+   ```
+   Cause: `compileNewExpression` (`expressions/new-super.ts`, identifier arm ~L7637) takes
+   `ctx.funcConstructorMap.get(calleeIdent.text)` — a cache keyed by identifier TEXT — before
+   checking that the callee's symbol is that function at all. The name keying runs through the
+   whole fnctor substrate (`__fnctor_<name>` structs, `funcConstructorMap`,
+   `nestedFuncCaptures`, `fnctorPrototypeObject` via `resolveUserFnctorName` → `sym.name`), so a
+   cache-only guard is not enough: a throwaway simulation that skips the cache when the callee's
+   declarations include no function declaration/expression made `new K` fall through to the
+   native construct driver, which then returned null for `n19` (the driver's
+   `resolveUserFnctorName` also answers by `sym.name`). Plan: key the fnctor registries by
+   declaration node (or a per-declaration unique name such as `K$<pos>`), and make the `new`
+   identifier arm resolve `getSymbolAtLocation(calleeIdent)` → declaration first, taking the
+   static fnctor path only when it IS a function declaration/expression and otherwise the native
+   construct driver with `proto = null`.
+
+2. **Split prototype brain for an IIFE-nested fnctor constructed through an alias** (`bx21`,
+   `.tmp/n10.js`; not on box2d's path — box2d writes `X.prototype.m` through the same aliases it
+   constructs with). `w.prototype.m = …` inside `w`'s own IIFE resolves to the per-fnctor
+   prototype global; `new Alias()` elsewhere goes through the native construct driver with
+   `proto = null` → `__extern_get(closure, "prototype")`, the closure side table — a different
+   object. `__closure_proto_of` (closure-prototype-edge.ts) only keys top-level singletons. Plan:
+   when a nested fnctor's closure value is materialised, seed its side-table `prototype` with the
+   (vivified) per-fnctor global, or add a per-closure arm to `__closure_proto_of`.
+
+3. On `main` alone `bx28` still fails at the in-ctor `this.b2T` prototype read; it passes once
+   #6949/#6951 (on `c-octane-integ`) land.
+
+Out-of-scope observations while measuring (all fail on `main` before this change):
+`function G(){this.v=7} G.prototype.get=function(){return this.v}; new G().get()` → standalone
+`NaN` (node 7); `function F(){var a=this.x; this.x=1; …}` reads the pre-write `this.x` as a
+number. `tests/issue-5162` standalone XFAIL rows and `tests/issue-2652` both lanes fail on
+`main` independently.

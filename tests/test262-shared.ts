@@ -10,6 +10,11 @@
  * memory reclaim of the vitest process itself.
  */
 import { parseTest262SemanticProviders, test262ResultPrefix } from "../scripts/test262-lane.mjs";
+import {
+  requireTest262CompilerPath,
+  test262CacheDirectoryName,
+  test262RequestedCompilerPathMetadata,
+} from "../scripts/test262-compiler-path.mjs";
 import { createHash } from "crypto";
 import {
   closeSync,
@@ -130,7 +135,8 @@ const DEFAULT_TEST_WEIGHT_MS = Number.isFinite(parsedDefaultTestWeightMs)
 
 // ── Cache setup (for disk cache side-effect) ───────────────────────
 
-const CACHE_DIR = join(import.meta.dirname ?? ".", "..", ".test262-cache");
+const TEST262_COMPILER_PATH = requireTest262CompilerPath(process.env.TEST262_COMPILER_PATH);
+const CACHE_DIR = join(import.meta.dirname ?? ".", "..", test262CacheDirectoryName(TEST262_COMPILER_PATH));
 mkdirSync(CACHE_DIR, { recursive: true });
 
 function buildCompilerHash(): string {
@@ -436,6 +442,7 @@ function recordResult(
     // comparisons (which would read oracle skew as regressions). Bump in
     // tests/test262-oracle-version.ts when the oracle tightens (e.g. #1945).
     oracle_version: ORACLE_VERSION,
+    ...test262RequestedCompilerPathMetadata(TEST262_COMPILER_PATH, TEST262_TARGET),
     // #3462: oracle LANE discriminator (the #3450 hybrid). "honest" is the
     // in-wasm v8 lane (host + standalone, the published number); a fast-mode
     // HOST run stamps "fast-nativeharness" and its own `oracle_fast_rev`. This

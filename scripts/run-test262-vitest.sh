@@ -51,6 +51,7 @@ if [ "$TEST262_SEMANTIC_PROVIDERS" != "auto" ]; then
   RESULT_PREFIX="${RESULT_PREFIX}-${TEST262_SEMANTIC_PROVIDERS}"
 fi
 export TEST262_SEMANTIC_PROVIDERS
+TEST262_COMPILER_PATH="${TEST262_COMPILER_PATH:-legacy}"
 # (#5385) The native-first lane measures the native semantic regime in the JS
 # environment (see CompileTargetProfile.nativeRegime); opt-in mirrors CI.
 if [ "$TEST262_SEMANTIC_PROVIDERS" = "native-first" ]; then
@@ -58,7 +59,20 @@ if [ "$TEST262_SEMANTIC_PROVIDERS" = "native-first" ]; then
 fi
 
 forwarded_args=()
+expect_compiler_path=0
 for arg in "$@"; do
+  if [ "$expect_compiler_path" = "1" ]; then
+    TEST262_COMPILER_PATH="$arg"
+    expect_compiler_path=0
+    continue
+  fi
+  if [ "$arg" = "--compiler-path" ]; then
+    expect_compiler_path=1
+    continue
+  fi
+  case "$arg" in
+    --compiler-path=*) TEST262_COMPILER_PATH="${arg#--compiler-path=}"; continue ;;
+  esac
   if [ "$arg" = "--include-proposals" ]; then
     INCLUDE_PROPOSALS=1
   elif [ "$arg" = "--official-scope-only" ]; then
@@ -67,6 +81,19 @@ for arg in "$@"; do
     forwarded_args+=("$arg")
   fi
 done
+if [ "$expect_compiler_path" = "1" ]; then
+  echo "ERROR: --compiler-path requires legacy or ir"; exit 2
+fi
+case "$TEST262_COMPILER_PATH" in
+  legacy) ;;
+  ir)
+    node "$SCRIPT_DIR/check-test262-compiler-path.mjs" --compiler-path ir \
+      --status "$RESULTS_DIR/${RESULT_PREFIX}-ir-status.json"
+    exit 2
+    ;;
+  *) echo "ERROR: compiler path must be legacy or ir"; exit 2 ;;
+esac
+export TEST262_COMPILER_PATH
 export TEST262_INCLUDE_PROPOSALS="$INCLUDE_PROPOSALS"
 export TEST262_TARGET
 export TEST262_RESULT_PREFIX="$RESULT_PREFIX"
@@ -503,6 +530,7 @@ if [ "$COMPLETENESS_OK" = true ]; then
     --input "$JSONL_FILE"
     --output "$REPORT_FILE"
     --target "$TEST262_TARGET"
+    --compiler-path "$TEST262_COMPILER_PATH"
     --baseline-generated-at "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   )
   if [ "$INCLUDE_PROPOSALS" = "1" ]; then
