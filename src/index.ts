@@ -676,6 +676,14 @@ export interface CompileOptions {
    * leaves it `true` (default) for genuine module tests, so the compiler sees
    * the source's *true* strictness rather than the wrapper artifact. An explicit
    * `"use strict"` prologue and class context still force strict regardless.
+   *
+   * (#6937) `false` is the Script-goal switch for a single-file source whose
+   * top-level `export` is a synthetic entry point: function code is sloppy and
+   * top-level `this` is the global object. On the standalone and WASI targets,
+   * top-level `var`/function declarations are also published as global-object
+   * properties; the JS-host (gc) target does not publish them onto the host
+   * global object yet (known limitation). Use it for benchmark drivers and
+   * test wrappers; never for real module input.
    */
   inferModuleStrictArguments?: boolean;
   /**

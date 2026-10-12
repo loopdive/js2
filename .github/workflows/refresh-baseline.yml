@@ -192,6 +192,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # The existing 102-shard budget now belongs entirely to standalone.
         chunk:
           [
             1,
@@ -251,18 +252,53 @@ jobs:
             55,
             56,
             57,
+            58,
+            59,
+            60,
+            61,
+            62,
+            63,
+            64,
+            65,
+            66,
+            67,
+            68,
+            69,
+            70,
+            71,
+            72,
+            73,
+            74,
+            75,
+            76,
+            77,
+            78,
+            79,
+            80,
+            81,
+            82,
+            83,
+            84,
+            85,
+            86,
+            87,
+            88,
+            89,
+            90,
+            91,
+            92,
+            93,
+            94,
+            95,
+            96,
+            97,
+            98,
+            99,
+            100,
+            101,
+            102,
           ]
-        # #3381 — second matrix dimension so each chunk runs BOTH host and
-        # standalone, mirroring test262-sharded.yml's 57x2 matrix. Without this
-        # the scheduled/emergency refresh produced HOST results only, so the
-        # public standalone report had no refresh path and stranded stale
-        # (2026-07-17: 57.3% for ~7h while host was fresh). 57 chunks x 2 targets
-        # = 114 jobs; acceptable because this workflow runs at most every 8h (or
-        # on manual dispatch), NOT per-PR.
         target:
-          - name: js-host
-            test262_target: gc
-            result_prefix: test262
           - name: standalone
             test262_target: standalone
             result_prefix: test262-standalone
@@ -274,13 +310,13 @@ jobs:
       # independent 512 MiB cap.
       VITEST_FORK_MAX_OLD_SPACE_SIZE: "1024"
       TEST262_INCLUDE_PROPOSALS: "1"
-      # #3381 — select host (gc) vs standalone lane; the runner reads these to
-      # pick the compile target and name its JSONL (tests/test262-shared.ts).
+      # Measure standalone; use the matching result prefix for merging.
       TEST262_TARGET: ${{ matrix.target.test262_target }}
       TEST262_RESULT_PREFIX: ${{ matrix.target.result_prefix }}
       JS2WASM_EVAL_ENGINE: ${{ matrix.target.test262_target == 'standalone' && 'quickjs' || '' }}
       # Namespace by target so host + standalone shards for the same chunk never
       # collide on the JSONL path / blob outfile / artifact name.
+      TEST262_CHUNK_TOTAL: "102"
       RUN_TIMESTAMP: ${{ github.run_id }}-${{ matrix.target.name }}-chunk${{ matrix.chunk }}
       # Harmless under QuickJS; load-bearing when a developer explicitly runs
       # this lane with the native interpreter selector.
@@ -341,7 +377,8 @@ jobs:
         run: |
           mkdir -p vitest-blob
           set +e
-          node node_modules/vitest/dist/cli.js run tests/test262-chunk${{ matrix.chunk }}.test.ts \
+          export TEST262_CHUNK_INDEX=$(( ${{ matrix.chunk }} - 1 ))
+          node node_modules/vitest/dist/cli.js run tests/test262-chunk-dynamic.test.ts \
             --reporter=blob \
             --outputFile=vitest-blob/blob-${{ matrix.target.name }}-${{ matrix.chunk }}.json
           exit_code=$?
@@ -439,11 +476,12 @@ jobs:
           pattern: emergency-*-shard-*
           merge-multiple: false
 
-      - name: Merge JS-host test262 JSONL results
+      - name: Preserve frozen JS-host baseline for publishing consumers
         run: |
-          mkdir -p merged-reports
-          find shard-artifacts/emergency-js-host-shard-* -name 'test262-results-*.jsonl' -print0 | sort -z | xargs -0 cat > merged-reports/test262-results-merged.jsonl
-          test -s merged-reports/test262-results-merged.jsonl
+          git clone --depth=1 --filter=blob:none --no-checkout https://github.com/loopdive/js2wasm-baselines.git /tmp/frozen-host-baseline
+          git -C /tmp/frozen-host-baseline sparse-checkout set --no-cone /test262-current.json /test262-current.jsonl
+          git -C /tmp/frozen-host-baseline checkout main
+          node scripts/preserve-frozen-host-baseline.mjs /tmp/frozen-host-baseline merged-reports
 
       - name: Merge standalone test262 JSONL results
         run: |
@@ -454,21 +492,9 @@ jobs:
           find shard-artifacts/emergency-standalone-shard-* -name 'test262-standalone-results-*.jsonl' -print0 | sort -z | xargs -0 cat > merged-reports/test262-standalone-results-merged.jsonl
           test -s merged-reports/test262-standalone-results-merged.jsonl
 
-      - name: Validate merged JS-host Test262 verdict completeness (#5215)
-        env:
-          EXPECTED_SHARDS: "57"
-        run: |
-          mapfile -d '' manifests < <(find shard-artifacts/emergency-js-host-shard-* -type f -name 'test262-results-*.shard-*.complete.json' -print0 | sort -z)
-          manifest_args=()
-          for manifest in "${manifests[@]}"; do manifest_args+=(--manifest "$manifest"); done
-          node scripts/validate-test262-completeness.mjs \
-            --input merged-reports/test262-results-merged.jsonl \
-            --expected-shards "$EXPECTED_SHARDS" \
-            "${manifest_args[@]}"
-
       - name: Validate merged standalone Test262 verdict completeness (#5215)
         env:
-          EXPECTED_SHARDS: "57"
+          EXPECTED_SHARDS: "102"
         run: |
           mapfile -d '' manifests < <(find shard-artifacts/emergency-standalone-shard-* -type f -name 'test262-standalone-results-*.shard-*.complete.json' -print0 | sort -z)
           manifest_args=()
@@ -477,20 +503,6 @@ jobs:
             --input merged-reports/test262-standalone-results-merged.jsonl \
             --expected-shards "$EXPECTED_SHARDS" \
             "${manifest_args[@]}"
-
-      - name: Build merged test262 report
-        run: |
-          # --baseline-sha records the main commit this baseline was generated
-          # from into the report's `baseline_sha` field, matching the
-          # test262-sharded.yml promote-baseline path. The #1668 stale-baseline
-          # guard and the #2562 src-aware drift gate both parse this main-sha
-          # (from the baselines-repo commit subject below) — without it, a
-          # refreshed baseline can't be proven content-current.
-          node scripts/build-test262-report.mjs \
-            --input merged-reports/test262-results-merged.jsonl \
-            --output merged-reports/test262-report-merged.json \
-            --baseline-sha "${{ github.sha }}" \
-            --include-proposals
 
       - name: Build merged standalone test262 report
         run: |
@@ -578,7 +590,6 @@ jobs:
 
       - name: Regenerate edition buckets
         run: |
-          node --experimental-strip-types scripts/generate-editions.ts --results benchmarks/results/test262-current.jsonl
           # (#4362) The STANDALONE twin. This job — not promote-baseline — is
           # what actually lands runs/editions-index.json in the baselines repo
           # (measured 2026-08-14: every commit touching that file is a
@@ -653,9 +664,6 @@ jobs:
           fi
 
           # Copy fresh artifacts (JSONL lives here, not in the main repo)
-          cp merged-reports/test262-results-merged.jsonl /tmp/js2wasm-baselines/test262-current.jsonl
-          cp merged-reports/test262-report-merged.json   /tmp/js2wasm-baselines/test262-current.json
-          cp merged-reports/test262-results-merged.jsonl /tmp/js2wasm-baselines/test262-results.jsonl
           # #3381 — standalone artifacts under the exact filenames the pipeline
           # already uses: test262-standalone-report.json is what
           # baseline-summary-sync.yml sparse-checkouts; test262-standalone-current.jsonl
@@ -665,41 +673,12 @@ jobs:
           cp merged-reports/test262-standalone-report-merged.json   /tmp/js2wasm-baselines/test262-standalone-report.json
           cp merged-reports/test262-standalone-results-merged.jsonl /tmp/js2wasm-baselines/test262-standalone-results.jsonl
 
-          # Update runs/index.json (trend graph history lives in baselines)
-          node -e "
-          const fs = require('fs');
-          const report = JSON.parse(fs.readFileSync('/tmp/js2wasm-baselines/test262-current.json', 'utf8'));
-          const indexPath = '/tmp/js2wasm-baselines/runs/index.json';
-          fs.mkdirSync('/tmp/js2wasm-baselines/runs', { recursive: true });
-          const idx = fs.existsSync(indexPath) ? (() => { try { return JSON.parse(fs.readFileSync(indexPath, 'utf8')); } catch { return []; } })() : [];
-          const entry = {
-            timestamp: new Date().toISOString().replace(/[-:]/g, '').replace('T', '-').substring(0, 15),
-            pass: report.summary.pass,
-            fail: report.summary.fail,
-            ce: report.summary.compile_error || 0,
-            skip: report.summary.skip || 0,
-            total: report.summary.total,
-            strict_pass: (report.strict_summary || {}).pass || 0,
-            strict_total: (report.strict_summary || {}).total || 0,
-            gitHash: '${{ github.sha }}'.substring(0, 8),
-          };
-          const last = idx[idx.length - 1];
-          if (!last || last.pass !== entry.pass || last.total !== entry.total) {
-            idx.push(entry);
-            fs.writeFileSync(indexPath, JSON.stringify(idx, null, 2));
-            console.log('Appended to runs/index.json:', entry.pass, '/', entry.total);
-          } else {
-            console.log('Skipped duplicate entry');
-          }
-          "
-
           # Append per-ES-edition + standalone trend history (landing-page
           # mini graphs). Both editions.json (regenerated above) and the
           # standalone report are already fresh on disk in this job.
           # Best-effort — never blocks the baseline refresh pipeline.
           node scripts/append-run-history.mjs \
             --runs-dir /tmp/js2wasm-baselines/runs \
-            --editions website/public/benchmarks/results/test262-editions.json \
             --standalone-editions website/public/benchmarks/results/test262-standalone-editions.json \
             --standalone-report /tmp/js2wasm-baselines/test262-standalone-current.json \
             --sha "${{ github.sha }}" || echo "::warning::append-run-history failed (non-fatal)"
@@ -721,9 +700,9 @@ jobs:
             # is unambiguous. Host + standalone counts are both recorded, matching
             # test262-sharded.yml's "N/T host, N/T standalone (<sha>)" format.
             if [ "${IS_FORCED}" = "true" ]; then
-              git commit -m "chore(test262): FORCED baseline refresh by ${ACTOR} — ${PASS}/${TOTAL} host, ${STANDALONE_PASS}/${STANDALONE_TOTAL} standalone (${{ github.sha }})"
+              git commit -m "chore(test262): FORCED baseline refresh by ${ACTOR} — ${PASS}/${TOTAL} frozen host, ${STANDALONE_PASS}/${STANDALONE_TOTAL} standalone (${{ github.sha }})"
             else
-              git commit -m "chore(test262): scheduled baseline refresh by ${ACTOR} — ${PASS}/${TOTAL} host, ${STANDALONE_PASS}/${STANDALONE_TOTAL} standalone (${{ github.sha }})"
+              git commit -m "chore(test262): scheduled baseline refresh by ${ACTOR} — ${PASS}/${TOTAL} frozen host, ${STANDALONE_PASS}/${STANDALONE_TOTAL} standalone (${{ github.sha }})"
             fi
             # (#3382 / #2942) Resilient push. A concurrent test262-sharded
             # promote-baseline can advance js2wasm-baselines between our clone and

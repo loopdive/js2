@@ -1,0 +1,9 @@
+# 2026-10-10 Octane earley-boyer.js (+ base.js), triage driver shape (.tmp/oct-repro.mjs), head of #6939
+# base (main 01e4888aae): INVALID on both lanes — sc_jsNew local.tee[0] expected (ref null N), found local.get of type i32
+earley-boyer [gc] compile 15723ms success=true
+VALID
+earley-boyer [standalone] compile 43303ms success=true
+VALID
+# run: instantiate + octane_run(1) — new first failures, NOT #6939 scope
+gc:         RUNTIME: result is not defined   (host import via src/runtime.ts, from __fn_tramp_RunBenchmark_cached <- __closure_275)
+standalone: instantiate needs js2wasm:runtime-eval.__runtime_apply_interpreted / __runtime_direct_eval (direct eval, no provider supplied)
