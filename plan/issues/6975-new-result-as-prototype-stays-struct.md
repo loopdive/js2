@@ -95,10 +95,17 @@ base vs head.
   head both 1189/1235 with the identical 46 failing rows; no pass→fail.
 - `node scripts/equivalence-gate.mjs` (after merging `origin/main` a87e4b905a): 1748 passing,
   22 known failures, no new regressions.
-- Octane box2d on `c-octane-integ` + #6974 + this fix (`--lanes node,standalone --timeout 900`):
-  gets past `SetAsEdge` and fails later with `TypeError: Cannot access property on null or
-  undefined at 620:218` (`b2Island.Solve`, `e.m_force.x`). Node 109293, standalone
-  `runtime-error`.
+- Octane box2d (`--lanes node,standalone --timeout 900`), measured 2026-10-12 on a throwaway
+  branch = `c-octane-integ` 3dc4b64076 + #6974 (net diff fcda5c1bb3..ada13070a9, which applies
+  cleanly; cherry-picking ada13070a9 alone conflicts because its parent is the #6974 WIP commit)
+  + this fix:
+  - base (without this fix): standalone `runtime-error — TypeError: called value is not a
+    function` (`SetAsEdge`); node 79201.
+  - head: gets past `SetAsEdge`, standalone `runtime-error — TypeError: Cannot access property on
+    null or undefined at 620:218` (`b2Island.Solve`, `e.m_force.x`); node 47907.
+  - head + the throwaway half-fix described under Remaining: standalone **PASS**
+    (`pass-unvalidated`, 1206 = 0.03x of node 53340). Node scores vary run to run on the shared
+    4-core box.
 
 ## Remaining
 
@@ -131,6 +138,10 @@ base vs head.
   whose allocated slot (local, parameter or module global) is not `f64`/`i32` — the slot is the
   authority, as in `fnctorNewResultConsumedAsExternref`. Give `staticTypeofForType`'s identifier
   caller the same guard (answer `null` → runtime `__typeof`). A 6-line throwaway patch of the
-  first half alone, measured on `c-octane-integ` + #6974 + #6975, makes **box2d PASS on standalone**
-  (`pass-unvalidated`, score 1677 = 0.02x of node's 111036). Not shipped here because it is a
-  different family from this issue (a static-type fold, not a prototype link).
+  first half alone (the receiver identifier's `fctx.localMap` slot, via `getLocalType`, must be
+  `f64`/`i32` or the fold declines), measured on `c-octane-integ` + #6974 + #6975, makes **box2d
+  PASS on standalone** (`pass-unvalidated`; 1677 = 0.02x of node 111036 on 2026-10-11, and 1206 =
+  0.03x of node 53340 on 2026-10-12). With that half alone the repro answers
+  `number:object:object`: the property read is right, `typeof e` still folds. Not shipped here: it
+  is a different family (a static-type fold, not a prototype link) and its files are outside this
+  issue's scope. It needs its own issue id.
