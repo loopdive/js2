@@ -885,6 +885,12 @@ jobs:
           fetch-depth: 0
       - name: Verify issue-test scheduling controls
         run: node --test scripts/select-changed-issue-tests.test.mjs
+      - name: Verify Test262 compiler-path and website IR controls
+        run: >-
+          node --test --test-concurrency=1
+          scripts/test262-compiler-path.test.mjs
+          scripts/website-ir-view-state.test.mjs
+          scripts/test262-ir-pages-artifacts.test.mjs
       - name: Select changed issue test files
         id: select
         env:
