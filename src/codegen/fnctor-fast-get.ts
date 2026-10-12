@@ -112,6 +112,28 @@ function fieldSignature(def: unknown): string | undefined {
   return undefined;
 }
 
+/**
+ * (#6973 stage 2) The fnctor class `X` when field `fieldName` of struct
+ * `ownerStruct` is typed `(ref null $__fnctor_X)` — such a slot holds an `X`
+ * instance or null, so `this.<field>.m()` inside a typed twin may take the same
+ * guarded direct-call trampoline as a receiver-flow-proven identifier. Declines
+ * unless `$__fnctor_X`'s structure is unique in the module: a structurally
+ * identical sibling canonicalizes to the same Wasm type, and the trampoline's
+ * `ref.test` could not tell the two apart.
+ */
+export function fieldTypedFnctorClass(ctx: CodegenContext, ownerStruct: string, fieldName: string): string | undefined {
+  const field = ctx.structFields.get(ownerStruct)?.find((f) => f.name === fieldName);
+  if (field === undefined || (field.type.kind !== "ref" && field.type.kind !== "ref_null")) return undefined;
+  const typeIdx = field.type.typeIdx;
+  const names = [...ctx.structMap].filter(([, idx]) => idx === typeIdx).map(([name]) => name);
+  if (names.length !== 1 || !names[0]!.startsWith("__fnctor_")) return undefined;
+  const sig = fieldSignature(ctx.mod.types[typeIdx]);
+  if (sig === undefined || ctx.mod.types.some((def, idx) => idx !== typeIdx && fieldSignature(def) === sig)) {
+    return undefined;
+  }
+  return names[0]!.slice("__fnctor_".length);
+}
+
 function fieldNamesOf(def: unknown): string | undefined {
   const d = def as { kind: string; fields?: { name: string }[] };
   return d.kind === "struct" && d.fields ? d.fields.map((f) => f.name).join(",") : undefined;

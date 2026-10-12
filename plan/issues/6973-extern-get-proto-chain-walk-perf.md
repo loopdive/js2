@@ -23,9 +23,22 @@ loc-budget-allow:
   # present-element overwrite to `directOwnElementStore` (vec-overlay-carriers.ts)
   # instead of minting a descriptor companion (the deltablue leak).
   - src/codegen/vec-overlay.ts
+  # 2026-10-12 (#6973 stage 2): +35 — `this.<field>.m()` admission for the guarded
+  # direct-call trampoline, and the trampoline's own-expando-bag decline
+  # (`noOwnExpandoBag`) that keeps `o.m = f` shadowing the prototype twin.
+  - src/codegen/typed-this.ts
+  # 2026-10-12 (#6973 stage 2): +5 — the `vec[untypedKey]` read opts into the
+  # Number-key `__extern_get_idx` arm (array-nonindex-key.ts).
+  - src/codegen/property-access.ts
+coercion-sites-allow:
+  # 2026-10-12 (#6973 stage 2): `__unbox_number` on a key `__typeof_number` has
+  # just proven to be a Number box — an unbox, not a ToNumber coercion.
+  - src/codegen/array-nonindex-key.ts
 func-budget-allow:
   # 2026-10-12 (#6973 stage 2): same change, inside the fill.
   - src/codegen/vec-overlay.ts::fillVecOverlayHelpers
+  # 2026-10-12 (#6973 stage 2): the call-site flag above (+5).
+  - src/codegen/property-access.ts::compileElementAccessBody
 flat-dir-budget-allow:
   - src/codegen/fnctor-fast-get.ts # 2026-10-11 (#6973): the fnctor-instance __extern_get fast arm; sits with its flat fnctor-* siblings (fnctor-struct-proto-hop.ts, fnctor-identity-fields.ts) whose helpers it composes
 ---
