@@ -183,9 +183,12 @@ const MARK_NUM_NAME = "__vec_overlay_mark_num"; // (#6964)
  * (#6964) `$Object.flags` bit on a COMPANION: it has been registered in the
  * numeric-entry table (`__vec_overlay_num_state`). Above the eight bits the
  * object runtime documents (object-runtime.ts flag table); never set on a
- * user-visible object, and every reader masks its own bits.
+ * user-visible object, and every reader masks its own bits. NOT 0x100 (the
+ * module-namespace exotic brand, module-namespace-exotic.ts) nor 0x200 (the
+ * global-var binding brand): their prepended [[Get]]/[[Set]] arms test the
+ * bit on any `$Object`, so sharing one would route a companion through them.
  */
-const OBJ_FLAG_OVERLAY_NUMERIC = 0x100;
+const OBJ_FLAG_OVERLAY_NUMERIC = 0x400;
 /** `$Object.flags` field index (object-runtime.ts `objectFields`). */
 const OBJ_FLAGS_FIELD = 4;
 const ENSURE_NAME = "__vec_overlay_ensure";
