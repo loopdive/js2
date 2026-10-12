@@ -118,6 +118,7 @@ import {
   allowedCarriers,
   carrierDefaultInstrs,
   carrierRefWriteBack,
+  externSetStoreCarrierSet,
   type CarrierDefaultMode,
   type OverlayCarrier,
 } from "./vec-overlay-carriers.js";
@@ -784,11 +785,15 @@ export function reserveVecOverlayPrime(ctx: CodegenContext): number | undefined 
  * the carrier `anyLocal` holds? Mirrors the `__vec_dp_value` write-back rule:
  * an externref carrier takes anything, an f64 carrier only a strict number
  * (`$__box_number_struct` or i31); every other carrier answers 0 so the
- * overlay keeps the kind-incompatible value in its companion.
+ * overlay keeps the kind-incompatible value in its companion. A carrier with
+ * no `fillExternSetVecArms` store arm (`$ObjVec`, `__regexp_match_vec`) also
+ * answers 0: every caller `br`s out to that arm, which would skip the store.
  */
 function valueFitsCarrierInstrs(ctx: CodegenContext, carriers: readonly OverlayCarrier[], anyLocal: number): Instr[] {
   const boxNumTypeIdx = ctx.nativeBoxNumberTypeIdx;
+  const stored = externSetStoreCarrierSet(ctx);
   const fits = (c: OverlayCarrier): Instr[] => {
+    if (!stored.has(c.vecTypeIdx)) return [{ op: "i32.const", value: 0 }];
     if (c.kind === "externref") return [{ op: "i32.const", value: 1 }];
     if (c.kind !== "f64" || boxNumTypeIdx === undefined || boxNumTypeIdx < 0) return [{ op: "i32.const", value: 0 }];
     return [

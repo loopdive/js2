@@ -155,7 +155,7 @@ import { reserveProtoFunctionValue } from "./proto-function-value.js"; // (#4637
 import { buildFnctorMissingMethodDispatch } from "./fnctor-missing-method-dispatch.js";
 // (#4230 L1) the #3251 overlay companion as a THIRD key source for the vec key walks
 import { buildOverlayPushKeys, buildVecOverlayHasArm, reserveVecOverlayPushKeys } from "./vec-overlay-keys.js";
-import { allowedCarriers } from "./vec-overlay-carriers.js"; // (#6963) element-store key arm
+import { allowedCarriers, externSetStoreCarrierSet, recordExternSetStoreCarriers } from "./vec-overlay-carriers.js"; // (#6963)
 // (#6485) `__extern_has`'s numeric-key delegation — §13.10.1 ToPropertyKey.
 import { buildVecNumericKeyGetArm, buildVecNumericKeyHasArm } from "./vec-numeric-key-presence.js";
 // (#4194) instance expando substrate — composes AROUND the #3537/#3468 arms and
@@ -10476,7 +10476,8 @@ export function fillDynamicForinVecArms(ctx: CodegenContext): void {
  * whose reserved body is `__to_property_key(key)`. Prepend: a NON-NEGATIVE
  * i31 key on one of the JS-array carriers the descriptor overlay serves
  * (`allowedCarriers` — never a TypedArray view or another `$__vec_base`
- * subtype) is returned unchanged, so the store reaches the overlay's i31
+ * subtype — that also has a numeric store arm in `__extern_set`, so never
+ * `$ObjVec`) is returned unchanged, so the store reaches the overlay's i31
  * front door and this function's numeric arm without a number→string→index
  * round trip. Such a key's ToPropertyKey is its decimal string and has no
  * side effects; every other shape keeps the string canonicalisation.
@@ -10484,7 +10485,8 @@ export function fillDynamicForinVecArms(ctx: CodegenContext): void {
 function fillElemStoreKeyArm(ctx: CodegenContext): void {
   const fn = ctx.mod.functions.find((f) => f.name === "__elem_store_key");
   if (!fn) return;
-  const carriers = allowedCarriers(ctx);
+  const stored = externSetStoreCarrierSet(ctx);
+  const carriers = allowedCarriers(ctx).filter((c) => stored.has(c.vecTypeIdx));
   if (carriers.length === 0) return;
   const carrierTest: Instr[] = [];
   carriers.forEach((c, i) => {
@@ -10694,9 +10696,11 @@ export function fillExternSetVecArms(ctx: CodegenContext): void {
           { op: "return" },
         ];
 
+  const storeCarrierIdxs: number[] = [];
   for (const { typeIdx, arrTypeIdx, elemType } of carriers) {
     const unbox = unboxExternrefToVecElement(ctx, elemType);
     if (unbox === null) continue; // unsupported element kind → store no-op (as before)
+    storeCarrierIdxs.push(typeIdx);
     // Build fresh instruction objects for each control-flow arm. Reusing one
     // array here would share type-index-bearing nodes between `then`/`else`,
     // which later remap/finalize passes are allowed to mutate in place.
@@ -10741,6 +10745,7 @@ export function fillExternSetVecArms(ctx: CodegenContext): void {
     );
   }
   if (carrierArms.length === 0) return; // no writable carriers → leave body untouched
+  recordExternSetStoreCarriers(ctx, storeCarrierIdxs);
   fillElemStoreKeyArm(ctx);
 
   fn.locals.push(
