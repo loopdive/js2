@@ -1,10 +1,13 @@
 import { register } from "node:module";
+import { requireTest262CompilerPath } from "./test262-compiler-path.mjs";
+requireTest262CompilerPath(process.env.TEST262_COMPILER_PATH);
 register("tsx", import.meta.url);
 
 const { workerData, parentPort } = await import("worker_threads");
 const { runTest262File } = await import("../tests/test262-runner.ts");
 
 const { filePath, category } = workerData;
+requireTest262CompilerPath(workerData.compilerPath ?? process.env.TEST262_COMPILER_PATH);
 const relPath = filePath.replace(/.*test262\/test\//, "");
 
 try {

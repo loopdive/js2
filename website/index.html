@@ -1,6 +1,23 @@
 <!doctype html>
 <html lang="en">
   <head>
+    <script>
+      const initialIrQuery = new URLSearchParams(location.search);
+      if (initialIrQuery.has("ir") && initialIrQuery.get("ir") === "1")
+        document.documentElement.classList.add("t262-ir-pending");
+    </script>
+    <style>
+      .t262-ir-pending #compat-pass-rate,
+      .t262-ir-pending #compat-pass-rate-label,
+      .t262-ir-pending #feature-coverage,
+      .t262-ir-pending #feature-coverage-label,
+      .t262-ir-pending .conformance-diagrams,
+      .t262-ir-pending .edition-timeline-section,
+      .t262-ir-pending .feat-tables {
+        visibility: hidden;
+      }
+    </style>
+
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" href="./js2logo.svg" type="image/svg+xml" />
@@ -1897,11 +1914,16 @@
                 <input type="checkbox" id="host-support-toggle" />
                 <span>JS host</span>
               </label>
+              <label class="feat-toggle" id="conformance-ir-toggle" hidden style="display: none">
+                <input type="checkbox" />
+                <span>IR</span>
+              </label>
               <label class="feat-toggle">
                 <input type="checkbox" id="strict-only-toggle" />
                 <span>Strict mode</span>
               </label>
             </div>
+            <p id="conformance-ir-provenance" role="status" hidden></p>
           </div>
           <div class="diagram-panel">
             <h3 class="diagram-title">ECMAScript Conformance Pass Rate Over Time</h3>
@@ -4657,6 +4679,60 @@ console.log(instance.exports.run()); // &rarr; 55</pre
     <script type="module" src="./components/t262-conformance-trend.js"></script>
 
     <script>
+      const IR_SELECTED = window.t262ViewState.read().ir;
+      window.t262ViewState.bindIrToggle(document.getElementById("conformance-ir-toggle"));
+      const showIrProvenance = (measured, mode) => {
+        if (!IR_SELECTED) return;
+        const node = document.getElementById("conformance-ir-provenance");
+        node.hidden = false;
+        const filename = mode === "host" ? "test262-ir-report.json" : "test262-standalone-ir-report.json";
+        node.textContent = measured ? `IR · ${mode} · benchmarks/results/${filename}` : `IR · ${mode} · unmeasured`;
+      };
+      if (IR_SELECTED) {
+        const view = window.t262ViewState.read();
+        const hostToggle = document.getElementById("host-support-toggle");
+        if (view.mode) hostToggle.checked = view.mode === "host";
+        window.__conformanceEditionScope = view.edition || "overall";
+        const reportLink = document.getElementById("conformance-report-link");
+        reportLink.href = window.t262ViewState.linkTo("./benchmarks/report.html", view);
+        document.querySelectorAll(".feat-row .feat-badge").forEach((badge) => {
+          badge.className = "feat-badge nodata";
+          badge.textContent = "–";
+          badge.dataset.glyph = "–";
+          badge.title = "IR feature data is unmeasured.";
+        });
+        const coverage = document.getElementById("feature-coverage");
+        if (coverage) coverage.textContent = "Unmeasured";
+        const coverageLabel = document.getElementById("feature-coverage-label");
+        if (coverageLabel) coverageLabel.textContent = "IR feature coverage is unmeasured.";
+        const showUnmeasured = () => {
+          const message = document.createElement("div");
+          message.className = "conformance-unavailable";
+          message.setAttribute("role", "status");
+          message.textContent = "IR conformance is unmeasured. No verified IR results are available.";
+          document.getElementById("conformance-donut-slot").replaceChildren(message);
+          document.getElementById("compat-pass-rate").textContent = "Unmeasured";
+          document.getElementById("compat-pass-rate-label").textContent = message.textContent;
+          window.__conformanceHeadlineHydrated = true;
+          const mode = hostToggle.checked ? "host" : "standalone";
+          showIrProvenance(false, mode);
+          window.t262ViewState.irStatus("./benchmarks/results", mode).then((reason) => {
+            if (reason) message.textContent = `IR conformance is unmeasured. ${reason}`;
+          });
+          document
+            .getElementById("conformance-edition-timeline")
+            .setAttribute(
+              "src",
+              mode === "host"
+                ? "./benchmarks/results/test262-editions.json"
+                : "./benchmarks/results/test262-standalone-editions.json",
+            );
+          window.t262ViewState.write({ mode });
+        };
+        showUnmeasured();
+        hostToggle.addEventListener("change", showUnmeasured);
+        document.documentElement.classList.remove("t262-ir-pending");
+      }
       // #3071 — Prefer the same-origin deployed copy of the JS-host test262
       // report over raw.githubusercontent.com, which rate-limits (HTTP 429)
       // under normal visitor traffic and intermittently broke the conformance
@@ -4673,12 +4749,7 @@ console.log(instance.exports.run()); // &rarr; 55</pre
         let lastErr;
         for (const url of urls) {
           try {
-            const resp = await fetch(url);
-            if (!resp.ok) {
-              lastErr = new Error(`unavailable (${resp.status}): ${url}`);
-              continue;
-            }
-            return await resp.json();
+            return await window.t262ViewState.fetchData(url);
           } catch (err) {
             lastErr = err;
           }
@@ -5227,6 +5298,7 @@ console.log(instance.exports.run()); // &rarr; 55</pre
               window.__applyFeatureBadges(hostEnabled);
             }
             hostRows.forEach((row) => {
+              if (IR_SELECTED) return;
               const badge = row.querySelector(".feat-badge");
               if (!(badge instanceof HTMLElement)) return;
               const origClass = badge.dataset.origClass || "";
@@ -5344,9 +5416,7 @@ console.log(instance.exports.run()); // &rarr; 55</pre
               const url = hostEnabled
                 ? "./benchmarks/results/test262-editions.json"
                 : "./benchmarks/results/test262-standalone-editions.json";
-              const editionsResp = await fetch(url);
-              if (!editionsResp.ok) throw new Error("edition data unavailable");
-              const editions = await editionsResp.json();
+              const editions = await window.t262ViewState.fetchData(url, "editions");
               if (!Array.isArray(editions) || editions.length === 0) {
                 throw new Error("edition data unavailable");
               }
@@ -5420,9 +5490,14 @@ console.log(instance.exports.run()); // &rarr; 55</pre
           donut.setAttribute("skip", String(skip));
           donut.setAttribute("total", String(total));
           donut.setAttribute("caption-main", captionMain);
-          donut.setAttribute("caption-sub", captionSub);
+          donut.setAttribute("caption-sub", IR_SELECTED ? `IR ${captionSub}` : captionSub);
           donut.setAttribute("style", donutStyle);
-          updateHeadlineStat({ pass, fail, ce, skip, total }, captionMain, captionSub);
+          updateHeadlineStat(
+            { pass, fail, ce, skip, total },
+            captionMain,
+            IR_SELECTED ? `IR ${captionSub}` : captionSub,
+          );
+          showIrProvenance(true, hostToggle.checked ? "host" : "standalone");
         };
         const renderUnavailable = (captionMain, captionSub, detail) => {
           donutSlot.innerHTML = `
@@ -5435,7 +5510,8 @@ console.log(instance.exports.run()); // &rarr; 55</pre
               </div>
             </div>
           `;
-          updateHeadlineUnavailable(captionMain, captionSub, detail);
+          updateHeadlineUnavailable(captionMain, IR_SELECTED ? `IR ${captionSub}` : captionSub, detail);
+          showIrProvenance(false, hostToggle.checked ? "host" : "standalone");
         };
         const normalizeSummary = (summary, fallback = {}) => {
           const pass = Number(summary?.pass ?? fallback.pass ?? 0);
@@ -5489,9 +5565,7 @@ console.log(instance.exports.run()); // &rarr; 55</pre
           return { pass, fail, ce, skip, total: pass + fail + ce + skip };
         };
         const fetchJson = async (url) => {
-          const resp = await fetch(url);
-          if (!resp.ok) throw new Error(`unavailable: ${url}`);
-          return resp.json();
+          return window.t262ViewState.fetchData(url);
         };
         // (#2636) Per-edition standalone buckets, mirroring the JS-host
         // `test262-editions.json` mechanism. Built by generate-editions.ts over
@@ -5506,9 +5580,10 @@ console.log(instance.exports.run()); // &rarr; 55</pre
             if (!pending) {
               pending = (async () => {
                 try {
-                  const resp = await fetch("./benchmarks/results/test262-standalone-editions.json");
-                  if (!resp.ok) return new Map();
-                  const rows = await resp.json();
+                  const rows = await window.t262ViewState.fetchData(
+                    "./benchmarks/results/test262-standalone-editions.json",
+                    "editions",
+                  );
                   if (!Array.isArray(rows)) return new Map();
                   const map = new Map();
                   for (const row of rows) {
@@ -5561,7 +5636,7 @@ console.log(instance.exports.run()); // &rarr; 55</pre
           for (const key of Object.keys(node)) applyStandaloneHostFree(node[key]);
         };
         const loadStandaloneReport = async (hostReport) => {
-          const embedded = standalonePayloadFromHostReport(hostReport);
+          const embedded = IR_SELECTED ? null : standalonePayloadFromHostReport(hostReport);
           if (embedded && hasUsableSummary(embedded.summary ?? embedded.official_summary)) {
             applyStandaloneHostFree(embedded);
             return { report: embedded, source: "test262-current.json" };
@@ -5701,9 +5776,12 @@ console.log(instance.exports.run()); // &rarr; 55</pre
 
         try {
           // #3071 — same-origin first, raw.githubusercontent fallback.
-          const report = await fetchTest262ReportJson();
+          const report = await fetchTest262ReportJson().catch((error) => {
+            if (!IR_SELECTED) throw error;
+            return null;
+          });
           const overallSummary = report?.summary;
-          if (!overallSummary) throw new Error("overall summary unavailable");
+          if (!overallSummary && !IR_SELECTED) throw new Error("overall summary unavailable");
 
           const overall = normalizeSummary(overallSummary);
           const fullSummary = report?.full_summary ?? overallSummary;
@@ -5783,6 +5861,14 @@ console.log(instance.exports.run()); // &rarr; 55</pre
               renderDonut(standalone.summary, captionMain, options.captionSub);
               return;
             }
+            if (IR_SELECTED && !hasUsableSummary(report?.summary)) {
+              renderUnavailable(
+                captionMain,
+                "IR conformance",
+                "IR results for this lane are unmeasured or unavailable.",
+              );
+              return;
+            }
             const { summary } = applyConformanceOptions(hostSummary, { exactStrictSummary });
             renderDonut(summary, captionMain, options.captionSub);
           };
@@ -5849,6 +5935,13 @@ console.log(instance.exports.run()); // &rarr; 55</pre
           const syncEditionTimelineSrc = async () => {
             const token = ++editionSrcToken;
             const hostEnabled = hostToggle ? hostToggle.checked : true;
+            if (IR_SELECTED) {
+              editionTimeline.setAttribute(
+                "src",
+                hostEnabled ? EDITION_TIMELINE_SRC.host : EDITION_TIMELINE_SRC.standalone,
+              );
+              return;
+            }
             let src = EDITION_TIMELINE_SRC.host;
             if (!hostEnabled) {
               if (standaloneEditionsAvailable === null) {
@@ -5905,7 +5998,7 @@ console.log(instance.exports.run()); // &rarr; 55</pre
             applyUrlStateOnce(event.detail);
           });
 
-          if (report.timestamp) {
+          if (report?.timestamp) {
             editionTimeline.setAttribute("reference-timestamp", report.timestamp);
           } else {
             editionTimeline.removeAttribute("reference-timestamp");
@@ -5925,7 +6018,7 @@ console.log(instance.exports.run()); // &rarr; 55</pre
           // is now implicit via the edition-timeline slider (overall+proposal).
           // The donut / feature rows stay on current-standard ("overall") by default.
         } catch {
-          window.__conformanceEditionScope = "overall";
+          window.__conformanceEditionScope = IR_SELECTED ? initialViewState.edition || "overall" : "overall";
         }
       })();
 
@@ -6282,7 +6375,8 @@ console.log(instance.exports.run()); // &rarr; 55</pre
               bar.title = isLegacyResidue ? residueTitle : title;
             });
           } catch {
-            renderHeuristicEditionPassBars();
+            if (IR_SELECTED) document.querySelectorAll(".feat-edition-passbar").forEach((bar) => bar.remove());
+            else renderHeuristicEditionPassBars();
           }
         };
 
@@ -6369,11 +6463,12 @@ console.log(instance.exports.run()); // &rarr; 55</pre
         };
 
         const fetchFeaturesFrom = async (file) => {
-          for (const base of ["./", "/", "../"]) {
+          for (const base of IR_SELECTED ? ["./benchmarks/results/ir/"] : ["./", "/", "../"]) {
             try {
-              const resp = await fetch(`${base}${file}`);
-              if (!resp.ok) continue;
-              const payload = await resp.json();
+              const url = `${base}${file}`;
+              const resp = IR_SELECTED ? null : await fetch(url);
+              if (resp && !resp.ok) continue;
+              const payload = IR_SELECTED ? await window.t262ViewState.fetchData(url) : await resp.json();
               if (Array.isArray(payload?.features) && payload.features.length > 0) return payload.features;
             } catch {
               /* try next path */
@@ -6404,7 +6499,7 @@ console.log(instance.exports.run()); // &rarr; 55</pre
         };
 
         const [features, standaloneFeatures] = await Promise.all([fetchFeatures(), fetchStandaloneFeatures()]);
-        if (!features) return;
+        if (!features && (!IR_SELECTED || !standaloneFeatures)) return;
         const indexByName = (list) => {
           const map = new Map();
           for (const f of list ?? []) {
@@ -6412,7 +6507,7 @@ console.log(instance.exports.run()); // &rarr; 55</pre
           }
           return map;
         };
-        const hostByName = indexByName(features);
+        const hostByName = indexByName(features || []);
         const standaloneByName = standaloneFeatures ? indexByName(standaloneFeatures) : null;
 
         // (#4362) Applying the counts is now a re-runnable function keyed by
@@ -6420,7 +6515,7 @@ console.log(instance.exports.run()); // &rarr; 55</pre
         // per-row badge / "N / M" chip / "NN%" all switch datasets instead of
         // staying pinned to the js-host numbers they were hydrated with.
         const applyFeatureBadges = (hostEnabled = true) => {
-          const byName = !hostEnabled && standaloneByName ? standaloneByName : hostByName;
+          const byName = !hostEnabled ? standaloneByName || (IR_SELECTED ? new Map() : hostByName) : hostByName;
           applyRows(byName);
           // Re-cache AFTER the rewrite so the host toggle restores this lane's
           // derived badge, not the previous lane's.
@@ -6440,7 +6535,21 @@ console.log(instance.exports.run()); // &rarr; 55</pre
             if (row.dataset.featName === undefined) row.dataset.featName = decodeEntities(nameEl.textContent);
             const name = row.dataset.featName;
             const feature = byName.get(name);
-            if (!feature) continue;
+            if (!feature) {
+              if (IR_SELECTED) {
+                const badge = row.querySelector(".feat-badge");
+                if (badge) {
+                  badge.className = "feat-badge nodata";
+                  badge.textContent = "–";
+                  badge.dataset.glyph = "–";
+                  badge.title = "IR feature data for this lane is unmeasured.";
+                }
+                nameEl.querySelector(".feat-row-counts")?.remove();
+                row.querySelector(".feat-edition-spread")?.remove();
+                row.dataset.noT262Data = "";
+              }
+              continue;
+            }
 
             const paths = Array.isArray(feature.testCategories) ? feature.testCategories.filter(Boolean) : [];
             const pass = Number(feature.passCount ?? 0);
@@ -6568,21 +6677,26 @@ console.log(instance.exports.run()); // &rarr; 55</pre
             // test262 source for every mapped feature (regardless of total).
             const details = row.querySelector("details");
             if (details && paths.length > 0) {
-              let linkWrap = details.querySelector(".feat-report-link");
-              if (!linkWrap) {
-                linkWrap = document.createElement("div");
-                linkWrap.className = "feat-report-link";
-                const a = document.createElement("a");
-                a.href = `./benchmarks/feature-report.html?feature=${encodeURIComponent(paths[0])}`;
-                a.rel = "noopener";
-                linkWrap.appendChild(a);
-                details.appendChild(linkWrap);
-              }
-              // (#4362) Refresh the count in the link label on every apply, so it
-              // agrees with the chip rather than keeping the first lane's numbers.
-              const reportLink = linkWrap.querySelector("a");
-              if (reportLink) {
-                reportLink.textContent = total > 0 ? `View test results (${pass}/${total}) →` : "View test results →";
+              // Measurement details have no IR dataset contract yet.
+              if (IR_SELECTED) {
+                details.querySelector(".feat-report-link")?.remove();
+              } else {
+                let linkWrap = details.querySelector(".feat-report-link");
+                if (!linkWrap) {
+                  linkWrap = document.createElement("div");
+                  linkWrap.className = "feat-report-link";
+                  const a = document.createElement("a");
+                  a.href = `./benchmarks/feature-report.html?feature=${encodeURIComponent(paths[0])}`;
+                  a.rel = "noopener";
+                  linkWrap.appendChild(a);
+                  details.appendChild(linkWrap);
+                }
+                // (#4362) Refresh the count in the link label on every apply, so it
+                // agrees with the chip rather than keeping the first lane's numbers.
+                const reportLink = linkWrap.querySelector("a");
+                if (reportLink) {
+                  reportLink.textContent = total > 0 ? `View test results (${pass}/${total}) →` : "View test results →";
+                }
               }
               if (!details.querySelector(".feat-test262-paths")) {
                 // Compact rendering. Rows map to as many as 35 test262 paths
