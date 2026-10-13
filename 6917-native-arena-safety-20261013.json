@@ -1,0 +1,55 @@
+{
+  "id": "6917",
+  "slice": "native-arena-safety-20261013",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "status": "in-progress",
+  "branch": "codex/6917-b-native-arena-safety-20261013-01a12827",
+  "claimed_at": "2026-10-13T12:37:33.296590Z",
+  "updated_at": "2026-10-13T12:37:33.296590Z",
+  "write_id": "b-native-arena-safety-7e150bc4-3633-4ec1-8b52-c9f314527823",
+  "predecessors": [
+    {
+      "path": "6917.json",
+      "write_id": "28525-acre1kpn",
+      "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+      "blob": "aae6e8f6aebe1dccac60ca02d497467b01cd4b50"
+    },
+    {
+      "path": "6891-linear-stack-tests-20261007.json",
+      "write_id": "88397-3u7aezkn",
+      "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+      "blob": "ba6708122c0d77e4fb43905d100329e2e3b30b94"
+    },
+    {
+      "path": "6920-b-native-runtime-recipe-takeover-20261013.json",
+      "write_id": "b-bounded-takeover-4cf22cfc-ed94-4d37-b22d-205201264589:allocator",
+      "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+      "blob": "1fac4ad5401d7ef66337d3ee6d4cf4bb52c55e13"
+    }
+  ],
+  "handoff_authority": {
+    "source": "human scope reply call_fHCisBpMmbCIm9ci7BYIEcqH",
+    "answer": "Take over the blocking shared seams",
+    "receiving_owner": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+    "bounded_only": true
+  },
+  "handoff_scope": [
+    "src/wasm/physical/linear-bump-allocation.ts: default-only unsigned endpoint/alignment and memory.grow failure checks before the unchanged shared commit/header tail; default descriptor scratch locals with explicit preserved original two-local linked prefix",
+    "src/codegen-linear/runtime.ts: default allocator registration comments and exact default-versus-linked local-list binding only; same effective linked selector, unchanged linked prologue/body/type/registration and malloc-v1 ownership",
+    "tests/issue-6917-linear-malloc-overflow.test.ts: real emitted default predecessor/candidate failure-state and success controls, linked/malloc-v1 preservation and common native recipe registration",
+    "tests/issue-6891-linear-stack-arena-overflow.test.ts: exactly two existing real-allocator huge-call expectations switch to native trap with original state and subsequent-allocation assertions retained",
+    "tests/issue-6920-linear-arena-provider-preservation.test.ts: retain immutable historical fixture and linked exact binary authority, prove exact intentional default allocator body/local delta and unchanged other module resources; no rewritten original golden",
+    "plan/issues/6917-linear-standalone-malloc-overflow.md: current source receiver, actual predecessor/candidate measurements and remaining migration limitations"
+  ],
+  "exclusions": [
+    "shared original commit/header-zeroing tail changes",
+    "linked prologue and chunk-local3 changes",
+    "memory configuration/import/ABI/registration changes",
+    "legacy source push/grow behavior",
+    "foreign finally6651 and other algorithms",
+    "existing branches, other PR heads, HOLDs and A integration/queue ownership",
+    "baseline edits, new allowances, hook bypass, force/main push"
+  ],
+  "donor_policy": "Preserve predecessors and every historical fixture/evidence; source writes only in fresh isolated receiving worktree."
+}

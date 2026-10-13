@@ -6,8 +6,8 @@
   "status": "in-progress",
   "branch": "codex/6920-b-native-allocator-carriers-20261013-01a12827",
   "claimed_at": "2026-10-13T06:38:30.746860Z",
-  "updated_at": "2026-10-13T12:17:41.026611Z",
-  "write_id": "b-body-batch-adapter-home-5cf4d416-bf66-48ec-94b2-f79e096e8379",
+  "updated_at": "2026-10-13T12:37:33.296590Z",
+  "write_id": "b-physical-tag-closure-65ffbb0f-099d-42f4-b18b-ca335f02ab17",
   "handoff_scope": [
     "src/ir/lower-generic.ts: representation-aware vector types and scratch",
     "src/ir/backend/{handles,lower-contracts,emitter}.ts: genuine GC and Linear vector representations",
@@ -18,7 +18,11 @@
     "src/ir/program/native-vector-resources.ts::deriveNativeVectorResourcePlan: extend only layout-free f64 vector layout discovery to wasmgc/wasi, preserving exact current wasmgc/standalone behavior, standalone-only externref layout/helper selection, vector callable provider target policy, canonical type recipes, and existing source/ABI/typeRef/persisted-layout checks; no host or Linear GC-resource admission",
     "src/ir/backend/linear-integration.ts::preflightLinearBackendResources, makeLinearIrResolver and their direct resource-binding call site: reserve the actual opaque-externref exception tag demanded by retained try/throw bodies before frozen body consumption and expose only its checked existing index through ensureExnTag; preserve every other planning/selection/factory/runtime path",
     "src/ir/backend/linear-body-batch-resources.ts: complete bounded resource preflight and tag reservation/authentication for the existing Linear body consumer, retaining canonical IR demand data, injected legacy adapter ports and the unchanged public demand type alias; remains unmigrated adapter debt, no exception/finally algorithms, source admission or host ABI widening",
-    "tests/issue-6920-linear-body-batch-exceptions.test.ts: new independent real resource and execution regressions, preserving existing parity corpus and assertions"
+    "tests/issue-6920-linear-body-batch-exceptions.test.ts: new independent real resource and execution regressions, preserving existing parity corpus and assertions",
+    "src/wasm/physical/linear-body-batch-exception-tag.ts: complete canonical physical exception-tag resource contract, private issuance WeakMap and unchanged reserve/read coordinate and identity checks only; canonical Wasm data imports, no IR/backend dependency or new semantics",
+    "src/ir/backend/linear-body-batch-resources.ts: remove that complete physical definition span and import/directly reexport the single canonical provider, preserving complete demand/forwarding/preflight order and public binding identities",
+    "tests/issue-6920-linear-body-batch-exceptions.test.ts: add finite canonical provider export-identity and physical-only module-closure controls; retain all existing 21 assertions and corpus",
+    "scripts/compiler-boundaries.json: truthful exact new canonical leaf row after complete dependency/consumer proof; retain IR adapter debt, no allowance or activation-policy changes"
   ],
   "handoff_authority": {
     "source": "human scope reply call_fHCisBpMmbCIm9ci7BYIEcqH",
@@ -87,7 +91,7 @@
     "force push, hook bypass, main push"
   ],
   "donor_policy": "Preserve original donors; authenticate actual source before adoption; receiving writes occur in fresh isolated worktrees.",
-  "previous_write_id": "b-body-batch-physical-home-bf0ddddb-361f-4a44-b774-06fe4eef60f9",
+  "previous_write_id": "b-body-batch-adapter-home-5cf4d416-bf66-48ec-94b2-f79e096e8379",
   "scope_refinements": [
     {
       "at": "2026-10-13T12:08:20.967759Z",
@@ -112,6 +116,22 @@
         "bounded_only": true
       },
       "reason": "Keep the complete preflight beside its existing IR backend adapter. Its canonical IR demand contracts and injected legacy ports prevent clean physical-layer activation; preserve honest unmigrated classification and existing import-cycle bounds without allowances."
+    },
+    {
+      "at": "2026-10-13T12:37:33.296590Z",
+      "additions": [
+        "src/wasm/physical/linear-body-batch-exception-tag.ts: complete canonical physical exception-tag resource contract, private issuance WeakMap and unchanged reserve/read coordinate and identity checks only; canonical Wasm data imports, no IR/backend dependency or new semantics",
+        "src/ir/backend/linear-body-batch-resources.ts: remove that complete physical definition span and import/directly reexport the single canonical provider, preserving complete demand/forwarding/preflight order and public binding identities",
+        "tests/issue-6920-linear-body-batch-exceptions.test.ts: add finite canonical provider export-identity and physical-only module-closure controls; retain all existing 21 assertions and corpus",
+        "scripts/compiler-boundaries.json: truthful exact new canonical leaf row after complete dependency/consumer proof; retain IR adapter debt, no allowance or activation-policy changes"
+      ],
+      "authority": {
+        "source": "human scope reply call_fHCisBpMmbCIm9ci7BYIEcqH",
+        "answer": "Take over the blocking shared seams",
+        "receiving_owner": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+        "bounded_only": true
+      },
+      "reason": "Close the actual exception-tag physical provider dependency boundary while retaining semantic demand in the IR adapter. No return/finally or emission algorithm changes."
     }
   ]
 }
