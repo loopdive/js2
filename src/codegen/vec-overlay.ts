@@ -118,6 +118,7 @@ import {
   allowedCarriers,
   carrierDefaultInstrs,
   carrierRefWriteBack,
+  directOwnElementStore,
   type CarrierDefaultMode,
   type OverlayCarrier,
 } from "./vec-overlay-carriers.js";
@@ -2262,9 +2263,11 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
       // off the final local list rather than assumed.
       const setBagLocal = 3 + fn.locals.length;
       const setFrozenLenLocal = setBagLocal + 1;
+      const directLenLocal = setBagLocal + 2;
       fn.locals.push(
         { name: "__ov_set_bag", type: { kind: "externref" } },
         { name: "__ov_set_frozen_len", type: { kind: "i32" } },
+        { name: "__ov_set_direct_len", type: { kind: "i32" } },
       );
       /**
        * (#4491 wave-4) §10.1.9.2 OrdinarySetWithOwnDescriptor step 2.b —
@@ -2393,6 +2396,11 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
         ...overlayStore(flags),
       ];
       const nullOwnLayer = (): Instr[] => [{ op: "ref.null.extern" }];
+      const directStore = (): Instr[] =>
+        directOwnElementStore(carriers, { any: anyLocal, comp: compLocal, index: indexLocal, value: 2 }, () => [
+          ...publishSuccess(),
+          { op: "return" },
+        ]);
       const companionOwnLayer = (): Instr[] => [
         { op: "local.get", index: compLocal },
         { op: "ref.as_non_null" },
@@ -2604,11 +2612,17 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
                         {
                           op: "if",
                           blockType: { kind: "empty" },
-                          then: overlayStore(SEED_FLAGS),
+                          then: [...directStore(), ...overlayStore(SEED_FLAGS)],
                           else: resolveThenStore(nullOwnLayer, SEED_FLAGS),
                         },
                       ]
                     : [
+                        // (#6973) a backed own element with no companion is a plain slot store.
+                        ...vecBackedLen(anyLocal, directLenLocal),
+                        { op: "local.get", index: indexLocal },
+                        { op: "local.get", index: directLenLocal },
+                        { op: "i32.lt_s" },
+                        { op: "if", blockType: { kind: "empty" }, then: directStore() },
                         { op: "local.get", index: 0 },
                         { op: "local.get", index: keyLocal },
                         { op: "local.get", index: 2 },

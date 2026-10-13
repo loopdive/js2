@@ -6611,8 +6611,13 @@ export function compileElementAccessBody(
       !isRegexMatchVec &&
       isDynamicPropertyKeyExpression(ctx, expr.argumentExpression, expr.expression)
     ) {
-      const dynamic = emitDynamicVecElementGet(ctx, fctx, objType, expr.argumentExpression, (e, h) =>
-        compileExpression(ctx, fctx, e, h),
+      const dynamic = emitDynamicVecElementGet(
+        ctx,
+        fctx,
+        objType,
+        expr.argumentExpression,
+        (e, h) => compileExpression(ctx, fctx, e, h),
+        true, // (#6973) Number keys take `__extern_get_idx`
       );
       if (dynamic) return dynamic;
     }

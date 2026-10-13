@@ -295,7 +295,60 @@ export function buildTransferredNativeProtoCallInstrs(
       },
     );
   }
-  return body;
+  return guardByCommonSupertype(ctx, entries, anyLocal, body);
+}
+
+/** Declared supertype of struct type `idx`, if any. */
+function superTypeOf(ctx: CodegenContext, idx: number): number | undefined {
+  const def = ctx.mod.types[idx] as { kind?: string; superTypeIdx?: unknown; superType?: unknown } | undefined;
+  const sup = def?.kind === "struct" ? def.superTypeIdx : def?.kind === "sub" ? def.superType : undefined;
+  return typeof sup === "number" && sup >= 0 ? sup : undefined;
+}
+
+/**
+ * (#6973 stage 2) Wrap the per-entry arms in ONE `ref.test` of the entries'
+ * nearest common declared supertype. Every arm starts with `ref.test
+ * <its own type>`, and each of those types is a subtype of the common one, so a
+ * closure that fails the outer test fails every arm — skipping them is exact.
+ * An ordinary method closure then pays one type test here instead of one per
+ * native-prototype member (deltablue: 7 per `__call_fn_method_0` call).
+ */
+function guardByCommonSupertype(
+  ctx: CodegenContext,
+  entries: TransferredNativeReceiverEntry[],
+  anyLocal: number,
+  body: Instr[],
+): Instr[] {
+  if (entries.length < 2) return body;
+  const chain = (idx: number): number[] => {
+    const out: number[] = [];
+    for (let cur: number | undefined = idx; cur !== undefined && out.length < 64; cur = superTypeOf(ctx, cur))
+      out.push(cur);
+    return out;
+  };
+  // Entry types are usually distinct IR indices of ONE shape (same fields, same
+  // supertype, all leaves, so `finalizeLeafStructTypes` gives them the same
+  // finality): those canonicalize to a single Wasm type, so the first entry's
+  // own type is the tightest exact guard.
+  const shape = (idx: number): string | undefined => {
+    const raw = ctx.mod.types[idx];
+    const def = raw?.kind === "sub" ? raw.type : raw;
+    const sup = raw?.kind === "sub" ? raw.superType : raw?.kind === "struct" ? raw.superTypeIdx : undefined;
+    if (def?.kind !== "struct") return undefined;
+    return JSON.stringify([def.fields.map((f) => [f.type, f.mutable]), sup]);
+  };
+  const firstShape = shape(entries[0]!.typeIdx);
+  const chains = entries.map((entry) => chain(entry.typeIdx));
+  const common =
+    firstShape !== undefined && entries.every((entry) => shape(entry.typeIdx) === firstShape)
+      ? entries[0]!.typeIdx
+      : chains[0]!.find((candidate) => chains.every((c) => c.includes(candidate)));
+  if (common === undefined) return body;
+  return [
+    { op: "local.get", index: anyLocal },
+    { op: "ref.test", typeIdx: common },
+    { op: "if", blockType: { kind: "empty" }, then: body },
+  ];
 }
 
 /**

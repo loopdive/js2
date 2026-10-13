@@ -155,6 +155,11 @@ import { reserveClosurePropHelpers } from "./closure-props.js"; // (#3468 C-core
 import { reserveClosurePrototypeEdge } from "./closure-prototype-edge.js"; // (#2660 M3) function-value → prototype-object edge
 import { reserveProtoFunctionValue } from "./proto-function-value.js"; // (#4637 A1) function value in a [[Prototype]] slot
 import { buildFnctorMissingMethodDispatch } from "./fnctor-missing-method-dispatch.js";
+import {
+  fillFnctorStructProtoForwarders,
+  fnctorStructProtoReentry,
+  reserveFnctorStructProtoHelpers,
+} from "./fnctor-struct-proto-hop.js"; // (#6944) struct-valued [[Prototype]] links
 // (#4230 L1) the #3251 overlay companion as a THIRD key source for the vec key walks
 import { buildOverlayPushKeys, buildVecOverlayHasArm, reserveVecOverlayPushKeys } from "./vec-overlay-keys.js";
 // (#6485) `__extern_has`'s numeric-key delegation — §13.10.1 ToPropertyKey.
@@ -220,6 +225,7 @@ import {
 import { reserveClassToPrimitive } from "./class-to-primitive.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2/S3) positional-read chokepoint + stable-regime minting
 import { fnctorProtoLinkInstrs, fnctorProtoStartNeeded } from "./fnctor-identity-fields.js"; // (#6951 G3) [[Prototype]] snapshot
+import { unshiftFnctorFastGetArm } from "./fnctor-fast-get.js"; // (#6973) fnctor-instance read fast arm
 import { emitSelfHostedFunc } from "./stdlib-selfhost.js"; // (#3160) self-hosted object-runtime slice
 import { SELF_HOSTED_OBJECT_RUNTIME } from "../stdlib/object-runtime.js"; // (#3160) TS-source builtins
 import { buildObjectDescriptorHelpers } from "./object-runtime-descriptors.js";
@@ -1925,6 +1931,10 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
         [{ op: "ref.null.extern" }],
       )
     : undefined;
+  const fnctorStructProto =
+    fnctorProtoStartIdx === undefined
+      ? undefined
+      : reserveFnctorStructProtoHelpers(registerNative, fnctorProtoStartIdx, objectTypeIdx);
 
   // (#3673 round 9b) Table generation for the per-key prototype-lookup cache
   // (see the `$HashedString` cacheGen/cacheOwner/cacheEntry fields). Bumped
@@ -1983,8 +1993,9 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
                 { op: "local.get", index: 0 },
                 { op: "call", funcIdx: fnctorProtoStartIdx! },
                 { op: "local.tee", index: 4 },
-                { op: "ref.is_null" },
-                { op: "i32.eqz" },
+                // (#6944) a struct-valued link is not cacheable: test, not cast.
+                { op: "any.convert_extern" },
+                { op: "ref.test", typeIdx: objectTypeIdx },
                 {
                   op: "if",
                   blockType: { kind: "empty" },
@@ -2135,6 +2146,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       hashedStringTypeIdx: HSTR,
       bfnGetMetaIdx,
       fnctorProtoStartIdx,
+      fnctorStructProto,
       objectTerminalAllowsImplicitProtoIdx,
       templateRaw: templateRawReadBinding,
       boundaryGet,
@@ -3860,9 +3872,15 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
             : ([
                 { op: "local.get", index: 0 },
                 { op: "call", funcIdx: fnctorProtoStartIdx },
-                { op: "local.tee", index: 4 + (hasArmIdxs.length > 0 ? 1 : 0) },
-                { op: "ref.is_null" },
-                { op: "i32.eqz" },
+                { op: "local.set", index: 4 + (hasArmIdxs.length > 0 ? 1 : 0) },
+                // (#6944) a `new G()` struct link: `link.[[HasProperty]](key)`.
+                ...fnctorStructProtoReentry(fnctorStructProto!.ok, 4 + (hasArmIdxs.length > 0 ? 1 : 0), [
+                  { op: "local.get", index: 1 },
+                  { op: "call", funcIdx: fnctorStructProto!.has },
+                ]),
+                { op: "local.get", index: 4 + (hasArmIdxs.length > 0 ? 1 : 0) },
+                { op: "any.convert_extern" },
+                { op: "ref.test", typeIdx: objectTypeIdx },
                 {
                   op: "if",
                   blockType: { kind: "empty" },
@@ -4018,6 +4036,14 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       body,
     );
   }
+  if (fnctorStructProto !== undefined) {
+    fillFnctorStructProtoForwarders(
+      ctx,
+      fnctorStructProto,
+      ctx.funcMap.get("__reflect_get_receiver")!,
+      ctx.funcMap.get("__extern_has")!,
+    );
+  }
 
   // (#2175 D5) The standalone fixed-name `in` fold has a special case that
   // knows a name belongs to %Object.prototype% without materializing that
@@ -4135,8 +4161,9 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
             { op: "local.get", index: 0 },
             { op: "call", funcIdx: fnctorProtoStartIdx },
             { op: "local.tee", index: 3 },
-            { op: "ref.is_null" },
-            { op: "i32.eqz" },
+            // (#6944) test, not null-check: a struct link keeps the permissive answer.
+            { op: "any.convert_extern" },
+            { op: "ref.test", typeIdx: objectTypeIdx },
             {
               op: "if",
               blockType: { kind: "empty" },
@@ -9721,7 +9748,16 @@ export function fillFnctorPrototypeDispatchArms(ctx: CodegenContext): void {
         op: "if",
         blockType: { kind: "empty" },
         then: [
-          ...cacheTry,
+          // (#6944) `G.prototype = new F()` stores a struct link the cache
+          // below would `ref.cast` to `$Object`: only an `$Object` link caches.
+          ...(cacheTry.length === 0
+            ? []
+            : ([
+                { op: "global.get", index: protoGlobalIdx },
+                { op: "any.convert_extern" },
+                { op: "ref.test", typeIdx: objTypes!.objectTypeIdx },
+                { op: "if", blockType: { kind: "empty" }, then: cacheTry },
+              ] satisfies Instr[])),
           { op: "local.get", index: 0 },
           { op: "local.get", index: 1 },
           { op: "call", funcIdx: externGetIdx },
@@ -9972,6 +10008,7 @@ function receiverHasNoOwnKeyGuard(ctx: CodegenContext, hasOwnIdx: number): Instr
 }
 
 export function unshiftExternGetProtoCacheArm(ctx: CodegenContext): void {
+  unshiftFnctorFastGetArm(ctx); // (#6973) BEFORE the cache arm, which must stay the prefix
   if (!ctx.standalone || ctx.hashedStrTypeIdx < 0) return;
   const HSTR = ctx.hashedStrTypeIdx;
   const protoStartIdx = ctx.funcMap.get("__fnctor_proto_start");
@@ -10035,8 +10072,9 @@ export function unshiftExternGetProtoCacheArm(ctx: CodegenContext): void {
                 { op: "local.get", index: 0 },
                 { op: "call", funcIdx: protoStartIdx },
                 { op: "local.tee", index: 7 },
-                { op: "ref.is_null" },
-                { op: "i32.eqz" },
+                // (#6944) a struct link is never a cache owner: test, not null-check.
+                { op: "any.convert_extern" },
+                { op: "ref.test", typeIdx: objectTypeIdx },
                 // (#6946) §10.1.8.1 OrdinaryGet consults OWN storage first: a
                 // fnctor receiver that has since gained an own `key` (an expando
                 // `this.v = x` shadowing an inherited default already cached for
