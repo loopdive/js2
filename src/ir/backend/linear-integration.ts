@@ -50,6 +50,12 @@ import {
 } from "../../codegen-linear/runtime.js";
 import { linearStringLiteralInstrs } from "../../codegen-linear/string-literals.js";
 import {
+  preflightLinearBodyBatchResources,
+  readLinearBodyBatchExceptionTag,
+  type LinearBackendResourceDemand,
+} from "./linear-body-batch-resources.js";
+export type { LinearBackendResourceDemand } from "./linear-body-batch-resources.js";
+import {
   authenticateLinearStringRepeatReservationReceipt,
   authenticateLinearStringRepeatProvider,
   issueLinearStringRepeatReservationReceipt,
@@ -413,21 +419,6 @@ export function linearIrEnabled(): boolean {
   return readEnv("JS2WASM_LINEAR_IR") !== "0";
 }
 
-/**
- * Backend resources required by one already-built linear IR module.
- *
- * The names are runtime bindings, while operations/layouts/data segments stay
- * symbolic. This is deliberately a demand projection: it never assigns a
- * final linear address or discovers a new source/runtime intent.
- */
-export interface LinearBackendResourceDemand {
-  readonly runtimeFunctions: readonly string[];
-  readonly runtimeOperations: readonly LinearRuntimeOperation[];
-  readonly allocationSites: readonly AllocSiteId[];
-  readonly layoutIds: readonly string[];
-  readonly dataSegmentIds: readonly string[];
-}
-
 function linearBackendResourceInvariant(detail: string): never {
   throw new IrInvariantError(
     "selection-preparation-mismatch",
@@ -574,18 +565,19 @@ export function collectLinearBackendResourceDemand(
   });
 }
 
-/** Prove structural resources and the forwarding ABI before any body consumer. */
+/** Bind existing adapter ports to the complete physical resource preflight. */
 function preflightLinearBackendResources(ctx: LinearContext, module: IrModule, memoryPlan: LinearMemoryPlan): void {
-  const demand = collectLinearBackendResourceDemand(module, memoryPlan);
-  validateLinearBackendResourceDemand({
-    demand,
-    memoryPlan,
-    availableFunctionNames: new Set(ctx.mod.functions.map((fn) => fn.name)),
+  preflightLinearBodyBatchResources(module, ctx.mod, collectLinearBackendResourceDemand(module, memoryPlan), {
+    validateDemand: (demand) =>
+      validateLinearBackendResourceDemand({
+        demand,
+        memoryPlan,
+        availableFunctionNames: new Set(ctx.mod.functions.map((fn) => fn.name)),
+      }),
+    resolveRuntimeOperation: (operation) => resolveLinearRuntimeOperation(ctx, operation),
+    internFunctionType: (type) => internLinearFuncType(ctx, type),
+    forEachInstruction: forEachLinearIrInstruction,
   });
-  for (const operation of demand.runtimeOperations) {
-    if (operation.family === "vector" && operation.operation === "resolve-forwarding")
-      resolveLinearRuntimeOperation(ctx, operation);
-  }
 }
 
 /**
@@ -1808,6 +1800,15 @@ function resolvePreparedLinearStringRepeatProvider(
   return authenticatePreparedLinearStringRepeatProvider(ctx, prepared);
 }
 
+function resolveNamedLinearRuntimeFunction(ctx: LinearContext, name: string): number {
+  // Runtime functions were appended before user-slot pre-assignment. Scan
+  // the actual defined-function table so a source function with a reserved
+  // helper-like name cannot shadow the runtime entry in funcMap.
+  const localIdx = ctx.mod.functions.findIndex((func) => func.name === name);
+  if (localIdx < 0) throw new Error(`linear-ir: runtime helper '${name}' missing`);
+  return ctx.numImportFuncs + localIdx;
+}
+
 /**
  * The linear resolver: required name/table methods plus the L2 fixed-f64-vec,
  * aggregate/refcell subsets and the L3 i32-pointer string representation.
@@ -1832,14 +1833,7 @@ function makeLinearIrResolver(
   const unitFuncSlotById = new Map<IrUnitId, LinearIrLegacySlotAdapter>();
   let memoryPlan: LinearMemoryPlan | undefined;
 
-  const resolveRuntimeFunc = (name: string): number => {
-    // Runtime functions were appended before user-slot pre-assignment. Scan
-    // the actual defined-function table so a source function with a reserved
-    // helper-like name cannot shadow the runtime entry in funcMap.
-    const localIdx = ctx.mod.functions.findIndex((func) => func.name === name);
-    if (localIdx < 0) throw new Error(`linear-ir: runtime helper '${name}' missing`);
-    return ctx.numImportFuncs + localIdx;
-  };
+  const resolveRuntimeFunc = (name: string): number => resolveNamedLinearRuntimeFunction(ctx, name);
 
   const resolveImportFunc = (module: string, field: string): number =>
     resolveLinearImportFunc(ctx, module, field, resolveRuntimeFunc);
@@ -1939,6 +1933,9 @@ function makeLinearIrResolver(
   };
 
   const resolver: IrLowerResolver & IrFromAstResolver = {
+    ensureExnTag(): number {
+      return readLinearBodyBatchExceptionTag(ctx.mod);
+    },
     resolveFunc(ref: IrFuncRef): number {
       switch (ref.binding.kind) {
         case "unit": {

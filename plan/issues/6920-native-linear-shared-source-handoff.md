@@ -3192,3 +3192,90 @@ flags remain false. Final merge/push hooks and public review publication are
 still pending at this record; no queue release or full migration completion
 is inferred. The separate next cleanup implementation is private and outside
 this checkpoint.
+
+
+### Published checkpoint and bounded parity repair — 2026-10-13
+
+The SSH-signed combined head `82bb39d34b407b6427f393d0e6f11773fa96f76c`
+was normally pushed to the isolated fork review branch and published as
+https://github.com/loopdive/js2/pull/6662. The PR is ready, open, labelled
+`hold`, and has no auto-merge request. A retains integration and queue ownership.
+
+The unchanged cross-backend parity job found a real regression in
+`control/try-finally-early-exit`: the retained Linear body-batch resolver lacked
+`ensureExnTag` when the new backend legality admitted a `try`. The failure
+occurs before binary emission, with `resolver cannot resolve __exn tag for try
+(breakRunsFinally)`. Exact tracked predecessor `529b092b6f80682538c1c2b7f7e136f5ca9d72c2`
+passes all 33 unchanged controls; exact published head passes 32/33. Their
+tracked driver/corpus hashes match. Local Node 24 positive controls and the
+same failing fixture confirm the failure independently of CI's Node version.
+This advisory job failure is preserved and repaired, not waived.
+
+The bounded receiving transaction `9474e518cd8571ba88ea46c4ea6365e20235e63f`
+adds only the existing carrier receiver's actual body-resource preflight and
+read-only exception-tag resolver join. The predecessor frozen-body-batch claim
+retains its original owner, branch and partial disposition. All 3,066 other
+rows remain identical. No return/finally algorithm, source-admission widening,
+selector change or host ABI is transferred. Subsequent exact one-row helper-home
+refinements retain 3,067 other rows and do not change any source PR head.
+
+The repair reserves the real opaque `(externref)->()` tag before any body
+consumer. Demand validation and existing forwarding checks retain their order.
+The resolver reads an issued reservation on the original module; actual tag
+identity, type identity/signature, imported-tag offset and direct physical
+coordinates must still match. Emission never allocates a replacement tag.
+Numeric-only bodies reserve no exception resource. Canonical recursive type
+groups before the direct interner's type coordinate are explicitly refused.
+The old public resource-demand type remains available through its type alias,
+and the extracted runtime lookup preserves its actual-table lookup and import
+offset without changing any routing.
+
+The final helper home remains an unmigrated IR backend adapter. An intermediate
+backend/program home added a reverse dependency; a physical-layer attempt was
+then correctly rejected by inventory because this complete helper still owns
+IR demand inspection and injected legacy ports. Neither failure is suppressed;
+no allowance, active-layer demotion, false clean classification or historical
+receipt rewrite is introduced. Physical-resource separation and the whole
+compiler graph remain incomplete.
+
+The permanent 21-test file covers unissued reads, repeated reservation without
+mutation, original-module custody, nine reservation/type/offset mutations,
+unreserved name collision, wrong interner type, recursive-coordinate changes,
+genuine typed-IR throw-only demand, displaced real Wasm indices, original opaque
+payload catch/rethrow identity, cleanup exactly once, numeric no-tag output and
+public nested break/continue execution. Root's pre-relocation combined controls
+execute 54/54 (33 unchanged parity plus 21 permanent regressions). Peer review
+of the supplied source and test definitions is reasoning-only because agent
+shell startup is blocked by the symlinked sandbox root; it supplies no
+independent execution credit. The separate private return/finally semantic
+packet remains outside this source repair and its foreign ownership is retained.
+Final post-relocation qualification and ordinary source commit/push are pending.
+
+
+### Final adapter-home qualification and repair publication preparation — 2026-10-13
+
+The final exact one-row receiver refinement is SSH-signed
+`98fd2b92b63cd014d82ef90f61c459975201550f`, normally pushed and effect-verified
+on `upstream/issue-assignments`. It retains 3,067 unrelated rows unchanged.
+The complete helper is now `src/ir/backend/linear-body-batch-resources.ts`,
+with exactly equivalent body bytes apart from its three canonical type imports.
+Both intermediate unpublished helper paths are absent. Its single inventory
+row remains `unmigrated` / `mixed-needs-split`, destination `wasm-physical`.
+All prior layer definitions, activations, baselines and allowance policy remain
+semantically identical. Actual module-level migration debt is preserved.
+
+The final root run executes all 48 selected files, 596 tests: 593 pass,
+the same two authentic-predecessor legacy results fail, and one is a todo.
+All 33 unchanged parity controls and all 21 new resource regressions pass.
+All eleven source checks and the full build exit zero; no assertion, corpus,
+exception rule, source selector or budget allowance was relaxed. The complete
+1,968-file source census is unchanged throughout qualification. Existing
+four-profile native/GC behavior and the original GC binary digest are retained.
+
+The reviewed repair contains exactly five files: this issue, the one-row
+inventory addition, the existing integration adapter, its new complete
+resource helper, and the permanent 21-test file. The exploratory public Error
+file remains untouched and excluded. Normal signed source commit and push
+hooks are still required before publication. New-head remote CI is pending;
+local parity repair is not a whole-suite, whole-graph or whole-IR completion.
+The public PR stays on HOLD under A's integration and queue authority.
