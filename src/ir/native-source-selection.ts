@@ -1,3 +1,7 @@
+import { sourceBooleanAnyResult, assertSourceBooleanAnyReturns } from "../frontend/boolean-return-boundary.js";
+import { refuseUnbackedNativeNumericGrowth } from "./program/native-vector-growth-source.js";
+import type { IrFunction } from "./core/nodes.js";
+export { sourceBooleanAnyResult };
 import { sameSourceModuleVectors } from "./native-module-vector-source.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
@@ -85,8 +89,18 @@ export function sourceVectorCollector(
   globals: Parameters<typeof sameSourceModuleVectors>[0],
   enabled: boolean,
 ) {
-  return (declaration: ts.FunctionDeclaration, sourceId: string) =>
-    enabled
-      ? nativeLinearSourceVectors(checker, declaration, directCalls, sameSourceModuleVectors(globals, sourceId))
-      : undefined;
+  return {
+    collect: (declaration: ts.FunctionDeclaration, sourceId: string) =>
+      enabled
+        ? nativeLinearSourceVectors(checker, declaration, directCalls, sameSourceModuleVectors(globals, sourceId))
+        : undefined,
+    assertFunction: (
+      declaration: ts.FunctionDeclaration,
+      lowered: { readonly main: IrFunction; readonly lifted: readonly IrFunction[] },
+      family: boolean,
+    ) => {
+      if (enabled && !family) for (const fn of [lowered.main, ...lowered.lifted]) refuseUnbackedNativeNumericGrowth(fn);
+      assertSourceBooleanAnyReturns(checker, declaration, lowered.main);
+    },
+  };
 }

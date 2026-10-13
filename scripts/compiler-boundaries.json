@@ -16517,6 +16517,11 @@
       "path": "src/ir/analysis/allocation-evidence/module-vector-globals.ts",
       "state": "clean",
       "layer": "ir-analysis"
+    },
+    {
+      "path": "src/ir/program/native-vector-growth-source.ts",
+      "state": "clean",
+      "layer": "ir-program"
     }
   ]
 }

@@ -3,7 +3,6 @@
 import { nativeSynchronousVectorParameter, nativeSynchronousVectorResult } from "./program-sync-vectors.js";
 import { storageType } from "./native-module-vector-source.js";
 import { ts, assertCurrentProgramSources } from "../ts-api.js";
-import { sourceBooleanAnyResult, assertSourceBooleanAnyReturns } from "../frontend/boolean-return-boundary.js";
 import { preparedIrProgramCallableResults } from "./program-callable-contract.js";
 import { prepareSourceClosureInvocations } from "./source-closure-invocation.js";
 import type { TypedIrProgramInput } from "./program/input-contracts.js";
@@ -48,6 +47,7 @@ import {
   sourceDataField,
   selectNativeLinearVectorProjection,
   sourceVectorCollector,
+  sourceBooleanAnyResult,
   selectNativeAsyncFamilyProjection,
 } from "./native-source-selection.js";
 import { classifyIrFailure, IrUnsupportedError } from "./outcomes.js";
@@ -1776,7 +1776,7 @@ export function prepareIrProgramSources(
         ),
       );
       const signature = signatures.get(unit.id);
-      const logicalVectorTypes = family?.logicalVectorTypes ?? collectVectors(declaration, unit.sourceId);
+      const logicalVectorTypes = family?.logicalVectorTypes ?? collectVectors.collect(declaration, unit.sourceId);
       const lowered = lowerFunctionAstToIr(declaration, {
         booleanReturnBoundary: sourceBooleanAnyResult(input.checker, declaration) ? declaration : undefined,
         ownerUnitId: unit.id,
@@ -1821,7 +1821,7 @@ export function prepareIrProgramSources(
             ? "number"
             : undefined,
       });
-      assertSourceBooleanAnyReturns(input.checker, declaration, lowered.main);
+      collectVectors.assertFunction(declaration, lowered, family !== undefined);
       if (certifiedDelays.has(unit.id) && (lowered.lifted.length !== 0 || lowered.liftedUnitProvenance.length !== 0))
         throw new PreparedIrProgramInvariantError(
           "invalid-prepared-data",

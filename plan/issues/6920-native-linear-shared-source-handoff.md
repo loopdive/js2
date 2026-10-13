@@ -3791,3 +3791,88 @@ This remains a held B checkpoint. Growth, general/mutable globals, broader
 initializers, async/cleanup, retirement and verified main integration remain
 open. A forwarding claims and final integration/queue ownership are preserved;
 legacy source push/grow implementations are untouched.
+
+### Native growth audit receiver and source refusal gap (2026-10-13)
+
+Global checkpoint 91f12e2c2ebe8de6b9fbdad252fb4548b9945c5c is signed and verified
+on held PR6662 with normal hooks. Its 32-file manifest and exact description are
+sealed; the foreign untracked integration test remains preserved. Fresh receiver
+codex/6920-b-vector-growth-20261013-01a12827 starts from that checkpoint.
+Signed claim e760fc8ce3a7abb218862d3cdac60034e73a716b registers this bounded audit
+and source capability correction in two existing B rows, preserving all others.
+
+The authentic direct source `export function run():number{const a=[2,5];return
+ a.push(11)+a.length+a[2];}` reaches the actual common f64 grow/store intrinsic
+but then throws invalid-prepared-data: calls an undeclared callable
+intrinsic|21:__ir_vec_elem_set_f64. Native resources declare only the externref
+variant. A genuine unsupported source operation must be refused by source
+capability preparation before constructing sealed Program data; restored data
+with an undeclared callable must continue failing the existing invariant.
+
+Parallel review confirms current source lowering already evaluates the argument
+before reading length and emits the three-argument indexed grow/store operation;
+push expression result is captured length+1. Two-argument legacy __arr_push is
+not that ABI. The current issued forwarding endpoint preserves Linear identity,
+but raw access still authenticates original requested extent, not padding16.
+Growth needs a real callable/resource and dynamic semantic-extent contract; no
+placeholder declaration, removed bounds check or forged literal site is allowed.
+A proposed append-only extent policy E=max(original requested extent,current
+logical length) needs complete authenticated initialization/append writers,
+backing assurance, checked arithmetic and publication before it can be adopted;
+general growth requires a broader explicit extent resource.
+
+### Qualified source growth capability correction (2026-10-13)
+
+The native synchronous source wrapper now scans each actual main/lifted function
+for the canonical intrinsic f64 grow/store binding. A genuine layout-free logical
+f64 receiver yields array-representation-unsupported@build before sealing;
+missing, foreign, wrong-element or layoutful receiver evidence yields the existing
+producer type-map-failure invariant. An ordinary unit with the same display name
+executes unchanged. Restored DATA never runs this source helper and retains the
+undeclared-callable invariant. No callable declaration or growth resource was
+invented, and no bounds check was removed.
+
+The new pure helper has canonical ir-program ownership in the boundary inventory.
+The existing sourceVectorCollector has one source consumer. Its original collect
+arrow AST is unchanged inside the orchestration object. Boolean assertion receives
+the same captured original checker, declaration and main function; the re-export
+is the identical original helper binding. Native-off and async-family behavior
+preserve the original collector/Boolean path. No size allowance was added.
+
+Final measurement: eight/eight growth-boundary feature cases pass, including
+eight genuine local/global preparations, eight located public zero-binary
+refusals, four executing unit-binding namesake profiles, four genuine generated-IR
+receiver mutations and restored undeclared-callable rejection. These are capability
+and invariant controls, not successful growth executions. Eight additional source
+cases across four profiles give 32 outcomes exactly equal to published predecessor
+91f12e2c2ebe8de6b9fbdad252fb4548b9945c5c: argument arity/spread, Boolean
+argument/receiver, unrelated push, async owner, Boolean return and two-function
+vector facts. Eight scalar/Boolean artifact rows also match that predecessor
+exactly.
+
+The final 69-file / 1,071-case cohort is 1,009 pass / 52 fail / nine skip / one
+todo, actual exit 1. Exact failure identities equal the previously measured
+67-file global cohort's 48 plus the separately paired 31-case externref cohort's
+four on the published predecessor. All four externref normalized full failure
+messages are identical. The broad cohort remains red. All 1,989 source hashes
+remain unchanged before/after the final qualification.
+
+Typing includes 1,989/1,989 source TS files, 57/57 named tests and 2,313 actual
+inputs, exclude [], zero diagnostics. All ten ordinary gates pass, with three
+changed source files net +58 LOC against published predecessor 91f12 and no new
+LOC/function/cycle allowance. The full ordinary build passes with an 8 GiB Node
+heap and every stage retained. Earlier failed gate, test-fixture and instrumentation
+epochs remain recorded privately; the final measurements supersede their claims.
+
+Signed remote receiver refinement fc4d44b4235bdfa670d8ff721d74ba58cd410f50
+changes one existing B preparation row on claim e760fc8ce3a7abb218862d3cdac60034e73a716b;
+all other rows, source branches and original owners remain preserved. Six exact
+tracked paths and raw evidence are sealed in .tmp/vector-growth/. Parallel
+reasoning review of the next append contract is retained there and does not
+claim independent execution. Actual growth still needs a canonical f64 callable,
+complete append/length-writer proof, allocation resources, failure-atomic
+publication, alias survival and current semantic extent on both backends.
+Original externref/async collectors, legacy push/grow and A's forwarding and
+integration/queue ownership remain preserved. Growth, remaining migration,
+retirement/conformance and verified main delivery remain open; this is a held B
+checkpoint.
