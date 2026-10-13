@@ -6,8 +6,8 @@
   "status": "in-progress",
   "branch": "codex/6920-b-native-allocator-carriers-20261013-01a12827",
   "claimed_at": "2026-10-13T06:38:30.746860Z",
-  "updated_at": "2026-10-13T14:50:02.976172Z",
-  "write_id": "b-internal-vector-calls-9ecf291d-bb3e-498d-b32c-c24d426d8426",
+  "updated_at": "2026-10-13T18:37:01.446575Z",
+  "write_id": "b-internal-vector-calls-fd4ce9d0-3185-420d-befc-3d4c209f744c",
   "handoff_scope": [
     "src/ir/lower-generic.ts: representation-aware vector types and scratch",
     "src/ir/backend/{handles,lower-contracts,emitter}.ts: genuine GC and Linear vector representations",
@@ -31,7 +31,8 @@
     "scripts/compiler-boundaries.json: only truthful exact rows for new synchronous source/IR proof leaves; no activation or allowance changes",
     "tests/issue-6920-native-vector-calls.test.ts: real shared four-profile live/codec transport, freshness/alias and malformed-provenance controls; preserve all earlier fixtures and assertions",
     "plan/issues/6920-native-linear-shared-source-handoff.md: measured first-boundary feature audit and complete internal-call qualification; full migration remains open",
-    "src/ir/backend/lower-contracts.ts, src/ir/backend/vector-element-access.ts, src/ir/lower-generic.ts and src/ir/program-body-resources.ts: explicit unit-and-SSA requested backing capacity endpoint issued by the current native Linear memory pack; retain exact local constructor guards and GC/legacy behavior, no fake constructors or padded extent inference"
+    "src/ir/backend/lower-contracts.ts, src/ir/backend/vector-element-access.ts, src/ir/lower-generic.ts and src/ir/program-body-resources.ts: explicit unit-and-SSA requested backing capacity endpoint issued by the current native Linear memory pack; retain exact local constructor guards and GC/legacy behavior, no fake constructors or padded extent inference",
+    "src/ir/program-physical-plan.ts, program-consumer.ts, program-body-resources.ts and lower-generic.ts: existing canonical global reservation joined to issued native vector storage/resources, legitimate uninitialized carrier defaults and guarded GC nonnull refinement; preserve unrelated globals, reservations, source ABI and A provider"
   ],
   "handoff_authority": {
     "source": "human scope reply call_fHCisBpMmbCIm9ci7BYIEcqH",
@@ -100,7 +101,7 @@
     "force push, hook bypass, main push"
   ],
   "donor_policy": "Preserve original donors; authenticate actual source before adoption; receiving writes occur in fresh isolated worktrees.",
-  "previous_write_id": "b-internal-vector-calls-14d5a2b1-61ba-4068-9462-a64794ccf146",
+  "previous_write_id": "b-internal-vector-calls-9ecf291d-bb3e-498d-b32c-c24d426d8426",
   "scope_refinements": [
     {
       "at": "2026-10-13T12:08:20.967759Z",
@@ -186,10 +187,24 @@
         "bounded_only": true
       },
       "reason": "Resolve measured signature, finite allocation evidence and genuine demand provenance barriers together for internal synchronous vector transport."
+    },
+    {
+      "at": "2026-10-13T18:37:01.446575Z",
+      "additions": [
+        "src/ir/program-physical-plan.ts, program-consumer.ts, program-body-resources.ts and lower-generic.ts: existing canonical global reservation joined to issued native vector storage/resources, legitimate uninitialized carrier defaults and guarded GC nonnull refinement; preserve unrelated globals, reservations, source ABI and A provider"
+      ],
+      "authority": {
+        "source": "human scope reply call_fHCisBpMmbCIm9ci7BYIEcqH",
+        "answer": "Take over the blocking shared seams",
+        "receiving_owner": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+        "bounded_only": true
+      },
+      "reason": "Resolve the measured native internal module-vector exact-storage/startup blocker through existing canonical joins; preserve unrelated source, growth and A integration."
     }
   ],
   "receiving_worktrees": [
     "codex/6920-b-native-vector-calls-20261013-01a12827",
-    "codex/6920-b-native-vector-calls-20261013-01a12827"
+    "codex/6920-b-native-vector-calls-20261013-01a12827",
+    "codex/6920-b-vector-globals-20261013-01a12827"
   ]
 }

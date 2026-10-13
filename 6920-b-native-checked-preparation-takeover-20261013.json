@@ -6,8 +6,8 @@
   "status": "in-progress",
   "branch": "codex/6920-b-native-preparation-20261013-01a12827",
   "claimed_at": "2026-10-13T06:38:30.746860Z",
-  "updated_at": "2026-10-13T17:55:39.596348Z",
-  "write_id": "b-internal-vector-calls-f57cadd3-2bcb-4d62-b68c-28ffb92cce5e",
+  "updated_at": "2026-10-13T18:37:01.446575Z",
+  "write_id": "b-internal-vector-calls-0bc67c58-7bca-403a-a3b0-8500c8162554",
   "handoff_scope": [
     "src/ir/program-source.ts: genuine shared logical vector resolver, preparation origin and final checked facts joins",
     "src/ir/from-ast.ts: logical vector admission and executable allocation demand only",
@@ -29,7 +29,11 @@
     "new tests/issue-6920-native-vector-mutation.test.ts, plan/issues/6920-native-linear-shared-source-handoff.md and one new leaf classification row in scripts/compiler-boundaries.json: actual four-profile live/codec/public mutation and malformed proof controls; no architectural completion or growth admission",
     "src/ir/native-vector-mutation.ts: bounded logical write lowering and actual checker-symbol/i32-slot association extracted from B-owned from-ast wiring; no physical source resolver or growth algorithm",
     "src/ir/logical-vector-source-facts.ts: four existing logical source guard function bodies extracted byte-identically from B-owned from-ast to satisfy ordinary driver budget; preserve original async collector and error behavior",
-    "src/ir/program-sync-vectors.ts and structured-vector-body.ts: finite signed length ceiling at genuine literal source capture and independent structured constructor replay, required for unit-step i32 mutation proof; preserve historical standalone checker and generic producers"
+    "src/ir/program-sync-vectors.ts and structured-vector-body.ts: finite signed length ceiling at genuine literal source capture and independent structured constructor replay, required for unit-step i32 mutation proof; preserve historical standalone checker and generic producers",
+    "src/ir/module-binding-value-kinds.ts, module-bindings.ts and bounded new native module-vector source leaf: truthful native-only actual const literal storage classification with canonical source/global/TDZ identity, no legacy resource coordinates; preserve native-off/host classifiers",
+    "src/ir/program-source.ts, native-source-selection.ts and program-sync-vectors.ts: original module-init population vector facts and authentic internal global reads, preserving original AST nodes and async collector",
+    "src/ir/program/linear-vector-flow.ts and bounded native structured allocation-evidence/producer leaves: complete actual vector global writer/read origins and escaping lifetime replay, no synthetic sites or generic producer/checker changes",
+    "new tests/issue-6920-native-vector-globals.test.ts, plan/issues/6920-native-linear-shared-source-handoff.md and truthful new boundary leaf rows: actual native four-profile live/codec/public startup/global/lifetime qualification, currentness/TDZ/unknown writer controls; no completion or allowance claim"
   ],
   "handoff_authority": {
     "source": "human scope reply call_fHCisBpMmbCIm9ci7BYIEcqH",
@@ -192,14 +196,31 @@
         "bounded_only": true
       },
       "reason": "Record the finite mutation subsystem extraction and signed constructor-length proof closure without widening foreign source or growth."
+    },
+    {
+      "at": "2026-10-13T18:37:01.446575Z",
+      "additions": [
+        "src/ir/module-binding-value-kinds.ts, module-bindings.ts and bounded new native module-vector source leaf: truthful native-only actual const literal storage classification with canonical source/global/TDZ identity, no legacy resource coordinates; preserve native-off/host classifiers",
+        "src/ir/program-source.ts, native-source-selection.ts and program-sync-vectors.ts: original module-init population vector facts and authentic internal global reads, preserving original AST nodes and async collector",
+        "src/ir/program/linear-vector-flow.ts and bounded native structured allocation-evidence/producer leaves: complete actual vector global writer/read origins and escaping lifetime replay, no synthetic sites or generic producer/checker changes",
+        "new tests/issue-6920-native-vector-globals.test.ts, plan/issues/6920-native-linear-shared-source-handoff.md and truthful new boundary leaf rows: actual native four-profile live/codec/public startup/global/lifetime qualification, currentness/TDZ/unknown writer controls; no completion or allowance claim"
+      ],
+      "authority": {
+        "source": "human scope reply call_fHCisBpMmbCIm9ci7BYIEcqH",
+        "answer": "Take over the blocking shared seams",
+        "receiving_owner": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+        "bounded_only": true
+      },
+      "reason": "Resolve the measured native internal module-vector exact-storage/startup blocker through existing canonical joins; preserve unrelated source, growth and A integration."
     }
   ],
-  "previous_write_id": "b-internal-vector-calls-37c099b9-90db-4ea1-8fe6-1b2dff1d2059",
+  "previous_write_id": "b-internal-vector-calls-f57cadd3-2bcb-4d62-b68c-28ffb92cce5e",
   "receiving_worktrees": [
     "codex/6920-b-native-vector-calls-20261013-01a12827",
     "codex/6920-b-vector-control-20261013-01a12827",
     "codex/6920-b-vector-control-20261013-01a12827",
     "codex/6920-b-vector-mutation-20261013-01a12827",
-    "codex/6920-b-vector-mutation-20261013-01a12827"
+    "codex/6920-b-vector-mutation-20261013-01a12827",
+    "codex/6920-b-vector-globals-20261013-01a12827"
   ]
 }
