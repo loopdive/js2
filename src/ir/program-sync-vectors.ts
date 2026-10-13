@@ -74,6 +74,8 @@ export function buildSynchronousLogicalVectors(
     let actual: NativeFamilyVectorType;
     if (ts.isParenthesizedExpression(node)) actual = initializer(node.expression, declared);
     else if (ts.isArrayLiteralExpression(node)) {
+      // Native vector length is a signed i32. This also bounds ++ induction before exit.
+      if (node.elements.length > 2147483647) unsupported("literal exceeds native signed vector length");
       for (const item of node.elements)
         if (
           ts.isSpreadElement(item) ||

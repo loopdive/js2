@@ -3624,3 +3624,91 @@ inventory pass. Eight scalar/Boolean WIT result pairs are byte-identical to 8ac.
 The 32-request public audit improves from 10 to 20 correct executions; mutation,
 globals and growth remain explicitly open. Inventory still reports incomplete
 architecture. No full conformance, retirement or main-delivery claim is made.
+
+
+### Native fixed-vector mutation receiver (2026-10-13)
+
+The published structured-control checkpoint is c3daab06f5e124796ce0e2ed5359ce3aef3cdce2
+on held PR6662. Normal commit and push hooks passed; the remote PR head and
+exact reviewed body digest were verified. Main integration remains A-owned.
+
+A genuine predecessor probe executes sixteen public requests: four mutation
+sources on the four native profiles. All sixteen refuse logical element-store
+lowering. The first candidate probe executes the same sixteen correctly.
+This probe is a finite matrix, not full mutation or conformance coverage.
+
+Receiver ledger 23d046c287b3468f9917213b69d698c26fc16941 registers the fresh
+isolated B mutation worktree. Native plain stores, supported numeric compound
+stores and discarded increments bypass physical source resolution only when
+checker symbols, original loop declaration and actual i32 slot agree. The
+body-only proof requires a strict vector-length bound, let integer initialization
+and ++ update. Signed native constructor length bounds prevent counter overflow.
+Unknown calls, property/alias writes, declaration writes and lost symbol/slot
+association refuse; the historical read proof and legacy growth are unchanged.
+The captured receiver/index are reused; compound reads precede the RHS.
+
+The first new test run reports seven passes and three failures among ten cases.
+Two failures expose an unsupported scalar assignment expression in one intended
+positive fixture; this original source and failure epoch are retained. The
+remaining failure is a harness assumption that refusal binary is undefined,
+where the real public API returns an empty Uint8Array. The corrected sequential
+scalar-effect fixture uses existing statement semantics and the unsupported
+expression remains a negative control. No result is credited until the final
+source qualification runs. Initial module-import and typecheck-path failures
+also remain under .tmp/vector-mutation/.
+
+Final source/runtime/codec/public, broader regression and gate qualification
+is recorded in the next entry. Globals, growth, general property writes, non-counted mutation,
+async/cleanup, IR retirement, full conformance and verified main delivery remain
+open. A forwarding claims, branches, HOLDs and integration/queue ownership remain
+unchanged.
+
+### Qualified native fixed-vector mutation (2026-10-13)
+
+The final source boundary is synchronous FunctionDeclaration-owned f64-vector
+mutation under a restricted counted-loop/effect profile. Original checker
+symbols, actual i32 slot records, a strict logical-length bound, let integer
+initialization and same-symbol ++ update must agree. Native constructors and
+independent structured replay require lengths at most 2,147,483,647. Unknown
+calls, object/any coercion, getters, declaration writes and property/alias effects
+remain refused. Async owners cannot borrow this proof; the original async
+collector and generic ownership/escape/checker bytes remain preserved.
+
+Qualification passes 13/13 feature tests. Ten actual synchronous programs run
+on all four native profiles using the same prepared program live and through
+codec restoration: 80 emissions and 160 correct runtime calls. Public compilation
+adds 40 compilations and 80 correct calls. Seventeen negative sources produce
+68 located zero-binary refusals. The separate checker control queries authentic
+sync, async and implicit object-coercion owners; it grants only the first and is
+not counted as execution coverage. The earlier 115/115 focused run predates the
+last two boundary refinements; the final broad cohort covers its unchanged
+compatibility cases and all thirteen feature cases.
+
+The final sealed 66-file / 1,019-case cohort records 961 pass / 48 fail / nine
+skip / one todo, actual process exit 1. Its exact 48 failure identities match
+published c3daab06f5e124796ce0e2ed5359ce3aef3cdce2; source hashes are identical
+before and after this run. No new failure identity is observed, and the cohort
+remains red. Initial fixture, harness, shadowing, typing and budget failure
+epochs are retained without changing predecessor assertions.
+
+Typing covers 1,980/1,980 source TS files and 55/55 explicitly named tests,
+with 2,303 actual inputs, no exclusions and zero diagnostics. The two unchanged
+older analysis tests retain six predecessor typing diagnostics outside that
+scope; their 21 runtime cases passed on both authentic versions. All ten source
+gates pass, including ordinary LOC/function budgets without a new allowance.
+The four extracted logical source-guard function bodies are byte-identical to
+c3da with the original imported error identity and call contracts preserved.
+The inventory honestly retains incomplete architecture. Eight scalar/Boolean
+WIT artifact pairs on the final source exactly match c3da.
+
+The ordinary full build passes with an 8 GiB Node heap. The initial default
+4 GiB run failed with V8 heap exhaustion (exit 134); its full failure log is
+preserved. No build stage or hook is skipped.
+
+Receiver ledger c01fcfcb6646733c7c6cf500162e9b0f83f2c0e0 records the expanded
+source-helper scope, retaining all foreign rows. Private exact manifests,
+source hashes, raw results, full logs and predecessor comparisons are retained
+under .tmp/vector-mutation/. This is a held B checkpoint; no verified main
+integration is claimed. Globals, growth, general writes, non-counted mutation,
+async/cleanup, IR retirement and full conformance remain open. A forwarding
+claims, branches, HOLDs and final integration/queue ownership are preserved.

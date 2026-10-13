@@ -168,6 +168,7 @@ export class StructuredVectorBody {
     const exclusion = profileInstructionExclusion(instr);
     if (exclusion) this.refuse(exclusion);
     if (instr.kind === "vec.new_fixed") {
+      if (instr.elements.length > 2147483647) this.refuse();
       if (instr.result === null || instr.alloc === undefined || this.facts.sites.has(instr.alloc))
         this.fail("occurrence-mismatch");
       const entry = this.registry.entries[instr.alloc];

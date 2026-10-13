@@ -16435,6 +16435,30 @@
       "path": "src/ir/analysis/allocation-evidence/native-control-producer.ts",
       "state": "clean",
       "layer": "ir-analysis"
+    },
+    {
+      "path": "src/ir/native-vector-mutation-proof.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "6920-native-preparation",
+      "nextBoundary": "Checker-bound native mutation proof; move with source preparation to frontend/ts. No physical layout or pure IR claim."
+    },
+    {
+      "path": "src/ir/native-vector-mutation.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "6920-native-preparation",
+      "nextBoundary": "Checker-bound native logical mutation lowering; move with source preparation to frontend/ts. No physical layout or pure IR claim."
+    },
+    {
+      "path": "src/ir/logical-vector-source-facts.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "6920-native-preparation",
+      "nextBoundary": "Existing owned logical source facts and consumption checks, extracted unchanged from the frontend driver; move with source preparation to frontend/ts."
     }
   ]
 }
