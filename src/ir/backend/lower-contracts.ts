@@ -4,6 +4,7 @@
 import type { IrUnitId } from "../../shared/contracts/ir-identity.js";
 import type {
   AllocSiteId,
+  IrValueId,
   IrClassShape,
   IrClosureSignature,
   IrDomCallbackAuthority,
@@ -152,6 +153,7 @@ export interface IrLowerResolver {
    * path). Returns the same `IrVecLowering` shape as `resolveVec`.
    */
   resolveVecForElement?(elementValType: ValType, alloc?: AllocSiteId): IrVectorLowering | null;
+  requestedVectorCapacity?(unitId: IrUnitId, value: IrValueId): number;
   /**
    * Resolve the Wasm value type used for `IrType.string` in the active
    * backend.

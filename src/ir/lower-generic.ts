@@ -2323,6 +2323,7 @@ export function lowerIrFunctionBody<S, Slot>(
             emitter,
             emitValue,
             construction: defBy.get(instr.vec),
+            requestedCapacity: resolver.requestedVectorCapacity?.(func.unitId, instr.vec),
             indexScratch: () => allocScratchLocal("$vec_access_index", { kind: "i32" }),
             elementScratch: ensureVecElementScratch,
           },

@@ -3457,3 +3457,90 @@ explicit source/published-test typing and formatting checks also finish
 with zero diagnostics. These 16 affected controls overlap the first broad
 cohort; the broad 647/3/9/1 result remains its own unchanged record rather
 than being relabeled as a fresh full-suite pass.
+
+
+### Internal synchronous vector transport receiver — 2026-10-13
+
+Signed receiver `1d92a9a70791a5b18a1226369b3adb57439c4c9a` extends
+only the existing B checked-preparation and carrier claims. Source producer
+`codex/6920-b-native-vector-calls-20261013-01a12827` starts from authentic
+published `68d2b17bb594cb4fc9c21030f41cd741d7ef61fe`.
+The ten-sample whole-program feature audit executes the local f64 vector
+positive control on all four profiles (four correct executions). Internal
+vector parameters/results and the multi-source factory fail shared callable
+signature preparation. Constant/mutable vector globals fail exact storage
+admission, Boolean vectors fail the current family element contract, indexed
+assignment fails allocation-free admission, and the loop fails the finite
+allocation-evidence profile. Push preparation throws for the undeclared
+`__ir_vec_elem_set_f64` intrinsic; that failure remains preserved. This is a
+first-boundary audit, not a conformance population estimate.
+
+The next implementation joins real synchronous signatures, body-derived
+conservative allocation evidence and complete acyclic unit-bound call/return
+origins. Parameters and returned aliases create no allocation sites. Every
+origin remains the actual creating instruction's site and requested extent.
+All four A forwarding claims, original async collector, legacy growth source,
+old fixtures, HOLDs and A queue authority remain preserved. Full migration
+and retirement remain open. Actual results follow qualification.
+
+
+Internal transport qualification retains the original asynchronous collector
+byte-exact. The dedicated synchronous source collector uses authenticated
+unit-bound call plans and checker contracts; nullable callable types remain
+distinct from nonnullable literal allocations. The separate
+`single-block-numeric-vector-call-v1` verifier replays original intraprocedural
+conservative ownership/escape annotations without calling the producer solver.
+Whole-program flow summaries substitute actual formal arguments and terminal
+vector returns. Every demanded receiver joins all authentic creating sites and
+a consistent requested backing capacity. Transport introduces no allocation
+site. The issued native pack checks unit/SSA capacity queries throughout the
+active emission attempt; the physical access guard uses requested extent,
+retaining actual arena padding and the existing A forwarding provider.
+
+The seven-source, four-profile live/codec matrix has **56/56** correct
+executions. The same sources on authentic published predecessor `68d` have
+eight correct local-control executions; the other six sources refuse at
+shared signature preparation. All eight existing local-control pairs retain
+complete encoded program, emitted module DATA, binary and runtime/memory
+identity. No successful predecessor binaries exist for the six newly admitted
+sources. Final candidate output records remain identical after the finite
+selector correction. Static retained allocation sites are separately measured:
+two nested-call fixtures retain an original factory site plus an inlined site,
+while each runtime invocation still performs its expected single allocation.
+
+The new test file has **12/12** checks, including 56 executions, actual callee
+site ownership, argument ordinal recomputation, stale local return evidence,
+recursive/mixed-extent refusals, removed caller/forged unit and post-attempt
+capacity capability revocation. The affected three-file group passes **41/41**.
+The first broad cohort reports 659 passes, three failures, nine skips and one
+todo across 672 cases: two historic issue-1169o legacy failures and a new
+selector traversal stack overflow on the retained cyclic-buffer control.
+That failed epoch is preserved. The selector now uses a finite buffer census
+and keeps the old no-call profile untouched; the new profile also diagnoses
+an active native buffer cycle as invalid, with a real positive-control probe.
+The corrected **53-file / 672-case** cohort reports **660 passes, two failures,
+nine skips and one todo**. Original assertions and fixtures are retained.
+
+Final source census is stable throughout qualification. Typing covers
+**1,972/1,972** source TypeScript modules and **44/44** explicitly named
+published tests (2,273 actual typed inputs; `exclude: []`). Build, lint, format,
+whitespace, dead exports, oracle and coercion checks pass. Ordinary file and
+function budgets pass without new allowances. Inventory has zero errors and
+remains explicitly graph/architecture incomplete. Both earlier over-budget
+epochs, initial test count assumptions, diagnostic-order failures and the
+cyclic failure remain under `.tmp/native-vector-calls/`.
+
+The implementation admits the finite synchronous single-block profile with
+scalar conditional children and terminal returns. Early returns, multiple
+blocks, async/slot bodies, unresolved/indirect vector calls, public vector ABI,
+mixed requested extents and recursive vector flow remain refused. Global
+vector storage, mutation/growth/loops, full IR frontend parity/retirement,
+merge-group conformance and A's final integration remain open. The held PR
+is a review checkpoint, not verified main delivery.
+
+Authentic `68d` reconfirmation runs the unchanged issue-1169o harness in the
+existing default JS-host lane: **seven passes / two failures / nine cases**. The
+same computed/bitwise legacy-return assertions fail before the IR comparison.
+The source collector, producer and old fixture remain unpatched. This
+reconfirms the two remaining broad-cohort failures without assigning them to
+the new native transport change.

@@ -8,6 +8,7 @@ import {
   type IrSiteId,
   type IrValueId,
 } from "../core/nodes.js";
+import { collectLinearVectorFlow } from "./linear-vector-flow.js";
 import type { IrType } from "../core/types.js";
 import type { IrUnitId } from "../../shared/contracts/ir-identity.js";
 import { IrUnsupportedError } from "../../shared/contracts/ir-preparation-errors.js";
@@ -158,7 +159,6 @@ export function collectPreparedLinearMemoryDemand(input: PreparedLinearMemoryInp
     invalid(error instanceof Error ? error.message : String(error));
   }
 
-  const occurrences: PreparedLinearMemoryDemandOccurrence[] = [];
   input.module.functions.forEach((fn, functionIndex) => {
     const owner = { functionIndex, unitId: fn.unitId, ownerFunction: fn.name };
     if (fn.exported) {
@@ -177,6 +177,21 @@ export function collectPreparedLinearMemoryDemand(input: PreparedLinearMemoryInp
           );
       }
     }
+  });
+  const flow = collectLinearVectorFlow(input.module);
+  const allPositions = new Map<IrInstr, PreparedLinearMemoryDemandPath>();
+  input.module.functions.forEach((fn, functionIndex) =>
+    fn.blocks.forEach((block, blockIndex) =>
+      block.instrs.forEach((instr, index) =>
+        positionedInstructions(instr, ["functions", functionIndex, "blocks", blockIndex, "instrs", index]).forEach(
+          (at) => allPositions.set(at.instr, at.path),
+        ),
+      ),
+    ),
+  );
+  const occurrences: PreparedLinearMemoryDemandOccurrence[] = [];
+  input.module.functions.forEach((fn, functionIndex) => {
+    const owner = { functionIndex, unitId: fn.unitId, ownerFunction: fn.name };
     const positions: ReturnType<typeof positionedInstructions> = [];
     fn.blocks.forEach((block, blockIndex) =>
       block.instrs.forEach((instr, index) =>
@@ -200,15 +215,6 @@ export function collectPreparedLinearMemoryDemand(input: PreparedLinearMemoryInp
         ),
       ),
     );
-    // This is an exact local defining-instruction join, not ownership/escape
-    // analysis or an inferred interprocedural vector ABI.
-    const constructions = new Map<IrValueId, (typeof positions)[number]>();
-    for (const position of positions) {
-      if (position.instr.kind === "vec.new_fixed" && position.instr.result !== null) {
-        if (constructions.has(position.instr.result)) invalid(`duplicate vector definition in ${fn.unitId}`);
-        constructions.set(position.instr.result, position);
-      }
-    }
     for (const { instr, path } of positions) {
       const at = { ...owner, instructionPath: path, ...(instr.site === undefined ? {} : { site: instr.site }) };
       if (instr.kind === "vec.set_length" || instr.kind === "forof.vec")
@@ -235,20 +241,28 @@ export function collectPreparedLinearMemoryDemand(input: PreparedLinearMemoryInp
           lookups: ["allocate", "initialize-element"],
         });
       } else if (instr.kind === "vec.get" || instr.kind === "vec.len" || instr.kind === "vec.set") {
-        const construction = constructions.get(instr.vec);
-        if (!construction || construction.instr.kind !== "vec.new_fixed")
-          unsupported(at, "native Linear vector operand has no exact local fixed-construction allocation");
-        checkedVector(construction.instr.resultType, at);
-        const allocationId = construction.instr.alloc;
-        if (allocationId === undefined) invalid(`vector operand lost its construction allocation in ${fn.unitId}`);
-        occurrences.push({
-          ...at,
-          kind: instr.kind,
-          allocationId,
-          vectorValue: instr.vec,
-          constructionPath: construction.path,
-          lookups: ["resolve-forwarding"],
-        });
+        const origins = flow.get(fn.unitId)?.get(instr.vec);
+        if (!origins?.length)
+          unsupported(
+            at,
+            "native Linear vector operand has no exact local fixed-construction allocation or authenticated call origin",
+          );
+        for (const origin of origins) {
+          const construction = origin.instruction;
+          checkedVector(construction.resultType, at);
+          const allocationId = construction.alloc;
+          const constructionPath = allPositions.get(construction);
+          if (allocationId === undefined || !constructionPath)
+            invalid(`vector operand lost its authentic construction in ${fn.unitId}`);
+          occurrences.push({
+            ...at,
+            kind: instr.kind,
+            allocationId,
+            vectorValue: instr.vec,
+            constructionPath,
+            lookups: ["resolve-forwarding"],
+          });
+        }
       }
     }
   });

@@ -39,6 +39,8 @@ import type {
   MemoryReservation,
   PhysicalModuleReservations,
 } from "../../../wasm/physical/module-reservations.js";
+import type { IrUnitId } from "../../../shared/contracts/ir-identity.js";
+import type { IrValueId } from "../../../ir/core/nodes.js";
 import type { WasmExport } from "../../../wasm/model/module-records.js";
 import type { PreparedLinearMemoryPlan, PreparedLinearMemoryResult } from "./contracts.js";
 
@@ -73,6 +75,7 @@ export interface PreparedLinearBodyBindings {
   readonly supportFunctions: readonly FunctionReservation[];
   resolveVectorLayout(element: IrType, allocation?: AllocSiteId): LinearVecLowering;
   resolveRuntimeOperation(operation: LinearRuntimeOperation): number;
+  requestedVectorCapacity(unitId: IrUnitId, value: IrValueId): number;
 }
 function invalid(detail: string): never {
   throw new PreparedIrProgramInvariantError("emission-failed", `Linear memory pack: ${detail}`);
@@ -137,7 +140,11 @@ export function planPreparedLinearMemory(input: {
       if (at.functionIndex >= projection.prepared.functions.length || !program.units.has(at.unitId))
         unsupported("allocating support is not admitted by the numeric vector recipe", at);
       const allocation = planner.allocation(at.allocationId);
-      if (!allocation || allocation.ownerFunction !== at.ownerFunction || !constructors.has(at.allocationId))
+      if (
+        !allocation ||
+        allocation.ownerFunction !== checked.module.functions[at.constructionPath[1] as number]?.name ||
+        !constructors.has(at.allocationId)
+      )
         unsupported("vector demand lacks its exact canonical constructor owner", at);
       const layout = planner.requireLayout(allocation.layoutId);
       if (
@@ -338,6 +345,27 @@ export function preparedLinearMemoryBindings(
     return Object.freeze({
       supportFunctions: pack.functions,
       resolveRuntimeOperation,
+      requestedVectorCapacity: (unitId: IrUnitId, value: IrValueId) =>
+        use(tx, authority, (active) => {
+          const occurrences = active.plan.demand.occurrences.filter(
+            (at) => at.unitId === unitId && at.vectorValue === value,
+          );
+          if (!occurrences.length) invalid("vector receiver has no issued semantic demand");
+          const capacities = occurrences.map((at) => {
+            let construction: unknown = active.issuance.projection.prepared;
+            for (const key of at.constructionPath)
+              construction = (construction as Record<string | number, unknown>)[key];
+            const instr = construction as Extract<
+              import("../../../ir/core/nodes.js").IrInstr,
+              { kind: "vec.new_fixed" }
+            >;
+            if (instr.kind !== "vec.new_fixed" || instr.alloc !== at.allocationId)
+              invalid("requested extent lost its exact construction owner");
+            return instr.capacity ?? instr.elements.length;
+          });
+          if (new Set(capacities).size !== 1) invalid("vector receiver has mixed requested backing extents");
+          return capacities[0]!;
+        }),
       resolveVectorLayout: (element: IrType, allocationId?: AllocSiteId): LinearVecLowering =>
         use(tx, authority, (active) => {
           if (element.kind !== "val" || element.val.kind !== "f64") invalid("unplanned vector element carrier");

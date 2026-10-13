@@ -136,6 +136,7 @@ export function physicalBodyResolver(
       linear
         ? linear.resolveVectorLayout({ kind: "val", val: element }, allocation)
         : vectorLowering(vectors.resolveElement(vectorTypes, element)),
+    ...(linear ? { requestedVectorCapacity: linear.requestedVectorCapacity } : {}),
     internFuncType: (type) => reservations.internFunctionType(type.params, type.results),
     standardizedExceptions: () => target === "standalone" || target === "wasi",
     ensureExnTag: () => {

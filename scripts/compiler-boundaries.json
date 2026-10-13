@@ -16123,6 +16123,24 @@
       "layer": "ir-runtime"
     },
     {
+      "path": "src/ir/program-sync-vectors.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "6920-native-preparation",
+      "nextBoundary": "Genuine synchronous checker-bound vector signatures and complete source-owner expression facts. Retain frontend debt until shared source preparation relocation; no physical representation."
+    },
+    {
+      "path": "src/ir/program/linear-vector-flow.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/analysis/allocation-evidence/vector-call-profile.ts",
+      "state": "clean",
+      "layer": "ir-analysis"
+    },
+    {
       "path": "src/ir/native-source-selection.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",

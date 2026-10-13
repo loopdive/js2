@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
+import { nativeSynchronousVectorParameter, nativeSynchronousVectorResult } from "./program-sync-vectors.js";
 import { ts, assertCurrentProgramSources } from "../ts-api.js";
 import { sourceBooleanAnyResult, assertSourceBooleanAnyReturns } from "../frontend/boolean-return-boundary.js";
 import { preparedIrProgramCallableResults } from "./program-callable-contract.js";
@@ -1380,7 +1381,7 @@ function validateNativePromiseDelaySourceLowering(
 /** Keep callable carriers separate from semantic fulfillment signatures. */
 function prepareSourceFunctionSignatures(
   checker: ts.TypeChecker,
-  policy: RuntimeManifestPolicy,
+  policy: RuntimeManifestPolicy & { readonly nativeLinearVectors: boolean },
   inventory: IrUnitInventory,
   identity: ReturnType<typeof buildIrPlanningIdentityContext>,
   types: ReturnType<typeof buildIrUnitTypeMap>,
@@ -1404,7 +1405,8 @@ function prepareSourceFunctionSignatures(
       family?.params ??
       declaration.parameters.map((param, index) =>
         param.type
-          ? ((hostAsync ? hostAsyncParameter(checker, param) : undefined) ??
+          ? (nativeSynchronousVectorParameter(checker, declaration, param, policy.nativeLinearVectors) ??
+            (hostAsync ? hostAsyncParameter(checker, param) : undefined) ??
             checkerCallable(checker, param.type, unit.displayName) ??
             typeNodeToIr(param.type, unit.displayName))
           : propagated?.params[index]
@@ -1413,27 +1415,30 @@ function prepareSourceFunctionSignatures(
       );
     if (params.some((type) => !type)) unsupported(`function ${unit.displayName} has an unresolved parameter contract`);
     const returnNode = isAsync ? unwrapPromiseTypeNode(declaration.type) : declaration.type;
+    const nativeResult = nativeSynchronousVectorResult(checker, declaration, policy.nativeLinearVectors);
     const dynamicResult = hostAsync ? hostAsyncAnyResult(checker, declaration) : undefined;
     const result: IrType | null = certifiedDelays.has(unit.id)
       ? { kind: "extern", className: "Promise" }
       : family
         ? family.result
-        : dynamicResult
-          ? dynamicResult
-          : returnNode?.kind === ts.SyntaxKind.VoidKeyword
-            ? null
-            : !isAsync &&
-                returnNode &&
-                ts.isTypeReferenceNode(returnNode) &&
-                ts.isIdentifier(returnNode.typeName) &&
-                returnNode.typeName.text === "Promise"
-              ? { kind: "val", val: { kind: "externref" } }
-              : returnNode
-                ? (sourceBooleanAnyResult(checker, declaration) ??
-                  checkerCallable(checker, returnNode, unit.displayName) ??
-                  typeNodeToIr(returnNode, unit.displayName))
-                : (checkerInferredCallableResult(checker, declaration, unit.displayName) ??
-                  (propagated ? lowerTypeToIrType(propagated.returnType) : null));
+        : nativeResult
+          ? nativeResult
+          : dynamicResult
+            ? dynamicResult
+            : returnNode?.kind === ts.SyntaxKind.VoidKeyword
+              ? null
+              : !isAsync &&
+                  returnNode &&
+                  ts.isTypeReferenceNode(returnNode) &&
+                  ts.isIdentifier(returnNode.typeName) &&
+                  returnNode.typeName.text === "Promise"
+                ? { kind: "val", val: { kind: "externref" } }
+                : returnNode
+                  ? (sourceBooleanAnyResult(checker, declaration) ??
+                    checkerCallable(checker, returnNode, unit.displayName) ??
+                    typeNodeToIr(returnNode, unit.displayName))
+                  : (checkerInferredCallableResult(checker, declaration, unit.displayName) ??
+                    (propagated ? lowerTypeToIrType(propagated.returnType) : null));
     bodyResults.set(unit.id, result);
     const callableResults = preparedIrProgramCallableResults({
       funcKind: isAsync ? "async" : "regular",
@@ -1675,7 +1680,7 @@ export function prepareIrProgramSources(
       : undefined;
     prepareSourceFunctionSignatures(
       input.checker,
-      input.policy,
+      { ...input.policy, nativeLinearVectors },
       inventory,
       identity,
       types,
@@ -1785,7 +1790,7 @@ export function prepareIrProgramSources(
       const logicalVectorTypes =
         family?.logicalVectorTypes ??
         (nativeLinearVectors && !moduleInit
-          ? nativeLinearSourceVectors(input.checker, declaration, ts.SyntaxKind.AsyncKeyword)
+          ? nativeLinearSourceVectors(input.checker, declaration, directCalls)
           : undefined);
       const lowered = lowerFunctionAstToIr(declaration, {
         booleanReturnBoundary: sourceBooleanAnyResult(input.checker, declaration) ? declaration : undefined,

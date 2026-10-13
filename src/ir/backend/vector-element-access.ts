@@ -8,6 +8,7 @@ interface VectorElementAccessContext<S> {
   readonly emitter: BackendEmitter<S>;
   readonly emitValue: (value: IrValueId, out: S) => void;
   readonly construction: IrInstr | undefined;
+  readonly requestedCapacity?: number;
   readonly indexScratch: () => number;
   readonly elementScratch: (type: ValType) => number;
 }
@@ -24,10 +25,12 @@ export function emitVectorElementAccess<S>(
   emitter.emitVecDataPtr(vec, out);
   emitValue(instr.index, out);
   if (instr.kind === "vec.set") emitValue(instr.newValue, out);
-  if ("linearMemory" in vec && construction?.kind === "vec.new_fixed") {
+  const capacity =
+    context.requestedCapacity ??
+    (construction?.kind === "vec.new_fixed" ? (construction.capacity ?? construction.elements.length) : undefined);
+  if ("linearMemory" in vec && capacity !== undefined) {
     // GC array.get/set check requested backing extent, not logical length or
     // physical Linear padding. Native admission joins this exact SSA owner.
-    const capacity = construction.capacity ?? construction.elements.length;
     const index = context.indexScratch();
     const value = instr.kind === "vec.set" ? context.elementScratch(vec.elementValType) : undefined;
     if (value !== undefined) emitter.emitLocalSet(value, out);
@@ -41,8 +44,8 @@ export function emitVectorElementAccess<S>(
     emitter.emitLocalGet(index, out);
     if (value !== undefined) emitter.emitLocalGet(value, out);
   }
-  // Ambiguous legacy operands retain their existing access contract; the
-  // native collector refuses operands without an exact local construction.
+  // Native transported operands retain their complete issued origin/extent join.
+  // Legacy operands keep the original local defining-instruction guard.
   if (instr.kind === "vec.get") emitter.emitElemGet(vec, out);
   else emitter.emitElemSet(vec, context.elementScratch(vec.elementValType), out);
 }

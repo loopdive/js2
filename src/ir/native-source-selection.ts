@@ -1,12 +1,10 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
-import type { ts } from "../ts-api.js";
+import { ts } from "../ts-api.js";
 import type { IrProgramSourceInput } from "./program-source.js";
-import {
-  buildNativeFamilyLogicalVectors,
-  type NativeFamilyVectorNode,
-  type NativeFamilyVectorType,
-} from "./program-logical-types.js";
+import { type NativeFamilyVectorNode, type NativeFamilyVectorType } from "./program-logical-types.js";
+import { buildSynchronousLogicalVectors } from "./program-sync-vectors.js";
+import type { IrDirectCallLoweringPlan } from "./ast-lowering-plans.js";
 import { IrUnsupportedError } from "../shared/contracts/ir-preparation-errors.js";
 import { PreparedIrProgramInvariantError } from "./program/errors.js";
 import { assertNativeIrPolicy, isLegacyHostIrPolicy } from "./runtime/target-admission.js";
@@ -43,10 +41,11 @@ export function selectNativeLinearVectorProjection(input: IrProgramSourceInput):
 export function nativeLinearSourceVectors(
   checker: ts.TypeChecker,
   declaration: ts.FunctionDeclaration,
-  asyncKeyword: ts.SyntaxKind.AsyncKeyword,
+  directCalls: ReadonlyMap<ts.CallExpression, IrDirectCallLoweringPlan>,
 ): ReadonlyMap<NativeFamilyVectorNode, NativeFamilyVectorType> | undefined {
-  if (!declaration.body || declaration.modifiers?.some((modifier) => modifier.kind === asyncKeyword)) return undefined;
-  const facts = buildNativeFamilyLogicalVectors(checker, declaration, new Map());
+  if (!declaration.body || declaration.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword))
+    return undefined;
+  const facts = buildSynchronousLogicalVectors(checker, declaration, directCalls);
   for (const type of facts.values())
     if (
       Object.hasOwn(type, "layout") ||

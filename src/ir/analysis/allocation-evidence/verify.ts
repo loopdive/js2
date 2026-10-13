@@ -3,6 +3,7 @@
 import type { IrModule } from "../../core/nodes.js";
 import type { AllocRegistrySnapshot } from "../contracts/allocations.js";
 import type { AllocationEvidenceCheck } from "./contracts.js";
+import { hasNumericVectorCallBoundary, verifyNumericVectorCallEvidence } from "./vector-call-profile.js";
 import { captureAllocationEvidenceCensus } from "./census.js";
 import { compareRegistryEvidence, indexRegistryEvidence } from "./metadata.js";
 
@@ -15,6 +16,7 @@ import { compareRegistryEvidence, indexRegistryEvidence } from "./metadata.js";
  * Legacy rule sharing and prepared-program joins remain separate work.
  */
 export function verifyAllocationEvidence(module: IrModule, registry: AllocRegistrySnapshot): AllocationEvidenceCheck {
+  if (hasNumericVectorCallBoundary(module)) return verifyNumericVectorCallEvidence(module, registry);
   const index = indexRegistryEvidence(registry);
   const captured = captureAllocationEvidenceCensus(module, registry);
   if (captured.kind !== "captured") return captured;
