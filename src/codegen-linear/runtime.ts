@@ -218,21 +218,13 @@ export function addRuntime(mod: WasmModule, opts: ArenaOptions = {}): void {
 
   // Register __malloc function type
   const mallocTypeIdx = mod.types.length;
-  const mallocType = describeLinearBumpArena().allocatorType;
+  const mallocArena = describeLinearBumpArena();
+  const mallocType = mallocArena.allocatorType;
   mod.types.push(mallocType);
 
-  // __malloc implementation (bump allocator with on-demand memory growth):
-  // 1. ret  = __heap_ptr (the address handed back to the caller)
-  // 2. next = align8(ret + size)            ; new bump position
-  // 3. if next > (memory.size * PAGE_SIZE)   ; would overflow current pages?
-  //       grow memory by ceil((next - cur_bytes) / PAGE_SIZE) pages
-  // 4. __heap_ptr = next
-  // 5. return ret
-  //
-  // The growth check is what makes the arena usable for non-trivial
-  // short-lived programs (#1856). `memory.grow` returns -1 on failure; we do
-  // not branch on that here — a -1 means the engine's max was hit, and the
-  // subsequent store traps cleanly rather than corrupting live data.
+  // The default arena proves unsigned endpoint/alignment additions, grows in
+  // page units, and traps on failed growth before heap or header publication.
+  // Linked and malloc-v1 arenas retain their original chunk prologue and frame.
   const local_ret = 1; // local 0 is the `size` param
   const local_next = 2;
   const local_chunk = 3; // linked mode only
@@ -260,12 +252,10 @@ export function addRuntime(mod: WasmModule, opts: ArenaOptions = {}): void {
   mod.functions.push({
     name: "__malloc",
     typeIdx: mallocTypeIdx,
-    locals: [
-      ...describeLinearBumpArena().allocatorLocals,
-      // The chunk-size scratch exists only on the linked path, so the
-      // standalone frame — and therefore the emitted bytes — is unchanged.
-      ...(linked !== undefined ? [{ name: "__malloc_chunk", type: { kind: "i32" } as ValType }] : []),
-    ],
+    locals:
+      linked === undefined
+        ? mallocArena.allocatorLocals
+        : [...mallocArena.allocatorBaseLocals, { name: "__malloc_chunk", type: { kind: "i32" } as ValType }],
     body: mallocBody,
     exported: false,
   });

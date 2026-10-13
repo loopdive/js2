@@ -55,21 +55,41 @@ describe("canonical allocator/constructor producer preservation — runtime unit
     ]);
   });
   for (const row of authority.cases)
-    it(`preserves all resources, bodies and binary bytes for ${row.name}`, () => {
+    it(`preserves the complete historical ${row.name} module apart from the checked default allocator epoch`, () => {
       const mod = moduleFor(row.name);
-      expect(sha(JSON.stringify(mod))).toBe(row.moduleSha256);
       expect(mod.memories).toEqual(row.memories);
       expect(mod.globals).toEqual(row.globals);
       expect(mod.types).toEqual(row.types);
-      expect(mod.functions.find((fn) => fn.name === "__malloc")).toEqual(row.malloc);
       expect(mod.functions.find((fn) => fn.name === "__arr_new")).toEqual(row.constructor);
       expect(mod.imports).toHaveLength(row.importCount);
       expect(mod.functions).toHaveLength(row.functionCount);
       expect(mod.exports).toEqual(row.exports);
-      const binary = emitBinary(mod);
-      expect(binary.length).toBe(row.binaryBytes);
-      expect(sha(binary)).toBe(row.binarySha256);
-      expect(WebAssembly.validate(new Uint8Array(binary))).toBe(true);
+      const malloc = mod.functions.find((fn) => fn.name === "__malloc")!;
+      const historical = structuredClone(mod);
+      if (row.name === "linked") {
+        expect(malloc).toEqual(row.malloc);
+      } else {
+        expect(malloc.body).toEqual(
+          buildLinearBumpAllocationBody(mod.globals.findIndex((g) => g.name === "__heap_ptr")),
+        );
+        expect(malloc.locals).toEqual(describeLinearBumpArena().allocatorLocals);
+        expect(malloc.body).not.toEqual(row.malloc.body);
+        expect(malloc.locals).not.toEqual(row.malloc.locals);
+        const oldMalloc = historical.functions.find((fn) => fn.name === "__malloc")!;
+        // The immutable old authority proves the entire remaining module,
+        // not a silently regenerated golden for the intentional safety change.
+        oldMalloc.body = structuredClone(row.malloc.body);
+        oldMalloc.locals = structuredClone(row.malloc.locals);
+      }
+      expect(sha(JSON.stringify(historical))).toBe(row.moduleSha256);
+      const oldBinary = new Uint8Array(emitBinary(historical));
+      expect(oldBinary.length).toBe(row.binaryBytes);
+      expect(sha(oldBinary)).toBe(row.binarySha256);
+      expect(WebAssembly.validate(oldBinary)).toBe(true);
+      const binary = new Uint8Array(emitBinary(mod));
+      expect(WebAssembly.validate(binary)).toBe(true);
+      if (row.name === "linked") expect(sha(binary)).toBe(row.binarySha256);
+      else expect(sha(binary)).not.toBe(row.binarySha256);
     });
   it("binds actual shifted allocator/global coordinates and supplies fresh nested bodies/resources", () => {
     const mod = moduleFor("seeded");
