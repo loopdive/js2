@@ -6,13 +6,18 @@
   "status": "in-progress",
   "branch": "codex/6920-b-native-allocator-carriers-20261013-01a12827",
   "claimed_at": "2026-10-13T06:38:30.746860Z",
-  "updated_at": "2026-10-13T06:38:30.746860Z",
-  "write_id": "b-bounded-takeover-4cf22cfc-ed94-4d37-b22d-205201264589:allocator",
+  "updated_at": "2026-10-13T13:53:30.428670Z",
+  "write_id": "b-complete-native-initializer-f03585bc-5c25-4862-b652-cb224dcd7749",
   "handoff_scope": [
     "src/codegen-linear/runtime.ts: addRuntime selected default bump __malloc complete type/body/registration/resource recipe only",
     "addArrayRuntime __arr_new complete type/body/registration and constructor memory/heap/layout recipe only",
     "pure allocator/constructor provider leaves shared with the retained direct callers",
-    "existing B initializer donor may be adopted byte-exact; forwarding resolver remains A-owned and is consumed through its existing provider endpoint"
+    "existing B initializer donor may be adopted byte-exact; forwarding resolver remains A-owned and is consumed through its existing provider endpoint",
+    "src/wasm/physical/linear-vector-initialization.ts: complete original f64 initializer builder byte-exact plus fresh physical params/results/locals descriptor matching the existing native initializer recipe",
+    "src/codegen-linear/runtime/vector-initialization.ts: replace only the owned implementation with an identity-preserving direct canonical builder reexport; no second definition or algorithm change",
+    "src/backend/linear/program/memory.ts: initializer import and params/results/locals descriptor binding only; preserve function key/name/order, caller operands, resources, authority, and A forwarding endpoint",
+    "scripts/compiler-boundaries.json: exact canonical initializer leaf and retained legacy compatibility facade classification only; preserve all A forwarding rows and other policy records",
+    "plan/issues/6920-native-linear-shared-source-handoff.md: append precise source/closure and authentic predecessor/candidate byte and execution measurements; no historical rewrite or retirement claim"
   ],
   "handoff_authority": {
     "source": "human scope reply call_fHCisBpMmbCIm9ci7BYIEcqH",
@@ -38,5 +43,26 @@
     "blanket TypeScript/oracle retirement",
     "force push, hook bypass, main push"
   ],
-  "donor_policy": "Preserve original donors; authenticate actual source before adoption; receiving writes occur in fresh isolated worktrees."
+  "donor_policy": "Preserve original donors; authenticate actual source before adoption; receiving writes occur in fresh isolated worktrees.",
+  "scope_refinements": [
+    {
+      "at": "2026-10-13T13:53:30.428670Z",
+      "additions": [
+        "src/wasm/physical/linear-vector-initialization.ts: complete original f64 initializer builder byte-exact plus fresh physical params/results/locals descriptor matching the existing native initializer recipe",
+        "src/codegen-linear/runtime/vector-initialization.ts: replace only the owned implementation with an identity-preserving direct canonical builder reexport; no second definition or algorithm change",
+        "src/backend/linear/program/memory.ts: initializer import and params/results/locals descriptor binding only; preserve function key/name/order, caller operands, resources, authority, and A forwarding endpoint",
+        "scripts/compiler-boundaries.json: exact canonical initializer leaf and retained legacy compatibility facade classification only; preserve all A forwarding rows and other policy records",
+        "plan/issues/6920-native-linear-shared-source-handoff.md: append precise source/closure and authentic predecessor/candidate byte and execution measurements; no historical rewrite or retirement claim"
+      ],
+      "receiving_branch": "codex/6920-b-native-vector-initializer-20261013-01a12827",
+      "authority": {
+        "source": "human scope reply call_fHCisBpMmbCIm9ci7BYIEcqH",
+        "answer": "Take over the blocking shared seams",
+        "receiving_owner": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+        "bounded_only": true
+      },
+      "reason": "Give the complete already owned physical initializer recipe one canonical owner; no new source admission, forwarding or initializer algorithm."
+    }
+  ],
+  "previous_write_id": "b-bounded-takeover-4cf22cfc-ed94-4d37-b22d-205201264589:allocator"
 }
