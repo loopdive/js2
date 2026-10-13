@@ -7,6 +7,7 @@
 // isolated compile+execute attempt and communicates success through the normal
 // process exit/stdout/stderr contract used by every test262.fyi engine.
 import fs from "node:fs";
+import { parseTest262CompilerPath, requireTest262CompilerPath } from "./test262-compiler-path.mjs";
 import { relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { discoverFixtureGraph } from "./test262-fixture-graph.mjs";
@@ -29,6 +30,7 @@ Run one source file through js2's original-harness Test262 executor.
 
 Options:
   --target <target>          gc or standalone
+  --compiler-path <path>     legacy (compatibility) or ir (currently unavailable)
   --test262-root <path>      Test262 checkout containing test/ and harness/
   --engine-suffix <suffix>  Temporary filename suffix added by the caller
   --module                   Compile the input as a module
@@ -39,6 +41,7 @@ Options:
 export function parseArgs(argv) {
   const options = {
     target: undefined,
+    compilerPath: parseTest262CompilerPath(process.env.TEST262_COMPILER_PATH),
     test262Root: undefined,
     engineSuffix: undefined,
     module: false,
@@ -55,6 +58,12 @@ export function parseArgs(argv) {
       options.module = true;
     } else if (arg === "--check-runtime") {
       options.checkRuntime = true;
+    } else if (arg.startsWith("--compiler-path=")) {
+      options.compilerPath = parseTest262CompilerPath(arg.slice("--compiler-path=".length));
+    } else if (arg === "--compiler-path") {
+      const value = argv[++index];
+      if (!value) throw new Error("--compiler-path requires legacy or ir");
+      options.compilerPath = parseTest262CompilerPath(value);
     } else if (arg === "--target") {
       options.target = argv[++index];
     } else if (arg === "--test262-root") {
@@ -128,7 +137,16 @@ export function parseTest262Negative(source, flags = parseTest262Flags(source)) 
 // fresh executor is created and torn down before returning, matching every
 // existing caller (the `main()` CLI entry point below, and any external
 // integration written against the prior signature).
-export async function executeTestFile({ target, test262Root, inputPath, engineSuffix, module = false, executor }) {
+export async function executeTestFile({
+  target,
+  test262Root,
+  inputPath,
+  engineSuffix,
+  module = false,
+  executor,
+  compilerPath = process.env.TEST262_COMPILER_PATH,
+}) {
+  requireTest262CompilerPath(compilerPath);
   const source = fs.readFileSync(resolve(inputPath), "utf8");
   const flags = parseTest262Flags(source);
   const testPath = testPathForInput(inputPath, test262Root, engineSuffix);

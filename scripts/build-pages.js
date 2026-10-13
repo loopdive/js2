@@ -451,6 +451,45 @@ if (test262RunsStandaloneEditionsIndexSource) {
   );
 }
 
+// IR measurements have their own namespace. Missing files mean unmeasured;
+// neither a legacy snapshot nor an IR-first hybrid run is a replacement.
+for (const relativePath of [
+  "test262-ir-status.json",
+  "test262-standalone-ir-status.json",
+  "test262-ir-report.json",
+  "test262-standalone-ir-report.json",
+  "ir/test262-editions.json",
+  "ir/test262-standalone-editions.json",
+  "ir/test262-category-editions.json",
+  "ir/test262-file-editions.json",
+  "ir/test262-categories.json",
+  "ir/test262-standalone-categories.json",
+  "ir/feature-examples.json",
+  "ir/feature-examples-standalone.json",
+  "ir/runs/index.json",
+  "ir/runs/standalone-index.json",
+  "ir/runs/editions-index.json",
+  "ir/runs/standalone-editions-index.json",
+]) {
+  const source = resolvePreferredFileOrNull(
+    join(BENCHMARKS_RESULTS_DIR, relativePath),
+    join(PUBLIC_BENCH, relativePath),
+  );
+  if (!source) continue;
+  const data = JSON.parse(readFileSync(source, "utf8"));
+  const unavailable = relativePath.endsWith("-status.json") && data.state === "unavailable";
+  if (
+    data.compilerPath !== "ir" ||
+    (unavailable
+      ? data.compilerPathVerified !== false || typeof data.reason !== "string" || !data.reason
+      : data.compilerPathVerified !== true || data.executionCompilerPath !== "ir")
+  ) {
+    throw new Error(`IR Test262 artifact lacks explicit path provenance: ${source}`);
+  }
+  copyFile(source, join(PAGES_DIST, "benchmarks", "results", relativePath));
+  copyFile(source, join(PLAYGROUND_BENCHMARKS_RESULTS_DIR, relativePath));
+}
+
 const equivTests = buildEquivTests();
 writeJson(join(PLAYGROUND_DATA_DIR, "equiv-tests.json"), equivTests);
 writeJson(join(PLAYGROUND_APP_DATA_DIR, "equiv-tests.json"), equivTests);

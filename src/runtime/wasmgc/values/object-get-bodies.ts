@@ -30,6 +30,8 @@ export interface ObjectGetBindings {
   readonly hashedStringTypeIdx: number;
   readonly bfnGetMetaIdx: FuncHandle | undefined;
   readonly fnctorProtoStartIdx: FuncHandle | undefined;
+  /** (#6944) Struct-valued prototype-link re-entry (`fnctor-struct-proto-hop.ts`). */
+  readonly fnctorStructProto?: { readonly ok: FuncHandle; readonly get: FuncHandle };
   readonly objectTerminalAllowsImplicitProtoIdx: FuncHandle;
   readonly templateRaw: TemplateRawReadBinding | undefined;
   readonly boundaryGet: FuncHandle | undefined;
@@ -174,6 +176,25 @@ function buildGetEntryAndCursor(d: ObjectGetBindings): Instr[] {
                 blockType: { kind: "empty" },
                 then: buildVecOrClosureRead(d.missingPrototype),
               },
+              // (#6944) `G.prototype = new F()`: the link is a fnctor STRUCT.
+              // §10.1.8.1 step 3 — answer `link.[[Get]](key, Receiver)`.
+              ...(d.fnctorStructProto === undefined
+                ? []
+                : ([
+                    { op: "local.get", index: 7 },
+                    { op: "call", funcIdx: d.fnctorStructProto.ok },
+                    {
+                      op: "if",
+                      blockType: { kind: "empty" },
+                      then: [
+                        { op: "local.get", index: 7 },
+                        { op: "local.get", index: 1 },
+                        { op: "local.get", index: d.explicitReceiverLocal },
+                        { op: "call", funcIdx: d.fnctorStructProto.get },
+                        { op: "return" },
+                      ],
+                    },
+                  ] satisfies Instr[])),
               // (#4639/#4637 cross-lane trap, 2026-08-23) TEST before the
               // cast: `__fnctor_proto_start` answers whatever the S2 store
               // holds, and for `G.prototype = P` with `P` a FUNCTION that WAS

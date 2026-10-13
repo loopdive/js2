@@ -119,6 +119,7 @@ import {
   carrierDefaultInstrs,
   carrierRefWriteBack,
   externSetStoreCarrierSet,
+  directOwnElementStore,
   type CarrierDefaultMode,
   type OverlayCarrier,
 } from "./vec-overlay-carriers.js";
@@ -2568,9 +2569,11 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
       // off the final local list rather than assumed.
       const setBagLocal = 3 + fn.locals.length;
       const setFrozenLenLocal = setBagLocal + 1;
+      const directLenLocal = setBagLocal + 2;
       fn.locals.push(
         { name: "__ov_set_bag", type: { kind: "externref" } },
         { name: "__ov_set_frozen_len", type: { kind: "i32" } },
+        { name: "__ov_set_direct_len", type: { kind: "i32" } },
       );
       // (#6963) Backed length for the plain-overwrite fall-through below.
       const fastLenLocal = 3 + fn.locals.length;
@@ -2702,6 +2705,11 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
         ...overlayStore(flags),
       ];
       const nullOwnLayer = (): Instr[] => [{ op: "ref.null.extern" }];
+      const directStore = (): Instr[] =>
+        directOwnElementStore(carriers, { any: anyLocal, comp: compLocal, index: indexLocal, value: 2 }, () => [
+          ...publishSuccess(),
+          { op: "return" },
+        ]);
       const companionOwnLayer = (): Instr[] => [
         { op: "local.get", index: compLocal },
         { op: "ref.as_non_null" },
@@ -2929,6 +2937,7 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
                           // numeric arm (br 4 leaves the whitelisted-carrier
                           // arm) instead of seeding a companion entry.
                           then: [
+                            ...directStore(),
                             ...valueFitsCarrierInstrs(ctx, carriers, anyLocal),
                             { op: "if", blockType: { kind: "empty" }, then: [{ op: "br", depth: 4 }] },
                             ...overlayStore(SEED_FLAGS),
@@ -2937,6 +2946,12 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
                         },
                       ]
                     : [
+                        // (#6973) a backed own element with no companion is a plain slot store.
+                        ...vecBackedLen(anyLocal, directLenLocal),
+                        { op: "local.get", index: indexLocal },
+                        { op: "local.get", index: directLenLocal },
+                        { op: "i32.lt_s" },
+                        { op: "if", blockType: { kind: "empty" }, then: directStore() },
                         // (#6963) Same plain-overwrite fall-through for an
                         // in-bounds backed element (br 3 leaves the
                         // whitelisted-carrier arm for the numeric arm).

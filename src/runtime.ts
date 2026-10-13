@@ -65,7 +65,7 @@ import { compiledClosureLength } from "./runtime/compiled-closure-length.js"; //
 import { getWasmVecPrototypeMember as vecProtoGet, WASM_VEC_PROTOTYPE_MISS } from "./runtime/wasm-vec-prototype.js";
 import { fnctorInstanceofResult, fnctorOrNative, type FnctorIoHooks } from "./runtime/fnctor-instanceof.js";
 export { buildStringConstants, buildStringConstants16 };
-export { _resetIteratorRuntimeIntrinsicsForRealmIsolation };
+export { _installIteratorHelperPolyfills, _resetIteratorRuntimeIntrinsicsForRealmIsolation };
 // (#6492 r5 / #5967) The test262 worker primes the await-dictionary statics
 // BEFORE its realm-canary snapshot, so the one-time install onto `Promise` is
 // part of the baseline instead of drift that recycles the worker after every
@@ -303,7 +303,10 @@ function _fnctorProtoLookup(
   if (proto === undefined) return undefined;
   let cur: any = proto;
   let guard = 0;
-  while (cur != null && typeof cur === "object" && guard++ < 16) {
+  // (#6944) A cyclic user chain (aliased nested-ctor prototype) ends with `undefined`.
+  const seen = new Set<any>();
+  while (cur != null && typeof cur === "object" && guard++ < 16 && !seen.has(cur)) {
+    seen.add(cur);
     // (#2680) Per ES §10.1.6.2 ToPropertyDescriptor → §7.3.12 HasProperty /
     // §7.3.3 Get (both prototype-inclusive), an inherited attribute must be
     // read. When an ancestor is itself a WasmGC struct (the common case:
@@ -316,7 +319,9 @@ function _fnctorProtoLookup(
     // the native reader.
     const desc = _isWasmStruct(cur) ? _readOwnDescriptor(cur, key, exports) : Object.getOwnPropertyDescriptor(cur, key);
     if (desc) return desc;
-    cur = Object.getPrototypeOf(cur);
+    // (#6944) A struct ancestor (`Derived.prototype = new Inheriter()`) has a null native
+    // prototype; `_structUserProto` resolves its fnctor ctor link / setPrototypeOf record.
+    cur = _structUserProto(cur, exports);
     if (cur === Object.prototype) break;
   }
   return undefined;
@@ -5942,11 +5947,16 @@ function _structFieldWriteback(
  */
 function _lookupDescriptorNoProxy(obj: any, key: PropertyKey): PropertyDescriptor | undefined {
   try {
+    let hops = 0;
     for (let cur = obj; cur != null && (typeof cur === "object" || typeof cur === "function"); ) {
       if (_isUserProxy(cur)) return undefined;
       const d = Object.getOwnPropertyDescriptor(cur, key);
       if (d) return d;
-      cur = Object.getPrototypeOf(cur);
+      // (#6944) Struct nodes resolve their user [[Prototype]]; bounded, the chain may cycle.
+      if (_isWasmStruct(cur)) {
+        if (++hops > 16) break;
+        cur = _structUserProto(cur);
+      } else cur = Object.getPrototypeOf(cur);
     }
   } catch {
     /* opaque handle → no descriptor knowable */
@@ -13567,6 +13577,10 @@ assert._isSameValue = isSameValue;
           // object never has `e`; the source struct's shape no longer leaks).
           if (typeof obj === "object" && _isWasmStruct(obj)) {
             if (_wasmStructHasOwn(obj, key, callbackState?.getExports())) return 1;
+            // (#6944) HasProperty §7.3.12 is prototype-inclusive: consult the
+            // fnctor instance→ctor prototype chain (struct ancestors included).
+            if (typeof key === "string" && _fnctorProtoLookup(obj, key, callbackState?.getExports()) !== undefined)
+              return 1;
             return hasStructPrototypeMember(obj, key, _OBJECT_PROTO_KEYS, () => marshalExports(callbackState)) ? 1 : 0;
           }
           // Plain JS object (or host-supplied object) — native HasProperty walks
@@ -15430,7 +15444,7 @@ assert._isSameValue = isSameValue;
             // This is what makes `new this(...).m()` resolve like the
             // identifier-constructed `new Parser(...).m()` path does.
             {
-              const protoDesc = _fnctorProtoLookup(obj, method);
+              const protoDesc = _fnctorProtoLookup(obj, method, callbackState?.getExports());
               if (protoDesc) {
                 const resolved = protoDesc.get
                   ? protoDesc.get.call(obj)

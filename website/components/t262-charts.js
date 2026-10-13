@@ -1,3 +1,11 @@
+// Each conformance artifact keeps its compiler path; missing IR never falls back to historical data.
+const loadT262Data = async (src, field) => {
+  if (globalThis.t262ViewState) return globalThis.t262ViewState.fetchData(src, field);
+  const response = await fetch(src);
+  if (!response.ok) throw new Error("Conformance data unavailable");
+  return response.json();
+};
+
 /**
  * Shared web components for test262 conformance charts.
  * Used on both the landing page (index.html) and report page (report.html).
@@ -151,10 +159,8 @@ class T262Donut extends HTMLElement {
     if (pass === 0 && fail === 0 && ce === 0 && skip === 0) {
       const src = this.getAttribute("src") || "./benchmarks/results/test262-report.json";
       try {
-        const resp = await fetch(src);
+        const report = await loadT262Data(src);
         if (renderToken !== this._renderToken) return;
-        if (!resp.ok) return;
-        const report = await resp.json();
         // Default: exclude sloppy-mode-only tests (noStrict).
         // With include-sloppy attribute: show all tests including sloppy.
         const includeSloppy = this.hasAttribute("include-sloppy");
@@ -1156,9 +1162,7 @@ class T262EditionTimeline extends HTMLElement {
     if (!this._dataPromise) {
       const src = this.getAttribute("src") || "./benchmarks/results/test262-editions.json";
       this._dataPromise = (async () => {
-        const resp = await fetch(src);
-        if (!resp.ok) throw new Error("edition data unavailable");
-        const editions = await resp.json();
+        const editions = await loadT262Data(src, "editions");
         if (!Array.isArray(editions) || editions.length === 0) {
           throw new Error("edition data unavailable");
         }
@@ -1224,7 +1228,9 @@ class T262EditionTimeline extends HTMLElement {
       this._root.track.style.setProperty("--edition-progress-scale", "0");
       this._root.track.style.setProperty("--edition-thumb-fraction", "0");
       this._root.value.textContent = "Unavailable";
-      this._root.copy.textContent = "No ECMAScript edition data available.";
+      this._root.copy.textContent = globalThis.t262ViewState?.read().ir
+        ? "IR edition data is unmeasured or unavailable."
+        : "No ECMAScript edition data available.";
     }
   }
 
@@ -1481,7 +1487,9 @@ class T262EditionTimeline extends HTMLElement {
       this._root.track.style.setProperty("--edition-progress-scale", "0");
       this._root.track.style.setProperty("--edition-thumb-fraction", "0");
       this._root.value.textContent = "Unavailable";
-      this._root.copy.textContent = "No ECMAScript edition data available.";
+      this._root.copy.textContent = globalThis.t262ViewState?.read().ir
+        ? "IR edition data is unmeasured or unavailable."
+        : "No ECMAScript edition data available.";
       this._renderTimeline([]);
       return;
     }
@@ -1594,9 +1602,7 @@ class T262EditionBars extends HTMLElement {
     const chartMode = this.getAttribute("mode") || "both";
     let editions;
     try {
-      const resp = await fetch(src);
-      if (!resp.ok) return;
-      editions = await resp.json();
+      editions = await loadT262Data(src, "editions");
       if (!Array.isArray(editions) || editions.length === 0) return;
     } catch {
       return;

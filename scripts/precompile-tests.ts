@@ -20,6 +20,11 @@ import { availableParallelism } from "os";
 import { CompilerPool, type PoolResult } from "./compiler-pool.js";
 import { isModuleGoal } from "./test262-module-goal.mjs";
 import {
+  requireTest262CompilerPath,
+  test262CacheDirectoryName,
+  test262RequestedCompilerPathMetadata,
+} from "./test262-compiler-path.mjs";
+import {
   findTestFiles,
   matchesPathFilter,
   parseMeta,
@@ -29,7 +34,8 @@ import {
 } from "../tests/test262-runner.js";
 
 const TEST262_ROOT = join(import.meta.dirname ?? ".", "..", "test262");
-const CACHE_DIR = join(import.meta.dirname ?? ".", "..", ".test262-cache");
+const TEST262_COMPILER_PATH = requireTest262CompilerPath(process.env.TEST262_COMPILER_PATH);
+const CACHE_DIR = join(import.meta.dirname ?? ".", "..", test262CacheDirectoryName(TEST262_COMPILER_PATH));
 const RESULTS_DIR = join(import.meta.dirname ?? ".", "..", "benchmarks", "results");
 const COMPILE_JSONL_PATH = join(RESULTS_DIR, "test262-compile.jsonl");
 await mkdir(CACHE_DIR, { recursive: true });
@@ -44,6 +50,7 @@ let jsonlBuffer: string[] = [];
 function recordCompileResult(relPath: string, category: string, status: string, error?: string, compileMs?: number) {
   const entry = JSON.stringify({
     timestamp: new Date().toLocaleString("de-DE", { timeZone: "Europe/Berlin" }),
+    ...test262RequestedCompilerPathMetadata(TEST262_COMPILER_PATH, process.env.TEST262_TARGET),
     file: relPath,
     category,
     status,

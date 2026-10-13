@@ -146,6 +146,10 @@ export function enterInlineIifeBindingScope(fctx: FunctionContext, names: Readon
     readOnlyBindings: cloneNameSet(fctx.readOnlyBindings),
     constBindings: cloneNameSet(fctx.constBindings),
     hoistedFuncs: cloneNameSet(fctx.hoistedFuncs),
+    // (#6974) A `function K` hoisted by one inlined IIFE must not make a later
+    // sibling IIFE's `var K = …` materialize that function into its own slot.
+    hoistedFunctionValueBindings: cloneNameSet(fctx.hoistedFunctionValueBindings),
+    materializedHoistedFunctionValueBindings: cloneNameSet(fctx.materializedHoistedFunctionValueBindings),
     narrowedNonNull: cloneNameSet(fctx.narrowedNonNull),
     undefWidenedLocals: cloneNameSet(fctx.undefWidenedLocals),
     nullGuardAliases: cloneNameMap(fctx.nullGuardAliases),
@@ -175,6 +179,8 @@ export function enterInlineIifeBindingScope(fctx: FunctionContext, names: Readon
     fctx.readOnlyBindings?.delete(name);
     fctx.constBindings?.delete(name);
     fctx.hoistedFuncs?.delete(name);
+    fctx.hoistedFunctionValueBindings?.delete(name);
+    fctx.materializedHoistedFunctionValueBindings?.delete(name);
     fctx.narrowedNonNull?.delete(name);
     fctx.undefWidenedLocals?.delete(name);
     fctx.nullGuardAliases?.delete(name);
@@ -214,6 +220,16 @@ export function enterInlineIifeBindingScope(fctx: FunctionContext, names: Readon
     fctx.readOnlyBindings = restoreNameSet(fctx.readOnlyBindings, snapshot.readOnlyBindings, names);
     fctx.constBindings = restoreNameSet(fctx.constBindings, snapshot.constBindings, names);
     fctx.hoistedFuncs = restoreNameSet(fctx.hoistedFuncs, snapshot.hoistedFuncs, names);
+    fctx.hoistedFunctionValueBindings = restoreNameSet(
+      fctx.hoistedFunctionValueBindings,
+      snapshot.hoistedFunctionValueBindings,
+      names,
+    );
+    fctx.materializedHoistedFunctionValueBindings = restoreNameSet(
+      fctx.materializedHoistedFunctionValueBindings,
+      snapshot.materializedHoistedFunctionValueBindings,
+      names,
+    );
     fctx.narrowedNonNull = restoreNameSet(fctx.narrowedNonNull, snapshot.narrowedNonNull, names);
     fctx.undefWidenedLocals = restoreNameSet(fctx.undefWidenedLocals, snapshot.undefWidenedLocals, names);
     fctx.nullGuardAliases = restoreNameMap(fctx.nullGuardAliases, snapshot.nullGuardAliases, names);

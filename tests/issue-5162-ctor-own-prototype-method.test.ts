@@ -222,8 +222,13 @@ export function test() { var p = new PP(5); return (typeof seen.twice === "funct
 ${PROTO_TWICE}
 export function test() { return new PP(5).v; }`;
 
-  it("XFAIL both lanes: `this.twice.call(this, x)` in a ctor throws (spec says 10)", async () => {
-    expect(await threw(DOT_CALL, "gc")).toBe(true);
-    expect(await threw(DOT_CALL, "standalone")).toBe(true);
+  // (#6970) The gc half was the field auto-register arm minting an own
+  // `$__fnctor_PP.twice` slot for the `this.twice` VALUE read (the "null
+  // receiver read" above); it now reads the prototype member. The standalone
+  // half closed once every ordinary fnctor got a runtime prototype (#6949) and
+  // its instances a `[[Prototype]]` ladder (#6951). Both lanes give the spec 10.
+  it("`this.twice.call(this, x)` in a ctor returns 10 in both lanes (#6970, #6949, #6951)", async () => {
+    expect(await run(DOT_CALL, "gc")).toBe(10);
+    expect(await run(DOT_CALL, "standalone")).toBe(10);
   });
 });
