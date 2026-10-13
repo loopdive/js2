@@ -184,9 +184,57 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  # Match the canonical shards' linked standalone Temporal lane. Build once;
+  # every refresh shard must receive the same compiler-keyed pre-warm stamp.
+  temporal-provider:
+    name: build compiled standalone Temporal provider
+    needs: validate-inputs
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      JS2WASM_TEMPORAL_CACHE: .test262-cache/temporal
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          ref: main
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Setup Node and pnpm (cached)
+        uses: ./.github/actions/setup-node-pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Restore Temporal provider cache
+        uses: actions/cache@v4
+        with:
+          path: .test262-cache/temporal
+          key: temporal-provider-v2-${{ hashFiles('src/**/*.ts', 'tests/dogfood/temporal-polyfill-pin.json', 'tests/dogfood/setup-temporal-polyfill.mjs') }}
+
+      - name: Build compiler bundles
+        run: |
+          pnpm run build:compiler-bundle
+          pnpm run build:runtime-bundle
+
+      - name: Build and stamp the standalone Temporal provider
+        env:
+          NODE_OPTIONS: --max-old-space-size=3072
+        run: node scripts/prewarm-temporal-provider.mjs --target standalone
+
+      - name: Upload Temporal provider
+        uses: actions/upload-artifact@v6
+        with:
+          name: temporal-provider-${{ github.run_id }}
+          path: .test262-cache/temporal
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 1
+
   test262-shard:
     name: test262 ${{ matrix.target.name }} shard ${{ matrix.chunk }}
-    needs: [validate-inputs, runtime-eval-provider]
+    needs: [validate-inputs, runtime-eval-provider, temporal-provider]
     runs-on: ubuntu-latest
     timeout-minutes: 90
     strategy:
@@ -321,6 +369,7 @@ jobs:
       # Harmless under QuickJS; load-bearing when a developer explicitly runs
       # this lane with the native interpreter selector.
       TEST262_FULL_RUNTIME_EVAL: ${{ matrix.target.test262_target == 'standalone' && '1' || '' }}
+      JS2WASM_TEMPORAL_CACHE: .test262-cache/temporal
 
     steps:
       - name: Checkout
@@ -372,6 +421,34 @@ jobs:
       - name: Verify shared QuickJS provider cache (#4242/#4354)
         if: matrix.target.test262_target == 'standalone'
         run: node scripts/build-quickjs-eval-provider.mjs --require-cache
+
+      - name: Download compiled Temporal provider
+        uses: actions/download-artifact@v7
+        with:
+          name: temporal-provider-${{ github.run_id }}
+          path: .test262-cache/temporal
+
+      - name: Verify standalone Temporal provider eligibility
+        run: |
+          node --input-type=module <<'NODE'
+          import { temporalProviderCacheKey } from './scripts/compiler-bundle.mjs';
+          import {
+            loadTemporalPolyfillSource, readTemporalPrewarmStamp, temporalCacheDir,
+            temporalProviderCompileOptions, test262TemporalLaneEnabled,
+            withTemporalCompilerFingerprint,
+          } from './scripts/test262-temporal.mjs';
+          const target = 'standalone';
+          const cacheDir = temporalCacheDir();
+          if (!test262TemporalLaneEnabled(target, cacheDir)) {
+            throw new Error('Standalone Temporal provider is not eligible; refusing an unlinked baseline');
+          }
+          const stamp = readTemporalPrewarmStamp(cacheDir, target);
+          const polyfillSource = await loadTemporalPolyfillSource();
+          const compileOptions = withTemporalCompilerFingerprint(temporalProviderCompileOptions(target));
+          const key = temporalProviderCacheKey({ polyfillSource, compileOptions });
+          if (stamp?.key !== key) throw new Error('Standalone Temporal pre-warm stamp does not match this compiler');
+          console.log(`Temporal provider eligible: ${stamp.namespace} key=${key} dir=${cacheDir}`);
+          NODE
 
       - name: Run shard
         run: |
