@@ -8,6 +8,7 @@ import {
   type IrSiteId,
   type IrValueId,
 } from "../core/nodes.js";
+import { isNativeNumericAppendCall } from "../analysis/allocation-evidence/numeric-append-protocol.js";
 import { collectLinearVectorFlow } from "./linear-vector-flow.js";
 import type { IrType } from "../core/types.js";
 import type { IrUnitId } from "../../shared/contracts/ir-identity.js";
@@ -32,7 +33,7 @@ export interface PreparedLinearMemoryDemandLocation {
 }
 
 /** Semantic lookups, separate from the canonical catalogue and physical dependency closure. */
-export type PreparedLinearVectorLookup = "allocate" | "initialize-element" | "resolve-forwarding";
+export type PreparedLinearVectorLookup = "allocate" | "initialize-element" | "resolve-forwarding" | "append-f64";
 
 interface PreparedLinearVectorDemandBase extends PreparedLinearMemoryDemandLocation {
   readonly allocationId: AllocSiteId;
@@ -49,7 +50,7 @@ export type PreparedLinearMemoryDemandOccurrence =
       readonly capacity: number;
     })
   | (PreparedLinearVectorDemandBase & {
-      readonly kind: "vec.get" | "vec.len" | "vec.set";
+      readonly kind: "vec.get" | "vec.len" | "vec.set" | "call";
     });
 
 /**
@@ -240,8 +241,14 @@ export function collectPreparedLinearMemoryDemand(input: PreparedLinearMemoryInp
           // emitVecNewFixed resolves the initializer even for an empty literal.
           lookups: ["allocate", "initialize-element"],
         });
-      } else if (instr.kind === "vec.get" || instr.kind === "vec.len" || instr.kind === "vec.set") {
-        const origins = flow.get(fn.unitId)?.get(instr.vec);
+      } else if (
+        instr.kind === "vec.get" ||
+        instr.kind === "vec.len" ||
+        instr.kind === "vec.set" ||
+        isNativeNumericAppendCall(instr)
+      ) {
+        const receiver = instr.kind === "call" ? instr.args[0]! : instr.vec;
+        const origins = flow.get(fn.unitId)?.get(receiver);
         if (!origins?.length)
           unsupported(
             at,
@@ -258,9 +265,9 @@ export function collectPreparedLinearMemoryDemand(input: PreparedLinearMemoryInp
             ...at,
             kind: instr.kind,
             allocationId,
-            vectorValue: instr.vec,
+            vectorValue: receiver,
             constructionPath,
-            lookups: ["resolve-forwarding"],
+            lookups: instr.kind === "call" ? ["resolve-forwarding", "append-f64"] : ["resolve-forwarding"],
           });
         }
       }

@@ -18,6 +18,14 @@ import type { PreparedIrAbiEntry } from "./prepared-contracts.js";
 import type { RuntimeManifestPolicy } from "../../runtime/contracts/provider-policy.js";
 import type { RuntimeProviderDefinition } from "../runtime/contracts/manifest.js";
 
+import {
+  NUMERIC_APPEND_DECLARATION,
+  NUMERIC_APPEND_RUNTIME_PROVIDERS,
+  numericAppendProviderMismatch,
+  numericAppendCallablePolicyMismatch,
+} from "../runtime/numeric-vector-callables.js";
+import { collectNativeNumericAppendProtocol } from "../analysis/allocation-evidence/numeric-append-protocol.js";
+
 export type NativeVectorElement = "f64" | "externref";
 export interface NativeVectorResourcePlan {
   readonly anchor: string;
@@ -29,6 +37,7 @@ export interface NativeVectorResourcePlan {
     readonly referenceKey: string;
     readonly name: string;
   };
+  readonly numericAppendHelper?: NativeVectorResourcePlan["helper"];
   readonly exceptionRequired: boolean;
 }
 
@@ -86,7 +95,10 @@ export function deriveNativeVectorResourcePlan(input: NativeVectorResourceInput)
     }
   }
   let helper: NativeVectorResourcePlan["helper"];
-  if (supported && demands.some((owner) => owner.uses.length > 0)) {
+  if (
+    supported &&
+    demands.some((owner) => owner.uses.some((use) => use.feature === VECTOR_CALLABLE_DECLARATION.feature))
+  ) {
     const declaration = VECTOR_CALLABLE_DECLARATION;
     const policyError = vectorCallablePolicyMismatch(declaration.feature, input.policy);
     if (policyError) fail(policyError);
@@ -124,11 +136,56 @@ export function deriveNativeVectorResourcePlan(input: NativeVectorResourceInput)
     helper = { bindingId: abi.plan.id, referenceKey, name: declaration.ref.name };
     layouts.add("externref");
   }
+  let numericAppendHelper: NativeVectorResourcePlan["numericAppendHelper"];
+  if (demands.some((owner) => owner.uses.some((use) => use.feature === NUMERIC_APPEND_DECLARATION.feature))) {
+    const declaration = NUMERIC_APPEND_DECLARATION;
+    const policyError = numericAppendCallablePolicyMismatch(declaration.feature, input.policy);
+    if (policyError || input.policy.backend !== input.backend || input.policy.target !== input.target)
+      fail(policyError ?? "numeric append policy/projection mismatch");
+    collectNativeNumericAppendProtocol(input.functions);
+    const canonical = NUMERIC_APPEND_RUNTIME_PROVIDERS[0]!;
+    const providers = input.providers.filter(
+      (provider) =>
+        provider.id === canonical.id ||
+        provider.feature === canonical.feature ||
+        (provider.implementation.kind === "runtime-callable" &&
+          canonical.implementation.kind === "runtime-callable" &&
+          provider.implementation.symbol === canonical.implementation.symbol),
+    );
+    if (
+      providers.length !== 1 ||
+      providers[0]!.id !== canonical.id ||
+      providers[0]!.feature !== canonical.feature ||
+      numericAppendProviderMismatch(providers[0]!) !== undefined
+    )
+      fail("noncanonical selected numeric append provider");
+    const referenceKey = irCallableBindingKey(declaration.ref.binding);
+    const entries = input.abiEntries.filter(
+      (abi) => abi.contract.kind === "callable" && irCallableBindingKey(abi.contract.ref.binding) === referenceKey,
+    );
+    const abi = entries[0];
+    if (
+      entries.length !== 1 ||
+      !abi ||
+      abi.contract.kind !== "callable" ||
+      abi.plan.slotPolicy !== "required" ||
+      abi.plan.slotSpace !== "function" ||
+      abi.plan.structuralReferenceKey !== referenceKey ||
+      preparedIrDataMismatch(declaration.ref, abi.contract.ref) !== undefined ||
+      preparedIrDataMismatch(declaration.params, abi.contract.params) !== undefined ||
+      preparedIrDataMismatch(declaration.results, abi.contract.results) !== undefined ||
+      abi.contract.promise !== undefined
+    )
+      fail("noncanonical numeric append callable ABI declaration");
+    numericAppendHelper = { bindingId: abi.plan.id, referenceKey, name: declaration.ref.name };
+    if (input.backend === "wasmgc") layouts.add("f64");
+  }
   return freezePreparedIrValue({
     anchor: input.anchor,
     layouts: (["f64", "externref"] as const).filter((element) => layouts.has(element)),
     demands,
     ...(helper ? { helper } : {}),
+    ...(numericAppendHelper ? { numericAppendHelper } : {}),
     exceptionRequired: helper !== undefined,
   }) as NativeVectorResourcePlan;
 }

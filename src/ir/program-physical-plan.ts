@@ -101,6 +101,7 @@ import {
   irNumberRemainderCallableDeclaration,
   NUMBER_REMAINDER_RUNTIME_PROVIDERS,
 } from "./runtime/number-remainder-callables.js";
+import { NUMERIC_APPEND_DECLARATION } from "./runtime/numeric-vector-callables.js";
 import { deriveNativeVectorResourcePlan, type NativeVectorResourcePlan } from "./program/native-vector-resources.js";
 import { physicalBodyResourceRequirements } from "./program/physical-body-requirements.js";
 import { assertPreparedIrProgram } from "./program-validation.js";
@@ -296,7 +297,7 @@ export function planNativeVectorResources(
       "native vector resources: missing entry-source anchor",
     );
   }
-  return deriveNativeVectorResourcePlan({
+  const plan = deriveNativeVectorResourcePlan({
     anchor: entry.id,
     functions: program.ir.functions,
     abiEntries: program.abi.entries,
@@ -305,6 +306,16 @@ export function planNativeVectorResources(
     backend: options.backend,
     target: options.target,
   });
+  if (
+    plan.numericAppendHelper &&
+    plan.numericAppendHelper.bindingId !==
+      preparedIrRuntimeCallableBindingId(program.inventory, NUMERIC_APPEND_DECLARATION.ref)
+  )
+    throw new PreparedIrProgramInvariantError(
+      "invalid-prepared-data",
+      "numeric append has a foreign runtime ABI owner",
+    );
+  return plan;
 }
 
 export {
@@ -1307,6 +1318,11 @@ export function planPhysicalSetup(
       if (vectors.helper?.bindingId === plan.id && vectors.helper.referenceKey === irCallableBindingKey(binding)) {
         continue;
       }
+      if (
+        vectors.numericAppendHelper?.bindingId === plan.id &&
+        vectors.numericAppendHelper.referenceKey === irCallableBindingKey(binding)
+      )
+        continue;
       gaps.add(`${binding.kind} callable ${contract.ref.name} needs runtime function materialization`);
       continue;
     }
@@ -1360,6 +1376,7 @@ export function planPhysicalSetup(
     ...functions.map((slot) => irCallableBindingKey({ kind: "unit", unitId: slot.unitId })),
     ...importedFunctions.map((fn) => fn.referenceKey),
     ...(vectors.helper ? [vectors.helper.referenceKey] : []),
+    ...(vectors.numericAppendHelper ? [vectors.numericAppendHelper.referenceKey] : []),
     ...numberRemainders.map((resource) => resource.referenceKey),
     ...(referenceError ? [referenceError.referenceKey] : []),
     ...nativeBindings.filter((row) => row.reference.kind === "func").map((row) => nativeReferenceKey(row.reference)),

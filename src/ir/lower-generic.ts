@@ -1034,6 +1034,18 @@ export function lowerIrFunctionBody<S, Slot>(
     return idx;
   };
 
+  function vectorElementAccessContext(instr: Extract<IrInstr, { kind: "vec.get" | "vec.set" }>) {
+    return {
+      emitter,
+      emitValue,
+      construction: defBy.get(instr.vec),
+      requestedCapacity: resolver.requestedVectorCapacity?.(func.unitId, instr.vec),
+      indexScratch: () => allocScratchLocal("$vec_access_index", { kind: "i32" }),
+      receiverScratch: (type: ValType) => allocScratchLocal("$vec_access_receiver", type),
+      elementScratch: ensureVecElementScratch,
+    };
+  }
+
   /**
    * Emit a nested buffer as a statement sequence with the standard SSA
    * materialisation rules (void instrs emit in place; cross-block results
@@ -2318,19 +2330,7 @@ export function lowerIrFunctionBody<S, Slot>(
       case "vec.set": {
         const vec = resolveVecType(typeOf(instr.vec));
         if (!vec) throw new Error(`ir/lower: resolver cannot lower vec for ${instr.kind} (${func.name})`);
-        emitVectorElementAccess(
-          instr,
-          vec,
-          {
-            emitter,
-            emitValue,
-            construction: defBy.get(instr.vec),
-            requestedCapacity: resolver.requestedVectorCapacity?.(func.unitId, instr.vec),
-            indexScratch: () => allocScratchLocal("$vec_access_index", { kind: "i32" }),
-            elementScratch: ensureVecElementScratch,
-          },
-          out,
-        );
+        emitVectorElementAccess(instr, vec, vectorElementAccessContext(instr), out);
         return;
       }
       case "vec.set_length": {

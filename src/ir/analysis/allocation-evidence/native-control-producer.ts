@@ -5,6 +5,8 @@ import { ALLOC_NAMESPACES, type AllocSiteRegistry } from "../alloc-registry.js";
 import { AccessSet, joinAnnotations, annotationsEqual, topAnnotation, type OwnershipAnnotation } from "../lattice.js";
 import type { EscapeClass } from "../contracts/allocations.js";
 
+import { isNativeNumericAppendCall } from "./numeric-append-protocol.js";
+
 function nativeVector(type: IrType | null | undefined): boolean {
   return (
     type?.kind === "vec" &&
@@ -90,12 +92,13 @@ export function analyzeNativeVectorControl(fn: IrFunction, registry: AllocSiteRe
     } else if (instr.kind === "throw") {
       touch(instr.value, "escape");
       opaque.add(instr.value);
-    } else if (instr.kind === "call")
+    } else if (instr.kind === "call") {
+      if (isNativeNumericAppendCall(instr)) touch(instr.args[0]!, "write");
       for (const arg of instr.args) {
         touch(arg, "escape");
         opaque.add(arg);
       }
-    else if (instr.kind === "early.return" && instr.value !== null) {
+    } else if (instr.kind === "early.return" && instr.value !== null) {
       touch(instr.value, "escape");
       returned.add(instr.value);
     } else if (instr.kind === "binary" && (instr.op === "i32.eq" || instr.op === "i32.ne")) {

@@ -11,7 +11,7 @@ export interface PreparedLinearMemoryPlan {
   readonly functions: readonly {
     readonly key: string;
     readonly name: string;
-    readonly role: "malloc" | "array-new" | "initialize-element" | "resolve-forwarding";
+    readonly role: "malloc" | "array-new" | "initialize-element" | "resolve-forwarding" | "append-f64";
     readonly params: readonly ValType[];
     readonly results: readonly ValType[];
     readonly locals: readonly LocalDef[];

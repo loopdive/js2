@@ -32,6 +32,10 @@ import {
   describeLinearF64VectorInitialization,
   buildLinearF64VectorInitializationBody,
 } from "../../../wasm/physical/linear-vector-initialization.js";
+import {
+  describeLinearNumericVectorAppend,
+  buildLinearNumericVectorAppendBody,
+} from "../../../wasm/physical/linear-vector-append.js";
 import { buildArrayForwardingResolverBody } from "../../../codegen-linear/runtime/arrays/forwarding-resolver.js";
 import type {
   FunctionReservation,
@@ -207,6 +211,17 @@ export function planPreparedLinearMemory(input: {
           locals: [],
           operation: { family: "vector", operation: "resolve-forwarding" },
         });
+      if (demand.occurrences.some((at) => at.lookups.includes("append-f64"))) {
+        const append = describeLinearNumericVectorAppend();
+        functions.push({
+          key: "linear:append-f64",
+          name: "__ir_vec_elem_set_f64",
+          role: "append-f64",
+          params: append.params,
+          results: append.results,
+          locals: append.locals,
+        });
+      }
     }
     const plan = freezePreparedIrValue({
       schema: "prepared-linear-memory-v1",
@@ -328,6 +343,30 @@ function use<T>(
   }
 }
 
+/** The original pack token, after freeze, guarded by the same whole-attempt lifetime. */
+export function preparedLinearNumericAppendReservation(
+  tx: PhysicalModuleReservations,
+  authority: PreparedLinearMemoryReservations,
+): FunctionReservation | undefined {
+  return use(tx, authority, (pack) => {
+    const index = pack.plan.functions.findIndex((fn) => fn.role === "append-f64");
+    if (index < 0) return undefined;
+    const descriptor = pack.plan.functions[index]!;
+    const recipe = describeLinearNumericVectorAppend();
+    if (
+      !pack.plan.demand.occurrences.some((at) => at.kind === "call" && at.lookups.includes("append-f64")) ||
+      descriptor.key !== "linear:append-f64" ||
+      descriptor.name !== "__ir_vec_elem_set_f64" ||
+      preparedIrDataMismatch(
+        [descriptor.params, descriptor.results, descriptor.locals],
+        [recipe.params, recipe.results, recipe.locals],
+      ) !== undefined
+    )
+      invalid("numeric append lost its exact semantic demand/physical recipe");
+    return pack.functions[index]!;
+  });
+}
+
 export function preparedLinearMemoryBindings(
   tx: PhysicalModuleReservations,
   authority: PreparedLinearMemoryReservations,
@@ -433,7 +472,9 @@ export function fillPreparedLinearMemory(
             ? buildLinearArrayConstructorBody(functionIndex("malloc"))
             : fn.role === "initialize-element"
               ? buildLinearF64VectorInitializationBody()
-              : buildArrayForwardingResolverBody(LINEAR_ARRAY_FORWARDING);
+              : fn.role === "append-f64"
+                ? buildLinearNumericVectorAppendBody(functionIndex("malloc"), functionIndex("resolve-forwarding"))
+                : buildArrayForwardingResolverBody(LINEAR_ARRAY_FORWARDING);
       tx.fillFunction(pack.functions[index]!, { locals: fn.locals.map((local) => ({ ...local })), body });
       tx.assertCompletedReservation(pack.functions[index]!);
     });

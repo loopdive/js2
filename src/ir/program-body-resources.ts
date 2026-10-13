@@ -119,6 +119,11 @@ export function physicalBodyResolver(
   sourceClosures: NativeSourceClosureEmission | undefined,
   linear?: PreparedLinearBodyBindings,
   target?: PhysicalSetupPlan["target"],
+  numericAppend?: {
+    readonly referenceKey: string;
+    requireFunction(): FunctionReservation;
+    requestedCapacity(unitId: IrUnitId, value: import("./core/nodes.js").IrValueId): number;
+  },
 ): IrLowerResolver {
   const { functionsByKey, globalsByKey, typesByKey, reservations } = context;
   // Resource validation authenticates this exact shared two-field layout.
@@ -126,7 +131,10 @@ export function physicalBodyResolver(
     layout ? { ...layout, lengthFieldIdx: 0, dataFieldIdx: 1 } : null;
   return {
     resolveFunc: (ref: IrFuncRef) => {
-      const reserved = functionsByKey.get(irCallableBindingKey(ref.binding));
+      const key = irCallableBindingKey(ref.binding);
+      const reserved = functionsByKey.get(key);
+      if (numericAppend?.referenceKey === key && numericAppend.requireFunction() !== reserved)
+        emissionFailed("numeric append callable lost its original issued reservation");
       if (!reserved) emissionFailed(`callable ${ref.name} (${ref.binding.kind}) was not reserved`);
       return reserved.handle;
     },
@@ -166,7 +174,11 @@ export function physicalBodyResolver(
       linear
         ? linear.resolveVectorLayout({ kind: "val", val: element }, allocation)
         : vectorLowering(vectors.resolveElement(vectorTypes, element)),
-    ...(linear ? { requestedVectorCapacity: linear.requestedVectorCapacity } : {}),
+    ...(linear
+      ? { requestedVectorCapacity: linear.requestedVectorCapacity }
+      : numericAppend
+        ? { requestedVectorCapacity: numericAppend.requestedCapacity }
+        : {}),
     internFuncType: (type) => reservations.internFunctionType(type.params, type.results),
     standardizedExceptions: () => target === "standalone" || target === "wasi",
     ensureExnTag: () => {
@@ -334,6 +346,13 @@ export function bindPhysicalAbi(
       space: "function",
       index: reservations.physicalIndex(vectorHelper.function),
     });
+  }
+  if (plan.vectors.numericAppendHelper) {
+    const binding = plan.vectors.numericAppendHelper;
+    const token = resourcesByBinding.get(binding.bindingId);
+    if (!token || token.kind !== "function" || functionsByKey.get(binding.referenceKey) !== token)
+      emissionFailed("numeric append lost its exact reserved ABI owner");
+    abi.bindFinalIndex(binding.bindingId, { space: "function", index: reservations.physicalIndex(token) });
   }
   for (const remainder of plan.numberRemainders) {
     const token = resourcesByBinding.get(remainder.bindingId);

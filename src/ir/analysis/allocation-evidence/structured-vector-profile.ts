@@ -26,6 +26,9 @@ import {
   type NativeModuleGlobalEvidence,
 } from "./module-vector-globals.js";
 
+import { collectNativeNumericAppendProtocol, isNativeNumericAppendCall } from "./numeric-append-protocol.js";
+import { IrInvariantError, IrUnsupportedError } from "../../../shared/contracts/ir-preparation-errors.js";
+
 /** Select only genuine numeric-vector programs whose bodies require the new control checker. */
 export function hasStructuredNumericVectors(module: IrModule): boolean {
   let vectors = false,
@@ -48,7 +51,8 @@ export function hasStructuredNumericVectors(module: IrModule): boolean {
         instr.kind === "while.loop" ||
         instr.kind === "for.loop" ||
         instr.kind === "global.set" ||
-        instr.kind === "early.return";
+        instr.kind === "early.return" ||
+        isNativeNumericAppendCall(instr);
       forEachNestedBuffer(instr, (child) => pending.push(child));
     }
   }
@@ -141,6 +145,16 @@ export function verifyStructuredNumericVectorEvidence(
   registry: AllocRegistrySnapshot,
   globals?: ReadonlyMap<string, NativeModuleGlobalEvidence>,
 ): AllocationEvidenceCheck {
+  let appends: ReturnType<typeof collectNativeNumericAppendProtocol>;
+  try {
+    appends = collectNativeNumericAppendProtocol(module.functions);
+  } catch (error) {
+    if (error instanceof IrInvariantError)
+      return { kind: "invalid", code: "lexical-definition", at: { kind: "module" } };
+    if (error instanceof IrUnsupportedError)
+      return { kind: "not-covered", reason: "instruction-kind", at: { kind: "module" } };
+    throw error;
+  }
   const globalFailure =
     globals && (checkNativeModuleVectorWriters(module, globals) ?? checkNativeModuleVectorReads(module, globals));
   if (globalFailure) return globalFailure;
@@ -175,7 +189,7 @@ export function verifyStructuredNumericVectorEvidence(
   return (
     failure ?? {
       kind: "verified",
-      profile: "structured-numeric-vector-control-v1",
+      profile: appends.length ? "structured-numeric-vector-append-v1" : "structured-numeric-vector-control-v1",
       namespaces: indexRegistryEvidence(registry).mode,
       census,
     }

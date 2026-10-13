@@ -1,12 +1,15 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { analyzeMultiSource } from "../src/checker/index.js";
+import * as directLinear from "../src/codegen-linear/index.js";
+import * as directGc from "../src/codegen/index.js";
 import { compile } from "../src/index.js";
 import { prepareIrProgramSources } from "../src/ir/program-source.js";
 import { IrInvariantError } from "../src/shared/contracts/ir-preparation-errors.js";
 import { prepareWholeIrProgram } from "../src/ir/program-preparation.js";
 import { encodePreparedIrProgram, decodePreparedIrProgram } from "../src/ir/program-codec.js";
 import { assertPreparedIrProgram } from "../src/ir/program-validation.js";
+import { PreparedIrProgramInvariantError } from "../src/shared/contracts/prepared-ir-invariant-error.js";
 import { irIntrinsicFuncRef } from "../src/ir/core/callable-bindings.js";
 import { irVecElemSetSymbol } from "../src/ir/core/vector-runtime.js";
 import { forEachInstrDeep, type IrInstr, type IrValueId } from "../src/ir/core/nodes.js";
@@ -35,33 +38,40 @@ function prepare(source: string, policy: (typeof policies)[number]) {
 }
 afterEach(() => vi.restoreAllMocks());
 describe("native f64 growth source capability boundary", () => {
-  it.each(policies)("refuses genuine local/global push before sealing for $backend/$target", (policy) => {
-    for (const source of sources) {
-      const result = prepare(source, policy);
-      expect(result.kind).toBe("unsupported");
-      if (result.kind !== "unsupported") throw Error(JSON.stringify(result));
-      expect(result.code).toBe("array-representation-unsupported");
-      expect(result.stage).toBe("build");
-      expect(result.detail).toContain("authenticated f64 callable");
-      expect(result.location?.line).toBeGreaterThan(0);
-      expect(result.unitId).toBeDefined();
-    }
-  });
-  it("gives eight located public zero-binary refusals", async () => {
-    let refusals = 0;
+  it.each(policies)(
+    "prepares genuine local/global push with checked append resources for $backend/$target",
+    (policy) => {
+      for (const source of sources) {
+        const result = prepare(source, policy);
+        expect(result.kind, JSON.stringify(result)).toBe("prepared");
+        if (result.kind !== "prepared") throw Error(JSON.stringify(result));
+        expect(result.program.runtime).toHaveLength(4);
+      }
+    },
+  );
+  it("executes eight genuine public local/global append cases", async () => {
+    const linear = vi.spyOn(directLinear, "generateLinearModule").mockImplementation(() => {
+      throw Error("direct Linear forbidden");
+    });
+    const gc = vi.spyOn(directGc, "generateModule").mockImplementation(() => {
+      throw Error("direct GC forbidden");
+    });
+    let executions = 0;
     for (const source of sources)
       for (const policy of policies) {
         const result = await compile(source, { ...policy, optimize: false, sourceMap: false });
-        expect(result.success).toBe(false);
-        expect(result.binary?.length ?? 0).toBe(0);
-        expect(
-          result.errors.some(
-            (row) => row.message.includes("authenticated f64 callable") && typeof row.line === "number",
-          ),
-        ).toBe(true);
-        refusals++;
+        expect(result.success, JSON.stringify(result.errors)).toBe(true);
+        expect(result.binary!.length).toBeGreaterThan(0);
+        const module = new WebAssembly.Module(Uint8Array.from(result.binary!));
+        expect(WebAssembly.Module.imports(module)).toEqual([]);
+        const instance = new WebAssembly.Instance(module, {});
+        if (instance.exports._start) (instance.exports._start as () => void)();
+        expect((instance.exports.run as () => number)()).toBe(17);
+        executions++;
       }
-    expect(refusals).toBe(8);
+    expect(executions).toBe(8);
+    expect(linear).not.toHaveBeenCalled();
+    expect(gc).not.toHaveBeenCalled();
   });
   it("executes a genuine unit with the same display name without borrowing intrinsic identity", async () => {
     const source =
@@ -115,7 +125,7 @@ describe("native f64 growth source capability boundary", () => {
       expect(() => growth.refuseUnbackedNativeNumericGrowth(fn)).toThrow(IrInvariantError);
     }
   });
-  it("retains the undeclared-callable invariant for restored prepared DATA", () => {
+  it("rejects restored DATA lacking the newly declared runtime callable inventory", () => {
     const result = prepare("export function run():number{const a=[2,5];return a[0]+a[1];}", policies[0]);
     expect(result.kind).toBe("prepared");
     if (result.kind !== "prepared") throw Error(JSON.stringify(result));
@@ -137,7 +147,16 @@ describe("native f64 growth source capability boundary", () => {
       target: irIntrinsicFuncRef(irVecElemSetSymbol({ kind: "val", val: { kind: "f64" } })),
       args: [vector.result!, get.index, vector.elements[0]!],
     });
-    expect(() => assertPreparedIrProgram({ ...decoded, ir: module })).toThrow(/undeclared callable/);
+    let failure: unknown;
+    try {
+      assertPreparedIrProgram({ ...decoded, ir: module });
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toBeInstanceOf(PreparedIrProgramInvariantError);
+    if (!(failure instanceof PreparedIrProgramInvariantError)) throw Error("missing DATA invariant failure");
+    expect(failure.code).toBe("invalid-prepared-data");
+    expect(failure.message).toContain("runtime ABI declaration population");
     expect(forbidden).not.toHaveBeenCalled();
   });
 });

@@ -2,9 +2,11 @@
 import { forEachInstrDeep, type IrFunction, type IrValueId } from "../core/nodes.js";
 import type { IrType } from "../core/types.js";
 import { irVecElemSetSymbol } from "../core/vector-runtime.js";
-import { IrUnsupportedError, IrInvariantError } from "../../shared/contracts/ir-preparation-errors.js";
+import { IrInvariantError } from "../../shared/contracts/ir-preparation-errors.js";
 
-/** Source capability boundary only: sealed DATA still requires its exact declared callable. */
+import { collectNativeNumericAppendProtocol } from "../analysis/allocation-evidence/numeric-append-protocol.js";
+
+/** Own source sequence only; complete Program validation still joins effects, origins, ABI and resources. */
 export function refuseUnbackedNativeNumericGrowth(fn: IrFunction): void {
   const types = new Map<IrValueId, IrType>(fn.params.map((param) => [param.value, param.type]));
   const symbol = irVecElemSetSymbol({ kind: "val", val: { kind: "f64" } });
@@ -34,11 +36,6 @@ export function refuseUnbackedNativeNumericGrowth(fn: IrFunction): void {
             "native numeric grow/store lacks its authentic logical f64 receiver",
             { unitId: fn.unitId },
           );
-        throw new IrUnsupportedError(
-          "array-representation-unsupported",
-          "build",
-          "native numeric vector grow/store requires an authenticated f64 callable, growth resources and current extent",
-          { unitId: fn.unitId },
-        );
       });
+  collectNativeNumericAppendProtocol([fn]);
 }

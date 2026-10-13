@@ -8,6 +8,7 @@ import {
   type RuntimeProviderDefinition,
 } from "./contracts/manifest.js";
 import { irClosureInvocationCallableDeclaration } from "./closure-invocation-callables.js";
+import { NUMERIC_APPEND_RUNTIME_PROVIDERS, numericAppendProviderMismatch } from "./numeric-vector-callables.js";
 import {
   NATIVE_ASYNC_CALLABLE_RUNTIME_PROVIDERS,
   nativeAsyncProviderMismatch,
@@ -62,6 +63,7 @@ export function irRuntimeCallableDeclaration(ref: IrFuncRef): IrRuntimeCallableD
 export const SEMANTIC_CALLABLE_RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.freeze([
   ...NATIVE_ASYNC_CALLABLE_RUNTIME_PROVIDERS,
   ...VECTOR_CALLABLE_RUNTIME_PROVIDERS,
+  ...NUMERIC_APPEND_RUNTIME_PROVIDERS,
   ...ORDINARY_OBJECT_RUNTIME_PROVIDERS,
   ...NUMBER_REMAINDER_RUNTIME_PROVIDERS,
 ]);
@@ -71,6 +73,7 @@ export function semanticCallableProviderMismatch(provider: RuntimeProviderDefini
     referenceErrorProviderMismatch(provider) ??
     nativeAsyncProviderMismatch(provider) ??
     vectorProviderMismatch(provider) ??
+    numericAppendProviderMismatch(provider) ??
     ordinaryObjectProviderMismatch(provider) ??
     numberRemainderProviderMismatch(provider)
   );

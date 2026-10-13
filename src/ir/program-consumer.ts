@@ -121,6 +121,10 @@ import { indexPhysicalTypes } from "../wasm/physical/type-layout.js";
 import {
   reserveNativeVectorHelper,
   fillNativeVectorHelper,
+  reserveNativeNumericAppend,
+  nativeNumericAppendFunction,
+  fillNativeNumericAppend,
+  requireCompletedNativeNumericAppend,
   nativeVectorPhysicalType,
   requireNativeVectorTypeReservations,
   type NativeVectorLayout,
@@ -173,6 +177,7 @@ import {
   completedStartupGuardIndex,
   collectPhysicalUnitReceipts,
 } from "./program-body-resources.js";
+import { createNativeVectorEmission } from "./program-native-vector-emission.js";
 import { acquirePreparedLinearAllocation } from "./program/linear-allocation-outcome.js";
 import {
   reserveAndBindPhysicalReferenceError,
@@ -187,6 +192,7 @@ import {
   linearMemoryOptionsUnsupported,
   reservePreparedLinearMemory,
   preparedLinearMemoryBindings,
+  preparedLinearNumericAppendReservation,
   fillPreparedLinearMemory,
   requireCompletedPreparedLinearMemory,
 } from "../backend/linear/program/memory.js";
@@ -1198,6 +1204,13 @@ function physicalVectorCarrierProducers() {
     physicalType: nativeVectorPhysicalType,
     resolve: resolveNativeVector,
     resolveElement: resolveNativeVectorForElement,
+    reserveExternref: reserveNativeVectorHelper,
+    fillExternref: fillNativeVectorHelper,
+    reserveAppend: reserveNativeNumericAppend,
+    appendFunction: nativeNumericAppendFunction,
+    fillAppend: fillNativeNumericAppend,
+    completeAppend: requireCompletedNativeNumericAppend,
+    linearAppendFunction: preparedLinearNumericAppendReservation,
   };
 }
 function physicalReferenceErrorLiteralProducers() {
@@ -1354,15 +1367,9 @@ function materializePhysicalProgram(
       supportFunctions.set(token.object, token);
     }
   }
-  const vectorHelper = reserveNativeVectorHelper(reservations, plan.vectors, vectorTypes, exceptionTag);
-  if (vectorHelper) {
-    supportFunctions.set(vectorHelper.function.object, vectorHelper.function);
-    if (!plan.vectors.helper) emissionFailed("vector helper has no authenticated binding plan");
-    functionsByKey.set(plan.vectors.helper.referenceKey, vectorHelper.function);
-    resourcesByBinding.set(plan.vectors.helper.bindingId, vectorHelper.function);
-  } else if (plan.vectors.helper) {
-    emissionFailed("planned vector helper was not reserved");
-  }
+  const vectorOwner = createNativeVectorEmission(accepted, plan, reconciliation, vectorProducers);
+  const vectorEmission = vectorOwner.reserve(vectorTypes, exceptionTag, supportFunctions, assertEmissionActive);
+  const vectorHelper = vectorEmission.externref;
   reserveNumberRemainders(plan, reconciliation, supportFunctions);
   const referenceError = reserveAndBindPhysicalReferenceError(
     reservations,
@@ -1389,6 +1396,8 @@ function materializePhysicalProgram(
   const linearBindings = linearPack ? preparedLinearMemoryBindings(reservations, linearPack) : undefined;
   for (const token of linearBindings?.supportFunctions ?? []) supportFunctions.set(token.object, token);
 
+  const appendBinding = vectorEmission.bind(linearPack);
+
   // 3. A's authoritative ABI over the program's entries, bound to the reserved indices.
   abi ??= sealedPhysicalProgramAbi(program);
   bindPhysicalAbi(abi, plan, { ...reconciliation, slots, vectorHelper });
@@ -1398,7 +1407,7 @@ function materializePhysicalProgram(
   else if (strings) fillNativeStringLiteralResources(reservations, strings);
   if (realm) fillNativeRealmResources(reservations, realm);
   if (formatterPack) fillNativeNumberFormatResources(reservations, formatterPack);
-  if (vectorHelper) fillNativeVectorHelper(reservations, vectorHelper);
+  vectorEmission.fill();
   if (invocationPack) {
     if (!sourceClosures || !exceptionTag || !record.nativeInvocation)
       emissionFailed("native invocation lost its source or exception owner");
@@ -1421,6 +1430,7 @@ function materializePhysicalProgram(
       sourceClosures,
       linearBindings,
       plan.target,
+      appendBinding,
     ),
     assertEmissionActive,
   );
@@ -1472,6 +1482,7 @@ function materializePhysicalProgram(
   if (nativePack?.output) publishNativeStringValueOutput(reservations, nativePack);
   if (referenceError) requireCompletedPhysicalReferenceError(reservations, referenceError);
   if (linearPack) requireCompletedPreparedLinearMemory(reservations, linearPack);
+  vectorEmission.complete();
   const referenceErrorReceipt = referenceError
     ? completedPhysicalReferenceErrorReceipt(reservations, referenceError, module)
     : undefined;

@@ -10,6 +10,7 @@ interface VectorElementAccessContext<S> {
   readonly construction: IrInstr | undefined;
   readonly requestedCapacity?: number;
   readonly indexScratch: () => number;
+  readonly receiverScratch: (type: ValType) => number;
   readonly elementScratch: (type: ValType) => number;
 }
 
@@ -21,6 +22,47 @@ export function emitVectorElementAccess<S>(
   out: S,
 ): void {
   const { emitter, emitValue, construction } = context;
+  if (context.requestedCapacity !== undefined) {
+    // Issued native origins retain the captured logical receiver, never a pre-effect backing pointer.
+    const receiver = context.receiverScratch(
+        "linearMemory" in vec ? { kind: "i32" } : { kind: "ref_null", typeIdx: vec.vecStructTypeIdx },
+      ),
+      index = context.indexScratch(),
+      length = context.indexScratch();
+    const value = instr.kind === "vec.set" ? context.elementScratch(vec.elementValType) : undefined;
+    emitValue(instr.vec, out);
+    emitter.emitLocalSet(receiver, out);
+    emitValue(instr.index, out);
+    emitter.emitLocalSet(index, out);
+    if (value !== undefined && instr.kind === "vec.set") {
+      emitValue(instr.newValue, out);
+      emitter.emitLocalSet(value, out);
+    }
+    emitter.emitLocalGet(receiver, out);
+    emitter.emitVecLen(vec, out);
+    emitter.emitLocalSet(length, out);
+    emitter.emitLocalGet(index, out);
+    emitter.emitLocalGet(length, out);
+    emitter.emitScalarConst("i32", context.requestedCapacity, out);
+    emitter.emitBinary("i32.gt_u", out);
+    const grown = emitter.newSink(),
+      original = emitter.newSink();
+    emitter.emitLocalGet(length, grown);
+    emitter.emitScalarConst("i32", context.requestedCapacity, original);
+    emitter.emitIf({ kind: "val", type: { kind: "i32" } }, grown, original, out);
+    emitter.emitBinary("i32.ge_u", out);
+    const trap = emitter.newSink();
+    emitter.pushRaw(trap, { op: "unreachable" });
+    emitter.emitIf({ kind: "empty" }, trap, emitter.newSink(), out);
+    // Resolution and length refresh occur after all operand effects, with no callbacks between.
+    emitter.emitLocalGet(receiver, out);
+    emitter.emitVecDataPtr(vec, out);
+    emitter.emitLocalGet(index, out);
+    if (value !== undefined) emitter.emitLocalGet(value, out);
+    if (instr.kind === "vec.get") emitter.emitElemGet(vec, out);
+    else emitter.emitElemSet(vec, value!, out);
+    return;
+  }
   emitValue(instr.vec, out);
   emitter.emitVecDataPtr(vec, out);
   emitValue(instr.index, out);

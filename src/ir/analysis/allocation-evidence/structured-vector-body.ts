@@ -7,6 +7,8 @@ import { numericVector, vectorAssignable, StructuredVectorFacts } from "./struct
 import type { NativeModuleGlobalEvidence } from "./module-vector-globals.js";
 import { irGlobalBindingKey } from "../../core/global-binding-keys.js";
 import type { AllocationEvidenceCensus, AllocationEvidenceFailure } from "./contracts.js";
+import { isNativeNumericAppendCall } from "./numeric-append-protocol.js";
+
 export interface StructuredScope {
   values: Map<IrValueId, IrType>;
   initialized: Set<number>;
@@ -249,6 +251,22 @@ export class StructuredVectorBody {
       instr.resultType.val.kind === "externref"
     )
       return;
+    if (isNativeNumericAppendCall(instr)) {
+      if (
+        instr.args.length !== 3 ||
+        !numericVector(scope.values.get(instr.args[0]!)) ||
+        primitiveKind(scope.values.get(instr.args[1]!)) !== "i32" ||
+        primitiveKind(scope.values.get(instr.args[2]!)) !== "f64" ||
+        instr.result !== null ||
+        instr.resultType !== null
+      )
+        this.fail("lexical-definition");
+      this.facts.touch(instr.args[0]!, "write");
+      // Retain the conservative callable escape evidence; append does not synthesize a site.
+      for (const value of instr.args) this.facts.escape(value, "opaque");
+      this.census.vectorWrites++;
+      return;
+    }
     const target = instr.target.binding.kind === "unit" ? this.functions.get(instr.target.binding.unitId) : undefined;
     if (!target || target.params.length !== instr.args.length || target.resultTypes.length > 1) this.refuse();
     if (

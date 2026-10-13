@@ -4,7 +4,7 @@ title: "Native Linear numeric-vector shared source handoff and integration plan"
 status: in-progress
 sprint: current
 created: 2026-10-08
-updated: 2026-10-13
+updated: 2026-10-14
 priority: high
 horizon: l
 feasibility: hard
@@ -3876,3 +3876,114 @@ Original externref/async collectors, legacy push/grow and A's forwarding and
 integration/queue ownership remain preserved. Growth, remaining migration,
 retirement/conformance and verified main delivery remain open; this is a held B
 checkpoint.
+
+### Actual native numeric append receiver (2026-10-13)
+
+Published source-capability checkpoint 72ce5a7b1dad207b02c94bdf64ccfc69f244c92b
+is the measured predecessor; native push remains unsupported there. Receiver
+codex/6920-b-vector-append-20261013-01a12827 now owns the actual append protocol,
+checked physical transactions, current extent and common/public integration.
+Signed receiving claim 96118f3c9f4164fd9c3ed86fff11a44d2d2042f8 is verified on
+the remote. Three existing B rows and the finite native-vector resource handoff
+change; every other row, the original parent owner/branch and A forwarding and
+queue ownership remain preserved.
+
+The actual initializer is value-first (f64,i32 pointer,i32 index)->void and only
+stores; it cannot substitute for the three-argument vector/index/f64 append ABI.
+Implement a dedicated endpoint whose allocation/copy/value/length preparation
+precedes publication, preserving original aliases through the current forwarding
+provider. Numeric raw accesses need E=max(original requested N,current logical L)
+on both backends under a complete closed append/length-writer proof; physical
+padding grants no access. Catalog declaration alone must never grant admission.
+
+Physical recipe qualification, semantic/effect/origin replay, real resource/ABI
+issuance, source-free live/codec execution and public four-profile execution are
+in progress. No new execution, gate or complete-growth claim is made yet.
+
+The first actual append components are now implemented locally. Dedicated Linear
+and GC recipes execute real backing growth, copy/store-before-publication and
+alias preservation. Linear validates resolved tag/alignment and full widened
+old/new ranges, checked capacity and index, and publishes one complete forwarding
+header last. Actual default memory.grow failure preserves vector, forwarding,
+heap and memory size; invalid/overlapping endpoints, overflowing/unaddressable
+headers and wrong indices fail before mutation. GC retains NaN bits and negative
+zero through array copying and guards nullable input before touching a carrier.
+
+Genuine raw source IR proved the internal formal receiver is nullable in IR;
+the canonical numeric declaration and GC signature therefore retain that precise
+contract. Complete original constructor origins must still prove actual values
+when admission is joined. The separate source-free sequence/length-writer check
+covers six actual sources including nested RHS append, call transport and loop
+occurrences, and refuses an RHS moved after length capture. It is descriptive
+verification, not emission/Program authority or a substitute for lexical,
+allocation, global, effect and original-extent proof.
+
+The canonical numeric feature/provider is added beside the unchanged externref
+catalog; its original complete collector function bytes are identical to 72ce5a7.
+Typed malformed DATA now fails the rederived runtime ABI population invariant
+before reaching an undeclared-callable check, preserving refusal and the forbidden
+source-replay control. Source admission remains guarded while actual resource
+bindings, whole-program replay and current raw extent are still being wired.
+
+Latest local focused run: three files, 50/50 cases pass, actual exit0: 32 real
+physical transaction cases, ten raw source protocol/catalog cases and eight
+preserved source/DATA boundary cases. The earlier 81-case run is 76pass/5fail;
+four failures are the exact predecessor's 31-case externref cohort messages,
+and the fifth was the obsolete diagnostic assertion now replaced by its strict
+typed ABI invariant control. Earlier harness export-key and protocol/type
+failures remain recorded. Typing covers 1,993/1,993 source files and 59/59 named
+tests, 2,319 inputs, exclude[], zero diagnostics. No full gates/build, live/codec
+native append, public append success, source publication or completion is claimed
+for this working receiver. Common/public integration and full migration remain
+open; published held PR6662 is unchanged at 72ce5a7.
+
+
+The numeric append path is now locally wired through real preparation, canonical
+ABI, owned physical reservations and public output joins. Source admission validates
+its original captured-length sequence; independent source-free structured evidence
+replays actual writes while preserving conservative callable escape facts. Physical
+terminal access captures receiver/index/RHS first, then refreshes both backing and
+logical length. Its issued extent is max(original requested N,current L), so physical
+padding does not authorize access. Compound reads retain their old value before RHS
+append effects. Neither legacy source push/grow nor the original externref helper
+algorithm/collector is changed.
+
+Measured before the final structural extraction: all eight genuine live/codec
+numeric append programs execute on four profiles; 34/34 physical transactions pass,
+including real capacity16 growth during index/RHS, compound old-value preservation,
+zero original extent and padding boundaries. Fourteen separate resource cases pass,
+including both genuine Linear prepared resource packs; exact output joins now admit
+eight public local/global append calls. The five-file admission rerun passes74/74.
+No mocked validation/emission or direct legacy generator fallback grants admission.
+
+A 73-file broader run measures1,137 cases:1,074pass/53fail/9skip/1todo. Its52 predecessor
+failure IDs remain, plus one old global fixture expecting push refusal; that exact
+qualified fixture is being moved to positive source/live/codec coverage. Four initial
+structural gates failed (inventory ownership, driver LOC/function budgets and a
+new directory dependency), without requesting allowances. GC append custody remains
+separate inside the existing vector resource owner, preserving the original helper;
+common vector emission coordination is extracted from the driver and honestly
+recorded as migration debt beside it. The semantic IR-program layer's backend/physical
+prohibition is retained. Final scoped tests, gates, build, artifact preservation and
+publication are still in progress. PR6662 remains held at72ce5a7 until those steps finish.
+
+Constant-index source stores with an effectful RHS still refuse at the existing
+stable mutation proof. The raw physical path is qualified, but extending source
+store admission requires a separate complete constructor-length/index/effect proof;
+no general store or unknown-call admission is inferred from append availability.
+Full migration, retirement/conformance and verified main delivery remain open.
+
+
+Final local qualification on 2026-10-14: six focused files pass88/88; the73-file
+broader run measures1,138 cases (1,076pass/52fail/9skip/1todo), retaining exactly
+all52 predecessor failure IDs with no additions/removals. The qualified original
+prefix/global append fixture now has positive source/live/codec coverage. All ten
+structural gates and the extra directory budget gate pass; the full8GiB build passes.
+Typing covers1,995/1,995 source files and61/61 scoped tests,2,323 inputs,exclude[],
+zero diagnostics. All32 paired source compatibility outcomes and eight complete
+scalar artifact rows remain identical. Six original functions (the whole vector
+collector, both externref helper methods, allocation, constructor and forwarding
+resolver bodies) remain byte-identical. All earlier failed epochs remain recorded
+privately. Exact source/evidence receipts are under .tmp/vector-append/; normal
+commit/push hooks and remote publication verification are the remaining steps.
+Full migration and held integration remain open.

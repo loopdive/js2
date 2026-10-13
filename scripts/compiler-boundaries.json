@@ -16522,6 +16522,42 @@
       "path": "src/ir/program/native-vector-growth-source.ts",
       "state": "clean",
       "layer": "ir-program"
+    },
+    {
+      "path": "src/wasm/physical/linear-vector-append.ts",
+      "state": "clean",
+      "layer": "wasm-physical"
+    },
+    {
+      "path": "src/wasm/physical/gc-vector-append.ts",
+      "state": "clean",
+      "layer": "wasm-physical"
+    },
+    {
+      "path": "src/ir/analysis/allocation-evidence/numeric-append-protocol.ts",
+      "state": "clean",
+      "layer": "ir-analysis"
+    },
+    {
+      "path": "src/ir/runtime/numeric-vector-callables.ts",
+      "state": "clean",
+      "layer": "ir-runtime"
+    },
+    {
+      "path": "src/compiler/native-numeric-append-presentation.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "compiler",
+      "owner": "6920-native-preparation",
+      "nextBoundary": "Canonical append DATA joined to immutable completed support and physical ABI; frontend presentation debt remains."
+    },
+    {
+      "path": "src/ir/program-native-vector-emission.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "6920-session-b-native-takeover",
+      "nextBoundary": "Injected common emission coordination retains original GC and Linear reservation owners; move with the consumer after separating portable origin lookup from target resource ports."
     }
   ]
 }

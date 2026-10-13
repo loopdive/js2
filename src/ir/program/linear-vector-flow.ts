@@ -12,6 +12,11 @@ import { IrUnsupportedError } from "../../shared/contracts/ir-preparation-errors
 import { PreparedIrProgramInvariantError } from "./errors.js";
 import { irGlobalBindingKey } from "../core/global-binding-keys.js";
 
+import {
+  collectNativeNumericAppendProtocol,
+  isNativeNumericAppendCall,
+} from "../analysis/allocation-evidence/numeric-append-protocol.js";
+
 export interface LinearVectorOrigin {
   readonly functionIndex: number;
   readonly instruction: Extract<IrInstr, { kind: "vec.new_fixed" }>;
@@ -37,6 +42,7 @@ function invalid(detail: string): never {
 export function collectLinearVectorFlow(
   module: IrModule,
 ): ReadonlyMap<IrUnitId, ReadonlyMap<IrValueId, readonly LinearVectorOrigin[]>> {
+  collectNativeNumericAppendProtocol(module.functions);
   const functions = new Map(module.functions.map((fn, index) => [fn.unitId, { fn, index }]));
   if (functions.size !== module.functions.length) invalid("duplicate source-unit owner");
   const flows = new Map<IrUnitId, FunctionFlow>();
@@ -90,6 +96,10 @@ export function collectLinearVectorFlow(
         if (instr.result === null || !producer?.length) unsupported(fn, "vector global has no actual producer");
         values.set(instr.result, producer);
       } else if (instr.kind === "call") {
+        if (isNativeNumericAppendCall(instr)) {
+          origin(instr.args[0]!);
+          return;
+        }
         const target =
           instr.target.binding.kind === "unit" ? functions.get(instr.target.binding.unitId)?.fn : undefined;
         const carries =
@@ -154,6 +164,7 @@ export function collectLinearVectorFlow(
         forEachInstrDeep(root, (instr) => {
           if (instr.kind === "vec.get" || instr.kind === "vec.len" || instr.kind === "vec.set")
             receivers.add(instr.vec);
+          else if (isNativeNumericAppendCall(instr)) receivers.add(instr.args[0]!);
         });
     for (const [value, symbolic] of flows.get(fn.unitId)!.values) {
       if (!receivers.has(value)) continue;

@@ -1,3 +1,4 @@
+import { completedNumericAppendPresentation } from "./native-numeric-append-presentation.js";
 import { completedErrorPresentation, type CompletedErrorPresentation } from "./ir-program-error-presentation.js";
 import { completedLinearMemorySupportKeys } from "./ir-program-memory-presentation.js";
 import { joinPreparedStartup, type IrProgramPresentationStartup } from "./ir-program-startup-presentation.js";
@@ -469,6 +470,7 @@ function checkAbiExports(
   errorBindingId?: IrBindingId,
 ): Set<string> {
   const mod = emission.module;
+  const append = completedNumericAppendPresentation(program, emission, capture.backend);
   const { globals } = capture;
   const entries = new Map(program.abi.entries.map((entry) => [entry.plan.id, entry]));
   if (entries.size !== program.abi.entries.length)
@@ -497,6 +499,7 @@ function checkAbiExports(
         !mixed &&
         !nativeVectorCallable &&
         plan.id !== errorBindingId &&
+        plan.id !== append?.bindingId &&
         (contract.promise ||
           [...contract.params, ...contract.results].some((type) => type.kind !== "val" || !numeric(type.val)))
       )
@@ -694,10 +697,16 @@ function numberRemainderSupportMatches(
 ): boolean {
   const physical = emittedPhysicalSetupPlan(emission);
   const memoryKeys = completedLinearMemorySupportKeys(emission, backend);
-  if (!memoryKeys || !error) return false;
-  providers = providers.filter((row) => !error.bindingId || row.feature !== "error.reference.construct");
+  const append = completedNumericAppendPresentation(program, emission, backend);
+  if (!memoryKeys || !error || !append) return false;
+  providers = providers.filter(
+    (row) =>
+      (!error.bindingId || row.feature !== "error.reference.construct") &&
+      (!append.bindingId || row.feature !== "js.vector.append.f64"),
+  );
   const support = emittedSupportFunctionReceipts(emission).filter(
-    (row) => !memoryKeys.includes(row.key) && !error.supportKeys.includes(row.key),
+    (row) =>
+      !memoryKeys.includes(row.key) && !error.supportKeys.includes(row.key) && !append.supportKeys.includes(row.key),
   );
   if (
     !physical ||
