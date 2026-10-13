@@ -6,8 +6,8 @@
   "status": "in-progress",
   "branch": "codex/6920-b-native-preparation-20261013-01a12827",
   "claimed_at": "2026-10-13T06:38:30.746860Z",
-  "updated_at": "2026-10-13T16:31:32.093166Z",
-  "write_id": "b-internal-vector-calls-dfaaebaa-4a7c-423b-8f98-82ff7294428d",
+  "updated_at": "2026-10-13T17:03:35.281839Z",
+  "write_id": "b-internal-vector-calls-f76fde28-af7d-4095-965f-775289fe6c84",
   "handoff_scope": [
     "src/ir/program-source.ts: genuine shared logical vector resolver, preparation origin and final checked facts joins",
     "src/ir/from-ast.ts: logical vector admission and executable allocation demand only",
@@ -21,7 +21,10 @@
     "src/ir/program/linear-vector-flow.ts: actual structured conditional producer unions and all plain return payloads, complete caller substitution; no synthetic sites or vector slot inference",
     "src/ir/analysis/allocation-evidence/verify.ts/contracts.ts and distinct structured numeric-vector checker leaves: complete scalar slot initialization, lexical SSA/type checks, plain branch/loop/return effects and original allocation facts replay; preserve historical local/call profiles",
     "src/ir/analysis/ownership.ts and escape.ts bounded plain if.stmt/early.return effect census and alias return classification required by authentic synchronous numeric vectors; preserve unrelated allocation algorithms, async and finally completion lowering",
-    "new tests/issue-6920-native-vector-control.test.ts and plan/issues/6920-native-linear-shared-source-handoff.md: measured eight-source predecessor audit, runtime both branches/zero-multi iteration/native four-profile live-codec qualification and malformed-facts/SSA/slot controls"
+    "new tests/issue-6920-native-vector-control.test.ts and plan/issues/6920-native-linear-shared-source-handoff.md: measured eight-source predecessor audit, runtime both branches/zero-multi iteration/native four-profile live-codec qualification and malformed-facts/SSA/slot controls",
+    "src/ir/analysis/native-vector-control.ts plus bounded calls in src/ir/analysis/linear-memory-plan.ts and src/ir/program-middleend-ir.ts: independent original-IR synchronous native f64 vector annotation extension, preserving generic ownership.ts/escape.ts byte-exact and old stack algorithms",
+    "src/ir/program/linear-allocation-validation.ts plus src/ir/analysis/allocation-evidence/structured-vector-profile.ts: canonical whole-native context selects the independent structured control checker; preserve the standalone historical verify.ts finite grammar byte-exact",
+    "src/ir/core/native-conditional-type.ts and only new leaf rows in scripts/compiler-boundaries.json: pure logical type join and body-only native evidence modules, no activation or architectural-completion claim"
   ],
   "handoff_authority": {
     "source": "human scope reply call_fHCisBpMmbCIm9ci7BYIEcqH",
@@ -140,11 +143,27 @@
         "bounded_only": true
       },
       "reason": "Resolve measured native vector structured control source, provenance and independent evidence barriers together."
+    },
+    {
+      "at": "2026-10-13T17:03:35.281839Z",
+      "additions": [
+        "src/ir/analysis/native-vector-control.ts plus bounded calls in src/ir/analysis/linear-memory-plan.ts and src/ir/program-middleend-ir.ts: independent original-IR synchronous native f64 vector annotation extension, preserving generic ownership.ts/escape.ts byte-exact and old stack algorithms",
+        "src/ir/program/linear-allocation-validation.ts plus src/ir/analysis/allocation-evidence/structured-vector-profile.ts: canonical whole-native context selects the independent structured control checker; preserve the standalone historical verify.ts finite grammar byte-exact",
+        "src/ir/core/native-conditional-type.ts and only new leaf rows in scripts/compiler-boundaries.json: pure logical type join and body-only native evidence modules, no activation or architectural-completion claim"
+      ],
+      "authority": {
+        "source": "human scope reply call_fHCisBpMmbCIm9ci7BYIEcqH",
+        "answer": "Take over the blocking shared seams",
+        "receiving_owner": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+        "bounded_only": true
+      },
+      "reason": "Preserve sealed generic producers and standalone checker while advancing genuine whole-native control facts and admission."
     }
   ],
-  "previous_write_id": "b-internal-vector-calls-b42b8e84-3b9f-4c01-9329-40853bfc4655",
+  "previous_write_id": "b-internal-vector-calls-dfaaebaa-4a7c-423b-8f98-82ff7294428d",
   "receiving_worktrees": [
     "codex/6920-b-native-vector-calls-20261013-01a12827",
+    "codex/6920-b-vector-control-20261013-01a12827",
     "codex/6920-b-vector-control-20261013-01a12827"
   ]
 }
