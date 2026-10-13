@@ -6,8 +6,8 @@
   "status": "in-progress",
   "branch": "codex/6920-b-native-preparation-20261013-01a12827",
   "claimed_at": "2026-10-13T06:38:30.746860Z",
-  "updated_at": "2026-10-13T14:42:17.796324Z",
-  "write_id": "b-internal-vector-calls-b42b8e84-3b9f-4c01-9329-40853bfc4655",
+  "updated_at": "2026-10-13T16:31:32.093166Z",
+  "write_id": "b-internal-vector-calls-dfaaebaa-4a7c-423b-8f98-82ff7294428d",
   "handoff_scope": [
     "src/ir/program-source.ts: genuine shared logical vector resolver, preparation origin and final checked facts joins",
     "src/ir/from-ast.ts: logical vector admission and executable allocation demand only",
@@ -16,7 +16,12 @@
     "existing checker/program creation wrappers: finite genuine Program origin association needed for these native facts only",
     "src/ir/program-source.ts, src/ir/native-source-selection.ts and new src/ir/program-sync-vectors.ts: authentic synchronous internal f64 vector signatures and complete owned expression maps; preserve the original async collector byte-exact and existing Program/checker/unit callable joins",
     "src/ir/program/linear-vector-flow.ts and src/ir/program/linear-memory-demand.ts: recompute finite acyclic actual call/parameter/return origin joins from complete frozen IR; no synthetic allocation sites, AST reads or persisted caller-authored provenance",
-    "src/ir/analysis/allocation-evidence/vector-call-profile.ts and verify.ts/contracts.ts: distinct finite synchronous numeric-vector call profile rechecking original local ownership/escape facts against actual bodies; preserve old profile and producer analysis"
+    "src/ir/analysis/allocation-evidence/vector-call-profile.ts and verify.ts/contracts.ts: distinct finite synchronous numeric-vector call profile rechecking original local ownership/escape facts against actual bodies; preserve old profile and producer analysis",
+    "src/ir/program-sync-vectors.ts and src/ir/from-ast.ts bounded synchronous logical-vector expression joins: actual conditional arm types and owned expression facts; preserve asynchronous collector and foreign completion lowering",
+    "src/ir/program/linear-vector-flow.ts: actual structured conditional producer unions and all plain return payloads, complete caller substitution; no synthetic sites or vector slot inference",
+    "src/ir/analysis/allocation-evidence/verify.ts/contracts.ts and distinct structured numeric-vector checker leaves: complete scalar slot initialization, lexical SSA/type checks, plain branch/loop/return effects and original allocation facts replay; preserve historical local/call profiles",
+    "src/ir/analysis/ownership.ts and escape.ts bounded plain if.stmt/early.return effect census and alias return classification required by authentic synchronous numeric vectors; preserve unrelated allocation algorithms, async and finally completion lowering",
+    "new tests/issue-6920-native-vector-control.test.ts and plan/issues/6920-native-linear-shared-source-handoff.md: measured eight-source predecessor audit, runtime both branches/zero-multi iteration/native four-profile live-codec qualification and malformed-facts/SSA/slot controls"
   ],
   "handoff_authority": {
     "source": "human scope reply call_fHCisBpMmbCIm9ci7BYIEcqH",
@@ -118,10 +123,28 @@
         "bounded_only": true
       },
       "reason": "Resolve measured signature, finite allocation evidence and genuine demand provenance barriers together for internal synchronous vector transport."
+    },
+    {
+      "at": "2026-10-13T16:31:32.093166Z",
+      "additions": [
+        "src/ir/program-sync-vectors.ts and src/ir/from-ast.ts bounded synchronous logical-vector expression joins: actual conditional arm types and owned expression facts; preserve asynchronous collector and foreign completion lowering",
+        "src/ir/program/linear-vector-flow.ts: actual structured conditional producer unions and all plain return payloads, complete caller substitution; no synthetic sites or vector slot inference",
+        "src/ir/analysis/allocation-evidence/verify.ts/contracts.ts and distinct structured numeric-vector checker leaves: complete scalar slot initialization, lexical SSA/type checks, plain branch/loop/return effects and original allocation facts replay; preserve historical local/call profiles",
+        "src/ir/analysis/ownership.ts and escape.ts bounded plain if.stmt/early.return effect census and alias return classification required by authentic synchronous numeric vectors; preserve unrelated allocation algorithms, async and finally completion lowering",
+        "new tests/issue-6920-native-vector-control.test.ts and plan/issues/6920-native-linear-shared-source-handoff.md: measured eight-source predecessor audit, runtime both branches/zero-multi iteration/native four-profile live-codec qualification and malformed-facts/SSA/slot controls"
+      ],
+      "authority": {
+        "source": "human scope reply call_fHCisBpMmbCIm9ci7BYIEcqH",
+        "answer": "Take over the blocking shared seams",
+        "receiving_owner": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+        "bounded_only": true
+      },
+      "reason": "Resolve measured native vector structured control source, provenance and independent evidence barriers together."
     }
   ],
-  "previous_write_id": "b-bounded-takeover-4cf22cfc-ed94-4d37-b22d-205201264589:a2",
+  "previous_write_id": "b-internal-vector-calls-b42b8e84-3b9f-4c01-9329-40853bfc4655",
   "receiving_worktrees": [
-    "codex/6920-b-native-vector-calls-20261013-01a12827"
+    "codex/6920-b-native-vector-calls-20261013-01a12827",
+    "codex/6920-b-vector-control-20261013-01a12827"
   ]
 }
