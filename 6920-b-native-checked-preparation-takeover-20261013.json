@@ -1,0 +1,103 @@
+{
+  "id": "6920",
+  "slice": "b-native-checked-preparation-takeover-20261013",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "status": "in-progress",
+  "branch": "codex/6920-b-native-preparation-20261013-01a12827",
+  "claimed_at": "2026-10-13T06:38:30.746860Z",
+  "updated_at": "2026-10-13T06:38:30.746860Z",
+  "write_id": "b-bounded-takeover-4cf22cfc-ed94-4d37-b22d-205201264589:a2",
+  "handoff_scope": [
+    "src/ir/program-source.ts: genuine shared logical vector resolver, preparation origin and final checked facts joins",
+    "src/ir/from-ast.ts: logical vector admission and executable allocation demand only",
+    "src/ir/program-prepare-ir.ts: final facts before freeze and prepared input authentication",
+    "src/ir/program*.ts and codecs: canonical facts, ownership/provenance seals, ABI attachment and pure planner joins required by native Linear",
+    "existing checker/program creation wrappers: finite genuine Program origin association needed for these native facts only"
+  ],
+  "handoff_authority": {
+    "source": "human scope reply call_fHCisBpMmbCIm9ci7BYIEcqH",
+    "answer": "Take over the blocking shared seams",
+    "receiving_owner": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+    "bounded_only": true
+  },
+  "predecessors": [
+    {
+      "path": "6865-native-linear-source-facts-20261008.json",
+      "assignee": "ttraenkler/codex-ir-native-linear-source-facts-sol61-20261008",
+      "write_id": "16740-hhm82aur",
+      "blob": "f6ae15cb642a663c45de6ece4462d13440b1cf8d"
+    },
+    {
+      "path": "6865-native-linear-facts-verifier-extraction-20261008.json",
+      "assignee": "ttraenkler/codex-ir-native-linear-source-facts-sol61-20261008",
+      "write_id": "46615-x5dy59lp",
+      "blob": "5d58b393c46fa55c14f813d98d1c73752092a70e"
+    },
+    {
+      "path": "6920-native-packets-rebuild-20261011.json",
+      "assignee": "ttraenkler/codex-native-packets-rebuild-20261011",
+      "write_id": "21473-5lu7txva",
+      "blob": "15b34623707f4d1634a9adfb027bf3457b60e784"
+    },
+    {
+      "path": "6920-linear-memory-demand-20261010.json",
+      "assignee": "ttraenkler/codex-native-linear-demand-sol61-20261010",
+      "write_id": "18952-zd5pr79x",
+      "blob": "dcec255fc1ee6056f7b06a54ac2e9745cd498773"
+    },
+    {
+      "path": "6920-allocation-evidence-checker-20261009.json",
+      "assignee": "ttraenkler/codex-sol-allocation-evidence-checker-20261009",
+      "write_id": "19199-2n2yketq",
+      "blob": "9aa7415cf520c5138d599e72525403bc494afb15"
+    },
+    {
+      "path": "6920-allocation-evidence-boundaries-20261009.json",
+      "assignee": "ttraenkler/codex-ir-evidence-boundaries-20261009",
+      "write_id": "41777-d2f5erfl",
+      "blob": "6fa7576e895b1c0f21d49c97c5340996368483d0"
+    },
+    {
+      "path": "6920-allocation-provenance-context-20261009.json",
+      "assignee": "ttraenkler/codex-sol-allocation-provenance-context-20261009",
+      "write_id": "37849-iyihfm2v",
+      "blob": "e0a229c5ff1b373ce525291da0f599c3e90ebf9e"
+    },
+    {
+      "path": "3518-authoritative-preparation.json",
+      "assignee": "ttraenkler/astra-ir-program-a-20260905",
+      "write_id": "93121-srsh5bgo",
+      "blob": "d2892ba688af27ee43c895f7cdef0e1fcbbbb4c5"
+    },
+    {
+      "path": "3521-prepared-program-core.json",
+      "assignee": "ttraenkler/codex-3521-prepared-core-019f7cb9",
+      "write_id": null,
+      "blob": "395bb8a822f690f31587531ddf6ec9eccbcf3844"
+    },
+    {
+      "path": "3521-program-abi-session-seal.json",
+      "assignee": "ttraenkler/codex-r2-session",
+      "write_id": null,
+      "blob": "17cbddee25b133520615c3d1cc81c4b91418a03d"
+    },
+    {
+      "path": "4218.json",
+      "assignee": "ttraenkler/fable-remote",
+      "write_id": "2794-sye8cat1",
+      "blob": "741af9d8465486c8d7cdd2e7780cb0aa7f118ba5"
+    }
+  ],
+  "exclusions": [
+    "unrelated parent issue work",
+    "existing branches and staged payloads",
+    "four transferred 6914 forwarding claims",
+    "legacy source push/grow behavior",
+    "public PR heads and HOLDs",
+    "A integration/queue ownership",
+    "blanket TypeScript/oracle retirement",
+    "force push, hook bypass, main push"
+  ],
+  "donor_policy": "Preserve original donors; authenticate actual source before adoption; receiving writes occur in fresh isolated worktrees."
+}

@@ -5,6 +5,38 @@
   "status": "in-progress",
   "branch": "claude/linear-memory-quickjs-backend-gkhszu",
   "claimed_at": "2026-08-19T00:47:25Z",
-  "updated_at": "2026-08-19T00:47:25Z",
-  "write_id": "12703-i71z8kda"
+  "updated_at": "2026-10-13T06:38:30.746860Z",
+  "write_id": "b-bounded-takeover-4cf22cfc-ed94-4d37-b22d-205201264589:disposition:4540",
+  "bounded_handoffs": [
+    {
+      "successor": "6920-b-native-runtime-recipe-takeover-20261013.json",
+      "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+      "lane": "allocator",
+      "authority": {
+        "source": "human scope reply call_fHCisBpMmbCIm9ci7BYIEcqH",
+        "answer": "Take over the blocking shared seams",
+        "receiving_owner": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+        "bounded_only": true
+      },
+      "scope": [
+        "src/codegen-linear/runtime.ts: addRuntime selected default bump __malloc complete type/body/registration/resource recipe only",
+        "addArrayRuntime __arr_new complete type/body/registration and constructor memory/heap/layout recipe only",
+        "pure allocator/constructor provider leaves shared with the retained direct callers",
+        "existing B initializer donor may be adopted byte-exact; forwarding resolver remains A-owned and is consumed through its existing provider endpoint"
+      ],
+      "exclusions": [
+        "unrelated parent issue work",
+        "existing branches and staged payloads",
+        "four transferred 6914 forwarding claims",
+        "legacy source push/grow behavior",
+        "public PR heads and HOLDs",
+        "A integration/queue ownership",
+        "blanket TypeScript/oracle retirement",
+        "force push, hook bypass, main push"
+      ],
+      "previous_write_id": "12703-i71z8kda",
+      "at": "2026-10-13T06:38:30.746860Z"
+    }
+  ],
+  "previous_write_id": "12703-i71z8kda"
 }

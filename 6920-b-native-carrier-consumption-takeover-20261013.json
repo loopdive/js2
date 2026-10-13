@@ -1,0 +1,80 @@
+{
+  "id": "6920",
+  "slice": "b-native-carrier-consumption-takeover-20261013",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "status": "in-progress",
+  "branch": "codex/6920-b-native-allocator-carriers-20261013-01a12827",
+  "claimed_at": "2026-10-13T06:38:30.746860Z",
+  "updated_at": "2026-10-13T06:38:30.746860Z",
+  "write_id": "b-bounded-takeover-4cf22cfc-ed94-4d37-b22d-205201264589:carrier",
+  "handoff_scope": [
+    "src/ir/lower-generic.ts: representation-aware vector types and scratch",
+    "src/ir/backend/{handles,lower-contracts,emitter}.ts: genuine GC and Linear vector representations",
+    "src/ir/program-physical-plan.ts: native Linear physical signatures and resource planning",
+    "src/ir/program-consumer.ts: body resolver, primary fill, emission and whole-attempt lifetime joins",
+    "src/ir/program-native-invocation.ts: actual Linear runtime-operation wiring and revocation",
+    "src/backend/linear/program/: checked native memory resource pack, no source algorithms"
+  ],
+  "handoff_authority": {
+    "source": "human scope reply call_fHCisBpMmbCIm9ci7BYIEcqH",
+    "answer": "Take over the blocking shared seams",
+    "receiving_owner": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+    "bounded_only": true
+  },
+  "predecessors": [
+    {
+      "path": "3518-backend-consumption-replay.json",
+      "assignee": "ttraenkler/claude-fable-ir-backend-c-20260906",
+      "write_id": "35959-9ep78ngq",
+      "blob": "4b2597dedbfc04a3fdb61fe2a53ef109f855f8c2"
+    },
+    {
+      "path": "3518-logical-vector-lowering.json",
+      "assignee": "ttraenkler/codex-astra-logical-vector-lowering-20260908",
+      "write_id": "14408-9k4zqvng",
+      "blob": "b593d73296ff0d784cd67bf0c71ea6b3d82a87b6"
+    },
+    {
+      "path": "3518-native-vector-consumer.json",
+      "assignee": "ttraenkler/codex-astra-native-vector-consumer-20260908",
+      "write_id": "34083-4yph817m",
+      "blob": "7bc7a3cdc1e14a06d5f0c5330bff8d4d6046a010"
+    },
+    {
+      "path": "3518-native-vector-resources.json",
+      "assignee": "ttraenkler/codex-3518-native-vector-resources-20260908",
+      "write_id": "32348-se055uf4",
+      "blob": "32002755e5b01a2b2e022bdc1b2d07d54d7ecedf"
+    },
+    {
+      "path": "3518-program-ownership-runtime.json",
+      "assignee": "ttraenkler/codex-astra-program-ownership-20260908",
+      "write_id": "34718-qohac24f",
+      "blob": "6f90cc9046fae934852cc543096c8d9b3d164d1b"
+    },
+    {
+      "path": "3518-program-abi-seam.json",
+      "assignee": "ttraenkler/codex-astra-program-abi-20260908",
+      "write_id": "97104-ngwilyls",
+      "blob": "031277a089b846f639d206e4e53bc80d88d9694a"
+    },
+    {
+      "path": "2929-native-consumer-exception-observer.json",
+      "assignee": "ttraenkler/codex-sol61-native-consumer-observer",
+      "write_id": "40430-ewbsk32e",
+      "blob": "5ba2732babef75035af0d7a75b6d52377471382a"
+    }
+  ],
+  "exclusions": [
+    "unrelated parent issue work",
+    "existing branches and staged payloads",
+    "four transferred 6914 forwarding claims",
+    "legacy source push/grow behavior",
+    "public PR heads and HOLDs",
+    "A integration/queue ownership",
+    "blanket TypeScript/oracle retirement",
+    "force push, hook bypass, main push"
+  ],
+  "donor_policy": "Preserve original donors; authenticate actual source before adoption; receiving writes occur in fresh isolated worktrees."
+}

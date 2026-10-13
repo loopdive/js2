@@ -1,0 +1,85 @@
+{
+  "id": "6920",
+  "slice": "b-native-startup-resources-takeover-20261013",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "status": "in-progress",
+  "branch": "codex/6920-b-native-routing-startup-20261013-01a12827",
+  "claimed_at": "2026-10-13T06:38:30.746860Z",
+  "updated_at": "2026-10-13T06:38:30.746860Z",
+  "write_id": "b-bounded-takeover-4cf22cfc-ed94-4d37-b22d-205201264589:startup",
+  "handoff_scope": [
+    "src/ir/{module-init-plan,module-init,program-startup-proof}.ts: native startup and TDZ resources only",
+    "src/ir/program-source.ts: startup construction joins, coordinated with preparation receiver",
+    "src/ir/program-consumer.ts: fillStartupAdapter only, coordinated with carrier receiver",
+    "src/ir/runtime/callable-declarations.ts and intrinsic-preparation.ts: actual ReferenceError provider declaration/selection",
+    "native caller WASI/standalone startup reconciliation and related shared callable ABI only"
+  ],
+  "handoff_authority": {
+    "source": "human scope reply call_fHCisBpMmbCIm9ci7BYIEcqH",
+    "answer": "Take over the blocking shared seams",
+    "receiving_owner": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+    "bounded_only": true
+  },
+  "predecessors": [
+    {
+      "path": "6865-native-wasi-startup-20261008.json",
+      "assignee": "ttraenkler/codex-ir-native-wasi-startup-sol61-20261008",
+      "write_id": "74929-veqhe4ti",
+      "blob": "d8ab56fd33b507199ca09a8b41ab0879ded026fd"
+    },
+    {
+      "path": "6919-wasi-startup-safety-repair.json",
+      "assignee": "ttraenkler/codex-6919-wasi-startup-safety-repair-sol-20261008",
+      "write_id": "40009-2gdqrxx8",
+      "blob": "40433a772957811333349395e886219b9dfbaf69"
+    },
+    {
+      "path": "3518-module-init-source-audit.json",
+      "assignee": "ttraenkler/astra-ir-program-a-20260905",
+      "write_id": "77526-fw97c0ic",
+      "blob": "2c17383b6b6c7297de3aaf196d0910d66ff0dbc6"
+    },
+    {
+      "path": "3518-wasi-startup-handoff.json",
+      "assignee": "ttraenkler/astra-ir-program-a-20260905",
+      "write_id": "36145-t67eppdb",
+      "blob": "f9b5999ff0fafb6d307bde2a3861dd87cd2332b0"
+    },
+    {
+      "path": "3518-startup-contract-separation.json",
+      "assignee": "ttraenkler/codex-astra-startup-contract-20260908",
+      "write_id": "55042-97xbfnhm",
+      "blob": "709760cc15a16e34a95d7b27bb72593cb5037df8"
+    },
+    {
+      "path": "3518-reference-error-runtime.json",
+      "assignee": "ttraenkler/astra-reference-error-runtime-20260906",
+      "write_id": "61168-0c9vbgt3",
+      "blob": "7a8611ca3df79e1be50b4ed9cf47e167e648810d"
+    },
+    {
+      "path": "3518-reference-error-materialization.json",
+      "assignee": "ttraenkler/astra-reference-error-runtime-20260906",
+      "write_id": "65394-rfk7pz1m",
+      "blob": "4757a39e98541c66a47fdb019c0a5a52aa84fbac"
+    },
+    {
+      "path": "3518-runtime-callable-abi.json",
+      "assignee": "ttraenkler/astra-ir-program-a-20260905",
+      "write_id": "62173-txtvzol7",
+      "blob": "83a1f1944fb82b534cb128ee36d925c80da5461c"
+    }
+  ],
+  "exclusions": [
+    "unrelated parent issue work",
+    "existing branches and staged payloads",
+    "four transferred 6914 forwarding claims",
+    "legacy source push/grow behavior",
+    "public PR heads and HOLDs",
+    "A integration/queue ownership",
+    "blanket TypeScript/oracle retirement",
+    "force push, hook bypass, main push"
+  ],
+  "donor_policy": "Preserve original donors; authenticate actual source before adoption; receiving writes occur in fresh isolated worktrees."
+}
