@@ -9,8 +9,13 @@ export function describeLinearBumpArena(heapStart: number = 1024): {
   memory: { min: number; max: number };
   heapPointer: GlobalDef;
   allocatorType: FuncTypeDef;
+  allocatorBaseLocals: LocalDef[];
   allocatorLocals: LocalDef[];
 } {
+  const allocatorBaseLocals: LocalDef[] = [
+    { name: "__malloc_ret", type: { kind: "i32" } },
+    { name: "__malloc_next", type: { kind: "i32" } },
+  ];
   return {
     memory: { min: 1, max: 256 },
     heapPointer: {
@@ -20,14 +25,16 @@ export function describeLinearBumpArena(heapStart: number = 1024): {
       init: [{ op: "i32.const", value: heapStart }],
     },
     allocatorType: { kind: "func", name: "$type___malloc", params: [{ kind: "i32" }], results: [{ kind: "i32" }] },
+    allocatorBaseLocals,
     allocatorLocals: [
-      { name: "__malloc_ret", type: { kind: "i32" } },
-      { name: "__malloc_next", type: { kind: "i32" } },
+      ...allocatorBaseLocals,
+      { name: "__malloc_required_pages", type: { kind: "i32" } },
+      { name: "__malloc_current_pages", type: { kind: "i32" } },
     ],
   };
 }
 
-/** Fresh unchanged default allocator body, using the reserved heap-pointer index. */
+/** Fresh checked default allocator body, using the reserved heap-pointer index. */
 export function buildLinearBumpAllocationBody(heapPointerGlobalIndex: number): Instr[] {
   return [
     ...buildLinearBumpAllocationPrologue(heapPointerGlobalIndex),
@@ -37,42 +44,71 @@ export function buildLinearBumpAllocationBody(heapPointerGlobalIndex: number): I
 
 function buildLinearBumpAllocationPrologue(heapPointerGlobalIndex: number): Instr[] {
   return [
-    // ret = __heap_ptr
     { op: "global.get", index: heapPointerGlobalIndex },
     { op: "local.set", index: 1 },
-    // next = align8(ret + size) = (ret + size + 7) & ~7
+    ...checkedLinearBumpEndpointBody(),
+    ...growLinearBumpMemoryBody(),
+  ];
+}
+
+/** Prove both unsigned additions before aligning the endpoint in local 2. */
+function checkedLinearBumpEndpointBody(): Instr[] {
+  return [
+    // size <= UINT32_MAX - ret, before the first addition loses a carry.
+    { op: "local.get", index: 0 },
+    { op: "i32.const", value: -1 },
     { op: "local.get", index: 1 },
-    { op: "local.get", index: 0 }, // size
+    { op: "i32.sub" },
+    { op: "i32.gt_u" },
+    { op: "if", blockType: { kind: "empty" }, then: [{ op: "unreachable" }], else: [] },
+    { op: "local.get", index: 1 },
+    { op: "local.get", index: 0 },
     { op: "i32.add" },
+    { op: "local.set", index: 2 },
+    // next <= UINT32_MAX - 7, before padding loses the second carry.
+    { op: "local.get", index: 2 },
+    { op: "i32.const", value: -8 },
+    { op: "i32.gt_u" },
+    { op: "if", blockType: { kind: "empty" }, then: [{ op: "unreachable" }], else: [] },
+    { op: "local.get", index: 2 },
     { op: "i32.const", value: 7 },
     { op: "i32.add" },
-    { op: "i32.const", value: -8 }, // ~7 = 0xFFFFFFF8
+    { op: "i32.const", value: -8 },
     { op: "i32.and" },
     { op: "local.set", index: 2 },
-    // if (next > memory.size * PAGE_SIZE) grow
+  ];
+}
+
+/** Check the actual grow result in page units before publishing any heap state. */
+function growLinearBumpMemoryBody(): Instr[] {
+  return [
+    // requiredPages = (next >>> 16) + ((next & 65535) != 0).
     { op: "local.get", index: 2 },
+    { op: "i32.const", value: 16 },
+    { op: "i32.shr_u" },
+    { op: "local.get", index: 2 },
+    { op: "i32.const", value: WASM_PAGE_SIZE - 1 },
+    { op: "i32.and" },
+    { op: "i32.const", value: 0 },
+    { op: "i32.ne" },
+    { op: "i32.add" },
+    { op: "local.set", index: 3 },
     { op: "memory.size" },
-    { op: "i32.const", value: WASM_PAGE_SIZE },
-    { op: "i32.mul" },
+    { op: "local.set", index: 4 },
+    { op: "local.get", index: 3 },
+    { op: "local.get", index: 4 },
     { op: "i32.gt_u" },
     {
       op: "if",
       blockType: { kind: "empty" },
       then: [
-        // pages_needed = ceil((next - cur_bytes) / PAGE_SIZE)
-        //              = (next - cur_bytes + PAGE_SIZE - 1) / PAGE_SIZE
-        { op: "local.get", index: 2 },
-        { op: "memory.size" },
-        { op: "i32.const", value: WASM_PAGE_SIZE },
-        { op: "i32.mul" },
+        { op: "local.get", index: 3 },
+        { op: "local.get", index: 4 },
         { op: "i32.sub" },
-        { op: "i32.const", value: WASM_PAGE_SIZE - 1 },
-        { op: "i32.add" },
-        { op: "i32.const", value: WASM_PAGE_SIZE },
-        { op: "i32.div_u" },
         { op: "memory.grow" },
-        // discard memory.grow's result (prev page count, or -1 on failure)
-        { op: "drop" },
+        { op: "i32.const", value: -1 },
+        { op: "i32.eq" },
+        { op: "if", blockType: { kind: "empty" }, then: [{ op: "unreachable" }], else: [] },
       ],
       else: [],
     },

@@ -1,13 +1,57 @@
 ---
 id: 6917
-status: blocked
+status: in-progress
 title: Prevent unsigned overflow and failed-growth publication in Linear standalone malloc
 related: [6891, 4540]
 ---
 
 # Issue 6917: Linear standalone malloc overflow and failure atomicity
 
-## Planning custody and status
+## Current native recipe implementation — 2026-10-13
+
+The human shared-seam takeover releases the selected default allocator's
+complete type/body/registration/resource recipe through B receiver
+`6920-b-native-runtime-recipe-takeover-20261013`. The exact signed successor
+`1b8ba99dd1e12c5b5b7127773bb9d97ad67d98e9` adds receiving slice
+`6917-native-arena-safety-20261013`, normally pushed and effect-verified on
+`upstream/issue-assignments`. Existing B issue and stack-test records remain
+unchanged (`28525-acre1kpn`, `88397-3u7aezkn`), as do all foreign records.
+The original 4540 donor and its unrelated/linked work are preserved.
+This supersedes the historical default-only production partition blocker below;
+it does not transfer linked allocation, source grow/push or finally semantics.
+
+Fresh isolated branch `codex/6917-b-native-arena-safety-20261013-01a12827`
+starts at the actual published common-consumer dependency
+`5555c7213825d4abb702d24e4819e160db5b7bf5`. The real default predecessor
+executes 16 independent Wasm controls: ten pass and six fail. Four unsigned
+size/endpoint cases return without trapping and clear the seeded resident
+header; two install pointer zero and another rewinds to 1008. Requesting the
+actual deterministic 257-page bound returns 1024, installs heap 16842752 and
+clears the header despite retaining only 65536 memory bytes. A defensively
+injected high heap state also wraps to zero; it is not credited as a state
+reachable through successful allocations under max256. Complete before/after
+state rows and the original strict-failure test epoch are preserved privately.
+
+The default producer now proves endpoint and padding additions, computes the
+required page count without a byte-count rounding addition, and checks the
+actual memory.grow result before the unchanged shared publication/header tail.
+Its canonical descriptor exposes the complete four-local default frame and
+the original two-local base. The retained driver uses the same effective linked
+condition for both body and frame; linked/malloc-v1 keep chunk local3. The
+common native recipe still consumes this same descriptor without a duplicate
+local/frame implementation.
+
+The actual candidate executes the identical 16-control state-observation file
+with 16 passes. This is default runtime-unit proof, not general source huge-array
+admission or migration completion. Linked/malloc-v1, shared-tail identity,
+existing B stack-test composition, the intentional default golden epoch,
+full source checks and common-consumer execution still require qualification.
+Original fixture bytes and historical binary evidence must remain intact.
+With actual min1/max256, old current-page multiplication and delta rounding
+cannot independently overflow for a valid unsigned endpoint; no such separate
+reproduction or credit is claimed.
+
+## Historical planning custody and status — 2026-10-08
 
 Source baseline: `8452732f0b88c14c5c7634ece58f83240970ea4c`.
 Planning worktree: `/private/tmp/js2-6917-linear-malloc-plan-20261008`.
@@ -362,3 +406,42 @@ Parent did not retry the flagged delegation through another route. The exact
 test-only claim above was released and effect-verified upstream; it is no
 longer active. A later test dispatch requires a fresh claim and resolved tool
 access as well as the unchanged ownership boundaries. The plan remains blocked.
+
+
+## Joined candidate qualification — 2026-10-13
+
+The full 52-file joined run executes 659 tests: 647 pass, two existing legacy
+computed/bitwise index results fail, nine existing missing-artifact cases skip,
+and one is a todo. The two result failures are the same independently reproduced
+original predecessor failures; the nine skips belong to the preserved linked
+artifact tests, with no new skip or assertion relaxation. All eleven source
+checks and the full build exit zero. The complete 1,968-file source census is
+stable throughout. All 16 new allocator controls, existing stack-state and
+subsequent-allocation controls, ordinary allocation/array constructor execution,
+unchanged parity controls and all four native/GC policy profiles pass.
+
+The private authentic-source 5555 archive independently generates linked and
+malloc-v1 modules through their actual predecessor runtime. Both complete module
+hashes, bodies/frames, binaries and real allocated values equal the successor;
+malloc-v1 remains 2,391 bytes with its original ret/next/chunk locals. The shared
+commit/header tail remains byte-identical. The historical four-case fixture is
+unchanged. Each default module reconstructs the exact complete original module
+and binary when only its allocator body/locals are restored from that immutable
+authority; every remaining resource and constructor stays equal. Its new binary
+is an intentional default allocator safety epoch, not an extraction identity
+claim. GC profile bytes retain the original 182-byte binary and digest.
+
+A separate expanded legacy stack-harness type check reports two old errors in
+its unmodified binary/instantiate helper (ArrayBufferLike vs BufferSource and
+instantiate overload). The actual full-source 5555 archive with the original
+unchanged test reproduces exactly those two diagnostics. Current strict source,
+new allocator tests and the owned 6920 test pack pass. The unrelated helper was
+not rewritten to mask the historical errors; runtime checks execute it normally.
+
+Peer review of supplied operand order, frame partition and measurements finds
+no semantic blocker; it is reasoning-only, not independently executed evidence.
+Normal signed commit/push and composition with the published physical-provider
+successor still require completion before this branch's public handoff.
+This closes a genuine default recipe correctness gap in the common native
+consumer; general IR, array growth, custom memory, source-language allocation
+exceptions and foreign cleanup algorithms remain uncompleted work.
