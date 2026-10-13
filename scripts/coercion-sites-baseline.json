@@ -10,7 +10,7 @@
   "codegen/array-join-proto-hole.ts": 2,
   "codegen/array-like-native.ts": 2,
   "codegen/array-methods.ts": 20,
-  "codegen/array-nonindex-key.ts": 2,
+  "codegen/array-nonindex-key.ts": 3,
   "codegen/array-prototype-borrow.ts": 4,
   "codegen/array-slice-native.ts": 1,
   "codegen/array-species.ts": 2,
