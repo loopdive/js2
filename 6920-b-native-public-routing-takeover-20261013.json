@@ -6,13 +6,15 @@
   "status": "in-progress",
   "branch": "codex/6920-b-native-routing-startup-20261013-01a12827",
   "claimed_at": "2026-10-13T06:38:30.746860Z",
-  "updated_at": "2026-10-13T06:38:30.746860Z",
-  "write_id": "b-bounded-takeover-4cf22cfc-ed94-4d37-b22d-205201264589:a1",
+  "updated_at": "2026-10-13T15:40:30.880893Z",
+  "write_id": "b-internal-vector-calls-60e44954-11e1-4ce2-ae5c-3f5a808c3f75",
   "handoff_scope": [
     "src/compiler.ts: public entry normalization and native Linear selection only",
     "src/index.ts: genuine exported compiler routing only",
     "src/compiler/target-profile.ts: backend/environment composition only",
-    "src/compiler/native-linear-pipeline.ts: real shared preparation and consumer entry"
+    "src/compiler/native-linear-pipeline.ts: real shared preparation and consumer entry",
+    "src/compiler/ir-program-presentation.ts and bounded source-signature helper: genuine native synchronous numeric-vector declaration capture and exact shared callable joins; distinguish authenticated internal callable contracts from authoritative public exports, preserving complete declaration/source census, public scalar ABI, WIT, Boolean, Promise, Error and host restrictions",
+    "tests/issue-6920-native-vector-presentation.test.ts and plan/issues/6920-native-linear-shared-source-handoff.md: actual public compile native four-profile runtime qualification, multi-source/internal versus public export controls, direct generator prohibition and preserved predecessor failure evidence"
   ],
   "handoff_authority": {
     "source": "human scope reply call_fHCisBpMmbCIm9ci7BYIEcqH",
@@ -38,5 +40,25 @@
     "blanket TypeScript/oracle retirement",
     "force push, hook bypass, main push"
   ],
-  "donor_policy": "Preserve original donors; authenticate actual source before adoption; receiving writes occur in fresh isolated worktrees."
+  "donor_policy": "Preserve original donors; authenticate actual source before adoption; receiving writes occur in fresh isolated worktrees.",
+  "scope_refinements": [
+    {
+      "at": "2026-10-13T15:40:30.880893Z",
+      "additions": [
+        "src/compiler/ir-program-presentation.ts and bounded source-signature helper: genuine native synchronous numeric-vector declaration capture and exact shared callable joins; distinguish authenticated internal callable contracts from authoritative public exports, preserving complete declaration/source census, public scalar ABI, WIT, Boolean, Promise, Error and host restrictions",
+        "tests/issue-6920-native-vector-presentation.test.ts and plan/issues/6920-native-linear-shared-source-handoff.md: actual public compile native four-profile runtime qualification, multi-source/internal versus public export controls, direct generator prohibition and preserved predecessor failure evidence"
+      ],
+      "authority": {
+        "source": "human scope reply call_fHCisBpMmbCIm9ci7BYIEcqH",
+        "answer": "Take over the blocking shared seams",
+        "receiving_owner": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+        "bounded_only": true
+      },
+      "reason": "Resolve measured public compiler scalar-only declaration gate for already qualified internal synchronous vector transport."
+    }
+  ],
+  "previous_write_id": "b-bounded-takeover-4cf22cfc-ed94-4d37-b22d-205201264589:a1",
+  "receiving_worktrees": [
+    "codex/6920-b-native-presentation-calls-20261013-01a12827"
+  ]
 }
