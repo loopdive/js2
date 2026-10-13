@@ -6,8 +6,8 @@
   "status": "in-progress",
   "branch": "codex/6920-b-native-allocator-carriers-20261013-01a12827",
   "claimed_at": "2026-10-13T06:38:30.746860Z",
-  "updated_at": "2026-10-13T13:36:11.379613Z",
-  "write_id": "b-owned-test-typing-d171f306-6b9a-4ce7-9d29-89d6c1f57b7a",
+  "updated_at": "2026-10-13T14:42:17.796324Z",
+  "write_id": "b-internal-vector-calls-14d5a2b1-61ba-4068-9462-a64794ccf146",
   "handoff_scope": [
     "src/ir/lower-generic.ts: representation-aware vector types and scratch",
     "src/ir/backend/{handles,lower-contracts,emitter}.ts: genuine GC and Linear vector representations",
@@ -26,7 +26,11 @@
     "tests/issue-6920-emission-attempt-lifetime.test.ts: use canonical ValType in actual resolver lifetime controls and concrete ArrayBuffer Wasm instantiation; preserve real source preparation and all revocation assertions",
     "tests/issue-6920-native-linear-array-execution.test.ts: concrete ArrayBuffer copy at real Wasm API boundary only, preserve all frontend-forbidden, memory and execution assertions",
     "tests/issue-6920-linear-body-batch-exceptions.test.ts: concrete ArrayBuffer API calls and finite accurate Wasm EH import typing only, preserve all 22 controls, payload identity and actual exception behavior",
-    "plan/issues/6920-native-linear-shared-source-handoff.md: truthful correction of inherited test exclusion, actual explicit test-inclusive typing denominator and final joined measurements; preserve all historical evidence"
+    "plan/issues/6920-native-linear-shared-source-handoff.md: truthful correction of inherited test exclusion, actual explicit test-inclusive typing denominator and final joined measurements; preserve all historical evidence",
+    "src/backend/linear/program/memory.ts: bind cross-call vector receiver demand to the authentic allocating unit and existing program-wide issued resource pack, preserving default arena and A forwarding endpoint",
+    "scripts/compiler-boundaries.json: only truthful exact rows for new synchronous source/IR proof leaves; no activation or allowance changes",
+    "tests/issue-6920-native-vector-calls.test.ts: real shared four-profile live/codec transport, freshness/alias and malformed-provenance controls; preserve all earlier fixtures and assertions",
+    "plan/issues/6920-native-linear-shared-source-handoff.md: measured first-boundary feature audit and complete internal-call qualification; full migration remains open"
   ],
   "handoff_authority": {
     "source": "human scope reply call_fHCisBpMmbCIm9ci7BYIEcqH",
@@ -95,7 +99,7 @@
     "force push, hook bypass, main push"
   ],
   "donor_policy": "Preserve original donors; authenticate actual source before adoption; receiving writes occur in fresh isolated worktrees.",
-  "previous_write_id": "b-physical-tag-closure-65ffbb0f-099d-42f4-b18b-ca335f02ab17",
+  "previous_write_id": "b-owned-test-typing-d171f306-6b9a-4ce7-9d29-89d6c1f57b7a",
   "scope_refinements": [
     {
       "at": "2026-10-13T12:08:20.967759Z",
@@ -152,6 +156,25 @@
         "bounded_only": true
       },
       "reason": "Repair nine actual B-owned test harness typing errors exposed by removing inherited test exclusions; no source semantics, assertion removal or broad type suppression."
+    },
+    {
+      "at": "2026-10-13T14:42:17.796324Z",
+      "additions": [
+        "src/backend/linear/program/memory.ts: bind cross-call vector receiver demand to the authentic allocating unit and existing program-wide issued resource pack, preserving default arena and A forwarding endpoint",
+        "scripts/compiler-boundaries.json: only truthful exact rows for new synchronous source/IR proof leaves; no activation or allowance changes",
+        "tests/issue-6920-native-vector-calls.test.ts: real shared four-profile live/codec transport, freshness/alias and malformed-provenance controls; preserve all earlier fixtures and assertions",
+        "plan/issues/6920-native-linear-shared-source-handoff.md: measured first-boundary feature audit and complete internal-call qualification; full migration remains open"
+      ],
+      "authority": {
+        "source": "human scope reply call_fHCisBpMmbCIm9ci7BYIEcqH",
+        "answer": "Take over the blocking shared seams",
+        "receiving_owner": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+        "bounded_only": true
+      },
+      "reason": "Resolve measured signature, finite allocation evidence and genuine demand provenance barriers together for internal synchronous vector transport."
     }
+  ],
+  "receiving_worktrees": [
+    "codex/6920-b-native-vector-calls-20261013-01a12827"
   ]
 }
