@@ -6,7 +6,7 @@ import { numericVector } from "../analysis/allocation-evidence/structured-vector
 import type { NativeModuleGlobalEvidence } from "../analysis/allocation-evidence/module-vector-globals.js";
 /** Ephemeral index of the existing canonical contracts, never a second persisted identity map. */
 export function nativeModuleGlobalEvidence(
-  program: PreparedIrProgram,
+  program: Pick<PreparedIrProgram, "abi" | "startup">,
 ): ReadonlyMap<string, NativeModuleGlobalEvidence> {
   const globals = new Map<string, NativeModuleGlobalEvidence>();
   const invalid = (detail: string): never => {

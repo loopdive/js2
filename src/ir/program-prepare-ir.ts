@@ -21,6 +21,8 @@ import {
 import { analyzeIrRuntimeSupportAllocations } from "./program-allocations.js";
 import { freezePreparedIrValue, freezePreparedIrRuntimeValue, preparedIrReadonlyMap } from "./program/data.js";
 import { PreparedIrProgramInvariantError } from "./program/errors.js";
+import { nativeVectorStoreFailure } from "./program/native-vector-store-proof.js";
+import { nativeModuleGlobalEvidence } from "./program/native-module-vector-context.js";
 import type {
   IrProgramPreparationResult,
   PreparedIrProgram,
@@ -126,6 +128,32 @@ export function prepareTypedIrProgram(
     supportBodies.length === 0
       ? finalSource.ir
       : { ...finalSource.ir, functions: [...finalSource.ir.functions, ...supportBodies] };
+  if (nativeVectors || ![resolved.policy, ...resolved.runtimePolicies].every(isLegacyHostIrPolicy)) {
+    const failure = nativeVectorStoreFailure(completeFinalModule, () =>
+      nativeModuleGlobalEvidence({ abi: { entries }, startup: source.startup }),
+    );
+    if (failure) {
+      const owner = source.inventory.allUnits.find((unit) => unit.id === failure.unitId);
+      const record = source.inventory.sources.find((item) => item.id === owner?.sourceId);
+      if (!owner || !record)
+        throw new PreparedIrProgramInvariantError("invalid-prepared-data", "store proof lacks its actual source owner");
+      return {
+        kind: "unsupported",
+        code: "element-store-unsupported",
+        stage: "resolve",
+        detail: failure.detail,
+        unitId: owner.id,
+        sourceFile: record.originalFileName,
+        location: {
+          sourceId: owner.sourceId,
+          line: owner.line,
+          column: owner.column,
+          declarationStart: owner.declarationStart,
+          declarationEnd: owner.declarationEnd,
+        },
+      };
+    }
+  }
   const linearAllocationFacts = resolved.runtimePolicies.some(
     (policy) => policy.backend === "linear" && policy.target !== "host",
   )

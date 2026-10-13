@@ -30,6 +30,13 @@ function asVal(type: IrType) {
 }
 
 function lowerNativeVectorMutationIndex(lhs: ts.ElementAccessExpression, cx: NativeMutationHost): IrValueId {
+  // This is syntax admission, not a bounds certificate. The complete native
+  // Program independently proves the original logical length of every origin.
+  if (ts.isNumericLiteral(lhs.argumentExpression) && nativeVectorMutationOwnerIsSynchronous(lhs)) {
+    const index = Number(lhs.argumentExpression.text.replace(/_/g, ""));
+    if (Number.isInteger(index) && index >= 0 && index <= 2147483647)
+      return cx.builder.emitConst({ kind: "i32", value: index }, { kind: "val", val: { kind: "i32" } });
+  }
   const binding = ts.isIdentifier(lhs.argumentExpression) ? cx.scope.get(lhs.argumentExpression.text) : undefined;
   const symbol = cx.checker?.getSymbolAtLocation(lhs.argumentExpression);
   const expectedSlot = symbol === undefined ? undefined : cx.nativeVectorMutationSlots?.get(symbol);

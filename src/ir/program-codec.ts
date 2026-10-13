@@ -44,6 +44,8 @@ import { assertPreparedSourceMap } from "./program/validation.js";
 import { assertPreparedIrProgram } from "./program-validation.js";
 import { screenPreparedIrLinearAllocationEntry } from "./program/linear-allocation-validation.js";
 import { prepareWholeProgramRuntimeManifest } from "./runtime-program-manifest.js";
+import { nativeVectorStoreFailure } from "./program/native-vector-store-proof.js";
+import { nativeModuleGlobalEvidence } from "./program/native-module-vector-context.js";
 
 export const PREPARED_IR_PROGRAM_CODEC = "prepared-ir-program-codec-v1" as const;
 export const PREPARED_IR_PROGRAM_SCHEMA = "prepared-ir-program-v1" as const;
@@ -206,6 +208,9 @@ function encodeValue(value: unknown, path: string, ancestors: Set<object>): stri
 export function encodePreparedIrProgram(program: PreparedIrProgram): string {
   const attached = screenPreparedIrLinearAllocationEntry(program, false);
   if (attached) assertPreparedIrProgram(program);
+  assertPreparedIrProgramShape(program);
+  const failure = nativeVectorStoreFailure(program.ir, () => nativeModuleGlobalEvidence(program));
+  if (failure) invalid(`${failure.unitId}: ${failure.detail}`);
   return encodePreparedIrProgramData(program);
 }
 

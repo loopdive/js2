@@ -494,6 +494,10 @@ export function isSideEffecting(i: IrInstr): boolean {
     // slot.read is pure (load a Wasm local) but always-keep to avoid
     // breaking the for-of body's load/use pattern.
     i.kind === "slot.write" ||
+    // Dense stores are void, but their receiver/index/value definitions must
+    // remain live even outside a loop's surrounding liveness root.
+    i.kind === "vec.set" ||
+    i.kind === "vec.set_length" ||
     // #3795: strict dynamic [[Set]] is void-result but its three carrier
     // operands must seed DCE liveness. The generic null-result keep rule
     // preserves only the instruction itself, not the definitions it uses.

@@ -49,6 +49,8 @@ import {
   type PreparedLinearMemoryInput,
 } from "./linear-allocation-validation.js";
 import type { PreparedIrProgramRuntimeProjection } from "./prepared-contracts.js";
+import { nativeVectorStoreFailure } from "./native-vector-store-proof.js";
+import { nativeModuleGlobalEvidence } from "./native-module-vector-context.js";
 
 function invalid(detail: string): never {
   throw new PreparedIrProgramInvariantError("invalid-prepared-data", detail);
@@ -429,6 +431,8 @@ function validatePreparedIrProgram(
     });
     assertPreparedIrRuntimeProjection(program, projection);
   }
+  const storeFailure = nativeVectorStoreFailure(program.ir, () => nativeModuleGlobalEvidence(program));
+  if (storeFailure) invalid(`${storeFailure.unitId}: ${storeFailure.detail}`);
   if (attached || requiredLinearEvidence)
     return validatePreparedIrLinearAllocationEvidence(program, requiredLinearEvidence, selectedProjection);
 }

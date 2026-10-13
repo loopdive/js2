@@ -16524,6 +16524,11 @@
       "layer": "ir-program"
     },
     {
+      "path": "src/ir/program/native-vector-store-proof.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
       "path": "src/wasm/physical/linear-vector-append.ts",
       "state": "clean",
       "layer": "wasm-physical"

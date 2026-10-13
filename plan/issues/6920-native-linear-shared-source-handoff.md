@@ -3987,3 +3987,85 @@ resolver bodies) remain byte-identical. All earlier failed epochs remain recorde
 privately. Exact source/evidence receipts are under .tmp/vector-append/; normal
 commit/push hooks and remote publication verification are the remaining steps.
 Full migration and held integration remain open.
+
+
+### B original-length store receiver (2026-10-14, qualified local checkpoint)
+
+The human shared-seam takeover now has a separate receiver,
+`codex/6920-b-vector-stores-20261014-01a12827`, starting at the published append
+checkpoint `4b90c5a5d90d68f1e7604035a1bc8923c63b4662`. The signed live preparation
+claim was refined through `2b55de1`, `7b8c227` and `0067e45`; only that B row
+changed, with every foreign owner, branch and other ledger row preserved.
+
+Exact synchronous nonnegative integral literal indices are admitted provisionally
+by the existing frontend mutation leaf. No source annotation grants bounds. A
+source-free Program checker recomputes all actual constructor origins and requires
+an index below every original `elements.length`; capacity and `E=max(N,L)` remain
+separate raw-memory facts. Every dynamic native store must instead match its actual
+live counted-loop guard, slot initialization and unit-step update. The actual index
+read must execute within the guarded body, preventing a stale outer-iteration read
+from borrowing a later counter guard. The complete closed effect population permits
+authenticated append, exact internal calls and the canonical native ReferenceError
+constructor; unknown effects, arbitrary length writes, recursion and incomplete
+origins refuse. Distinct global-load SSA values use the canonical const/startup/TDZ
+contracts and independent complete writer/read census. GC-only preparation and
+encoder/decoder/consumer entry points also recheck the proof.
+
+The first genuine RHS-growth fixture exposed two separate preparation defects:
+`isSideEffecting` did not seed `vec.set`/`vec.set_length` operand liveness, and
+monomorphization ignored parameter uses inside loop buffers while dropping local
+slot declarations. The receiver adds the two exact liveness roots, replays nested
+parameter consumption for the existing specialization restriction, and preserves
+fresh local-slot rows in legitimate clones. Other effect-summary arms, generic
+allocation/ownership/escape producers and foreign algorithms are unchanged.
+
+Current measured focused epoch: 45/45 distinct passing cases across five files.
+The four-file cohort passes 43/43, the final store file independently passes 8/8
+after its added hidden scalar/global length-writer control, and the genuine clone
+file passes 1/1. The two new files contain nine cases. Coverage includes all four
+native profiles live/codec/public, original mutation,
+global lifetime/repeated startup and append coverage. The negative matrix includes
+empty and mixed-original-length origins with equal capacities, fractional/public
+indices, unknown length effects, altered guards/updates, a stale outer-iteration
+index read and a type-correct arbitrary dynamic index after warm GC-only validation
+and codec mutation. The old global `a[0]=9` refusal is replaced by genuine positive
+execution; `a[2]=9` retains the out-of-original-length refusal control.
+
+All ten structural checks and the full 8 GiB build passed. Complete scoped typing
+uses `exclude: []` with 1,996 source files and 63 explicit test roots; the resolved
+2,327-file compilation includes 82 test files, with zero diagnostics. Thirty-two source
+compatibility outcomes and all eight complete scalar artifact rows are exactly
+unchanged against `4b90c5a`. The pinned Node 25.9.0 broader comparison measures
+74 files and 1,147 cases: 1,085 passing, 52 failing, nine skipped and one todo.
+Exactly all 52 predecessor failure IDs and full normalized messages remain, with
+no additions, removals or changed messages. The one-case clone file passes
+separately; it is not counted in that 74-file command. Source publication remains
+pending; `.tmp/vector-stores/` retains every failed earlier epoch and the
+current command/result records. No main delivery, async/externref completion,
+optimization equality or full IR retirement is claimed. PR6662 remains held,
+ready, without auto-merge; A retains integration/queue ownership.
+
+
+Parallel dependency audit for this receiver reproduced all four GVN/replay
+configurations of the existing async-resource diagnostic. Each retains five source
+functions, sixteen prepared functions and thirty allocation sites, then refuses
+at `entry.ts:17:1` with `body-shape-rejected`, build stage, and the same complete
+39-gap physical resource population. The historical scheduler/promise diagnostic
+substring is absent; the four assertion failures are wording drift over a genuinely
+unsupported family, not four independently attributed externref-vector defects.
+The two refused `extern:Promise` results belong to synchronous `delay` and derived
+`fetchUser__ir_async_state_0`, both calling `__ir_promise_delay_native`; they require
+the authentic separately claimed Promise provider/inventory and async frame owners.
+No generic `externref` retagging, new acceptance or foreign implementation takeover
+is inferred. Exact full diagnostics are retained in `.tmp/vector-stores/`.
+
+The next bounded numeric source candidate is synchronous logical-f64 multi-argument
+nonspread `push`: `const a=[2,5]; const n=a.push(7,11); return n*100+a[2]*10+a[3]`
+currently refuses at `array-element-lowering.ts` with `method-call-unsupported`.
+Its expected result is 481. The proposed slice must evaluate the receiver once and
+all arguments left-to-right before the first append/length capture, then reuse the
+already issued helper/protocol; no implementation is included in this checkpoint.
+Fresh sole ownership and an exact native-f64 leaf partition must be registered
+before any writes. Genuine public/live/codec, aliases/global receivers, capacity
+crossing, later-argument throw, protocol mutation and preserved legacy/non-f64/spread
+controls remain required.

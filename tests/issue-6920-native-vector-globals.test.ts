@@ -30,6 +30,11 @@ import { nativeModuleVectorType } from "../src/ir/native-module-vector-source.js
 import { ts } from "../src/ts-api.js";
 const fixtures = [
   {
+    name: "constant module store",
+    source: "const a=[2,5];export function run():number{a[0]=9;return a[0];}",
+    value: 9,
+  },
+  {
     name: "qualified append retains original prefix",
     source: "const a=[2,5];export function run():number{a.push(9);return a[0];}",
     value: 2,
@@ -79,7 +84,7 @@ const negatives = [
   "export const a=[2,5];export function run():number{return a[0];}",
   "const a=[2,5];export {a as exposed};export function run():number{return a[0];}",
   "const a=[2,5];export function run():number[]{return a;}",
-  "const a=[2,5];export function run():number{a[0]=9;return a[0];}",
+  "const a=[2,5];export function run():number{a[2]=9;return a[0];}",
   "const a=[2,5];export function run():number{a=[9];return a[0];}",
   "const a=[2,5];const b=a;export function run():number{return b[0];}",
   "const a=[2,5];const b=[a[0]];export function run():number{return b[0];}",
