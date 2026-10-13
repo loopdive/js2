@@ -99,6 +99,11 @@ export function buildSynchronousLogicalVectors(
         unsupported("vector call has no authenticated synchronous source-unit result");
       actual = call.signature.returnType;
       if (!irTypeEquals(actual, vector(node))) unsupported("callable and checker vector result disagree");
+    } else if (ts.isConditionalExpression(node)) {
+      const left = initializer(node.whenTrue, declared);
+      const right = initializer(node.whenFalse, declared);
+      if (!irTypeEquals(left.elementType, right.elementType)) unsupported("conditional element contracts disagree");
+      actual = { ...declared, nullable: left.nullable || right.nullable };
     } else if (ts.isIdentifier(node)) {
       const binding = checker.getSymbolAtLocation(node)?.valueDeclaration;
       const type = binding && bindings.get(binding);
@@ -165,7 +170,12 @@ export function buildSynchronousLogicalVectors(
       const type = facts.get(node.expression);
       if (type) facts.set(node, type);
     }
-    if (ts.isArrayLiteralExpression(node) && !facts.has(node)) initializer(node, vector(node));
+    if (
+      (ts.isArrayLiteralExpression(node) || ts.isConditionalExpression(node)) &&
+      checker.isArrayType(checker.getTypeAtLocation(node)) &&
+      !facts.has(node)
+    )
+      initializer(node, vector(node));
     if (ts.isCallExpression(node) && checker.isArrayType(checker.getTypeAtLocation(node)) && !facts.has(node))
       initializer(node, vector(node));
   };

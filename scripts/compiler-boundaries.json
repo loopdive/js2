@@ -16410,6 +16410,31 @@
       "path": "src/ir/program/native-primitive-boundary-contracts.ts",
       "state": "clean",
       "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/core/native-conditional-type.ts",
+      "state": "clean",
+      "layer": "ir-core"
+    },
+    {
+      "path": "src/ir/analysis/allocation-evidence/structured-vector-facts.ts",
+      "state": "clean",
+      "layer": "ir-analysis"
+    },
+    {
+      "path": "src/ir/analysis/allocation-evidence/structured-vector-body.ts",
+      "state": "clean",
+      "layer": "ir-analysis"
+    },
+    {
+      "path": "src/ir/analysis/allocation-evidence/structured-vector-profile.ts",
+      "state": "clean",
+      "layer": "ir-analysis"
+    },
+    {
+      "path": "src/ir/analysis/allocation-evidence/native-control-producer.ts",
+      "state": "clean",
+      "layer": "ir-analysis"
     }
   ]
 }

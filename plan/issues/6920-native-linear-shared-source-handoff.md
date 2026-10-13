@@ -3567,3 +3567,60 @@ Final isolated feature run passes **12/12** with no unhandled errors: 36 public 
 The unchanged authentic54e checkpoint executes the same eight added presentation suites: **235 passes / 46 failures / 281 cases**, plus the same worker timeout. All 46 failure identities and assertion/error texts match candidate: 45 fail the complete historical classification raw-source profile pin; one expects a former externref Linear legality refusal. Their original tests, expectations and sealed receipts are unchanged. Authentic54e also reproduces the two legacy computed/bitwise failures (**seven passes / two failures / nine cases**) before IR comparison. No new failure identity is observed in the candidate cohort; these comparisons do not make the broader run green or establish full conformance. The transient/error channel remains reported, and no hook or expectation is bypassed.
 
 The complete shared-source/ABI migration, global vectors, broader vector control flow and operations, IR-only retirement, full merge-group qualification and verified main integration remain open. This bounded public-route correction is prepared for the existing held B review branch; A's original branches, four forwarding claims, HOLDs and integration/queue authority remain unchanged.
+
+### Synchronous numeric-vector control audit (2026-10-13, predecessor 8acbfe0474)
+
+Measured eight genuine public source programs on Linear and WasmGC, standalone
+and WASI: 32 requests. Local fixed-vector reads execute correctly in 4/4;
+local and internal-parameter counted loops and plain early vector returns each
+execute correctly in 2/4 (GC), with Linear refused by evidence coverage.
+Conditional vector results fail in 4/4 during logical expression capture.
+Internal element assignment, top-level vectors and push growth each remain
+unsupported or invariant failures in 4/4. Exact original source/configuration,
+error rows and literal independent expected answers are retained privately.
+
+The next receiver work advances source conditional facts, actual producer/return
+origin unions and independent scalar-slot/control-flow allocation evidence
+together. Historical profiles, foreign completion lowering, source push/grow
+algorithms and A's final integration ownership remain preserved. This audit is
+not a full conformance population or IR migration completion claim.
+
+### Qualified native vector control flow (2026-10-13)
+
+The native source collector now authenticates conditional vector arm types.
+Linear recomputes both actual conditional origins, all ordinary/nested return
+payloads and complete caller substitutions. Whole-native preparation selects
+an independent structured checker with lexical SSA, acyclic outer CFG and
+scalar slot initialization checks. Plain loops, statement branches and early
+returns retain their original execution semantics and original allocation sites.
+
+A separate annotation producer covers actual synchronous native numeric-vector
+control effects. The generic ownership/escape producers and the standalone
+finite evidence checker remain byte-identical to 8acbfe0474. Existing two-argument
+allocation preparation retains its original producer behavior; the authenticated
+native preparation context explicitly requests the extension. Arrays are excluded
+from the existing annotation-only stack consumer, and returned vectors survive
+subsequent allocations in the runtime controls. The checker does not invoke the
+producer, including after codec restoration. Unknown executable forms remain
+conservative and unsupported.
+
+Qualification: 20/20 new tests; fourteen genuine programs on four native
+profiles, live and serialized IR, plus public compilation. These cover both
+conditional branches, zero/one/multiple loop iterations, ordinary and nested
+returns, formal/call/constructor origin joins, scalar slots, single-arm allocation
+and lifetime across another allocation. The focused compatibility cohort passes
+103/103. The broader 65-file cohort has 948 pass / 48 fail / 9 skip / 1 todo
+among 1,006 cases; its exact 48 failure identities equal the authentic 8ac
+predecessor. The initial 41 additional compatibility failures were resolved by
+preserving sealed generic producer bytes and the standalone checker's grammar.
+Original receipts, assertions and the initial failure report are retained.
+
+Typing covers 1,977/1,977 source TS files and 54/54 named tests, with 2,298 actual
+inputs and no exclusions or diagnostics. The two unchanged older analysis tests
+retain six typing diagnostics, exactly reproduced on 8ac; their 21 runtime
+cases pass on both versions. Build, lint, formatting, whitespace, ordinary LOC
+and function budgets, cycles, reachability, oracle/coercion ratchets and compiler
+inventory pass. Eight scalar/Boolean WIT result pairs are byte-identical to 8ac.
+The 32-request public audit improves from 10 to 20 correct executions; mutation,
+globals and growth remain explicitly open. Inventory still reports incomplete
+architecture. No full conformance, retirement or main-delivery claim is made.

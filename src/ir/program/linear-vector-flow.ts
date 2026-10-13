@@ -1,5 +1,12 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-import { forEachInstrDeep, type IrFunction, type IrInstr, type IrModule, type IrValueId } from "../core/nodes.js";
+import {
+  forEachNestedBuffer,
+  forEachInstrDeep,
+  type IrFunction,
+  type IrInstr,
+  type IrModule,
+  type IrValueId,
+} from "../core/nodes.js";
 import type { IrUnitId } from "../../shared/contracts/ir-identity.js";
 import { IrUnsupportedError } from "../../shared/contracts/ir-preparation-errors.js";
 import { PreparedIrProgramInvariantError } from "./errors.js";
@@ -48,7 +55,18 @@ export function collectLinearVectorFlow(
       if (!origins?.length) unsupported(fn, "vector SSA value has no authenticated producer");
       return origins;
     };
+    const returns: SymbolicOrigin[] = [];
+    const activeBuffers = new Set<readonly IrInstr[]>();
+    const visitBuffer = (buffer: readonly IrInstr[]): void => {
+      if (activeBuffers.has(buffer)) invalid("cyclic executable buffer");
+      activeBuffers.add(buffer);
+      buffer.forEach(visit);
+      activeBuffers.delete(buffer);
+    };
     const visit = (instr: IrInstr): void => {
+      forEachNestedBuffer(instr, visitBuffer);
+      if (instr.kind === "early.return" && instr.value !== null && fn.resultTypes[0]?.kind === "vec")
+        returns.push(...origin(instr.value));
       if (instr.kind === "vec.new_fixed") {
         if (instr.result === null || instr.alloc === undefined) invalid("construction lacks actual result/site");
         values.set(instr.result, [{ functionIndex: functions.get(fn.unitId)!.index, instruction: instr }]);
@@ -77,10 +95,12 @@ export function collectLinearVectorFlow(
             ),
           );
         }
+      } else if (instr.kind === "if" && instr.resultType?.kind === "vec") {
+        if (instr.result === null) invalid("vector conditional lacks result");
+        values.set(instr.result, [...origin(instr.thenValue), ...origin(instr.elseValue)]);
       } else if (instr.resultType?.kind === "vec") unsupported(fn, `unproved vector-producing ${instr.kind}`);
     };
-    for (const block of fn.blocks) for (const instr of block.instrs) forEachInstrDeep(instr, visit);
-    const returns: SymbolicOrigin[] = [];
+    for (const block of fn.blocks) visitBuffer(block.instrs);
     for (const block of fn.blocks) {
       const term = block.terminator;
       if (term.kind === "return")

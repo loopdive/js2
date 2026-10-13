@@ -5,6 +5,7 @@ import type { AllocSiteRegistry } from "./alloc-registry.js";
 import { ALLOC_NAMESPACES, type EscapeInfo } from "./contracts/allocations.js";
 import type { PreparedIrModule as IrModule } from "../runtime/contracts/prepared.js";
 import { analyzeEncoding, type Encoding } from "./encoding.js";
+import { analyzeNativeVectorControl } from "./allocation-evidence/native-control-producer.js";
 import { analyzeEscape } from "./escape.js";
 import { analyzeOwnership } from "./ownership.js";
 import { findStackAllocCandidates } from "./stack-alloc.js";
@@ -100,12 +101,14 @@ export {
 export function prepareLinearAllocationFacts(
   module: IrModule,
   registry: AllocSiteRegistry,
+  nativeVectorControl = false,
 ): LinearPreparedAllocationFacts {
   for (const fn of module.functions) {
     analyzeEncoding(fn, registry);
     const ownership = analyzeOwnership(fn, registry);
     analyzeEscape(fn, registry, ownership);
     findStackAllocCandidates(fn, registry, ownership);
+    if (nativeVectorControl) analyzeNativeVectorControl(fn, registry, true);
   }
 
   const registrySnapshot = registry.snapshot();

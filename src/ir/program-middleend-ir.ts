@@ -2,6 +2,8 @@
 
 import type { AllocSiteRegistry } from "./alloc-registry.js";
 import { analyzeOwnership } from "./analysis/ownership.js";
+import { isLegacyHostIrPolicy } from "./runtime/target-admission.js";
+import { analyzeNativeVectorControl } from "./analysis/allocation-evidence/native-control-producer.js";
 import { analyzeEscape } from "./analysis/escape.js";
 import { analyzeEncoding } from "./analysis/encoding.js";
 import type { IrFunction, IrModule } from "./nodes.js";
@@ -126,6 +128,7 @@ export function optimizePreparedIrProgramIr(
     if (controls.ownership || controls.escape) {
       const ownership = analyzeOwnership(fn, allocations);
       if (controls.escape) analyzeEscape(fn, allocations, ownership);
+      if (!isLegacyHostIrPolicy(input.policy)) analyzeNativeVectorControl(fn, allocations, controls.escape);
     }
   }
   return { ir, derivedUnits };

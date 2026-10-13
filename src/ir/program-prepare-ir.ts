@@ -131,7 +131,7 @@ export function prepareTypedIrProgram(
   )
     ? {
         schema: "linear-allocation-facts-v1" as const,
-        facts: prepareLinearAllocationFacts(completeFinalModule, allocations),
+        facts: prepareLinearAllocationFacts(completeFinalModule, allocations, nativeVectors),
       }
     : undefined;
   // Freeze semantic data BEFORE runtime attachments authenticate exact identities.

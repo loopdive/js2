@@ -35,6 +35,7 @@
 //     call's return type comes from `callReturnTypes` (same TypeMap),
 //     with arg types validated against the propagated callee param types.
 
+import { conditionalBranchTypesAgree } from "./core/native-conditional-type.js";
 import { IR_STRING_COMPARE_FN } from "./runtime-symbols.js";
 import { IR_ASYNC_CONSOLE_LOG_STRING_FN, IR_ASYNC_NUMBER_TO_STRING_FN } from "./async-semantic-runtime.js";
 import { ts, forEachChild } from "../ts-api.js";
@@ -13591,20 +13592,13 @@ function lowerConditional(expr: ts.ConditionalExpression, cx: LowerCtx): IrValue
   });
   const ftype = cx.builder.typeOf(whenFalse);
 
-  const tVal = asVal(ttype);
-  const fVal = asVal(ftype);
-  if (!tVal || !fVal || tVal.kind !== fVal.kind) {
-    // (#3144) Non-scalar arms with the SAME IrType (string/class/extern/
-    // object/…) are lowerable: the `if` lowering derives the result carrier
-    // from the instr's IrType via `lowerIrTypeToValType`, so e.g.
-    // `cond ? "true" : "false"` types as string on either string backend.
-    // Only genuinely mismatched arm types still demote.
-    if (!irTypeEquals(ttype, ftype)) {
-      demoteToLegacy(
-        "operand-coercion-unsupported",
-        `ir/from-ast: ternary branches have different types (${describeIrType(ttype)} vs ${describeIrType(ftype)}) in ${cx.funcName}`,
-      );
-    }
+  const logicalJoin = cx.logicalVectorTypes?.get(expr);
+  if (!conditionalBranchTypesAgree(ttype, ftype, logicalJoin)) {
+    if (logicalJoin) logicalVectorMismatch(cx.funcName, "conditional arm contradicts its owned join");
+    demoteToLegacy(
+      "operand-coercion-unsupported",
+      `ir/from-ast: ternary branches have different types (${describeIrType(ttype)} vs ${describeIrType(ftype)}) in ${cx.funcName}`,
+    );
   }
 
   joinScopeStringEncodingFacts(cx.scope, [thenCx.scope, elseCx.scope]);
@@ -13615,7 +13609,7 @@ function lowerConditional(expr: ts.ConditionalExpression, cx: LowerCtx): IrValue
     thenValue: whenTrue,
     else: elseBody,
     elseValue: whenFalse,
-    resultType: ttype,
+    resultType: logicalJoin ?? ttype,
   });
 }
 
