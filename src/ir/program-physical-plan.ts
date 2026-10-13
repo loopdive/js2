@@ -164,11 +164,12 @@ export interface PhysicalDefinedGlobal {
   readonly bindingId: IrBindingId;
   readonly referenceKey: string;
   readonly name: string;
-  readonly type: ValType;
+  readonly type: ValType | Extract<IrType, { kind: "vec" }>;
   readonly mutable: boolean;
 }
 
-export interface PhysicalImportedGlobal extends PhysicalDefinedGlobal {
+export interface PhysicalImportedGlobal extends Omit<PhysicalDefinedGlobal, "type"> {
+  readonly type: ValType;
   readonly module: string;
   readonly field: string;
 }
@@ -1259,6 +1260,14 @@ export function planPhysicalSetup(
       if (!target || target.plan.slotPolicy !== "required") {
         gaps.add(`export ${contract.externalName} does not resolve to a required binding`);
       } else if (target.plan.slotSpace === "function" || target.plan.slotSpace === "global") {
+        if (target.contract.kind === "global" && target.contract.type.kind === "vec")
+          gaps.add(`export ${contract.externalName} exposes an unsupported public vector global`);
+        if (
+          target.contract.kind === "callable" &&
+          [...target.contract.params, ...target.contract.results].some((type) => type.kind === "vec") &&
+          program.abi.entries.some((row) => row.contract.kind === "global" && row.contract.type.kind === "vec")
+        )
+          gaps.add(`export ${contract.externalName} exposes an unsupported public vector contract`);
         exports.push({
           externalName: contract.externalName,
           targetBindingId: contract.targetId,
@@ -1303,7 +1312,12 @@ export function planPhysicalSetup(
     }
     if (contract.kind === "global") {
       const binding = contract.ref.binding;
-      const type = scalar(contract.type);
+      const convertedVector =
+        contract.type.kind === "vec" && binding.kind === "source"
+          ? convert([{ ...contract.type, nullable: true }], `global ${contract.ref.name}`)[0]
+          : undefined;
+      const vector = convertedVector?.kind === "vec" || convertedVector?.kind === "i32" ? convertedVector : undefined;
+      const type = scalar(contract.type) ?? vector;
       if (!type) {
         gaps.add(`global ${contract.ref.name} carries non-scalar IR type ${typeLabel(contract.type)}`);
         continue;
@@ -1316,9 +1330,11 @@ export function planPhysicalSetup(
         mutable: contract.mutable,
       };
       if (binding.kind === "import") {
-        importedGlobals.push({ ...base, module: binding.module, field: binding.field });
+        if (type.kind === "vec") gaps.add("imported vector global has no admitted storage contract");
+        else importedGlobals.push({ ...base, type, module: binding.module, field: binding.field });
       } else if (binding.kind === "source") {
-        if (!numeric(type)) gaps.add(`source global ${contract.ref.name} needs a reference-typed default initializer`);
+        if (type.kind !== "vec" && !numeric(type))
+          gaps.add(`source global ${contract.ref.name} needs a reference-typed default initializer`);
         else definedGlobals.push(base);
       } else {
         gaps.add(`${binding.kind} global ${contract.ref.name} needs runtime storage materialization`);

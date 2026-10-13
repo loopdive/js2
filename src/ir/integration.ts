@@ -1,3 +1,5 @@
+import { findReferencedWithdrawnIrUnit } from "./withdrawn-unit-references.js";
+export { findReferencedWithdrawnIrUnit } from "./withdrawn-unit-references.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 //
 // Integration point between the legacy codegen pipeline and the IR path.
@@ -5907,26 +5909,6 @@ function hasExportModifier(fn: ts.FunctionDeclaration): boolean {
  * Runtime/import/intrinsic/support bindings with a lookalike name are
  * intentionally ignored.
  */
-export function findReferencedWithdrawnIrUnit(
-  fn: IrFunction,
-  unitIds: ReadonlySet<IrUnitId>,
-): { readonly unitId: IrUnitId; readonly name: string } | undefined {
-  let found: { readonly unitId: IrUnitId; readonly name: string } | undefined;
-  for (const block of fn.blocks) {
-    for (const instr of block.instrs) {
-      forEachInstrDeep(instr, (nested) => {
-        if (found) return;
-        const ref =
-          nested.kind === "call" ? nested.target : nested.kind === "closure.new" ? nested.liftedFunc : undefined;
-        if (ref?.binding.kind === "unit" && unitIds.has(ref.binding.unitId)) {
-          found = { unitId: ref.binding.unitId, name: ref.name };
-        }
-      });
-      if (found) return found;
-    }
-  }
-  return found;
-}
 
 /**
  * (#3142 Slice 2) Deep-scan a Wasm body for return-class ops (`return`,
@@ -6008,6 +5990,12 @@ function resolveModuleBindingGlobal(
   let type: IrType;
   let storageType: ValType;
   switch (identity.valueKind.kind) {
+    case "native-f64-vector":
+      throw new IrUnsupportedError(
+        "array-representation-unsupported",
+        "build",
+        "native canonical vector storage has no legacy allocation agreement",
+      );
     case "f64":
       type = { kind: "val", val: { kind: "f64" } };
       storageType = { kind: "f64" };

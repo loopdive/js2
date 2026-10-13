@@ -44,6 +44,8 @@ export type {
 } from "./handles.js";
 
 export interface IrLowerResolver {
+  /** Issued native program storage refinement; absent on every legacy resolver. */
+  nativeVectorGlobalReadNonNull?(ref: IrGlobalRef, type: Extract<IrType, { kind: "vec" }>): boolean;
   resolveFunc(ref: IrFuncRef): number;
   /** Exact post-call carrier adaptation for a provider with a legacy ABI. */
   callResultAdapter?(ref: IrFuncRef): "native-string-from-externref" | undefined;

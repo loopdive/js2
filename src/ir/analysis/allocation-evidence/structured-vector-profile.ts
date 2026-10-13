@@ -20,6 +20,11 @@ import {
   type StructuredScope,
 } from "./structured-vector-body.js";
 import type { AllocationEvidenceCheck } from "./contracts.js";
+import {
+  checkNativeModuleVectorWriters,
+  checkNativeModuleVectorReads,
+  type NativeModuleGlobalEvidence,
+} from "./module-vector-globals.js";
 
 /** Select only genuine numeric-vector programs whose bodies require the new control checker. */
 export function hasStructuredNumericVectors(module: IrModule): boolean {
@@ -42,6 +47,7 @@ export function hasStructuredNumericVectors(module: IrModule): boolean {
         instr.kind === "if.stmt" ||
         instr.kind === "while.loop" ||
         instr.kind === "for.loop" ||
+        instr.kind === "global.set" ||
         instr.kind === "early.return";
       forEachNestedBuffer(instr, (child) => pending.push(child));
     }
@@ -133,7 +139,11 @@ function replayFunction(checker: StructuredVectorBody): void {
 export function verifyStructuredNumericVectorEvidence(
   module: IrModule,
   registry: AllocRegistrySnapshot,
+  globals?: ReadonlyMap<string, NativeModuleGlobalEvidence>,
 ): AllocationEvidenceCheck {
+  const globalFailure =
+    globals && (checkNativeModuleVectorWriters(module, globals) ?? checkNativeModuleVectorReads(module, globals));
+  if (globalFailure) return globalFailure;
   const functions = new Map(module.functions.map((fn) => [fn.unitId, fn]));
   const census = {
     functions: 0,
@@ -150,7 +160,7 @@ export function verifyStructuredNumericVectorEvidence(
   try {
     for (const fn of module.functions) {
       census.functions++;
-      const checker = new StructuredVectorBody(fn, functions, registry, census);
+      const checker = new StructuredVectorBody(fn, functions, registry, census, globals);
       replayFunction(checker);
       for (const [id, site] of checker.facts.sites) {
         if (sites.has(id)) checker.fail("occurrence-mismatch");
@@ -176,8 +186,9 @@ export function verifyStructuredNumericVectorEvidence(
 export function verifyNativeAllocationEvidence(
   module: IrModule,
   registry: AllocRegistrySnapshot,
+  globals?: ReadonlyMap<string, NativeModuleGlobalEvidence>,
 ): AllocationEvidenceCheck {
   return hasStructuredNumericVectors(module)
-    ? verifyStructuredNumericVectorEvidence(module, registry)
+    ? verifyStructuredNumericVectorEvidence(module, registry, globals)
     : verifyAllocationEvidence(module, registry);
 }

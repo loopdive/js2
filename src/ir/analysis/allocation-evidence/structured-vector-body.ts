@@ -4,6 +4,8 @@ import { irTypeEquals, type IrType } from "../../core/types.js";
 import type { AllocRegistrySnapshot } from "../contracts/allocations.js";
 import { primitiveKind, profileInstructionExclusion } from "./effect-rules.js";
 import { numericVector, vectorAssignable, StructuredVectorFacts } from "./structured-vector-facts.js";
+import type { NativeModuleGlobalEvidence } from "./module-vector-globals.js";
+import { irGlobalBindingKey } from "../../core/global-binding-keys.js";
 import type { AllocationEvidenceCensus, AllocationEvidenceFailure } from "./contracts.js";
 export interface StructuredScope {
   values: Map<IrValueId, IrType>;
@@ -39,6 +41,7 @@ export class StructuredVectorBody {
     private readonly functions: ReadonlyMap<IrFunction["unitId"], IrFunction>,
     private readonly registry: AllocRegistrySnapshot,
     readonly census: { -readonly [K in keyof AllocationEvidenceCensus]: number },
+    private readonly globals?: ReadonlyMap<string, NativeModuleGlobalEvidence>,
   ) {}
   fail(code: Extract<AllocationEvidenceFailure, { kind: "invalid" }>["code"]): never {
     throw new StructuredEvidenceRefusal({ kind: "invalid", code, at: { kind: "function", unitId: this.fn.unitId } });
@@ -146,6 +149,32 @@ export class StructuredVectorBody {
     else scope.normal = scope.normal && body.normal;
   }
   private leaf(instr: IrInstr, scope: StructuredScope): void {
+    if (instr.kind === "global.get" || instr.kind === "global.set") {
+      if (instr.target.binding.kind !== "source") this.refuse();
+      const contract = this.globals?.get(irGlobalBindingKey(instr.target.binding));
+      if (!contract) this.refuse();
+      if (instr.kind === "global.get") {
+        if (!instr.resultType || !irTypeEquals(instr.resultType, contract.type)) this.fail("lexical-definition");
+        if (!primitiveKind(instr.resultType) && !numericVector(instr.resultType)) this.refuse("reference-carrier");
+        if (numericVector(instr.resultType)) this.facts.parameter(instr.result!);
+      } else {
+        const type = scope.values.get(instr.value);
+        if (!type || !irTypeEquals(type, contract.type)) this.fail("lexical-definition");
+        if (numericVector(type) && this.fn.unitId !== contract.owner) this.fail("allocation-provenance");
+        if (!primitiveKind(type) && !numericVector(type)) this.refuse("reference-carrier");
+        this.facts.escape(instr.value, "opaque");
+      }
+      return;
+    }
+    const extern = (type: IrType | null | undefined): boolean => type?.kind === "val" && type.val.kind === "externref";
+    if (
+      instr.kind === "const" &&
+      instr.value.kind === "null" &&
+      extern(instr.resultType) &&
+      irTypeEquals(instr.value.ty, instr.resultType!)
+    )
+      return;
+    if (instr.kind === "throw" && extern(scope.values.get(instr.value))) return;
     if (instr.kind === "slot.read" || instr.kind === "slot.write") {
       this.slot(instr, scope);
       return;
@@ -209,6 +238,17 @@ export class StructuredVectorBody {
     }
   }
   private call(instr: Extract<IrInstr, { kind: "call" }>, scope: StructuredScope): void {
+    if (
+      instr.target.binding.kind === "runtime" &&
+      instr.target.binding.symbol === "__new_ReferenceError" &&
+      instr.args.length === 1 &&
+      scope.values.get(instr.args[0]!)?.kind === "val" &&
+      (scope.values.get(instr.args[0]!) as Extract<IrType, { kind: "val" }>).val.kind === "externref" &&
+      instr.result !== null &&
+      instr.resultType?.kind === "val" &&
+      instr.resultType.val.kind === "externref"
+    )
+      return;
     const target = instr.target.binding.kind === "unit" ? this.functions.get(instr.target.binding.unitId) : undefined;
     if (!target || target.params.length !== instr.args.length || target.resultTypes.length > 1) this.refuse();
     if (

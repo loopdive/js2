@@ -3712,3 +3712,82 @@ under .tmp/vector-mutation/. This is a held B checkpoint; no verified main
 integration is claimed. Globals, growth, general writes, non-counted mutation,
 async/cleanup, IR retirement and full conformance remain open. A forwarding
 claims, branches, HOLDs and final integration/queue ownership are preserved.
+
+### Native internal module-vector receiver audit (2026-10-13)
+
+Mutation checkpoint 99eb0b9e1d0c6bbb007df3efe3769cb7170cc99b is signed and
+published to held PR6662 with normal hooks; exact remote head/body and HOLD were
+verified. Claim cc5332428c83c5bc9415305f33dab49318921b60 registers the fresh
+isolated global receiver in four B-owned takeover rows, preserving all foreign
+claims and source branches.
+
+The authentic checkpoint refuses direct whole preparation of the genuine source
+`const a=[2,5];export function run():number{return a[0]+a[1];}` at the real module
+initializer: binding a has no exact typed storage. Existing canonical ABI global
+contracts already contain IrType and authentic global/TDZ/storage-owner identities;
+there is no need for a second global identity map. The finite receiving profile
+starts with internal const numeric literals and synchronous reads. It must retain
+original AST allocation sites, real construction/store/TDZ order, escaping lifetime,
+issued backend storage and codec replay. Native-off classifiers, public vector
+exports, unsupported initializers, unknown writers, cross-module aliases/cycles,
+legacy source growth and A final integration remain preserved or refused.
+
+The existing startup plan promises exactlyOnce while its current physical adapter
+contains only flat calls. Repeated exported startup therefore needs measured
+qualification and a genuine guarded resource join before this profile can claim
+once-only construction. Initial source classification/collection edits are
+experimental; final execution, regression, type and gate qualification are pending.
+
+### Qualified native internal module vectors (2026-10-13)
+
+The finite source profile now prepares and executes genuine internal const f64
+literal vectors through their original canonical global and TDZ contracts.
+It keeps logical nonnull types separate from actual issued Linear i32 and GC
+nullable storage; GC reads receive nonnull refinement only from the current
+issued resolver. Public vector transport and unsupported source writers remain
+refused. No source or producer replay is used by live/codec consumers.
+
+Independent restored-IR checks census the unique unconditional original value
+and initialized-flag writers, prove value-before-flag publication, and require
+the authentic ReferenceError guard for reads without a prior guaranteed flag.
+Nested buffers inherit prior parent initialization without publishing their
+own facts to parent or sibling paths. Original initializer reads resolve their
+already-constructed SSA producer without recursively summarizing the same unit.
+The physical adapter uses a privately reserved once-state only for this native
+global profile, with actual semantic callee order and completed resource joins.
+
+Thirteen feature cases pass. Seven genuine sources execute through four profiles
+and live/codec consumers (56 emissions); all seven also pass the public source
+facade across four profiles (28 compilations). They cover scalar initializer
+order returning 52, length, empty storage, two original vectors, symbol shadowing,
+internal call transport, later-allocation lifetime and retained mutations across
+repeated startup. Both actual backends also pass deferred-startup TDZ and
+idempotence controls. Fourteen unsupported sources produce 56 located zero-binary
+requests. Ten detached-IR mutations refuse, including wrong writer/type/guard/TDZ
+identity, conditional or repeated writes, flag reset/order and read before flag
+publication. Runtime failure/reentry is unmeasured for this literal-only profile;
+the once-state recipe checks do not claim that execution coverage.
+
+The final 67-file / 1,032-case cohort is 974 pass / 48 fail / nine skip / one todo,
+actual exit 1. Its exact 48 failure identities match published predecessor
+99eb0b9e1d0c6bbb007df3efe3769cb7170cc99b. All 1,988 source hashes remain unchanged
+before/after qualification. The final malformed-control object shape was typed
+and its two affected tests separately rechecked after that shape correction.
+The cohort remains red; no fresh CI-green or full-conformance claim is made.
+
+Typing includes 1,988/1,988 source TS files, 56/56 explicitly named tests and
+2,312 actual inputs, exclude [], zero diagnostics. All ten normal gates pass;
+ordinary LOC/function budgets use predecessor 99eb with no new allowance
+(29 changed source files, net +662 LOC). Seven complete relocated helper bodies
+are byte-identical to that predecessor. Eight scalar/Boolean artifacts exactly
+match it. The full ordinary build passes with an 8 GiB Node heap and every stage
+retained. The inventory honestly retains incomplete architecture.
+
+Signed receiver claim eb66cbc06873c529f1a41b42fe070ed4d5e7c8ec is verified on the
+remote, expanding only four existing B takeover rows; all other rows and source
+branches are unchanged. Private exact manifests, full logs, earlier failures,
+source seals and authentic predecessor pairs are retained in .tmp/vector-globals/.
+This remains a held B checkpoint. Growth, general/mutable globals, broader
+initializers, async/cleanup, retirement and verified main integration remain
+open. A forwarding claims and final integration/queue ownership are preserved;
+legacy source push/grow implementations are untouched.

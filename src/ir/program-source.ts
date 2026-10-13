@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import { nativeSynchronousVectorParameter, nativeSynchronousVectorResult } from "./program-sync-vectors.js";
+import { storageType } from "./native-module-vector-source.js";
 import { ts, assertCurrentProgramSources } from "../ts-api.js";
 import { sourceBooleanAnyResult, assertSourceBooleanAnyReturns } from "../frontend/boolean-return-boundary.js";
 import { preparedIrProgramCallableResults } from "./program-callable-contract.js";
@@ -46,7 +47,7 @@ import { freezePreparedIrRuntimeValue, preparedIrDataMismatch } from "./program/
 import {
   sourceDataField,
   selectNativeLinearVectorProjection,
-  nativeLinearSourceVectors,
+  sourceVectorCollector,
   selectNativeAsyncFamilyProjection,
 } from "./native-source-selection.js";
 import { classifyIrFailure, IrUnsupportedError } from "./outcomes.js";
@@ -1089,22 +1090,6 @@ function hostAsyncAnyResult(checker: ts.TypeChecker, declaration: ts.FunctionDec
   return { kind: "dynamic" };
 }
 
-function storageType(identity: IrModuleBindingIdentity): IrType {
-  const value = identity.valueKind;
-  switch (value.kind) {
-    case "f64":
-      return { kind: "val", val: { kind: "f64" } };
-    case "i32":
-      return { kind: "val", val: { kind: "i32", boolean: true } };
-    case "string":
-      return { kind: "string" };
-    case "dynamic":
-      return { kind: "dynamic" };
-    default:
-      return unsupported(`whole-program source storage has no typed carrier for ${value.kind}`);
-  }
-}
-
 /** Validate the explicit source request before inventory construction or source planning. */
 function selectNativePromiseDelaySourceProjection(
   input: Pick<IrProgramSourceInput, "promiseDelayProjection" | "policy">,
@@ -1631,6 +1616,7 @@ export function prepareIrProgramSources(
       input.checker,
       {
         numberStorage: "f64",
+        allowNativeF64VectorStorage: nativeLinearVectors,
         allowHostExterns: input.policy.target === "host",
         allowBuiltinMapExtern: input.policy.target === "host" && input.policy.stringConst?.storage !== "native",
         allowNativeMapStorage: input.policy.stringConst?.storage === "native",
@@ -1709,7 +1695,7 @@ export function prepareIrProgramSources(
             tdzGlobalRef: lexical ? irSourceGlobalRef(global.tdzBindingId, `${declaration.name.text}$tdz`) : null,
             globalName: declaration.name.text,
             tdzGlobalName: lexical ? `${declaration.name.text}$tdz` : null,
-            type: storageType(global),
+            type: storageType(global, input.checker, unsupported),
           };
           const entry = { binding, identity: global };
           globals.push(entry);
@@ -1734,6 +1720,7 @@ export function prepareIrProgramSources(
       });
     }
     prepareStartupDirectCalls(input.checker, sourceFiles, identity, startup, signatures, directCalls, diagnostic);
+    const collectVectors = sourceVectorCollector(input.checker, directCalls, globals, nativeLinearVectors);
     for (const unit of inventory.terminalUnits) {
       diagnostic.active = unit.id;
       if (functions.some((fn) => fn.unitId === unit.id)) continue;
@@ -1752,7 +1739,9 @@ export function prepareIrProgramSources(
         return {
           ...global.binding,
           ownerUnitId: unit.id,
-          ...(postStartupUnits.has(unit.id) ? { omitTdzReadCheck: true as const } : {}),
+          ...(postStartupUnits.has(unit.id) && global.binding.type.kind !== "vec"
+            ? { omitTdzReadCheck: true as const }
+            : {}),
         };
       };
       const resolver: IrFromAstResolver = {
@@ -1787,11 +1776,7 @@ export function prepareIrProgramSources(
         ),
       );
       const signature = signatures.get(unit.id);
-      const logicalVectorTypes =
-        family?.logicalVectorTypes ??
-        (nativeLinearVectors && !moduleInit
-          ? nativeLinearSourceVectors(input.checker, declaration, directCalls)
-          : undefined);
+      const logicalVectorTypes = family?.logicalVectorTypes ?? collectVectors(declaration, unit.sourceId);
       const lowered = lowerFunctionAstToIr(declaration, {
         booleanReturnBoundary: sourceBooleanAnyResult(input.checker, declaration) ? declaration : undefined,
         ownerUnitId: unit.id,

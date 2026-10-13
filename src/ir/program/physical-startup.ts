@@ -9,6 +9,7 @@ export interface PhysicalStartup {
   /** Executable startup bodies in semantic module-evaluation order. */
   readonly units: readonly IrUnitId[];
   readonly adapter: "none" | "wasm-start" | "deferred-export" | "wasi-start-export";
+  readonly onceGuard?: true;
 }
 
 export function planPhysicalStartup(
@@ -57,7 +58,11 @@ export function planPhysicalStartup(
   if (adapter === "wasi-start-export" && exportNames.has("_start"))
     gaps.add("WASI startup export _start collides with a program export of the same name");
 
-  return { units: startupUnits, adapter };
+  const onceGuard = program.abi.entries.some(
+    ({ contract }) =>
+      contract.kind === "global" && contract.ref.binding.kind === "source" && contract.type.kind === "vec",
+  );
+  return { units: startupUnits, adapter, ...(onceGuard ? { onceGuard: true as const } : {}) };
 }
 
 /** Exact materialization guard after canonical native bindings have been authenticated. */

@@ -5,8 +5,10 @@
 // fallback gate can import it without pulling in codegen/index.ts.
 
 import { isExternalDeclaredClass } from "../checker/type-mapper.js";
-import { TsCheckerOracle, type TypeOracle } from "../checker/oracle.js";
+import { type TypeOracle } from "../checker/oracle.js";
 import { ts } from "../ts-api.js";
+import { bindingDeclarationCandidates, uniqueTopLevelVariableDeclaration } from "./module-binding-declarations.js";
+import { nativeModuleVectorType } from "./native-module-vector-source.js";
 import * as bindingValue from "./module-binding-value-kinds.js";
 import { updateRetypesModuleBinding } from "./update-retyped-bindings.js";
 import { isBoundedPreparedAccessorClass } from "./class-accessor-safety.js";
@@ -801,6 +803,8 @@ export interface IrModuleBindingResolver extends IrModuleBindingResolverSurface<
 > {}
 
 export interface IrModuleBindingResolverOptions {
+  /** Canonical identity resolver only; never grants legacy carrier admission. */
+  readonly allowNativeF64VectorStorage?: boolean;
   /** Actual legacy storage choice for an ordinary TS `number`. */
   readonly numberStorage: "f64" | "i32";
   /** Extern-class globals exist only on the JS-host lane. */
@@ -861,52 +865,6 @@ const NON_F64_NATIVE_NUMBER_ALIASES = new Set(["i8", "i16", "i32", "u8", "u16", 
 // memoized `TsCheckerOracle` answers (same checker, per-node cache); under
 // the `inhouse` backend the binder answers with no checker at all.
 // Mirrors the `UpdateRetypeQuerySource` pattern in update-retyped-bindings.ts.
-type BindingQuerySource = ts.TypeChecker | Pick<TypeOracle, "valueDeclarationOf" | "declarationsOf">;
-
-const checkerBindingOracles = new WeakMap<ts.TypeChecker, TsCheckerOracle>();
-
-function bindingOracle(source: BindingQuerySource): Pick<TypeOracle, "valueDeclarationOf" | "declarationsOf"> {
-  if ("valueDeclarationOf" in source && "declarationsOf" in source) return source;
-  let oracle = checkerBindingOracles.get(source);
-  if (!oracle) {
-    oracle = new TsCheckerOracle(source);
-    checkerBindingOracles.set(source, oracle);
-  }
-  return oracle;
-}
-
-/** Ordered declaration candidates: value declaration first, then the full
- * merged list — the exact priority the raw
- * `[symbol.valueDeclaration, ...symbol.declarations]` idiom encoded. */
-function bindingDeclarationCandidates(
-  node: ts.Identifier,
-  source: BindingQuerySource,
-): readonly (ts.Declaration | undefined)[] {
-  const oracle = bindingOracle(source);
-  return [oracle.valueDeclarationOf(node), ...oracle.declarationsOf(node)];
-}
-
-function uniqueTopLevelVariableDeclaration(
-  node: ts.Identifier,
-  checker: ts.TypeChecker,
-): ts.VariableDeclaration | undefined {
-  const sourceFile = node.getSourceFile();
-  const candidates = bindingDeclarationCandidates(node, checker);
-  if (candidates.length === 0) return undefined;
-  const directDeclarations = new Set<ts.VariableDeclaration>();
-  for (const candidate of candidates) {
-    if (!candidate || !ts.isVariableDeclaration(candidate)) continue;
-    if (candidate.getSourceFile() !== sourceFile) continue;
-    if (!ts.isIdentifier(candidate.name)) continue;
-    const list = candidate.parent;
-    if (!ts.isVariableDeclarationList(list)) continue;
-    const statement = list.parent;
-    if (!ts.isVariableStatement(statement) || statement.parent !== sourceFile) continue;
-    directDeclarations.add(candidate);
-  }
-  if (directDeclarations.size !== 1) return undefined;
-  return [...directDeclarations][0]!;
-}
 
 function directTopLevelDeclaration(node: ts.Identifier, checker: ts.TypeChecker): ts.VariableDeclaration | undefined {
   const declaration = uniqueTopLevelVariableDeclaration(node, checker);
@@ -2478,6 +2436,21 @@ export function makeIrModuleBindingResolver(
   };
   const inspectDirectBinding = (node: ts.Identifier, writeValue?: ts.Expression): IrModuleBindingInspection => {
     const ownerUnitId = ownerAt(node);
+    if (options.allowNativeF64VectorStorage === true && writeValue === undefined) {
+      const declaration = uniqueTopLevelVariableDeclaration(node, checker);
+      if (declaration && nativeModuleVectorType(checker, declaration)) {
+        return {
+          kind: "supported",
+          identity: {
+            declaration,
+            mutable: false,
+            valueKind: { kind: "native-f64-vector" },
+            ownerUnitId,
+            ...bindingLocation(declaration),
+          },
+        };
+      }
+    }
     const inspected = legacy.inspectDirectBinding(node, writeValue);
     const identity =
       inspected.kind === "supported"

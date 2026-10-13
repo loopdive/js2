@@ -57,7 +57,6 @@ import {
   type PreparedAsyncFrameReservations,
 } from "../backend/wasmgc/resources/prepared-async-frame.js";
 import { sameValTypes } from "../wasm/physical/function-types.js";
-import { buildNumberRemainderBody } from "../wasm/physical/number-remainder.js";
 import {
   planNativeStringValuePhysical,
   reserveNativeStringValueResources,
@@ -162,7 +161,6 @@ import {
   type PreparedIrProgramRuntimeProjection,
 } from "./program.js";
 import {
-  defaultInit,
   reservePhysicalImports,
   reservePhysicalExceptionTag,
   reserveStartupAdapter,
@@ -170,6 +168,9 @@ import {
   physicalSignatureConverter,
   bindPhysicalAbi,
   fillStartupAdapter,
+  fillPhysicalScalarResources,
+  indexSupportFunctions,
+  completedStartupGuardIndex,
   collectPhysicalUnitReceipts,
 } from "./program-body-resources.js";
 import { acquirePreparedLinearAllocation } from "./program/linear-allocation-outcome.js";
@@ -232,6 +233,7 @@ interface EmissionObservation {
   readonly referenceError?: CompletedPhysicalReferenceErrorReceipt;
   readonly vectorTypes?: NativeVectorTypeReservations;
   readonly startupAdapterIndex?: number;
+  readonly startupGuard?: GlobalReservation;
   readonly bindings: readonly (readonly [IrBindingId, ProgramAbiFinalIndex])[];
 }
 /** Private completed-emission evidence; reservation capabilities never escape. */
@@ -503,6 +505,10 @@ export function acceptedPhysicalSetupPlan(accepted: AcceptedPreparedIrProgram): 
 /** Function index of the startup adapter this emission constructed, if any. */
 export function emittedStartupAdapterIndex(emitted: EmittedPreparedIrProgram): number | undefined {
   return startupAdapters.get(emitted)?.startupAdapterIndex;
+}
+/** Exact once-only startup storage, authenticated against this completed attempt. */
+export function emittedStartupGuardIndex(emitted: EmittedPreparedIrProgram): number | undefined {
+  return completedStartupGuardIndex(startupAdapters.get(emitted), () => emittedSupportFunctionReceipts(emitted));
 }
 
 /** Exact non-source helper bodies, authenticated against the completed module. */
@@ -912,6 +918,7 @@ function recordEmissionObservation(
   supportFunctions: readonly FunctionReservation[],
   referenceError?: CompletedPhysicalReferenceErrorReceipt,
   vectorTypes?: NativeVectorTypeReservations,
+  startupGuard?: GlobalReservation,
 ): void {
   const bindings: (readonly [IrBindingId, ProgramAbiFinalIndex])[] = [];
   for (const entry of abi.entries()) {
@@ -932,6 +939,7 @@ function recordEmissionObservation(
     result,
     Object.freeze({
       ...(startAdapter ? { startupAdapterIndex: reservations.physicalIndex(startAdapter) } : {}),
+      ...(startupGuard ? { startupGuard } : {}),
       bindings: Object.freeze(bindings),
       physical: plan,
       reservations,
@@ -1100,16 +1108,6 @@ function reserveNumberRemainders(
 }
 
 /** No observation or reusable capability escapes the physical transaction. */
-function indexSupportFunctions(rows: readonly NativeNumberFormatResourceRow[]): Map<WasmFunction, FunctionReservation> {
-  const functions = new Map<WasmFunction, FunctionReservation>();
-  for (const row of rows) {
-    if (row.space !== "function") continue;
-    const previous = functions.get(row.reservation.object);
-    if (previous && previous !== row.reservation) emissionFailed("support function has competing reservation owners");
-    functions.set(row.reservation.object, row.reservation);
-  }
-  return functions;
-}
 
 /** Preserve global-before-unit reservation in the consumer's sole slot allocator. */
 function reservePhysicalProgramSlots(
@@ -1119,7 +1117,8 @@ function reservePhysicalProgramSlots(
 ) {
   const { reservations, globalsByKey, resourcesByBinding, functionsByKey } = context;
   for (const global of plan.definedGlobals) {
-    const reserved = reservations.reserveGlobal(global.bindingId, global.name, global.type, global.mutable);
+    const type = physicalSignature({ params: [global.type], results: [] }).params[0]!;
+    const reserved = reservations.reserveGlobal(global.bindingId, global.name, type, global.mutable);
     globalsByKey.set(global.referenceKey, reserved);
     resourcesByBinding.set(global.bindingId, reserved);
   }
@@ -1165,19 +1164,6 @@ function publishPhysicalExports(
 }
 
 /** Fill the reserved globals only after the physical index space is frozen. */
-function fillPhysicalScalarResources(plan: PhysicalSetupPlan, context: NativeReconciliationContext): void {
-  const { reservations, globalsByKey } = context;
-  for (const global of plan.definedGlobals) {
-    const reserved = globalsByKey.get(global.referenceKey);
-    if (!reserved || reserved.kind !== "global") emissionFailed(`global ${global.name} has no defined reservation`);
-    reservations.fillGlobal(reserved, defaultInit(global.type));
-  }
-  for (const resource of plan.numberRemainders) {
-    const token = context.resourcesByBinding.get(resource.bindingId);
-    if (!token || token.kind !== "function") emissionFailed("number remainder reservation vanished before fill");
-    context.reservations.fillFunction(token, buildNumberRemainderBody(resource.earlyMagnitude));
-  }
-}
 
 /** Bind selected invocation entry points to their exact, uniquely owned resources. */
 function reconcileInvocationBindings(
@@ -1387,6 +1373,9 @@ function materializePhysicalProgram(
     physicalReferenceErrorLiteralProducers(),
   );
   const startAdapter = reserveStartupAdapter(plan, reservations);
+  const startupGuard = plan.startup.onceGuard
+    ? reservations.reserveGlobal("physical:startup-once", "__startup_once", { kind: "i32" }, true)
+    : undefined;
 
   const linearPack = record.linearMemory
     ? reservePreparedLinearMemory(reservations, record.linearMemory, assertEmissionActive)
@@ -1477,7 +1466,7 @@ function materializePhysicalProgram(
   }
 
   // 5. Startup adapter and ABI export aliases (by their planned index space).
-  fillStartupAdapter(startAdapter, plan, slots, reservations);
+  fillStartupAdapter(startAdapter, plan, slots, reservations, startupGuard);
   publishPhysicalExports(plan, abi, reconciliation);
 
   if (nativePack?.output) publishNativeStringValueOutput(reservations, nativePack);
@@ -1518,6 +1507,7 @@ function materializePhysicalProgram(
     [...supportFunctions.values()],
     referenceErrorReceipt,
     vectorTypes,
+    startupGuard,
   );
   return result;
 }

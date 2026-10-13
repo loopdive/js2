@@ -1,3 +1,4 @@
+import { sameSourceModuleVectors } from "./native-module-vector-source.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import { ts } from "../ts-api.js";
@@ -42,10 +43,11 @@ export function nativeLinearSourceVectors(
   checker: ts.TypeChecker,
   declaration: ts.FunctionDeclaration,
   directCalls: ReadonlyMap<ts.CallExpression, IrDirectCallLoweringPlan>,
+  moduleVectors?: ReadonlyMap<ts.VariableDeclaration, NativeFamilyVectorType>,
 ): ReadonlyMap<NativeFamilyVectorNode, NativeFamilyVectorType> | undefined {
   if (!declaration.body || declaration.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword))
     return undefined;
-  const facts = buildSynchronousLogicalVectors(checker, declaration, directCalls);
+  const facts = buildSynchronousLogicalVectors(checker, declaration, directCalls, moduleVectors);
   for (const type of facts.values())
     if (
       Object.hasOwn(type, "layout") ||
@@ -75,4 +77,16 @@ export function selectNativeAsyncFamilyProjection(input: IrProgramSourceInput): 
       "native async family source projection requires explicit native delay and wasmgc:standalone policy",
     );
   return true;
+}
+
+export function sourceVectorCollector(
+  checker: ts.TypeChecker,
+  directCalls: ReadonlyMap<ts.CallExpression, IrDirectCallLoweringPlan>,
+  globals: Parameters<typeof sameSourceModuleVectors>[0],
+  enabled: boolean,
+) {
+  return (declaration: ts.FunctionDeclaration, sourceId: string) =>
+    enabled
+      ? nativeLinearSourceVectors(checker, declaration, directCalls, sameSourceModuleVectors(globals, sourceId))
+      : undefined;
 }

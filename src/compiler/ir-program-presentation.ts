@@ -7,6 +7,12 @@ import { resolveCompileTargetProfile } from "../target-profile.js";
 import { isNativeIrCompileProfile } from "../ir/runtime/target-admission.js";
 import { ts } from "../ts-api.js";
 import { nativeSynchronousVectorParameter, nativeSynchronousVectorResult } from "../ir/program-sync-vectors.js";
+import {
+  booleanExportSignature,
+  captureVectorGlobal,
+  checkNativeGlobalPresentation,
+  type GlobalCapture,
+} from "./native-vector-global-presentation.js";
 import { IrUnsupportedError } from "../ir/outcomes.js";
 import type { PipelineOutputContext } from "../compiler.js";
 import type { CompileResult } from "../index.js";
@@ -141,17 +147,7 @@ function physicalSlotMatches(slot: PresentationSlot, physical: ValType, logical:
     (slot !== "boolean" || booleanCarrier(physical))
   );
 }
-function booleanExportSignature(declaration: DeclarationCapture): ExportSignature | undefined {
-  if (![...declaration.params, ...declaration.results].some((slot) => slot === "boolean" || slot === "promise"))
-    return undefined;
-  const signature: ExportSignature = {
-    params: declaration.params.map((slot) => (slot === "boolean" ? "boolean" : "other")),
-    result:
-      declaration.results[0] === "promise" ? "promise" : declaration.results[0] === "boolean" ? "boolean" : "other",
-  };
-  Object.freeze(signature.params);
-  return Object.freeze(signature);
-}
+
 function unprovedReference(type: ValType, vectorRefs?: ReadonlySet<number>): boolean {
   return type.kind === "ref" && !vectorRefs?.has(type.typeIdx);
 }
@@ -223,13 +219,7 @@ type GapRecorder = (
   detail: string,
   association?: Partial<IrProgramPresentationGap>,
 ) => void;
-interface GlobalCapture {
-  sourceFile: string;
-  start: number;
-  end: number;
-  name: string;
-  numeric: boolean;
-}
+
 interface PresentationCapture {
   input: IrWholeProgramPreparationInput;
   backend: PreparedIrBackendOptions;
@@ -314,7 +304,7 @@ function capturePresentation(request: IrProgramPresentationRequest, gap: GapReco
   )
     gap("codegenOptions.link", "option-association", "resolved link collection must agree with captured options");
   const declarations: DeclarationCapture[] = [];
-  const globals: { sourceFile: string; start: number; end: number; name: string; numeric: boolean }[] = [];
+  const globals: GlobalCapture[] = [];
   function classify(type: ts.Type): "number" | "boolean" | "void" | undefined {
     if ((type.flags & ts.TypeFlags.NumberLike) !== 0) return "number";
     if ((type.flags & ts.TypeFlags.BooleanLike) !== 0) return "boolean";
@@ -326,17 +316,18 @@ function capturePresentation(request: IrProgramPresentationRequest, gap: GapReco
       if (!ts.isVariableStatement(statement)) continue;
       for (const declaration of statement.declarationList.declarations) {
         if (ts.isIdentifier(declaration.name))
-          globals.push({
-            sourceFile: source.fileName,
-            start: declaration.getStart(source),
-            end: declaration.end,
-            name: declaration.name.text,
-            numeric: classify(input.checker.getTypeAtLocation(declaration)) === "number",
-          });
+          globals.push(
+            captureVectorGlobal(
+              input.checker,
+              declaration,
+              source,
+              native && input.linearVectorProjection === "native-f64",
+            ),
+          );
       }
     }
     for (const row of globals.filter((row) => row.sourceFile === source.fileName)) {
-      if (!row.numeric)
+      if (!row.numeric && !row.vector)
         gap("declaration", "non-numeric-boundary", "top-level global storage needs a numeric source classification", {
           sourceFile: source.fileName,
         });
@@ -529,7 +520,12 @@ function checkAbiExports(
           });
       }
     }
-    if (contract.kind === "global" && (contract.type.kind !== "val" || !numeric(contract.type.val)))
+    if (contract.kind === "global" && contract.type.kind === "vec") {
+      if (!checkNativeGlobalPresentation(program, emission, plan.id, contract.type, globals, capture.backend.backend))
+        gap("abi.global", "vector-global-join", "internal vector global must retain exact source and issued storage", {
+          bindingId: plan.id,
+        });
+    } else if (contract.kind === "global" && (contract.type.kind !== "val" || !numeric(contract.type.val)))
       gap("abi.global", "non-numeric-contract", "global resources require a primitive numeric contract", {
         bindingId: plan.id,
       });

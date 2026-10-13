@@ -10,6 +10,7 @@ import {
 import type { IrUnitId } from "../../shared/contracts/ir-identity.js";
 import { IrUnsupportedError } from "../../shared/contracts/ir-preparation-errors.js";
 import { PreparedIrProgramInvariantError } from "./errors.js";
+import { irGlobalBindingKey } from "../core/global-binding-keys.js";
 
 export interface LinearVectorOrigin {
   readonly functionIndex: number;
@@ -41,6 +42,16 @@ export function collectLinearVectorFlow(
   const flows = new Map<IrUnitId, FunctionFlow>();
   const active = new Set<IrUnitId>();
   const incoming = new Map<IrUnitId, { fn: IrFunction; args: readonly (readonly SymbolicOrigin[])[] }[]>();
+  const writers = new Map<string, { fn: IrFunction; value: IrValueId }[]>();
+  for (const fn of module.functions)
+    for (const block of fn.blocks)
+      for (const root of block.instrs)
+        forEachInstrDeep(root, (instr) => {
+          if (instr.kind === "global.set") {
+            const key = irGlobalBindingKey(instr.target.binding);
+            writers.set(key, [...(writers.get(key) ?? []), { fn, value: instr.value }]);
+          }
+        });
   const summarize = (fn: IrFunction): FunctionFlow => {
     const cached = flows.get(fn.unitId);
     if (cached) return cached;
@@ -70,6 +81,14 @@ export function collectLinearVectorFlow(
       if (instr.kind === "vec.new_fixed") {
         if (instr.result === null || instr.alloc === undefined) invalid("construction lacks actual result/site");
         values.set(instr.result, [{ functionIndex: functions.get(fn.unitId)!.index, instruction: instr }]);
+      } else if (instr.kind === "global.get" && instr.resultType?.kind === "vec") {
+        const rows = writers.get(irGlobalBindingKey(instr.target.binding));
+        if (instr.target.binding.kind !== "source" || rows?.length !== 1)
+          unsupported(fn, "vector global lacks one complete source writer");
+        const writer = rows[0]!;
+        const producer = (writer.fn === fn ? values : summarize(writer.fn).values).get(writer.value);
+        if (instr.result === null || !producer?.length) unsupported(fn, "vector global has no actual producer");
+        values.set(instr.result, producer);
       } else if (instr.kind === "call") {
         const target =
           instr.target.binding.kind === "unit" ? functions.get(instr.target.binding.unitId)?.fn : undefined;

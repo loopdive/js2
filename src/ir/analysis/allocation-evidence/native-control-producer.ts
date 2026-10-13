@@ -25,6 +25,7 @@ const pure = new Set([
   "for.loop",
   "while.loop",
   "early.return",
+  "global.get",
 ]);
 /** Native annotation producer over actual synchronous vector regions; no IR or sites are synthesized. */
 export function analyzeNativeVectorControl(fn: IrFunction, registry: AllocSiteRegistry, escapeEnabled: boolean): void {
@@ -83,6 +84,12 @@ export function analyzeNativeVectorControl(fn: IrFunction, registry: AllocSiteRe
     else if (instr.kind === "vec.set") {
       touch(instr.vec, "write");
       touch(instr.newValue, "escape");
+    } else if (instr.kind === "global.set") {
+      touch(instr.value, "escape");
+      opaque.add(instr.value);
+    } else if (instr.kind === "throw") {
+      touch(instr.value, "escape");
+      opaque.add(instr.value);
     } else if (instr.kind === "call")
       for (const arg of instr.args) {
         touch(arg, "escape");

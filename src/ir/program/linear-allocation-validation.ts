@@ -3,6 +3,7 @@
 import { createVerifiedAllocationSnapshot } from "../analysis/allocations/snapshot.js";
 import { assertFinalAllocProvenance } from "../analysis/alloc-verification.js";
 import { verifyNativeAllocationEvidence } from "../analysis/allocation-evidence/structured-vector-profile.js";
+import { nativeModuleGlobalEvidence } from "./native-module-vector-context.js";
 import {
   checkRegistryEvidenceMetadataDomain,
   indexRegistryEvidence,
@@ -225,7 +226,8 @@ export function validatePreparedIrLinearAllocationEvidence(
     }
   }
   let uncovered: AllocationEvidenceCheck | undefined;
-  const reports = views.map((module) => verifyNativeAllocationEvidence(module, program.allocations));
+  const globals = nativeModuleGlobalEvidence(program);
+  const reports = views.map((module) => verifyNativeAllocationEvidence(module, program.allocations, globals));
   // Examine every required view before acting on a coverage refusal. Covered
   // contradictions must never turn into a fallback analysis or unsupported.
   for (const report of reports) {

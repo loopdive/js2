@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { ts } from "../ts-api.js";
-import type { IrType } from "./core/types.js";
+import { irTypeEquals, type IrType } from "./core/types.js";
 import { IrInvariantError } from "./outcomes.js";
 interface LogicalVectorSourceHost {
   readonly funcName: string;
@@ -69,5 +69,33 @@ export function checkLogicalVectorConsumption(cx: LogicalVectorSourceHost): void
   for (const node of cx.logicalVectorTypes?.keys() ?? []) {
     if (!cx.logicalVectorConsumed?.has(node))
       logicalVectorMismatch(cx.funcName, "entry was not consumed by its owned declaration/expression");
+  }
+}
+
+interface LogicalVectorInitializerHost extends LogicalVectorSourceHost {
+  readonly mutatedLets: ReadonlySet<string>;
+  readonly moduleBindings?: ReadonlyMap<string, { readonly type: IrType }>;
+}
+export function validateVectorInitializer(
+  declaredVector: Extract<IrType, { kind: "vec" }> | undefined,
+  inferred: IrType,
+  name: string,
+  isConst: boolean,
+  moduleBinding: { readonly type: IrType } | undefined,
+  cx: LogicalVectorInitializerHost,
+  irTypeAssignable: (actual: IrType, expected: IrType) => boolean,
+): void {
+  if (cx.logicalVectorTypes !== undefined && inferred.kind === "vec") {
+    if (!declaredVector || !irTypeAssignable(inferred, declaredVector)) {
+      logicalVectorMismatch(cx.funcName, `initializer contradicts vector declaration '${name}'`);
+    }
+    const nativeModule =
+      moduleBinding?.type.kind === "vec" &&
+      isConst &&
+      cx.moduleBindings?.get(name) === moduleBinding &&
+      irTypeEquals(inferred, moduleBinding.type);
+    if ((!isConst && cx.mutatedLets.has(name)) || (moduleBinding && !nativeModule)) {
+      logicalVectorMismatch(cx.funcName, "mutable/global vector storage is not part of this logical projection");
+    }
   }
 }

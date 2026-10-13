@@ -1,3 +1,5 @@
+import { buildNumberRemainderBody } from "../wasm/physical/number-remainder.js";
+import type { NativeNumberFormatResourceRow } from "../backend/wasmgc/resources/native-number-format.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import type { Instr, ValType, WasmFunction } from "./types.js";
@@ -56,6 +58,8 @@ export function defaultInit(type: ValType): Instr[] {
       return [{ op: "f32.const", value: 0 }];
     case "f64":
       return [{ op: "f64.const", value: 0 }];
+    case "ref_null":
+      return [{ op: "ref.null", typeIdx: type.typeIdx }];
     default:
       return emissionFailed(`no default initializer for global type ${type.kind}`);
   }
@@ -67,6 +71,7 @@ export function fillStartupAdapter(
   plan: PhysicalSetupPlan,
   slots: ReadonlyMap<IrUnitId, FunctionReservation>,
   reservations: PhysicalModuleReservations,
+  onceGuard?: GlobalReservation,
 ): void {
   if (!startAdapter) return;
   const body = plan.startup.units.map((unitId): Instr => {
@@ -74,6 +79,21 @@ export function fillStartupAdapter(
     if (!target) emissionFailed(`startup unit ${unitId} has no reserved slot`);
     return { op: "call", funcIdx: target.handle };
   });
+  if (onceGuard) {
+    const index = reservations.physicalIndex(onceGuard);
+    reservations.fillGlobal(onceGuard, [{ op: "i32.const", value: 0 }]);
+    body.unshift(
+      { op: "global.get", index },
+      { op: "i32.const", value: 2 },
+      { op: "i32.eq" },
+      { op: "if", blockType: { kind: "empty" }, then: [{ op: "return" }], else: [] },
+      { op: "global.get", index },
+      { op: "if", blockType: { kind: "empty" }, then: [{ op: "unreachable" }], else: [] },
+      { op: "i32.const", value: 1 },
+      { op: "global.set", index },
+    );
+    body.push({ op: "i32.const", value: 2 }, { op: "global.set", index });
+  }
   reservations.fillFunction(startAdapter, { locals: [], body });
   if (plan.startup.adapter === "wasm-start") reservations.defineStart(startAdapter);
   else if (plan.startup.adapter === "deferred-export")
@@ -114,6 +134,16 @@ export function physicalBodyResolver(
       const reserved = globalsByKey.get(irGlobalBindingKey(ref.binding));
       if (!reserved) emissionFailed(`global ${ref.name} (${ref.binding.kind}) was not reserved`);
       return reservations.physicalIndex(reserved);
+    },
+    nativeVectorGlobalReadNonNull: (ref, type) => {
+      const reserved = globalsByKey.get(irGlobalBindingKey(ref.binding));
+      if (!reserved || reserved.kind !== "global") emissionFailed("native vector global lost its defined reservation");
+      const storage = reserved.object.type;
+      if (linear && storage.kind === "i32") return false;
+      const value = vectors.physicalType(vectorTypes, type);
+      if (value?.kind !== "ref" || storage.kind !== "ref_null" || value.typeIdx !== storage.typeIdx)
+        emissionFailed("native vector global carrier disagrees with its issued vector resources");
+      return true;
     },
     resolveType: (ref) => {
       const reserved = typesByKey.get(irTypeBindingKey(ref.binding));
@@ -352,4 +382,64 @@ export function bindPhysicalAbi(
     alreadyBound.add(row.id);
   }
   abi.finishBinding();
+}
+
+export function indexSupportFunctions(
+  rows: readonly NativeNumberFormatResourceRow[],
+): Map<WasmFunction, FunctionReservation> {
+  const functions = new Map<WasmFunction, FunctionReservation>();
+  for (const row of rows) {
+    if (row.space !== "function") continue;
+    const previous = functions.get(row.reservation.object);
+    if (previous && previous !== row.reservation) emissionFailed("support function has competing reservation owners");
+    functions.set(row.reservation.object, row.reservation);
+  }
+  return functions;
+}
+
+export function completedStartupGuardIndex(
+  record:
+    | {
+        readonly physical: { readonly startup: { readonly onceGuard?: true } };
+        readonly startupGuard?: GlobalReservation;
+        readonly reservations: PhysicalModuleReservations;
+      }
+    | undefined,
+  validateFunctions: () => unknown,
+): number | undefined {
+  if (!record)
+    throw new PreparedIrProgramInvariantError(
+      "invalid-transaction-capability",
+      "program consumer: startup guard has no completed emission owner",
+    );
+  validateFunctions();
+  if ((record.physical.startup.onceGuard === true) !== (record.startupGuard !== undefined))
+    emissionFailed("startup guard differs from the accepted plan");
+  if (!record.startupGuard) return undefined;
+  record.reservations.assertCompletedReservation(record.startupGuard);
+  return record.reservations.physicalIndex(record.startupGuard);
+}
+
+export function fillPhysicalScalarResources(
+  plan: PhysicalSetupPlan,
+  context: {
+    readonly reservations: PhysicalModuleReservations;
+    readonly globalsByKey: PhysicalBodyResources["globalsByKey"];
+    readonly resourcesByBinding: ReadonlyMap<
+      IrBindingId,
+      CallableReservation | GlobalReservation | GlobalImportReservation | TypeReservation
+    >;
+  },
+): void {
+  const { reservations, globalsByKey } = context;
+  for (const global of plan.definedGlobals) {
+    const reserved = globalsByKey.get(global.referenceKey);
+    if (!reserved || reserved.kind !== "global") emissionFailed(`global ${global.name} has no defined reservation`);
+    reservations.fillGlobal(reserved, defaultInit(reserved.object.type));
+  }
+  for (const resource of plan.numberRemainders) {
+    const token = context.resourcesByBinding.get(resource.bindingId);
+    if (!token || token.kind !== "function") emissionFailed("number remainder reservation vanished before fill");
+    context.reservations.fillFunction(token, buildNumberRemainderBody(resource.earlyMagnitude));
+  }
 }

@@ -16459,6 +16459,64 @@
       "destination": "frontend-ts",
       "owner": "6920-native-preparation",
       "nextBoundary": "Existing owned logical source facts and consumption checks, extracted unchanged from the frontend driver; move with source preparation to frontend/ts."
+    },
+    {
+      "path": "src/compiler/native-vector-global-presentation.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "compiler",
+      "owner": "6920-native-preparation",
+      "nextBoundary": "Actual native internal global capture and canonical source/issued storage joins; frontend presentation debt remains."
+    },
+    {
+      "path": "src/ir/backend/native-global-read.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "6920-native-preparation",
+      "nextBoundary": "Bounded native program global read emission through issued storage endpoint; no layout/source ownership or completion claim."
+    },
+    {
+      "path": "src/ir/module-binding-declarations.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "6920-native-preparation",
+      "nextBoundary": "Original complete checker/oracle declaration query and cache subsystem; moved without changing calls or bodies. Remains source preparation debt."
+    },
+    {
+      "path": "src/ir/native-module-vector-source.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "6920-native-preparation",
+      "nextBoundary": "Actual checker-owned module const literal facts; move with source preparation. No backend resources or pure IR admission."
+    },
+    {
+      "path": "src/ir/withdrawn-unit-references.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-program",
+      "owner": "6920-native-preparation",
+      "nextBoundary": "Complete existing unit reference census relocated with preserved public reexport; no architecture activation claim."
+    },
+    {
+      "path": "src/ir/backend/instruction-uses.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "6920-native-preparation",
+      "nextBoundary": "Complete existing generic instruction SSA-use census moved byte-identically out of lowering; retain actual consumers and historical grammar, no architecture activation claim."
+    },
+    {
+      "path": "src/ir/program/native-module-vector-context.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/analysis/allocation-evidence/module-vector-globals.ts",
+      "state": "clean",
+      "layer": "ir-analysis"
     }
   ]
 }

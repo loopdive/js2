@@ -61,10 +61,11 @@ export function buildSynchronousLogicalVectors(
   checker: ts.TypeChecker,
   owner: ts.FunctionDeclaration,
   directCalls: ReadonlyMap<ts.CallExpression, IrDirectCallLoweringPlan>,
+  moduleVectors?: ReadonlyMap<ts.VariableDeclaration, NativeFamilyVectorType>,
 ): ReadonlyMap<NativeFamilyVectorNode, NativeFamilyVectorType> {
   if (!owner.body) unsupported("owner has no executable body");
   const facts = new Map<NativeFamilyVectorNode, NativeFamilyVectorType>();
-  const bindings = new Map<ts.Declaration, NativeFamilyVectorType>();
+  const bindings = new Map<ts.Declaration, NativeFamilyVectorType>(moduleVectors);
   const vector = (node: ts.Node): NativeFamilyVectorType => {
     const type = nativeSynchronousVectorType(checker, checker.getTypeAtLocation(node));
     if (!type) unsupported("expected an exact numeric vector expression");

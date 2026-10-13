@@ -82,6 +82,7 @@ import {
 import {
   logicalVectorMismatch,
   validateLogicalVectorFacts,
+  validateVectorInitializer,
   requireLogicalVector,
   checkLogicalVectorConsumption,
 } from "./logical-vector-source-facts.js";
@@ -3955,23 +3956,6 @@ function logicalVectorDeclarationType(
 }
 
 /** Validate after emission without replacing the initializer's actual type. */
-function validateVectorInitializer(
-  declaredVector: Extract<IrType, { kind: "vec" }> | undefined,
-  inferred: IrType,
-  name: string,
-  isConst: boolean,
-  moduleBinding: ModuleBindingGlobal | undefined,
-  cx: LowerCtx,
-): void {
-  if (cx.logicalVectorTypes !== undefined && inferred.kind === "vec") {
-    if (!declaredVector || !irTypeAssignable(inferred, declaredVector)) {
-      logicalVectorMismatch(cx.funcName, `initializer contradicts vector declaration '${name}'`);
-    }
-    if ((!isConst && cx.mutatedLets.has(name)) || moduleBinding) {
-      logicalVectorMismatch(cx.funcName, "mutable/global vector storage is not part of this logical projection");
-    }
-  }
-}
 
 function resolveMutableLocalRepresentation(
   inferred: IrType,
@@ -4242,7 +4226,7 @@ function lowerVariableDeclaration(d: ts.VariableDeclaration, isConst: boolean, c
     value = boxed;
   }
   const inferred = cx.builder.typeOf(value);
-  validateVectorInitializer(declaredVector, inferred, name, isConst, moduleBinding, cx);
+  validateVectorInitializer(declaredVector, inferred, name, isConst, moduleBinding, cx, irTypeAssignable);
   const stringEncoding = inferred.kind === "string" ? inferStringEncoding(d.initializer, cx) : undefined;
   if (annotated) {
     // Slice 1 (#1169a): the IrType discriminator includes a `string` arm

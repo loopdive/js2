@@ -1,6 +1,11 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { absoluteFuncIndex } from "../emit/resolve-layout.js";
-import { emittedStartupAdapterIndex, emittedProgramBindingIndex } from "../ir/program-consumer.js";
+import {
+  emittedStartupAdapterIndex,
+  emittedStartupGuardIndex,
+  emittedProgramBindingIndex,
+} from "../ir/program-consumer.js";
+import { preparedIrDataMismatch } from "../ir/program/data.js";
 import type { PreparedIrProgram, EmittedPreparedIrProgram } from "../ir/program.js";
 import type { IrWholeProgramPreparationInput } from "../ir/program-preparation.js";
 import type { IrUnitId } from "../shared/contracts/ir-identity.js";
@@ -86,6 +91,36 @@ export function joinPreparedStartup(
         );
         return matches.length === 1 ? emittedProgramBindingIndex(emission, matches[0]!.plan.id) : undefined;
       });
+      const guardIndex = emittedStartupGuardIndex(emission);
+      const needsGuard = program.abi.entries.some(
+        ({ contract }) => contract.kind === "global" && contract.type.kind === "vec",
+      );
+      let calls = adapter?.body ?? [];
+      let guarded = needsGuard === (guardIndex !== undefined);
+      if (guardIndex !== undefined) {
+        const index = guardIndex;
+        const guard = mod.globals[index - mod.imports.filter((row) => row.desc.kind === "global").length];
+        const prefix = [
+          { op: "global.get", index },
+          { op: "i32.const", value: 2 },
+          { op: "i32.eq" },
+          { op: "if", blockType: { kind: "empty" }, then: [{ op: "return" }], else: [] },
+          { op: "global.get", index },
+          { op: "if", blockType: { kind: "empty" }, then: [{ op: "unreachable" }], else: [] },
+          { op: "i32.const", value: 1 },
+          { op: "global.set", index },
+        ];
+        guarded &&=
+          guard?.type.kind === "i32" &&
+          guard.mutable &&
+          preparedIrDataMismatch(guard.init, [{ op: "i32.const", value: 0 }]) === undefined &&
+          preparedIrDataMismatch(calls.slice(0, 8), prefix) === undefined &&
+          preparedIrDataMismatch(calls.slice(-2), [
+            { op: "i32.const", value: 2 },
+            { op: "global.set", index },
+          ]) === undefined;
+        calls = calls.slice(8, -2);
+      }
       if (
         !signature ||
         signature.kind !== "func" ||
@@ -93,8 +128,9 @@ export function joinPreparedStartup(
         signature.results.length ||
         !adapter ||
         adapter.locals.length ||
-        adapter.body.length !== unitIds.length ||
-        adapter.body.some(
+        !guarded ||
+        calls.length !== unitIds.length ||
+        calls.some(
           (instruction, index) =>
             instruction.op !== "call" ||
             slots[index]?.space !== "function" ||
