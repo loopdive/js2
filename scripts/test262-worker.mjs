@@ -26,7 +26,11 @@ import { compile, compileMulti, createIncrementalCompiler } from "./compiler-bun
 // unlinked, exactly as they did before #5353.
 import * as compilerBundle from "./compiler-bundle.mjs";
 import * as runtimeBundle from "./runtime-bundle.mjs";
-import { buildImports, _resetIteratorRuntimeIntrinsicsForRealmIsolation } from "./runtime-bundle.mjs";
+import {
+  buildImports,
+  _installIteratorHelperPolyfills,
+  _resetIteratorRuntimeIntrinsicsForRealmIsolation,
+} from "./runtime-bundle.mjs";
 import { poisonRecycleReason } from "./test262-poison-error.mjs";
 import { negativeCompileErrorMatches, negativeCompileSucceededVerdict } from "./negative-verdict.mjs";
 import { hasPinnedEntryValueSelfImport, hasPinnedNamespaceSelfModuleImport } from "./test262-fixture-graph.mjs";
@@ -226,6 +230,26 @@ process.on("unhandledRejection", () => {});
 // For numeric-index accessors added to Array.prototype (configurable data
 // or accessor properties), we delete.  For tests that add non-configurable
 // poison, we exit for worker-pool restart — recovery is impossible.
+
+// Prime only the host's existing data-property Iterator before restoration
+// snapshots. The synthetic fallback keeps its normal first-use timing because
+// the runtime resets its identity between requests. Promise and RegExp timing
+// remain unchanged; no canary keys are ignored.
+const startupIteratorDescriptor = Object.getOwnPropertyDescriptor(globalThis, "Iterator");
+const startupIteratorPrototypeDescriptor =
+  startupIteratorDescriptor &&
+  Object.hasOwn(startupIteratorDescriptor, "value") &&
+  typeof startupIteratorDescriptor.value === "function"
+    ? Object.getOwnPropertyDescriptor(startupIteratorDescriptor.value, "prototype")
+    : undefined;
+if (
+  startupIteratorPrototypeDescriptor &&
+  Object.hasOwn(startupIteratorPrototypeDescriptor, "value") &&
+  startupIteratorPrototypeDescriptor.value !== null &&
+  typeof startupIteratorPrototypeDescriptor.value === "object"
+) {
+  _installIteratorHelperPolyfills();
+}
 
 // --- Category 1: numeric Array.prototype keys and Object.prototype keys
 // (must be deleted, not re-assigned — they're properties not on the
@@ -3403,8 +3427,45 @@ function sendResult(payload, forceRecycleReason) {
   if (observation) payload = { ...payload, [NATIVE_EVAL_OBSERVATION_FIELD]: observation };
   if (currentLinkedFallback && payload && typeof payload === "object")
     payload = { ...payload, linkedFallback: true, linkedFallbackReason: currentLinkedFallbackReason };
-  const cleanup = postCompileCleanup();
-  const driftReason = realmDriftRecycleReason(payload);
+  // Preserve drift before restoration can erase function name/length metadata.
+  const canarySnapshotBefore = realmCanarySnapshot;
+  let driftReason;
+  let cleanup;
+  let canaryInspectionFailed = false;
+  let canaryInspectionError;
+  let canaryRebaseFailed = false;
+  let canaryRebaseError;
+  try {
+    driftReason = realmDriftRecycleReason(payload);
+  } catch (error) {
+    canaryInspectionFailed = true;
+    canaryInspectionError = error;
+  } finally {
+    cleanup = postCompileCleanup();
+  }
+  // The observer re-baselines on drift even in log mode. Compare future rows
+  // with the cleaned surface, without adding a snapshot to every clean row.
+  if (realmCanarySnapshot !== canarySnapshotBefore) {
+    try {
+      realmCanarySnapshot = snapshotRealmSurface();
+    } catch (error) {
+      canaryRebaseFailed = true;
+      canaryRebaseError = error;
+    }
+  }
+  if (canaryInspectionFailed || canaryRebaseFailed) {
+    try {
+      console.error("[realm-canary] observation/rebaseline failed:", {
+        canaryInspectionFailed,
+        canaryInspectionError,
+        canaryRebaseFailed,
+        canaryRebaseError,
+      });
+    } catch {}
+    driftReason = canaryInspectionFailed
+      ? "realm canary pre-cleanup inspection failed (#3426)"
+      : "realm canary cleaned rebaseline failed (#3426)";
+  }
   const recycle = Boolean(forceRecycleReason || driftReason || cleanup.recycle);
   process.send(
     recycle

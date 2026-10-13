@@ -64,6 +64,53 @@ export function carrierDefaultInstrs(
     : [{ op: "ref.null", typeIdx: -15 }];
 }
 
+/**
+ * (#6973 stage 2) Ordinary [[Set]] of an index that is ALREADY a backed own
+ * element of an `externref` carrier with NO descriptor companion: the element
+ * is an implicit `{value, w/e/c: true}` data property (§10.1.9.2 step 2), so the
+ * set is a plain slot store. Routing it through `__vec_dp_value` instead
+ * allocated a companion for the array, appended it to the append-only overlay
+ * table, and from then on every dynamic read of every array scanned that table —
+ * deltablue's `this.elms[index] = value` grew it by one array per call and the
+ * run slowed linearly with elapsed reps. Caller guarantees `0 <= idx < backed
+ * length` and has already run the frozen-element guard. Other carrier kinds
+ * (f64 / any / string) keep the companion path: their storage is lossy for a
+ * value of another kind, which is what the companion holds.
+ */
+export function directOwnElementStore(
+  carriers: OverlayCarrier[],
+  l: { any: number; comp: number; index: number; value: number },
+  tail: () => Instr[],
+): Instr[] {
+  const arms: Instr[] = [];
+  for (const c of carriers) {
+    if (c.kind !== "externref") continue;
+    arms.push(
+      { op: "local.get", index: l.any },
+      { op: "ref.test", typeIdx: c.vecTypeIdx },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "local.get", index: l.any },
+          { op: "ref.cast", typeIdx: c.vecTypeIdx },
+          { op: "struct.get", typeIdx: c.vecTypeIdx, fieldIdx: 1 },
+          { op: "local.get", index: l.index },
+          { op: "local.get", index: l.value },
+          { op: "array.set", typeIdx: c.arrTypeIdx },
+          ...tail(),
+        ],
+      },
+    );
+  }
+  if (arms.length === 0) return [];
+  return [
+    { op: "local.get", index: l.comp },
+    { op: "ref.is_null" },
+    { op: "if", blockType: { kind: "empty" }, then: arms },
+  ];
+}
+
 export function carrierRefWriteBack(
   carrier: OverlayCarrier,
   castVecAndIdx: Instr[],

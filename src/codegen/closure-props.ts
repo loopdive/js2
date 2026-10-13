@@ -84,6 +84,7 @@ import { INSTANCE_BAG_FIELD } from "./closures/closure-header-layout.js"; // (#4
 // the fold-routing predicates so the two cannot drift apart.
 import { BUILTIN_INSTANCE_CARRIER_STRUCT_NAMES } from "./builtin-instance-key-presence.js";
 import { addFuncType } from "./registry/types.js";
+import { bagOwnDataHitInstrs } from "./fnctor-fast-get.js"; // (#6973 stage 2)
 
 /** WasmGC `eq` abstract heap type (used for `ref.cast`/`ref.null` to eqref). */
 const EQ_HEAP_TYPE = -19;
@@ -1023,10 +1024,17 @@ export function fillClosurePropHelpers(ctx: CodegenContext): void {
     // Without the predicate the emitted body is byte-identical to the pre-#4563
     // one, so a module that cannot resolve it keeps today's answer.
     const hasOwnIdx = ctx.funcMap.get("__hasOwnProperty");
+    // (#6973 stage 2) A live DATA entry in the bag IS the own property: answer
+    // it from the entry before the generic `__hasOwnProperty` + receiver-bound
+    // `__extern_get` pair (~1.9 k-instruction predicate, then a full ladder).
+    // Accessors, tombstones and the deleted-field sentinel keep that path.
+    const entryLocal = protoEdgeArm.length === 0 ? 3 : 4;
+    const bagDataHit = bagOwnDataHitInstrs(ctx, { bag: 2, key: 1, entry: entryLocal });
     const bagOwnGuardedRead: Instr[] =
       hasOwnIdx === undefined
         ? [...bagRead, { op: "return" }]
         : [
+            ...bagDataHit,
             { op: "local.get", index: 2 }, // bag
             { op: "local.get", index: 1 }, // key
             { op: "call", funcIdx: hasOwnIdx },
@@ -1061,16 +1069,20 @@ export function fillClosurePropHelpers(ctx: CodegenContext): void {
       },
       ...(protoIndexRecvGetMissInstrs(ctx, 0, 1) ?? getMiss()),
     ];
-    setBody(
-      CLOSURE_PROP_GET,
+    const propGetLocals: { name: string; type: ValType }[] =
       protoEdgeArm.length === 0
         ? [{ name: "__bag", type: { kind: "externref" } }]
         : [
             { name: "__bag", type: { kind: "externref" } },
             { name: "__protoEdge", type: { kind: "externref" } },
-          ],
-      body,
-    );
+          ];
+    if (bagDataHit.length > 0) {
+      propGetLocals.push({
+        name: "__bagEntry",
+        type: { kind: "ref_null", typeIdx: ctx.objectRuntimeTypes!.propEntryTypeIdx },
+      });
+    }
+    setBody(CLOSURE_PROP_GET, propGetLocals, body);
   } else {
     // Deps absent — keep a valid body: always return the undefined sentinel.
     setBody(CLOSURE_PROP_GET, [], [...getMiss()]);

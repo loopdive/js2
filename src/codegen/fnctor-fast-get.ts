@@ -112,6 +112,28 @@ function fieldSignature(def: unknown): string | undefined {
   return undefined;
 }
 
+/**
+ * (#6973 stage 2) The fnctor class `X` when field `fieldName` of struct
+ * `ownerStruct` is typed `(ref null $__fnctor_X)` — such a slot holds an `X`
+ * instance or null, so `this.<field>.m()` inside a typed twin may take the same
+ * guarded direct-call trampoline as a receiver-flow-proven identifier. Declines
+ * unless `$__fnctor_X`'s structure is unique in the module: a structurally
+ * identical sibling canonicalizes to the same Wasm type, and the trampoline's
+ * `ref.test` could not tell the two apart.
+ */
+export function fieldTypedFnctorClass(ctx: CodegenContext, ownerStruct: string, fieldName: string): string | undefined {
+  const field = ctx.structFields.get(ownerStruct)?.find((f) => f.name === fieldName);
+  if (field === undefined || (field.type.kind !== "ref" && field.type.kind !== "ref_null")) return undefined;
+  const typeIdx = field.type.typeIdx;
+  const names = [...ctx.structMap].filter(([, idx]) => idx === typeIdx).map(([name]) => name);
+  if (names.length !== 1 || !names[0]!.startsWith("__fnctor_")) return undefined;
+  const sig = fieldSignature(ctx.mod.types[typeIdx]);
+  if (sig === undefined || ctx.mod.types.some((def, idx) => idx !== typeIdx && fieldSignature(def) === sig)) {
+    return undefined;
+  }
+  return names[0]!.slice("__fnctor_".length);
+}
+
 function fieldNamesOf(def: unknown): string | undefined {
   const d = def as { kind: string; fields?: { name: string }[] };
   return d.kind === "struct" && d.fields ? d.fields.map((f) => f.name).join(",") : undefined;
@@ -714,4 +736,85 @@ function buildHelper(ctx: CodegenContext, types: readonly LadderArm[], d: Helper
     exported: false,
   });
   return funcIdx;
+}
+
+/**
+ * (#6973 stage 2) `if (bag is $Object && e = __obj_find(bag, key) is a live DATA
+ * entry whose value is not the bag itself) return e.value`. The bag is an
+ * internal `$Object` standing in for the carrier's own-property table, so such
+ * an entry is exactly the own data property `__hasOwnProperty` + the
+ * receiver-bound `__extern_get` would find (a data read never consults the
+ * receiver). `[]` without the object runtime.
+ */
+export function bagOwnDataHitInstrs(ctx: CodegenContext, l: { bag: number; key: number; entry: number }): Instr[] {
+  const types = ctx.objectRuntimeTypes;
+  const objFindIdx = ctx.funcMap.get("__obj_find");
+  if (types === undefined || objFindIdx === undefined) return [];
+  const { objectTypeIdx: OBJ, propEntryTypeIdx: PE } = types;
+  const EQ = -19;
+  return [
+    { op: "local.get", index: l.bag },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx: OBJ },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: l.bag },
+        { op: "any.convert_extern" },
+        { op: "ref.cast", typeIdx: OBJ },
+        { op: "local.get", index: l.key },
+        { op: "call", funcIdx: objFindIdx },
+        { op: "local.tee", index: l.entry },
+        { op: "ref.is_null" },
+        { op: "i32.eqz" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            { op: "local.get", index: l.entry },
+            { op: "struct.get", typeIdx: PE, fieldIdx: 2 }, // flags
+            { op: "i32.const", value: 0x08 | 0x80 }, // FLAG_ACCESSOR | FLAG_TOMBSTONE
+            { op: "i32.and" },
+            { op: "i32.eqz" },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [
+                // The deleted-declared-field sentinel stores the bag itself.
+                { op: "local.get", index: l.entry },
+                { op: "struct.get", typeIdx: PE, fieldIdx: 1 },
+                { op: "ref.test", typeIdx: EQ },
+                {
+                  op: "if",
+                  blockType: { kind: "val", type: { kind: "i32" } },
+                  then: [
+                    { op: "local.get", index: l.entry },
+                    { op: "struct.get", typeIdx: PE, fieldIdx: 1 },
+                    { op: "ref.cast", typeIdx: EQ },
+                    { op: "local.get", index: l.bag },
+                    { op: "any.convert_extern" },
+                    { op: "ref.cast", typeIdx: EQ },
+                    { op: "ref.eq" },
+                  ],
+                  else: [{ op: "i32.const", value: 0 }],
+                },
+                { op: "i32.eqz" },
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  then: [
+                    { op: "local.get", index: l.entry },
+                    { op: "struct.get", typeIdx: PE, fieldIdx: 1 },
+                    { op: "extern.convert_any" },
+                    { op: "return" },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+  ];
 }
