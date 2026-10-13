@@ -3279,3 +3279,52 @@ file remains untouched and excluded. Normal signed source commit and push
 hooks are still required before publication. New-head remote CI is pending;
 local parity repair is not a whole-suite, whole-graph or whole-IR completion.
 The public PR stays on HOLD under A's integration and queue authority.
+
+
+### Canonical physical exception-tag closure — 2026-10-13
+
+Signed receiving transaction `1b8ba99dd1e12c5b5b7127773bb9d97ad67d98e9`
+extends only B's existing carrier claim for the exact physical-provider span.
+It also binds the already B-owned default allocator safety successor; 3,067
+other existing rows and all predecessor records remain identical. Normal push
+hooks and the upstream ref effect were verified before either source write.
+Foreign finally semantics, source grow/push and A's queue ownership remain out
+of scope.
+
+The complete exception-tag contract, single private WeakMap, constants and
+reserve/read implementation now live in
+`src/wasm/physical/linear-body-batch-exception-tag.ts`. The entire executable
+span is byte-identical to published predecessor
+`5555c7213825d4abb702d24e4819e160db5b7bf5`; the resource interface changes only
+by becoming exported. The complete IR demand/forwarding/preflight function is
+also byte-identical. Compatibility exports reference the very same functions,
+not wrappers or copied state. The actual integration resolver consumes the
+canonical physical read endpoint; reservation remains before body consumption.
+
+The actual inventory graph, including type edges, proves a three-module full
+provider closure: the new physical leaf and the canonical Wasm module-records
+and instructions files. All are clean and within the existing allowed layers.
+The only source incoming edges are real preflight/import/reexport and resolver
+consumers. Original policy equals the successor after removing just the new
+clean provider row and restoring the adapter's debt description. No allowance,
+activation, baseline, suppression or graph-completion flag changes.
+The IR adapter remains unmigrated because injected legacy/semantic demand
+orchestration has not completed its own closure.
+
+The same 48-file qualification executes 597 tests: 594 pass, the same two
+independently reproduced legacy results fail, and one remains a todo. All 33
+unchanged parity controls, the original 21 resource regressions and the added
+canonical export-identity control pass. All eleven source checks and the full
+build exit zero. The entire 1,969-file source census is stable during the run;
+physical state/implementation and complete preflight spans remain exactly equal
+after formatting. Peer review is reasoning-only from the supplied code and
+root measurements, not an independent execution claim.
+
+The getter validates present resource identity, opaque signature, import offset
+and direct type coordinates. It does not latch permanent revocation or detect
+an earlier mutation restored before observation; whole-attempt revocation
+remains the separate prepared-consumer contract. This is actual physical-provider
+boundary closure, not whole-preflight, graph or full migration completion.
+The default allocator safety candidate is isolated on its own successor branch
+and is not part of this checkpoint. Normal source commit/push remains pending
+at this preparation record, and the PR remains held for A's integration.

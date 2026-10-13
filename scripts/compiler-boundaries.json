@@ -16207,12 +16207,17 @@
       "layer": "ir-program"
     },
     {
+      "path": "src/wasm/physical/linear-body-batch-exception-tag.ts",
+      "state": "clean",
+      "layer": "wasm-physical"
+    },
+    {
       "path": "src/ir/backend/linear-body-batch-resources.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "wasm-physical",
       "owner": "6920-session-b-native-takeover",
-      "nextBoundary": "Complete body-batch preflight still combines canonical IR demand inspection, injected legacy adapter ports and physical tag custody. Separate that physical-resource responsibility under its full consumer closure before layer activation; no pure-IR or whole-compiler closure is established."
+      "nextBoundary": "Body-batch orchestration still combines canonical IR demand inspection with injected legacy adapter ports. Physical exception-tag custody now uses the canonical Wasm-only provider; establish remaining semantic/provider consumer closure before layer activation. No whole-preflight or whole-compiler closure is established."
     },
     {
       "path": "src/backend/linear/program/contracts.ts",

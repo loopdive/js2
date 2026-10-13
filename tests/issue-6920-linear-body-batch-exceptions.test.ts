@@ -6,7 +6,11 @@ import { emitBinary } from "../src/emit/binary.js";
 import {
   reserveLinearBodyBatchExceptionTag,
   readLinearBodyBatchExceptionTag,
+} from "../src/wasm/physical/linear-body-batch-exception-tag.js";
+import {
   preflightLinearBodyBatchResources,
+  reserveLinearBodyBatchExceptionTag as facadeReserve,
+  readLinearBodyBatchExceptionTag as facadeRead,
 } from "../src/ir/backend/linear-body-batch-resources.js";
 import { LinearEmitter } from "../src/ir/backend/linear-emitter.js";
 import type { IrLowerResolver } from "../src/ir/backend/lower-contracts.js";
@@ -31,6 +35,10 @@ function reservation() {
 }
 
 describe("6920 Linear body-batch exception resources", () => {
+  it("preserves canonical physical provider identity through the IR compatibility exports", () => {
+    expect(facadeReserve).toBe(reserveLinearBodyBatchExceptionTag);
+    expect(facadeRead).toBe(readLinearBodyBatchExceptionTag);
+  });
   it("refuses emission before preflight without creating resources", () => {
     const { module } = reservation();
     expect(() => readLinearBodyBatchExceptionTag(module)).toThrow(/not reserved/);

@@ -49,12 +49,9 @@ import {
   LINEAR_IR_VEC_INIT_F64_FN,
 } from "../../codegen-linear/runtime.js";
 import { linearStringLiteralInstrs } from "../../codegen-linear/string-literals.js";
-import {
-  preflightLinearBodyBatchResources,
-  readLinearBodyBatchExceptionTag,
-  type LinearBackendResourceDemand,
-} from "./linear-body-batch-resources.js";
+import { preflightLinearBodyBatchResources, type LinearBackendResourceDemand } from "./linear-body-batch-resources.js";
 export type { LinearBackendResourceDemand } from "./linear-body-batch-resources.js";
+import { readLinearBodyBatchExceptionTag } from "../../wasm/physical/linear-body-batch-exception-tag.js";
 import {
   authenticateLinearStringRepeatReservationReceipt,
   authenticateLinearStringRepeatProvider,
