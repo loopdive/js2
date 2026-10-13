@@ -55,6 +55,7 @@ import { emitUndefined } from "./expressions/late-imports.js";
 import { compileExpression } from "./shared.js";
 import { getLocalType } from "./context/locals.js";
 import { localGlobalIdx } from "./registry/imports.js";
+import { isWrittenAfterDeclaration } from "./expressions/reflect-construct-newtarget.js";
 
 /**
  * Everything reachable from a number/boolean primitive through its wrapper
@@ -182,6 +183,12 @@ const NUMERIC_SLOT_KINDS: ReadonlySet<ValType["kind"]> = new Set(["i32", "i64", 
  * for the value (Octane box2d `b2Island.Solve`'s `e.m_force`). The allocated
  * slot is the authority: a non-numeric slot declines the fold, and the runtime
  * path reads the value. An identifier with no slot here keeps the fold.
+ *
+ * A slot that is non-numeric only because of where the binding lives (a
+ * script-level `var` sits in an externref global) proves nothing: unless the
+ * file actually writes the name after its declaration, the initializer IS the
+ * value and the fold stands (test262 `S15.3.4.3_A5_T1`: `var obj = 1; …
+ * typeof obj.touched` must stay "undefined").
  */
 export function primitiveFactContradictedBySlot(
   ctx: CodegenContext,
@@ -192,7 +199,8 @@ export function primitiveFactContradictedBySlot(
   while (ts.isParenthesizedExpression(id)) id = id.expression;
   if (!ts.isIdentifier(id)) return false;
   const slot = bindingSlotType(ctx, fctx, id.text);
-  return slot !== undefined && !NUMERIC_SLOT_KINDS.has(slot.kind);
+  if (slot === undefined || NUMERIC_SLOT_KINDS.has(slot.kind)) return false;
+  return isWrittenAfterDeclaration(id.getSourceFile(), id.text);
 }
 
 /** (#6976) The `typeof` twin: only a "number"/"boolean" fold is judged by the slot. */
