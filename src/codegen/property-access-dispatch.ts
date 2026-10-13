@@ -4163,6 +4163,32 @@ function emitExternGetReceiverGuard(
   }
 }
 
+/**
+ * (#6970) A `this.<m>` VALUE read inside a JS constructor function whose `m` is
+ * never declared by a `this`-rooted write (`this.m = …`) names a PROTOTYPE
+ * member (`F.prototype.m = function () {…}`), not an own slot. The TS instance
+ * type of a constructor function lists prototype members among its properties,
+ * so the field auto-register arm would mint an own struct field for `m` and the
+ * read would become a `struct.get` of a slot nothing ever writes — shadowing
+ * `F.prototype.m` (box2dweb's `this.b2X.apply(this, arguments)` ctor idiom).
+ * Declining lets the read take the dynamic `__extern_get` route, which walks
+ * the prototype chain. A member with ANY `this.m = …` declaration keeps the
+ * field route: that is the ctor-write derivation the struct layout is built
+ * from (`deriveFnctorFields`).
+ */
+function isThisReadOfFnctorPrototypeMember(
+  typeName: string,
+  expr: ts.PropertyAccessExpression,
+  tsProp: ts.Symbol,
+): boolean {
+  if (!typeName.startsWith("__fnctor_") || expr.expression.kind !== ts.SyntaxKind.ThisKeyword) return false;
+  const decls = tsProp.declarations ?? [];
+  const isThisRooted = (node: ts.Node): boolean =>
+    (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) &&
+    node.expression.kind === ts.SyntaxKind.ThisKeyword;
+  return decls.length > 0 && !decls.some((d) => isThisRooted(d) || (ts.isBinaryExpression(d) && isThisRooted(d.left)));
+}
+
 export function finalizeStructAndDynamicMemberGet(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -4702,13 +4728,17 @@ export function finalizeStructAndDynamicMemberGet(
   // but NEVER for class struct types — their fields are fixed at collection time
   // — and never for a foreign-return fnctor instance (#2071): its checker shape
   // may not describe the runtime value at all, so no field auto-registration.
-  if (typeName && !ctx.classSet.has(typeName) && !foreignReturnReceiver) {
+  // (#6938) Nor for a non-`this` fnctor receiver named by resolveStructName's
+  // lockstep answer: a prototype member is not a field — read it dynamically.
+  const fnctorProtoMemberRead =
+    typeName?.startsWith("__fnctor_") === true && expr.expression.kind !== ts.SyntaxKind.ThisKeyword;
+  if (typeName && !ctx.classSet.has(typeName) && !foreignReturnReceiver && !fnctorProtoMemberRead) {
     // typeName was already resolved above but field was not found;
     // try auto-registering the property from the TS type
     const props = objType.getProperties?.();
     if (props) {
       const tsProp = props.find((p) => p.name === propName);
-      if (tsProp) {
+      if (tsProp && !isThisReadOfFnctorPrototypeMember(typeName, expr, tsProp)) {
         const propTsType = ctx.checker.getTypeOfSymbolAtLocation(tsProp, expr);
         const propWasmType = resolveWasmType(ctx, propTsType);
         // Try to add the field to the struct dynamically

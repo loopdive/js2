@@ -300,6 +300,26 @@ export function scanForDynamicProto(ctx: CodegenContext, root: ts.Node): void {
       const sym = resolveFnctorSymbol(ctx.checker, node.left.expression);
       if (sym && ctx.fnctorEscapeGate?.approvedNames.has(sym.name)) {
         markProtoSource(node.right);
+      } else if (sym === undefined && ctx.standalone) {
+        // (#6968) A DYNAMIC constructor (closure returned from a call,
+        // member-held `Class.create()` ctor, …) has no fnctor symbol, so
+        // nothing above promotes its prototype object — the literal stayed a
+        // closed struct and the native construct driver's
+        // `__object_create(proto)` reparented every instance to
+        // `%Object.prototype%`. Mark a direct literal RHS (markProtoSource
+        // only follows identifiers) or a literal-initialized binding.
+        let rhs: ts.Expression = node.right;
+        while (
+          ts.isParenthesizedExpression(rhs) ||
+          ts.isAsExpression(rhs) ||
+          ts.isNonNullExpression(rhs) ||
+          ts.isSatisfiesExpression(rhs) ||
+          ts.isTypeAssertionExpression(rhs)
+        ) {
+          rhs = rhs.expression;
+        }
+        if (ts.isObjectLiteralExpression(rhs)) ctx.dynamicProtoLiteralNodes.add(rhs);
+        else markProtoSource(rhs);
       }
     }
     forEachChild(node, visit);

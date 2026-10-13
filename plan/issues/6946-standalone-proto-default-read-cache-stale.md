@@ -1,10 +1,11 @@
 ---
 id: 6946
 title: "standalone: reading an inherited default (`T.prototype.v = null`) before the instance writes `this.v` leaves later reads stuck on the prototype value — per-key lookup cache is not shadowed by the own write (Octane splay `root_`)"
-status: ready
+status: done
+completed: 2026-10-10
 sprint: current
 created: 2026-10-10
-updated: 2026-10-10
+updated: 2026-10-12
 priority: high
 horizon: s
 feasibility: medium
@@ -15,6 +16,16 @@ language_feature: prototype-chain, property-assignment
 goal: standalone-mode
 related: [874, 6943, 6947, 3673, 2660, 4194]
 assignee: "ttraenkler/claude-session-c-octane-standalone-proto-default-read-cache-stale-20261010"
+loc-budget-allow:
+  # 2026-10-10 (#6946) object-runtime.ts +40: the own-shadow hit guard
+  #   (`receiverHasNoOwnKeyGuard`, documented) and its two call sites in the
+  #   #3673 prototype-cache arms that live in this file.
+  - src/codegen/object-runtime.ts
+  # 2026-10-12 (#6946 regression follow-up) +1 each: the import of
+  #   `closedReflectiveStructName` (helper lives in fnctor-instance-names.ts);
+  #   the call sites themselves are line-neutral.
+  - src/codegen/object-ops.ts
+  - src/codegen/expressions/call-builtin-static.ts
 ---
 
 # #6946 — standalone: own write does not shadow a previously-read prototype default
@@ -109,3 +120,99 @@ implements at the project lead's direction. Functions touched:
 `unshiftExternGetProtoCacheArm`, the inline cache in
 `fillFnctorPrototypeDispatchArms`, and the `__extern_get` registration-time
 population branch (`:~1976`).
+
+## Implementation notes (2026-10-10, Session C)
+
+Plan step 1 confirmed the arm: with `unshiftExternGetProtoCacheArm` disabled,
+`.tmp/sp19.js` / `.tmp/sp20.js` answer `null,5,true` / `null,5,5,true` (node).
+
+Fix (plan step 2, at the hit guard, `src/codegen/object-runtime.ts`):
+`receiverHasNoOwnKeyGuard` is AND-ed into both prototype-cache hit guards for
+fnctor receivers — the generic `__extern_get` arm (only in its fnctor branch;
+the `$Object` branch already caches depth-0 own entries) and the per-fnctor
+inline cache in `fillFnctorPrototypeDispatchArms`. A fnctor's own expandos live
+in its carrier `$bag` (#4194/#4241), so the guard is `__closure_bag_lookup(recv)
+== null`: a receiver with no expando bag keeps the hit; a receiver WITH a bag
+skips the cache and takes the exact slow path. If that helper is absent the
+guard falls back to `__hasOwnProperty(recv, key) == 0`.
+
+Why not `__hasOwnProperty` on every hit (first cut): measured 5.5x slower on a
+hot inherited-read loop (`.tmp/bench6946.js`, standalone, best of 7:
+base 5.1 ms, hasOwn guard 28-32 ms) — that predicate flattens and compares the
+key against its special names before the bag probe. The bag-null guard
+measures 5.1 ms (= base).
+
+Tests: `tests/issue-6946-own-write-shadows-proto-default.test.ts` (sp19, sp20,
+sp12, sp11's first four fields, no-prior-read control, a second instance that
+keeps the default after the first one shadows it; gc + standalone vs node).
+Base: 5 fail / 6 pass; head: 11 / 11. Regression A/B over the 41 test files
+matching 3673/4194/4241/fnctor/expando/prototype-chain: identical pass/fail sets
+(292 / 12 both).
+
+Acceptance: Octane `splay.js` rewritten (`SplayTree.Node` → function
+declaration, `.tmp/splay-probe.mjs rewritten standalone`) now fails with
+`TypeError: Cannot access property on null or undefined` — the #6947
+call-site symptom — instead of never growing the tree.
+
+### Found while testing, NOT fixed here (pre-existing on base, standalone)
+
+- `.tmp/sp32.js`: when the program writes `x.left = …` anywhere, the fnctor
+  struct gains a `left` field, and an instance that never wrote it reads
+  `undefined` instead of the inherited `N.prototype.left = null` (sp11's fifth
+  field `r.left === null` is `false`). Typed own-field read ignores presence.
+- `.tmp/sp36.js`: same family for methods — with `t.f = function…` somewhere in
+  the program, `id_(t).f()` BEFORE that write returns `null`/`0` instead of
+  calling `T.prototype.f`.
+- `.tmp/sp40.js` (`put(t, "f", fn)` then `call(t)` → `o.f()`): the own method
+  never shadows the prototype one on standalone (`111` vs node `121`), on base
+  and head alike — the dispatch does not reach the cache arms this issue
+  guards, so the method-arm guard here is defensive.
+
+## Regression follow-up (2026-10-12)
+
+`tests/issue-6946-own-write-shadows-proto-default.test.ts` "standalone:
+noPriorRead" failed on main (`Object.keys(t)` → `$constructor$__fnctorProto$bag`
+instead of `v`). Culprit: a semantic merge interaction, not a textual one —
+this issue's PR (#6625, head `452c37a243`) passes alone, and so does it merged
+with main up to `0555ac93e4`; it fails once merged with #6623 (`ed1c9e2dc2`,
+#6938 "phantom anon struct for fnctor instance types"). #6938 made
+`resolveStructName` answer the reserved `__fnctor_<Name>` struct for an approved
+standalone fnctor instance type (it answered nothing before), which sent
+`Object.keys/values/entries` (`compileObjectKeysOrValues`) and the literal-key
+`Object.getOwnPropertyDescriptor` fold into their closed-struct field
+expansion. That carrier is open — expandos in `$bag`, ctor fields gated by
+`$presence_N`, `$constructor`/`$__fnctorProto` internal — so the expansion listed
+the internals and missed the bag.
+
+Fix: `closedReflectiveStructName` (`fnctor-instance-names.ts`) drops a
+`__fnctor_*` name at those two consumers, restoring the runtime own-key route
+they took before #6938. `resolveStructName` keeps #6938's answer for member
+get/set/call dispatch. Tests: `tests/issue-6946-keys-leak.test.ts`.
+
+Still wrong on standalone, pre-existing (same on the pre-#6938 merge), not
+fixed here: `JSON.stringify(t)` → `null` once a prototype method writing
+`this.x` exists for the fnctor and is called; `t.hasOwnProperty("set")` → `true`
+for a prototype method; for-in omits inherited prototype keys on an instance
+with no own expando (`new T()` → nothing, node `v;set;`; `new U(3)` → `a;`,
+node `a;m;`);
+`delete t.v` leaves `hasOwnProperty("v")` true; `Object.assign({}, t)` copies
+nothing (`Object.assign({}, u)` with a ctor field traps `illegal cast`).
+
+## Approved bounded ownership refinement (October 12, 2026)
+
+The human approved takeover and delivery of the existing #6655 follow-up as
+a bounded exception to the frontend freeze. Its authored reflection routing,
+24 controls, original #6946 controls and all limitations above are retained.
+
+The reflective helper now uses the existing `isFnctorInstanceType` authority
+before declining an internal fnctor name. A legitimate user class may be named
+`__fnctor_User`; the prefix alone is not proof of constructor-function ownership.
+The predicate excludes actual class declarations and uses the existing escape-gate
+constructor registry before any `new` site has populated the emitted constructor
+cache. Member get/set/call resolution remains unchanged.
+
+Four separate Node-oracle controls compare ordinary and prefixed class names
+with the same dollar-prefixed and ordinary own fields on gc and standalone.
+The original 24 + original 11 + four added controls total 39. Their current-main
+qualification is pending; no pre-existing descriptor, delete, JSON or inherited
+enumeration limitation is waived or claimed repaired by this refinement.

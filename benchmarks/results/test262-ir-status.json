@@ -1,0 +1,9 @@
+{
+  "schema": "test262-compiler-path-status-v1",
+  "compilerPath": "ir",
+  "compilerPathVerified": false,
+  "executionCompilerPath": "unknown",
+  "state": "unavailable",
+  "reason": "IR-only Test262 compilation is unavailable: public compile/compileMulti still use direct generators. The internal prepared pipeline has no adopted public complete-program route; IR_FIRST and per-unit IR telemetry are not IR-only execution.",
+  "blockerCode": "ir-only-compiler-api-unavailable"
+}

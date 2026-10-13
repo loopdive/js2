@@ -189,6 +189,10 @@ const EXACT_TEST262_PATHS = new Set([
   "scripts/tsconfig.json",
   "vitest.config.ts",
   "scripts/build-test262-report.mjs",
+  "scripts/test262-concurrency.mjs",
+  "scripts/validate-test262-completeness.mjs",
+  "scripts/gen-test262-mg-matrix.mjs",
+  "scripts/preserve-frozen-host-baseline.mjs",
   "scripts/compiler-fork-worker.mjs",
   "scripts/compiler-pool.ts",
   "scripts/diff-test262.ts",
@@ -212,6 +216,8 @@ export function classifyTest262Path(p) {
   if (!p) return "";
   if (p === "tests/test262-slow-tests-standalone.json") return "standalone";
   if (p === "tests/test262-slow-tests.json") return "host";
+  if (p === "scripts/gen-test262-mg-matrix.mjs") return "standalone";
+  if (p === "scripts/preserve-frozen-host-baseline.mjs") return "standalone";
   if (p === "scripts/build-quickjs-eval-provider.mjs") return "standalone";
   if (p === "scripts/quickjs-eval-provider.mjs") return "standalone";
   if (p === "scripts/runtime-eval-provider.mjs") return "standalone";

@@ -65,7 +65,7 @@ import { compiledClosureLength } from "./runtime/compiled-closure-length.js"; //
 import { getWasmVecPrototypeMember as vecProtoGet, WASM_VEC_PROTOTYPE_MISS } from "./runtime/wasm-vec-prototype.js";
 import { fnctorInstanceofResult, fnctorOrNative, type FnctorIoHooks } from "./runtime/fnctor-instanceof.js";
 export { buildStringConstants, buildStringConstants16 };
-export { _resetIteratorRuntimeIntrinsicsForRealmIsolation };
+export { _installIteratorHelperPolyfills, _resetIteratorRuntimeIntrinsicsForRealmIsolation };
 // (#6492 r5 / #5967) The test262 worker primes the await-dictionary statics
 // BEFORE its realm-canary snapshot, so the one-time install onto `Promise` is
 // part of the baseline instead of drift that recycles the worker after every

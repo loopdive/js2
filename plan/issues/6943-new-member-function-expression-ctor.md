@@ -1,7 +1,8 @@
 ---
 id: 6943
 title: "`new T.Node(k)` — a constructor held in a member property (`T.Node = function(){…}`) compiles to `undefined`; the refusal diagnostic is swallowed (Octane splay, gc + standalone)"
-status: ready
+status: done
+completed: 2026-10-10
 sprint: current
 created: 2026-10-10
 updated: 2026-10-10
@@ -15,6 +16,20 @@ language_feature: new-expression, constructor-functions
 goal: correctness
 related: [874, 6944, 6945, 6946, 6947, 2660, 3981, 4616, 5383, 1919, 3725]
 assignee: "ttraenkler/claude-session-c-octane-new-member-function-expression-ctor-20261010"
+loc-budget-allow:
+  # 2026-10-10 (#6943) new-super.ts +99: the member-held user-function
+  #   predicates (`resolvesToMemberHeldUserFunction`,
+  #   `isMemberHeldUserFunctionNewCallee`), the host-lane arm helper and the
+  #   documented sticky-degrade terminal refusal. They extend the existing
+  #   construct-admission predicates that live in this file next to their two
+  #   consumers; the call-site growth is one line each.
+  - src/codegen/expressions/new-super.ts
+func-budget-allow:
+  # 2026-10-10 (#6943) compileNewExpression +2: the one-line host-lane call of
+  #   `tryEmitMemberHeldUserFunctionHostNew` (all logic lives in the helper)
+  #   plus its separating blank line; the terminal refusal moved into
+  #   `reportNewExpressionRefusal` at zero net lines.
+  - src/codegen/expressions/new-super.ts::compileNewExpression
 ---
 
 # #6943 — `new <obj>.<prop>(…)` with a user function expression in the property evaluates to `undefined`
@@ -155,3 +170,78 @@ lead's direction. Functions touched: `resolvesToDynamicAnyCtorValue`,
 `compileNewExpression` (dynamic-callee block near `dynMemberCallee`, the
 `calleeIdent` native-construct admission, and the terminal `reportError`),
 `tryCompileNativeConstructFromValue` — nothing else.
+
+## Implementation notes (2026-10-10, Session C)
+
+What landed, all in `src/codegen/expressions/new-super.ts`:
+
+- **`resolvesToMemberHeldUserFunction`** (new predicate, plan step 1): a member
+  callee whose EVERY declaration (`ctx.oracle.declarationsOf` on the property
+  name / string key) is an ordinary `FunctionExpression` — expando
+  `T.Node = function…` or object-literal `{ Node: function… }`. Generator /
+  async / arrow / method values are not claimed, so their §13.3.5.1 step 5
+  TypeError path is unchanged (negative controls in the test).
+  `resolvesToDynamicAnyCtorValue`'s member arm ORs it in, which admits the site
+  into the existing standalone driver (`tryCompileNativeConstructFromValue` →
+  `__native_construct_<N>`) at both of its consumers.
+- **Host lane** (plan steps 1+2): the member/alias site carries the function's
+  own symbol name `__function`, so the `!className` dynamic block (where
+  `dynMemberCallee` lives) is never entered. A new arm right after the native
+  construct fallback routes `isMemberHeldUserFunctionNewCallee` (the member
+  itself, or an identifier whose initializer is one — `var N = T.Node`) to
+  `emitDynamicNewFallback`; `usesHostConstructClosureBase` admits the same
+  callee so the fallback's `__construct_closure` no-match base is armed.
+  Evaluation order is the fallback's (callee, then arguments, then
+  IsConstructor + [[Construct]] in the bridge).
+- **Terminal refusal** (plan step 3) — DEVIATION: it is now `sticky` (survives
+  `rollbackSpeculative`) but with severity **`degrade`**, not `error`.
+  Measured before choosing: a compile-only sweep of the honest-harness test262
+  assembly (`.tmp/sweep6943.mts`, gc, 2,000 of the 11,296 rows whose body has a
+  non-builtin `new`) found 20 files that reach this refusal, and **6 of them
+  pass today** in the CI baseline (`DataView/proto-from-ctor-realm-sab.js`,
+  `Function/proto-from-ctor-realm.js`, `Function/prototype/bind/proto-from-ctor-realm.js`,
+  `Proxy/get-fn-realm.js`, `Proxy/get-fn-realm-recursive.js`,
+  `Proxy/ownKeys/return-not-list-object-throws-realm.js`) — a fatal refusal
+  would turn each into a compile_error. It also fires inside probes whose
+  sibling lowering later succeeds (`var F; F = function(){}; var o = new F();`
+  at top level reports the refusal yet runs correctly), so a fatal sticky error
+  would be a false compile failure there. `degrade` surfaces as a `warning` in
+  `CompileResult.errors`: the refusal is no longer silent and the build still
+  succeeds. The runner counts warnings as a pass only for NEGATIVE tests; a
+  sweep of all 372 negative test262 files whose body contains `new` found none
+  that reach this refusal, so the channel cannot flip a negative row.
+
+Tests: `tests/issue-6943-new-member-held-ctor.test.ts` — 22 cases (sp6/sp5/sp4/sp8
+shapes, object-literal property + instanceof, prototype identity; arrow /
+generator / method / `Math.abs` negative controls; refusal diagnostic present
+for a still-refused site). Base: 12 fail / 10 pass; head: 22 / 22.
+
+### Remaining (not this issue)
+
+Octane `splay.js` on gc now gets past `Key not found` and fails with
+`traverse_ is not a function`; standalone fails with `called value is not a
+function`. Root cause, minimized (`.tmp/neg12.js`):
+
+```js
+function o() {}
+o.F = function (k) { this.key = k; };
+o.F.prototype.get = function () { return this.key; };   // TOP-LEVEL
+export function main() { return typeof o.F.prototype.get; } // node "function", gc/standalone "undefined"
+```
+
+The top-level statement is never compiled: `collectDeclarations`'
+module-init keep gate in `src/codegen/declarations.ts` (the #4618 host arm and
+the #2660 S2 standalone arm) keeps `F.prototype.m = …` only when `F` is a bare
+top-level function identifier; `o.F.prototype.m = …` (receiver of `.prototype`
+is itself a member chain) is dropped. The same write inside a function body
+works on both lanes (`.tmp/neg13.js`). Pre-existing on base (also through
+`mk(o.F, 7)`, which never touches this issue's arm). Needs its own issue; a fix
+would extend those two keep arms to a callable member chain rooted at a
+top-level function (`isTopLevelFunctionPropertyReceiver` on the `.prototype`
+receiver).
+
+Also observed, not asserted: on gc, `new T.Node(7).constructor === T.Node` is
+`false` (node/standalone `true`; `.tmp/neg9.js`) — the host bridge constructs
+the closure's host wrapper, whose `prototype.constructor` is the wrapper, not
+the wasm closure value `T.Node` reads back. `Object.getPrototypeOf(n) ===
+T.Node.prototype` and inherited method dispatch do hold.
