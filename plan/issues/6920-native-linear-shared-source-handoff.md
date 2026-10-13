@@ -3328,3 +3328,54 @@ boundary closure, not whole-preflight, graph or full migration completion.
 The default allocator safety candidate is isolated on its own successor branch
 and is not part of this checkpoint. Normal source commit/push remains pending
 at this preparation record, and the PR remains held for A's integration.
+
+### Explicit owned-test typing correction and current upstream composition — 2026-10-13
+
+Signed allocator donor `616a2cbb1227116cc8df7bd22bc1afeb159bd44e` is
+composed with the physical tag provider and current upstream
+`c1081873965c93b430f1dc4296187cf33b099767` in signed merge
+`4f67ecaed2` after normal hooks. The immutable combined 52-file execution
+run has 648 passes, the same two issue-1169o legacy failures, nine existing
+artifact skips and one todo (660 cases). Ten non-strict gates and build
+pass; the 1,970-file source census is stable. Those outcomes do not prove
+complete IR migration or remove HOLD/A integration ownership.
+
+**Correction to historical typing coverage claims:** earlier private
+`tsconfig.source-and-owned-current.json` and similarly inherited configs
+kept `tsconfig.json`'s `exclude: [node_modules, dist, website, tests]`. Their
+success proves source typing only. Historical paragraphs/receipts that
+called those runs “source and owned-test typing” overstate test coverage;
+this correction applies to those claims without rewriting their configs,
+logs, seals or independent runtime outcomes.
+
+The corrected private config explicitly sets `exclude: []`. Its actual
+TS7 `--listFilesOnly` output has 2,269 files: all 1,968 source TypeScript
+files, all 42 selected issue-6920 test inputs (41 tracked and one preserved
+private exploratory file), plus the explicit issue-6865
+and issue-6917 tests, with zero missing selected inputs. The separate
+source census includes two non-TypeScript files. Inclusion alone is not
+typing success: the first real test-inclusive run reports nine diagnostics
+in three B-owned helpers and no source diagnostics. An earlier malformed
+relative-path probe and the nine-error run remain preserved.
+
+Published receiver `984408b4e6ff7538d0fd07bd9f3be1391159aa3a` releases
+only these owned helper corrections: canonical f64 ValType arguments in
+resolver lifetime probes, concrete ArrayBuffer byte inputs at Wasm API
+boundaries, and a local module-based instantiate signature admitting the
+genuine exception-tag import absent from DOM typings. No runtime source
+algorithm, existing behavioral assertion, historical fixture, baseline
+or allowance changes. Final test-inclusive typing and affected runtime
+results are recorded after their natural completion in
+`.tmp/native-takeover/test-harness-typing-01/`; the broad runtime run above
+is preserved as its own epoch and is not retroactively credited.
+
+Final affected-runtime repair qualification: all **34/34** tests across the
+three changed helpers pass. The same explicit test-inclusive TS7 config
+now finishes with zero diagnostics, including all previously failing
+helpers and the preserved private exploratory input. A separately sealed
+explicit tracked-file config checks the 41 published issue-6920 tests plus
+issue-6865/6917 without depending on the untracked exploratory file; its
+result is kept as a separate epoch. Neither run types the unrelated
+issue-6891 historical harness, whose two old diagnostics are preserved in
+the authentic-predecessor allocator record. The 34 affected checks overlap
+the combined cohort and are not added to its 660-case denominator.

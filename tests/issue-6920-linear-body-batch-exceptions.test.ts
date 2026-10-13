@@ -268,7 +268,13 @@ describe("6920 Linear body-batch exception resources", () => {
       );
       const binary = new Uint8Array(emitBinary(module));
       expect(WebAssembly.validate(binary)).toBe(true);
-      const { instance } = await WebAssembly.instantiate(binary, {
+      const wasmModule = await WebAssembly.compile(binary);
+      // DOM import typings omit the genuine Wasm exception-tag import value.
+      const instantiateWithTags = WebAssembly.instantiate as (
+        module: WebAssembly.Module,
+        imports: Record<string, Record<string, WebAssembly.ImportValue | WebAssembly.Tag>>,
+      ) => Promise<WebAssembly.Instance>;
+      const instance = await instantiateWithTags(wasmModule, {
         env: { other: new WebAssembly.Tag({ parameters: ["externref"] }) },
       });
       const payload = { name: "ReferenceError", message: "original opaque identity" };
@@ -292,7 +298,7 @@ describe("6920 Linear body-batch exception resources", () => {
     const result = await compile("export function run(x: number): number { return x + 1; }", { target: "linear" });
     expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
     expect(result.wat).not.toContain("(tag ");
-    const { instance } = await WebAssembly.instantiate(result.binary, {});
+    const { instance } = await WebAssembly.instantiate(new Uint8Array(result.binary), {});
     expect(Reflect.apply(instance.exports.run as Function, undefined, [4])).toBe(5);
   });
 
@@ -303,8 +309,8 @@ describe("6920 Linear body-batch exception resources", () => {
     `;
     const result = await compile(source, { target: "linear" });
     expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
-    expect(WebAssembly.validate(result.binary)).toBe(true);
-    const wasmModule = await WebAssembly.compile(result.binary);
+    expect(WebAssembly.validate(new Uint8Array(result.binary))).toBe(true);
+    const wasmModule = await WebAssembly.compile(new Uint8Array(result.binary));
     expect(WebAssembly.Module.imports(wasmModule)).toEqual([]);
     const instance = await WebAssembly.instantiate(wasmModule, {});
     expect(Reflect.apply(instance.exports.stop as Function, undefined, [])).toBe(1);

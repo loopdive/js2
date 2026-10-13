@@ -18,7 +18,7 @@ const source =
   "export function run(a:number,b:number):number { const values=[a,b]; return values[0]+values[1]+values.length; }";
 afterEach(() => vi.restoreAllMocks());
 
-async function execute(binary: Uint8Array) {
+async function execute(binary: Uint8Array<ArrayBuffer>) {
   expect(WebAssembly.validate(binary)).toBe(true);
   const { instance } = await WebAssembly.instantiate(binary, {});
   expect(instance.exports.memory).toBeInstanceOf(WebAssembly.Memory);

@@ -27,7 +27,7 @@ function captureRealLowering(failAfterBody = false) {
   vi.spyOn(invocation, "fillPreparedPrimaryUnit").mockImplementation((...args) => {
     const resolver = args[4];
     // Read an authentic, currently active resolver. No test IR or resource is minted.
-    expect(() => resolver.resolveVecForElement!({ kind: "val", val: { kind: "f64" } })).not.toThrow();
+    expect(() => resolver.resolveVecForElement!({ kind: "f64" })).not.toThrow();
     captured.push(resolver);
     original(...args);
     if (failAfterBody) throw new Error("construction failure after real body fill");
@@ -38,9 +38,7 @@ function captureRealLowering(failAfterBody = false) {
 function requireRevoked(captured: readonly IrLowerResolver[]) {
   expect(captured.length).toBeGreaterThan(0);
   for (const resolver of captured)
-    expect(() => resolver.resolveVecForElement!({ kind: "val", val: { kind: "f64" } })).toThrow(
-      /emission attempt is no longer active/,
-    );
+    expect(() => resolver.resolveVecForElement!({ kind: "f64" })).toThrow(/emission attempt is no longer active/);
 }
 
 describe("native memory bindings use the common whole-emission lifetime", () => {
@@ -50,7 +48,7 @@ describe("native memory bindings use the common whole-emission lifetime", () => 
       const captured = captureRealLowering();
       const emitted = emitAcceptedIrProgram(accepted);
       expect(captured).toHaveLength(accepted.runtime.prepared.functions.length);
-      const { instance } = await WebAssembly.instantiate(emitBinary(emitted.module));
+      const { instance } = await WebAssembly.instantiate(new Uint8Array(emitBinary(emitted.module)));
       const main = instance.exports.main;
       if (typeof main !== "function") throw new Error("missing genuine source export main");
       expect(main()).toBe(42);
