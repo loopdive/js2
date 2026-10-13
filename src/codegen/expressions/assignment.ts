@@ -202,7 +202,7 @@ import {
 import { tryCompileStrictFunctionPoisonAssignment } from "../function-poison-pill-access.js";
 import { emitRuntimeEvalAotCallableAdapter } from "../runtime-eval-callable.js";
 import { tryEmitStaticI32Expression } from "../i32-static-range-expr.js";
-import { emitToPropertyKeyOnce } from "./computed-member-reference.js";
+import { emitElementStoreKeyOnce } from "./computed-member-reference.js";
 import { inheritedSetAffectsKey } from "../inherited-set-gate.js"; // (#4602) per-key #4504 gate
 import { compileRuntimeEvalShadowedAssignment } from "./runtime-eval-assignment.js";
 import { hostTypedArrayCarrierNameForExpression } from "./typed-array-host-carrier.js";
@@ -6572,7 +6572,8 @@ function compileExternSetFallback(
     kind: "externref",
   });
   if (!keyResult) return null;
-  emitToPropertyKeyOnce(ctx, fctx);
+  // (#6963) A non-negative small-int key on a JS-array carrier stays numeric.
+  emitElementStoreKeyOnce(ctx, fctx, objLocal);
   const keyLocal = allocLocal(fctx, `__eset_key_${fctx.locals.length}`, {
     kind: "externref",
   });

@@ -94,6 +94,94 @@ const REVIVE_NAME = "__args_len_revive";
 const IS_BRANDED_NAME = "__args_is_branded";
 
 /**
+ * (#6964) The own-property seed natives for a FRESHLY BUILT arguments object
+ * (`@@iterator`, sloppy `callee`, strict poisoned `callee`). Same signature as
+ * the generic `__defineProperty_value` / `__defineProperty_accessor` they
+ * replace at the seed sites, and that is also their placeholder body.
+ *
+ * Why not the generic define: on a vec receiver it runs the whole array-exotic
+ * [[DefineOwnProperty]] preamble — `__vec_overlay_ensure` (a newest-first scan
+ * of the companion table that always MISSES for a brand-new vec, so it walks
+ * every companion ever created) and, for a named key, the §10.1.6.3
+ * extensibility guard, whose `__integrity_bag` call allocates an expando bag
+ * for the vec and prepends it to the bag list after walking that list too.
+ * Every sloppy call that touches `arguments` paid both, so each call got
+ * slower than the last (Octane earley-boyer: 1.5 s -> 13 s over five runs).
+ * A fresh arguments object is extensible, owns nothing yet, and is not an
+ * array index / `length` target, so the define is exactly the ordinary define
+ * on its companion `$Object`; the fill (`fillArgumentsLengthBrand`) does that
+ * with the no-scan `__vec_overlay_ensure_newest` for the branded subtype.
+ */
+export const ARGS_OWN_DEFINE_VALUE = "__args_own_define_value";
+export const ARGS_OWN_DEFINE_ACCESSOR = "__args_own_define_accessor";
+
+/**
+ * Reserve (idempotent) the seed native for `accessor` and return its funcIdx,
+ * or `undefined` when the generic define it stands in for is unavailable.
+ */
+export function reserveArgumentsOwnDefine(ctx: CodegenContext, accessor: boolean): number | undefined {
+  const name = accessor ? ARGS_OWN_DEFINE_ACCESSOR : ARGS_OWN_DEFINE_VALUE;
+  const existing = ctx.funcMap.get(name);
+  if (existing !== undefined) return existing;
+  const target = ctx.funcMap.get(accessor ? "__defineProperty_accessor" : "__defineProperty_value");
+  if (target === undefined) return undefined;
+  const params: ValType[] = accessor ? [EXT, EXT, EXT, EXT, { kind: "f64" }] : [EXT, EXT, EXT, { kind: "f64" }];
+  const typeIdx = addFuncType(ctx, params, [EXT], `$${name}_type`);
+  const funcIdx = mintDefinedFunc(ctx);
+  const forward: Instr[] = params.map((_, i) => ({ op: "local.get", index: i }) as Instr);
+  forward.push({ op: "call", funcIdx: target });
+  pushDefinedFunc(ctx, funcIdx, { name, typeIdx, locals: [], body: forward, exported: false });
+  ctx.funcMap.set(name, funcIdx);
+  return funcIdx;
+}
+
+/**
+ * Fill the reserved seed natives: `comp = branded ? ensure_newest(v) :
+ * ensure(v)`, then the generic define on `comp`; returns the receiver like the
+ * generic define does. An unbranded receiver (a non-observable arguments object
+ * may alias the extras vec, so it is not provably fresh) keeps the scanning
+ * `ensure`.
+ */
+function fillArgumentsOwnDefines(
+  ctx: CodegenContext,
+  argumentsTypeIdx: number,
+  overlayEnsureIdx: number,
+  overlayEnsureNewestIdx: number,
+): void {
+  for (const accessor of [false, true]) {
+    const idx = ctx.funcMap.get(accessor ? ARGS_OWN_DEFINE_ACCESSOR : ARGS_OWN_DEFINE_VALUE);
+    const target = ctx.funcMap.get(accessor ? "__defineProperty_accessor" : "__defineProperty_value");
+    if (idx === undefined || target === undefined) continue;
+    const fn = definedFuncAt(ctx, idx);
+    if (!fn) continue;
+    const companionType: ValType = { kind: "ref", typeIdx: ctx.objectRuntimeTypes!.objectTypeIdx };
+    const ensureOf = (funcIdx: number): Instr[] => [
+      { op: "local.get", index: 0 },
+      { op: "any.convert_extern" },
+      { op: "call", funcIdx },
+    ];
+    const tail = (accessor ? [1, 2, 3, 4] : [1, 2, 3]).map((i) => ({ op: "local.get", index: i }) as Instr);
+    fn.locals = [];
+    fn.body = [
+      { op: "local.get", index: 0 },
+      { op: "any.convert_extern" },
+      { op: "ref.test", typeIdx: argumentsTypeIdx },
+      {
+        op: "if",
+        blockType: { kind: "val", type: companionType },
+        then: ensureOf(overlayEnsureNewestIdx),
+        else: ensureOf(overlayEnsureIdx),
+      },
+      { op: "extern.convert_any" },
+      ...tail,
+      { op: "call", funcIdx: target },
+      { op: "drop" },
+      { op: "local.get", index: 0 },
+    ];
+  }
+}
+
+/**
  * Reserve the arguments-query helpers before finalize. Idempotent; returns the
  * first funcIdx, or `undefined` outside standalone where the host owns the MOP.
  */
@@ -246,11 +334,13 @@ export function buildArgumentsLengthReviveCall(ctx: CodegenContext, objParam = 0
 export function fillArgumentsLengthBrand(
   ctx: CodegenContext,
   _objectTypeIdx: number,
-  _overlayEnsureIdx: number,
+  overlayEnsureIdx: number,
   _overlayLookupIdx: number,
+  overlayEnsureNewestIdx: number,
 ): void {
   const argumentsTypeIdx = ctx.structMap.get(ARGUMENTS_VEC_STRUCT);
   if (argumentsTypeIdx === undefined) return;
+  fillArgumentsOwnDefines(ctx, argumentsTypeIdx, overlayEnsureIdx, overlayEnsureNewestIdx); // (#6964)
   const setFn = (name: string, locals: { name: string; type: ValType }[], body: Instr[]): void => {
     const idx = ctx.funcMap.get(name);
     if (idx === undefined) return;

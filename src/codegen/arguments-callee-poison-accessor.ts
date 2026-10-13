@@ -48,6 +48,7 @@ import { ensureArrayNativeProtoGlue } from "./array-object-proto.js";
 import { pushBuiltinFnSingletonValueInstrs } from "./builtin-fn-meta.js";
 import { getWellKnownSymbolId } from "./literals.js";
 import { ensureStandaloneNativeMethodClosure } from "./native-proto.js";
+import { reserveArgumentsOwnDefine } from "./arguments-length-brand.js"; // (#6964)
 
 const POISON_FUNC_NAME = "__args_callee_poison";
 
@@ -110,13 +111,16 @@ export function seedStrictArgumentsCalleePoison(
   }
   if (!ok) return;
 
-  const defineIdx = ensureLateImport(
+  const genericDefineIdx = ensureLateImport(
     ctx,
     "__defineProperty_accessor",
     [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }, { kind: "externref" }, { kind: "f64" }],
     [{ kind: "externref" }],
   );
   flushLateImportShifts(ctx, fctx);
+  if (genericDefineIdx === undefined) return;
+  // (#6964) the fresh-arguments define — no companion-table scan, no expando bag.
+  const defineIdx = reserveArgumentsOwnDefine(ctx, true);
   if (defineIdx === undefined) return;
 
   addStringConstantGlobal(ctx, "callee");
@@ -163,7 +167,7 @@ export function seedArgumentsIteratorProperty(ctx: CodegenContext, fctx: Functio
   if (!closure) return;
   const boxSymbolIdx = ensureLateImport(ctx, "__box_symbol", [{ kind: "i32" }], [{ kind: "externref" }]);
   flushLateImportShifts(ctx, fctx);
-  const defineIdx = ctx.funcMap.get("__defineProperty_value");
+  const defineIdx = reserveArgumentsOwnDefine(ctx, false); // (#6964)
   const iteratorId = getWellKnownSymbolId("iterator");
   if (boxSymbolIdx === undefined || defineIdx === undefined || iteratorId === undefined) return;
 

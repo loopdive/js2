@@ -18,7 +18,8 @@ export function markNumericLikeNamedKey(
   ctx: CodegenContext,
   keyLocal: number,
   scratchF64: number,
-  numericFlagGlobalIdx: number,
+  /** (#6964) Fresh instrs that arm the numeric flag + register the companion. */
+  markInstrs: Instr[],
   numToStringIdx: number,
   strFlattenIdx: number,
   strEqualsIdx: number,
@@ -27,10 +28,7 @@ export function markNumericLikeNamedKey(
 ): Instr[] {
   const strToNumberIdx = ctx.funcMap.get("__str_to_number");
   if (strToNumberIdx === undefined) return [];
-  const mark: Instr[] = [
-    { op: "i32.const", value: 1 },
-    { op: "global.set", index: numericFlagGlobalIdx },
-  ];
+  const mark: Instr[] = [...markInstrs];
   if (highArrayIndexLocal !== undefined) {
     mark.push(
       { op: "local.get", index: scratchF64 },

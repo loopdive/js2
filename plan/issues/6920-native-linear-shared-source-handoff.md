@@ -3164,3 +3164,31 @@ source admission. Neither plan adds implementation or runtime credit here.
 The upstream integration, final build and ordinary signed commit/push hooks
 still require qualification. Existing PR heads, HOLDs and A's final integration
 and queue authority remain unchanged; no whole IR migration completion follows.
+
+
+### Verified upstream integration and final source qualification — 2026-10-13
+
+The normally checked, SSH-signed source commit is
+`41e43787421432b356d5e27af447b68a5c696e8f`. Its author is Thomas Tränkler; its
+Codex co-author and configured-model trailer are retained. Cryptographic
+verification uses the matching existing public key. All 142 committed path
+hashes equal the reviewed manifest after the hooks, with zero source or
+receipt drift. Existing branches and claim records were not rewritten.
+
+Upstream `a8b79f3110884d09dd0a1f7e9989061b73ffb88f` merged automatically into
+this isolated branch. The only overlapping inventory file combined cleanly;
+all upstream source and baseline changes remain. The actual combined tree has
+1,967 source files, unchanged throughout its second 46-file run. It again
+executes 542 tests: 539 pass, the same two original legacy cases fail, and one
+is a todo. Both the authentic original base and the complete pre-index source
+snapshot separately execute nine unchanged legacy controls with seven pass
+and those exact same two failures. There is no whole-suite green claim.
+
+The normal build exits zero. All eleven final checks exit zero, including
+strict typing, function/file budgets against this exact upstream base, import
+cycles, compiler inventory, dead exports, oracle/coercion limits, lint,
+formatting and whitespace. The broader graph and architecture completion
+flags remain false. Final merge/push hooks and public review publication are
+still pending at this record; no queue release or full migration completion
+is inferred. The separate next cleanup implementation is private and outside
+this checkpoint.
