@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { describe, expect, it, vi } from "vitest";
-import * as initializationProvider from "../src/codegen-linear/runtime/vector-initialization.js";
+import * as initializationProvider from "../src/wasm/physical/linear-vector-initialization.js";
 import { analyzeMultiSource } from "../src/checker/index.js";
 import { captureTypedIrProgramInput, prepareIrProgramSources } from "../src/ir/program-source.js";
 import { prepareTypedIrProgram } from "../src/ir/program-prepare-ir.js";

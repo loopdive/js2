@@ -16182,6 +16182,11 @@
       "layer": "wasm-physical"
     },
     {
+      "path": "src/wasm/physical/linear-vector-initialization.ts",
+      "state": "clean",
+      "layer": "wasm-physical"
+    },
+    {
       "path": "src/frontend/program-origin.ts",
       "state": "clean",
       "layer": "frontend-ts"
@@ -16259,10 +16264,8 @@
     {
       "path": "src/codegen-linear/runtime/vector-initialization.ts",
       "state": "unmigrated",
-      "layer": "mixed-needs-split",
-      "destination": "legacy-linear",
-      "owner": "6920-session-b-native-takeover",
-      "nextBoundary": "Retain actual shared consumer/runtime recipe ownership and audit the complete source-free import closure before layer activation."
+      "layer": "legacy-linear",
+      "reason": "Identity-preserving direct reexport of the complete canonical physical f64 vector initialization body."
     },
     {
       "path": "src/compiler/ir-program-startup-presentation.ts",

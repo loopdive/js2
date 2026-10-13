@@ -3379,3 +3379,81 @@ result is kept as a separate epoch. Neither run types the unrelated
 issue-6891 historical harness, whose two old diagnostics are preserved in
 the authentic-predecessor allocator record. The 34 affected checks overlap
 the combined cohort and are not added to its 660-case denominator.
+
+### Complete canonical native vector initializer receiver — 2026-10-13
+
+Published claim `1711a5c39a52332bcf2d115fe797e7222da95faf` binds B's
+complete existing f64 element initializer to the isolated receiver
+`codex/6920-b-native-vector-initializer-20261013-01a12827` from signed
+predecessor `882b244b2519406ef539da3fcde0b5222bca9243`. The full
+seven-instruction body is retained byte-exact in
+`src/wasm/physical/linear-vector-initialization.ts`. Its canonical fresh
+descriptor owns the existing `(f64 value, i32 pointer, i32 index) -> void`
+signature and empty locals. The native memory pack directly consumes
+that descriptor and body; existing function key/name/order, caller
+operands, storage alignment/offset and reservation/lifetime authority
+remain unchanged. The old B initializer path is a direct identity
+reexport, retained as legacy compatibility debt.
+
+Only the new canonical leaf and the exact old compatibility policy row
+change classification. A's four forwarding claims, forwarding provider
+source/import/policy, all other policy records, old golden fixtures and
+source admission remain preserved. This removes one direct legacy-path
+provider dependency and duplicated descriptor from the native consumer;
+it does not close the whole pack or full IR retirement.
+
+The authentic predecessor source archive, unchanged original fixture and
+identical paired instrumentation are sealed under `.tmp/native-initializer/`.
+Complete emitted module DATA, binary and runtime/header/payload
+observations for all four backend/target profiles in both live and codec
+modes are compared against that predecessor. Their actual results and
+ordinary gate outcomes are appended after natural completion; no new
+conformance or retirement claim follows before those results.
+
+Measured paired qualification: all **16/16** cases pass, with eight paired
+profile/mode rows equal in complete emitted module DATA hash, encoded
+whole-program hash, binary length/hash and runtime observations. Linear
+outputs are 515 bytes, SHA256
+`53dfe1c7fa59ffa83af45a9c86d4a5b9bd2062239f864a8ad7a5805ad7ced0fe`;
+GC outputs retain 182 bytes and the established
+`9d0b81ec0f857912d0019f54d6ee6f1f5ce81aae9e7a34d5e4b433093aab3ca8`.
+Both return `[1.25, 15]`. Actual Linear headers, payloads and memory
+observations match. The first private probe wrongly assumed capacity two
+and the second pointer 1056 on both arms; observed capacity 16 requires
+aligned pointer 1168. That failed 8/16 instrumentation epoch is preserved.
+The corrected identical probe derives the next pointer from the observed
+header and retains the independent expected second payload `[4, 9]`.
+
+Direct custody checks confirm old-facade/canonical builder identity,
+unchanged body DATA against the authentic predecessor, and fresh descriptor
+nested-object/array mutation isolation. Complete actual dependency closure
+is three clean modules: the physical leaf, canonical Wasm instruction DATA
+and the zero-import shared layout contract, including type edges. Only the
+native memory pack and compatibility reexport consume the leaf. A's
+forwarding provider dependency remains present and outside this closure.
+
+The first unchanged **52-file / 660-case** cohort has 647 passes, three
+failures, nine existing artifact skips and one todo. Two failures are the
+same issue-1169o legacy cases; the third is an existing fault-injection
+control still spying on the old compatibility namespace, so it no longer
+intercepts the native pack's actual canonical provider. Its original
+failure, binding revocation and unpublished-export assertions remain
+unchanged while only the injection import is moved to the actual owner.
+This first full epoch remains preserved. Ten non-format gates and build
+pass, and the 1,971-file source census is stable. The first policy serializer expanded unrelated formatting and
+failed Prettier; that epoch is preserved, and the final policy edit is
+reconstructed from predecessor bytes at only the two authorized records.
+Final format/inventory/explicit typing checks qualify that bounded final
+policy epoch separately. No source behavior, golden, admission, baseline,
+allowance or A forwarding record is changed by this correction. Full IR
+retirement and A's final integration remain open; HOLD is retained.
+
+After published test-seam refinement
+`43105db4a94b926c398f61a2d7d5e1a06fba0219`, the only changed test
+byte sequence is the initializer-provider import path. The full affected
+pack file now passes **16/16**, including genuine provider construction
+failure, rejected completion/later bindings and empty exports. The final
+explicit source/published-test typing and formatting checks also finish
+with zero diagnostics. These 16 affected controls overlap the first broad
+cohort; the broad 647/3/9/1 result remains its own unchanged record rather
+than being relabeled as a fresh full-suite pass.

@@ -28,7 +28,10 @@ import {
   describeLinearArrayConstructor,
   buildLinearArrayConstructorBody,
 } from "../../../wasm/physical/linear-array-constructor.js";
-import { buildLinearF64VectorInitializationBody } from "../../../codegen-linear/runtime/vector-initialization.js";
+import {
+  describeLinearF64VectorInitialization,
+  buildLinearF64VectorInitializationBody,
+} from "../../../wasm/physical/linear-vector-initialization.js";
 import { buildArrayForwardingResolverBody } from "../../../codegen-linear/runtime/arrays/forwarding-resolver.js";
 import type {
   FunctionReservation,
@@ -172,13 +175,14 @@ export function planPreparedLinearMemory(input: {
         locals: ctor.locals,
         operation: { family: "vector", operation: "allocate", allocationClass: "arena", elementStorage: "f64" },
       });
+      const initializer = describeLinearF64VectorInitialization();
       functions.push({
         key: "linear:initialize-element",
         name: "__linear_ir_vec_init_f64",
         role: "initialize-element",
-        params: [{ kind: "f64" }, { kind: "i32" }, { kind: "i32" }],
-        results: [],
-        locals: [],
+        params: initializer.params,
+        results: initializer.results,
+        locals: initializer.locals,
         operation: {
           family: "vector",
           operation: "initialize-element",
