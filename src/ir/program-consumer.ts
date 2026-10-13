@@ -123,6 +123,8 @@ import {
   reserveNativeVectorHelper,
   fillNativeVectorHelper,
   nativeVectorPhysicalType,
+  requireNativeVectorTypeReservations,
+  type NativeVectorLayout,
   resolveNativeVector,
   resolveNativeVectorForElement,
   type NativeVectorTypeReservations,
@@ -228,6 +230,7 @@ interface EmissionObservation {
   readonly functions: readonly FunctionReservation[];
   readonly support: readonly EmittedSupportFunctionReceipt[];
   readonly referenceError?: CompletedPhysicalReferenceErrorReceipt;
+  readonly vectorTypes?: NativeVectorTypeReservations;
   readonly startupAdapterIndex?: number;
   readonly bindings: readonly (readonly [IrBindingId, ProgramAbiFinalIndex])[];
 }
@@ -520,6 +523,16 @@ export function emittedPhysicalSetupPlan(emitted: EmittedPreparedIrProgram): Phy
   if (!record) programInvariant("invalid-transaction-capability", "emission was not produced by this consumer");
   emittedSupportFunctionReceipts(emitted);
   return record.physical;
+}
+
+/** Read-only canonical vector coordinates from this exact completed reservation pack. */
+export function emittedNativeVectorLayouts(emitted: EmittedPreparedIrProgram): readonly NativeVectorLayout[] {
+  const record = startupAdapters.get(emitted);
+  if (!record) programInvariant("invalid-transaction-capability", "emission was not produced by this consumer");
+  emittedSupportFunctionReceipts(emitted);
+  if (!record.vectorTypes) return Object.freeze([]);
+  requireNativeVectorTypeReservations(record.reservations, record.vectorTypes, record.physical.vectors);
+  return Object.freeze(record.vectorTypes.layouts.map((row) => row.layout));
 }
 
 /** Completed physical Error DATA is authenticated against this exact consumer emission and module. */
@@ -898,6 +911,7 @@ function recordEmissionObservation(
   sourceFunctions: readonly FunctionReservation[],
   supportFunctions: readonly FunctionReservation[],
   referenceError?: CompletedPhysicalReferenceErrorReceipt,
+  vectorTypes?: NativeVectorTypeReservations,
 ): void {
   const bindings: (readonly [IrBindingId, ProgramAbiFinalIndex])[] = [];
   for (const entry of abi.entries()) {
@@ -924,6 +938,7 @@ function recordEmissionObservation(
       functions: Object.freeze(functions),
       support: Object.freeze(support),
       ...(referenceError ? { referenceError } : {}),
+      ...(vectorTypes ? { vectorTypes } : {}),
     }),
   );
 }
@@ -1502,6 +1517,7 @@ function materializePhysicalProgram(
     [...slots.values()],
     [...supportFunctions.values()],
     referenceErrorReceipt,
+    vectorTypes,
   );
   return result;
 }

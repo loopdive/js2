@@ -1,5 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { ts } from "./ts-api.js";
+import { normalizeMultiFileName } from "./checker/multi-file-paths.js";
+import { isNativeIrCompileProfile } from "./ir/runtime/target-admission.js";
 import {
   analyzeFiles,
   analyzeMultiSource,
@@ -2048,7 +2050,17 @@ export async function compileMultiSource(
   };
   const sourcesContent = new Map<string, string>();
   for (const [name, content] of Object.entries(files)) {
-    sourcesContent.set(name, content);
+    const key = isNativeIrCompileProfile(multiTargetProfile) ? normalizeMultiFileName(name) : name;
+    if (sourcesContent.has(key)) {
+      pushSourceAnchoredDiagnostic(
+        errors,
+        multiAst.entryFile,
+        "Prepared IR: multiple source paths share one canonical source identity",
+        "error",
+      );
+      return failResult(errors);
+    }
+    sourcesContent.set(key, content);
   }
   // #2771 — detect WASI fd-IO surfaces across EVERY bundled file (entry + its
   // relative `./*.ts` deps), not just the entry. The multi path resolves cross-
