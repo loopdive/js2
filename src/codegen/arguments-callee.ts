@@ -73,6 +73,7 @@ import { isStrictFunction } from "./helpers/is-strict-function.js";
 import { noJsHost } from "./js-errors.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
+import { reserveArgumentsOwnDefine } from "./arguments-length-brand.js"; // (#6964)
 import { addStringConstantGlobal } from "./registry/imports.js";
 
 /**
@@ -98,7 +99,8 @@ export function seedArgumentsCallee(
 ): void {
   if (!noJsHost(ctx)) return;
   ensureObjectRuntime(ctx);
-  const defineIdx = ctx.funcMap.get("__defineProperty_value");
+  // (#6964) the fresh-arguments define — no companion-table scan, no expando bag.
+  const defineIdx = reserveArgumentsOwnDefine(ctx, false);
   if (defineIdx === undefined) return;
 
   const savedBody = fctx.body;
@@ -186,6 +188,10 @@ export function seedDeclarationArgumentsCallee(
     if (observable) seedStrictArgumentsCalleePoison(ctx, fctx, argsLocalIdx);
     return;
   }
+  // (#6964) `callee` is a named own property: the observability proof above
+  // admits only `.length` and proven-numeric index reads, so an unobservable
+  // arguments object can never reach it — skip the per-call define.
+  if (!observable) return;
   if (ctx.classSet.has(funcName)) return;
   const captures = ctx.nestedFuncCaptures.get(funcName);
   if (captures && captures.length > 0) return;
@@ -228,6 +234,7 @@ export function seedLiftedClosureArgumentsCallee(
     if (observable) seedStrictArgumentsCalleePoison(ctx, liftedFctx, argsLocalIdx); // (#4555) §10.6 step 14
     return;
   }
+  if (!observable) return; // (#6964) see seedDeclarationArgumentsCallee
   const selfType = liftedFctx.params[0]?.type ?? null;
   if (selfType === null) return;
   seedArgumentsCallee(ctx, liftedFctx, argsLocalIdx, () => {
