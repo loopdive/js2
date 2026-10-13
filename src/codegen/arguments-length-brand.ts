@@ -27,6 +27,16 @@ const LENGTH_ABSENT_FIELD = ARGUMENTS_LENGTH_ABSENT_FIELD;
 export const ARGUMENTS_LENGTH_VALUE_FIELD = 3;
 /** Whether `ARGUMENTS_LENGTH_VALUE_FIELD` contains the current own property. */
 export const ARGUMENTS_LENGTH_OVERRIDE_FIELD = 4;
+/**
+ * (#6972) The arguments object's own overlay companion `$Object` (anyref, null
+ * until the first own-property define). Held HERE rather than in the global
+ * `$__overlay_tab` side table: that table is strongly held and never pruned, so
+ * every materialized arguments object (its seeded `@@iterator` / `callee`)
+ * stayed reachable forever — ~400 B per sloppy `f.apply(this, arguments)` call
+ * (Octane raytrace: ~29 MB per rep, then a V8 OOM). In the slot, the companion
+ * dies with its arguments object.
+ */
+const ARGUMENTS_COMPANION_FIELD = 5;
 
 /**
  * A distinct subtype makes the arguments brand an O(1) WasmGC `ref.test`.
@@ -47,6 +57,7 @@ export function getOrRegisterArgumentsVecType(ctx: CodegenContext, baseVecTypeId
     { name: "lengthAbsent", type: { kind: "i32" } as ValType, mutable: true },
     { name: "lengthValue", type: EXT, mutable: true },
     { name: "lengthOverride", type: { kind: "i32" } as ValType, mutable: true },
+    { name: "overlayCompanion", type: { kind: "anyref" } as ValType, mutable: true }, // (#6972)
   ];
   const typeIdx = ctx.mod.types.length;
   ctx.mod.types.push({ kind: "struct", name: ARGUMENTS_VEC_STRUCT, superTypeIdx: baseVecTypeIdx, fields });
@@ -447,6 +458,66 @@ function buildKeyIsLengthInstrs(ctx: CodegenContext, keyLocal: number): Instr[] 
       ],
       else: [{ op: "i32.const", value: 0 }],
     },
+  ];
+}
+
+/**
+ * (#6972) Overlay-core prologue arms that keep a branded arguments object's
+ * companion in its own `ARGUMENTS_COMPANION_FIELD` instead of the global
+ * companion table. Param 0 is the `anyref` vec in both natives. `[]` when no
+ * arguments object was ever branded, so those modules keep their bodies.
+ *
+ * `lookup`: `if (vec is $__arguments_vec) return vec.companion;` — exact,
+ * because the ensure arm below is the only writer of a branded companion.
+ *
+ * `ensure` (the table-append tail, after the state global is initialised so
+ * the `__extern_get` / `__vec_prop_get` read prologues, gated on that global
+ * being non-null, still consult the overlay): return the slot's companion,
+ * minting and storing a fresh `$Object` into it first when empty.
+ * `compLocal` is a scratch `(ref null $Object)` local of the caller.
+ */
+export function buildArgumentsCompanionArm(
+  ctx: CodegenContext,
+  objectTypeIdx: number,
+  ensure?: { newPlainObjectIdx: number; compLocal: number },
+): Instr[] {
+  const argumentsTypeIdx = ctx.structMap.get(ARGUMENTS_VEC_STRUCT);
+  if (argumentsTypeIdx === undefined) return [];
+  const castArgs: Instr[] = [
+    { op: "local.get", index: 0 },
+    { op: "ref.cast", typeIdx: argumentsTypeIdx },
+  ];
+  const readSlot: Instr[] = [
+    ...castArgs,
+    { op: "struct.get", typeIdx: argumentsTypeIdx, fieldIdx: ARGUMENTS_COMPANION_FIELD },
+    { op: "ref.cast_null", typeIdx: objectTypeIdx },
+  ];
+  const then: Instr[] = ensure
+    ? [
+        ...readSlot,
+        { op: "local.tee", index: ensure.compLocal },
+        { op: "ref.is_null" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            ...castArgs,
+            { op: "call", funcIdx: ensure.newPlainObjectIdx },
+            { op: "any.convert_extern" },
+            { op: "ref.cast", typeIdx: objectTypeIdx },
+            { op: "local.tee", index: ensure.compLocal },
+            { op: "struct.set", typeIdx: argumentsTypeIdx, fieldIdx: ARGUMENTS_COMPANION_FIELD },
+          ],
+        },
+        { op: "local.get", index: ensure.compLocal },
+        { op: "ref.as_non_null" },
+        { op: "return" },
+      ]
+    : [...readSlot, { op: "return" }];
+  return [
+    { op: "local.get", index: 0 },
+    { op: "ref.test", typeIdx: argumentsTypeIdx },
+    { op: "if", blockType: { kind: "empty" }, then },
   ];
 }
 

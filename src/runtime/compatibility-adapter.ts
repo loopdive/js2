@@ -2,7 +2,7 @@
 
 import { _installIteratorHelperPolyfills } from "./iterator-polyfills.js";
 import { _installLegacyRegExpAccessors, type LegacyRegExpState } from "./legacy-regexp.js";
-import { _installPromiseKeyedCombinators, type ThenableMirror } from "./promise-keyed-combinators.js";
+import { _installSelectedPromiseCompatibility, type ThenableMirror } from "./promise-try-polyfill.js";
 
 export interface AmbientCompatibilityOptions {
   enabled: boolean;
@@ -113,7 +113,7 @@ export function installAmbientCompatibility(options: AmbientCompatibilityOptions
   // (#6492 round 5) await-dictionary: no engine ships these, so js2 owns them.
   // (#6492 r17) …on the REALM the compiled code reads `Promise` from.
   const PromiseConstructor = resolvePromiseCompatibilityTarget(options);
-  if (PromiseConstructor) _installPromiseKeyedCombinators(PromiseConstructor, options.mirrorThenable);
+  if (PromiseConstructor) _installSelectedPromiseCompatibility(PromiseConstructor, options.mirrorThenable);
   const RegExpConstructor = options.deps?.RegExp ?? (typeof RegExp !== "undefined" ? RegExp : undefined);
   if (RegExpConstructor) _installLegacyRegExpAccessors(RegExpConstructor, options.legacyRegExpState);
 }
