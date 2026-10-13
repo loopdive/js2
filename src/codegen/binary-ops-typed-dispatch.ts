@@ -795,7 +795,7 @@ export function compileTypedBinaryDispatch(
           { op: "call", funcIdx: toPrimIdx },
           { op: "local.set", index: externLocal },
         ];
-        fctx.body.push(
+        const reduce: Instr[] = [
           // lIsObj XOR rIsObj  ≡  lIsObj !== rIsObj
           { op: "local.get", index: lTmp },
           { op: "call", funcIdx: typeofObject },
@@ -807,7 +807,8 @@ export function compileTypedBinaryDispatch(
             blockType: { kind: "empty" },
             then: [...reduceOperand(lTmp), ...reduceOperand(rTmp)],
           },
-        );
+        ];
+        fctx.body.push(...unlessBothI31(ctx.standalone, lTmp, rTmp, reduce)); // (#6973)
       }
 
       // (#2081) LOOSE null/undefined arm (§7.2.15 steps 2-3): `null == undefined`
@@ -1171,7 +1172,7 @@ export function compileTypedBinaryDispatch(
               },
             ]
           : coreEqInstrs;
-      for (const ins of eqInstrs) fctx.body.push(ins);
+      fctx.body.push(...i31EqualityFastPath(ctx.standalone, lTmp, rTmp, eqInstrs)); // (#6973)
       if (isNeqOp) fctx.body.push({ op: "i32.eqz" });
       releaseTempLocal(fctx, rTmp);
       releaseTempLocal(fctx, lTmp);
@@ -1598,4 +1599,53 @@ export function compileTypedBinaryDispatch(
 
   reportError(ctx, expr, `Unsupported binary operator for type`);
   return null;
+}
+
+/** WasmGC `i31` abstract heap type. */
+const I31_HEAP = -20;
+
+/** `a` and `b` (externref locals) are both i31-boxed. */
+function bothI31(a: number, b: number): Instr[] {
+  return [
+    { op: "local.get", index: a },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx: I31_HEAP },
+    { op: "local.get", index: b },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx: I31_HEAP },
+    { op: "i32.and" },
+  ];
+}
+
+/**
+ * (#6973 stage 2) Equality of two externref locals: when both are i31-boxed they
+ * are two integral Numbers (an i31 is only ever a Number in this runtime, and
+ * never -0 or NaN, which stay `$BoxedNumber`), so `==` and `===` are both
+ * integer equality. Deltablue's `this.direction == Direction.FORWARD` otherwise
+ * ran the ToPrimitive / nullish / typeof cascade — about ten helper calls.
+ * `slow` (the full cascade) answers every other pair. Standalone only.
+ */
+function i31EqualityFastPath(standalone: boolean, a: number, b: number, slow: Instr[]): Instr[] {
+  if (!standalone) return slow;
+  const i31Of = (local: number): Instr[] => [
+    { op: "local.get", index: local },
+    { op: "any.convert_extern" },
+    { op: "ref.cast", typeIdx: I31_HEAP },
+    { op: "i31.get_s" },
+  ];
+  return [
+    ...bothI31(a, b),
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "i32" } },
+      then: [...i31Of(a), ...i31Of(b), { op: "i32.eq" }],
+      else: slow,
+    },
+  ];
+}
+
+/** (#6973 stage 2) Run `instrs` (the loose-equality ToPrimitive step) unless both operands are i31 Numbers. */
+function unlessBothI31(standalone: boolean, a: number, b: number, instrs: Instr[]): Instr[] {
+  if (!standalone) return instrs;
+  return [...bothI31(a, b), { op: "i32.eqz" }, { op: "if", blockType: { kind: "empty" }, then: instrs }];
 }

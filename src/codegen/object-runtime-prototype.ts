@@ -209,7 +209,9 @@ function fnctorIsPrototypeOfSeed(
   protoSlot: number,
 ): PrototypeChainSeed {
   const startIdx = ctx.funcMap.get(FNCTOR_PROTO_START);
-  return { startIdx, objectTypeIdx, curSlot, targetSlot, protoSlot, candidateSlot: 1 };
+  // (#6944) struct-valued first link: step to the first `$Object` ancestor.
+  const structHopOkIdx = ctx.funcMap.get("__fnctor_struct_proto_ok");
+  return { startIdx, objectTypeIdx, curSlot, targetSlot, protoSlot, candidateSlot: 1, structHopOkIdx };
 }
 
 /**

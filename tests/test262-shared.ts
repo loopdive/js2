@@ -663,72 +663,90 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
     // incomplete shard rather than looking settled after teardown.
     const allCallbacksSettledBeforePoolShutdown =
       callbacksStarted === registeredPaths.length && callbacksSettled === registeredPaths.length;
-    try {
-      pool?.shutdown();
-      pool = null;
-    } catch {}
-    try {
-      closeSync(jsonlFd);
-    } catch {}
-
-    const ecEntries = Object.entries(errorCategoryCounts).sort((a, b) => b[1] - a[1]);
-    if (ecEntries.length > 0) {
-      console.log(`\nError categories:`);
-      for (const [cat, count] of ecEntries) {
-        console.log(`  ${cat}: ${count}`);
+    return (async () => {
+      let shutdownFailed = false;
+      let shutdownError: unknown;
+      let closeFailed = false;
+      let closeError: unknown;
+      try {
+        await pool?.shutdown();
+      } catch (error) {
+        shutdownFailed = true;
+        shutdownError = error;
+      } finally {
+        pool = null;
+        try {
+          closeSync(jsonlFd);
+        } catch (error) {
+          closeFailed = true;
+          closeError = error;
+        }
       }
-    }
-
-    const skipEntries = Object.entries(skipReasonCounts).sort((a, b) => b[1] - a[1]);
-    if (skipEntries.length > 0) {
-      console.log(`\nUnsupported features (skipped):`);
-      for (const [reason, count] of skipEntries) {
-        console.log(`  ${reason}: ${count}`);
+      if (shutdownFailed && closeFailed) {
+        throw new AggregateError([shutdownError, closeError], "Compiler pool shutdown and Test262 JSONL close failed");
       }
-    }
+      if (shutdownFailed) throw shutdownError;
+      if (closeFailed) throw closeError;
 
-    console.log(
-      `\nTest262 chunk ${chunkIndex + 1}/${totalChunks}: ${summary.total} total — ${summary.pass} pass, ${summary.fail} fail, ${summary.compile_error} CE, ${summary.skip} skip`,
-    );
-    if (retriesUsed > 0) {
-      console.log(`Compile-timeout retries (#1589): ${retriesUsed}/${MAX_RETRIES_PER_SHARD} used`);
-    }
-    if (poisonRetriesUsed > 0) {
-      console.log(`Poison-error retries (#1862): ${poisonRetriesUsed} used`);
-    }
+      const ecEntries = Object.entries(errorCategoryCounts).sort((a, b) => b[1] - a[1]);
+      if (ecEntries.length > 0) {
+        console.log(`\nError categories:`);
+        for (const [cat, count] of ecEntries) {
+          console.log(`  ${cat}: ${count}`);
+        }
+      }
 
-    const canonicalVerdicts = registeredPaths.reduce((count, path) => count + (canonicalRowCounts.get(path) ?? 0), 0);
-    const completion = {
-      schema: "test262-shard-completion-v2",
-      runTimestamp: RUN_TIMESTAMP,
-      chunkIndex,
-      chunkTotal: totalChunks,
-      target: TEST262_TARGET ?? "gc",
-      semanticProviders: TEST262_SEMANTIC_PROVIDERS,
-      registeredTests: registeredPaths.length,
-      registeredPaths,
-      // Keep recordedRows for the existing artifact readers while naming the
-      // invariant explicitly for new validators.
-      recordedRows: canonicalVerdicts,
-      canonicalVerdicts,
-      exclusions: {
-        proposal: { count: proposalExclusionPaths.length, paths: [...proposalExclusionPaths].sort() },
-        official: { count: officialExclusionPaths.length, paths: [...officialExclusionPaths].sort() },
-      },
-      callbacksStarted,
-      callbacksSettled,
-      allCallbacksSettled: allCallbacksSettledBeforePoolShutdown,
-    };
-    try {
-      // A duplicate RUN_TIMESTAMP must never replace evidence from an earlier
-      // attempt. The shell runner supplies a fresh timestamp; a collision is
-      // an infrastructure error that should remain visible to the validator.
-      writeFileSync(shardCompletionPath, JSON.stringify(completion, null, 2) + "\n", { flag: "wx" });
-    } catch (error) {
-      console.error(`Test262 shard completion manifest was not created: ${shardCompletionPath}: ${String(error)}`);
-      throw error;
-    }
-  });
+      const skipEntries = Object.entries(skipReasonCounts).sort((a, b) => b[1] - a[1]);
+      if (skipEntries.length > 0) {
+        console.log(`\nUnsupported features (skipped):`);
+        for (const [reason, count] of skipEntries) {
+          console.log(`  ${reason}: ${count}`);
+        }
+      }
+
+      console.log(
+        `\nTest262 chunk ${chunkIndex + 1}/${totalChunks}: ${summary.total} total — ${summary.pass} pass, ${summary.fail} fail, ${summary.compile_error} CE, ${summary.skip} skip`,
+      );
+      if (retriesUsed > 0) {
+        console.log(`Compile-timeout retries (#1589): ${retriesUsed}/${MAX_RETRIES_PER_SHARD} used`);
+      }
+      if (poisonRetriesUsed > 0) {
+        console.log(`Poison-error retries (#1862): ${poisonRetriesUsed} used`);
+      }
+
+      const canonicalVerdicts = registeredPaths.reduce((count, path) => count + (canonicalRowCounts.get(path) ?? 0), 0);
+      const completion = {
+        schema: "test262-shard-completion-v2",
+        runTimestamp: RUN_TIMESTAMP,
+        chunkIndex,
+        chunkTotal: totalChunks,
+        target: TEST262_TARGET ?? "gc",
+        semanticProviders: TEST262_SEMANTIC_PROVIDERS,
+        registeredTests: registeredPaths.length,
+        registeredPaths,
+        // Keep recordedRows for the existing artifact readers while naming the
+        // invariant explicitly for new validators.
+        recordedRows: canonicalVerdicts,
+        canonicalVerdicts,
+        exclusions: {
+          proposal: { count: proposalExclusionPaths.length, paths: [...proposalExclusionPaths].sort() },
+          official: { count: officialExclusionPaths.length, paths: [...officialExclusionPaths].sort() },
+        },
+        callbacksStarted,
+        callbacksSettled,
+        allCallbacksSettled: allCallbacksSettledBeforePoolShutdown,
+      };
+      try {
+        // A duplicate RUN_TIMESTAMP must never replace evidence from an earlier
+        // attempt. The shell runner supplies a fresh timestamp; a collision is
+        // an infrastructure error that should remain visible to the validator.
+        writeFileSync(shardCompletionPath, JSON.stringify(completion, null, 2) + "\n", { flag: "wx" });
+      } catch (error) {
+        console.error(`Test262 shard completion manifest was not created: ${shardCompletionPath}: ${String(error)}`);
+        throw error;
+      }
+    })();
+  }, 10_000);
 
   for (const [category, tests] of byCategory) {
     // describe.concurrent lets vitest run it() blocks within this describe up
