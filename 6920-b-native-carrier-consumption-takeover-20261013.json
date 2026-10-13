@@ -6,15 +6,16 @@
   "status": "in-progress",
   "branch": "codex/6920-b-native-allocator-carriers-20261013-01a12827",
   "claimed_at": "2026-10-13T06:38:30.746860Z",
-  "updated_at": "2026-10-13T06:38:30.746860Z",
-  "write_id": "b-bounded-takeover-4cf22cfc-ed94-4d37-b22d-205201264589:carrier",
+  "updated_at": "2026-10-13T08:17:29.536754Z",
+  "write_id": "b-carrier-f64-wasi-dda9455a-a31b-4e15-95a2-6c300c861ddd",
   "handoff_scope": [
     "src/ir/lower-generic.ts: representation-aware vector types and scratch",
     "src/ir/backend/{handles,lower-contracts,emitter}.ts: genuine GC and Linear vector representations",
     "src/ir/program-physical-plan.ts: native Linear physical signatures and resource planning",
     "src/ir/program-consumer.ts: body resolver, primary fill, emission and whole-attempt lifetime joins",
     "src/ir/program-native-invocation.ts: actual Linear runtime-operation wiring and revocation",
-    "src/backend/linear/program/: checked native memory resource pack, no source algorithms"
+    "src/backend/linear/program/: checked native memory resource pack, no source algorithms",
+    "src/ir/program/native-vector-resources.ts::deriveNativeVectorResourcePlan: extend only layout-free f64 vector layout discovery to wasmgc/wasi, preserving exact current wasmgc/standalone behavior, standalone-only externref layout/helper selection, vector callable provider target policy, canonical type recipes, and existing source/ABI/typeRef/persisted-layout checks; no host or Linear GC-resource admission"
   ],
   "handoff_authority": {
     "source": "human scope reply call_fHCisBpMmbCIm9ci7BYIEcqH",
@@ -76,5 +77,6 @@
     "blanket TypeScript/oracle retirement",
     "force push, hook bypass, main push"
   ],
-  "donor_policy": "Preserve original donors; authenticate actual source before adoption; receiving writes occur in fresh isolated worktrees."
+  "donor_policy": "Preserve original donors; authenticate actual source before adoption; receiving writes occur in fresh isolated worktrees.",
+  "previous_write_id": "b-bounded-takeover-4cf22cfc-ed94-4d37-b22d-205201264589:carrier"
 }
