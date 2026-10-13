@@ -216,8 +216,9 @@ import { NEW_INDEXED_FALLTHROUGH, tryCompileIndexedBuiltinNew } from "./new-inde
 import { tryCompileIntlHostOnlyNew } from "./new-intl-host-bridge.js"; // (#5355) standalone Intl refusal
 import { emitFnctorProtoGet, resolveUserFnctorName } from "./fnctor-prototype.js"; // (#2660 S3a) reconstruct `new F()` as $Object; (#3981) proto for a value-bound ctor
 import { emitStandalonePromiseFromExecutor, emitStandalonePromiseFromExecutorValue } from "../promise-executor.js"; // (#2959 / #2903 R1) native new Promise(executor)
+import { funcConstructorForCallee } from "../fnctor-ctor-decl.js"; // (#6974) a bare name is not a binding
 import { deriveFnctorFields, resolveFnctorSymbol, resolveEnclosingFnctorOwner } from "../fnctor-escape-gate.js"; // (#2660 S3a) canonical fnctor-name key; (#2773 S1) shared field derivation; (#2681/#2686 A1) `new this()` owner
-import { newExpressionReconstructsAsObject } from "../fnctor-instance-object-slot.js"; // (#4506 S1) the site-level reconstruct predicate the slot typer shares
+import { isPrototypeStoreValue, newExpressionReconstructsAsObject } from "../fnctor-instance-object-slot.js"; // (#4506 S1) the site-level reconstruct predicate the slot typer shares
 import {
   appendFnctorConstructorParam,
   emitFnctorConstructorArguments,
@@ -642,7 +643,7 @@ function resolvesToLateAssignedConstructSignatureValue(ctx: CodegenContext, call
   if (
     ctx.classSet.has(calleeExpr.text) ||
     ctx.externClasses.has(calleeExpr.text) ||
-    ctx.funcConstructorMap.has(calleeExpr.text)
+    funcConstructorForCallee(ctx, calleeExpr) // (#6974) a same-named alias is not the fnctor
   ) {
     return false;
   }
@@ -939,7 +940,7 @@ function resolvesToDynamicAnyCtorValue(ctx: CodegenContext, calleeExpr: ts.Expre
   if (!ts.isIdentifier(calleeExpr)) return false;
   const externClassName = ctx.externClasses.has(calleeExpr.text) && !bcv.shadowsExternClassName(ctx, calleeExpr);
   if (ctx.classSet.has(calleeExpr.text) || externClassName) return false;
-  if (ctx.funcConstructorMap?.has(calleeExpr.text)) return false;
+  if (funcConstructorForCallee(ctx, calleeExpr)) return false; // (#6974) identity, not the name
   // (#1930) Destructured-alias form for the symbol lookup (out of ratchet scope);
   // the type-flags check routes through the oracle (`typeFactOf`) rather than a
   // direct `getTypeAtLocation`.
@@ -2505,6 +2506,10 @@ function flattenCallArgs(args: readonly ts.Expression[]): ts.Expression[] | null
  *   (b) an inline member/element receiver `new F().x` / `new F()[i]` (unwrapping
  *       `( )`/`as`/`!`): an externref receiver routes through the dynamic
  *       `__extern_get` + `$proto` walk — the resolution path we want.
+ *   (c) (#6975) the right-hand side of a `<x>.prototype = new F` store. The
+ *       value becomes a [[Prototype]] link, and `__object_create` / the `$proto`
+ *       walk accept only an `$Object` there: a struct prototype was dropped, so
+ *       every `new <subclass>` lost the chain (`Box2D.inherit`'s `new K`).
  * Anything else (a struct-typed local or global, a call argument, a return, an
  * assignment target) → false → status-quo struct lowering. The conservative
  * miss costs a row, never the floor.
@@ -2536,7 +2541,7 @@ function fnctorNewResultConsumedAsExternref(
   }
   if (ts.isPropertyAccessExpression(parent) && parent.expression === inner) return true;
   if (ts.isElementAccessExpression(parent) && parent.expression === inner) return true;
-  return false;
+  return isPrototypeStoreValue(parent, inner);
 }
 
 /**
@@ -3983,7 +3988,7 @@ function tryCompileNativeConstructFromValue(
   )
     return undefined;
   // A compiled fnctor for this binding means the typed-struct path owns it.
-  if (ts.isIdentifier(calleeExpr) && ctx.funcConstructorMap.has(calleeExpr.text)) return undefined;
+  if (ts.isIdentifier(calleeExpr) && funcConstructorForCallee(ctx, calleeExpr)) return undefined;
   const runtimeFunctionAlias =
     ts.isIdentifier(calleeExpr) &&
     ctx.runtimeEvalCallableBoundaryEnabled === true &&
@@ -7636,8 +7641,8 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
       // The helper declined without emitting (its contract) — fall through to
       // the ordinary cached/struct path below, exactly as before.
     }
-    // Check cache first — if we already built a constructor for this function
-    const cachedFnCtor = ctx.funcConstructorMap.get(fnName);
+    // Check cache first — only when the callee binds that function (#6974: `var K = NS.T` is not `function K`)
+    const cachedFnCtor = funcConstructorForCallee(ctx, calleeIdent);
     if (cachedFnCtor) {
       const ctorFuncIdx = ctx.funcMap.get(cachedFnCtor.ctorFuncName);
       if (ctorFuncIdx !== undefined) {
