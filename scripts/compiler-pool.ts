@@ -10,7 +10,7 @@
  * Usage:
  *   const pool = new CompilerPool(4);
  *   const result = await pool.runTest(source, { execute: true, ... });
- *   pool.shutdown();
+ *   await pool.shutdown();
  */
 import { fork, type ChildProcess } from "child_process";
 import { join } from "path";
@@ -73,6 +73,13 @@ interface ForkState {
   };
 }
 
+interface ChildLifetime {
+  identity: number;
+  errors: unknown[];
+  signals: { signal: NodeJS.Signals; sent?: boolean; error?: unknown }[];
+  exit?: { code: number | null; signal: NodeJS.Signals | null };
+}
+
 type QueueItem = {
   id: number;
   msg: Record<string, any>;
@@ -95,6 +102,12 @@ export class CompilerPool {
   private readyCount = 0;
   private workerPath: string;
   private shuttingDown = false;
+  private outstandingChildren = new Map<ChildProcess, ChildLifetime>();
+  private nextChildIdentity = 0;
+  private forkHandlerDetachers = new Map<ChildProcess, () => void>();
+  private shutdownPromise: Promise<void> | null = null;
+  private shutdownResolve: (() => void) | null = null;
+  private shutdownTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     private size = 4,
@@ -116,7 +129,7 @@ export class CompilerPool {
 
   private forkProcess(): ChildProcess {
     const maxOldSpaceSize = process.env.TEST262_WORKER_MAX_OLD_SPACE_SIZE ?? "512";
-    return fork(this.workerPath, [], {
+    const proc = fork(this.workerPath, [], {
       // (#5353) stderr is INHERITED, not piped. Everything a fork writes there
       // is provenance or a fatal: the runtime-eval tier announcement (#2928 E7,
       // which was written to be recoverable from a run log and never was), the
@@ -133,12 +146,24 @@ export class CompilerPool {
       // diagnostic override.
       env: { ...process.env, TZ: process.env.TEST262_TZ ?? "UTC" },
     });
+    // Own this exact generation before any job handler or signal can see it.
+    const lifetime: ChildLifetime = { identity: ++this.nextChildIdentity, errors: [], signals: [] };
+    this.outstandingChildren.set(proc, lifetime);
+    proc.on("error", (error) => lifetime.errors.push(error));
+    proc.once("exit", (code, signal) => {
+      lifetime.exit = { code, signal };
+    });
+    proc.once("close", () => {
+      this.outstandingChildren.delete(proc);
+      this.finishShutdownIfClosed();
+    });
+    return proc;
   }
 
   private attachForkHandlers(state: ForkState, countInitialReady: boolean) {
     const proc = state.proc;
-    proc.on("message", (msg: any) => {
-      if (this.shuttingDown) return;
+    const onMessage = (msg: any) => {
+      if (this.shuttingDown || state.proc !== proc) return;
       if (msg.type === "ready") {
         state.ready = true;
         if (countInitialReady) this.readyCount++;
@@ -166,13 +191,23 @@ export class CompilerPool {
           this.dispatch();
         }
       }
-    });
+    };
 
-    proc.on("error", (err) => this.handleForkFailure(state, proc, `error: ${err.message}`));
-
-    proc.on("exit", (code, signal) =>
-      this.handleForkFailure(state, proc, `exit ${code ?? "null"}${signal ? ` (${signal})` : ""}`),
-    );
+    const onError = (err: Error) => this.handleForkFailure(state, proc, `error: ${err.message}`);
+    const onExit = (code: number | null, signal: NodeJS.Signals | null) =>
+      this.handleForkFailure(state, proc, `exit ${code ?? "null"}${signal ? ` (${signal})` : ""}`);
+    proc.on("message", onMessage);
+    proc.on("error", onError);
+    proc.on("exit", onExit);
+    const detachJobHandlers = () => {
+      // Leave lifetime and external listeners intact, including late errors.
+      proc.off("message", onMessage);
+      proc.off("error", onError);
+      proc.off("exit", onExit);
+      this.forkHandlerDetachers.delete(proc);
+    };
+    this.forkHandlerDetachers.set(proc, detachJobHandlers);
+    proc.once("close", detachJobHandlers);
   }
 
   /** Wait for all forks to be ready */
@@ -356,7 +391,7 @@ export class CompilerPool {
         free.busy = false;
         free.ready = false;
         free.active = undefined;
-        free.proc.kill("SIGKILL");
+        this.signalChild(free.proc, "SIGKILL");
         this.respawnFork(free);
       }, job.timeoutMs);
 
@@ -429,9 +464,10 @@ export class CompilerPool {
   private respawnFork(state: ForkState, reason?: string) {
     if (this.shuttingDown) return;
     const oldProc = state.proc;
-    oldProc.removeAllListeners();
+    // Retire job handlers before kill can synchronously emit an error.
+    this.forkHandlerDetachers.get(oldProc)?.();
     if (!oldProc.killed) {
-      oldProc.kill("SIGTERM");
+      this.signalChild(oldProc, "SIGTERM");
     }
     if (reason) {
       console.error(`[pool] recycling worker: ${reason}`);
@@ -443,14 +479,79 @@ export class CompilerPool {
     this.attachForkHandlers(state, false);
   }
 
-  /** Shut down all forks — OS reclaims all memory */
-  shutdown() {
+  private signalChild(proc: ChildProcess, signal: NodeJS.Signals, retainFailure = false) {
+    const request: ChildLifetime["signals"][number] = { signal };
+    const lifetime = this.outstandingChildren.get(proc);
+    lifetime?.signals.push(request);
+    try {
+      request.sent = proc.kill(signal);
+    } catch (error) {
+      request.error = error;
+      lifetime?.errors.push(error);
+      if (!retainFailure) throw error;
+    }
+  }
+
+  private finishShutdownIfClosed() {
+    if (this.outstandingChildren.size !== 0 || !this.shutdownResolve) return;
+    if (this.shutdownTimer !== null) clearTimeout(this.shutdownTimer);
+    this.shutdownTimer = null;
+    const resolve = this.shutdownResolve;
+    this.shutdownResolve = null;
+    resolve();
+  }
+
+  /** Await actual close of active AND retired generations; legacy ignored calls remain handled. */
+  shutdown(timeoutMs = 5_000): Promise<void> {
+    if (this.shutdownPromise) return this.shutdownPromise;
     this.shuttingDown = true;
-    for (const { proc } of this.forks) {
-      proc.removeAllListeners();
-      if (!proc.killed) {
-        proc.kill("SIGTERM");
+    const startedAt = Date.now();
+    this.shutdownPromise = new Promise<void>((resolve, reject) => {
+      if (!Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs > 5_000) {
+        reject(new RangeError("CompilerPool shutdown timeout must be finite, positive and at most 5000ms"));
+        return;
+      }
+      this.shutdownResolve = resolve;
+      if (this.outstandingChildren.size === 0) {
+        this.finishShutdownIfClosed();
+        return;
+      }
+      this.shutdownTimer = setTimeout(
+        () => {
+          this.shutdownResolve = null;
+          this.shutdownTimer = null;
+          const outstandingChildren = [...this.outstandingChildren].map(([proc, lifetime]) => ({
+            identity: lifetime.identity,
+            pid: proc.pid,
+            killed: proc.killed,
+            exitCode: proc.exitCode,
+            signalCode: proc.signalCode,
+            exit: lifetime.exit,
+            closeObserved: false,
+            signals: [...lifetime.signals],
+            errors: [...lifetime.errors],
+          }));
+          reject(
+            Object.assign(new Error(`CompilerPool shutdown timed out after ${timeoutMs}ms awaiting child close`), {
+              name: "CompilerPoolShutdownTimeoutError",
+              outstandingChildren,
+            }),
+          );
+        },
+        Math.max(0, timeoutMs - (Date.now() - startedAt)),
+      );
+    });
+    // Observe rejection synchronously for old void callers; awaited callers receive the ORIGINAL promise.
+    void this.shutdownPromise.catch((error) => {
+      try {
+        console.error(`[pool] shutdown failed: ${String(error)}`);
+      } catch {}
+    });
+    for (const [proc, lifetime] of this.outstandingChildren) {
+      if (this.outstandingChildren.has(proc) && !proc.killed && !lifetime.signals.some((request) => request.sent)) {
+        this.signalChild(proc, "SIGTERM", true);
       }
     }
+    return this.shutdownPromise;
   }
 }
