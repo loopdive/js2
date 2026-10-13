@@ -1924,8 +1924,8 @@
   {
     "edition": "ES2021",
     "pass": 336,
-    "fail": 83,
-    "ce": 53,
+    "fail": 86,
+    "ce": 50,
     "skip": 0,
     "total": 472,
     "pct": 71,
@@ -1942,8 +1942,8 @@
       {
         "name": "Promise.any",
         "pass": 49,
-        "fail": 22,
-        "ce": 21,
+        "fail": 25,
+        "ce": 18,
         "skip": 0,
         "total": 92,
         "pct": 53
@@ -1978,8 +1978,8 @@
       {
         "name": "arrow-function",
         "pass": 17,
-        "fail": 12,
-        "ce": 11,
+        "fail": 15,
+        "ce": 8,
         "skip": 0,
         "total": 40,
         "pct": 43
@@ -1996,8 +1996,8 @@
       {
         "name": "Symbol",
         "pass": 13,
-        "fail": 18,
-        "ce": 8,
+        "fail": 21,
+        "ce": 5,
         "skip": 0,
         "total": 39,
         "pct": 33
@@ -2023,8 +2023,8 @@
       {
         "name": "Symbol.iterator",
         "pass": 10,
-        "fail": 16,
-        "ce": 4,
+        "fail": 19,
+        "ce": 1,
         "skip": 0,
         "total": 30,
         "pct": 33
@@ -2032,8 +2032,8 @@
       {
         "name": "computed-property-names",
         "pass": 22,
-        "fail": 2,
-        "ce": 3,
+        "fail": 5,
+        "ce": 0,
         "skip": 0,
         "total": 27,
         "pct": 81
@@ -3571,57 +3571,57 @@
   },
   {
     "edition": "ES2026",
-    "pass": 272,
-    "fail": 4078,
-    "ce": 571,
+    "pass": 4588,
+    "fail": 194,
+    "ce": 139,
     "skip": 0,
     "total": 4921,
-    "pct": 6,
+    "pct": 93,
     "features": [
       {
         "name": "Temporal",
-        "pass": 169,
-        "fail": 3991,
-        "ce": 451,
+        "pass": 4485,
+        "fail": 107,
+        "ce": 19,
         "skip": 0,
         "total": 4611,
-        "pct": 4
+        "pct": 97
       },
       {
         "name": "Symbol",
-        "pass": 75,
-        "fail": 296,
-        "ce": 23,
+        "pass": 386,
+        "fail": 6,
+        "ce": 2,
         "skip": 0,
         "total": 394,
-        "pct": 19
+        "pct": 98
       },
       {
         "name": "BigInt",
-        "pass": 48,
-        "fail": 116,
-        "ce": 15,
+        "pass": 170,
+        "fail": 7,
+        "ce": 2,
         "skip": 0,
         "total": 179,
-        "pct": 27
+        "pct": 95
       },
       {
         "name": "arrow-function",
-        "pass": 12,
-        "fail": 142,
-        "ce": 24,
+        "pass": 173,
+        "fail": 5,
+        "ce": 0,
         "skip": 0,
         "total": 178,
-        "pct": 7
+        "pct": 97
       },
       {
         "name": "Reflect.construct",
-        "pass": 10,
-        "fail": 129,
+        "pass": 133,
+        "fail": 6,
         "ce": 0,
         "skip": 0,
         "total": 139,
-        "pct": 7
+        "pct": 96
       },
       {
         "name": "Array.fromAsync",
@@ -3697,12 +3697,12 @@
       },
       {
         "name": "Intl.Era-monthcode",
-        "pass": 0,
-        "fail": 9,
-        "ce": 1,
+        "pass": 10,
+        "fail": 0,
+        "ce": 0,
         "skip": 0,
         "total": 10,
-        "pct": 0
+        "pct": 100
       },
       {
         "name": "Math.sumPrecise",
@@ -3733,12 +3733,12 @@
       },
       {
         "name": "Symbol.toStringTag",
-        "pass": 0,
-        "fail": 4,
+        "pass": 2,
+        "fail": 2,
         "ce": 0,
         "skip": 0,
         "total": 4,
-        "pct": 0
+        "pct": 50
       },
       {
         "name": "Map",
