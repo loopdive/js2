@@ -185,10 +185,11 @@ const NUMERIC_SLOT_KINDS: ReadonlySet<ValType["kind"]> = new Set(["i32", "i64", 
  * path reads the value. An identifier with no slot here keeps the fold.
  *
  * A slot that is non-numeric only because of where the binding lives (a
- * script-level `var` sits in an externref global) proves nothing: unless the
- * file actually writes the name after its declaration, the initializer IS the
- * value and the fold stands (test262 `S15.3.4.3_A5_T1`: `var obj = 1; …
- * typeof obj.touched` must stay "undefined").
+ * script-level `var` sits in an externref global) proves nothing. Keep the
+ * authored fold for genuine variable bindings without a recorded write
+ * (test262 `S15.3.4.3_A5_T1`: `typeof obj.touched` stays "undefined"). A
+ * parameter default cannot certify its incoming value: the caller may supply
+ * an object without any assignment in the function body.
  */
 export function primitiveFactContradictedBySlot(
   ctx: CodegenContext,
@@ -200,6 +201,10 @@ export function primitiveFactContradictedBySlot(
   if (!ts.isIdentifier(id)) return false;
   const slot = bindingSlotType(ctx, fctx, id.text);
   if (slot === undefined || NUMERIC_SLOT_KINDS.has(slot.kind)) return false;
+  // A default is not a variable initializer: incoming arguments may replace it.
+  // Preserve existing variable admission instead of adding initializer rules.
+  const declarations = ctx.oracle.declarationsOf(id);
+  if (declarations.length === 0 || !declarations.every(ts.isVariableDeclaration)) return true;
   return isWrittenAfterDeclaration(id.getSourceFile(), id.text);
 }
 
