@@ -97,6 +97,7 @@ import { injectTimerShimOnly, preprocessImports } from "./import-resolver.js";
 import { PositionMap } from "./position-map.js";
 import { profileCount, profilePhase } from "./compile-profile.js";
 import { resolveCompileTargetProfile } from "./target-profile.js";
+import { prepareNativeLinearPipeline, preparedPipelineArtifacts } from "./compiler/native-linear-pipeline.js";
 import { injectProcessStdinPrelude } from "./process-stdin-prelude.js";
 import { injectIteratorStaticsPrelude } from "./iterator-statics-prelude.js";
 import { applyIntlListFormatPrelude, applyIntlListFormatPreludeToFiles } from "./intl-listformat-prelude.js";
@@ -1096,6 +1097,19 @@ function runPipeline(input: PipelineInput): CompileResult {
   let mod;
   let telemetry: Partial<FailureTelemetry> = EMPTY_FAILURE_TELEMETRY;
   try {
+    if (
+      (useLinear || options.backend === "wasmgc") &&
+      (targetProfile.target === "standalone" || targetProfile.target === "wasi")
+    ) {
+      const prepared = runPreparedIrPipelinePresentation(input);
+      if (prepared.kind === "artifacts" || prepared.kind === "output-failed") return prepared.artifacts;
+      const detail =
+        prepared.kind === "unsupported"
+          ? `${prepared.failure.code}: ${prepared.failure.detail}`
+          : prepared.gaps.map((gap) => gap.detail).join("; ");
+      pushSourceAnchoredDiagnostic(errors, diagnosticAnchor, `Prepared IR: ${detail}`, "error");
+      return failResult(errors);
+    }
     if (useLinear) {
       mod = multiAst
         ? generateLinearMultiModule(multiAst, { exposeArenaReset: options.allocator === "arena-reset" })
@@ -1207,13 +1221,18 @@ export function runPreparedIrPipelinePresentation(input: PipelineInput): Prepare
     moduleName: options.moduleName ?? "module",
     ...(targetProfile.backend === "linear" ? { linear: buildLinearOptions(options, undefined) } : {}),
   };
-  const prepared = prepareIrProgramPresentation({
+  const prepare =
+    targetProfile.backend === "linear" && (target === "standalone" || target === "wasi")
+      ? prepareNativeLinearPipeline
+      : prepareIrProgramPresentation;
+  const prepared = prepare({
     preparation: {
       sourceFiles: multiAst?.sourceFiles ?? [entryAst.sourceFile],
       entrySource: entryAst.sourceFile,
       checker: entryAst.checker,
       policy: { backend: backendOptions.backend, target },
       deferTopLevelInit: options.deferTopLevelInit === true,
+      ...(target === "host" ? {} : { linearVectorProjection: "native-f64" as const }),
     },
     backendOptions,
     output: {
@@ -1253,37 +1272,6 @@ export function runPreparedIrPipelinePresentation(input: PipelineInput): Prepare
     startup: prepared.startup,
     artifacts,
     ...(finalization ? { finalization: finalization.receipt! } : {}),
-  };
-}
-
-/** Preserve produced artifact fields without inventing legacy route telemetry. */
-function preparedPipelineArtifacts(
-  result: CompileResult,
-): Extract<PreparedIrPipelinePresentationResult, { kind: "artifacts" }>["artifacts"] {
-  return {
-    binary: result.binary,
-    wat: result.wat,
-    dts: result.dts,
-    importsHelper: result.importsHelper,
-    success: result.success,
-    errors: result.errors,
-    stringPool: result.stringPool,
-    sourceMap: result.sourceMap,
-    imports: result.imports,
-    runtimeRecGroupFingerprint: result.runtimeRecGroupFingerprint,
-    targetProfile: result.targetProfile,
-    hostImportInventory: result.hostImportInventory,
-    hostImportSummary: result.hostImportSummary,
-    capabilityRequirements: result.capabilityRequirements,
-    capabilityProviderDiagnostics: result.capabilityProviderDiagnostics,
-    cHeader: result.cHeader,
-    wit: result.wit,
-    hasMain: result.hasMain,
-    hasTopLevelStatements: result.hasTopLevelStatements,
-    exportSignatures: result.exportSignatures,
-    exportBoundaryPolicies: result.exportBoundaryPolicies,
-    adapterManifest: result.adapterManifest,
-    explanation: result.explanation,
   };
 }
 

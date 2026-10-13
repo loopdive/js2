@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 // Twelve source-successor controls, separate from all semantic and historical cohorts.
+import { readBeforeIrNativeAllocationTypeOwnership } from "./helpers/ir-native-allocation-type-ownership-successor.js";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
@@ -31,11 +32,15 @@ import {
   irValidationAnalysisCurrentPaths,
   irValidationAnalysisOriginalPaths,
   irValidationAnalysisReceiptPath,
-  readIrValidationAnalysisActual,
   reconstructIrValidationAnalysisSources,
 } from "./helpers/ir-validation-analysis-relocation.js";
 
-const raw = (path: string): string => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
+// These original controls exercise authenticated predecessor stages. The new
+// type-ownership suite separately proves actual current-source drift and roles.
+const actualRaw = (path: string): string => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
+const raw = (path: string): string => readBeforeIrNativeAllocationTypeOwnership(path, actualRaw);
+const readIrValidationAnalysisActual = (path: string): string =>
+  readBeforeIrAllocationProvenanceLookup(path, (requested) => readBeforeIrAllocationRuleSharing(requested, raw));
 const [ownershipPath, escapePath, encodingPath, rulePath, censusPath] = irAllocationRuleSharingPaths;
 const expectedBefore = [
   [ownershipPath, 23654, "9c622ef53c8c9c1ecbc1c0bc8eee907dfb00da82a5f16c89feecb0c6d918495f"],
@@ -141,7 +146,7 @@ function composed(reader: (path: string) => string) {
   return (path: string) =>
     readBeforeIrAllocationProvenanceLookup(path, (requested) => readBeforeIrAllocationRuleSharing(requested, reader));
 }
-function oldPositive(reader?: (path: string) => string) {
+function oldPositive(reader: (path: string) => string = readIrValidationAnalysisActual) {
   const old = authenticateIrValidationAnalysisRelocation(raw(irValidationAnalysisReceiptPath));
   const originals = reconstructIrValidationAnalysisSources(reader);
   expect([...originals.keys()]).toEqual(irValidationAnalysisOriginalPaths);

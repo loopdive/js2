@@ -76,7 +76,6 @@ import {
   beginNativeSourceClosureEmission,
   bindNativeSourceClosureUnits,
   nativeSourceClosureValueType,
-  nativeSourceClosureResolver,
   fillPreparedPrimaryUnit,
   requireCompletedNativeSourceClosures,
   type NativeSourceClosureEmission,
@@ -92,6 +91,8 @@ import {
   nativeStringLiteralReservationInventory,
   fillNativeStringLiteralResources,
   requireCompletedNativeStringLiterals,
+  requireNativeStringLiteral,
+  nativeStringLiteralGlobalMatches,
   type NativeStringLiteralReservations,
   type NativeStringLiteralTypeReservations,
 } from "../backend/wasmgc/resources/native-string-literals.js";
@@ -141,7 +142,7 @@ import { WasmGcEmitter } from "./backend/wasmgc-emitter.js";
 import { irCallableBindingKey } from "./callable-bindings.js";
 import type { IrBindingId, IrUnitId } from "./identity.js";
 import { lowerIrFunctionBody, wasmValueTypeConverter, type IrLowerResolver } from "./lower.js";
-import { forEachInstrDeep, type IrFuncRef, type IrFunction, type IrGlobalRef } from "./nodes.js";
+import { forEachInstrDeep, type IrFuncRef, type IrFunction } from "./nodes.js";
 import type { IrPreparationFailure } from "./outcomes.js";
 import { ProgramAbiMap, type ProgramAbiFinalIndex } from "./program-abi.js";
 import { observePreparedIrProgram } from "./program-observation.js";
@@ -158,6 +159,36 @@ import {
   type PreparedIrProgramFailure,
   type PreparedIrProgramRuntimeProjection,
 } from "./program.js";
+import {
+  defaultInit,
+  reservePhysicalImports,
+  reservePhysicalExceptionTag,
+  reserveStartupAdapter,
+  physicalBodyResolver,
+  physicalSignatureConverter,
+  bindPhysicalAbi,
+  fillStartupAdapter,
+  collectPhysicalUnitReceipts,
+} from "./program-body-resources.js";
+import { acquirePreparedLinearAllocation } from "./program/linear-allocation-outcome.js";
+import {
+  reserveAndBindPhysicalReferenceError,
+  fillPhysicalReferenceError,
+  requireCompletedPhysicalReferenceError,
+  completedPhysicalReferenceErrorReceipt,
+  verifyCompletedPhysicalReferenceErrorReceipt,
+  type CompletedPhysicalReferenceErrorReceipt,
+} from "./program-reference-error.js";
+import {
+  planPreparedLinearMemory,
+  linearMemoryOptionsUnsupported,
+  reservePreparedLinearMemory,
+  preparedLinearMemoryBindings,
+  fillPreparedLinearMemory,
+  requireCompletedPreparedLinearMemory,
+} from "../backend/linear/program/memory.js";
+import type { PreparedLinearMemoryPlan } from "../backend/linear/program/contracts.js";
+import type { PreparedLinearBodyBindings } from "../backend/linear/program/memory.js";
 import { createEmptyModule, type Instr, type ValType, type WasmFunction } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -166,6 +197,8 @@ import { createEmptyModule, type Instr, type ValType, type WasmFunction } from "
 
 interface AcceptanceRecord {
   readonly physical: PhysicalSetupPlan;
+  /** Private whole-attempt lifetime, including failures outside ledger operations. */
+  readonly emission: { state: "accepted" | "emitting" | "completed" | "failed" };
   /** Exact issued dependencies; never deep-clone the native-value plan. */
   readonly nativeStrings?: NativeStringValueReservationInput;
   readonly nativeSnapshot?: unknown;
@@ -173,6 +206,7 @@ interface AcceptanceRecord {
   readonly sourceClosures?: NativeSourceClosureRequirements;
   readonly nativeInvocation?: NativeInvocationRequirements;
   readonly nativeRealm?: NativeRealmRequirements;
+  readonly linearMemory?: PreparedLinearMemoryPlan;
 }
 interface AcceptedNativeNumberFormat {
   readonly requirements: NativeNumberFormatRequirements;
@@ -193,6 +227,7 @@ interface EmissionObservation {
   readonly reservations: PhysicalModuleReservations;
   readonly functions: readonly FunctionReservation[];
   readonly support: readonly EmittedSupportFunctionReceipt[];
+  readonly referenceError?: CompletedPhysicalReferenceErrorReceipt;
   readonly startupAdapterIndex?: number;
   readonly bindings: readonly (readonly [IrBindingId, ProgramAbiFinalIndex])[];
 }
@@ -386,7 +421,41 @@ export function acceptPreparedIrProgram(
     : undefined;
   if (nativeStrings && "kind" in nativeStrings) return nativeStrings;
   const nativeNumberFormat = prepareNativeNumberFormat(program, options, runtime);
-  const physical = planPhysicalSetup(program, options, runtime, nativeStrings, nativeNumberFormat);
+  const optionGap = options.backend === "linear" ? linearMemoryOptionsUnsupported(options) : undefined;
+  if (optionGap) {
+    const unitId = runtime.prepared.functions[0]?.unitId ?? program.inventory.terminalUnits[0]?.id;
+    if (!unitId) programInvariant("invalid-prepared-data", "Linear option refusal has no canonical owner");
+    return locate(program, unitId, {
+      kind: "unsupported",
+      code: "array-representation-unsupported",
+      stage: "resolve",
+      detail: optionGap,
+    });
+  }
+  const linearEvidence = acquirePreparedLinearAllocation(program, options, runtime);
+  if (linearEvidence.kind === "unsupported") return linearEvidence;
+  const linearResult = linearEvidence.input
+    ? planPreparedLinearMemory({ program, projection: runtime, options })
+    : undefined;
+  if (linearResult?.kind === "unsupported") {
+    const location = linearResult.location as { readonly unitId?: IrUnitId } | undefined;
+    const unitId = location?.unitId ?? runtime.prepared.functions[0]?.unitId ?? program.inventory.terminalUnits[0]?.id;
+    if (!unitId) programInvariant("invalid-prepared-data", "Linear refusal has no canonical owning unit");
+    const located = locate(program, unitId, {
+      kind: "unsupported",
+      code: "array-representation-unsupported",
+      stage: "resolve",
+      detail: linearResult.detail,
+      ...(linearResult.location === undefined ? {} : { cause: linearResult.location }),
+    });
+    return Object.freeze({
+      ...located,
+      ...(linearResult.location === undefined ? {} : { cause: linearResult.location }),
+    });
+  }
+
+  const linearMemory = linearResult?.kind === "supported" ? linearResult.plan : undefined;
+  const physical = planPhysicalSetup(program, options, runtime, nativeStrings, nativeNumberFormat, linearMemory);
   if (physical.kind !== "planned") return physical;
 
   const accepted = Object.freeze({
@@ -399,11 +468,13 @@ export function acceptPreparedIrProgram(
     accepted,
     Object.freeze({
       physical: physical.plan,
+      emission: { state: "accepted" as const },
       ...(nativeStrings ? { nativeStrings, nativeSnapshot: freezePreparedIrValue(nativeStrings.demands) } : {}),
       ...(nativeNumberFormat ? { nativeNumberFormat } : {}),
       ...(sourceClosures ? { sourceClosures } : {}),
       ...(nativeInvocation ? { nativeInvocation } : {}),
       ...(nativeRealm ? { nativeRealm } : {}),
+      ...(linearMemory ? { linearMemory } : {}),
     }),
   );
   observePreparedIrProgram({ phase: "accepted", program, backend: options.backend, target: options.target });
@@ -451,6 +522,18 @@ export function emittedPhysicalSetupPlan(emitted: EmittedPreparedIrProgram): Phy
   return record.physical;
 }
 
+/** Completed physical Error DATA is authenticated against this exact consumer emission and module. */
+export function emittedReferenceErrorResourceReceipt(
+  emitted: EmittedPreparedIrProgram,
+): CompletedPhysicalReferenceErrorReceipt | undefined {
+  const record = startupAdapters.get(emitted);
+  if (!record) programInvariant("invalid-transaction-capability", "emission was not produced by this consumer");
+  emittedSupportFunctionReceipts(emitted);
+  return record.referenceError
+    ? verifyCompletedPhysicalReferenceErrorReceipt(emitted.module, record.referenceError)
+    : undefined;
+}
+
 /** Final binding index observed at emission; does not authenticate later module mutations. */
 export function emittedProgramBindingIndex(
   emitted: EmittedPreparedIrProgram,
@@ -467,21 +550,6 @@ function emissionFailed(detail: string): never {
   throw new PreparedIrProgramInvariantError("emission-failed", `program emission: ${detail}`);
 }
 
-function defaultInit(type: ValType): Instr[] {
-  switch (type.kind) {
-    case "i32":
-      return [{ op: "i32.const", value: 0 }];
-    case "i64":
-      return [{ op: "i64.const", value: 0n }];
-    case "f32":
-      return [{ op: "f32.const", value: 0 }];
-    case "f64":
-      return [{ op: "f64.const", value: 0 }];
-    default:
-      return emissionFailed(`no default initializer for global type ${type.kind}`);
-  }
-}
-
 /**
  * Emit one accepted program exactly once. Every physical resource is reserved
  * from the plan acceptance derived, the index space is frozen, A's ABI map is
@@ -496,19 +564,58 @@ export function emitAcceptedIrProgram(accepted: AcceptedPreparedIrProgram): Emit
   if (emissions.has(accepted)) programInvariant("invalid-transaction-capability", "acceptance was already emitted");
   emissions.add(accepted);
   const { program, options } = accepted;
+  const record = acceptances.get(accepted)!;
+  const runtime = accepted.runtime;
+  record.emission.state = "emitting";
+  const assertEmissionActive = (): void => {
+    if (
+      acceptances.get(accepted) !== record ||
+      record.physical !== plan ||
+      accepted.program !== program ||
+      accepted.runtime !== runtime ||
+      accepted.options !== options ||
+      record.emission.state !== "emitting"
+    )
+      emissionFailed("emission attempt is no longer active for this acceptance");
+  };
   const backend = options.backend;
-  observePreparedIrProgram({ phase: "emission-started", program, backend, target: options.target });
-  let result: EmittedPreparedIrProgram;
+  let observing = true;
   try {
-    result = materializePhysicalProgram(accepted, plan);
+    observePreparedIrProgram({ phase: "emission-started", program, backend, target: options.target });
+    observing = false;
+    assertEmissionActive();
+    const result = materializePhysicalProgram(accepted, plan, assertEmissionActive);
+    assertEmissionActive();
+    observing = true;
+    observePreparedIrProgram({ phase: "emitted", program, backend, target: options.target });
+    record.emission.state = "completed";
+    return result;
   } catch (error) {
-    if (error instanceof PreparedIrProgramInvariantError) throw error;
+    record.emission.state = "failed";
+    // Existing observation clients receive their original exception identity.
+    if (observing || error instanceof PreparedIrProgramInvariantError) throw error;
     return emissionFailed(
       `physical module construction failed: ${error instanceof Error ? error.message : String(error)}`,
     );
+  } finally {
+    if (record.emission.state === "emitting") record.emission.state = "failed";
   }
-  observePreparedIrProgram({ phase: "emitted", program, backend, target: options.target });
-  return result;
+}
+
+/** Captured emission-local callables lose authority when the entire attempt ends. */
+function activeEmissionResolver(resolver: IrLowerResolver, assertEmissionActive: () => void): IrLowerResolver {
+  assertEmissionActive();
+  return Object.fromEntries(
+    Object.entries(resolver).map(([key, value]) => [
+      key,
+      typeof value === "function"
+        ? (...args: unknown[]) => {
+            assertEmissionActive();
+            return Reflect.apply(value, resolver, args);
+          }
+        : value,
+    ]),
+  ) as IrLowerResolver;
 }
 
 /** Authenticate accepted native inputs and seal their ABI before any allocation. */
@@ -555,6 +662,7 @@ function prepareNativeEmission(accepted: AcceptedPreparedIrProgram, plan: Physic
       runtime,
       record.nativeStrings,
       record.nativeNumberFormat,
+      record.linearMemory,
     );
     if (current.kind !== "planned" || preparedIrDataMismatch(current.plan, plan) !== undefined)
       emissionFailed("source closure physical plan is no longer current");
@@ -573,7 +681,14 @@ function prepareNativeEmission(accepted: AcceptedPreparedIrProgram, plan: Physic
       formatter.support.functions[0] !== formatter.body
     )
       emissionFailed("formatter support changed after acceptance");
-    const current = planPhysicalSetup(program, accepted.options, runtime, record.nativeStrings, formatter);
+    const current = planPhysicalSetup(
+      program,
+      accepted.options,
+      runtime,
+      record.nativeStrings,
+      formatter,
+      record.linearMemory,
+    );
     if (current.kind !== "planned" || preparedIrDataMismatch(current.plan, plan) !== undefined)
       emissionFailed("formatter physical plan is no longer current");
   }
@@ -586,6 +701,11 @@ function prepareNativeEmission(accepted: AcceptedPreparedIrProgram, plan: Physic
     if (record.nativeStrings.valueRequirements)
       assertNativeValueResourcePlanFor(record.nativeStrings.valueRequirements, program, runtime, "native-string");
   }
+  if (
+    Boolean(record.linearMemory) !== Boolean(plan.linearMemory) ||
+    (record.linearMemory && preparedIrDataMismatch(record.linearMemory, plan.linearMemory) !== undefined)
+  )
+    emissionFailed("Linear memory plan differs from its acceptance owner");
   const native = plan.nativeStrings;
   const layoutOnly = native?.resources.mode === "formatter-layout";
   if (layoutOnly) {
@@ -627,6 +747,7 @@ function prepareNativeEmission(accepted: AcceptedPreparedIrProgram, plan: Physic
       runtime,
       record.nativeStrings,
       record.nativeNumberFormat,
+      record.linearMemory,
     );
     if (current.kind !== "planned" || preparedIrDataMismatch(current.plan, plan) !== undefined)
       emissionFailed("async physical plan is no longer current");
@@ -776,6 +897,7 @@ function recordEmissionObservation(
   startAdapter: FunctionReservation | undefined,
   sourceFunctions: readonly FunctionReservation[],
   supportFunctions: readonly FunctionReservation[],
+  referenceError?: CompletedPhysicalReferenceErrorReceipt,
 ): void {
   const bindings: (readonly [IrBindingId, ProgramAbiFinalIndex])[] = [];
   for (const entry of abi.entries()) {
@@ -801,45 +923,9 @@ function recordEmissionObservation(
       reservations,
       functions: Object.freeze(functions),
       support: Object.freeze(support),
+      ...(referenceError ? { referenceError } : {}),
     }),
   );
-}
-
-function physicalSignatureConverter(
-  vectorTypes: NativeVectorTypeReservations,
-  stringTypes: NativeStringLiteralTypeReservations | undefined,
-  formatterScratch: NonNullable<PhysicalSetupPlan["nativeStrings"]>["formatterScratch"],
-  reservations: PhysicalModuleReservations,
-  sourceClosures?: NativeSourceClosureEmission,
-) {
-  const physicalSignature = (signature: {
-    readonly params: readonly PhysicalSignatureType[];
-    readonly results: readonly PhysicalSignatureType[];
-  }) => {
-    const convert = (types: readonly PhysicalSignatureType[]): ValType[] =>
-      types.map((type) => {
-        if (type.kind === "closure" || type.kind === "callable" || type.kind === "boxed") {
-          const value = sourceClosures && nativeSourceClosureValueType(reservations, sourceClosures, type);
-          if (!value) emissionFailed("logical callable signature has no accepted source type owner");
-          return value;
-        }
-        if (type.kind === "support-ref") {
-          if (!stringTypes || !formatterScratch || preparedIrDataMismatch(type, formatterScratch) !== undefined)
-            emissionFailed("support signature is not the accepted formatter scratch type");
-          return { kind: type.nullable ? "ref_null" : "ref", typeIdx: stringTypes.layout.nativeStrDataTypeIdx };
-        }
-        if (type.kind === "string") {
-          if (!stringTypes) emissionFailed("logical string signature has no accepted string resources");
-          return { kind: "ref", typeIdx: stringTypes.layout.anyStrTypeIdx };
-        }
-        const value = nativeVectorPhysicalType(vectorTypes, type.kind === "vec" ? type : { kind: "val", val: type });
-        if (!value) emissionFailed("accepted signature has no reserved physical carrier");
-        return value;
-      });
-    return { params: convert(signature.params), results: convert(signature.results) };
-  };
-
-  return physicalSignature;
 }
 
 /** Authenticate the genuinely empty literal owner before exposing its type rows. */
@@ -937,7 +1023,9 @@ function fillPrimaryBody(
   nativePack: ReturnType<typeof reserveNativeStringValueResources> | undefined,
   reservations: PhysicalModuleReservations,
   physicalSignature: ReturnType<typeof physicalSignatureConverter>,
+  assertEmissionActive: () => void,
   sourceClosures?: NativeSourceClosureEmission,
+  linearBindings?: PreparedLinearBodyBindings,
 ): void {
   const { backend, target } = accepted.options;
   try {
@@ -962,9 +1050,10 @@ function fillPrimaryBody(
       fn,
       reserved,
       physicalSignature(declared),
-      ownerResolver,
+      activeEmissionResolver(ownerResolver, assertEmissionActive),
       backend,
       sourceClosures,
+      linearBindings?.resolveRuntimeOperation,
     );
   } catch (error) {
     emissionFailed(
@@ -973,26 +1062,6 @@ function fillPrimaryBody(
       }`,
     );
   }
-}
-
-/** Publish the already reserved startup adapter without allocating a new slot. */
-function fillStartupAdapter(
-  startAdapter: FunctionReservation | undefined,
-  plan: PhysicalSetupPlan,
-  slots: ReadonlyMap<IrUnitId, FunctionReservation>,
-  reservations: PhysicalModuleReservations,
-): void {
-  if (!startAdapter) return;
-  const body = plan.startup.units.map((unitId): Instr => {
-    const target = slots.get(unitId);
-    if (!target) emissionFailed(`startup unit ${unitId} has no reserved slot`);
-    return { op: "call", funcIdx: target.handle };
-  });
-  reservations.fillFunction(startAdapter, { locals: [], body });
-  if (plan.startup.adapter === "wasm-start") reservations.defineStart(startAdapter);
-  else if (plan.startup.adapter === "deferred-export")
-    reservations.defineExport("publication:startup", "__module_init", startAdapter);
-  else emissionFailed(`startup adapter ${plan.startup.adapter} has executable units but no materialization`);
 }
 
 /** Bind the already sealed ABI to the exact reservations of this transaction. */
@@ -1015,78 +1084,6 @@ function reserveNumberRemainders(
   }
 }
 
-function bindPhysicalAbi(
-  abi: ProgramAbiMap,
-  plan: PhysicalSetupPlan,
-  context: NativeReconciliationContext & {
-    readonly slots: ReadonlyMap<IrUnitId, FunctionReservation>;
-    readonly vectorHelper: ReturnType<typeof reserveNativeVectorHelper>;
-  },
-): void {
-  const { reservations, functionsByKey, globalsByKey, resourcesByBinding, slots, vectorHelper } = context;
-  const native = plan.nativeStrings;
-  const formatter = plan.nativeNumberFormat;
-  for (const imported of plan.importedFunctions) {
-    abi.bindFinalIndex(imported.bindingId, {
-      space: "function",
-      index: reservations.physicalIndex(functionsByKey.get(imported.referenceKey)!),
-    });
-  }
-  for (const declared of plan.functions) {
-    abi.bindFinalIndex(declared.bindingId, {
-      space: "function",
-      index: reservations.physicalIndex(slots.get(declared.unitId)!),
-    });
-  }
-  if (vectorHelper && plan.vectors.helper) {
-    abi.bindFinalIndex(plan.vectors.helper.bindingId, {
-      space: "function",
-      index: reservations.physicalIndex(vectorHelper.function),
-    });
-  }
-  for (const remainder of plan.numberRemainders) {
-    const token = resourcesByBinding.get(remainder.bindingId);
-    if (!token || token.kind !== "function" || functionsByKey.get(remainder.referenceKey) !== token)
-      emissionFailed("number remainder lost its exact reserved ABI owner");
-    abi.bindFinalIndex(remainder.bindingId, { space: "function", index: reservations.physicalIndex(token) });
-  }
-  for (const global of [...plan.importedGlobals, ...plan.definedGlobals]) {
-    abi.bindFinalIndex(global.bindingId, {
-      space: "global",
-      index: reservations.physicalIndex(globalsByKey.get(global.referenceKey)!),
-    });
-  }
-  if (native) {
-    const bound = new Set<IrBindingId>();
-    for (const binding of [
-      ...native.bindings,
-      ...(formatter?.bindings ?? []),
-      ...(plan.nativeInvocation?.bindings ?? []),
-    ]) {
-      if (bound.has(binding.entry.id)) continue;
-      const resource = resourcesByBinding.get(binding.entry.id);
-      if (!resource || binding.entry.slotPolicy !== "required") emissionFailed("native ABI resource vanished");
-      abi.bindFinalIndex(binding.entry.id, {
-        space: binding.entry.slotSpace,
-        index: reservations.physicalIndex(resource),
-      });
-      bound.add(binding.entry.id);
-    }
-  }
-  const alreadyBound = new Set([
-    ...plan.importedFunctions.map((row) => row.bindingId),
-    ...plan.functions.map((row) => row.bindingId),
-  ]);
-  for (const row of plan.asyncFrames?.entries ?? []) {
-    if (row.slotPolicy !== "required" || alreadyBound.has(row.id)) continue;
-    const token = resourcesByBinding.get(row.id);
-    if (!token) emissionFailed("async ABI resource was not reserved");
-    abi.bindFinalIndex(row.id, { space: row.slotSpace, index: reservations.physicalIndex(token) });
-    alreadyBound.add(row.id);
-  }
-  abi.finishBinding();
-}
-
 /** No observation or reusable capability escapes the physical transaction. */
 function indexSupportFunctions(rows: readonly NativeNumberFormatResourceRow[]): Map<WasmFunction, FunctionReservation> {
   const functions = new Map<WasmFunction, FunctionReservation>();
@@ -1097,51 +1094,6 @@ function indexSupportFunctions(rows: readonly NativeNumberFormatResourceRow[]): 
     functions.set(row.reservation.object, row.reservation);
   }
   return functions;
-}
-
-/** Resolve body references only through this transaction's reserved resources. */
-function physicalBodyResolver(
-  context: NativeReconciliationContext,
-  vectorTypes: NativeVectorTypeReservations,
-  stringTypes: NativeStringLiteralTypeReservations | undefined,
-  exnTagIdx: number | undefined,
-  sourceClosures: NativeSourceClosureEmission | undefined,
-): IrLowerResolver {
-  const { functionsByKey, globalsByKey, typesByKey, reservations } = context;
-  // Resource validation authenticates this exact shared two-field layout.
-  const vectorLowering = (layout: ReturnType<typeof resolveNativeVector>) =>
-    layout ? { ...layout, lengthFieldIdx: 0, dataFieldIdx: 1 } : null;
-  return {
-    resolveFunc: (ref: IrFuncRef) => {
-      const reserved = functionsByKey.get(irCallableBindingKey(ref.binding));
-      if (!reserved) emissionFailed(`callable ${ref.name} (${ref.binding.kind}) was not reserved`);
-      return reserved.handle;
-    },
-    resolveGlobal: (ref: IrGlobalRef) => {
-      const reserved = globalsByKey.get(irGlobalBindingKey(ref.binding));
-      if (!reserved) emissionFailed(`global ${ref.name} (${ref.binding.kind}) was not reserved`);
-      return reservations.physicalIndex(reserved);
-    },
-    resolveType: (ref) => {
-      const reserved = typesByKey.get(irTypeBindingKey(ref.binding));
-      if (!reserved) emissionFailed(`type ${ref.name} was not reserved`);
-      return reservations.physicalIndex(reserved);
-    },
-    ...(stringTypes
-      ? {
-          resolveString: (): ValType => ({ kind: "ref", typeIdx: stringTypes.layout.anyStrTypeIdx }),
-          nativeStrings: () => true,
-        }
-      : {}),
-    ...(sourceClosures ? nativeSourceClosureResolver(reservations, sourceClosures) : {}),
-    resolveVec: (type) => vectorLowering(resolveNativeVector(vectorTypes, type)),
-    resolveVecForElement: (element) => vectorLowering(resolveNativeVectorForElement(vectorTypes, element)),
-    internFuncType: (type) => reservations.internFunctionType(type.params, type.results),
-    ensureExnTag: () => {
-      if (exnTagIdx === undefined) emissionFailed("a body requires the __exn tag but the plan reserved none");
-      return exnTagIdx;
-    },
-  };
 }
 
 /** Preserve global-before-unit reservation in the consumer's sole slot allocator. */
@@ -1231,10 +1183,39 @@ function reconcileInvocationBindings(
   }
 }
 
+/** Seal the original program ABI when no native supplemental entries were planned. */
+function sealedPhysicalProgramAbi(program: PreparedIrProgram): ProgramAbiMap {
+  const abi = new ProgramAbiMap(program.inventory, program.derivedUnits);
+  for (const entry of program.abi.entries) abi.plan(entry.plan);
+  abi.sealPlan();
+  return abi;
+}
+
+/** Pass exact canonical producers at this attempt's existing reservation phase. */
+function physicalVectorCarrierProducers() {
+  return {
+    physicalType: nativeVectorPhysicalType,
+    resolve: resolveNativeVector,
+    resolveElement: resolveNativeVectorForElement,
+  };
+}
+function physicalReferenceErrorLiteralProducers() {
+  return {
+    reserve: reserveNativeStringLiteralResources,
+    inventory: nativeStringLiteralReservationInventory,
+    fill: fillNativeStringLiteralResources,
+    requireCompleted: requireCompletedNativeStringLiterals,
+    requireLiteral: requireNativeStringLiteral,
+    globalMatches: nativeStringLiteralGlobalMatches,
+  };
+}
+
 function materializePhysicalProgram(
   accepted: AcceptedPreparedIrProgram,
   plan: PhysicalSetupPlan,
+  assertEmissionActive: () => void,
 ): EmittedPreparedIrProgram {
+  assertEmissionActive();
   const { program, runtime } = accepted;
   const { record, native, abi: plannedAbi } = prepareNativeEmission(accepted, plan);
   let abi = plannedAbi;
@@ -1246,15 +1227,7 @@ function materializePhysicalProgram(
   const globalsByKey = new Map<string, GlobalReservation | GlobalImportReservation>();
   const resourcesByBinding = new Map<IrBindingId, ConsumerReservation>();
   const typesByKey = new Map<string, TypeReservation>();
-  const exceptionTag = plan.exceptionTag.required
-    ? reservations.reserveTag(
-        "physical:exception-tag",
-        { params: [{ kind: "externref" }], results: [] },
-        plan.exceptionTag.shared
-          ? { kind: "import", module: "env", name: "__exn" }
-          : { kind: "defined", name: "__exn" },
-      )
-    : undefined;
+  const exceptionTag = reservePhysicalExceptionTag(plan, reservations);
 
   const { vectorTypes, stringTypes, earlyStrings, realm } = reserveNativeProgramFoundation(
     reservations,
@@ -1279,7 +1252,9 @@ function materializePhysicalProgram(
         realm?.requests,
       )
     : undefined;
+  const vectorProducers = physicalVectorCarrierProducers();
   const physicalSignature = physicalSignatureConverter(
+    vectorProducers,
     vectorTypes,
     stringTypes,
     native?.formatterScratch,
@@ -1287,27 +1262,12 @@ function materializePhysicalProgram(
     sourceClosures,
   );
 
-  for (const imported of plan.importedFunctions) {
-    const reserved = reservations.reserveFunctionImport(
-      imported.bindingId,
-      imported.module,
-      imported.field,
-      physicalSignature(imported),
-    );
-    functionsByKey.set(imported.referenceKey, reserved);
-    resourcesByBinding.set(imported.bindingId, reserved);
-  }
-  for (const imported of plan.importedGlobals) {
-    const reserved = reservations.reserveGlobalImport(
-      imported.bindingId,
-      imported.module,
-      imported.field,
-      imported.type,
-      imported.mutable,
-    );
-    globalsByKey.set(imported.referenceKey, reserved);
-    resourcesByBinding.set(imported.bindingId, reserved);
-  }
+  reservePhysicalImports(plan, reservations, physicalSignature, {
+    functionsByKey,
+    globalsByKey,
+    resourcesByBinding,
+  });
+
   const nativePack =
     earlyStrings ??
     (native && stringTypes && record.nativeStrings
@@ -1403,27 +1363,33 @@ function materializePhysicalProgram(
     emissionFailed("planned vector helper was not reserved");
   }
   reserveNumberRemainders(plan, reconciliation, supportFunctions);
-  let startAdapter: FunctionReservation | undefined;
-  if (plan.startup.units.length > 0) {
-    startAdapter = reservations.reserveFunction("physical:startup-adapter", "__module_init", {
-      params: [],
-      results: [],
-    });
-  }
+  const referenceError = reserveAndBindPhysicalReferenceError(
+    reservations,
+    plan.referenceError,
+    assertEmissionActive,
+    reconciliation,
+    supportFunctions,
+    physicalReferenceErrorLiteralProducers(),
+  );
+  const startAdapter = reserveStartupAdapter(plan, reservations);
+
+  const linearPack = record.linearMemory
+    ? reservePreparedLinearMemory(reservations, record.linearMemory, assertEmissionActive)
+    : undefined;
 
   // 2. Freeze the index space: nothing below may add an import or a slot.
   reservations.freezeReservations();
   if (sourceClosures) bindNativeSourceClosureUnits(reservations, sourceClosures, slots);
   const exnTagIdx = exceptionTag === undefined ? undefined : reservations.physicalIndex(exceptionTag);
   fillPhysicalScalarResources(plan, reconciliation);
+  const linearBindings = linearPack ? preparedLinearMemoryBindings(reservations, linearPack) : undefined;
+  for (const token of linearBindings?.supportFunctions ?? []) supportFunctions.set(token.object, token);
 
   // 3. A's authoritative ABI over the program's entries, bound to the reserved indices.
-  if (!abi) {
-    abi = new ProgramAbiMap(program.inventory, program.derivedUnits);
-    for (const entry of program.abi.entries) abi.plan(entry.plan);
-    abi.sealPlan();
-  }
+  abi ??= sealedPhysicalProgramAbi(program);
   bindPhysicalAbi(abi, plan, { ...reconciliation, slots, vectorHelper });
+  if (referenceError) fillPhysicalReferenceError(reservations, referenceError);
+  if (linearPack) fillPreparedLinearMemory(reservations, linearPack);
   if (nativePack) fillNativeStringValueResources(reservations, nativePack);
   else if (strings) fillNativeStringLiteralResources(reservations, strings);
   if (realm) fillNativeRealmResources(reservations, realm);
@@ -1441,7 +1407,19 @@ function materializePhysicalProgram(
   }
 
   // 4. Lower every physical body into its reserved slot.
-  const resolver = physicalBodyResolver(reconciliation, vectorTypes, stringTypes, exnTagIdx, sourceClosures);
+  const resolver = activeEmissionResolver(
+    physicalBodyResolver(
+      vectorProducers,
+      reconciliation,
+      vectorTypes,
+      stringTypes,
+      exnTagIdx,
+      sourceClosures,
+      linearBindings,
+      plan.target,
+    ),
+    assertEmissionActive,
+  );
   const bodies = new Map<IrUnitId, IrFunction>(runtime.prepared.functions.map((fn) => [fn.unitId, fn] as const));
   if (formatterPack) {
     if (!record.nativeNumberFormat) emissionFailed("formatter support authority vanished");
@@ -1459,6 +1437,7 @@ function materializePhysicalProgram(
     if (asyncFrame) {
       if (!exceptionTag) emissionFailed("async exception tag vanished");
       fillPreparedAsyncFrame(reservations, asyncFrame, fn, functionsByKey, exceptionTag, () => {
+        assertEmissionActive();
         if (
           acceptances.get(accepted) !== record ||
           record.physical !== plan ||
@@ -1476,7 +1455,9 @@ function materializePhysicalProgram(
         nativePack,
         reservations,
         physicalSignature,
+        assertEmissionActive,
         sourceClosures,
+        linearBindings,
       );
   }
 
@@ -1485,6 +1466,11 @@ function materializePhysicalProgram(
   publishPhysicalExports(plan, abi, reconciliation);
 
   if (nativePack?.output) publishNativeStringValueOutput(reservations, nativePack);
+  if (referenceError) requireCompletedPhysicalReferenceError(reservations, referenceError);
+  if (linearPack) requireCompletedPreparedLinearMemory(reservations, linearPack);
+  const referenceErrorReceipt = referenceError
+    ? completedPhysicalReferenceErrorReceipt(reservations, referenceError, module)
+    : undefined;
   reservations.seal();
   if (sourceClosures) requireCompletedNativeSourceClosures(reservations, sourceClosures);
   if (realm) requireCompletedNativeRealmBootstrap(reservations, realm);
@@ -1494,29 +1480,18 @@ function materializePhysicalProgram(
   if (formatterPack) requireCompletedNativeNumberFormat(reservations, formatterPack);
 
   // 6. Receipts come from the module itself, never from the loop counter.
-  const emittedUnitIds: IrUnitId[] = [];
-  for (const fn of module.functions) {
-    const unitId = slotOwners.get(fn);
-    if (unitId === undefined) {
-      if (
-        fn !== startAdapter?.object &&
-        fn !== vectorHelper?.function.object &&
-        fn !== formatterPack?.functions["radix-body"].object &&
-        !nativeFunctions.has(fn) &&
-        !supportFunctions.has(fn)
-      ) {
-        emissionFailed(`module carries an unowned function ${fn.name}`);
-      }
-      continue;
-    }
-    emittedUnitIds.push(unitId);
-  }
-  if (emittedUnitIds.length !== plan.functions.length) {
-    emissionFailed(`module holds ${emittedUnitIds.length} owned bodies but the plan reserved ${plan.functions.length}`);
-  }
-  if (emittedUnitIds.some((unitId, index) => unitId !== plan.functions[index]!.unitId)) {
-    emissionFailed("module function ownership order contradicts the reserved program projection");
-  }
+  const emittedUnitIds = collectPhysicalUnitReceipts(
+    module,
+    plan,
+    slotOwners,
+    new Set([
+      ...nativeFunctions,
+      ...supportFunctions.keys(),
+      ...(startAdapter ? [startAdapter.object] : []),
+      ...(vectorHelper ? [vectorHelper.function.object] : []),
+      ...(formatterPack ? [formatterPack.functions["radix-body"].object] : []),
+    ]),
+  );
   const result: EmittedPreparedIrProgram = Object.freeze({ module, emittedUnitIds: Object.freeze(emittedUnitIds) });
   recordEmissionObservation(
     result,
@@ -1526,6 +1501,7 @@ function materializePhysicalProgram(
     startAdapter,
     [...slots.values()],
     [...supportFunctions.values()],
+    referenceErrorReceipt,
   );
   return result;
 }

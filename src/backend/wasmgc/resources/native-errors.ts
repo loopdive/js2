@@ -12,7 +12,7 @@ import {
   requireCompletedNativeStringLiterals,
   type NativeStringLiteralReservations,
 } from "./native-string-literals.js";
-import { preparedIrDataMismatch } from "../../../ir/program/data.js";
+import { preparedIrDataMismatch } from "../../../shared/contracts/prepared-ir-data.js";
 
 export interface NativeErrorDependencies {
   readonly strings: NativeStringLiteralReservations;

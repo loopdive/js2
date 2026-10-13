@@ -17,7 +17,7 @@ import type {
   NativeResourceRecipe,
   NativeDeclaredName,
 } from "../../../runtime/wasmgc/values/native-resource-declaration-types.js";
-import { freezePreparedIrValue, preparedIrDataMismatch } from "../../../ir/program/data.js";
+import { freezePreparedIrValue, preparedIrDataMismatch } from "../../../shared/contracts/prepared-ir-data.js";
 
 export type NativeDeclaredReservation = TypeReservation | GlobalReservation | FunctionReservation;
 export type NativeDeclaredTypeTokens = ReadonlyMap<string, TypeReservation>;

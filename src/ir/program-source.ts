@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
-import { ts } from "../ts-api.js";
+import { ts, assertCurrentProgramSources } from "../ts-api.js";
 import { sourceBooleanAnyResult, assertSourceBooleanAnyReturns } from "../frontend/boolean-return-boundary.js";
 import { preparedIrProgramCallableResults } from "./program-callable-contract.js";
 import { prepareSourceClosureInvocations } from "./source-closure-invocation.js";
@@ -42,6 +42,12 @@ import type { IrDirectCallLoweringPlan, ModuleBindingGlobal } from "./ast-loweri
 import type { PreparedIrFunction as IrFunction, PreparedIrModule as IrModule } from "./runtime/contracts/prepared.js";
 import type { IrType } from "./core/types.js";
 import { freezePreparedIrRuntimeValue, preparedIrDataMismatch } from "./program/data.js";
+import {
+  sourceDataField,
+  selectNativeLinearVectorProjection,
+  nativeLinearSourceVectors,
+  selectNativeAsyncFamilyProjection,
+} from "./native-source-selection.js";
 import { classifyIrFailure, IrUnsupportedError } from "./outcomes.js";
 import type { ProgramAbiDerivedUnitRecord } from "./program/abi.js";
 import { preparedIrProgramOwner } from "./program.js";
@@ -847,6 +853,8 @@ export interface IrProgramSourceInput {
   readonly oracle?: TypeOracle;
   readonly inventoryOptions?: BuildIrUnitInventoryOptions;
   readonly policy: RuntimeManifestPolicy;
+  /** Actual requested projections constrain source-level startup proofs jointly. */
+  readonly runtimePolicies?: readonly RuntimeManifestPolicy[];
   readonly deferTopLevelInit: boolean;
   /**
    * Explicit frontend lowering selection; not provider availability or
@@ -859,6 +867,8 @@ export interface IrProgramSourceInput {
   readonly nativeStringValueProjection?: "standalone-native";
   /** Independent string-only console intents; no async family or runtime availability is implied. */
   readonly nativeStringOutputProjection?: "standalone-native";
+  /** Frontend-only shared native f64 logical vectors; no runtime availability or serialized authority. */
+  readonly linearVectorProjection?: "native-f64";
 }
 
 /** Frontend-only carrier; declarations never cross into PreparedIrProgram. */
@@ -872,17 +882,6 @@ export interface IrProgramSourcePreparation {
   readonly callables: readonly IrProgramCallableBindingRecord[];
   readonly globals: readonly { readonly binding: ModuleBindingGlobal; readonly identity: IrModuleBindingIdentity }[];
   readonly allocations: AllocSiteRegistry;
-}
-
-/** Read only an explicitly selected own data field; never evaluate a getter. */
-function sourceDataField<T extends object, K extends keyof T>(object: T, key: K): T[K] {
-  const descriptor = Object.getOwnPropertyDescriptor(object, key);
-  if (!descriptor || !("value" in descriptor))
-    throw new PreparedIrProgramInvariantError(
-      "invalid-prepared-data",
-      `source capture requires own data field ${String(key)}`,
-    );
-  return descriptor.value;
 }
 
 /** Explicit frontend projection; capture all semantic fields jointly with allocations. */
@@ -1120,23 +1119,6 @@ function selectNativePromiseDelaySourceProjection(
       "Promise-delay source projection requires an explicit standalone-native request with wasmgc:standalone policy",
     );
   return nativeDelay;
-}
-
-/** Validate full-family selection independently from delay selection and runtime availability. */
-function selectNativeAsyncFamilyProjection(input: IrProgramSourceInput): boolean {
-  const projection = input.asyncFamilyProjection;
-  if (projection === undefined || projection === "disabled") return false;
-  if (
-    projection !== "standalone-native" ||
-    input.promiseDelayProjection !== "standalone-native" ||
-    input.policy.backend !== "wasmgc" ||
-    input.policy.target !== "standalone"
-  )
-    throw new PreparedIrProgramInvariantError(
-      "invalid-prepared-data",
-      "native async family source projection requires explicit native delay and wasmgc:standalone policy",
-    );
-  return true;
 }
 
 /** Resolve before source planning; never infer string-number lowering from the target. */
@@ -1589,19 +1571,26 @@ function prepareStartupDirectCalls(
   }
 }
 
+/** Keep the selected source population and checker paired at the inventory boundary. */
+function sourceUnitInventory(input: IrProgramSourceInput): ReturnType<typeof buildIrUnitInventory> {
+  return buildIrUnitInventory(input.sourceFiles, {
+    ...input.inventoryOptions,
+    entrySource: input.entrySource,
+    checker: input.checker,
+  });
+}
+
 export function prepareIrProgramSources(
   input: IrProgramSourceInput,
 ): IrProgramSourcePreparation | PreparedIrProgramFailure {
+  const nativeLinearVectors = selectNativeLinearVectorProjection(input);
+  if (nativeLinearVectors) assertCurrentProgramSources(input.checker, input.sourceFiles, input.entrySource);
   const sourceMapRequest = selectSourceMapCapture(input);
   const nativeDelay = selectNativePromiseDelaySourceProjection(input);
   const nativeAsyncFamily = selectNativeAsyncFamilyProjection(input);
   const nativeStringValues = selectNativeStringValueProjection(input);
   const nativeStringOutput = selectNativeStringOutputProjection(input);
-  const inventory = buildIrUnitInventory(input.sourceFiles, {
-    ...input.inventoryOptions,
-    entrySource: input.entrySource,
-    checker: input.checker,
-  });
+  const inventory = sourceUnitInventory(input);
   if (sourceMapRequest !== undefined) sourceMapPreflightScannerTree(inventory);
   const identity = buildIrPlanningIdentityContext(inventory);
   const sourceFiles = inventory.sources.map((source) => identity.sourceFileBySourceId.get(source.id)!);
@@ -1666,7 +1655,7 @@ export function prepareIrProgramSources(
         : new Map(sourceMapProjector.sourceMap.sources.map((row) => [row.sourceId, row]));
     const entryId = identity.sourceIdBySourceFile.get(input.entrySource)!;
     diagnostic.active = undefined;
-    const postStartupUnits = postStartupCallableUnits(input.checker, identity, startup);
+    const postStartupUnits = postStartupCallableUnits(input.checker, identity, startup, input);
     const exportedBindings = new Set(
       startup
         .find((plan) => plan.sourceId === entryId)!
@@ -1793,6 +1782,11 @@ export function prepareIrProgramSources(
         ),
       );
       const signature = signatures.get(unit.id);
+      const logicalVectorTypes =
+        family?.logicalVectorTypes ??
+        (nativeLinearVectors && !moduleInit
+          ? nativeLinearSourceVectors(input.checker, declaration, ts.SyntaxKind.AsyncKeyword)
+          : undefined);
       const lowered = lowerFunctionAstToIr(declaration, {
         booleanReturnBoundary: sourceBooleanAnyResult(input.checker, declaration) ? declaration : undefined,
         ownerUnitId: unit.id,
@@ -1819,7 +1813,7 @@ export function prepareIrProgramSources(
         ...(nativeStringValues ? { stringNumericCoercion: "number-boundary" as const } : {}),
         numericThrow: "number-boundary",
         ...(nativeDelay ? { promiseDelays: promiseDelaysBySource.get(source) } : {}),
-        ...(family ? { logicalVectorTypes: family.logicalVectorTypes } : {}),
+        ...(logicalVectorTypes === undefined ? {} : { logicalVectorTypes }),
         ...(moduleInit
           ? {
               moduleInitUnit: true,
@@ -1871,6 +1865,7 @@ export function prepareIrProgramSources(
       allocations,
     };
     if (sourceMap !== undefined) assertPreparedSourceMap(prepared);
+    if (nativeLinearVectors) assertCurrentProgramSources(input.checker, input.sourceFiles, input.entrySource);
     return prepared;
   } catch (error) {
     const owner = diagnostic.active

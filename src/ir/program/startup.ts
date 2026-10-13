@@ -8,6 +8,8 @@ export type IrModuleInitInvocationKind = "none" | "wasm-start" | "deferred-expor
 export interface IrModuleInitInvocationPolicy {
   readonly target: IrModuleInitTarget;
   readonly kind: IrModuleInitInvocationKind;
+  /** Semantic caller intent, independent of the selected physical environment. */
+  readonly deferTopLevelInit: boolean;
   readonly exactlyOnce: true;
 }
 

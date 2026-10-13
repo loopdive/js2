@@ -4,7 +4,7 @@ import type { IrType } from "../../../ir/core/types.js";
 import type { NativeVectorElement, NativeVectorResourcePlan } from "../../../ir/program/native-vector-resources.js";
 import { VECTOR_CALLABLE_DECLARATION } from "../../../ir/runtime/vector-callables.js";
 import { irCallableBindingKey } from "../../../ir/core/callable-bindings.js";
-import { preparedIrDataMismatch } from "../../../ir/program/data.js";
+import { preparedIrDataMismatch } from "../../../shared/contracts/prepared-ir-data.js";
 import type { ValType } from "../../../wasm/model/instructions.js";
 import {
   type PhysicalModuleReservations,

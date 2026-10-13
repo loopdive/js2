@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
+import { IR_CLASS_SHAPE_CELL } from "../../shared/contracts/ir-class-shape-marker.js";
 import type { IrBindingId, IrClassId, IrUnitId } from "../../shared/contracts/ir-identity.js";
 import type { ValType } from "../../wasm/model/instructions.js";
 import type { IrFnctorShape } from "./fnctor-shapes.js";
@@ -248,7 +249,7 @@ export interface IrClassMethodDescriptor {
  * the resolver returns an exact typed callable reference for the selected
  * allocator-owned slot.
  */
-export const IR_CLASS_SHAPE_CELL: unique symbol = Symbol("IR_CLASS_SHAPE_CELL");
+export { IR_CLASS_SHAPE_CELL } from "../../shared/contracts/ir-class-shape-marker.js";
 
 export interface IrClassShape {
   /**

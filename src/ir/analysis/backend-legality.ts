@@ -118,7 +118,7 @@ function checkInstr(
 // CORE-OP families (const / arithmetic / locals-as-slots / structured control
 // flow / direct call). These lower to core Wasm and `LinearEmitter` emits them
 // byte-identically to `WasmGcEmitter`. The representation-DIVERGENT families
-// (closures, dynamic boxing, exceptions, non-fixed vec
+// (closures, dynamic boxing, non-fixed vec
 // iteration, promises) stay rejected here — the linear analogue lands
 // with the production wiring (#2956). This mirrors `bytecodeInstrError`'s
 // allow-list shape; the operand-type gate (`linearValTypeError`) independently
@@ -126,6 +126,10 @@ function checkInstr(
 // admits a divergent-typed operand.
 function linearInstrError(instr: IrInstr): string | null {
   switch (instr.kind) {
+    // Implemented Wasm EH carries the shared opaque externref payload.
+    case "throw":
+    case "try":
+      return null;
     case "const":
       switch (instr.value.kind) {
         case "i32":
@@ -134,6 +138,10 @@ function linearInstrError(instr: IrInstr): string | null {
         case "f64":
         case "bool":
           return null;
+        case "null":
+          return instr.value.ty.kind === "val" && instr.value.ty.val.kind === "externref"
+            ? null
+            : "linear backend only supports an opaque externref null";
         default:
           // null/ref/string/undefined consts are representation-divergent.
           return `linear backend does not support const '${instr.value.kind}'`;
@@ -481,6 +489,8 @@ function checkValType(
 
 function linearValTypeError(v: ValType): string | null {
   switch (v.kind) {
+    // Opaque reference identity is preserved; GC layout references remain refused.
+    case "externref":
     case "i32":
     case "i64":
     case "f32":

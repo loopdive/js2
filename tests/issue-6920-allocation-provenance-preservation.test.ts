@@ -1,5 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 // Sixteen successor preservation controls; separate from P01–P08 and AE01–AE40.
+import { readBeforeIrNativeAllocationTypeOwnership } from "./helpers/ir-native-allocation-type-ownership-successor.js";
+import { readBeforeIrAllocationRuleSharing } from "./helpers/ir-allocation-rule-sharing-successor.js";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
@@ -21,11 +23,10 @@ import {
   assertIrValidationAnalysisReceiptStructure,
   assertIrValidationAnalysisSource,
   authenticateIrValidationAnalysisRelocation,
-  beforeIrValidationAnalysisRelocation,
+  beforeIrValidationAnalysisRelocation as beforeRelocation,
   irValidationAnalysisCurrentPaths,
   irValidationAnalysisOriginalPaths,
   irValidationAnalysisReceiptPath,
-  readIrValidationAnalysisActual,
   reconstructIrValidationAnalysisSources,
 } from "./helpers/ir-validation-analysis-relocation.js";
 
@@ -35,7 +36,14 @@ const paths = {
   program: "src/ir/program/allocations.ts",
   helper: "src/ir/program/allocation-body-validation.ts",
 };
-const raw = (path: string): string => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
+// These original controls exercise authenticated predecessor stages. The new
+// type-ownership suite separately proves actual current-source drift and roles.
+const actualRaw = (path: string): string => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
+const raw = (path: string): string => readBeforeIrNativeAllocationTypeOwnership(path, actualRaw);
+const readIrValidationAnalysisActual = (path: string): string =>
+  readBeforeIrAllocationProvenanceLookup(path, (requested) => readBeforeIrAllocationRuleSharing(requested, raw));
+const beforeIrValidationAnalysisRelocation = (path: string, source: string): string =>
+  beforeRelocation(path, source, readIrValidationAnalysisActual);
 const hash = (text: string): string => createHash("sha256").update(text).digest("hex");
 const OLD_SHA = "9a52664fbba6044d168f428f9398e5d2bff923cf7cac1adc6aae04827431e969";
 const beforePins = [
@@ -148,7 +156,7 @@ function stageReader(source: ReadonlyMap<string, string>, calls: string[] = []) 
     return text;
   };
 }
-function oldPositive(reader?: (path: string) => string) {
+function oldPositive(reader: (path: string) => string = readIrValidationAnalysisActual) {
   const value = oldReceipt(),
     originals = reconstructIrValidationAnalysisSources(reader);
   expect([...originals.keys()]).toEqual(irValidationAnalysisOriginalPaths);

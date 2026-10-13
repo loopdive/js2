@@ -112,21 +112,7 @@ export function copyIrPreparationData<T>(value: T): T {
   return visit(value) as T;
 }
 
-/**
- * Reserved metadata namespaces. Each analysis owns exactly one and may not
- * write to another's. Enforced by convention in this issue (#1586); the ADR
- * documents the ownership table.
- */
-export const ALLOC_NAMESPACES = {
-  /** #1587 — ownership and access-semantics analysis. */
-  ownership: "ownership",
-  /** #1588 — string encoding tracking. */
-  encoding: "encoding",
-  /** #1585 — dual-target IR / lifetime analysis. */
-  lifetime: "lifetime",
-  /** Closure-capture escape analysis (#747). */
-  escape: "escape",
-} as const;
+export { ALLOC_NAMESPACES } from "./contracts/allocations.js";
 
 type Provenance =
   | { state: "live"; site: AllocSite }

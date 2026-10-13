@@ -26,6 +26,7 @@ import type {
   IrRefCellLowering,
   IrUnionLowering,
   IrVecLowering,
+  IrVectorLowering,
 } from "./handles.js";
 
 export type {
@@ -38,6 +39,7 @@ export type {
   IrRefCellLowering,
   IrUnionLowering,
   IrVecLowering,
+  IrVectorLowering,
 } from "./handles.js";
 
 export interface IrLowerResolver {
@@ -137,7 +139,9 @@ export interface IrLowerResolver {
    * the type isn't a recognisable vec — caller treats that as a bug
    * (selector should have rejected the for-of).
    */
-  resolveVec?(valType: ValType): IrVecLowering | null;
+  /** The accepted physical backend; used to reject foreign persisted vector layouts. */
+  readonly vectorRepresentation?: "wasmgc" | "linear";
+  resolveVec?(valType: ValType): IrVectorLowering | null;
   /**
    * #1804 — resolve (registering if needed) the vec struct for an *element*
    * ValType, used by `vec.new_fixed` construction where a fresh literal has no
@@ -147,7 +151,7 @@ export interface IrLowerResolver {
    * legacy `compileArrayLiteral` output (===, instanceof Array, the for-of fast
    * path). Returns the same `IrVecLowering` shape as `resolveVec`.
    */
-  resolveVecForElement?(elementValType: ValType, alloc?: AllocSiteId): IrVecLowering | null;
+  resolveVecForElement?(elementValType: ValType, alloc?: AllocSiteId): IrVectorLowering | null;
   /**
    * Resolve the Wasm value type used for `IrType.string` in the active
    * backend.

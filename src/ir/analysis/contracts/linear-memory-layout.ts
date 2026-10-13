@@ -1,6 +1,13 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
-import type { LinearStorageKind, LinearSizePlan } from "../../../shared/contracts/linear-memory-layout.js";
+import type {
+  LinearStorageKind,
+  LinearSizePlan,
+  LinearLayoutBase,
+  LinearRecordLayoutPlan,
+  LinearVectorLayoutPlan,
+  LinearStringLayoutPlan,
+} from "../../../shared/contracts/linear-memory-layout.js";
 export type {
   LinearStorageKind,
   LinearSizePlan,
@@ -12,9 +19,8 @@ export type {
 } from "../../../shared/contracts/linear-memory-layout.js";
 
 import type { AllocKind, AllocSiteId, IrSiteId } from "../../core/nodes.js";
-import type { Ownership } from "../lattice.js";
-import type { EscapeClass } from "../escape.js";
-import type { Encoding } from "../encoding.js";
+import type { AllocSite, Ownership, EscapeClass } from "./allocations.js";
+import type { IrStringEncoding as Encoding } from "../../core/string-types.js";
 
 export type LinearAllocationClass = "static" | "stack" | "arena" | "managed";
 
@@ -90,4 +96,60 @@ export interface LinearAllocationSitePlan extends LinearAllocationDecision {
   readonly stackCandidate: boolean;
   readonly encoding?: Encoding;
   readonly dataSegmentId?: string;
+}
+
+export type LinearAllocatorPolicyId = "arena-v1" | "analysis-stack-arena-v1";
+
+export interface LinearOpaqueLayoutPlan extends LinearLayoutBase {
+  readonly kind: "opaque";
+  readonly allocationKind: AllocKind;
+}
+
+export type LinearLayoutPlan =
+  | LinearRecordLayoutPlan
+  | LinearVectorLayoutPlan
+  | LinearStringLayoutPlan
+  | LinearOpaqueLayoutPlan;
+
+export interface LinearAllocationFacts {
+  readonly site: AllocSite;
+  readonly layout: LinearLayoutPlan;
+  readonly ownership: Ownership;
+  readonly accesses: readonly string[];
+  readonly escape: EscapeClass;
+  readonly stackCandidate: boolean;
+  readonly encoding?: Encoding;
+}
+
+/** Policy seam. Policies consume facts only; target adapters bind operations. */
+export interface LinearAllocatorPolicy {
+  readonly id: string;
+  decide(facts: LinearAllocationFacts): LinearAllocationDecision;
+}
+
+/** Relocatable bytes. The artifact adapter chooses the final address/order. */
+export interface LinearDataSegmentPlan {
+  readonly id: string;
+  readonly alignment: number;
+  readonly bytes: readonly number[];
+}
+
+/** Symbolic static storage. The artifact adapter chooses the global index. */
+export interface LinearGlobalStoragePlan {
+  readonly id: string;
+  readonly allocationClass: "static";
+  readonly storage: LinearStorageKind;
+  readonly sizeBytes: number;
+  readonly alignment: number;
+  readonly containsPointer: boolean;
+  readonly mutable: boolean;
+  readonly initializer: "zero";
+}
+
+export interface LinearMemoryPlanSnapshot {
+  readonly policy: string;
+  readonly layouts: readonly LinearLayoutPlan[];
+  readonly allocations: readonly LinearAllocationSitePlan[];
+  readonly dataSegments: readonly LinearDataSegmentPlan[];
+  readonly globals: readonly LinearGlobalStoragePlan[];
 }

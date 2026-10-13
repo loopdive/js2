@@ -9,8 +9,15 @@ import { assertPreparedIrProgramPopulation } from "./program-population.js";
 import { prepareIrProgramRuntimeCallables } from "./program-runtime-abi.js";
 import { prepareWholeProgramAsyncFunctions, prepareWholeProgramRuntimeManifest } from "./runtime-program-producers.js";
 import { irProgramRuntimeDemands } from "./program-runtime-demands.js";
-import { assertPreparedIrProgram } from "./program-validation.js";
-import { assertIrRuntimeSupport, irNumberFormatDemandOwners } from "./program/runtime-support.js";
+import { assertPreparedIrProgram, assertPreparedIrProgramLinearAllocationEvidence } from "./program-validation.js";
+import { assertNativeIrPolicy, isLegacyHostIrPolicy } from "./runtime/target-admission.js";
+import { prepareLinearAllocationFacts } from "./analysis/linear-memory-plan.js";
+import { preparedLinearAllocationOutcome } from "./program/linear-allocation-outcome.js";
+import {
+  assertIrRuntimeSupport,
+  irNumberFormatDemandOwners,
+  irRuntimeSupportFunctions,
+} from "./program/runtime-support.js";
 import { analyzeIrRuntimeSupportAllocations } from "./program-allocations.js";
 import { freezePreparedIrValue, freezePreparedIrRuntimeValue, preparedIrReadonlyMap } from "./program/data.js";
 import { PreparedIrProgramInvariantError } from "./program/errors.js";
@@ -55,6 +62,15 @@ export function prepareTypedIrProgram(
   const resolved = ownTypedIrProgramOptions(options);
   const { input: source, allocations } = ownTypedIrProgramInput(input);
   assertPreparedIrProgramPopulation(source);
+  // Restored canonical allocation types, not a caller's source-target label,
+  // distinguish the new layout-free native vector capability from legacy DATA.
+  const nativeVectors = source.allocations.entries.some(
+    (entry) => entry.state === "live" && entry.site.type.kind === "vec" && !entry.site.type.layout,
+  );
+  if (nativeVectors || ![resolved.policy, ...resolved.runtimePolicies].every(isLegacyHostIrPolicy)) {
+    assertNativeIrPolicy(resolved.policy);
+    for (const policy of resolved.runtimePolicies) assertNativeIrPolicy(policy);
+  }
   assertIrRuntimeSupport(source, source.runtimeSupport);
   if (
     source.runtimeSupport !== undefined &&
@@ -105,20 +121,47 @@ export function prepareTypedIrProgram(
   const finalRuntime = prepareIrProgramRuntimeCallables(finalSource);
   if (finalRuntime.kind !== "prepared") return finalRuntime;
   const entries = prepareIrProgramAbiEntries(finalSource, finalRuntime.declarations);
+  const supportBodies = irRuntimeSupportFunctions(finalSource.runtimeSupport);
+  const completeFinalModule =
+    supportBodies.length === 0
+      ? finalSource.ir
+      : { ...finalSource.ir, functions: [...finalSource.ir.functions, ...supportBodies] };
+  const linearAllocationFacts = resolved.runtimePolicies.some(
+    (policy) => policy.backend === "linear" && policy.target !== "host",
+  )
+    ? {
+        schema: "linear-allocation-facts-v1" as const,
+        facts: prepareLinearAllocationFacts(completeFinalModule, allocations),
+      }
+    : undefined;
   // Freeze semantic data BEFORE runtime attachments authenticate exact identities.
   // Attached objects must never be cloned after authentication.
-  const semantic = freezePreparedIrValue({
+  const frozenSemantic = freezePreparedIrValue({
     inventory: source.inventory,
     ...optimized,
     abi: { entries },
     startup: source.startup,
     ...(source.sourceMap === undefined ? {} : { sourceMap: source.sourceMap }),
     ...(finalSource.runtimeSupport === undefined ? {} : { runtimeSupport: finalSource.runtimeSupport }),
-    allocations: allocations.snapshot(),
+    allocations: linearAllocationFacts?.facts.registry ?? allocations.snapshot(),
+    ...(linearAllocationFacts === undefined ? {} : { linearAllocationFacts }),
   }) as Pick<
     PreparedIrProgram,
-    "inventory" | "ir" | "derivedUnits" | "abi" | "startup" | "allocations" | "runtimeSupport" | "sourceMap"
+    | "inventory"
+    | "ir"
+    | "derivedUnits"
+    | "abi"
+    | "startup"
+    | "allocations"
+    | "runtimeSupport"
+    | "sourceMap"
+    | "linearAllocationFacts"
   >;
+  // Rejoin the completed frozen snapshot before runtime identity authentication.
+  const semantic = Object.freeze({
+    ...frozenSemantic,
+    allocations: frozenSemantic.linearAllocationFacts?.facts.registry ?? frozenSemantic.allocations,
+  });
   const runtime: PreparedIrProgramRuntimeProjection[] = [];
   const demands = new Map(semantic.ir.functions.map((fn) => [fn.unitId, irProgramRuntimeDemands(fn)]));
   for (const policy of resolved.runtimePolicies) {
@@ -140,6 +183,16 @@ export function prepareTypedIrProgram(
     reconciliation: "complete",
     sealed: true,
   });
-  assertPreparedIrProgram(program, { verifyDominanceNaive: resolved.controls.verifyDominanceNaive });
+  const verification = { verifyDominanceNaive: resolved.controls.verifyDominanceNaive };
+  assertPreparedIrProgram(program, verification);
+  // Every exact native Linear view must meet the current complete-context contract.
+  for (const projection of program.runtime) {
+    if (projection.backend !== "linear" || projection.target === "host") continue;
+    try {
+      assertPreparedIrProgramLinearAllocationEvidence(program, projection, verification);
+    } catch (error) {
+      return preparedLinearAllocationOutcome(error);
+    }
+  }
   return { kind: "prepared", program };
 }

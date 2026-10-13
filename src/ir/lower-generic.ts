@@ -47,7 +47,9 @@ import type { IrLowerResolver, IrLoweredBody, IrLoweredSignature } from "./backe
 import { emitStringOperation, type StringOperationContext } from "./lowering/string-operations.js";
 import type { TypeConverter } from "./backend/contract.js";
 import { type IrBackendKind, verifyIrBackendLegality } from "./backend/legality.js";
-import type { IrVecLowering } from "./backend/handles.js";
+import { resolveVectorLowering, resolveVectorCarrierType } from "./backend/vector-representation.js";
+import type { IrVectorLowering } from "./backend/handles.js";
+import { emitVectorElementAccess } from "./backend/vector-element-access.js";
 import {
   emitWasmInt32Coercion,
   emitWasmMathClz32,
@@ -844,14 +846,17 @@ export function lowerIrFunctionBody<S, Slot>(
   // the `array.new_fixed` data ref while the length is pushed below it for the
   // (length, data) struct.new field order. Keyed by arrayTypeIdx so distinct
   // element types get distinctly-typed data locals; reused across literals.
-  const vecNewFixedDataScratch = new Map<number, number>();
-  const ensureVecDataScratch = (arrayTypeIdx: number): number => {
-    const existing = vecNewFixedDataScratch.get(arrayTypeIdx);
+  const vecNewFixedDataScratch = new Map<number | object, number>();
+  const ensureVecDataScratch = (layout: IrVectorLowering): number => {
+    const linear = "linearMemory" in layout;
+    const key = linear ? layout.linearMemory.layout : layout.arrayTypeIdx;
+    const existing = vecNewFixedDataScratch.get(key);
     if (existing !== undefined) return existing;
     const idx = func.params.length + locals.length;
-    const type: ValType = { kind: "ref_null", typeIdx: arrayTypeIdx };
-    locals.push({ name: `$vec_data_${arrayTypeIdx}`, type, logicalType: { kind: "val", val: type } });
-    vecNewFixedDataScratch.set(arrayTypeIdx, idx);
+    const type: ValType = linear ? { kind: "i32" } : { kind: "ref_null", typeIdx: layout.arrayTypeIdx };
+    const name = linear ? `$linear_vec_ptr_${layout.linearMemory.layout.id}` : `$vec_data_${layout.arrayTypeIdx}`;
+    locals.push({ name, type, logicalType: { kind: "val", val: type } });
+    vecNewFixedDataScratch.set(key, idx);
     return idx;
   };
   const vecElementScratch = new Map<string, number>();
@@ -947,29 +952,14 @@ export function lowerIrFunctionBody<S, Slot>(
     }
   };
 
-  const resolveVecType = (type: IrType, alloc?: AllocSiteId): IrVecLowering | null => {
-    if (type.kind === "vec") {
-      const elementValType = lowerIrTypeToValType(type.elementType, resolver, func.name);
-      if (type.layout) {
-        return {
-          valueType: {
-            kind: type.nullable ? "ref_null" : "ref",
-            typeIdx: resolver.resolveType(type.layout.carrierType),
-          },
-          vecStructTypeIdx: resolver.resolveType(type.layout.carrierType),
-          lengthFieldIdx: type.layout.lengthFieldIndex,
-          dataFieldIdx: type.layout.dataFieldIndex,
-          arrayTypeIdx: resolver.resolveType(type.layout.dataType),
-          elementValType,
-        };
-      }
-      // Transitional IR fixtures may predate final Program-ABI preparation.
-      // Production prepared components fail closed on the missing layout.
-      return resolver.resolveVecForElement?.(elementValType, alloc) ?? null;
-    }
-    const valType = asVal(type);
-    return valType ? (resolver.resolveVec?.(valType) ?? null) : null;
-  };
+  const resolveVecType = (type: IrType, alloc?: AllocSiteId): IrVectorLowering | null =>
+    resolveVectorLowering(
+      type,
+      type.kind === "vec" ? lowerIrTypeToValType(type.elementType, resolver, func.name) : null,
+      resolver,
+      func.name,
+      alloc,
+    );
 
   // #3733 — best-effort constant-value peek, same defensive shape as
   // `tryTypeOf`. Used by the `js.bitor`/`js.bitxor` zero-operand fast path
@@ -2322,24 +2312,22 @@ export function lowerIrFunctionBody<S, Slot>(
         if (instr.integer !== true) emitter.emitUnary("f64.convert_i32_s", out);
         return;
       }
-      case "vec.get": {
-        const vec = resolveVecType(typeOf(instr.vec));
-        if (!vec) throw new Error(`ir/lower: resolver cannot lower vec for vec.get (${func.name})`);
-        // Stack: dataArray, index → element
-        emitValue(instr.vec, out);
-        emitter.emitVecDataPtr(vec, out);
-        emitValue(instr.index, out);
-        emitter.emitElemGet(vec, out);
-        return;
-      }
+      case "vec.get":
       case "vec.set": {
         const vec = resolveVecType(typeOf(instr.vec));
-        if (!vec) throw new Error(`ir/lower: resolver cannot lower vec for vec.set (${func.name})`);
-        emitValue(instr.vec, out);
-        emitter.emitVecDataPtr(vec, out);
-        emitValue(instr.index, out);
-        emitValue(instr.newValue, out);
-        emitter.emitElemSet(vec, ensureVecElementScratch(vec.elementValType), out);
+        if (!vec) throw new Error(`ir/lower: resolver cannot lower vec for ${instr.kind} (${func.name})`);
+        emitVectorElementAccess(
+          instr,
+          vec,
+          {
+            emitter,
+            emitValue,
+            construction: defBy.get(instr.vec),
+            indexScratch: () => allocScratchLocal("$vec_access_index", { kind: "i32" }),
+            elementScratch: ensureVecElementScratch,
+          },
+          out,
+        );
         return;
       }
       case "vec.set_length": {
@@ -2364,7 +2352,7 @@ export function lowerIrFunctionBody<S, Slot>(
         // wrap in the vec struct via a scratch local for the (length, data)
         // field order.
         for (const el of instr.elements) emitValue(el, out);
-        const dataScratch = ensureVecDataScratch(vec.arrayTypeIdx);
+        const dataScratch = ensureVecDataScratch(vec);
         emitter.emitVecNewFixed(vec, instr.elements.length, instr.capacity ?? instr.elements.length, dataScratch, out);
         return;
       }
@@ -4013,18 +4001,8 @@ export function lowerIrTypeToValType(t: IrType, resolver: IrLowerResolver, funcN
     }
     return sty;
   }
-  if (t.kind === "vec") {
-    const elementValType = lowerIrTypeToValType(t.elementType, resolver, funcName);
-    if (t.layout) {
-      return {
-        kind: t.nullable ? "ref_null" : "ref",
-        typeIdx: resolver.resolveType(t.layout.carrierType),
-      };
-    }
-    const vec = resolver.resolveVecForElement?.(elementValType);
-    if (!vec) throw new Error(`ir/lower: resolver cannot lower vec IrType (${funcName})`);
-    return vec.valueType ?? { kind: t.nullable ? "ref_null" : "ref", typeIdx: vec.vecStructTypeIdx };
-  }
+  if (t.kind === "vec")
+    return resolveVectorCarrierType(t, lowerIrTypeToValType(t.elementType, resolver, funcName), resolver, funcName);
   if (t.kind === "object") {
     // Object IrTypes always lower to a (ref $struct) — mutability of the
     // backing reference is decided by the caller (locals/params get a

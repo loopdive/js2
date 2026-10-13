@@ -140,7 +140,7 @@ function invocationPolicy(
       : deferTopLevelInit
         ? "deferred-export"
         : "wasm-start";
-  return Object.freeze({ target, kind, exactlyOnce: true });
+  return Object.freeze({ target, kind, deferTopLevelInit, exactlyOnce: true });
 }
 
 function collectReassignedTopLevelFunctions(
@@ -504,7 +504,13 @@ export function verifyIrModuleInitPlan(plan: IrModuleInitPlan, sourceFile: ts.So
   if (plan.executable !== (plan.liveSeeds.length > 0 || plan.evaluations.length > 0)) {
     throw new IrModuleInitPlanInvariantError("invalid-invocation", "executable flag disagrees with planned entries");
   }
-  if ((plan.invocation.kind === "none") !== !plan.executable || plan.invocation.exactlyOnce !== true) {
+  if (
+    (plan.invocation.kind === "none") !== !plan.executable ||
+    plan.invocation.exactlyOnce !== true ||
+    typeof plan.invocation.deferTopLevelInit !== "boolean" ||
+    plan.invocation.kind !==
+      invocationPolicy(plan.executable, plan.invocation.target, plan.invocation.deferTopLevelInit).kind
+  ) {
     throw new IrModuleInitPlanInvariantError("invalid-invocation", "module-init invocation policy is inconsistent");
   }
 }

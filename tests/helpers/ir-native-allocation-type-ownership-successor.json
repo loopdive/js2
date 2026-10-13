@@ -1,0 +1,116 @@
+{
+  "schema": 1,
+  "kind": "native-allocation-type-ownership-successor",
+  "base": "529b092b6f80682538c1c2b7f7e136f5ca9d72c2",
+  "before": [
+    {
+      "path": "src/ir/analysis/contracts/allocations.ts",
+      "bytes": 1715,
+      "sha256": "8f72c7cf5563171d02522fc7b1581db8cb68d67574fa97d17098e3594565b9e4",
+      "gitBlob": "544300c3319bc52d3f93c5289adad2a117eadea7"
+    },
+    {
+      "path": "src/ir/analysis/lattice.ts",
+      "bytes": 5739,
+      "sha256": "8814ff9b71c04e9e16760a913984aaba60f23b402a700968fd6c2a70c92fc22c",
+      "gitBlob": "09f6f2ced96906b6d7d6aa04a68e1c1ac23d9a8d"
+    },
+    {
+      "path": "src/ir/analysis/escape.ts",
+      "bytes": 11200,
+      "sha256": "9400e82269aa53b73a114e945474c6905b1e75795ca40f6da28be723fd678a5f",
+      "gitBlob": "6c678fd64d3d18f5d4896da3250f5e907de461a3"
+    },
+    {
+      "path": "src/ir/analysis/alloc-registry.ts",
+      "bytes": 16931,
+      "sha256": "f63a2ae6a079fb8bd5cc24ffbf5df38cc1bc3d758477d05e6248513473a4fd41",
+      "gitBlob": "de20b852157f7db39bcf7fc4cf6f5f1936ad2673"
+    }
+  ],
+  "current": [
+    {
+      "path": "src/ir/analysis/contracts/allocations.ts",
+      "bytes": 3351,
+      "sha256": "291f33563bf9db37fec8063cd02e4253ef626976b6ac4bce211d2a08831cf051",
+      "gitBlob": "3598a7438774dda6c053fc9cfc2cb346bf1eed47"
+    },
+    {
+      "path": "src/ir/analysis/lattice.ts",
+      "bytes": 5207,
+      "sha256": "d59cd168f935f4fa35ef21cdaade663b4e56138e08aa358a6611fc60efb3782f",
+      "gitBlob": "888709c116419d3c3f0dde61346e9dcb11150942"
+    },
+    {
+      "path": "src/ir/analysis/escape.ts",
+      "bytes": 10915,
+      "sha256": "393ef2faebf148ac7616cd0daf12e86a5de5669be27a1c45f50368da11caedca",
+      "gitBlob": "dba40d40f3c4104fbd8faf2f54c07c9403f262e1"
+    },
+    {
+      "path": "src/ir/analysis/alloc-registry.ts",
+      "bytes": 16450,
+      "sha256": "33a611e89ae5a9b54fefd59167da726c31bfd38a1b2d7ebc1ef82062396299a5",
+      "gitBlob": "6cbd570322cb8433a947601768bf5390726ce278"
+    }
+  ],
+  "historical": [
+    {
+      "path": "tests/helpers/ir-allocation-provenance-lookup-successor.json",
+      "bytes": 11637,
+      "sha256": "4528c914b70535665feebbd0f93ed5d43ef0a5fbb9b4a752e056da84f89a2c7d",
+      "gitBlob": "508e4a700348f1adacad3aad0e313c979b333159"
+    },
+    {
+      "path": "tests/helpers/ir-allocation-provenance-lookup-successor.ts",
+      "bytes": 29831,
+      "sha256": "7f818067a0ecb8963f582e232f1692af9d3ca9283b9596f42e9ab8846f1f6443",
+      "gitBlob": "059095d2f9cdb2ca2f0a6c42091e7104b89c3a75"
+    },
+    {
+      "path": "tests/helpers/ir-allocation-rule-sharing-successor.json",
+      "bytes": 45797,
+      "sha256": "7b947e08fab9d09418b3431f0f638f2f8e0278cc5af40ac1d979d7ed2064d8b2",
+      "gitBlob": "59e77cbe5196e1ed9b8a27b5dcfa7c48cbdcb31e"
+    },
+    {
+      "path": "tests/helpers/ir-allocation-rule-sharing-successor.ts",
+      "bytes": 40165,
+      "sha256": "b799ad4d8cd52819a21db12c36b7347c4fb8226b87c175f87135094091c848dc",
+      "gitBlob": "863104071712769db32986652777b29d5ff078a3"
+    }
+  ],
+  "transfers": [
+    {
+      "source": "src/ir/analysis/lattice.ts",
+      "beforeStart": 598,
+      "beforeEnd": 1251,
+      "beforeText": "/**\n * Ownership state — a totally ordered lattice from most-precise (`owned`) to\n * most-permissive (`escaped`). Higher = more conservative = safer default.\n *\n *   owned  ⊑ borrowed ⊑ shared ⊑ escaped\n *\n * - `owned`    — exactly one live reference (this one) for its liveness.\n * - `borrowed` — referenced elsewhere; this ref must not deallocate/invalidate.\n * - `shared`   — multiple references; mutation must be observable to all.\n * - `escaped`  — lifetime extends beyond this function (return, capture,\n *                store-to-heap, pass to opaque code).\n */\nexport type Ownership = \"owned\" | \"borrowed\" | \"shared\" | \"escaped\";",
+      "currentStart": 598,
+      "currentEnd": 719,
+      "currentText": "import type { Ownership } from \"./contracts/allocations.js\";\nexport type { Ownership } from \"./contracts/allocations.js\";",
+      "declarations": ["Ownership"]
+    },
+    {
+      "source": "src/ir/analysis/escape.ts",
+      "beforeStart": 1943,
+      "beforeEnd": 2377,
+      "beforeText": "/**\n * How an allocation escapes its defining function. Ordered most-precise →\n * most-conservative; `local` is the only stack-allocatable classification.\n */\nexport type EscapeClass = \"local\" | \"returned\" | \"stored\" | \"captured\" | \"opaque\";\n\nexport interface EscapeInfo {\n  readonly classification: EscapeClass;\n  /** True iff `classification === \"local\"` — safe for scalar replacement. */\n  readonly stackAllocatable: boolean;\n}",
+      "currentStart": 1943,
+      "currentEnd": 2092,
+      "currentText": "import type { EscapeClass, EscapeInfo } from \"./contracts/allocations.js\";\nexport type { EscapeClass, EscapeInfo } from \"./contracts/allocations.js\";",
+      "declarations": ["EscapeClass", "EscapeInfo"]
+    },
+    {
+      "source": "src/ir/analysis/alloc-registry.ts",
+      "beforeStart": 5358,
+      "beforeEnd": 5901,
+      "beforeText": "/**\n * Reserved metadata namespaces. Each analysis owns exactly one and may not\n * write to another's. Enforced by convention in this issue (#1586); the ADR\n * documents the ownership table.\n */\nexport const ALLOC_NAMESPACES = {\n  /** #1587 — ownership and access-semantics analysis. */\n  ownership: \"ownership\",\n  /** #1588 — string encoding tracking. */\n  encoding: \"encoding\",\n  /** #1585 — dual-target IR / lifetime analysis. */\n  lifetime: \"lifetime\",\n  /** Closure-capture escape analysis (#747). */\n  escape: \"escape\",\n} as const;",
+      "currentStart": 5358,
+      "currentEnd": 5420,
+      "currentText": "export { ALLOC_NAMESPACES } from \"./contracts/allocations.js\";",
+      "declarations": ["ALLOC_NAMESPACES"]
+    }
+  ],
+  "contractAppend": "\n/**\n * Ownership state — a totally ordered lattice from most-precise (`owned`) to\n * most-permissive (`escaped`). Higher = more conservative = safer default.\n *\n *   owned  ⊑ borrowed ⊑ shared ⊑ escaped\n *\n * - `owned`    — exactly one live reference (this one) for its liveness.\n * - `borrowed` — referenced elsewhere; this ref must not deallocate/invalidate.\n * - `shared`   — multiple references; mutation must be observable to all.\n * - `escaped`  — lifetime extends beyond this function (return, capture,\n *                store-to-heap, pass to opaque code).\n */\nexport type Ownership = \"owned\" | \"borrowed\" | \"shared\" | \"escaped\";\n\n/**\n * How an allocation escapes its defining function. Ordered most-precise →\n * most-conservative; `local` is the only stack-allocatable classification.\n */\nexport type EscapeClass = \"local\" | \"returned\" | \"stored\" | \"captured\" | \"opaque\";\n\nexport interface EscapeInfo {\n  readonly classification: EscapeClass;\n  /** True iff `classification === \"local\"` — safe for scalar replacement. */\n  readonly stackAllocatable: boolean;\n}\n\n/**\n * Reserved metadata namespaces. Each analysis owns exactly one and may not\n * write to another's. Enforced by convention in this issue (#1586); the ADR\n * documents the ownership table.\n */\nexport const ALLOC_NAMESPACES = {\n  /** #1587 — ownership and access-semantics analysis. */\n  ownership: \"ownership\",\n  /** #1588 — string encoding tracking. */\n  encoding: \"encoding\",\n  /** #1585 — dual-target IR / lifetime analysis. */\n  lifetime: \"lifetime\",\n  /** Closure-capture escape analysis (#747). */\n  escape: \"escape\",\n} as const;\n"
+}

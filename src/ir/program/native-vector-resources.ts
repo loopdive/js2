@@ -52,11 +52,18 @@ export function deriveNativeVectorResourcePlan(input: NativeVectorResourceInput)
   const demands = collectVectorCallableDemands(input.functions);
   const layouts = new Set<NativeVectorElement>();
   const supported = input.backend === "wasmgc" && input.target === "standalone";
+  const f64Supported = input.backend === "wasmgc" && (input.target === "standalone" || input.target === "wasi");
   const note = (type: IrType): void => {
-    if (!supported || type.kind !== "vec" || type.layout || type.elementType.kind !== "val" || type.elementType.typeRef)
+    if (
+      (!supported && !f64Supported) ||
+      type.kind !== "vec" ||
+      type.layout ||
+      type.elementType.kind !== "val" ||
+      type.elementType.typeRef
+    )
       return;
     const kind = type.elementType.val.kind;
-    if (kind === "f64" || kind === "externref") layouts.add(kind);
+    if ((kind === "f64" && f64Supported) || (kind === "externref" && supported)) layouts.add(kind);
   };
   for (const fn of input.functions) {
     fn.params.forEach((param) => note(param.type));

@@ -1,5 +1,10 @@
+import { completedErrorPresentation, type CompletedErrorPresentation } from "./ir-program-error-presentation.js";
+import { completedLinearMemorySupportKeys } from "./ir-program-memory-presentation.js";
+import { joinPreparedStartup, type IrProgramPresentationStartup } from "./ir-program-startup-presentation.js";
+export type { IrProgramPresentationStartup } from "./ir-program-startup-presentation.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-import { absoluteFuncIndex } from "../emit/resolve-layout.js";
+import { resolveCompileTargetProfile } from "../target-profile.js";
+import { isNativeIrCompileProfile } from "../ir/runtime/target-admission.js";
 import { ts } from "../ts-api.js";
 import type { PipelineOutputContext } from "../compiler.js";
 import type { CompileResult } from "../index.js";
@@ -44,21 +49,6 @@ export interface IrProgramPresentationGap {
   readonly unitId?: IrUnitId;
   readonly bindingId?: IrBindingId;
 }
-export type IrProgramPresentationStartup =
-  | { readonly kind: "none"; readonly hasTopLevelStatements: false }
-  | {
-      readonly kind: "wasm-start";
-      readonly hasTopLevelStatements: true;
-      readonly adapterIndex: number;
-      readonly unitIds: readonly IrUnitId[];
-    }
-  | {
-      readonly kind: "deferred-export";
-      readonly hasTopLevelStatements: true;
-      readonly adapterIndex: number;
-      readonly unitIds: readonly IrUnitId[];
-      readonly exportName: "__module_init";
-    };
 export type IrProgramPresentationResult =
   | {
       readonly kind: "prepared-presentation";
@@ -157,7 +147,8 @@ function booleanExportSignature(declaration: DeclarationCapture): ExportSignatur
   Object.freeze(signature.params);
   return Object.freeze(signature);
 }
-function typeNeedsWidening(type: TypeDef): boolean {
+function typeNeedsWidening(type: TypeDef, ownedRecords?: ReadonlySet<object>): boolean {
+  if (ownedRecords?.has(type)) return false;
   switch (type.kind) {
     case "func":
       return [...type.params, ...type.results].some((value) => value.kind === "ref");
@@ -166,9 +157,9 @@ function typeNeedsWidening(type: TypeDef): boolean {
     case "array":
       return type.element.kind === "ref";
     case "rec":
-      return type.types.some(typeNeedsWidening);
+      return type.types.some((member) => typeNeedsWidening(member, ownedRecords));
     case "sub":
-      return typeNeedsWidening(type.type);
+      return typeNeedsWidening(type.type, ownedRecords);
   }
 }
 function bodyNeedsWidening(body: readonly Instr[], visited = new Set<readonly Instr[]>()): boolean {
@@ -262,15 +253,22 @@ function capturePresentation(request: IrProgramPresentationRequest, gap: GapReco
         sourceFile: source.fileName,
       });
   }
+  const profile = resolveCompileTargetProfile(options);
+  const native = isNativeIrCompileProfile(profile);
   if (
-    backend.target !== "host" ||
+    (backend.target !== "host" && !native) ||
     policy.target !== backend.target ||
     policy.backend !== backend.backend ||
+    (native && backend.target !== profile.target) ||
     (backend.backend !== "wasmgc" && backend.backend !== "linear")
   )
-    gap("backend", "option-association", "only matching wasmgc:host or linear:host projections are admitted");
+    gap(
+      "backend",
+      "option-association",
+      "only matching host or explicit native backend/environment projections are admitted",
+    );
   if (
-    (options.target === "linear" ? "linear" : "wasmgc") !== backend.backend ||
+    profile.backend !== backend.backend ||
     (options.moduleName ?? "module") !== backend.moduleName ||
     (options.sharedExceptionTag === true) !== backend.sharedExceptionTag ||
     (options.utf8Storage === true) !== backend.utf8Storage ||
@@ -422,6 +420,7 @@ function checkAbiExports(
   mixed: boolean,
   asyncNames: Set<string>,
   witExports?: PreparedWitExport[],
+  errorBindingId?: IrBindingId,
 ): Set<string> {
   const mod = emission.module;
   const { globals } = capture;
@@ -434,6 +433,7 @@ function checkAbiExports(
     if (contract.kind === "callable") {
       if (
         !mixed &&
+        plan.id !== errorBindingId &&
         (contract.promise ||
           [...contract.params, ...contract.results].some((type) => type.kind !== "val" || !numeric(type.val)))
       )
@@ -636,9 +636,16 @@ function numberRemainderSupportMatches(
   program: PreparedIrProgram,
   emission: EmittedPreparedIrProgram,
   providers: readonly RuntimeProviderDefinition[],
+  backend: PreparedIrBackendOptions,
+  error: CompletedErrorPresentation | undefined,
 ): boolean {
   const physical = emittedPhysicalSetupPlan(emission);
-  const support = emittedSupportFunctionReceipts(emission);
+  const memoryKeys = completedLinearMemorySupportKeys(emission, backend);
+  if (!memoryKeys || !error) return false;
+  providers = providers.filter((row) => !error.bindingId || row.feature !== "error.reference.construct");
+  const support = emittedSupportFunctionReceipts(emission).filter(
+    (row) => !memoryKeys.includes(row.key) && !error.supportKeys.includes(row.key),
+  );
   if (
     !physical ||
     physical.numberRemainders.length !== providers.length ||
@@ -685,6 +692,7 @@ function checkResourceDemand(
   emission: EmittedPreparedIrProgram,
   backend: PreparedIrBackendOptions,
   gap: GapRecorder,
+  error: CompletedErrorPresentation | undefined,
 ): void {
   const mod = emission.module;
   const runtime = program.runtime.filter((row) => row.backend === backend.backend && row.target === backend.target);
@@ -694,7 +702,7 @@ function checkResourceDemand(
     if (
       manifest.hostCapabilities.length ||
       manifest.hostCapabilityRecords.length ||
-      !numberRemainderSupportMatches(program, emission, manifest.providers) ||
+      !numberRemainderSupportMatches(program, emission, manifest.providers, backend, error) ||
       runtime[0]!.prepared.functions.some((fn) => fn.asyncPlan || fn.asyncRuntime)
     )
       gap("runtime", "runtime-demand", "host provider or async demand is outside this numeric presentation contract");
@@ -725,122 +733,19 @@ function checkResourceDemand(
       "numeric boundary absence must be preserved, not filled with all-other rows",
     );
   if (
-    mod.functions.some((fn) => fn.locals.some((local) => local.type.kind === "ref") || bodyNeedsWidening(fn.body)) ||
-    mod.types.some(typeNeedsWidening) ||
-    mod.globals.some((global) => global.type.kind === "ref")
+    mod.functions.some(
+      (fn) =>
+        !error?.ownedRecords.has(fn) &&
+        (fn.locals.some((local) => local.type.kind === "ref") || bodyNeedsWidening(fn.body)),
+    ) ||
+    mod.types.some((type) => typeNeedsWidening(type, error?.ownedRecords)) ||
+    mod.globals.some((global) => !error?.ownedRecords.has(global) && global.type.kind === "ref")
   )
     gap(
       "physical",
       "widening-demand",
       "nondefaultable reference widening needs a separately authenticated physical post-state",
     );
-}
-function joinStartup(
-  program: PreparedIrProgram,
-  emission: EmittedPreparedIrProgram,
-  input: IrWholeProgramPreparationInput,
-  gap: GapRecorder,
-): IrProgramPresentationStartup {
-  const mod = emission.module;
-  const executable = program.startup.filter((row) => row.executable);
-  if (
-    program.startup.length !== program.inventory.sources.length ||
-    program.startup.some(
-      (row, index) =>
-        row.sourceId !== program.inventory.sources[index]?.id ||
-        row.gaps.length ||
-        row.invocation.target !== "host" ||
-        row.executable !== (row.evaluations.length > 0 || row.liveSeeds.length > 0),
-    )
-  )
-    gap(
-      "startup",
-      "startup-census",
-      "source order, executable evaluations and startup policy must be complete and consistent",
-    );
-  const adapterIndex = emittedStartupAdapterIndex(emission);
-  let startup: IrProgramPresentationStartup = Object.freeze({ kind: "none", hasTopLevelStatements: false });
-  if (executable.length === 0) {
-    if (
-      adapterIndex !== undefined ||
-      mod.startFuncIdx !== undefined ||
-      program.startup.some((row) => row.invocation.kind !== "none")
-    )
-      gap(
-        "startup",
-        "unexpected-startup",
-        "zero executable demand must have no authenticated startup adapter or Wasm start",
-      );
-  } else {
-    const unitIds = Object.freeze(executable.flatMap((row) => (row.unitId ? [row.unitId] : [])));
-    if (adapterIndex !== undefined) {
-      const adapter = mod.functions[adapterIndex - functionImportCount(mod)];
-      const signature = adapter && mod.types[adapter.typeIdx];
-      const slots = unitIds.map((unitId) => {
-        const matches = program.abi.entries.filter(
-          (entry) =>
-            entry.plan.intent.kind === "callable" &&
-            entry.plan.intent.unitId === unitId &&
-            entry.plan.slotPolicy === "required",
-        );
-        return matches.length === 1 ? emittedProgramBindingIndex(emission, matches[0]!.plan.id) : undefined;
-      });
-      if (
-        !signature ||
-        signature.kind !== "func" ||
-        signature.params.length ||
-        signature.results.length ||
-        !adapter ||
-        adapter.locals.length ||
-        adapter.body.length !== unitIds.length ||
-        adapter.body.some(
-          (instruction, index) =>
-            instruction.op !== "call" ||
-            slots[index]?.space !== "function" ||
-            absoluteFuncIndex(mod, instruction.funcIdx) !== slots[index]?.index,
-        )
-      )
-        gap(
-          "startup",
-          "startup-call-order",
-          "completed adapter must call each authenticated startup unit once in semantic order",
-        );
-    }
-    if (
-      unitIds.length !== executable.length ||
-      adapterIndex === undefined ||
-      !mod.functions[adapterIndex - functionImportCount(mod)]
-    )
-      gap("startup", "startup-adapter", "executable source units require a genuine completed physical startup adapter");
-    else if (
-      !input.deferTopLevelInit &&
-      executable.every((row) => row.invocation.kind === "wasm-start") &&
-      mod.startFuncIdx === adapterIndex
-    )
-      startup = Object.freeze({ kind: "wasm-start", hasTopLevelStatements: true, adapterIndex, unitIds });
-    else if (
-      input.deferTopLevelInit &&
-      executable.every((row) => row.invocation.kind === "deferred-export") &&
-      mod.startFuncIdx === undefined &&
-      mod.exports.filter(
-        (row) => row.name === "__module_init" && row.desc.kind === "func" && row.desc.index === adapterIndex,
-      ).length === 1
-    )
-      startup = Object.freeze({
-        kind: "deferred-export",
-        hasTopLevelStatements: true,
-        adapterIndex,
-        unitIds,
-        exportName: "__module_init",
-      });
-    else
-      gap(
-        "startup",
-        "startup-disposition",
-        "authenticated adapter and actual start/export disagree with captured invocation policy",
-      );
-  }
-  return startup;
 }
 /** One synchronous source-capture/driver transaction, never an emitted-packet input. */
 export function prepareIrProgramPresentation(request: IrProgramPresentationRequest): IrProgramPresentationResult {
@@ -863,6 +768,7 @@ export function prepareIrProgramPresentation(request: IrProgramPresentationReque
   const captures = joinDeclarations(program, capture, gap);
   const signatures: Record<string, ExportSignature> = Object.create(null);
   const mixed = [...captures.values()].some((row) => row.results.includes("promise"));
+  const error = mixed ? undefined : completedErrorPresentation(program, emission, capture.backend);
   const asyncNames = new Set<string>();
   const witExports: PreparedWitExport[] | undefined = capture.context.options.wit ? [] : undefined;
   const joinedExports = checkAbiExports(
@@ -875,6 +781,7 @@ export function prepareIrProgramPresentation(request: IrProgramPresentationReque
     mixed,
     asyncNames,
     witExports,
+    error?.bindingId,
   );
   if (witExports && (mixed || mod.imports.length)) {
     const promise = [...captures].find(([, declaration]) => declaration.results.includes("promise"));
@@ -889,8 +796,8 @@ export function prepareIrProgramPresentation(request: IrProgramPresentationReque
     );
   }
   if (mixed) checkMixedDemand(program, emission, capture.backend, captures, gap);
-  else checkResourceDemand(program, emission, capture.backend, gap);
-  const startup = joinStartup(program, emission, capture.input, gap);
+  else checkResourceDemand(program, emission, capture.backend, gap, error);
+  const startup = joinPreparedStartup(program, emission, capture.input, gap);
   if (!mod.functions.length || !program.inventory.terminalUnits.length)
     gap("emission", "empty-population", "presentation requires genuine nonempty emitted and terminal populations");
   if (mixed)
@@ -906,7 +813,7 @@ export function prepareIrProgramPresentation(request: IrProgramPresentationReque
       (!joinedExports.has(row.name) &&
         !(
           row.desc.kind === "func" &&
-          startup.kind === "deferred-export" &&
+          (startup.kind === "deferred-export" || startup.kind === "wasi-start-export") &&
           row.name === startup.exportName &&
           row.desc.index === startup.adapterIndex
         ))
@@ -927,9 +834,9 @@ export function prepareIrProgramPresentation(request: IrProgramPresentationReque
     emission,
     output: Object.freeze({ ...capture.context, preparedStartup: startup }),
     startup,
-    ...(mixed ? { requiresDetachedFinalization: true as const } : {}),
+    ...(mixed || error?.bindingId ? { requiresDetachedFinalization: true as const } : {}),
   });
-  if (mixed)
+  if (mixed || error?.bindingId)
     mixedPresentations.set(presentation, {
       plan: emittedPhysicalSetupPlan(emission),
       original: observeModuleData(mod),

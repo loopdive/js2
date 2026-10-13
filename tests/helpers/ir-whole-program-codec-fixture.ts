@@ -254,7 +254,7 @@ export function buildCodecFixture(policies: readonly RuntimeManifestPolicy[] = C
       start: index * 100,
       end: index * 100 + 50,
     })),
-    invocation: { target: "host", kind: "none", exactlyOnce: true },
+    invocation: { target: "host", kind: "none", deferTopLevelInit: false, exactlyOnce: true },
     gaps: [],
   };
 

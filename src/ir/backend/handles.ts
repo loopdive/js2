@@ -450,6 +450,9 @@ export interface IrDynamicLowering {
  * #1713 spec §7 anticipated. The `BackendEmitter` vec methods accept
  * `IrVecLowering | LinearVecLowering`; each emitter narrows to its own shape.
  */
+/** A real backend vector handle; Linear has no fabricated WasmGC type coordinates. */
+export type IrVectorLowering = IrVecLowering | LinearVecLowering;
+
 export interface LinearVecLowering {
   /** Element ValType — drives stride (4 vs 8) and the load op. */
   readonly elementValType: ValType;

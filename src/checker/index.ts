@@ -1,5 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-import { ts } from "../ts-api.js";
+import { ts, createOriginProgram, originTypeChecker, invalidateCompilerLibraryOrigins } from "../ts-api.js";
 import {
   buildBareSpecifierLookup,
   buildProjectModuleResolutionLookup,
@@ -12,7 +12,6 @@ import { getDefaultEnvironment } from "../env.js";
 import { DTS_ENTRY_DECLS_NAME } from "./dts-entrypoint-seeds.js";
 import { JS_COLLECTION_INFERENCE_DTS_NAME, jsCollectionInferenceSourceFile } from "./js-collection-inference.js";
 import { buildModuleDecls } from "./node-capability-map.js";
-import { traceTs5Checker } from "./ts5-trace.js";
 import { nodeBuiltinClassStub } from "../import-resolver.js";
 
 // All Node builtin access goes through the environment adapter (#1096).
@@ -39,6 +38,7 @@ function getBundledLibFiles(): Record<string, string> | undefined {
  * previously registered lib files.
  */
 export function preloadLibFiles(files: Record<string, string>): void {
+  invalidateCompilerLibraryOrigins();
   const globalObject = globalThis as TsLibGlobal;
   globalObject.__js2wasmTsLibFiles = {
     ...(globalObject.__js2wasmTsLibFiles ?? globalObject.__ts2wasmTsLibFiles ?? {}),
@@ -1065,7 +1065,7 @@ export function analyzeSource(source: string, fileName = "input.ts", analyzeOpti
     const rootNames = withNodeEnv ? [fileName, NODE_ENV_DTS_NAME] : [fileName];
     if (entryDeclsText !== undefined) rootNames.push(DTS_ENTRY_DECLS_NAME);
     if (injectJsCollections) rootNames.push(JS_COLLECTION_INFERENCE_DTS_NAME);
-    const prog = ts.createProgram(rootNames, compilerOptions, compilerHost);
+    const prog = createOriginProgram(rootNames, compilerOptions, compilerHost);
     // (#743) The shipped declaration root's own diagnostics never surface: it
     // exists purely as a seed source and must not block compiling the package.
     const dropEntryDecls = (diags: readonly ts.Diagnostic[]): readonly ts.Diagnostic[] =>
@@ -1090,7 +1090,7 @@ export function analyzeSource(source: string, fileName = "input.ts", analyzeOpti
 
   return {
     sourceFile: program.getSourceFile(fileName)!,
-    checker: traceTs5Checker(program.getTypeChecker()),
+    checker: originTypeChecker(program, true),
     program,
     diagnostics,
     syntacticDiagnostics: syntacticDiagnostics as readonly ts.Diagnostic[],
@@ -1199,7 +1199,7 @@ export function analyzeMultiSource(
     compilerOptions.checkJs = true;
   }
 
-  const program = ts.createProgram(rootNames, compilerOptions, compilerHost);
+  const program = createOriginProgram(rootNames, compilerOptions, compilerHost);
 
   const syntacticDiagnostics = program.getSyntacticDiagnostics();
   const semanticDiagnostics = analyzeOptions?.skipSemanticDiagnostics
@@ -1265,7 +1265,7 @@ export function analyzeMultiSource(
   return {
     sourceFiles: userSourceFiles,
     entryFile: entrySourceFile,
-    checker: traceTs5Checker(program.getTypeChecker()),
+    checker: originTypeChecker(program, true),
     program,
     diagnostics,
     syntacticDiagnostics: syntacticDiagnostics as readonly ts.Diagnostic[],
@@ -1407,8 +1407,8 @@ export function analyzeFiles(entryPath: string, analyzeOptions?: AnalyzeOptions)
     compilerOptions.checkJs = true;
   }
 
-  const program = ts.createProgram([resolvedEntry], compilerOptions);
-  const checker = traceTs5Checker(program.getTypeChecker());
+  const program = createOriginProgram([resolvedEntry], compilerOptions);
+  const checker = originTypeChecker(program, true);
 
   const syntacticDiagnostics = program.getSyntacticDiagnostics();
   const semanticDiagnostics = analyzeOptions?.skipSemanticDiagnostics

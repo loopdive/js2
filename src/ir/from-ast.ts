@@ -197,7 +197,14 @@ import {
 } from "./capability.js";
 import type { IrStandaloneDomOperation } from "./dom-capability.js";
 import { IR_CONSOLE_METHODS, IR_CONSOLE_SINK_APPEND_FN, IR_NUMBER_TO_STRING_NATIVE_FN } from "./host-free-runtime.js";
-import type { IrLowerResolver, IrVecLowering } from "./lower.js";
+import type { IrLowerResolver } from "./lower.js";
+import type { IrVectorLowering } from "./backend/handles.js";
+import {
+  sourceVectorValueType,
+  sourceVectorDataType,
+  vecElemSetProviderSymbol,
+  vecNewSizedProviderSymbol,
+} from "./ast-vector-representation.js";
 import {
   allocateLiftedFunctionArtifact,
   type IrDerivedUnitProvenance,
@@ -279,16 +286,11 @@ import {
 } from "./nodes.js";
 import type { ValType } from "./types.js";
 import { coerceIrValueToExternref } from "./value-coercion.js";
-import {
-  IR_HOLEY_ARRAY_ELEM_SET,
-  IR_HOLEY_ARRAY_NEW,
-  irVecElemSetSymbol,
-  irVecNewSizedSymbol,
-} from "./vector-runtime.js";
+import { IR_HOLEY_ARRAY_ELEM_SET, IR_HOLEY_ARRAY_NEW } from "./vector-runtime.js";
 import { readEnv } from "../env.js";
 
 interface ResolvedIrVecType {
-  readonly lowering: IrVecLowering;
+  readonly lowering: IrVectorLowering;
   readonly elementType: IrType;
   readonly valueType: ValType;
 }
@@ -317,9 +319,7 @@ function resolveIrVecType(
     const lowering = cx.resolver?.resolveVecForElement?.(elementValType);
     if (!lowering) return null;
     const backendValueType =
-      cx.resolver?.resolveVecValueTypeForElement?.(elementValType) ??
-      lowering.valueType ??
-      ({ kind: type.nullable ? "ref_null" : "ref", typeIdx: lowering.vecStructTypeIdx } as ValType);
+      cx.resolver?.resolveVecValueTypeForElement?.(elementValType) ?? sourceVectorValueType(lowering, type.nullable);
     const valueType =
       (backendValueType.kind === "ref" || backendValueType.kind === "ref_null") && type.nullable
         ? ({ kind: "ref_null", typeIdx: backendValueType.typeIdx } as ValType)
@@ -348,14 +348,6 @@ function resolveIrSlotRepresentation(
     storageType = resolveIrVecType(type, { resolver, funcName })?.valueType;
   }
   return storageType ? { storageType, bindingType: irVal(storageType), asType: type } : null;
-}
-
-function vecElemSetProviderSymbol(type: IrType, vec: IrVecLowering): string {
-  return type.kind === "vec" ? irVecElemSetSymbol(type.elementType) : `__vec_elem_set_${vec.vecStructTypeIdx}`;
-}
-
-function vecNewSizedProviderSymbol(type: IrType, vec: IrVecLowering): string {
-  return type.kind === "vec" ? irVecNewSizedSymbol(type.elementType) : `__vec_new_sized_${vec.vecStructTypeIdx}`;
 }
 
 function unsupportedVoidCallExpression(detail: string): never {
@@ -559,13 +551,13 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
     readonly get: string;
     readonly has: string;
   } | null;
-  resolveVec?(valType: ValType): IrVecLowering | null;
+  resolveVec?(valType: ValType): IrVectorLowering | null;
   /**
    * #1804 — register-or-recover the vec struct for an element ValType so
    * `lowerArrayLiteral` can type a constructed `vec.new_fixed`'s result SSA
    * value as `{ kind: "ref", typeIdx: vecStructTypeIdx }`.
    */
-  resolveVecForElement?(elementValType: ValType): IrVecLowering | null;
+  resolveVecForElement?(elementValType: ValType): IrVectorLowering | null;
   /**
    * Backend value representation for a vec constructed from `elementValType`.
    * WasmGC omits this and keeps the registered `(ref $vec)` default; linear
@@ -5436,10 +5428,7 @@ function lowerArrayLiteral(expr: ts.ArrayLiteralExpression, cx: LowerCtx, hint: 
         `ir/from-ast: resolver cannot register vec for empty literal (${cx.funcName})`,
       );
     }
-    const vecValueType =
-      cx.resolver?.resolveVecValueTypeForElement?.(elemVT) ??
-      vec.valueType ??
-      ({ kind: "ref", typeIdx: vec.vecStructTypeIdx } as ValType);
+    const vecValueType = cx.resolver?.resolveVecValueTypeForElement?.(elemVT) ?? sourceVectorValueType(vec, false);
     const vecResultType = hint.kind === "vec" ? irVec(hintElemIr, false) : irVal(vecValueType);
     const countedPush = canonicalCountedPushPlanForLiteral(expr, cx.checker);
     if (countedPush) {
@@ -5611,10 +5600,7 @@ function lowerArrayLiteral(expr: ts.ArrayLiteralExpression, cx: LowerCtx, hint: 
       `ir/from-ast: resolver cannot register vec for array literal (${cx.funcName})`,
     );
   }
-  const vecValueType =
-    cx.resolver?.resolveVecValueTypeForElement?.(elemVT) ??
-    vec.valueType ??
-    ({ kind: "ref", typeIdx: vec.vecStructTypeIdx } as ValType);
+  const vecValueType = cx.resolver?.resolveVecValueTypeForElement?.(elemVT) ?? sourceVectorValueType(vec, false);
   const resultType =
     elemVT.kind === "f64" || elemVT.kind === "i32" || storedElementType.kind === "string"
       ? irVec(storedElementType, false)
@@ -7017,10 +7003,24 @@ function lowerElementAccess(expr: ts.ElementAccessExpression, cx: LowerCtx): IrV
       logicalVectorMismatch(cx.funcName, "index must have the existing numeric/bool representation");
     }
     const index = scalar.kind === "i32" ? raw : cx.builder.emitUnary("i32.trunc_sat_f64_s", raw, IR_I32);
-    if (isProvenInBoundsIr(expr, cx)) return cx.builder.emitVecGet(recv, index, recvType.elementType);
+    // A numeric range proof alone must not bypass f64 property-index identity.
+    if (scalar.kind === "i32" && isProvenInBoundsIr(expr, cx)) {
+      return cx.builder.emitVecGet(recv, index, recvType.elementType);
+    }
     // No backend default lookup: retain the existing numeric NaN / externref
     // null out-of-bounds carriers using the layout-free vector element type.
-    return emitSafeVecGet(recv, index, asVal(recvType.elementType)!, { builder: cx.builder, funcName: cx.funcName });
+    const exactIndex =
+      scalar.kind === "f64"
+        ? cx.builder.emitBinary("f64.eq", raw, cx.builder.emitUnary("f64.convert_i32_s", index, IR_F64), IR_I32)
+        : undefined;
+    return emitSafeVecGet(
+      recv,
+      index,
+      asVal(recvType.elementType)!,
+      { builder: cx.builder, funcName: cx.funcName },
+      undefined,
+      exactIndex,
+    );
   }
 
   // Slice 2 — string-literal key on an object-shaped receiver: read the
@@ -12135,7 +12135,7 @@ function lowerForOfVec(
   const valTy = resolvedVec?.valueType ?? asVal(iterableType);
   if (resolvedVec) {
     elemValType = resolvedVec.lowering.elementValType;
-    dataValType = { kind: "ref", typeIdx: resolvedVec.lowering.arrayTypeIdx };
+    dataValType = sourceVectorDataType(resolvedVec.lowering);
   } else {
     if (!valTy) {
       demoteToLegacy(

@@ -13,16 +13,29 @@
 // Native string declarations are borrowed from the canonical backend recipe;
 // no resource allocation, codegen context or frontend code enters this plan.
 
+import { planPhysicalReferenceError, type PhysicalReferenceError } from "./program-reference-error.js";
+import { resolvePhysicalLinearMemory } from "./program-linear-memory.js";
+import type { PreparedLinearMemoryPlan } from "../backend/linear/program/contracts.js";
+import type {
+  NativeStringValueAbiBinding,
+  PhysicalNativeNumberFormatInput,
+  PhysicalNativeStringBindingInput,
+} from "./program/physical-body-resource-contracts.js";
+export type {
+  NativeStringValueAbiBinding,
+  PhysicalNativeNumberFormatInput,
+} from "./program/physical-body-resource-contracts.js";
+import { physicalSetupFailure } from "./program/physical-diagnostics.js";
+import { planPhysicalStartup, type PhysicalStartup } from "./program/physical-startup.js";
+export type { PhysicalStartup } from "./program/physical-startup.js";
+
 import {
   planNativeInvocationInput,
   nativeInvocationSetup,
   type NativeInvocationPhysicalSetup,
 } from "../backend/wasmgc/program/native-invocation-abi.js";
 import { nativeStringOutputAbiBindings } from "../backend/wasmgc/program/native-string-output-abi.js";
-import {
-  nativeBooleanAbiBindings,
-  nativeNumberBinding,
-} from "../backend/wasmgc/program/native-primitive-boundary-abi.js";
+import { nativeBooleanAbiBindings, nativeNumberBinding } from "./program/native-primitive-boundary-abi.js";
 import { planHostNumberBoundary, type HostNumberBoundarySetup } from "./program/host-number-boundary-setup.js";
 import { planHostAsyncDynamicUnits, preparedHostAsyncDynamicCarrier } from "./program/host-async-dynamic.js";
 import { irGlobalBindingKey, irTypeBindingKey, irSupportGlobalRef, irSourceTypeRef } from "./abi-bindings.js";
@@ -65,13 +78,14 @@ import {
   type NativeNumberFormatStringLayoutPlan,
   type NativeNumberFormatPhysicalPlan,
 } from "../backend/wasmgc/program/native-number-format.js";
-import { nativeStringTypeKeys } from "../backend/wasmgc/resources/native-string-literals.js";
+import { nativeStringTypeKeys } from "../shared/contracts/native-string-resource-keys.js";
 import { collectNativeStringValueDemands } from "./program/native-string-value-demands.js";
 import { numberFormatRadixSupportDeclarations } from "./program/formatter-support.js";
 import { NATIVE_ASYNC_CALLABLE_DECLARATIONS } from "./runtime/native-async-callables.js";
 import type { IrBindingId, IrUnitId } from "./identity.js";
-import { forEachInstrDeep, type IrFunction, type IrType, type IrInstrIntrinsic } from "./nodes.js";
+import { forEachInstrDeep, type IrFunction, type IrType } from "./nodes.js";
 import type { IrPreparationFailure } from "./outcomes.js";
+import { Gaps, acquirePreparedLinearAllocation } from "./program/linear-allocation-outcome.js";
 import {
   freezePreparedIrValue,
   preparedIrProgramOwner,
@@ -88,6 +102,7 @@ import {
   NUMBER_REMAINDER_RUNTIME_PROVIDERS,
 } from "./runtime/number-remainder-callables.js";
 import { deriveNativeVectorResourcePlan, type NativeVectorResourcePlan } from "./program/native-vector-resources.js";
+import { physicalBodyResourceRequirements } from "./program/physical-body-requirements.js";
 import { assertPreparedIrProgram } from "./program-validation.js";
 import {
   deriveNativeValueResourcePlan,
@@ -109,22 +124,9 @@ export type PhysicalSignatureType =
   | ValType
   | Extract<IrType, { kind: "vec" | "string" | "support-ref" | "closure" | "callable" | "boxed" }>;
 
-export interface NativeStringValueAbiBinding {
-  readonly resourceKey: string;
-  readonly entry: ProgramAbiPlanEntry;
-  readonly reference: IrFuncRef | IrGlobalRef | IrTypeRef;
-}
-
-export interface PhysicalNativeStringSetup {
+export interface PhysicalNativeStringSetup extends PhysicalNativeStringBindingInput {
   readonly resources: NativeStringValuePhysicalPlan | NativeNumberFormatStringLayoutPlan;
-  readonly bindings: readonly NativeStringValueAbiBinding[];
   readonly formatterScratch?: Extract<IrType, { kind: "support-ref" }>;
-}
-
-/** Descriptive input only; the consumer retains the actual prepared support owner. */
-export interface PhysicalNativeNumberFormatInput {
-  readonly requirements: NativeNumberFormatRequirements;
-  readonly support: PreparedIrRuntimeManifest;
 }
 
 export interface PhysicalNativeNumberFormatSetup {
@@ -176,12 +178,6 @@ export interface PhysicalExport {
   readonly targetBindingId: IrBindingId;
   /** Index space of the canonical target, decided at planning. */
   readonly space: "function" | "global";
-}
-
-export interface PhysicalStartup {
-  /** Executable startup bodies in semantic module-evaluation order. */
-  readonly units: readonly IrUnitId[];
-  readonly adapter: "none" | "wasm-start" | "deferred-export";
 }
 
 export interface PhysicalExceptionTag {
@@ -251,6 +247,8 @@ export interface PhysicalSetupPlan {
   readonly target: PreparedIrBackendOptions["target"];
   readonly exceptionTag: PhysicalExceptionTag;
   readonly vectors: NativeVectorResourcePlan;
+  readonly linearMemory?: PreparedLinearMemoryPlan;
+  readonly referenceError?: PhysicalReferenceError;
   readonly numberRemainders: readonly PhysicalNumberRemainder[];
   readonly sourceClosures?: Omit<NativeSourceClosureRequirements, "demands">;
   readonly nativeInvocation?: NativeInvocationPhysicalSetup;
@@ -346,13 +344,6 @@ function numeric(type: ValType): boolean {
 
 function typeLabel(type: IrType): string {
   return type.kind === "val" ? type.val.kind : type.kind;
-}
-
-class Gaps {
-  readonly rows: { readonly unitId: IrUnitId | undefined; readonly detail: string }[] = [];
-  add(detail: string, unitId?: IrUnitId): void {
-    this.rows.push({ unitId, detail });
-  }
 }
 
 /** Follow export aliases to the canonical required entry. */
@@ -954,6 +945,7 @@ function physicalSignatureConverter(
   native?: PhysicalNativeStringSetup,
   dynamicUnits: readonly IrUnitId[] = [],
   sourceClosures?: NativeSourceClosureRequirements,
+  linearMemory?: PreparedLinearMemoryPlan,
 ) {
   const abi = native ? new ProgramAbiMap(program.inventory, program.derivedUnits) : undefined;
   if (abi) {
@@ -1008,6 +1000,17 @@ function physicalSignatureConverter(
         (type.kind === "string" || (type.kind === "val" && (type.val.kind === "ref" || type.val.kind === "ref_null")))
       ) {
         out.push(nativeStringCarrier(type, context));
+        continue;
+      }
+      if (
+        type.kind === "vec" &&
+        !type.layout &&
+        type.elementType.kind === "val" &&
+        !type.elementType.typeRef &&
+        type.elementType.val.kind === "f64" &&
+        linearMemory?.memory
+      ) {
+        out.push({ kind: "i32" });
         continue;
       }
       if (
@@ -1148,70 +1151,6 @@ function planSourceClosureSetup(
   return sourceClosures;
 }
 
-function planPhysicalStartup(
-  program: PreparedIrProgram,
-  bodies: ReadonlyMap<IrUnitId, IrFunction>,
-  exportNames: ReadonlySet<string>,
-  gaps: Gaps,
-): PhysicalStartup {
-  // 4. Startup: executable units in semantic order, one adapter.
-  const startupUnits: IrUnitId[] = [];
-  let adapter: PhysicalStartup["adapter"] = "none";
-  for (const plan of program.startup) {
-    if (!plan.executable || plan.unitId === null) continue;
-    if (!bodies.has(plan.unitId))
-      gaps.add(`startup source ${plan.sourceId} has no physical initializer body`, plan.unitId);
-    startupUnits.push(plan.unitId);
-    const kind = plan.invocation.kind;
-    if (kind === "wasm-start" || kind === "deferred-export") {
-      if (adapter !== "none" && adapter !== kind) {
-        gaps.add(`startup sources disagree on the invocation adapter (${adapter} vs ${kind})`, plan.unitId);
-      }
-      adapter = kind;
-    } else {
-      gaps.add(`startup adapter ${kind} is not materializable (only wasm-start and deferred-export)`, plan.unitId);
-    }
-  }
-  if (adapter === "deferred-export" && exportNames.has("__module_init")) {
-    gaps.add("deferred startup export __module_init collides with a program export of the same name");
-  }
-
-  return { units: startupUnits, adapter };
-}
-
-/** Exact materialization guard after canonical native bindings have been authenticated. */
-function missingIntrinsicMaterialization(
-  instruction: IrInstrIntrinsic,
-  provider: NonNullable<IrInstrIntrinsic["provider"]>,
-  reserved: ReadonlySet<string>,
-  projection: PreparedIrProgramRuntimeProjection,
-  nativeStrings: PhysicalNativeStringSetup | undefined,
-  hostNumberBoundary: HostNumberBoundarySetup | undefined,
-): boolean {
-  return (
-    !(
-      provider.kind === "callable" &&
-      reserved.has(irCallableBindingKey(provider.target.binding)) &&
-      ((nativeStrings &&
-        (instruction.id === "js.number.unbox" ||
-          (instruction.id === "js.number.box" && projection.prepared.manifest.policy.numberBoundary.box === "native") ||
-          ((instruction.id === "js.boolean.box" || instruction.id === "js.boolean.unbox") &&
-            nativeStrings.bindings.some(
-              (row) =>
-                row.reference.kind === "func" &&
-                irCallableBindingKey(row.reference.binding) === irCallableBindingKey(provider.target.binding),
-            )))) ||
-        (instruction.id === "js.number.box" &&
-          hostNumberBoundary?.imports.some(
-            (row) => row.referenceKey === irCallableBindingKey(provider.target.binding),
-          )))
-    ) &&
-    provider.kind !== "backend-op" &&
-    provider.kind !== "backend-sequence" &&
-    provider.kind !== "backend-composite"
-  );
-}
-
 /**
  * Derive the physical setup for one projection, or the first located gap.
  * Only scalar carriers, unit/import callables, source/import globals, export
@@ -1219,18 +1158,25 @@ function missingIntrinsicMaterialization(
  * the `__exn` tag are materializable in this increment; every other need is
  * reported.
  */
+
 export function planPhysicalSetup(
   program: PreparedIrProgram,
   options: PreparedIrBackendOptions,
   projection: PreparedIrProgramRuntimeProjection,
   native?: NativeStringValueReservationInput,
   formatter?: PhysicalNativeNumberFormatInput,
+  linearMemory?: PreparedLinearMemoryPlan,
 ): PhysicalSetupOutcome {
+  const checkedLinear = acquirePreparedLinearAllocation(program, options, projection);
+  if (checkedLinear.kind === "unsupported") return checkedLinear;
   const gaps = new Gaps();
+  linearMemory = resolvePhysicalLinearMemory(program, options, gaps, linearMemory, checkedLinear.input);
+
   const physical = projection.prepared.functions;
   const bodies = new Map<IrUnitId, IrFunction>(physical.map((fn) => [fn.unitId, fn] as const));
   const entries = new Map<IrBindingId, PreparedIrAbiEntry>(program.abi.entries.map((entry) => [entry.plan.id, entry]));
   const vectors = planNativeVectorResources(program, options, projection);
+  const referenceError = planPhysicalReferenceError(program, projection);
   if (formatter) validateNativeNumberFormatInput(program, options, projection, formatter);
   let nativeStrings = native ? nativeStringSetup(program, options, projection, native) : undefined;
   if (formatter && !native) {
@@ -1287,7 +1233,15 @@ export function planPhysicalSetup(
   const nativeIds = new Set(nativeBindings.map((row) => row.entry.id));
   const dynamic = planHostAsyncDynamicUnits(program, projection, asyncFrames);
   for (const gap of dynamic.gaps) gaps.add(gap.detail, gap.unitId);
-  const convert = physicalSignatureConverter(program, vectors, gaps, nativeStrings, dynamic.units, sourceClosures);
+  const convert = physicalSignatureConverter(
+    program,
+    vectors,
+    gaps,
+    nativeStrings,
+    dynamic.units,
+    sourceClosures,
+    linearMemory,
+  );
 
   const functions = planPhysicalFunctionSlots(physical, entries, convert, dynamic.units, gaps);
   const numberRemainders = planNumberRemainders(program, projection);
@@ -1318,7 +1272,7 @@ export function planPhysicalSetup(
       continue;
     }
     if (plan.slotPolicy !== "required") continue;
-    if (nativeIds.has(plan.id) || remainderIds.has(plan.id)) continue;
+    if (nativeIds.has(plan.id) || remainderIds.has(plan.id) || referenceError?.bindingId === plan.id) continue;
     if (contract.kind === "callable") {
       const binding = contract.ref.binding;
       if (binding.kind === "unit") {
@@ -1391,72 +1345,43 @@ export function planPhysicalSetup(
     ...importedFunctions.map((fn) => fn.referenceKey),
     ...(vectors.helper ? [vectors.helper.referenceKey] : []),
     ...numberRemainders.map((resource) => resource.referenceKey),
+    ...(referenceError ? [referenceError.referenceKey] : []),
     ...nativeBindings.filter((row) => row.reference.kind === "func").map((row) => nativeReferenceKey(row.reference)),
   ]);
   const reservedGlobals = new Set<string>([
     ...[...importedGlobals, ...definedGlobals].map((global) => global.referenceKey),
     ...nativeBindings.filter((row) => row.reference.kind === "global").map((row) => nativeReferenceKey(row.reference)),
   ]);
-  let exceptionRequired = vectors.exceptionRequired || Boolean(asyncFrames?.frames.length) || Boolean(nativeInvocation);
-  for (const fn of [...physical, ...(formatter ? formatter.support.functions : [])]) {
-    const diagnosticUnit =
-      formatter && fn === formatter.support.functions[0]
-        ? formatter.requirements.calls.find((row) => row.view === "projection")!.ownerUnitId
-        : fn.unitId;
-    for (const buffer of [
-      ...fn.blocks.map((block) => block.instrs),
-      ...(fn.asyncPlan?.states.map((s) => s.body) ?? []),
-    ]) {
-      for (const root of buffer) {
-        forEachInstrDeep(root, (instruction) => {
-          if (instruction.kind === "call" || instruction.kind === "closure.new") {
-            const ref = instruction.kind === "call" ? instruction.target : instruction.liftedFunc;
-            if (!reserved.has(irCallableBindingKey(ref.binding))) {
-              gaps.add(
-                `body ${fn.name} references ${ref.binding.kind} callable ${ref.name} that the plan cannot reserve`,
-                diagnosticUnit,
-              );
-            }
-          } else if (instruction.kind === "global.get" || instruction.kind === "global.set") {
-            if (!reservedGlobals.has(irGlobalBindingKey(instruction.target.binding))) {
-              gaps.add(
-                `body ${fn.name} references global ${instruction.target.name} that the plan cannot reserve`,
-                diagnosticUnit,
-              );
-            }
-          } else if (instruction.kind === "intrinsic") {
-            const provider = instruction.provider;
-            if (!provider)
-              gaps.add(`body ${fn.name} intrinsic ${instruction.id} has no physical provider`, diagnosticUnit);
-            else if (
-              missingIntrinsicMaterialization(
-                instruction,
-                provider,
-                reserved,
-                projection,
-                nativeStrings,
-                hostNumberBoundary,
-              )
-            ) {
-              gaps.add(
-                `body ${fn.name} intrinsic ${instruction.id} needs ${provider.kind} provider materialization`,
-                diagnosticUnit,
-              );
-            }
-          } else if (instruction.kind === "throw" || instruction.kind === "try") {
-            exceptionRequired = true;
-          }
-        });
-      }
-    }
-  }
+  const reservedTypes = new Set(
+    nativeBindings.filter((row) => row.reference.kind === "type").map((row) => nativeReferenceKey(row.reference)),
+  );
+  const bodyExceptionRequired = physicalBodyResourceRequirements(
+    physical,
+    formatter,
+    {
+      backend: options.backend,
+      vectors,
+      linearMemory,
+      reservedTypes,
+      reserved,
+      reservedGlobals,
+      projection,
+      nativeStrings,
+      hostNumberBoundary,
+    },
+    gaps,
+  );
+  const exceptionRequired =
+    vectors.exceptionRequired ||
+    Boolean(asyncFrames?.frames.length) ||
+    Boolean(nativeInvocation) ||
+    bodyExceptionRequired;
 
-  const startup = planPhysicalStartup(program, bodies, exportNames, gaps);
+  const startup = planPhysicalStartup(program, bodies, exportNames, gaps, options.target);
 
-  // 5. Linear physical needs beyond scalar bodies.
-  if (options.backend === "linear" && program.allocations.size > 0) {
-    gaps.add(`linear memory plan for ${program.allocations.size} allocation site(s) is not materializable`);
-  }
+  for (const intent of linearMemory?.exports ?? [])
+    if (exportNames.has(intent.externalName))
+      gaps.add(`Linear memory export ${intent.externalName} collides with a program export`);
 
   // Preserve the existing first refusal while making missing inventory evidence
   // part of ordinary acceptance. Runtime configuration is not yet forwarded.
@@ -1467,31 +1392,16 @@ export function planPhysicalSetup(
         gaps.add(`native Promise inventory ${row.code}: ${row.detail}`, row.unitId);
   }
 
-  if (gaps.rows.length > 0) {
-    const first = gaps.rows[0]!;
-    const unitId = first.unitId ?? physical[0]?.unitId ?? program.inventory.terminalUnits[0]?.id;
-    if (!unitId) {
-      throw new PreparedIrProgramInvariantError("invalid-prepared-data", `physical plan: ${first.detail}`);
-    }
-    const failure: IrPreparationFailure = {
-      kind: "unsupported",
-      code: "body-shape-rejected",
-      stage: "build",
-      detail: `${options.backend}:${options.target} physical setup cannot be materialized (${gaps.rows.length} gap${
-        gaps.rows.length === 1 ? "" : "s"
-      }): ${gaps.rows.map((row) => row.detail).join("; ")}`,
-    };
-    const owner = preparedIrProgramOwner(program, unitId);
-    if (!owner)
-      throw new PreparedIrProgramInvariantError("invalid-prepared-data", `physical plan cannot locate ${unitId}`);
-    return Object.freeze({ ...failure, unitId: owner.unitId, location: owner.location, sourceFile: owner.sourceFile });
-  }
+  const failure = physicalSetupFailure(program, options, gaps.rows, physical[0]?.unitId);
+  if (failure) return failure;
 
   const plan: PhysicalSetupPlan = {
     backend: options.backend,
     target: options.target,
     exceptionTag: { required: exceptionRequired || options.sharedExceptionTag, shared: options.sharedExceptionTag },
     vectors,
+    ...(linearMemory ? { linearMemory } : {}),
+    ...(referenceError ? { referenceError } : {}),
     numberRemainders,
     ...(sourceClosures
       ? {

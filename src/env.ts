@@ -15,6 +15,9 @@
 // CJS `require`) instead of top-level `await`. Embedders can override the
 // default via `setDefaultEnvironment(...)` to inject dependencies explicitly.
 
+import { readEnv } from "./shared/contracts/environment-value.js";
+export { readEnv } from "./shared/contracts/environment-value.js";
+
 import type * as fsType from "node:fs";
 import type * as pathType from "node:path";
 import type * as urlType from "node:url";
@@ -92,20 +95,6 @@ export function getDefaultEnvironment(): Environment {
     module: loader ? safeLoad<typeof moduleType>(loader, "module") : null,
   };
   return _cached;
-}
-
-/**
- * Read one environment variable without assuming a global `process` (#6782).
- *
- * The compiler core is also bundled for browsers and other hosts that have no
- * `process`, so `src/` reads its `JS2WASM_*` switches through this accessor
- * instead of `process.env.X`. A host without `process.env` reads every
- * variable as `undefined` — the same value an unset variable has under Node.
- * Reads are live, not cached: a test that sets `process.env.X` is seen by the
- * next call.
- */
-export function readEnv(name: string): string | undefined {
-  return (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env?.[name];
 }
 
 /**
