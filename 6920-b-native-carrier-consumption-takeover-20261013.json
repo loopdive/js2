@@ -6,8 +6,8 @@
   "status": "in-progress",
   "branch": "codex/6920-b-native-allocator-carriers-20261013-01a12827",
   "claimed_at": "2026-10-13T06:38:30.746860Z",
-  "updated_at": "2026-10-13T11:42:50.812531Z",
-  "write_id": "b-body-batch-exception-resources-a71375a8-ff1f-4e5f-a620-e228d807bccd:receiver",
+  "updated_at": "2026-10-13T12:08:20.967759Z",
+  "write_id": "b-body-batch-physical-home-bf0ddddb-361f-4a44-b774-06fe4eef60f9",
   "handoff_scope": [
     "src/ir/lower-generic.ts: representation-aware vector types and scratch",
     "src/ir/backend/{handles,lower-contracts,emitter}.ts: genuine GC and Linear vector representations",
@@ -17,7 +17,7 @@
     "src/backend/linear/program/: checked native memory resource pack, no source algorithms",
     "src/ir/program/native-vector-resources.ts::deriveNativeVectorResourcePlan: extend only layout-free f64 vector layout discovery to wasmgc/wasi, preserving exact current wasmgc/standalone behavior, standalone-only externref layout/helper selection, vector callable provider target policy, canonical type recipes, and existing source/ABI/typeRef/persisted-layout checks; no host or Linear GC-resource admission",
     "src/ir/backend/linear-integration.ts::preflightLinearBackendResources, makeLinearIrResolver and their direct resource-binding call site: reserve the actual opaque-externref exception tag demanded by retained try/throw bodies before frozen body consumption and expose only its checked existing index through ensureExnTag; preserve every other planning/selection/factory/runtime path",
-    "src/backend/linear/program/body-batch-exceptions.ts: new finite physical tag reservation/authentication leaf for the existing Linear body consumer; no exception/finally algorithms, source admission or host ABI widening",
+    "src/wasm/physical/linear-body-batch-resources.ts: complete finite physical resource preflight and tag reservation/authentication leaf for the existing Linear body consumer, including the unchanged symbolic resource-demand type with its old public alias retained; no exception/finally algorithms, source admission or host ABI widening",
     "tests/issue-6920-linear-body-batch-exceptions.test.ts: new independent real resource and execution regressions, preserving existing parity corpus and assertions"
   ],
   "handoff_authority": {
@@ -87,5 +87,19 @@
     "force push, hook bypass, main push"
   ],
   "donor_policy": "Preserve original donors; authenticate actual source before adoption; receiving writes occur in fresh isolated worktrees.",
-  "previous_write_id": "b-carrier-f64-wasi-dda9455a-a31b-4e15-95a2-6c300c861ddd"
+  "previous_write_id": "b-body-batch-exception-resources-a71375a8-ff1f-4e5f-a620-e228d807bccd:receiver",
+  "scope_refinements": [
+    {
+      "at": "2026-10-13T12:08:20.967759Z",
+      "from": "src/backend/linear/program/body-batch-exceptions.ts: new finite physical tag reservation/authentication leaf for the existing Linear body consumer; no exception/finally algorithms, source admission or host ABI widening",
+      "to": "src/wasm/physical/linear-body-batch-resources.ts: complete finite physical resource preflight and tag reservation/authentication leaf for the existing Linear body consumer, including the unchanged symbolic resource-demand type with its old public alias retained; no exception/finally algorithms, source admission or host ABI widening",
+      "authority": {
+        "source": "human scope reply call_fHCisBpMmbCIm9ci7BYIEcqH",
+        "answer": "Take over the blocking shared seams",
+        "receiving_owner": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+        "bounded_only": true
+      },
+      "reason": "Place the complete resource preflight below the IR and backend layers, preserving their existing value-import cycle bounds and all compatibility resource checks."
+    }
+  ]
 }
