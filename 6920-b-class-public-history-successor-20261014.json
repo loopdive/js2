@@ -1,0 +1,154 @@
+{
+  "id": "6920",
+  "slice": "class-public-history-successor-successor-20261014",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+  "claimed_at": "2026-10-14T21:58:37.303885+00:00",
+  "updated_at": "2026-10-14T21:58:37.303885+00:00",
+  "write_id": "b-class-public-history-successor-5f1cc17a-571d-4dbd-a08b-8424cbcd436d",
+  "handoff_scope": [
+    {
+      "kind": "class-public-history-successor",
+      "at": "2026-10-14T21:58:37.303885+00:00",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+      "manifest": {
+        "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+        "componentPreimages": [
+          {
+            "path": "src/ir/analysis/allocation-evidence/js-class-value-domains/input.ts",
+            "bytes": 17146,
+            "sha256": "d21d55f89a7b7d5f7675cfb51edfb217495c8d83d0d4a87c645f16637e633d65"
+          },
+          {
+            "path": "src/ir/analysis/allocation-evidence/js-class-value-domains/producer.ts",
+            "bytes": 53402,
+            "sha256": "bf2549bf2c09fce2006992e4aa612798ff9a60bc3153ba34692e8cf2441d5169"
+          },
+          {
+            "path": "src/ir/analysis/allocation-evidence/js-class-value-domains/independent.ts",
+            "bytes": 58463,
+            "sha256": "64ab95ef8f9306f69feff0efd37e5ac42c556712e265bc17e9f17fab9236ab67"
+          },
+          {
+            "path": "src/ir/analysis/allocation-evidence/js-class-value-domains/independent-kernel.ts",
+            "bytes": 41518,
+            "sha256": "4cbe0d28190fb42f73fd67f22b5483a5ea6ce8538b08f893ee80e820384ff43b"
+          },
+          {
+            "path": "tests/issue-6920-native-js-class-value-domains.test.ts",
+            "bytes": 33614,
+            "sha256": "9ebd13b6cae3234da8553629f60645d7c7184263be64b66876d1caaaf70dcad6"
+          }
+        ],
+        "canonicalNewPaths": [],
+        "prospectiveReplacements": [
+          {
+            "path": "src/ir/analysis/allocation-evidence/js-class-value-domains/input.ts",
+            "bytes": 18350,
+            "sha256": "79f8410127fdd19e25c127fa91d8bec7d3a8a88d2e8973e0730dfd7573737260",
+            "donorPath": "src/ir/analysis/native-js-class-value-domain-inputs.ts",
+            "donorSha256": "4eb39d893f755950d6f3db33c5aa953144a7e3be9b15f8992b3d87258917ff39"
+          },
+          {
+            "path": "src/ir/analysis/allocation-evidence/js-class-value-domains/producer.ts",
+            "bytes": 60636,
+            "sha256": "6e398d3f5ee83255024750a509844ec43ac66ad054f23386079f47c478ecf087",
+            "donorPath": "src/ir/analysis/native-js-class-value-domains.ts",
+            "donorSha256": "4812a7063fc8ba5b04c3f2c1b6216d3ec3dc06c146664007ddbc1a31f62fa7d4"
+          },
+          {
+            "path": "src/ir/analysis/allocation-evidence/js-class-value-domains/independent.ts",
+            "bytes": 59152,
+            "sha256": "404e514e54c31191aa28f13af383192c8a712c63efcccd7cdc3d70f9947cd971",
+            "donorPath": "src/ir/analysis/evidence/native-js-class-value-domains.ts",
+            "donorSha256": "40ed06b73b667974914f91a10eb5da52e006f9d64f48b449dc09435d6ef5753d"
+          },
+          {
+            "path": "src/ir/analysis/allocation-evidence/js-class-value-domains/independent-kernel.ts",
+            "bytes": 51567,
+            "sha256": "5593c6b97b119f141d893506cfc972d6d41dd22e9365a51b5eae3d71f3515e3a",
+            "donorPath": "src/ir/analysis/evidence/native-js-class-value-domain-replay-kernel.ts",
+            "donorSha256": "4bf59b14ac197891438136cd69c383e31eb2874cf01fb99fbc655cf3cbeaaaa8"
+          },
+          {
+            "path": "tests/issue-6920-native-js-class-value-domains.test.ts",
+            "bytes": 50745,
+            "sha256": "14af5fb7969529c3cf8d89981203d905428e50be9be43509af1cdee264afc658",
+            "donorPath": "tests/issue-6920-native-js-class-value-domains.test.ts",
+            "donorSha256": "a7899bb36120d3ca276a489b49e224be8afe67b601ca6a7f4f9e3de5f081a681"
+          }
+        ],
+        "donors": {
+          "A117": {
+            "path": ".tmp/class-program-values-proposal/producer-117-sealed.json",
+            "bytes": 743679,
+            "sha256": "f4a438a05ef28dac9ee10be260774127ce9ba2977c672177819b843e84d2eec4",
+            "tests": 117,
+            "fullSourceTyping": 2037
+          },
+          "B31": {
+            "path": ".tmp/native-js-class-value-domain/final-independent-260-handoff/sealed.json",
+            "bytes": 97707,
+            "sha256": "6f8778db61c75dd975574df76b0df7388c6011490070c061c61180494a262116",
+            "tests": 260,
+            "naturalExit": 0,
+            "fullSourceTyping": 2039,
+            "explicitRoots": 13,
+            "resolvedInputs": 2052,
+            "independentRuntimeClosure": [
+              13,
+              12
+            ],
+            "noForbiddenRuntimeEdges": true
+          }
+        },
+        "testReconciliation": {
+          "oldLoopSha256": "fd078d4ad1ea465925df085c5fa6fe05165e5d1a34dde30be94040d0bf7a2fd1",
+          "rootQualifiedLoopSha256": "c07ea7fc661b6f89b526f7a741ad5255b7a499c30a5f192e4b6e4380215c78bf",
+          "sourceFixtureTextsExact": true,
+          "old71BodiesPreserved": true,
+          "reason": "qualified current frontend supports the two former throw/helper refusals; preserve root genuine abrupt/no-normal expectations",
+          "allPreviousRootNonImportStatementsCanonicalAstExact": true,
+          "preservedRootStatementCount": 4,
+          "preservedRootStatementSha256": [
+            "54ba12b05f2a339a36795847e0a82eff158f616afaf0b712d4c520cf74987c1e",
+            "af78ef31f575027962b0b3447c17332a55b0d6b4d651fff81e676c572c7812b0",
+            "7cc627abba0c9c1f39ba9deceb2f268f2ee877763e3362f5579e9b39a1cd95b5",
+            "26bc836d03b58af4155fa7cd4604f64da1d0ab947ba9ab6c2008d7205ce57251"
+          ]
+        },
+        "constraints": [
+          "Replace only canonical producer/input/independent/checker-kernel and append/reconcile sole producer test; contracts/data and all other source remain exact.",
+          "Module-only TS AST rewrite with whole-body inverse; preserve two current genuine throw/helper capability expectations and all other73 root test bodies.",
+          "Retain startup/public model isolation, normal/abrupt histories, public-only projections, complete canonical reason census/order and finite carrier guards.",
+          "Independent checker runtime closure must not depend on producer/data/input/program/runtime/frontend/backend implementation.",
+          "No new roots, classification/rules, gate budgets, signature/schema attachments, callbacks, scalar-js bridge, or readiness/public startup permission.",
+          "Final A117 plus B joined260 qualification/type/style and immutable capsules verified before receiving publication; root current source56/hostile and full-source qualification required after adoption.",
+          "Preserve failed epochs, old B33915, foreign work, public heads/HOLDs and A queue ownership; never cancel tests without human consent."
+        ]
+      },
+      "manifestSha256": "b5856aa6cb4090fc3b929cfd752bd371582f0b0cf6a162aae0123d2a02a28fa4",
+      "constraints": [
+        "Replace only canonical producer/input/independent/checker-kernel and append/reconcile sole producer test; contracts/data and all other source remain exact.",
+        "Module-only TS AST rewrite with whole-body inverse; preserve two current genuine throw/helper capability expectations and all other73 root test bodies.",
+        "Retain startup/public model isolation, normal/abrupt histories, public-only projections, complete canonical reason census/order and finite carrier guards.",
+        "Independent checker runtime closure must not depend on producer/data/input/program/runtime/frontend/backend implementation.",
+        "No new roots, classification/rules, gate budgets, signature/schema attachments, callbacks, scalar-js bridge, or readiness/public startup permission.",
+        "Final A117 plus B joined260 qualification/type/style and immutable capsules verified before receiving publication; root current source56/hostile and full-source qualification required after adoption.",
+        "Preserve failed epochs, old B33915, foreign work, public heads/HOLDs and A queue ownership; never cancel tests without human consent."
+      ]
+    }
+  ],
+  "predecessors": [
+    "3522-b-native-class-semantic-producer-20261014.json",
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}
