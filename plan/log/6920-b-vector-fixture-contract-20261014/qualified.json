@@ -1,0 +1,46 @@
+{
+  "schema": "b-vector-fixture-current-contract-v1",
+  "base": "6ad26e48263fd73b484157c2d17501b2dadbf012",
+  "source": "verified published PR6666 vector contract; all production files unchanged",
+  "receivingRecords": ["ddb764d1b6992e95660a1d70f17afe7bcc011fef", "05f7333d46071b2ef8f02a25b3898aaff6f5b2db"],
+  "fieldChange": "Each LinearVecLowering fixture supplies the actual required i32 arena pointer carrier",
+  "typingMigration": "Installed wabt types; owned ArrayBuffer for actual bytes; current five-argument fixed-vector API with genuine missing-runtime-provider refusal",
+  "runtime": {
+    "handle": 62364,
+    "naturalExit": 0,
+    "total": 44,
+    "passed": 44,
+    "failed": 0,
+    "unhandledErrors": false,
+    "files": 2,
+    "caseSplit": [14, 30]
+  },
+  "typing": {
+    "handle": 62527,
+    "naturalExit": 0,
+    "sourceFiles": 1915,
+    "explicitRoots": 2,
+    "resolvedTestsHelpers": 3,
+    "totalInputs": 2168,
+    "exclude": [],
+    "incremental": false
+  },
+  "style": {
+    "format": 0,
+    "biomeLint": 0,
+    "whitespace": 0
+  },
+  "tests": [
+    {
+      "path": "tests/ir-vec-two-backend.test.ts",
+      "bytes": 18750,
+      "sha256": "59cdbe7402578828e751430760399afdbd0882686ea8e1be927497bdc9761b17"
+    },
+    {
+      "path": "tests/issue-6893-linear-ir-read-forwarding.test.ts",
+      "bytes": 18784,
+      "sha256": "4b6a68d115f60d1da1a1e00a399279eda58f75dccebae5234f9c913b7d5fa8ee"
+    }
+  ],
+  "limits": "Fixture contribution only; five actual PR6662/6666 source conflicts and full composition qualification unresolved. Preserve HOLD and A queue/main ownership. No other source/runtime/test algorithms modified."
+}
