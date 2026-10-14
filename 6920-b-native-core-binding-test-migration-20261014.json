@@ -1,0 +1,98 @@
+{
+  "id": "6920",
+  "slice": "native-core-binding-tests-successor-20261014",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+  "claimed_at": "2026-10-14T15:32:33.047253Z",
+  "updated_at": "2026-10-14T15:32:33.047253Z",
+  "write_id": "b-core-binding-tests-9104f3b3-c0a6-4829-9e34-b2f947e4c14a",
+  "handoff_scope": [
+    {
+      "kind": "exact existing core-binding test migration",
+      "at": "2026-10-14T15:32:33.047253Z",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+      "manifest": {
+        "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+        "componentPreimages": [
+          {
+            "path": "tests/issue-3520-lowering-plan-identity.test.ts",
+            "bytes": 30702,
+            "sha256": "99221fe956dc47596fd1871186226a27ef40d6cea093291af204ba0875c00907"
+          },
+          {
+            "path": "tests/issue-3520-source-callable-abi.test.ts",
+            "bytes": 24347,
+            "sha256": "44bd9af85e2251ac67f939e459b1b1431bf8ad6ecb5108cbeeeb1a54a216bbd9"
+          }
+        ],
+        "canonicalNewPaths": [],
+        "exactTestBlocks": [
+          {
+            "path": "tests/issue-3520-lowering-plan-identity.test.ts",
+            "function": "importedCallFixture",
+            "edit": "Add source: \"module-import\" to the constructed imported plan.",
+            "reason": "The fixture targets a genuine irUnitFuncRef. The discriminant identifies imported source, whose current validator requires an exact unit binding. Undefined/stale/exact owner variants remain deliberately tested; retain the existing single fixture assertion cast used to represent the missing-owner hostile input, without an unknown/any double cast.",
+            "preserve": [
+              "it.each 4 owner families: missing and stale reject; exact owner accepts",
+              "structural target ID equals TARGET_ID; emitted call holds the exact plan target",
+              "env import substituted into source plan still rejects is not backed by an exact unit"
+            ]
+          },
+          {
+            "path": "tests/issue-3520-source-callable-abi.test.ts",
+            "test": "owns an admitted typed-this twin as support beneath its exact function expression",
+            "edit": "Replace publish.mock.instances.at(-1)?.publication with const publishedResult = publish.mock.results.at(-1); const publication = publishedResult?.type === \"return\" ? publishedResult.value : undefined;",
+            "reason": "ProgramAbiSession.publish returns PublishedProgramAbi {abi,legacy}; publication is a session getter, absent on the returned object. Observe the actual successful return from the actual publish call, not a cast session, synthetic ABI, or new allocator invocation.",
+            "preserve": [
+              "existing compile options and source",
+              "restore spy",
+              "compile succeeds; WAT __typed_this; publication defined",
+              "original source body and support twin have exact structural binding/unit ownership",
+              "both required final function slots exist and differ",
+              "actual instantiated test result is 7"
+            ],
+            "routeAudit": {
+              "staticOnly": true,
+              "source": "src/compiler.ts::runPipeline lines1034-1036",
+              "finding": "The test omits options.backend. The prepared-native branch currently requires useLinear OR an explicit options.backend === wasmgc; resolved default wasmgc is not sufficient. This fixture therefore retains the generateModule source-callable publication path. Do not add explicit backend or alter target in this migration.",
+              "limit": "The route and WAT/runtime assertions still need natural whole-file runtime verification after receiving; no runtime was repeated during this read-only review."
+            }
+          },
+          {
+            "path": "tests/issue-3520-source-callable-abi.test.ts",
+            "test": "owns direct function-value trampolines and preserves their cache strategy",
+            "edit": "Inside the existing two-element trampoline loop, check ref.binding.kind !== \"support\" and throw a descriptive missing support reference error, then bind const bindingId = ref.binding.bindingId and use that exact ID in the three current assertion/read locations.",
+            "reason": "irSupportFuncRef returns the shared IrFuncRef union. Authenticate its actual support discriminator before reading bindingId, as the same file already does for the typed-this twin. A cast would hide a foreign unit/import reference.",
+            "preserve": [
+              "same two actual nested source units and canonical support roles",
+              "exact support origin/unit identity and required function slots",
+              "capture-free global cache exists and capturing cache does not",
+              "existing actual closure identity/cache/runtime assertions"
+            ]
+          }
+        ],
+        "validation": [
+          "Run both complete test files in one normal Node25.9.0 Vitest invocation, default+JSON reporter, unchanged configured deadlines and no fixture/assertion skips. Save natural process exit, full test denominator and no unhandled errors.",
+          "Run full current source TS7 plus both explicit test roots, exclusions empty; verify the six reported errors disappear without source/API changes.",
+          "Run scoped formatting/lint on the exact two files.",
+          "Seal exact two-path diff: only the discriminant, actual-return observation, and support-binding narrowing. Preserve all source fixtures, expected values, exact owner/target/slot checks, route options and callbacks outside those blocks."
+        ],
+        "constraints": "Only three named fixture/observation/narrowing changes in two tests; retain routes, assertions, source and expected results; no production or policy changes"
+      },
+      "manifestSha256": "d32c1fa227ee3fd57237f7a534ba6e336e1139a7b784b55e57f97706cc0950b0",
+      "constraints": "Only three named fixture/observation/narrowing changes in two tests; retain routes, assertions, source and expected results; no production or policy changes"
+    }
+  ],
+  "predecessors": [
+    "3522-b-native-class-semantic-producer-20261014.json",
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}
