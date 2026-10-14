@@ -62,6 +62,8 @@ export const QUICKJS_SHIM_SOURCE = join(QUICKJS_ARTIFACT_DIR, "qjs_shim.c");
  * it is not a JS-host import and does not trip the #2961 leak scan.
  */
 export const QUICKJS_IMPORT_MODULE = "js2wasm:qjs";
+/** Mirrors RUNTIME_EVAL_MEMBRANE_HOOK_PROPERTY in src/codegen/expressions/runtime-eval-provider.ts. */
+const MEMBRANE_HOOK_PROPERTY = "__js2wasm_runtime_eval_membrane_hook__";
 
 /**
  * Adapter compile options — the sibling of
@@ -1301,12 +1303,41 @@ function qjsRegistryTarget(gc: number): any {
  * outer entry point is still holding, and clobbering them there would surface
  * as a refusal on an unrelated value.
  */
+/**
+ * The calling module's membrane hook — a canonical AOT-callable carrier the
+ * compiled side publishes on its global object (RUNTIME_EVAL_MEMBRANE_HOOK
+ * in src/codegen/expressions/runtime-eval-provider.ts). Re-read at every
+ * provider entry: a later entry may come from a different compiled module.
+ */
+let qjsMembraneHook: any = undefined;
+
+function qjsCaptureMembraneHook(globalObject: any): void {
+  if (globalObject === undefined || globalObject === null) return;
+  const hook: any = globalObject[${j(MEMBRANE_HOOK_PROPERTY)}];
+  if (__runtime_eval_is_aot_callable(hook)) qjsMembraneHook = hook;
+}
+
+/**
+ * \`target[key]\` answered by the module that OWNS \`target\`. This adapter's
+ * own getter walks a compiled object's canonical layout directly, so it misses
+ * the owner's accessors and prototype chain, and a closure-valued property
+ * crosses as an opaque, non-callable struct (#4307 residual 1). Rebinding the
+ * owner's hook carrier onto \`target\` routes the read through the owner's
+ * \`__extern_get\`, whose carrier trampoline also wraps closure results as
+ * callable carriers. A value that is already a carrier delegates by itself.
+ */
+function qjsOwnerGet(target: any, key: string): any {
+  if (qjsMembraneHook === undefined || __runtime_eval_is_aot_callable(target)) return target[key];
+  const owned: any = __runtime_eval_rebind_carrier(qjsMembraneHook, target);
+  return owned[key];
+}
+
 export function __membrane_get(gc: i32, keyPtr: i32, keyLen: i32): i32 {
   const c: number = qjsContextHandle;
   const target: any = qjsRegistryTarget(gc);
   if (c === 0 || target === undefined || target === null) return 0;
   const key: string = qjsReadUtf8(keyPtr, keyLen);
-  const value: any = target[key];
+  const value: any = qjsOwnerGet(target, key);
   const saved: string = qjsPushRefusal;
   qjsPushRefusal = "";
   const h: number = qjsToQuickjs(c, value);
@@ -1370,7 +1401,21 @@ export function __membrane_call(gc: i32, thisH: i32, argc: i32, argvPtr: i32): i
   if (c === 0 || fn === undefined || fn === null) return 0;
   const savedPull: string = qjsPullRefusal;
   qjsPullRefusal = "";
-  const thisValue: any = thisH === 0 ? undefined : qjsToGc(c, thisH);
+  // \`thisH === 1\` is the shim's reserved QJS_CONSTRUCT_RECEIVER: evaluated
+  // code ran \`new F(...)\` on a compiled function. §10.2.2 [[Construct]] for
+  // an ordinary base constructor: OrdinaryCreateFromConstructor(F,
+  // "%Object.prototype%") — a COMPILED object, so the compiled body's
+  // \`this.x = …\` writes land where compiled code and the outbound membrane
+  // both see them — then [[Call]] with it as receiver, then step 13: an Object
+  // result wins, anything else yields the receiver.
+  const constructing: boolean = thisH === 1;
+  let thisValue: any = undefined;
+  if (constructing) {
+    const proto: any = qjsOwnerGet(fn, "prototype");
+    thisValue = proto !== null && (typeof proto === "object" || typeof proto === "function") ? Object.create(proto) : {};
+  } else if (thisH !== 0) {
+    thisValue = qjsToGc(c, thisH);
+  }
   const args: any[] = [];
   for (let i = 0; i < argc; i += 1) {
     args.push(qjsToGc(c, load32(argvPtr + i * 4)));
@@ -1378,7 +1423,8 @@ export function __membrane_call(gc: i32, thisH: i32, argc: i32, argvPtr: i32): i
   const pullRefused: boolean = qjsPullRefusal !== "";
   qjsPullRefusal = savedPull;
   if (pullRefused) return 0;
-  const ret: any = __runtime_eval_apply_callable(fn, thisValue, args);
+  let ret: any = __runtime_eval_apply_callable(fn, thisValue, args);
+  if (constructing && !(ret !== null && (typeof ret === "object" || typeof ret === "function"))) ret = thisValue;
   const savedPush: string = qjsPushRefusal;
   qjsPushRefusal = "";
   const out: number = qjsToQuickjs(c, ret);
@@ -3268,6 +3314,7 @@ function qjsIntrinsicEvalValue(globalObject: any): any {
 }
 
 export function __runtime_indirect_eval(source: any, globalObject: any): any {
+  qjsCaptureMembraneHook(globalObject);
   // PerformEval step 2: a non-string argument is returned unchanged.
   if (typeof source !== "string") return runtimeEvalResult(true, source);
   if (source === "eval") return runtimeEvalResult(true, qjsIntrinsicEvalValue(globalObject));
@@ -3281,6 +3328,7 @@ export function __runtime_indirect_eval(source: any, globalObject: any): any {
 }
 
 export function __runtime_script_eval(source: any, globalObject: any): any {
+  qjsCaptureMembraneHook(globalObject);
   if (typeof source !== "string") return runtimeEvalResult(true, source);
   return qjsEvaluateGlobalScript(source as string, globalObject);
 }
@@ -3292,6 +3340,7 @@ export function __runtime_new_function(
   bodyString: any,
   globalObject: any
 ): any {
+  qjsCaptureMembraneHook(globalObject);
   const source: string =
     "(function anonymous(" + String(paramString) + "\\n) {\\n" + String(bodyString) + "\\n})";
   // No EDI: the body's \`var\`s belong to the synthesized function's varEnv.
@@ -3629,6 +3678,7 @@ export function __runtime_direct_eval(
   callerStrict: boolean,
   mappedParamNames: any
 ): any {
+  qjsCaptureMembraneHook(globalObject);
   // PerformEval step 2: a non-string argument is returned unchanged.
   if (typeof source !== "string") return runtimeEvalResult(true, source);
   const c: number = qjsEnsureContext();

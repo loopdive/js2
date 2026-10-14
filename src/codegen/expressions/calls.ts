@@ -365,7 +365,10 @@ import {
   ensureStandaloneNativeMethodClosure,
   getNativeProtoBuiltinGlue,
 } from "../native-proto.js";
-import { ensureRuntimeEvalAotCallableCarrierTypes } from "../runtime-eval-callable.js";
+import {
+  ensureRuntimeEvalAotCallableCarrierTypes,
+  tryRuntimeEvalRebindCarrierIntrinsic,
+} from "../runtime-eval-callable.js";
 import { RUNTIME_EVAL_AOT_CALLABLE_BRAND_A, RUNTIME_EVAL_AOT_CALLABLE_BRAND_B } from "../runtime-eval-boundary.js";
 import { wrapperProtoSyntacticMember } from "../wrapper-proto-dynamic-demand.js"; // (#4619)
 import { resolveDefaultExpressionImportGlobal } from "../default-expression-import-global.js";
@@ -6966,6 +6969,11 @@ function tryRuntimeEvalApplyCallableIntrinsic(
   fctx: FunctionContext,
   expr: ts.CallExpression,
 ): InnerResult | undefined {
+  const rebound = tryRuntimeEvalRebindCarrierIntrinsic(ctx, fctx, expr, (arg) => {
+    const type = compileExpression(ctx, fctx, arg, { kind: "externref" });
+    if (type && type.kind !== "externref") coerceType(ctx, fctx, type, { kind: "externref" });
+  });
+  if (rebound !== undefined) return rebound;
   if (
     (!ctx.standalone && !ctx.wasi) ||
     ctx.runtimeEvalCallableBoundaryEnabled !== true ||

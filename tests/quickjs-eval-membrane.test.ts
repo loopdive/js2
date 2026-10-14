@@ -1292,3 +1292,78 @@ describe.skipIf(!enabled)("#4245 slice 1 — quickjs eval membrane (inward)", ()
     ).toThrow(/build-quickjs-eval-provider\.mjs/);
   });
 });
+
+/**
+ * `new F()` on a COMPILED function from inside evaluated code (Octane
+ * code-load: jQuery's `new MockElement()`). The membrane's callable class used
+ * to refuse construction outright; the shim now forwards [[Construct]] to the
+ * adapter, which creates a compiled receiver from `F.prototype`, calls F with
+ * it, and applies the §10.2.2 step-13 result rule. Residual: a compiled
+ * function's `prototype` does not yet cross the carrier's property trampoline,
+ * so the receiver currently inherits from %Object.prototype%.
+ */
+const MEMBRANE_CONSTRUCT_SOURCE = `
+function Mock() { this.v = 40; this.add = function (n) { return this.v + n; }; }
+function Pair(a, b) { this.a = a; this.b = b; }
+function Returns() { this.v = 1; return { v: 7 }; }
+function evalIt(src) { return (0, eval)(src); }
+export function ownField() { return evalIt("var m = new Mock(); m.v + " + 2); }
+export function ownMethod() { return evalIt("var m = new Mock(); m.add(" + 2 + ")"); }
+export function inObjectLiteral() { return evalIt("var w = { d: new Mock() }; w.d.v + " + 2); }
+export function withArgs() { return evalIt("var k = new Pair(" + 40 + ", 2); k.a + k.b"); }
+export function objectResultWins() { return evalIt("var r = new Returns(); r.v + " + 0); }
+var bag = { v: 40, add: function (n) { return this.v + n; } };
+export function bagMethod() { return evalIt("bag.add(" + 2 + ")"); }
+export function compiledSeesIt() { evalIt("var g" + "lobalMock = new Mock();"); return globalMock.v + 2; }
+`;
+
+describe.skipIf(!enabled)("quickjs eval membrane — [[Construct]] of a compiled function", () => {
+  let exports_: Record<string, () => number>;
+
+  beforeAll(async () => {
+    const selection = withEnv(
+      {
+        [ENGINE_ENV]: "quickjs",
+        ...(availableArtifactDir ? { JS2WASM_QUICKJS_ARTIFACT_DIR: availableArtifactDir } : {}),
+      },
+      () => selectCachedRuntimeEvalProvider(),
+    ) as { engine?: string; bundle?: unknown };
+    expect(selection.engine).toBe("quickjs");
+    const compiled = await compile(MEMBRANE_CONSTRUCT_SOURCE, {
+      target: "standalone" as const,
+      skipSemanticDiagnostics: true,
+      inferModuleStrictArguments: false,
+      fileName: "quickjs-membrane-construct.js",
+      allowJs: true,
+    });
+    expect(compiled.success).toBe(true);
+    const module = new WebAssembly.Module(compiled.binary!);
+    expect(WebAssembly.Module.imports(module).some((i) => i.module === RUNTIME_EVAL_IMPORT_MODULE)).toBe(true);
+    const instance = new WebAssembly.Instance(module, {
+      [RUNTIME_EVAL_IMPORT_MODULE]: instantiateRuntimeEvalNamespace(selection.bundle),
+    });
+    exports_ = instance.exports as unknown as Record<string, () => number>;
+  }, 300_000);
+
+  it("the constructed object carries the compiled body's own field", () => {
+    expect(exports_.ownField!()).toBe(42);
+  });
+  it("an own method installed by the compiled body is callable with the right `this` (#4307 residual 1)", () => {
+    expect(exports_.ownMethod!()).toBe(42);
+  });
+  it("construction inside an object literal (the jQuery windowmock shape)", () => {
+    expect(exports_.inObjectLiteral!()).toBe(42);
+  });
+  it("arguments reach the compiled body", () => {
+    expect(exports_.withArgs!()).toBe(42);
+  });
+  it("an Object returned by the constructor wins over the receiver (§10.2.2 step 13)", () => {
+    expect(exports_.objectResultWins!()).toBe(7);
+  });
+  it("a closure held by a plain compiled object is callable from evaluated code (#4307 residual 1)", () => {
+    expect(exports_.bagMethod!()).toBe(42);
+  });
+  it("the constructed object is a compiled object the compiled side can read", () => {
+    expect(exports_.compiledSeesIt!()).toBe(42);
+  });
+});

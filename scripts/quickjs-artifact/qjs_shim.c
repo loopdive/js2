@@ -725,6 +725,9 @@ static uint8_t *qjs_wrap_live;
 static uint32_t qjs_wrap_slots_len;
 
 #define QJS_NO_WRAPPER 0xFFFFFFFFu
+/* Reserved `thisH` for __membrane_call meaning "[[Construct]], not [[Call]]".
+ * Real handles are heap pointers to a JSValue cell, so 1 is never one. */
+#define QJS_CONSTRUCT_RECEIVER ((qjs_handle)1u)
 
 /* Consume an adapter-returned handle: move the reference out of the cell and
  * release the cell itself (qjs_free_value would drop the reference too). */
@@ -904,11 +907,6 @@ static JSValue qjs_mb_exotic_call(JSContext *ctx, JSValueConst func_obj,
   qjs_handle this_h;
   uint32_t r;
   int i;
-  if (flags & JS_CALL_FLAG_CONSTRUCTOR) {
-    return JS_ThrowTypeError(ctx,
-                             "a compiled function cannot be used as a "
-                             "constructor inside evaluated code (#4245)");
-  }
   if (id == QJS_NO_WRAPPER || !qjs_mb_call) {
     return JS_ThrowTypeError(ctx, "not a compiled callable (#4245)");
   }
@@ -917,10 +915,18 @@ static JSValue qjs_mb_exotic_call(JSContext *ctx, JSValueConst func_obj,
     if (!cells) return JS_ThrowTypeError(ctx, "out of memory (#4245)");
     for (i = 0; i < argc; i++) cells[i] = box(JS_DupValue(ctx, argv[i]));
   }
-  this_h = box(JS_DupValue(ctx, this_val));
+  /* `new F()` on a compiled function from evaluated code (Octane code-load:
+   * jQuery's `new MockElement()`). The receiver must be a COMPILED object so
+   * the compiled body's `this.x = …` writes land where compiled code and the
+   * outbound membrane can see them; only the adapter can mint one, so the
+   * construct request crosses as the reserved receiver handle
+   * QJS_CONSTRUCT_RECEIVER and the adapter performs §10.2.2 [[Construct]]
+   * (create, call, step-13 result rule) and returns the resulting object. */
+  this_h = (flags & JS_CALL_FLAG_CONSTRUCTOR) ? QJS_CONSTRUCT_RECEIVER
+                                             : box(JS_DupValue(ctx, this_val));
   r = qjs_mb_call(id, this_h, (uint32_t)argc, (uint32_t)(uintptr_t)cells);
   /* Every handle passed IN is released here (borrow-in), on both paths. */
-  qjs_free_value(ctx, this_h);
+  if (this_h != QJS_CONSTRUCT_RECEIVER) qjs_free_value(ctx, this_h);
   for (i = 0; i < argc; i++) qjs_free_value(ctx, cells[i]);
   qjs_shim_free(cells);
   if (!r) {
@@ -1012,6 +1018,11 @@ qjs_handle QJS_EXPORT(qjs_new_wrapper)(JSContext *ctx, uint32_t gc_id,
   v = JS_NewObjectClass(ctx,
                         callable ? qjs_callable_class_id : qjs_wrapper_class_id);
   if (JS_IsException(v)) return box(v);
+  /* Without the bit, `new` on the wrapper throws "not a constructor" before
+   * reaching qjs_mb_exotic_call. The membrane cannot tell an arrow from a
+   * declaration, so every compiled callable is constructible here; the
+   * construct request is forwarded from qjs_mb_exotic_call. */
+  if (callable) JS_SetConstructorBit(ctx, v, true);
   /* +1 so that "no opaque" (NULL) is distinguishable from registry id 0. */
   JS_SetOpaque(v, (void *)(uintptr_t)(gc_id + 1u));
   qjs_wrap_slots[gc_id] = v; /* non-owning; cleared by the finalizer */
