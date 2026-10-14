@@ -1,11 +1,11 @@
 {
   "generated": "2026-10-14",
   "threshold": 1500,
-  "totalCeiling": 1024220,
+  "totalCeiling": 1024530,
   "files": {
     "src/codegen-linear/index.ts": 5791,
     "src/codegen-linear/runtime.ts": 4448,
-    "src/codegen/any-helpers.ts": 2240,
+    "src/codegen/any-helpers.ts": 2251,
     "src/codegen/array-holes.ts": 1538,
     "src/codegen/array-methods.ts": 10964,
     "src/codegen/array-object-proto.ts": 4527,
@@ -50,7 +50,7 @@
     "src/codegen/generators-native-consumer.ts": 1901,
     "src/codegen/generators-native.ts": 7192,
     "src/codegen/generic-struct-factory.ts": 1865,
-    "src/codegen/index.ts": 15382,
+    "src/codegen/index.ts": 15385,
     "src/codegen/ir-inline.ts": 1571,
     "src/codegen/ir-prepared-free-functions.ts": 2332,
     "src/codegen/iterator-native.ts": 6446,
