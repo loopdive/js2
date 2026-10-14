@@ -6,8 +6,8 @@
   "status": "in-progress",
   "branch": "codex/6920-b-native-preparation-20261013-01a12827",
   "claimed_at": "2026-10-13T06:38:30.746860Z",
-  "updated_at": "2026-10-14T00:59:21.714979Z",
-  "write_id": "b-zero-test-ee73add1-4d48-4b2e-a915-d6db28c2a980",
+  "updated_at": "2026-10-14T01:32:58.535944Z",
+  "write_id": "b-native-pure-multiply-2b65f1bc-2222-4281-8af8-9c3f311c1771",
   "handoff_scope": [
     "src/ir/program-source.ts: genuine shared logical vector resolver, preparation origin and final checked facts joins",
     "src/ir/from-ast.ts: logical vector admission and executable allocation demand only",
@@ -60,7 +60,10 @@
     "tests/issue-6920-native-vector-multipush*.test.ts and existing 6920 source handoff issue/evidence: genuine public/live/codec four-profile execution, argument effects/throw order, alias/global receiver and capacity-crossing controls; do not weaken any original refusal or broader failure assertions.",
     "src/ir/array-element-lowering.ts finite native synchronous logical-f64 zero-argument push partition only, after existing authentic receiver checks: evaluate receiver once and read current semantic vec length; no append/growth helper or operation, allocation site, schema or foreign algorithm. Preserve original spread, non-f64, async, counted-push and legacy paths.",
     "tests/issue-6920-native-vector-zero-push.test.ts and existing6920 handoff issue/evidence: genuine public/live/codec four-profile execution, receiver once/statement/alias/global/capacity aftermath and malformed ownership/type/refusal controls. Existing .length counterparts are design measurements only, never zero-push execution credit.",
-    "Root-only tests/issue-6920-native-vector-multipush.test.ts final native-refusal case: replace only the obsolete zero-argument refusal with genuine verified Prepared acceptance, preserve its six-case count and every spread/non-f64/async refusal assertion. Intentionally rename only that case to describe the new accepted behavior; do not claim unchanged original full-name identity. This supersedes only the earlier preserve-zero-refusal expectation after the authorized zero-arity partition passes actual four-profile execution."
+    "Root-only tests/issue-6920-native-vector-multipush.test.ts final native-refusal case: replace only the obsolete zero-argument refusal with genuine verified Prepared acceptance, preserve its six-case count and every spread/non-f64/async refusal assertion. Intentionally rename only that case to describe the new accepted behavior; do not claim unchanged original full-name identity. This supersedes only the earlier preserve-zero-refusal expectation after the authorized zero-arity partition passes actual four-profile execution.",
+    "src/ir/analysis/allocation-evidence/structured-vector-profile.ts: separate private native-only one-block numeric-vector multiplication selector and selection OR only. Require authentic nonnullable logical-f64 constructors, vector reads and exact f64.mul in the same vector-bearing function, complete finite module grammar; reuse unchanged structured replay after existing contextual/provenance/metadata/all-view validation. Preserve entire hasStructuredNumericVectors function, historical verifyAllocationEvidence, effect-rules and every generic producer byte-exact; no new policy row.",
+    "new tests/issue-6920-native-vector-pure-multiply.test.ts and root-only existing zero-push pure-math frontier case: actual pure length/zero-push four-profile live/codec/public execution, source-free and no append helper/demand, complete operand/result/SSA/site/metadata negatives. Reconcile only obsolete owned native frontier assertion after success, intentionally report any case-name change; preserve scalar J212 fallback and all held joined-validation tests byte-exact.",
+    "plan/issues/6920-native-linear-shared-source-handoff.md: append finite native-math qualification, exact remaining failures and scope; full migration remains open."
   ],
   "handoff_authority": {
     "source": "human scope reply call_fHCisBpMmbCIm9ci7BYIEcqH",
@@ -386,9 +389,24 @@
         "bounded_only": true
       },
       "reason": "Actualzeroarity8/8suite160successfulcalls+8authenticTDZexceptions qualifiesreplacementofexistingownedobsoletebailtest; no originalvalidatororforeignrefusalchanged."
+    },
+    {
+      "at": "2026-10-14T01:32:58.535944Z",
+      "additions": [
+        "src/ir/analysis/allocation-evidence/structured-vector-profile.ts: separate private native-only one-block numeric-vector multiplication selector and selection OR only. Require authentic nonnullable logical-f64 constructors, vector reads and exact f64.mul in the same vector-bearing function, complete finite module grammar; reuse unchanged structured replay after existing contextual/provenance/metadata/all-view validation. Preserve entire hasStructuredNumericVectors function, historical verifyAllocationEvidence, effect-rules and every generic producer byte-exact; no new policy row.",
+        "new tests/issue-6920-native-vector-pure-multiply.test.ts and root-only existing zero-push pure-math frontier case: actual pure length/zero-push four-profile live/codec/public execution, source-free and no append helper/demand, complete operand/result/SSA/site/metadata negatives. Reconcile only obsolete owned native frontier assertion after success, intentionally report any case-name change; preserve scalar J212 fallback and all held joined-validation tests byte-exact.",
+        "plan/issues/6920-native-linear-shared-source-handoff.md: append finite native-math qualification, exact remaining failures and scope; full migration remains open."
+      ],
+      "authority": {
+        "source": "human scope reply call_fHCisBpMmbCIm9ci7BYIEcqH",
+        "answer": "Take over the blocking shared seams",
+        "receiving_owner": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+        "bounded_only": true
+      },
+      "reason": "Human-authorized checked-preparation seam; actual pure-vector multiplication gap and independent read-only producer/verifier analysis. Native-only selector avoids any takeover or change of held shared allocation rules."
     }
   ],
-  "previous_write_id": "b-zero-push-bb7a3391-8e1a-4f15-bad0-c7bde6847296",
+  "previous_write_id": "b-zero-test-ee73add1-4d48-4b2e-a915-d6db28c2a980",
   "receiving_worktrees": [
     "codex/6920-b-native-vector-calls-20261013-01a12827",
     "codex/6920-b-vector-control-20261013-01a12827",
@@ -404,6 +422,7 @@
     "codex/6920-b-vector-stores-20261014-01a12827",
     "codex/6920-b-vector-stores-20261014-01a12827",
     "codex/6920-b-vector-multipush-20261014-01a12827",
-    "codex/6920-b-vector-zero-push-20261014-01a12827"
+    "codex/6920-b-vector-zero-push-20261014-01a12827",
+    "codex/6920-b-native-pure-multiply-20261014-01a12827"
   ]
 }
