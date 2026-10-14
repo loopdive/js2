@@ -725,6 +725,67 @@ function buildNativeGeneratorDispatch(
 }
 
 /**
+ * (#6980) `gen.return(v)` on a numeric-carrier generator: the frame's result
+ * struct stores `value` as f64, so a non-number `v` came back as
+ * `__gen_numeric_payload(v)` (NaN for `"done"`). Applied to the opaque
+ * dispatcher's result (locals: 1 = that payload, 2 = the original externref
+ * `v`): a DONE f64 result whose value is bit-identical to the payload of a
+ * non-number `v` is re-issued as an externref `{ value: v, done: true }`. A
+ * `finally` that completes with its own `return x` keeps `x` (different bits).
+ */
+function returnValuePreservingInstrs(
+  ctx: CodegenContext,
+  fn: { typeIdx: number; locals: { name: string; type: ValType }[] },
+  methodName: string,
+): Instr[] {
+  const typeofNumberIdx = ctx.funcMap.get("__typeof_number");
+  const f64Res = ctx.nativeGeneratorResultTypeIdx;
+  const fnType = ctx.mod.types[fn.typeIdx];
+  if (methodName !== "return" || typeofNumberIdx === undefined || f64Res < 0 || fnType?.kind !== "func") return [];
+  const extRes = ensureNativeGeneratorResultType(ctx, { kind: "externref" });
+  const res = fnType.params.length + fn.locals.length;
+  fn.locals.push({ name: "__ret_res", type: { kind: "anyref" } });
+  const field = (fieldIdx: number): Instr[] => [
+    { op: "local.get", index: res },
+    { op: "ref.cast", typeIdx: f64Res },
+    { op: "struct.get", typeIdx: f64Res, fieldIdx },
+  ];
+  return [
+    { op: "local.set", index: res },
+    { op: "local.get", index: res },
+    { op: "ref.test", typeIdx: f64Res },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "i32" } },
+      then: [
+        ...field(1),
+        ...field(0),
+        { op: "i64.reinterpret_f64" },
+        { op: "local.get", index: 1 },
+        { op: "i64.reinterpret_f64" },
+        { op: "i64.eq" },
+        { op: "i32.and" },
+        { op: "local.get", index: 2 },
+        { op: "call", funcIdx: typeofNumberIdx },
+        { op: "i32.eqz" },
+        { op: "i32.and" },
+      ],
+      else: [{ op: "i32.const", value: 0 }],
+    },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "anyref" } },
+      then: [
+        { op: "local.get", index: 2 },
+        { op: "i32.const", value: 1 },
+        { op: "struct.new", typeIdx: extRes },
+      ],
+      else: [{ op: "local.get", index: res }],
+    },
+  ];
+}
+
+/**
  * Fill every reserved opaque resume dispatcher from the FINAL producer set.
  * This mirrors `fillNativeIteratorLateArms`: module-init pass 2 has completed
  * by this point, so its fresh generator function-expression state type is part
@@ -785,7 +846,12 @@ export function fillNativeGeneratorMethodDispatches(ctx: CodegenContext): void {
     // externref. Preserve the JS-host helper's historical eqref result path.
     fn.body =
       ctx.standalone || ctx.wasi
-        ? [...instrs, { op: "extern.convert_any" }, { op: "call", funcIdx: ctx.funcMap.get("__gen_result_unwrap")! }]
+        ? [
+            ...instrs,
+            ...returnValuePreservingInstrs(ctx, fn, dispatch.methodName),
+            { op: "extern.convert_any" },
+            { op: "call", funcIdx: ctx.funcMap.get("__gen_result_unwrap")! },
+          ]
         : instrs;
   }
 }

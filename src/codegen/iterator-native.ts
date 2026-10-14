@@ -530,6 +530,46 @@ function boundaryHostObjectTest(load: () => Instr[]): Instr[] {
 }
 
 /**
+ * (#6980) `gen[Symbol.iterator]()` returns the generator itself (§27.5.1
+ * %GeneratorPrototype%[@@iterator] is `return this`), but the native GetIterator
+ * helper wraps a driven generator frame in a fresh `$IterRec`. Applied to the
+ * helper's result at an explicit `[Symbol.iterator]()` call site: a
+ * GENSTATE/ASYNCGEN record unwraps to its frame; every other value is kept.
+ * `scratch` is an externref local. Fresh instrs per call (#2169b).
+ */
+export function generatorSelfIteratorInstrs(ctx: CodegenContext, scratch: number): Instr[] {
+  const { iterRecTypeIdx } = iterRuntimeTypes(ctx);
+  const rec = (): Instr[] => [
+    { op: "local.get", index: scratch },
+    { op: "any.convert_extern" },
+    { op: "ref.cast", typeIdx: iterRecTypeIdx },
+  ];
+  const kindIs = (kind: number): Instr[] => [
+    ...rec(),
+    { op: "struct.get", typeIdx: iterRecTypeIdx, fieldIdx: 0 },
+    { op: "i32.const", value: kind },
+    { op: "i32.eq" },
+  ];
+  return [
+    { op: "local.tee", index: scratch },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx: iterRecTypeIdx },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "i32" } },
+      then: [...kindIs(ITER_KIND_GENSTATE), ...kindIs(ITER_KIND_ASYNCGEN), { op: "i32.or" }],
+      else: [{ op: "i32.const", value: 0 }],
+    },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "externref" } },
+      then: [...rec(), { op: "struct.get", typeIdx: iterRecTypeIdx, fieldIdx: 3 }],
+      else: [{ op: "local.get", index: scratch }],
+    },
+  ];
+}
+
+/**
  * (#6980) GetIterator arm for a closed-struct ITERATOR whose `next` is a
  * closure-valued field: when `__sget_next(iter)` is truthy, wrap it as an OBJ
  * record (the OBJ step/close arms read `next`/`return` via `__sget_*` on

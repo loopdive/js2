@@ -2231,6 +2231,23 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
       : false;
   }
 
+  /**
+   * (#6980) Terms of a nested sequenced-binary chain along its single
+   * yield-holding path, in evaluation order — `(("a" + yield) + "b")` →
+   * `["a", yield, "b"]`. `undefined` unless that path ends in an admitted yield
+   * and every node on it is a sequenced binary.
+   */
+  function sequencedBinaryYieldPath(node: ts.Expression): ts.Expression[] | undefined {
+    const inner = unwrapContinuationWrapper(node);
+    if (continuationYieldOf(inner)) return [inner];
+    if (!ts.isBinaryExpression(inner) || !isSequencedBinaryOperator(inner.operatorToken.kind)) return undefined;
+    const leftYields = containsAnyYield(inner.left);
+    if (leftYields === containsAnyYield(inner.right)) return undefined;
+    const path = sequencedBinaryYieldPath(leftYields ? inner.left : inner.right);
+    if (!path) return undefined;
+    return leftYields ? [...path, inner.right] : [inner.left, ...path];
+  }
+
   function lowerSequencedContinuation(
     host: ContinuationHost,
     terms: readonly ts.Expression[],
@@ -2426,6 +2443,14 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
       (continuationYieldOf(root.left) !== null || continuationYieldOf(root.right) !== null)
         ? root
         : undefined;
+    // (#6980) `"a" + (yield) + "b"` parses as `(("a" + yield) + "b")`: the yield
+    // sits one sequenced-binary level down. Descend the yield's path only —
+    // each yield-free sibling stays one whole term, captured (operators and all)
+    // before the suspension, exactly where §13.15.3 evaluates it.
+    const nestedBinaryTerms =
+      continuationYieldsMayCarryOperands && !binaryRoot && ts.isBinaryExpression(root)
+        ? sequencedBinaryYieldPath(root)
+        : undefined;
     // (#6651 A4) A template's substitutions evaluate left to right (§13.2.8.6),
     // the same sequence again.
     const templateRoot =
@@ -2434,7 +2459,16 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
       root.templateSpans.some((span) => continuationYieldOf(span.expression) !== null)
         ? root
         : undefined;
-    if (!singleYield && !arrayRoot && !objectRoot && !conditionalRoot && !commaRoot && !binaryRoot && !templateRoot) {
+    if (
+      !singleYield &&
+      !arrayRoot &&
+      !objectRoot &&
+      !conditionalRoot &&
+      !commaRoot &&
+      !binaryRoot &&
+      !templateRoot &&
+      !nestedBinaryTerms
+    ) {
       return "not-applicable";
     }
 
@@ -2498,7 +2532,7 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
     }
     const sequenced = binaryRoot
       ? [binaryRoot.left, binaryRoot.right]
-      : templateRoot?.templateSpans.map((span) => span.expression);
+      : (nestedBinaryTerms ?? templateRoot?.templateSpans.map((span) => span.expression));
     if (sequenced) {
       return lowerSequencedContinuation(host, sequenced.map(unwrapContinuationWrapper), unwind)
         ? "lowered"
@@ -4361,6 +4395,23 @@ export function sourceNeedsGeneratorHostImports(ctx: CodegenContext, sourceFile:
 
   function visit(node: ts.Node): void {
     if (needsHost) return;
+    // (#6980) An async generator in a module whose async gens ALL drive
+    // host-free (the pre-body `moduleHasNonDrivableAsyncGen` verdict, the same
+    // shape predicate the emit gate uses) never emits a legacy buffer. Counting
+    // it here registered the `__gen_result_*` imports anyway, and every
+    // `IteratorResult` `.value`/`.done` read then routed to them (NaN, or a
+    // native-first policy rejection).
+    if (
+      (ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node) || ts.isMethodDeclaration(node)) &&
+      node.asteriskToken &&
+      node.body &&
+      ctx.moduleHasAsyncGen === true &&
+      ctx.moduleHasNonDrivableAsyncGen !== true &&
+      ts.getModifiers(node)?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword)
+    ) {
+      found = true;
+      return;
+    }
     if (ts.isFunctionDeclaration(node) && node.asteriskToken && node.body) {
       found = true;
       // A non-native-candidate generator needs the host imports; so does a
