@@ -6,8 +6,8 @@
   "status": "in-progress",
   "branch": "codex/6920-b-native-preparation-20261013-01a12827",
   "claimed_at": "2026-10-13T06:38:30.746860Z",
-  "updated_at": "2026-10-14T12:41:08.570116Z",
-  "write_id": "b-class-allocation-3436ec50-c50c-46d4-bf98-591e0c8bc975",
+  "updated_at": "2026-10-14T13:35:36.839874Z",
+  "write_id": "b-class-optimizer-domain-559988a6-2fa0-4584-8186-1ab5dd905376",
   "handoff_scope": [
     "src/ir/program-source.ts: genuine shared logical vector resolver, preparation origin and final checked facts joins",
     "src/ir/from-ast.ts: logical vector admission and executable allocation demand only",
@@ -242,6 +242,48 @@
       "runtimeHandshake": "A runtime/js-class-verify.ts will implement verifyIrJsClassDefinitionData(value) +verifyIrJsClassInstruction actualSSA/role/frame. B runtime consumes runtime-local leaf, never program owner; B program uses preparedIrJsClassDefinitions(entries) and authentic inventory/ABI/startup joins. Await actual A API seal; no undeclared helper assumed.",
       "prerequisites": "Actual A fifteen-operation/closed descriptor/runtime validator API seals required before integrated qualification. Both C materializers required before class runtime credit.",
       "predecessorRecordSha256": "ce5e7a2d06583d77b9806c7d39e7061fa4786fb2173f488fdb440c2b0081857b"
+    },
+    {
+      "kind": "exact early optimizer native class domain argument",
+      "at": "2026-10-14T13:35:36.839874Z",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b"
+      },
+      "receivingBranch": "codex/6920-b-native-js-class-allocation-20261014-01a12827",
+      "refinement": {
+        "kind": "Exact additive native-only optimizer domain hook, same receivedsixfile set; proposal beforewrites",
+        "previousReceive": "23e0d50882101c27e888e8e025b07707b5b72e94",
+        "paths": [
+          "src/ir/program-middleend-ir.ts",
+          "src/ir/program-prepare-ir.ts"
+        ],
+        "api": {
+          "optimizePreparedIrProgramIr": "Add optionalfifth NativeJsClassEvidenceDomain parameter after counters. Existing fourargs and nonclass defaults unchanged; no PreparedIrProgramProducerInput/PreparedComponentAbiLookup/schema fields or methods added.",
+          "extractor": "B-owned program/native-js-class-allocation-validation.ts::nativeJsClassEvidenceDomainFromProgram reads actual full PreparedIrAbiEntry[] snapshot and real transformed source inventory/derivedUnits/startup/module; A preparedIrJsClassDefinitions(entries) supplies actual support:none/native-js-class-definition-v1 entries. No plan-only lookup/callback used for descriptor DATA."
+        },
+        "currentLocations": {
+          "prepareIr": "transformedRuntime completed; existing optimizePreparedIrProgramIr input.abi uses inline preparedIrDraftAbiLookup(prepareIrProgramAbiEntries(transformed,transformedRuntime.declarations)); fourargs end counters.",
+          "middle": "After final hygiene/monomorphization/tagging and populationvalidation, ordinary per-function analyses finish; existing finalnativeNN analyzer follows."
+        },
+        "proposedLocations": {
+          "prepareIr": "Capture that same genuine transformed fullentry vector once in local transformedEntries beforeoptimizer. Use same vector for existing draftABI argument; construct optionalfifth Bdomain from actual transformedsource+abi:{entries:transformedEntries} with transformed.ir. No duplicate ABI producer invocation, no A descriptorforwarding logic rewrite.",
+          "middle": "After final population/derivedclone validation, rejoin optionaldomain to actual final ir.functions orderedunitIds and require definition/body/role frame freshness before producer. Native selectedclass replaces only incompatible nativeNN selection; nonclass returnsfalse and same oldanalyzer remains.",
+          "finalLinear": "Existing separate receivedhook reconstructs full finaldomain from finalSource/entries/completeFinalModule and supplies fourtharg prepareLinearAllocationFacts. Not reused staleearlydomain."
+        },
+        "proofDistinction": "Early domain is actual ephemeral source/ABI DATA for annotation, not sealedruntime approval. It must bind actual original/class bodies and current allocation occurrence fields; clone/hygiene updates require fresh current unit/source/role matching or typedrefusal, never copyapproval. Full frozenprogram replay independently rebuilds domain and rejoins complete original/selected/runtimeSupport/inventory/ABI/startup, unchanged fullruntime verifier/canonical classchecker before positive.",
+        "startup": "Caller has actual transformedsource startup; middleinput doesnot. No missingstartup waiver or inventedsource map; earlydomain cannot substitute for final startup/program validation.",
+        "sourceA": "A descriptor forwarding and exact support/body/startup contracts remain A-owned. B modifies only separate entry-vector local+fifthargument call and own final annotation hook, no broad oldfunction rewrites.",
+        "exclusions": [
+          "Held draftABI lookup/producerinput contracts/core/genericalgorithm untouched",
+          "Root issue/policy/ledger/publication unchanged byB",
+          "No initial/finaldomain persisted approvaltoken or callback",
+          "No geometry/materializer/execution claim"
+        ]
+      },
+      "refinementSha256": "e81289058e16e12e5a5c550bc6ea08d5194743152b94aabc4bec9ab0913f9afd",
+      "predecessorRecordSha256": "930f0ddf353cfdcac6dadd960832d0be84a4722e21707e45911393aff0b7333e",
+      "constraints": "Same two previously received paths only. Actual transformed full ABI vector captured once, same old draft lookup, optional fifth optimizer argument. Separate final Linear domain/current fourth argument. No held lookup/input/schema rewrite, no final approval from early DATA."
     }
   ],
   "handoff_authority": {
@@ -842,9 +884,51 @@
       "runtimeHandshake": "A runtime/js-class-verify.ts will implement verifyIrJsClassDefinitionData(value) +verifyIrJsClassInstruction actualSSA/role/frame. B runtime consumes runtime-local leaf, never program owner; B program uses preparedIrJsClassDefinitions(entries) and authentic inventory/ABI/startup joins. Await actual A API seal; no undeclared helper assumed.",
       "prerequisites": "Actual A fifteen-operation/closed descriptor/runtime validator API seals required before integrated qualification. Both C materializers required before class runtime credit.",
       "predecessorRecordSha256": "ce5e7a2d06583d77b9806c7d39e7061fa4786fb2173f488fdb440c2b0081857b"
+    },
+    {
+      "kind": "exact early optimizer native class domain argument",
+      "at": "2026-10-14T13:35:36.839874Z",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b"
+      },
+      "receivingBranch": "codex/6920-b-native-js-class-allocation-20261014-01a12827",
+      "refinement": {
+        "kind": "Exact additive native-only optimizer domain hook, same receivedsixfile set; proposal beforewrites",
+        "previousReceive": "23e0d50882101c27e888e8e025b07707b5b72e94",
+        "paths": [
+          "src/ir/program-middleend-ir.ts",
+          "src/ir/program-prepare-ir.ts"
+        ],
+        "api": {
+          "optimizePreparedIrProgramIr": "Add optionalfifth NativeJsClassEvidenceDomain parameter after counters. Existing fourargs and nonclass defaults unchanged; no PreparedIrProgramProducerInput/PreparedComponentAbiLookup/schema fields or methods added.",
+          "extractor": "B-owned program/native-js-class-allocation-validation.ts::nativeJsClassEvidenceDomainFromProgram reads actual full PreparedIrAbiEntry[] snapshot and real transformed source inventory/derivedUnits/startup/module; A preparedIrJsClassDefinitions(entries) supplies actual support:none/native-js-class-definition-v1 entries. No plan-only lookup/callback used for descriptor DATA."
+        },
+        "currentLocations": {
+          "prepareIr": "transformedRuntime completed; existing optimizePreparedIrProgramIr input.abi uses inline preparedIrDraftAbiLookup(prepareIrProgramAbiEntries(transformed,transformedRuntime.declarations)); fourargs end counters.",
+          "middle": "After final hygiene/monomorphization/tagging and populationvalidation, ordinary per-function analyses finish; existing finalnativeNN analyzer follows."
+        },
+        "proposedLocations": {
+          "prepareIr": "Capture that same genuine transformed fullentry vector once in local transformedEntries beforeoptimizer. Use same vector for existing draftABI argument; construct optionalfifth Bdomain from actual transformedsource+abi:{entries:transformedEntries} with transformed.ir. No duplicate ABI producer invocation, no A descriptorforwarding logic rewrite.",
+          "middle": "After final population/derivedclone validation, rejoin optionaldomain to actual final ir.functions orderedunitIds and require definition/body/role frame freshness before producer. Native selectedclass replaces only incompatible nativeNN selection; nonclass returnsfalse and same oldanalyzer remains.",
+          "finalLinear": "Existing separate receivedhook reconstructs full finaldomain from finalSource/entries/completeFinalModule and supplies fourtharg prepareLinearAllocationFacts. Not reused staleearlydomain."
+        },
+        "proofDistinction": "Early domain is actual ephemeral source/ABI DATA for annotation, not sealedruntime approval. It must bind actual original/class bodies and current allocation occurrence fields; clone/hygiene updates require fresh current unit/source/role matching or typedrefusal, never copyapproval. Full frozenprogram replay independently rebuilds domain and rejoins complete original/selected/runtimeSupport/inventory/ABI/startup, unchanged fullruntime verifier/canonical classchecker before positive.",
+        "startup": "Caller has actual transformedsource startup; middleinput doesnot. No missingstartup waiver or inventedsource map; earlydomain cannot substitute for final startup/program validation.",
+        "sourceA": "A descriptor forwarding and exact support/body/startup contracts remain A-owned. B modifies only separate entry-vector local+fifthargument call and own final annotation hook, no broad oldfunction rewrites.",
+        "exclusions": [
+          "Held draftABI lookup/producerinput contracts/core/genericalgorithm untouched",
+          "Root issue/policy/ledger/publication unchanged byB",
+          "No initial/finaldomain persisted approvaltoken or callback",
+          "No geometry/materializer/execution claim"
+        ]
+      },
+      "refinementSha256": "e81289058e16e12e5a5c550bc6ea08d5194743152b94aabc4bec9ab0913f9afd",
+      "predecessorRecordSha256": "930f0ddf353cfdcac6dadd960832d0be84a4722e21707e45911393aff0b7333e",
+      "constraints": "Same two previously received paths only. Actual transformed full ABI vector captured once, same old draft lookup, optional fifth optimizer argument. Separate final Linear domain/current fourth argument. No held lookup/input/schema rewrite, no final approval from early DATA."
     }
   ],
-  "previous_write_id": "b-number-undefined-7876020d-4abb-4b59-ada6-a4e0a575316d",
+  "previous_write_id": "b-class-allocation-3436ec50-c50c-46d4-bf98-591e0c8bc975",
   "receiving_worktrees": [
     "codex/6920-b-native-vector-calls-20261013-01a12827",
     "codex/6920-b-vector-control-20261013-01a12827",
