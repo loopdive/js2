@@ -277,7 +277,7 @@ The original 50 rows (file :: test):
 - generator-return-method :: return() propagates the supplied value
 - gradual-typing :: typeof any boolean runtime tag check; typeof any number comparison (compile failures)
 - import-meta :: import.meta.url stored in a variable; reflects the loader-injected value
-- ir-slice10-error :: (a)–(e) Error/TypeError/RangeError `.message`, empty message, catch composition
+- ir-slice10-error :: (a)(b)(c)(e) were a harness defect — `tests/helpers/compile.ts` never called `setInstance`, so the string bridge memory was unbound (fixed here, found by opus-6981-ir); (d) `new Error().message` is a real regime defect (#6981)
 - ir-slice10-map-set :: (d) `new Set().size === 0`; (e) Set add + size + has
 - issue-1197 :: nine "structure: WAT contains __vec_i32 …" assertions — re-pinned to host-assisted (#6979)
 - issue-1388 :: static async generator method, detached + iterator

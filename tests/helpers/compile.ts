@@ -87,6 +87,7 @@ export async function compileAndRunBuildImports(source: string): Promise<Record<
   }
   const imports = buildImports(result.imports, undefined, result.stringPool);
   const { instance } = await WebAssembly.instantiate(result.binary, imports);
+  imports.setInstance?.(instance); // (#6708) binds the native-string bridge memory
   return jsFacingExports(result, instance);
 }
 
@@ -103,6 +104,7 @@ export async function compileAndRunHost(source: string): Promise<Record<string, 
   }
   const imports = buildImports(result.imports, undefined, result.stringPool);
   const { instance } = await WebAssembly.instantiate(result.binary, imports as unknown as WebAssembly.Imports);
+  imports.setInstance?.(instance); // (#6708) binds the native-string bridge memory
   return jsFacingExports(result, instance);
 }
 
@@ -143,6 +145,7 @@ export async function compileAndRunTestSync(src: string): Promise<any> {
   if (!r.success) throw new Error(`Compile error: ${r.errors?.[0]?.message}`);
   const imports = buildImports(r.imports, undefined, r.stringPool);
   const instance = new WebAssembly.Instance(new WebAssembly.Module(r.binary), imports);
+  imports.setInstance?.(instance); // (#6708) binds the native-string bridge memory
   return (jsFacingExports(r, instance) as any).test();
 }
 
@@ -164,6 +167,7 @@ export async function compileAndRunResultObject(
     const imports = buildImports(compiled.imports, undefined, compiled.stringPool);
     const mod = new WebAssembly.Module(compiled.binary);
     const inst = new WebAssembly.Instance(mod, imports);
+    imports.setInstance?.(inst); // (#6708) binds the native-string bridge memory
     const ret = optionalTest
       ? (jsFacingExports(compiled, inst) as any).test?.()
       : (jsFacingExports(compiled, inst) as any).test();
@@ -226,6 +230,7 @@ export async function compileAndRunBuildImportsExpect(source: string) {
   ).toBe(true);
   const imports = buildImports(result.imports, undefined, result.stringPool);
   const { instance } = await WebAssembly.instantiate(result.binary, imports as unknown as WebAssembly.Imports);
+  imports.setInstance?.(instance); // (#6708) binds the native-string bridge memory
   return jsFacingExports(result, instance);
 }
 
@@ -264,6 +269,7 @@ export async function compileAndRunTestSyncNumber(source: string): Promise<numbe
   const imports = buildImports(result.imports, undefined, result.stringPool);
   const mod = new WebAssembly.Module(result.binary);
   const instance = new WebAssembly.Instance(mod, imports);
+  imports.setInstance?.(instance); // (#6708) binds the native-string bridge memory
   return (jsFacingExports(result, instance) as any).test();
 }
 
@@ -279,6 +285,7 @@ export async function compileAndRunTestSyncJoined(source: string): Promise<any> 
   const imports = buildImports(result.imports, undefined, result.stringPool);
   const mod = new WebAssembly.Module(result.binary);
   const instance = new WebAssembly.Instance(mod, imports);
+  imports.setInstance?.(instance); // (#6708) binds the native-string bridge memory
   return (jsFacingExports(result, instance) as any).test();
 }
 
@@ -326,6 +333,7 @@ export async function compileAndRunFn(src: string, fn: string, args: number[] = 
   }
   const imports = buildImports(r.imports, undefined, r.stringPool);
   const { instance } = await WebAssembly.instantiate(r.binary, imports);
+  imports.setInstance?.(instance); // (#6708) binds the native-string bridge memory
   return (jsFacingExports(r, instance)[fn] as (...a: number[]) => number)(...args);
 }
 
@@ -341,6 +349,7 @@ export async function compileAndRunTestNumber(src: string): Promise<number> {
   }
   const imports = buildImports(r.imports, undefined, r.stringPool);
   const { instance } = await WebAssembly.instantiate(r.binary, imports);
+  imports.setInstance?.(instance); // (#6708) binds the native-string bridge memory
   return jsFacingExports(r, instance).test() as number;
 }
 
@@ -372,6 +381,7 @@ export async function compileAndRunIRVariant(
     r.stringPool,
   );
   const { instance } = await WebAssembly.instantiate(r.binary, imports);
+  imports.setInstance?.(instance); // (#6708) binds the native-string bridge memory
   const fn = jsFacingExports(r, instance)[fnName] as (...a: unknown[]) => unknown;
   return fn(...args);
 }
@@ -390,6 +400,7 @@ export async function compileAndRunHoistExports(source: string): Promise<Record<
   }
   const imports = buildImports(result.imports, undefined, result.stringPool);
   const { instance } = await WebAssembly.instantiate(result.binary, imports);
+  imports.setInstance?.(instance); // (#6708) binds the native-string bridge memory
   return jsFacingExports(result, instance);
 }
 
