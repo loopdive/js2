@@ -1,7 +1,8 @@
 ---
 id: 6980
 title: "Native regime in a JS environment: iterator / generator protocol defects (custom iterables, generator .return(), async generator methods)"
-status: in-progress
+status: done
+completed: 2026-10-14
 created: 2026-10-14
 updated: 2026-10-14
 priority: high
