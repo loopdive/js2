@@ -35,6 +35,14 @@
 //     call's return type comes from `callReturnTypes` (same TypeMap),
 //     with arg types validated against the propagated callee param types.
 
+import {
+  emitNativeNumberUndefinedRead,
+  emitNativeNumberUndefinedJoin,
+} from "./core/native-number-undefined-lowering.js";
+import {
+  assertNativeNumberUndefinedSource,
+  type NativeNumberUndefinedSource,
+} from "./native-number-undefined-source.js";
 import { nativeNumericUndefinedProof } from "./native-vector-undefined-provenance.js";
 import { conditionalBranchTypesAgree } from "./core/native-conditional-type.js";
 import { IR_STRING_COMPARE_FN } from "./runtime-symbols.js";
@@ -1167,6 +1175,7 @@ export interface AstToIrOptions {
    */
   readonly paramTypeOverrides?: readonly IrType[];
   /** Source-certified, per-function AST identities; never serialized or physically resolved. */
+  readonly nativeNumberUndefinedSource?: NativeNumberUndefinedSource;
   readonly logicalVectorTypes?: ReadonlyMap<
     ts.ParameterDeclaration | ts.VariableDeclaration | ts.Expression,
     Extract<IrType, { kind: "vec" }>
@@ -1548,6 +1557,16 @@ export function lowerFunctionAstToIr(
     | ts.SetAccessorDeclaration,
   options: AstToIrOptions,
 ): LoweredFunctionResult {
+  if (options.nativeNumberUndefinedSource) {
+    if (!ts.isFunctionDeclaration(fn) || !options.checker || !options.logicalVectorTypes)
+      demoteToLegacy("nullish-value-unsupported", "native Number/Undefined source custody is missing");
+    assertNativeNumberUndefinedSource(
+      options.nativeNumberUndefinedSource,
+      options.checker,
+      fn,
+      options.logicalVectorTypes,
+    );
+  }
   // #1370 Phase B: name resolution.
   //
   // FunctionDeclaration: prefer `fn.name.text`, fall back to options.funcName.
@@ -1816,6 +1835,7 @@ export function lowerFunctionAstToIr(
     returnType,
     ...numericProjectionOptions(options),
     logicalVectorTypes: options.logicalVectorTypes,
+    nativeNumberUndefinedSource: options.nativeNumberUndefinedSource,
     logicalVectorConsumed,
     calleeTypes: options.calleeTypes,
     directCalls: options.directCalls,
@@ -2963,6 +2983,7 @@ interface LowerCtx extends FrontendSourceScope {
   readonly booleanReturnBuilder?: IrFunctionBuilder;
   readonly stringNumericCoercion?: AstToIrOptions["stringNumericCoercion"];
   readonly numericThrow?: AstToIrOptions["numericThrow"];
+  readonly nativeNumberUndefinedSource?: NativeNumberUndefinedSource;
   readonly logicalVectorTypes?: AstToIrOptions["logicalVectorTypes"];
   readonly logicalVectorConsumed?: Set<ts.Node>;
   readonly scope: Map<string, ScopeBinding>;
@@ -4228,6 +4249,7 @@ function lowerVariableDeclaration(d: ts.VariableDeclaration, isConst: boolean, c
   // keywords; everything else falls through to inference.
   const declaredVector = logicalVectorDeclarationType(d, d.initializer, name, cx);
   let annotated: IrType | undefined =
+    (cx.nativeNumberUndefinedSource?.declarations.has(d) ? irDynamic() : undefined) ??
     declaredVector ??
     (d.type && isPrimitiveTypeNode(d.type) ? typeNodeToIr(d.type, `local ${name} of ${cx.funcName}`) : undefined);
   // (#2856) `number[]` annotation → resolve the f64-element vec and use its
@@ -4883,6 +4905,7 @@ function lowerExpr(expr: ts.Expression, cx: LowerCtx, hint: IrType): IrValueId {
 }
 
 function lowerExprUnchecked(expr: ts.Expression, cx: LowerCtx, hint: IrType): IrValueId {
+  if (cx.nativeNumberUndefinedSource?.values.has(expr)) hint = irDynamic();
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
     return withNodeSourceSite(cx, expr, () => lowerExprUnchecked(expr, cx, hint));
   if (ts.isParenthesizedExpression(expr)) {
@@ -7032,6 +7055,8 @@ function lowerElementAccess(expr: ts.ElementAccessExpression, cx: LowerCtx): IrV
     if (!scalar || (scalar.kind !== "f64" && scalar.kind !== "i32")) {
       logicalVectorMismatch(cx.funcName, "index must have the existing numeric/bool representation");
     }
+    if (cx.nativeNumberUndefinedSource?.reads.has(expr))
+      return emitNativeNumberUndefinedRead(cx.builder, recv, raw, JS_TAG_IDS.NumberF64, JS_TAG_IDS.Undefined);
     const index = scalar.kind === "i32" ? raw : cx.builder.emitUnary("i32.trunc_sat_f64_s", raw, IR_I32);
     // A numeric range proof alone must not bypass f64 property-index identity.
     if (scalar.kind === "i32" && isProvenInBoundsIr(expr, cx)) {
@@ -13535,6 +13560,19 @@ function boxMixedConditionalArm(
 function lowerConditional(expr: ts.ConditionalExpression, cx: LowerCtx): IrValueId {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
     return withNodeSourceSite(cx, expr, () => lowerConditional(expr, cx));
+  if (cx.nativeNumberUndefinedSource?.values.has(expr)) {
+    const rawCondition = lowerExpr(expr.condition, cx, IR_F64);
+    const condition = lowerToBooleanForCondition(rawCondition, expr.condition, cx);
+    if (condition === null)
+      demoteToLegacy("operand-coercion-unsupported", "native Number/Undefined conditional lacks primitive truthiness");
+    return emitNativeNumberUndefinedJoin(
+      cx.builder,
+      condition,
+      () => lowerExpr(expr.whenTrue, { ...cx, scope: new Map(cx.scope) }, IR_F64),
+      () => lowerExpr(expr.whenFalse, { ...cx, scope: new Map(cx.scope) }, IR_F64),
+      JS_TAG_IDS.NumberF64,
+    );
+  }
   const mixedProof = requireMixedPrimitiveConditionalProof(expr, "mixed conditional", cx);
   if (mixedProof !== null) {
     try {
@@ -15182,7 +15220,11 @@ function tryLowerUndefinedCompare(expr: ts.BinaryExpression, op: ts.SyntaxKind, 
   // `undefined` through a numeric-vector read, only a proven in-bounds access
   // may participate in the never-undefined fold below. Unproven reads stay on
   // the direct SAFE path instead of folding `a[i] === undefined` to false.
-  if (ts.isElementAccessExpression(other) && !isProvenInBoundsIr(other, cx)) {
+  if (
+    ts.isElementAccessExpression(other) &&
+    !isProvenInBoundsIr(other, cx) &&
+    !cx.nativeNumberUndefinedSource?.reads.has(other)
+  ) {
     throw new IrUnsupportedError(
       "nullish-value-unsupported",
       "build",

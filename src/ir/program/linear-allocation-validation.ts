@@ -1,3 +1,4 @@
+import { verifyNativeNumberUndefinedEvidence } from "../runtime/native-number-undefined-profile.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import { createVerifiedAllocationSnapshot } from "../analysis/allocations/snapshot.js";
@@ -227,7 +228,11 @@ export function validatePreparedIrLinearAllocationEvidence(
   }
   let uncovered: AllocationEvidenceCheck | undefined;
   const globals = nativeModuleGlobalEvidence(program);
-  const reports = views.map((module) => verifyNativeAllocationEvidence(module, program.allocations, globals));
+  const reports = views.map(
+    (module) =>
+      verifyNativeNumberUndefinedEvidence(module, program.allocations) ??
+      verifyNativeAllocationEvidence(module, program.allocations, globals),
+  );
   // Examine every required view before acting on a coverage refusal. Covered
   // contradictions must never turn into a fallback analysis or unsupported.
   for (const report of reports) {

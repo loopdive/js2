@@ -1,3 +1,4 @@
+import { analyzeNativeNumberUndefined } from "./analysis/allocation-evidence/native-number-undefined-producer.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import type { AllocSiteRegistry } from "./alloc-registry.js";
@@ -131,5 +132,6 @@ export function optimizePreparedIrProgramIr(
       if (!isLegacyHostIrPolicy(input.policy)) analyzeNativeVectorControl(fn, allocations, controls.escape);
     }
   }
+  if (!isLegacyHostIrPolicy(input.policy)) analyzeNativeNumberUndefined(ir, allocations, true);
   return { ir, derivedUnits };
 }

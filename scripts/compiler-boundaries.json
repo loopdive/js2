@@ -16600,6 +16600,109 @@
       "destination": "frontend-ts",
       "owner": "6920-session-b-native-takeover",
       "nextBoundary": "Checker-symbol native numeric defined-value provenance retains TypeScript AST authority; migrate with source lowering, never infer runtime absence from unboxed carriers."
+    },
+    {
+      "path": "src/ir/native-number-undefined-source.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "6920-session-b-native-takeover",
+      "nextBoundary": "Original checker-symbol/local dense-vector source and complete incoming/prototype-effect census remains frontend authority; migrate with source preparation, without serializing capabilities or inferring runtime absence from numeric types."
+    },
+    {
+      "path": "src/ir/core/native-number-undefined-lowering.ts",
+      "state": "clean",
+      "layer": "ir-core"
+    },
+    {
+      "path": "src/ir/analysis/allocation-evidence/native-number-undefined-body.ts",
+      "state": "clean",
+      "layer": "ir-analysis"
+    },
+    {
+      "path": "src/ir/analysis/allocation-evidence/native-number-undefined-profile.ts",
+      "state": "clean",
+      "layer": "ir-analysis"
+    },
+    {
+      "path": "src/ir/analysis/allocation-evidence/native-number-undefined-producer.ts",
+      "state": "clean",
+      "layer": "ir-analysis"
+    },
+    {
+      "path": "src/ir/program/native-number-undefined-requirements.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/native-number-undefined-abi.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/runtime/native-number-undefined-profile.ts",
+      "state": "clean",
+      "layer": "ir-runtime"
+    },
+    {
+      "path": "src/ir/backend/native-number-undefined.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "6920-session-b-native-takeover",
+      "nextBoundary": "Separate portable IR binding/proof contracts from concrete ValType/Instr carrier emission, scratch-local and memory-offset descriptors before core activation; all-import closure purity alone does not certify semantic core ownership."
+    },
+    {
+      "path": "src/backend/wasmgc/resources/native-number-undefined.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/backend/linear/program/native-number-undefined.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "wasm-physical",
+      "owner": "6920-session-b-native-takeover",
+      "nextBoundary": "Separate target-specific IR tags/errors/checker types from reusable physical record operations before activation; the current source-free recipe preserves exact existing allocation geometry and requires the issued Linear pack, without asserting a clean Wasm foundation boundary."
+    },
+    {
+      "path": "src/ir/program-number-undefined-resources.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "6920-session-b-native-takeover",
+      "nextBoundary": "Retain complete independent logical/source evidence and exact whole-attempt checks while consuming genuine target-specific reservations; split physical emission orchestration from portable independently issued proof after the separate proof receiving scope. No clean ir-program activation is inferred from a source-free closure."
+    },
+    {
+      "path": "src/ir/analysis/allocation-evidence/native-number-undefined-legality.ts",
+      "state": "clean",
+      "layer": "ir-analysis"
+    },
+    {
+      "path": "src/ir/program/native-number-undefined-allocation-validation.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/compiler/ir-native-number-undefined-presentation.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "compiler",
+      "owner": "6920-session-b-native-takeover",
+      "nextBoundary": "Separate completed native support-singleton authentication and concrete GC/Linear carrier/type/initializer/data joins from portable program presentation, retaining complete original/selected semantic evidence and opaque emission currentness. No clean compiler activation or general public dynamic ABI is inferred."
+    },
+    {
+      "path": "src/compiler/ir-native-number-undefined-optimization.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "compiler",
+      "owner": "6920-session-b-native-takeover",
+      "nextBoundary": "Separate actual finalized-artifact production/custody and optimizer orchestration from compiler frontend and legacy transitive consumers, retaining private constructor-only provenance, exact currentness and atomic actual candidate acceptance. The compiler-private authority cycle and actual 1932-file closure/1564 debt remain explicit migration work; no clean compiler activation or general dynamic ABI follows."
+    },
+    {
+      "path": "src/wasm/physical/native-number-undefined-binary.ts",
+      "state": "clean",
+      "layer": "wasm-physical"
     }
   ]
 }

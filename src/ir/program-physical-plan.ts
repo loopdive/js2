@@ -38,6 +38,10 @@ import { nativeStringOutputAbiBindings } from "../backend/wasmgc/program/native-
 import { nativeBooleanAbiBindings, nativeNumberBinding } from "./program/native-primitive-boundary-abi.js";
 import { planHostNumberBoundary, type HostNumberBoundarySetup } from "./program/host-number-boundary-setup.js";
 import { planHostAsyncDynamicUnits, preparedHostAsyncDynamicCarrier } from "./program/host-async-dynamic.js";
+import {
+  planNativeNumberUndefinedPhysical,
+  type NativeNumberUndefinedPhysicalPlan,
+} from "./program-number-undefined-resources.js";
 import { irGlobalBindingKey, irTypeBindingKey, irSupportGlobalRef, irSourceTypeRef } from "./abi-bindings.js";
 import {
   irCallableBindingKey,
@@ -245,6 +249,7 @@ function planNumberRemainders(
 
 /** Everything emission will reserve, in the order it will reserve it. Deep-frozen. */
 export interface PhysicalSetupPlan {
+  readonly numberUndefined?: NativeNumberUndefinedPhysicalPlan;
   readonly backend: PreparedIrBackendOptions["backend"];
   readonly target: PreparedIrBackendOptions["target"];
   readonly exceptionTag: PhysicalExceptionTag;
@@ -1188,6 +1193,7 @@ export function planPhysicalSetup(
   const bodies = new Map<IrUnitId, IrFunction>(physical.map((fn) => [fn.unitId, fn] as const));
   const entries = new Map<IrBindingId, PreparedIrAbiEntry>(program.abi.entries.map((entry) => [entry.plan.id, entry]));
   const vectors = planNativeVectorResources(program, options, projection);
+  const numberUndefined = planNativeNumberUndefinedPhysical(program, projection);
   const referenceError = planPhysicalReferenceError(program, projection);
   if (formatter) validateNativeNumberFormatInput(program, options, projection, formatter);
   let nativeStrings = native ? nativeStringSetup(program, options, projection, native) : undefined;
@@ -1243,7 +1249,12 @@ export function planPhysicalSetup(
   const asyncFrames = asyncOutcome.kind === "planned" ? asyncOutcome.setup : undefined;
   if (asyncOutcome.kind !== "planned") gaps.add(asyncOutcome.detail, asyncOutcome.unitId);
   const nativeIds = new Set(nativeBindings.map((row) => row.entry.id));
-  const dynamic = planHostAsyncDynamicUnits(program, projection, asyncFrames);
+  if (numberUndefined) {
+    nativeIds.add(numberUndefined.singletonBindingId);
+  }
+  const dynamic = numberUndefined
+    ? { units: [], gaps: [] }
+    : planHostAsyncDynamicUnits(program, projection, asyncFrames);
   for (const gap of dynamic.gaps) gaps.add(gap.detail, gap.unitId);
   const convert = physicalSignatureConverter(
     program,
@@ -1429,6 +1440,7 @@ export function planPhysicalSetup(
   if (failure) return failure;
 
   const plan: PhysicalSetupPlan = {
+    ...(numberUndefined ? { numberUndefined } : {}),
     backend: options.backend,
     target: options.target,
     exceptionTag: { required: exceptionRequired || options.sharedExceptionTag, shared: options.sharedExceptionTag },

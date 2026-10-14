@@ -12,6 +12,7 @@ reasoning_effort: high
 task_type: planning
 area: ir
 loc-budget-allow:
+  - src/ir/lower-generic.ts
   - src/compiler/ir-program-presentation.ts
   - src/compiler.ts
   - src/ir/program-consumer.ts
@@ -19,7 +20,18 @@ loc-budget-allow:
   - src/ir/from-ast.ts
   - src/ir/identity.ts
 func-budget-allow:
+  - src/ir/program-physical-plan.ts::planPhysicalSetup
+  - src/ir/program-consumer.ts::materializePhysicalProgram
+  - src/ir/lower-generic.ts::emitInstrTree
+  - src/ir/lower-generic.ts::lowerIrFunctionBody
+  - src/ir/from-ast.ts::lowerFunctionAstToIr
+  - src/ir/from-ast.ts::lowerExprUnchecked
   - src/ir/program-source.ts::prepareIrProgramSources
+import-cycles-allow:
+  - ir->backend: 28 # 2026-10-14 (#6920): three measured native Number/Undefined physical reserve/fill/completion recipe joins remain honest mixed IR/backend debt
+  - sccCountOver1: 5 # 2026-10-14 (#6920): actual private compiler finalization custody introduces one observed cycle; constructor ownership split remains required migration work
+  - compiler->compiler.ts: 1 # 2026-10-14 (#6920): fixed read-only private finalized-artifact checker prevents copied or original-emission tuple issuance; no caller registration/callback authority
+  - compiler.ts->compiler: 15 # 2026-10-14 (#6920): reverse custody edge makes the existing compiler import direction a measured two-way pair; only one new optimizer dispatch import, not fifteen new source edges
 language_feature: arrays
 goal: correctness
 parent: 3518
@@ -4799,40 +4811,323 @@ conformance/optimization/retirement and verified main remain required work.
 PR6662 retains HOLD, no auto-merge; A retains original forwarding and queue
 ownership. This is a reviewable guarded checkpoint, not full-green migration.
 
-## B finite class-layout source receipt (2026-10-14)
+## B native Number/Undefined bounded draft grants (2026-10-14)
 
-The user-authorized Session B receiving record
-6920-b-native-class-source-receipt-successor-20261014 at coordination commit
-00d965be29ab7341a1c186e07363e3d6e8d85625 receives only two current preservation
-driver reader hooks and three new helper/receipt/control files. Both former
-B records and all C1 H1/H2/H3/default-reader owners and historical bytes remain
-preserved. The actual source domain remains the published guarded 2001-file
-checkpoint; this receipt has no class body or semantic execution credit.
+Root receives only the measured native source hooks in from-ast and
+program-source: original metadata and generic algorithms are preserved.
+The existing from-ast LOC allowance remains; program-source and the three
+named functions receive ordinary scoped allowances for the small native
+hooks. These grants do not permit historical reflow or unrelated growth.
+The draft source/evidence controls and typing are partial qualification,
+not four-profile runtime or full migration credit. Physical resources and
+source-free live/codec/public execution require the exact frozen composition.
+Prototype/shadow custody and complete admission proofs remain mandatory.
 
-The fixed outer DATA authenticates 34 actual source operands, eight old
-helper/receipt anchors and its own fixed receipt afresh on every operation.
-It independently reverses the genuine added class-layout checks to the exact
-prior complete source bytes and reciprocally reconstructs current bytes.
-Original algorithms, defaults, 16+12 callbacks and old-stage mutants stay
-byte-exact. A fresh factory captures once for each explicit reader operation;
-its private captured reader never authorizes a later operation or rereads mapped
-inputs. This avoids repeated captures inside the unchanged type-ownership
-operation without introducing a cross-operation success cache.
+## B native Number/Undefined physical draft grants (2026-10-14)
 
-Independent natural default-runner qualification passed 55/55 cases (original
-28 and 27 new), exit0/no unhandled errors; AP03 maximum11.184seconds remains
-below its unchanged35second deadline. Full test-inclusive TS7 excludes[]
-passed with2001src/2258totalinputs/eight test-helper inputs; all ten ordinary
-gates passed. Initial27/28/AP03timeout43.580seconds with two unhandled errors,
-new fixture typing/lint failures and standaloneAP03 measurement32.653seconds
-are retained in the sealed evidence, not waived.
+Ordinary root grants cover only the measured carrier lowering, physical-plan
+and consumer hooks; historical formatter reflow is excluded. The exact existing
+canonical layout ID is record:box:scalar:f64, with unchanged planner geometry.
+Source-independent GC resource tests are partial qualification only; Linear
+and complete original/runtime body, ABI, reservation, lifetime and source-free
+execution joins require the exact frozen composition. Concrete emission and
+memory descriptors remain migration debt; imported closure purity alone does
+not certify semantic IR-core ownership. The runtime recipe and foreign
+generic/core/tag/native-values/C1 contracts remain unchanged.
 
-Sealed five-path handoff SHA256
-c2cc157399854f4b3ce700ef9a0a4999bef913b69d3a94cbd1c7aba6a13edd5c
-records complete unchanged source/anchor populations and independent driver
-preimage restoration. Only the seven historical class-layout first stops in
-these two drivers are cured. The wider70/77 failures, generic C1/default paths,
-primitive carrier execution, full class semantics, conformance, optimization,
-retirement and verified main remain required work. Normal root commit and
-publication checks must still pass. Existing PR6662 HOLD, A integration/queue
-ownership and unrelated branches remain unchanged.
+
+## B joined native Number/Undefined component qualification (2026-10-14)
+
+The isolated root carrier composition qualifies six original/new source, evidence,
+checked GC allocation, class-refusal, physical-resource and legality suites together:
+113 registered and executed cases, 113 passes, no skipped or todo cases, actual
+Node exit0 after192.708 seconds and no unhandled errors. The JSON suite aggregate
+reports9 suites; the actual testResults and command have exactly6 file identities.
+All original assertion identities are preserved. Explicit TS7 typing includes all
+2015 source files,7 genuine test roots,8 resolved test/helper inputs and2272 total
+inputs with excludes[], actual exit0. All37 owned TypeScript files pass lint and
+format checking; diff checking also exits0. This is component qualification, not
+final public or optimization execution. The exact39-file seal and reports are in
+.tmp/number-undefined-composition/joined113-receipt.json.
+
+The normal architecture gates pass dialect, kind neutrality, layering, directory
+budget, truthful2015-row inventory, function budget and LOC budget. The first
+cycle check against the fixedc1081873965c93b430f1dc4296187cf33b099767 base refuses
+twoWayDirEdges[ir->backend]25->28. Its full report is retained. Read-only physical
+auditing attributes the three actual value edges to program-consumer's GC
+completion recipe and the flat Number/Undefined orchestrator's GC and Linear
+reserve/fill recipes. These are concrete target dispatch and lifetime joins;
+callback injection or reexporting them would not remove transitive physical
+debt. An exact issue-owned allowance records28 without altering the baseline,
+algorithms or unrelated allowances. The involved policy rows remain mixed,
+not clean logical IR ownership. A real future target-dispatch relocation remains
+required architectural work.
+
+Source-free runtime epoch c78da qualified10 cases,608 JavaScript value comparisons,
+80 real binaries and40 live/codec byte pairs with actual Node0/no unhandled
+errors. Earlier RPC-timeout epochs are retained without completion credit. The
+subsequent public epoch df223 retained10 failures at the unchanged primitive
+numeric-global presentation contract. The final f886 test adds both legacy
+generator poison controls and expands to1344 comparisons,160 binaries and40
+source-free byte pairs; it remains unqualified pending the received finite
+singleton presentation implementation. No known public refusal or earlier
+failure is waived, removed, hidden or credited as success.
+
+The published held review branch is39c255ea0fb8ae364124c087acce7335285cbc33,
+containing the separate2001-input inventory and class source-receipt checkpoints.
+This2015-input carrier composition is still uncommitted and unpublished. The
+source-receipt and inventory continuations, public runtime/optimization matrix,
+broader failures, full class semantics, typeof/string/general dynamic transport,
+conformance, retirement and verified main remain required work.
+
+
+## B frozen2016 public singleton composition and optimizer receiver (2026-10-14)
+
+Root adopted the exact independently frozen singleton helper02093810 and
+presentation4cf88ea0, preserving every unrelated historical function. The sole
+new compiler row is honestly unmigrated/mixed-needs-split; all prior2015 rows
+and non-files bytes remain exact. Actual policy2016 is637204 bytes, SHA256
+f1934c0f22726ed604b009bc764ac3110f251f2aefb2533fa0dca7c13f874d88.
+The all2016-source/policy freeze isde4745435f8b47edd04f70569d30db6520780ea12548e4d78a31438c20f4d77f;
+the signed class55 and inventory562 dependencies from39c255 are adopted exactly.
+None of their current outer continuations is yet credited by this paragraph.
+
+Actual joined root qualification is7 files149/149, no skips/todos, natural
+Node0/no unhandled errors after289.99 seconds. Full TS7 checks all2016 source
+files,8 explicit test roots,9 resolved test/helper inputs and2274 total inputs,
+excludes[], exit0. Every frozen source and policy hash is unchanged afterward.
+All8 ordinary architecture gates exit0 against the fixedc108 baseline and
+measured issue-owned28 physical-edge allowance. Exact root149 report/seal:
+.tmp/number-undefined-composition/root149/qualified-receipt.json, SHA256
+747bfdc6b78dab3abc7d3f8d019529dd30f51386edf397b472c18b8bcecd62bd.
+The presentation suite adds real four-profile optimize:false native binaries
+and32 independent JS comparisons with both legacy generators poisoned.
+
+Worker epochs are preserved separately: initial24/25 stopped at an impossible
+immutable-module getter setup; corrected34 assertion successes still had actual
+process1 from a Vitest onTaskUpdate RPC timeout. Event-loop yields between
+complete cases preserve assertions/fixtures/deadlines;35/35 actual0 and the new
+selected1/1 actual0 precede the root full36/36 included in149. No RPC epoch is
+reported as a clean terminal. The first cycle refusal remains in the full
+joined-cycles-verbose.log; current2016 positive gate logs are archived separately
+in public2016-static. The old113 receipt retains its actual result payloads;
+some positive log output paths were reused by the later2016 gate invocation,
+and those files must not be cited as untouched2015 raw logs.
+
+The untouched f886 complete runtime/optimization oracle actually executes all10
+fixtures but fails10/10 at the existing capturePresentation optimize:true gate.
+All672 source-free comparisons/80 binaries/40 byte pairs and initial public
+false-mode rows are reached before the exact unproved-output-option refusal;
+this failed process supplies no full-suite or complete public matrix credit.
+Removing the numeric-global refusal did not complete optimization.
+
+Root receives the exact finite five-path optimizer lifecycle contract in signed
+claim a938cafba3192c6c431ecca73e270a656b4687ff, normal push0/remote verified.
+A fresh isolated writer owns two new compiler/physical leaves, only the named
+presentation capture/deferred-proof hooks, actual finalized-artifacts issuance
+and both existing async optimizer adapters, plus an independent new suite.
+The generic optimizer, singleton helper, C1/defaults, source-map/C ABI immediate
+refusals, other source/global/widening algorithms and f886 oracle stay exact.
+Actual async optimizer invocation/accepted-byte provenance, numeric public ABI,
+closed imports/start/memory/data/currentness and genuine canonical rec-group
+proof must qualify before optimized acceptance credit. Internal GC DCE/reindex
+is permitted under the complete closed public contract; transformed bytes never
+inherit original opaque emission/binding authority. Root owns truthful future
+2018 inventory rows and ordinary measured grants after the new source freeze.
+
+In parallel, exact source6 and inventory4 outer continuations qualify the frozen
+2016 epoch, preserving all55 and562 callback bodies/literals/defaults. Their
+active processes/typing/templates are not completed test results. Public full
+optimization, broader held failures, class semantics, general dynamic transport,
+conformance/retirement and verified main remain required. PR6662 current39c255
+retains HOLD and no auto-merge; this carrier checkpoint is still unpublished.
+
+
+## B actual source6 receipt composition (2026-10-14)
+
+The exact six owned source-receipt paths are adopted from sealed handoff
+f1aaa161852ee7bd0dd5893c09e0de325239c6790c0f2f9b542aa05f6f217c39.
+Final helper6768 bytes/SHAf5ee7cf91cb521c643c1a2c41cfd801b547de0fa1440c85edf551ba388ae4122
+and fixed DATA32537 bytes/SHA660b59f167026c48f33f8b34e9ef785d54874a4abdb2f3348b761458a228e750
+authenticate95 current source operands,10 unchanged helper/receipt anchors,
+3 complete current callers and one new receipt:109 physical reads per explicit
+operation, mapped rereads0, unknown physical read once. Exact allocation3-span
+and caller2/2/5-span inverses plus independent reciprocal replay preserve
+the complete qualified preimages. All55 old callbacks/bodies/literal pins are
+unchanged.35 independent controls exercise actual source/live/codec GC joins,
+original/selected malformed coverage and namespace refusal, descriptor getters
+at0, complete caller/source/anchor custody, mutation/restoration and no cache.
+The corrected new-helper construction comment is retained in an exact cleanup
+receipt and independent helper pin; historical pins remain untouched.
+
+Worker final90/90 naturally0/no unhandled errors, four files,56.429 seconds;
+AP03 maximum14.309402542 seconds stays below unchanged35 seconds. Full2016
+typing/2276 inputs/excludes[] and all11 static/style/whitespace checks naturally0.
+All frozen production/policy/read-only dependencies remain exact.
+
+Independent root full composition now11 files239/239, no skips/todos, natural
+Node0/no unhandled errors after382.5896456 seconds. TS7 includes all2016 source
+files,12 genuine test roots,19 resolved test/helper files and2284 inputs,
+excludes[], actual0. Two private root config path/rootDir mistakes are retained
+as failed typing setup epochs; corrected configuration does not exclude tests
+or change any source. Root full-source/policy/source6 seals remain unchanged.
+Exact independent receipt SHA80b611c55bd87faed0ed1e76fc754b54e7745a017e4ea5202044717b731908a6
+is .tmp/number-undefined-composition/root239/qualified-receipt.json.
+
+Inventory714 remains active and unqualified; no test is cancelled or expectation
+changed. The optimizer lane separately receives actual compiler-private
+finalization custody13898a93 and measured active DataCount grammarb63f2114.
+Earlier fabricated-artifact issuance failure and premature candidate-acceptance
+epochs are retained without acceptance credit. Every candidate check must
+finish before accepted bytes/state commit; real finalized compiler object
+identity/completed receipt cannot be replaced by original emission or a copy.
+Actual Linear optimizer output has count2 and two active sparse segments at
+1024[1,0,0,0,8] and1038[248,127]; count/full tails/offset/memory observations
+remain mandatory, passive/unknown forms still refuse. No Linear optimized
+acceptance or full f886 result is inferred before the new actual terminal.
+The current2016 checkpoint remains unpublished/held; all broader obligations
+and ordinary commit/push/integration checks remain required.
+
+
+## B native optimization metadata candidate (2026-10-14)
+
+This future2018 source epoch receives two exact inventory rows: the opaque
+optimizer/finalized-artifact orchestration remains unmigrated/mixed-needs-split
+with actual1932-file transitive closure and1564 existing debt operands. The
+finite raw binary projection has no imports, closure1/debt0, and is a clean
+wasm-physical leaf. Neither row changes any previous2016 row/non-files field.
+The first ordinary cycle refusal is retained: SCC count4->5 and new two-way
+compiler->compiler.ts0->1 / compiler.ts->compiler0->15. Private constructor-only
+finalization provenance cannot be replaced by an exported registration callback
+or a kind/report marker. These exact issue-owned allowances record the actual
+temporary cycle; baseline and every unreceived algorithm remain untouched.
+The reverse edge makes existing forward imports count as a two-way pair; it
+does not mean15 newly added imports. Removing mixed dependency/custody debt
+through genuine artifact production ownership remains required architecture
+work before full migration completion. No LOC/function allowance is needed
+by the actual first ordinary gate outcomes.
+
+The running53-case full command is unqualified until natural terminal and
+current input seals. Prior37/37 actual0, four actual backend/target optimizer
+acceptances and malformed/original-artifact failure/repair epochs are separate
+observations, not replacement full-matrix credit. Rootf886 oracle, generic
+optimizer, singleton helper and every2016 peer source/policy input stay exact.
+Root2016 is frozen while source/inventory continuations qualify; this metadata
+exists only in the isolated optimizer worktree after the active epoch finishes.
+
+
+## B actual optimized native carrier and bounded future-policy receiver (2026-10-14)
+
+The isolated optimizer final qualification naturally exited0 at its original
+process handle:2 files62/62, no skips/todos or unhandled errors. The52 new
+optimizer controls join the unchanged f88610-fixture oracle:1,344 independent
+JS comparisons,160 executed binaries and40 actual live-codec byte pairs.
+Actual accepted optimized:true output is observed for all four backend/target
+profiles. Both parent Node and the bundled optimizer executable shebang use
+explicit Node25 PATH. The prior53/53 epoch used Node25 parent but inherited
+Node24 optimizer PATH; it remains a separate preserved observation.
+All11 final static/style/type checks naturally exited0, with full2018 source
+inputs and actual test roots/excludes[]. Exact frozen five-path manifest is
+.tmp/optimization/frozen-five-paths.json in the isolated optimization worktree.
+The complete source/policy remains frozen; no full migration completion follows.
+
+Signed ownership refinement b5e78e68fcb0defd0739a90d556a440f78ff9bf6
+is normally pushed and its issue-assignments remote head verified. It receives
+three new authenticated2018-to-2016 policy transport files and three exact
+initial caller joins, preserving historical full-policy preimages and helper
+algorithms/defaults. The inventory caller additionally needs named default
+input adapters and one explicit original=disk to original=actualDisk physical
+save operand: otherwise mapped historical bytes would overwrite the genuine
+current caller during its real mutation test restoration. That one preparation
+change is explicit; its callback cannot be claimed byte-identical. Assertions,
+test identity, actual writes/restoration and all other callbacks stay preserved.
+
+The new isolated integration worktree composes all frozen2016 production with
+the five qualified optimizer paths and exact2018 policy. All root issue history
+and failed epochs are retained. Its independent9-file211-case run is active,
+not yet credited; production/policy hashes are frozen. The full714 inventory
+process remains active on its original2016 inputs. Receipt implementation
+waits its natural terminal and sealed four-file adoption; no running input is
+modified. Public branch39c255/PR6662 remains held pending actual combined
+qualification and normal commit/push hooks. Generic finalization ownership,
+full supported JS semantics, complete separation/zero debt, retirement, all
+backend/target conformance and verified main remain required work.
+
+
+The fresh integration full TS7 invocation naturally exited0:2,018 actual
+source files,13 explicit test roots,20 resolved test/helper inputs,2,287
+total inputs and excludes[]. Input census is recorded independently from
+--listFilesOnly output. The normal Node25/8GiB pnpm build naturally exited0
+after106.4907 seconds; all2,018 source/policy hashes remain unchanged. Build
+log SHA256b06bbb298fb5c2cc19b595cfeb7210b18ee28e8deaeb9f0dba76eca805f022dc.
+The root211 and inventory714 commands are still active at this observation;
+no completed combined result or publication is inferred from typing/build.
+
+
+The independent fresh integration command now naturally exits0:9 files211/211,
+no skips/todos or unhandled errors. All actual2,018 source/policy and9 complete
+test-file hashes remain unchanged. The untouched f886 full runtime oracle
+passes10/10 with1,344 JS comparisons,160 executed binaries and40 live-codec
+byte pairs; Node25 is explicit for parent and optimizer PATH. Root receipt
+.tmp/optimization-policy-composition/root211/qualified-receipt.json SHA256
+de2a3903f13b7a74e0a832ba26c59ca7ad308573972fbd6dee7dbc4fc901569b.
+Typing/build natural0 remain measured separately. This result does not credit
+future-policy SOURCE35/class55/inventory714 before their authenticated caller
+transport, nor full semantics/separation/retirement/conformance/main.
+
+
+The unchanged full inventory rerun now naturally exits0 at its original
+process handle96997:714/714 (historical562/562 plusnew152/152), no skips or
+unhandled errors,2,435.0275 seconds. Exact four-file sealed manifest SHA256
+0ac76ec89d56c6f20fb23e04572342ae866aa821d409d871e1fea4e8bcee3f65
+is adopted alone into this2018 integration worktree. Both historical helper
+and DATA anchors remain byte-identical; complete current caller inverse
+restores the exact old82ef5407 preimage. The earlier712pass/2diagnostic-wording
+fail epoch and targeted154-only success remain separately preserved. Full
+2016 source typing2,269 inputs/excludes[], format/lint/diff checks actual0.
+This qualified2016 component does not itself authenticate future2018 inputs.
+
+All prerequisites are now satisfied for the exact six-test-path policy
+transport underb5e78e68. That implementation proceeds in this worktree while
+the exact eight-path productive finalizer extraction proceeds in a separate
+worktree under058c7ee9. An independent reader reviews default-input semantics,
+wholecaller inverse authentication and genuine physical restoration. Existing
+2018 production/policy and publicPR6662 source head remain unchanged.
+
+
+The final current2018 policy-transport source command now naturally exits0:
+five files152/152 (historicalSOURCE90 plusnew62), no unhandled errors,89.03
+seconds, maximum case11.424 seconds. Full TS7 checks all2,018 source files,
+seven explicit roots and2,283 inputs/excludes[], exit0; all11 owned static/
+style/whitespace checks naturally0. A private rootDir configuration error
+is retained and corrected only in the private config. Primitive-path0IO/
+0coercion, lazy malformed-input0IO, genuine composed11 reads and preserved
+raw-vs-semantic error categories are tested. All old helpers/callbacks/pins
+remain unchanged except the previously named physical-save operand.
+The complete714 current-policy run is now live on its original59182 handle
+and final six-file/source2018 freeze; no cancellation, restart or active
+input edit occurs. Current-publication readiness still needs that natural
+terminal plus normal commit/push and actual fork/PR head readback.
+
+The same current-policy inventory process59182 now exits naturally0:
+714/714 with no skipped tests, todos or unhandled errors, and the complete
+original test identity counter unchanged. Duration2,467.35 seconds and
+maximum case14.216 seconds are measured from that actual run. Together with
+the separate152 source/transport cases,866 distinct cases pass on this epoch.
+Final six-path seal SHA25652653ffa2ae433067f33c9bcabff8344a96133fa13eabc357e37fad6d2ee8ea7
+checks all2,018 source files, current policy, four historical anchors and the
+complete reciprocal caller inverses. The actual value-import graph has65
+modules and the direct-type union95, with no compiler incoming edge.
+
+The final root typing union independently passes:2,018 source files,16
+explicit test roots,26 resolved test/helper files and2,293 total inputs,
+excludes[]. Full59-file formatting passes. Normal signed commit and push
+checks remain the publication prerequisite.
+
+This held2018 checkpoint preserves the measured private finalization tuple
+and currentness checks. A separate2020 productive-owner repair addresses the
+observed pre-first-issuance semantic/byte custody window; it is not included
+or credited here. Its exact cohesive lifecycle scope is published at
+38ba24a355e36450790f6840c931b8cd9ce028d4, and parallel implementation/review
+continue in isolated worktrees. Complete migration and verified upstream-main
+integration remain open.

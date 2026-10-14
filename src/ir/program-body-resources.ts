@@ -329,6 +329,16 @@ export function bindPhysicalAbi(
   const { reservations, functionsByKey, globalsByKey, resourcesByBinding, slots, vectorHelper } = context;
   const native = plan.nativeStrings;
   const formatter = plan.nativeNumberFormat;
+  if (plan.numberUndefined) {
+    for (const [bindingId, space] of [[plan.numberUndefined.singletonBindingId, "global"]] as const) {
+      const token = resourcesByBinding.get(bindingId);
+      if (!token || token.kind !== space) emissionFailed("numeric carrier ABI reservation vanished");
+      abi.bindFinalIndex(bindingId, {
+        space,
+        index: reservations.physicalIndex(token),
+      });
+    }
+  }
   for (const imported of plan.importedFunctions) {
     abi.bindFinalIndex(imported.bindingId, {
       space: "function",

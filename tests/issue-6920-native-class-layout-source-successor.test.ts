@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { createIrNativeNumberUndefinedSourceReader } from "./helpers/ir-native-number-undefined-source-successor.js";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { setImmediate as yieldTurn } from "node:timers/promises";
@@ -8,7 +9,7 @@ import {
   createIrNativeClassLayoutSourceReader,
   irNativeClassLayoutSourcePath as layoutPath,
   irNativeClassLayoutSourceReceiptPath as receiptPath,
-  readBeforeIrNativeClassLayoutSource as beforeClass,
+  readBeforeIrNativeClassLayoutSource as beforeClassEndpoint,
 } from "./helpers/ir-native-class-layout-source-successor.js";
 import type { IrNativeClassLayoutSourceReceipt } from "./helpers/ir-native-class-layout-source-successor.js";
 import { readBeforeIrNativeAllocationTypeOwnership } from "./helpers/ir-native-allocation-type-ownership-successor.js";
@@ -28,7 +29,13 @@ import type { IrFunction } from "../src/ir/core/nodes.js";
 import type { IrType } from "../src/ir/core/types.js";
 import type { PreparedIrAbiEntry } from "../src/ir/program/prepared-contracts.js";
 
-const disk = (path: string): string => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
+const actualDisk = (path: string): string => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
+const disk = (path: string): string => createIrNativeNumberUndefinedSourceReader(actualDisk)(path);
+const beforeClass = (path: string, suppliedReader: (path: string) => string): string =>
+  beforeClassEndpoint(
+    path,
+    suppliedReader === disk ? createIrNativeNumberUndefinedSourceReader(actualDisk) : suppliedReader,
+  );
 const sha = (text: string): string => createHash("sha256").update(text).digest("hex");
 const blob = (text: string): string =>
   createHash("sha1")
@@ -38,7 +45,10 @@ const blob = (text: string): string =>
 const receiptText = disk(receiptPath);
 const receipt = JSON.parse(receiptText) as IrNativeClassLayoutSourceReceipt;
 const required = [receiptPath, ...receipt.current.map((r) => r.path), ...receipt.anchors.map((r) => r.path)];
-const snapshot = (): Map<string, string> => new Map(required.map((path) => [path, disk(path)]));
+const snapshot = (): Map<string, string> => {
+  const captured = createIrNativeNumberUndefinedSourceReader(actualDisk);
+  return new Map(required.map((path) => [path, captured(path)]));
+};
 const reader =
   (values: ReadonlyMap<string, string>, reads: string[] = []) =>
   (path: string): string => {
@@ -50,7 +60,10 @@ const reader =
 const composed = (path: string): string =>
   readBeforeIrAllocationProvenanceLookup(path, (p) =>
     readBeforeIrAllocationRuleSharing(p, (q) =>
-      readBeforeIrNativeAllocationTypeOwnership(q, createIrNativeClassLayoutSourceReader(disk)),
+      readBeforeIrNativeAllocationTypeOwnership(
+        q,
+        createIrNativeClassLayoutSourceReader(createIrNativeNumberUndefinedSourceReader(actualDisk)),
+      ),
     ),
   );
 const helperPath = "tests/helpers/ir-native-class-layout-source-successor.ts";

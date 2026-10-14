@@ -1,3 +1,7 @@
+import {
+  issueNativeNumberUndefinedOptimizationInput,
+  applyIssuedNativeNumberUndefinedOptimization,
+} from "./compiler/ir-native-number-undefined-optimization.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { ts } from "./ts-api.js";
 import { normalizeMultiFileName } from "./checker/multi-file-paths.js";
@@ -118,6 +122,37 @@ import {
 import { readEnv } from "./env.js";
 export { compileToObjectSource } from "./compiler/output.js";
 export type { ObjectCompileResult } from "./compiler/output.js";
+
+type NativeOptimizationPresentation = Extract<IrProgramPresentationResult, { kind: "prepared-presentation" }>;
+const nativeOptimizationFinalizations = new WeakMap<
+  object,
+  {
+    presentation: NativeOptimizationPresentation;
+    module: WasmModule;
+    binary: Uint8Array;
+    detached?: PreparedPresentationFinalizationReceipt;
+  }
+>();
+/** Read-only compiler lifecycle witness: caller data cannot register an artifact. */
+export function assertCompilerNativeNumberUndefinedFinalization(
+  presentation: NativeOptimizationPresentation,
+  module: WasmModule,
+  artifacts: object,
+  originalBinary: Uint8Array,
+): void {
+  const record = nativeOptimizationFinalizations.get(artifacts);
+  if (
+    !record ||
+    record.presentation !== presentation ||
+    record.module !== module ||
+    record.binary !== originalBinary ||
+    (presentation.requiresDetachedFinalization === true && !record.detached)
+  )
+    throw new PreparedIrProgramInvariantError(
+      "invalid-transaction-capability",
+      "native Number/Undefined optimization requires actual completed compiler artifacts",
+    );
+}
 
 /**
  * Propagate codegen diagnostics raised by the linear-memory backend (#1868).
@@ -740,6 +775,8 @@ async function applyOptimize(
   options: CompileOptions,
   anchor: ts.SourceFile,
 ): Promise<CompileResult> {
+  const nativeOptimized = await applyIssuedNativeNumberUndefinedOptimization(result, options);
+  if (nativeOptimized) return nativeOptimized;
   if (!options.optimize || !result.success) return result;
   const level = typeof options.optimize === "number" ? options.optimize : 3;
   const optResult = await optimizeBinaryAsync(result.binary, {
@@ -1268,6 +1305,22 @@ export function runPreparedIrPipelinePresentation(input: PipelineInput): Prepare
       "mixed prepared output lacks completed finalization evidence",
     );
   const artifacts = preparedPipelineArtifacts(finalized);
+  if (finalized.success) {
+    nativeOptimizationFinalizations.set(
+      artifacts,
+      Object.freeze({
+        presentation: prepared,
+        module: finalization?.token.outputModule ?? prepared.emission.module,
+        binary: artifacts.binary,
+        detached: finalization?.receipt,
+      }),
+    );
+    issueNativeNumberUndefinedOptimizationInput(
+      prepared,
+      finalization?.token.outputModule ?? prepared.emission.module,
+      artifacts,
+    );
+  }
   if (!finalized.success) return { kind: "output-failed", errors: finalized.errors, artifacts };
   return {
     kind: "artifacts",
@@ -1638,6 +1691,8 @@ export async function compileSource(
   // optimizes.
   const result = compileSourceSync(source, withDefaultIrCompileRoute(options, "compile"), languageService);
 
+  const nativeOptimized = await applyIssuedNativeNumberUndefinedOptimization(result, options);
+  if (nativeOptimized) return nativeOptimized;
   if (options.optimize && result.success) {
     const level = typeof options.optimize === "number" ? options.optimize : 3;
     const optResult = await optimizeBinaryAsync(result.binary, {

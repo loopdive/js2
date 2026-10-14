@@ -1,3 +1,4 @@
+import { analyzeNativeNumberUndefined } from "./allocation-evidence/native-number-undefined-producer.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 // Compatibility producer: analyses remain here; frozen facts use the pure planner authority.
@@ -111,6 +112,7 @@ export function prepareLinearAllocationFacts(
     if (nativeVectorControl) analyzeNativeVectorControl(fn, registry, true);
   }
 
+  if (nativeVectorControl) analyzeNativeNumberUndefined(module, registry, true);
   const registrySnapshot = registry.snapshot();
   const located = collectModuleAllocationInstructions(module);
   const allocations: LinearPreparedAllocationFact[] = [];

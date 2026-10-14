@@ -270,7 +270,9 @@ export function lowerIrFunctionBody<S, Slot>(
       `ir/lower: backend contract mismatch for ${func.name}: emitter=${emitter.backend}, type-converter=${typeConverter.backend}`,
     );
   }
-  const legalityErrors = verifyIrBackendLegality(func, emitter.backend, resolver);
+  const nativeNumberUndefined = resolver.resolveNativeNumberUndefined?.(func);
+  nativeNumberUndefined?.assertFunction(func);
+  const legalityErrors = verifyIrBackendLegality(func, emitter.backend, resolver, nativeNumberUndefined?.legality);
   if (legalityErrors.length > 0) {
     const shown = legalityErrors.slice(0, 3).map((err) => err.message);
     throw new IrInvariantError(
@@ -1201,6 +1203,31 @@ export function lowerIrFunctionBody<S, Slot>(
   const stringOperationContext: StringOperationContext<S> = { emitter, emitValue };
 
   const emitInstrTree = (instr: IrInstr, out: S): void => {
+    if (nativeNumberUndefined?.owns(instr)) {
+      const values =
+        instr.kind === "box" || instr.kind === "tag.test" || instr.kind === "dyn.to_number"
+          ? [instr.value]
+          : instr.kind === "dyn.eq"
+            ? [instr.lhs, instr.rhs]
+            : [];
+      const operands = values.map((value) => {
+        const sink = emitter.newSink();
+        emitValue(value, sink);
+        return requireInstrSink(sink);
+      });
+      const scratch = (type: ValType): number => {
+        const index = func.params.length + locals.length;
+        locals.push({
+          name: "$native_number_undefined_" + index,
+          type,
+          logicalType: { kind: "val", val: type },
+        });
+        return index;
+      };
+      // pushraw-ok(#6920): exact checked native occurrence emits only its issued carrier recipe.
+      for (const op of nativeNumberUndefined.emit(instr, operands, scratch)) emitter.pushRaw(out, op);
+      return;
+    }
     switch (instr.kind) {
       case "const": {
         // (#5166) `const null` carries a SEMANTIC result type, but every

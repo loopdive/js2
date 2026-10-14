@@ -1,3 +1,4 @@
+import { completedNativeNumberUndefinedPresentation } from "./ir-native-number-undefined-presentation.js";
 import { createNativePreparedDtsView, renderNativePreparedDts, type NativePreparedDtsView } from "./native-ir-dts.js";
 import { completedNumericAppendPresentation } from "./native-numeric-append-presentation.js";
 import { completedErrorPresentation, type CompletedErrorPresentation } from "./ir-program-error-presentation.js";
@@ -291,7 +292,7 @@ function capturePresentation(request: IrProgramPresentationRequest, gap: GapReco
       "option-association",
       "resolved backend/module/storage/startup options disagree with presentation options",
     );
-  if (options.sourceMap || backend.sourceMap || options.abi === "c" || options.optimize)
+  if (options.sourceMap || backend.sourceMap || options.abi === "c" || (options.optimize && !native))
     gap(
       "options",
       "unproved-output-option",
@@ -469,6 +470,7 @@ function checkAbiExports(
   asyncNames: Set<string>,
   witExports?: PreparedWitExport[],
   errorBindingId?: IrBindingId,
+  numberUndefinedBindingId?: IrBindingId,
 ): Set<string> {
   const mod = emission.module;
   const append = completedNumericAppendPresentation(program, emission, capture.backend);
@@ -529,7 +531,11 @@ function checkAbiExports(
         gap("abi.global", "vector-global-join", "internal vector global must retain exact source and issued storage", {
           bindingId: plan.id,
         });
-    } else if (contract.kind === "global" && (contract.type.kind !== "val" || !numeric(contract.type.val)))
+    } else if (
+      contract.kind === "global" &&
+      plan.id !== numberUndefinedBindingId &&
+      (contract.type.kind !== "val" || !numeric(contract.type.val))
+    )
       gap("abi.global", "non-numeric-contract", "global resources require a primitive numeric contract", {
         bindingId: plan.id,
       });
@@ -828,6 +834,21 @@ export function prepareIrProgramPresentation(request: IrProgramPresentationReque
   const result = runIrProgramDriver(capture.input, capture.backend);
   if (result.kind !== "emitted") return result;
   const { program, emission } = result;
+  const numberUndefined = completedNativeNumberUndefinedPresentation(program, emission, capture.backend);
+  if (
+    capture.context.options.optimize ||
+    (numberUndefined && capture.context.options.optimize !== undefined && capture.context.options.optimize !== false)
+  ) {
+    const value = capture.context.options.optimize;
+    if (!numberUndefined || !(value === true || value === 1 || value === 2 || value === 3 || value === 4)) {
+      gap(
+        "options",
+        "unproved-output-option",
+        "source maps, C ABI and optimization require a separate complete presentation contract",
+      );
+      return unsupported(gaps);
+    }
+  }
   const mod = emission.module;
   emittedSupportFunctionReceipts(emission);
   const captures = joinDeclarations(program, capture, gap);
@@ -844,6 +865,7 @@ export function prepareIrProgramPresentation(request: IrProgramPresentationReque
       : [],
   );
   const detached = mixed || Boolean(error?.bindingId) || vectorRefs.size > 0;
+  for (const index of numberUndefined?.carrierTypeIndices ?? []) vectorRefs.add(index);
   const asyncNames = new Set<string>();
   const witExports: PreparedWitExport[] | undefined = capture.context.options.wit ? [] : undefined;
   const joinedExports = checkAbiExports(
@@ -857,6 +879,7 @@ export function prepareIrProgramPresentation(request: IrProgramPresentationReque
     asyncNames,
     witExports,
     error?.bindingId,
+    numberUndefined?.bindingId,
   );
   if (witExports && (mixed || mod.imports.length)) {
     const promise = [...captures].find(([, declaration]) => declaration.results.includes("promise"));

@@ -1,3 +1,5 @@
+import { appendNativeNumberUndefinedAbi } from "./program/native-number-undefined-abi.js";
+import { collectNativeNumberUndefinedRequirements } from "./program/native-number-undefined-requirements.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import { ownTypedIrProgramInput, ownTypedIrProgramOptions } from "./program/input.js";
@@ -122,7 +124,14 @@ export function prepareTypedIrProgram(
   analyzeIrRuntimeSupportAllocations(finalSource.runtimeSupport, allocations, resolved.controls);
   const finalRuntime = prepareIrProgramRuntimeCallables(finalSource);
   if (finalRuntime.kind !== "prepared") return finalRuntime;
-  const entries = prepareIrProgramAbiEntries(finalSource, finalRuntime.declarations);
+  const numberUndefined = nativeVectors
+    ? collectNativeNumberUndefinedRequirements(finalSource.ir, allocations.snapshot())
+    : undefined;
+  const entries = appendNativeNumberUndefinedAbi(
+    prepareIrProgramAbiEntries(finalSource, finalRuntime.declarations),
+    source.inventory,
+    numberUndefined,
+  );
   const supportBodies = irRuntimeSupportFunctions(finalSource.runtimeSupport);
   const completeFinalModule =
     supportBodies.length === 0

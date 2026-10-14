@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 // Twelve source-successor controls, separate from all semantic and historical cohorts.
+import { createIrNativeNumberUndefinedSourceReader } from "./helpers/ir-native-number-undefined-source-successor.js";
 import { createIrNativeClassLayoutSourceReader } from "./helpers/ir-native-class-layout-source-successor.js";
 import { readBeforeIrNativeAllocationTypeOwnership } from "./helpers/ir-native-allocation-type-ownership-successor.js";
 import { createHash } from "node:crypto";
@@ -40,7 +41,10 @@ import {
 // type-ownership suite separately proves actual current-source drift and roles.
 const actualRaw = (path: string): string => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 const raw = (path: string): string =>
-  readBeforeIrNativeAllocationTypeOwnership(path, createIrNativeClassLayoutSourceReader(actualRaw));
+  readBeforeIrNativeAllocationTypeOwnership(
+    path,
+    createIrNativeClassLayoutSourceReader(createIrNativeNumberUndefinedSourceReader(actualRaw)),
+  );
 const readIrValidationAnalysisActual = (path: string): string =>
   readBeforeIrAllocationProvenanceLookup(path, (requested) => readBeforeIrAllocationRuleSharing(requested, raw));
 const [ownershipPath, escapePath, encodingPath, rulePath, censusPath] = irAllocationRuleSharingPaths;

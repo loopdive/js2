@@ -44,6 +44,10 @@ export type {
 } from "./handles.js";
 
 export interface IrLowerResolver {
+  /** Original checked native Number/Undefined owner; absent on every ordinary resolver. */
+  resolveNativeNumberUndefined?(
+    fn: import("../core/nodes.js").IrFunction,
+  ): import("./native-number-undefined.js").NativeNumberUndefinedLowering | undefined;
   /** Issued native program storage refinement; absent on every legacy resolver. */
   nativeVectorGlobalReadNonNull?(ref: IrGlobalRef, type: Extract<IrType, { kind: "vec" }>): boolean;
   resolveFunc(ref: IrFuncRef): number;

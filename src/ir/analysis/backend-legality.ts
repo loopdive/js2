@@ -12,6 +12,12 @@ import type { IrBinop, IrBlock, IrFunction, IrInstr } from "../core/nodes.js";
 import { asVal, type IrClassShape, type IrType } from "../core/types.js";
 import type { IrFnctorShape } from "../core/fnctor-shapes.js";
 import type { ValType } from "../../wasm/model/instructions.js";
+import {
+  assertNativeNumberUndefinedLegalityCurrent,
+  nativeNumberUndefinedInstructionIsAdmitted,
+  nativeNumberUndefinedTypeIsAdmitted,
+  type NativeNumberUndefinedLegalityUse,
+} from "./allocation-evidence/native-number-undefined-legality.js";
 
 export type IrBackendKind = "wasmgc" | "linear" | "bytecode" | "porffor";
 
@@ -34,10 +40,19 @@ export function verifyIrBackendLegality(
   func: IrFunction,
   backend: IrBackendKind,
   fnctorResolver?: IrBackendFnctorResolver,
+  nativeNumberUndefined?: NativeNumberUndefinedLegalityUse,
 ): IrBackendLegalityError[] {
+  if (nativeNumberUndefined) assertNativeNumberUndefinedLegalityCurrent(nativeNumberUndefined, func, backend);
   const errors: IrBackendLegalityError[] = [];
   const checkedClassShapes = new Set<IrClassShape>();
-  const checkType = (type: IrType, block: number | undefined, where: string): void => {
+  const checkType = (type: IrType, block: number | undefined, where: string, instr?: IrInstr): void => {
+    if (
+      type.kind === "dynamic" &&
+      instr &&
+      nativeNumberUndefined &&
+      nativeNumberUndefinedTypeIsAdmitted(nativeNumberUndefined, func, backend, instr, type)
+    )
+      return;
     const fnctorHandle =
       type.kind === "fnctor" && backend === "wasmgc" ? fnctorResolver?.resolveFnctor?.(type.shape) : null;
     const fnctorResolved = fnctorHandle !== null && fnctorHandle !== undefined && fnctorHandle.supportsFieldGet;
@@ -54,7 +69,8 @@ export function verifyIrBackendLegality(
   for (const block of func.blocks) {
     const blockId = block.id as number;
     for (let i = 0; i < block.blockArgTypes.length; i++) checkType(block.blockArgTypes[i]!, blockId, `block arg ${i}`);
-    for (const instr of block.instrs) checkInstr(func, backend, block, instr, errors, checkType, fnctorResolver);
+    for (const instr of block.instrs)
+      checkInstr(func, backend, block, instr, errors, checkType, fnctorResolver, nativeNumberUndefined);
   }
   return errors;
 }
@@ -65,8 +81,9 @@ function checkInstr(
   block: IrBlock,
   instr: IrInstr,
   errors: IrBackendLegalityError[],
-  checkType: (type: IrType, block: number | undefined, where: string) => void,
+  checkType: (type: IrType, block: number | undefined, where: string, instr?: IrInstr) => void,
   fnctorResolver?: IrBackendFnctorResolver,
+  nativeNumberUndefined?: NativeNumberUndefinedLegalityUse,
 ): void {
   const blockId = block.id as number;
   const reject = (reason: string): void => {
@@ -78,7 +95,7 @@ function checkInstr(
     });
   };
 
-  if (instr.resultType) checkType(instr.resultType, blockId, `${instr.kind} result`);
+  if (instr.resultType) checkType(instr.resultType, blockId, `${instr.kind} result`, instr);
 
   // A nominal fnctor type may cross this boundary only for WasmGC after a
   // concrete resolver has supplied the constructor/layout handle. Other
@@ -98,7 +115,10 @@ function checkInstr(
   }
 
   if (backend === "linear") {
-    const reason = linearInstrError(instr);
+    const reason =
+      nativeNumberUndefined && nativeNumberUndefinedInstructionIsAdmitted(nativeNumberUndefined, func, backend, instr)
+        ? null
+        : linearInstrError(instr);
     if (reason) reject(reason);
   } else if (backend === "bytecode") {
     const reason = bytecodeInstrError(instr);
@@ -108,9 +128,10 @@ function checkInstr(
     if (reason) reject(reason);
   }
 
-  checkInstrEmbeddedTypes(instr, blockId, checkType);
+  checkInstrEmbeddedTypes(instr, blockId, (type, block, where) => checkType(type, block, where, instr));
   for (const nested of nestedInstrBuffers(instr)) {
-    for (const sub of nested) checkInstr(func, backend, block, sub, errors, checkType, fnctorResolver);
+    for (const sub of nested)
+      checkInstr(func, backend, block, sub, errors, checkType, fnctorResolver, nativeNumberUndefined);
   }
 }
 

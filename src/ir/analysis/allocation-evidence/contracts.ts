@@ -64,7 +64,8 @@ export type AllocationEvidenceCheck =
         | "single-block-numeric-vector-if-v1"
         | "single-block-numeric-vector-call-v1"
         | "structured-numeric-vector-control-v1"
-        | "structured-numeric-vector-append-v1";
+        | "structured-numeric-vector-append-v1"
+        | "native-number-undefined-v1";
       readonly namespaces: AllocationEvidenceNamespaceMode;
       readonly census: AllocationEvidenceCensus;
     }

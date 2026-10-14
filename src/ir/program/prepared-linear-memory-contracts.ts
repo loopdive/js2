@@ -3,11 +3,26 @@ import type { LinearMemoryPlanSnapshot, LinearRuntimeOperation } from "../analys
 import type { PreparedLinearMemoryDemand } from "./linear-memory-demand.js";
 import type { LocalDef, ValType } from "../../wasm/model/instructions.js";
 
+/** Physical descriptions; only the original issued memory plan can authorize them. */
+export interface NativeNumberUndefinedMemoryDescription {
+  readonly boxes: readonly {
+    readonly allocationId: number;
+    readonly layoutId: string;
+  }[];
+  readonly singleton: {
+    readonly key: string;
+    readonly offset: number;
+    readonly alignment: number;
+    readonly bytes: readonly number[];
+  };
+}
+
 /** Target descriptions only. Executable authority lives in the private issued-plan record. */
 export interface PreparedLinearMemoryPlan {
   readonly schema: "prepared-linear-memory-v1";
   readonly snapshot: LinearMemoryPlanSnapshot;
   readonly demand: PreparedLinearMemoryDemand;
+  readonly numberUndefined?: NativeNumberUndefinedMemoryDescription;
   readonly functions: readonly {
     readonly key: string;
     readonly name: string;

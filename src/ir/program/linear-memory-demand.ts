@@ -1,3 +1,7 @@
+import {
+  assertNativeNumberUndefinedRequirementsCurrent,
+  type NativeNumberUndefinedRequirements,
+} from "./native-number-undefined-requirements.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import {
@@ -146,7 +150,10 @@ function checkedVector(type: IrType | null | undefined, at: PreparedLinearMemory
  * Recheck facts before any coverage refusal so detached mutation cannot demote
  * malformed evidence. All module functions and async state buffers are visited.
  */
-export function collectPreparedLinearMemoryDemand(input: PreparedLinearMemoryInput): PreparedLinearMemoryDemand {
+export function collectPreparedLinearMemoryDemand(
+  input: PreparedLinearMemoryInput,
+  numberUndefined?: NativeNumberUndefinedRequirements,
+): PreparedLinearMemoryDemand {
   assertPreparedIrData(input);
   try {
     const lookup = createVerifiedAllocationSnapshot(input.facts.registry);
@@ -179,6 +186,9 @@ export function collectPreparedLinearMemoryDemand(input: PreparedLinearMemoryInp
       }
     }
   });
+  if (numberUndefined)
+    assertNativeNumberUndefinedRequirementsCurrent(numberUndefined, input.module, input.facts.registry);
+  const certifiedBoxes = new Set(numberUndefined?.boxes.map((box) => box.instr) ?? []);
   const flow = collectLinearVectorFlow(input.module);
   const allPositions = new Map<IrInstr, PreparedLinearMemoryDemandPath>();
   input.module.functions.forEach((fn, functionIndex) =>
@@ -220,7 +230,11 @@ export function collectPreparedLinearMemoryDemand(input: PreparedLinearMemoryInp
       const at = { ...owner, instructionPath: path, ...(instr.site === undefined ? {} : { site: instr.site }) };
       if (instr.kind === "vec.set_length" || instr.kind === "forof.vec")
         unsupported(at, `native Linear semantic demand does not admit ${instr.kind}`);
-      if (instr.alloc !== undefined && instr.kind !== "vec.new_fixed")
+      if (
+        instr.alloc !== undefined &&
+        instr.kind !== "vec.new_fixed" &&
+        !(instr.kind === "box" && certifiedBoxes.has(instr))
+      )
         unsupported(at, `native Linear memory demand does not admit allocating ${instr.kind}`, instr.alloc);
       if (instr.kind === "vec.new_fixed") {
         checkedVector(instr.resultType, at);

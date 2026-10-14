@@ -1,3 +1,5 @@
+import { createIrNativeNumberUndefinedOptimizationPolicyReader } from "./helpers/ir-native-number-undefined-optimization-policy-successor.js";
+import { createIrNativeNumberUndefinedInventoryReader } from "./helpers/ir-native-number-undefined-inventory-successor.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync, renameSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
@@ -6785,7 +6787,12 @@ const currentDomainExpected = {
   ],
 } as const;
 const root = resolve(import.meta.dirname, "..");
-const read = (path: string): string => readFileSync(resolve(root, path), "utf8");
+const read = (path: string): string =>
+  createIrNativeNumberUndefinedInventoryReader(
+    createIrNativeNumberUndefinedOptimizationPolicyReader((currentPath) =>
+      readFileSync(resolve(root, currentPath), "utf8"),
+    ),
+  )(path);
 const sha = (value: string | Buffer): string => createHash("sha256").update(value).digest("hex");
 const nextCurrentDomainExpected = {
   before: {

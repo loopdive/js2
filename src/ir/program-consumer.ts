@@ -197,6 +197,12 @@ import {
   requireCompletedPreparedLinearMemory,
 } from "../backend/linear/program/memory.js";
 import type { PreparedLinearMemoryPlan } from "../backend/linear/program/contracts.js";
+import { nativeNumberUndefinedLegality, nativeNumberUndefinedLowering } from "./program-number-undefined-resources.js";
+import {
+  reserveNativeNumberUndefinedGc,
+  fillNativeNumberUndefinedGc,
+  requireCompletedNativeNumberUndefinedGc,
+} from "../backend/wasmgc/resources/native-number-undefined.js";
 import type { PreparedLinearBodyBindings } from "../backend/linear/program/memory.js";
 import { createEmptyModule, type Instr, type ValType, type WasmFunction } from "./types.js";
 
@@ -409,7 +415,12 @@ export function acceptPreparedIrProgram(
   }
 
   for (const fn of runtime.prepared.functions) {
-    const errors = verifyIrBackendLegality(fn, options.backend);
+    const errors = verifyIrBackendLegality(
+      fn,
+      options.backend,
+      undefined,
+      nativeNumberUndefinedLegality(program, runtime, fn),
+    );
     if (errors.length > 0) {
       return locate(program, fn.unitId, {
         kind: "unsupported",
@@ -1069,9 +1080,22 @@ function fillPrimaryBody(
 ): void {
   const { backend, target } = accepted.options;
   try {
-    const scopedResolver: IrLowerResolver = declared.dynamicCarrier
-      ? { ...resolver, resolveDynamic: () => declared.dynamicCarrier! }
-      : resolver;
+    const numericCarrier = resolver.resolveNativeNumberUndefined?.(fn);
+    const scopedResolver: IrLowerResolver = numericCarrier
+      ? {
+          ...resolver,
+          resolveDynamic: () => {
+            numericCarrier.assertFunction(fn);
+            return numericCarrier.carrier;
+          },
+          resolveNativeNumberUndefined: (actual) => {
+            numericCarrier.assertFunction(actual);
+            return numericCarrier;
+          },
+        }
+      : declared.dynamicCarrier
+        ? { ...resolver, resolveDynamic: () => declared.dynamicCarrier! }
+        : resolver;
     const ownerResolver: IrLowerResolver = nativePack
       ? {
           ...scopedResolver,
@@ -1278,6 +1302,14 @@ function materializePhysicalProgram(
       )
     : undefined;
   const vectorProducers = physicalVectorCarrierProducers();
+  const numberUndefinedGc =
+    plan.numberUndefined && plan.backend === "wasmgc"
+      ? reserveNativeNumberUndefinedGc(reservations, plan.numberUndefined.key)
+      : undefined;
+  if (numberUndefinedGc && plan.numberUndefined) {
+    resourcesByBinding.set(plan.numberUndefined.singletonBindingId, numberUndefinedGc.singleton);
+    globalsByKey.set(irGlobalBindingKey(plan.numberUndefined.singletonRef.binding), numberUndefinedGc.singleton);
+  }
   const physicalSignature = physicalSignatureConverter(
     vectorProducers,
     vectorTypes,
@@ -1396,7 +1428,17 @@ function materializePhysicalProgram(
     : undefined;
 
   const linearPack = record.linearMemory
-    ? reservePreparedLinearMemory(reservations, record.linearMemory, assertEmissionActive)
+    ? reservePreparedLinearMemory(reservations, record.linearMemory, assertEmissionActive, (singleton) => {
+        assertEmissionActive();
+        if (
+          module.dataSegments.length !== (singleton ? 1 : 0) ||
+          (singleton && module.dataSegments[0] !== singleton.object)
+        )
+          throw new PreparedIrProgramInvariantError(
+            "emission-failed",
+            "native numeric singleton has an unknown aggregate static prefix",
+          );
+      })
     : undefined;
 
   // 2. Freeze the index space: nothing below may add an import or a slot.
@@ -1405,6 +1447,12 @@ function materializePhysicalProgram(
   const exnTagIdx = exceptionTag === undefined ? undefined : reservations.physicalIndex(exceptionTag);
   fillPhysicalScalarResources(plan, reconciliation);
   const linearBindings = linearPack ? preparedLinearMemoryBindings(reservations, linearPack) : undefined;
+  if (plan.numberUndefined && plan.backend === "linear") {
+    const singleton = linearBindings?.numberUndefined?.singletonGlobal;
+    if (!singleton) emissionFailed("numeric singleton lost its issued Linear global");
+    resourcesByBinding.set(plan.numberUndefined.singletonBindingId, singleton);
+    globalsByKey.set(irGlobalBindingKey(plan.numberUndefined.singletonRef.binding), singleton);
+  }
   for (const token of linearBindings?.supportFunctions ?? []) supportFunctions.set(token.object, token);
 
   const appendBinding = vectorEmission.bind(linearPack);
@@ -1414,6 +1462,7 @@ function materializePhysicalProgram(
   bindPhysicalAbi(abi, plan, { ...reconciliation, slots, vectorHelper });
   if (referenceError) fillPhysicalReferenceError(reservations, referenceError);
   if (linearPack) fillPreparedLinearMemory(reservations, linearPack);
+  if (numberUndefinedGc) fillNativeNumberUndefinedGc(reservations, numberUndefinedGc);
   if (nativePack) fillNativeStringValueResources(reservations, nativePack);
   else if (strings) fillNativeStringLiteralResources(reservations, strings);
   if (realm) fillNativeRealmResources(reservations, realm);
@@ -1431,18 +1480,33 @@ function materializePhysicalProgram(
   }
 
   // 4. Lower every physical body into its reserved slot.
+  const baseResolver = physicalBodyResolver(
+    vectorProducers,
+    reconciliation,
+    vectorTypes,
+    stringTypes,
+    exnTagIdx,
+    sourceClosures,
+    linearBindings,
+    plan.target,
+    appendBinding,
+  );
   const resolver = activeEmissionResolver(
-    physicalBodyResolver(
-      vectorProducers,
-      reconciliation,
-      vectorTypes,
-      stringTypes,
-      exnTagIdx,
-      sourceClosures,
-      linearBindings,
-      plan.target,
-      appendBinding,
-    ),
+    plan.numberUndefined
+      ? {
+          ...baseResolver,
+          resolveNativeNumberUndefined: (fn) =>
+            nativeNumberUndefinedLowering(
+              program,
+              runtime,
+              fn,
+              reservations,
+              assertEmissionActive,
+              numberUndefinedGc,
+              linearBindings?.numberUndefined,
+            ),
+        }
+      : baseResolver,
     assertEmissionActive,
   );
   const bodies = new Map<IrUnitId, IrFunction>(runtime.prepared.functions.map((fn) => [fn.unitId, fn] as const));
@@ -1493,6 +1557,7 @@ function materializePhysicalProgram(
   if (nativePack?.output) publishNativeStringValueOutput(reservations, nativePack);
   if (referenceError) requireCompletedPhysicalReferenceError(reservations, referenceError);
   if (linearPack) requireCompletedPreparedLinearMemory(reservations, linearPack);
+  if (numberUndefinedGc) requireCompletedNativeNumberUndefinedGc(reservations, numberUndefinedGc);
   vectorEmission.complete();
   const referenceErrorReceipt = referenceError
     ? completedPhysicalReferenceErrorReceipt(reservations, referenceError, module)

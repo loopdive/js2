@@ -1,3 +1,4 @@
+import { nativeNumberUndefinedSource } from "./native-number-undefined-source.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import {
@@ -1847,8 +1848,13 @@ export function prepareIrProgramSources(
       );
       const signature = signatures.get(unit.id);
       const logicalVectorTypes = family?.logicalVectorTypes ?? collectVectors.collect(declaration, unit.sourceId);
+      const numberUndefined =
+        nativeLinearVectors && !family
+          ? nativeNumberUndefinedSource(input.checker, declaration, logicalVectorTypes, identity)
+          : undefined;
       const lowered = lowerFunctionAstToIr(declaration, {
         ...(classes ? { classShapes: classes.lexicalShapes(declaration) } : {}),
+        ...(numberUndefined === undefined ? {} : { nativeNumberUndefinedSource: numberUndefined }),
         booleanReturnBoundary: sourceBooleanAnyResult(input.checker, declaration) ? declaration : undefined,
         ownerUnitId: unit.id,
         ...(sourceMapProjector === undefined

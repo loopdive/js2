@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 // Sixteen successor preservation controls; separate from P01–P08 and AE01–AE40.
+import { createIrNativeNumberUndefinedSourceReader } from "./helpers/ir-native-number-undefined-source-successor.js";
 import { createIrNativeClassLayoutSourceReader } from "./helpers/ir-native-class-layout-source-successor.js";
 import { readBeforeIrNativeAllocationTypeOwnership } from "./helpers/ir-native-allocation-type-ownership-successor.js";
 import { readBeforeIrAllocationRuleSharing } from "./helpers/ir-allocation-rule-sharing-successor.js";
@@ -41,7 +42,10 @@ const paths = {
 // type-ownership suite separately proves actual current-source drift and roles.
 const actualRaw = (path: string): string => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 const raw = (path: string): string =>
-  readBeforeIrNativeAllocationTypeOwnership(path, createIrNativeClassLayoutSourceReader(actualRaw));
+  readBeforeIrNativeAllocationTypeOwnership(
+    path,
+    createIrNativeClassLayoutSourceReader(createIrNativeNumberUndefinedSourceReader(actualRaw)),
+  );
 const readIrValidationAnalysisActual = (path: string): string =>
   readBeforeIrAllocationProvenanceLookup(path, (requested) => readBeforeIrAllocationRuleSharing(requested, raw));
 const beforeIrValidationAnalysisRelocation = (path: string, source: string): string =>

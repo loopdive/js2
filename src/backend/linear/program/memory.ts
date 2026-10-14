@@ -9,6 +9,12 @@ import {
 import { PreparedIrProgramInvariantError } from "../../../shared/contracts/prepared-ir-invariant-error.js";
 import { requirePreparedLinearMemoryInput } from "../../../ir/program/linear-allocation-facts.js";
 import { collectPreparedLinearMemoryDemand } from "../../../ir/program/linear-memory-demand.js";
+import { collectNativeNumberUndefinedRequirements } from "../../../ir/program/native-number-undefined-requirements.js";
+import {
+  describeNativeNumberUndefinedMemory,
+  requireNativeNumberUndefinedBoxLayout,
+  type NativeNumberUndefinedLinearBindings,
+} from "./native-number-undefined.js";
 import {
   DEFAULT_ARENA_POLICY,
   planLinearMemoryFromFrozenFacts,
@@ -41,6 +47,7 @@ import type {
   FunctionReservation,
   GlobalReservation,
   MemoryReservation,
+  DataReservation,
   PhysicalModuleReservations,
 } from "../../../wasm/physical/module-reservations.js";
 import type { IrUnitId } from "../../../shared/contracts/ir-identity.js";
@@ -70,6 +77,9 @@ interface Pack {
   readonly functions: readonly FunctionReservation[];
   readonly memory?: MemoryReservation;
   readonly heap?: GlobalReservation;
+  readonly numberUndefinedData?: DataReservation;
+  readonly numberUndefinedGlobal?: GlobalReservation;
+  readonly assertSingletonPlacement?: (data: DataReservation | undefined) => void;
   exports: WasmExport[];
   typeIndices?: readonly number[];
   state: "reserved" | "bindings-ready" | "filled" | "verified" | "failed";
@@ -80,6 +90,7 @@ export interface PreparedLinearBodyBindings {
   resolveVectorLayout(element: IrType, allocation?: AllocSiteId): LinearVecLowering;
   resolveRuntimeOperation(operation: LinearRuntimeOperation): number;
   requestedVectorCapacity(unitId: IrUnitId, value: IrValueId): number;
+  readonly numberUndefined?: NativeNumberUndefinedLinearBindings;
 }
 function invalid(detail: string): never {
   throw new PreparedIrProgramInvariantError("emission-failed", `Linear memory pack: ${detail}`);
@@ -98,6 +109,27 @@ function current(plan: PreparedLinearMemoryPlan, record: IssuedPlan): void {
     invalid("issued plan input changed");
   if (!record.program.runtime.includes(record.projection)) invalid("projection identity changed");
   if (issued.get(plan) !== record) invalid("unknown issued plan");
+  if (plan.numberUndefined) {
+    const requirements = collectNativeNumberUndefinedRequirements(
+      { ...record.program.ir, functions: record.projection.prepared.functions },
+      record.program.allocations,
+    );
+    if (
+      !requirements ||
+      preparedIrDataMismatch(
+        plan.numberUndefined,
+        describeNativeNumberUndefinedMemory(
+          record.planner,
+          requirements.boxes.map((box) => box.allocationId),
+          1024,
+        ),
+      ) !== undefined ||
+      plan.heapPointer?.floor !== plan.numberUndefined.singleton.offset + plan.numberUndefined.singleton.bytes.length ||
+      !plan.memory ||
+      plan.memory.min * 65536 < plan.heapPointer.floor
+    )
+      invalid("numeric carrier description is stale or overlaps the arena");
+  }
 }
 
 /** Pure option refusal shared by planning and genuine zero-resource callers. */
@@ -136,7 +168,15 @@ export function planPreparedLinearMemory(input: {
     if (optionGap) unsupported(optionGap);
     const checked = requirePreparedLinearMemoryInput(program, projection);
     const planner = planLinearMemoryFromFrozenFacts(checked.module, checked.facts, DEFAULT_ARENA_POLICY);
-    const demand = collectPreparedLinearMemoryDemand(checked);
+    const numericValues = collectNativeNumberUndefinedRequirements(checked.module, checked.facts.registry);
+    const demand = collectPreparedLinearMemoryDemand(checked, numericValues);
+    const numberUndefined = numericValues
+      ? describeNativeNumberUndefinedMemory(
+          planner,
+          numericValues.boxes.map((box) => box.allocationId),
+          1024,
+        )
+      : undefined;
     const constructors = new Set(
       demand.occurrences.filter((at) => at.kind === "vec.new_fixed").map((at) => at.allocationId),
     );
@@ -162,12 +202,18 @@ export function planPreparedLinearMemory(input: {
       )
         unsupported("vector demand is outside the canonical f64 arena recipe", at);
     }
-    if (planner.allocations.some((allocation) => !constructors.has(allocation.id)) || planner.dataSegments.length)
+    if (
+      planner.allocations.some(
+        (allocation) =>
+          !constructors.has(allocation.id) && !numberUndefined?.boxes.some((box) => box.allocationId === allocation.id),
+      ) ||
+      planner.dataSegments.length
+    )
       unsupported("complete allocation inventory contains resources outside fixed numeric vectors");
     const functions: PreparedLinearMemoryPlan["functions"][number][] = [];
     const arena = describeLinearBumpArena();
     const ctor = describeLinearArrayConstructor();
-    const hasVectors = demand.occurrences.length > 0;
+    const hasVectors = demand.occurrences.length > 0 || numberUndefined !== undefined;
     if (hasVectors) {
       functions.push({
         key: "linear:malloc",
@@ -227,11 +273,16 @@ export function planPreparedLinearMemory(input: {
       schema: "prepared-linear-memory-v1",
       snapshot: planner.toJSON(),
       demand,
+      ...(numberUndefined ? { numberUndefined } : {}),
       functions,
       ...(hasVectors
         ? {
             memory: { key: "linear:memory", ...arena.memory },
-            heapPointer: { key: "linear:heap", name: arena.heapPointer.name, floor: 1024 },
+            heapPointer: {
+              key: "linear:heap",
+              name: arena.heapPointer.name,
+              floor: numberUndefined ? numberUndefined.singleton.offset + numberUndefined.singleton.bytes.length : 1024,
+            },
           }
         : {}),
       exports: hasVectors
@@ -256,6 +307,7 @@ export function reservePreparedLinearMemory(
   tx: PhysicalModuleReservations,
   plan: PreparedLinearMemoryPlan,
   assertEmissionActive: () => void,
+  assertSingletonPlacement?: (data: DataReservation | undefined) => void,
 ): PreparedLinearMemoryReservations {
   const record = issued.get(plan);
   if (!record || record.used || record.failed) invalid("unknown or consumed issued plan");
@@ -264,10 +316,16 @@ export function reservePreparedLinearMemory(
     current(plan, record);
     assertEmissionActive();
     if (tx.state !== "reserving") invalid("reserve requires reserving phase");
+    if (plan.numberUndefined) {
+      if (!assertSingletonPlacement) unsupported("numeric singleton requires the actual aggregate static-prefix audit");
+      assertSingletonPlacement(undefined);
+    }
     tx.assertReservationKeysAvailable([
       ...plan.functions.map((fn) => fn.key),
       ...(plan.memory ? [plan.memory.key] : []),
       ...(plan.heapPointer ? [plan.heapPointer.key] : []),
+      ...(plan.numberUndefined ? [plan.numberUndefined.singleton.key] : []),
+      ...(plan.numberUndefined ? [plan.numberUndefined.singleton.key + ":global"] : []),
       ...plan.exports.map((exp) => exp.key),
     ]);
     const memory = plan.memory
@@ -275,6 +333,15 @@ export function reservePreparedLinearMemory(
       : undefined;
     const heap = plan.heapPointer
       ? tx.reserveGlobal(plan.heapPointer.key, plan.heapPointer.name, { kind: "i32" }, true)
+      : undefined;
+    const numberUndefinedData = plan.numberUndefined
+      ? tx.reserveDataSegment(plan.numberUndefined.singleton.key, {
+          offset: plan.numberUndefined.singleton.offset,
+          bytes: new Uint8Array(plan.numberUndefined.singleton.bytes),
+        })
+      : undefined;
+    const numberUndefinedGlobal = plan.numberUndefined
+      ? tx.reserveGlobal(plan.numberUndefined.singleton.key + ":global", "__native_undefined", { kind: "i32" }, false)
       : undefined;
     const functions = Object.freeze(
       plan.functions.map((fn) => tx.reserveFunction(fn.key, fn.name, { params: fn.params, results: fn.results })),
@@ -288,6 +355,9 @@ export function reservePreparedLinearMemory(
       functions,
       memory,
       heap,
+      numberUndefinedData,
+      numberUndefinedGlobal,
+      assertSingletonPlacement,
       state: "reserved",
       exports: [],
     });
@@ -336,6 +406,27 @@ function use<T>(
     pack.typeIndices ??= Object.freeze(pack.functions.map((token) => token.object.typeIdx as number));
     if (pack.memory && tx.physicalIndex(pack.memory) !== 0) invalid("canonical providers require memory zero");
     if (pack.heap) tx.physicalIndex(pack.heap);
+    if (Boolean(pack.numberUndefinedData) !== Boolean(pack.plan.numberUndefined))
+      invalid("numeric singleton inventory differs");
+    if (pack.numberUndefinedData) {
+      if (!pack.assertSingletonPlacement) invalid("numeric singleton placement audit vanished");
+      pack.assertSingletonPlacement(pack.numberUndefinedData);
+      tx.physicalIndex(pack.numberUndefinedData);
+      const expected = pack.plan.numberUndefined!.singleton;
+      if (
+        pack.numberUndefinedData.key !== expected.key ||
+        pack.numberUndefinedData.object.offset !== expected.offset ||
+        preparedIrDataMismatch([...pack.numberUndefinedData.object.bytes], expected.bytes) !== undefined
+      )
+        invalid("numeric singleton reservation changed");
+      if (
+        !pack.numberUndefinedGlobal ||
+        pack.numberUndefinedGlobal.object.type.kind !== "i32" ||
+        pack.numberUndefinedGlobal.object.mutable
+      )
+        invalid("numeric singleton global changed");
+      tx.physicalIndex(pack.numberUndefinedGlobal);
+    }
     return action(pack);
   } catch (error) {
     pack.state = "failed";
@@ -384,6 +475,31 @@ export function preparedLinearMemoryBindings(
     return Object.freeze({
       supportFunctions: pack.functions,
       resolveRuntimeOperation,
+      ...(pack.plan.numberUndefined
+        ? {
+            numberUndefined: Object.freeze({
+              singletonAddress: pack.plan.numberUndefined.singleton.offset,
+              singletonGlobal: pack.numberUndefinedGlobal!,
+              singletonGlobalIndex: tx.physicalIndex(pack.numberUndefinedGlobal!),
+              allocatorIndex: tx.physicalIndex(
+                pack.functions[pack.plan.functions.findIndex((fn) => fn.role === "malloc")]!,
+              ),
+              assertCurrent: () =>
+                use(tx, authority, (active) => {
+                  if (active.state !== "filled" && active.state !== "verified")
+                    invalid("numeric carrier resources are incomplete");
+                  tx.assertCompletedReservation(active.numberUndefinedGlobal!);
+                  for (const token of active.functions) tx.assertCompletedReservation(token);
+                }),
+              requireBox: (allocationId: AllocSiteId) =>
+                use(tx, authority, (active) => {
+                  if (!active.plan.numberUndefined?.boxes.some((box) => box.allocationId === allocationId))
+                    invalid("numeric box is absent from the issued occurrence census");
+                  return requireNativeNumberUndefinedBoxLayout(active.issuance.planner, allocationId);
+                }),
+            }),
+          }
+        : {}),
       requestedVectorCapacity: (unitId: IrUnitId, value: IrValueId) =>
         use(tx, authority, (active) => {
           const occurrences = active.plan.demand.occurrences.filter(
@@ -464,6 +580,10 @@ export function fillPreparedLinearMemory(
       return tx.physicalIndex(pack.functions[index]!);
     };
     if (pack.heap) tx.fillGlobal(pack.heap, [{ op: "i32.const", value: pack.plan.heapPointer!.floor }]);
+    if (pack.numberUndefinedGlobal)
+      tx.fillGlobal(pack.numberUndefinedGlobal, [
+        { op: "i32.const", value: pack.plan.numberUndefined!.singleton.offset },
+      ]);
     pack.plan.functions.forEach((fn, index) => {
       const body =
         fn.role === "malloc"
@@ -479,6 +599,7 @@ export function fillPreparedLinearMemory(
       tx.assertCompletedReservation(pack.functions[index]!);
     });
     if (pack.heap) tx.assertCompletedReservation(pack.heap);
+    if (pack.numberUndefinedGlobal) tx.assertCompletedReservation(pack.numberUndefinedGlobal);
     pack.exports = pack.plan.exports.map((intent) => {
       if (!pack.memory || intent.targetKey !== pack.memory.key) invalid("unknown target export");
       return tx.defineExport(intent.key, intent.externalName, pack.memory);
