@@ -15,16 +15,17 @@ import {
 import { IrFunctionBuilder } from "./builder.js";
 import { irIntrinsicFuncRef } from "./callable-bindings.js";
 import type { I32PureNames } from "./i32-pure-bitwise.js";
-import type { IrVectorLowering } from "./backend/handles.js";
-import { vecElemSetProviderSymbol, sourceVectorValueType } from "./ast-vector-representation.js";
+import type { IrVecBackendLowering } from "./backend/handles.js";
+import { irVecHandleCarrier } from "./backend/vector-representation.js";
+import { vecElemSetProviderSymbol } from "./ast-vector-representation.js";
 import { asVal, irTypeEquals, irVal, type IrConst, type IrType, type IrValueId } from "./nodes.js";
 import { demoteToLegacy, IrInvariantError, IrUnsupportedError } from "./outcomes.js";
 import { nativeVectorMutationOwnerIsSynchronous } from "./native-vector-mutation-proof.js";
 import type { ValType } from "./types.js";
 
 interface ArrayElementResolver {
-  resolveVec?(valType: ValType): IrVectorLowering | null;
-  resolveVecForElement?(elementValType: ValType): IrVectorLowering | null;
+  resolveVec?(valType: ValType): IrVecBackendLowering | null;
+  resolveVecForElement?(elementValType: ValType): IrVecBackendLowering | null;
   resolveVecOutOfBoundsConst?(elementValType: ValType): IrConst | null;
   isVecValueExpression?(expression: ts.Expression): boolean;
   preparedAsyncPromiseVectorLocal?(declaration: ts.VariableDeclaration): boolean;
@@ -333,7 +334,7 @@ export function annotatedArrayElementValType(
  * boolean[]. The representation and the receiver-specific proof must agree.
  */
 export function isNarrowedI32Vec(
-  vec: IrVectorLowering,
+  vec: IrVecBackendLowering,
   receiver: ts.Expression,
   host: ArrayElementLoweringHost,
 ): boolean {
@@ -409,7 +410,7 @@ export function tryLowerVecPush(
         : null;
   if (!vec && !logical) return undefined;
   const scalarVecReceiver =
-    ((vec && sourceVectorValueType(vec, false).kind === "i32") || vecRecvVal?.kind === "i32") &&
+    ((vec && irVecHandleCarrier(vec, false).kind === "i32") || vecRecvVal?.kind === "i32") &&
     (host.resolver?.isVecValueExpression?.(receiverExpression) === true ||
       host.emptyArrayInference.isResolvedVectorExpression(receiverExpression));
   if (recvType.kind !== "vec" && (!vecRecvVal || (vecRecvVal.kind !== "ref" && !scalarVecReceiver))) {

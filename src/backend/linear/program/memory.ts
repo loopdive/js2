@@ -555,6 +555,8 @@ export function preparedLinearMemoryBindings(
           resolveRuntimeOperation(allocate);
           resolveRuntimeOperation(initializeElement);
           return Object.freeze({
+            // #6920: the genuine Linear handle carries its required i32 pointer carrier.
+            valueType: Object.freeze({ kind: "i32" as const }),
             elementValType: Object.freeze({ kind: "f64" as const }),
             linearMemory: Object.freeze({
               ...(allocation ? { allocation } : {}),

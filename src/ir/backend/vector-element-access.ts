@@ -2,7 +2,7 @@
 import type { IrInstr, IrValueId } from "../core/nodes.js";
 import type { ValType } from "../../wasm/model/instructions.js";
 import type { BackendEmitter } from "./emitter.js";
-import type { IrVectorLowering } from "./handles.js";
+import type { IrVecRepresentation } from "./vector-representation.js";
 
 interface VectorElementAccessContext<S> {
   readonly emitter: BackendEmitter<S>;
@@ -14,18 +14,26 @@ interface VectorElementAccessContext<S> {
   readonly elementScratch: (type: ValType) => number;
 }
 
-/** Emit the complete terminal access with its original operand evaluation order. */
+/**
+ * Emit the complete terminal access with its original operand evaluation order.
+ * `representation` was resolved for `context.emitter.backend` (#6920); its
+ * `kind` — never the raw handle's shape — selects the receiver carrier and the
+ * Linear backing-extent guard.
+ */
 export function emitVectorElementAccess<S>(
   instr: Extract<IrInstr, { kind: "vec.get" | "vec.set" }>,
-  vec: IrVectorLowering,
+  representation: IrVecRepresentation,
   context: VectorElementAccessContext<S>,
   out: S,
 ): void {
   const { emitter, emitValue, construction } = context;
+  const vec = representation.lowering;
   if (context.requestedCapacity !== undefined) {
     // Issued native origins retain the captured logical receiver, never a pre-effect backing pointer.
     const receiver = context.receiverScratch(
-        "linearMemory" in vec ? { kind: "i32" } : { kind: "ref_null", typeIdx: vec.vecStructTypeIdx },
+        representation.kind === "linear-memory"
+          ? representation.valueType
+          : { kind: "ref_null", typeIdx: representation.lowering.vecStructTypeIdx },
       ),
       index = context.indexScratch(),
       length = context.indexScratch();
@@ -70,7 +78,7 @@ export function emitVectorElementAccess<S>(
   const capacity =
     context.requestedCapacity ??
     (construction?.kind === "vec.new_fixed" ? (construction.capacity ?? construction.elements.length) : undefined);
-  if ("linearMemory" in vec && capacity !== undefined) {
+  if (representation.kind === "linear-memory" && capacity !== undefined) {
     // GC array.get/set check requested backing extent, not logical length or
     // physical Linear padding. Native admission joins this exact SSA owner.
     const index = context.indexScratch();

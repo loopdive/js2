@@ -6,7 +6,8 @@ import { PhysicalModuleReservations } from "../src/wasm/physical/module-reservat
 import { emitVectorElementAccess } from "../src/ir/backend/vector-element-access.js";
 import { LinearEmitter } from "../src/ir/backend/linear-emitter.js";
 import { WasmGcEmitter } from "../src/ir/backend/wasmgc-emitter.js";
-import type { IrVectorLowering } from "../src/ir/backend/handles.js";
+import type { IrVecBackendLowering } from "../src/ir/backend/handles.js";
+import { resolveIrVecRepresentation } from "../src/ir/backend/vector-representation.js";
 import type { BackendEmitter } from "../src/ir/backend/emitter.js";
 import type { IrInstr, IrValueId } from "../src/ir/core/nodes.js";
 import { planLinearVectorLayout } from "../src/ir/analysis/linear-memory-plan.js";
@@ -41,10 +42,27 @@ const integer = (value: number): Instr => ({ op: "i32.const", value });
 function rawAccessPack(
   tx: PhysicalModuleReservations,
   ref: ValType,
-  layout: IrVectorLowering,
+  layout: IrVecBackendLowering,
   append: FunctionReservation,
   emitter: BackendEmitter<Instr[]>,
 ) {
+  // #6920: the access receives the representation resolved for the emitter's backend.
+  const representation = resolveIrVecRepresentation(
+    {
+      backend: emitter.backend,
+      type: { kind: "vec", elementType: { kind: "val", val: f64 }, nullable: false },
+      elementValType: f64,
+      resolver: {
+        resolveType: () => {
+          throw new Error("raw access fixture has no persisted layout");
+        },
+        resolveVecForElement: () => layout,
+      },
+      where: "raw-access",
+    },
+    "operation",
+  );
+  if (!representation) throw new Error("raw access fixture has no vector representation");
   const effects = tx.reserveGlobal("raw:effects", "rawEffects", i32, true);
   const functions = ["getAfterIndex", "setAfterRhs", "compoundAfterRhs", "readPlain", "readEmpty"].map((name) =>
     tx.reserveFunction(`raw:${name}`, name, { params: [ref, i32, f64], results: [f64] }),
@@ -101,7 +119,7 @@ function rawAccessPack(
           } as Extract<IrInstr, { kind: "vec.get" | "vec.set" }>;
           emitVectorElementAccess(
             instr,
-            layout,
+            representation,
             {
               emitter,
               emitValue,
@@ -148,7 +166,8 @@ function linear(allocatorReturn?: number, raw = false) {
   const resolve = tx.reserveFunction("resolve", "resolve", { params: [i32], results: [i32] });
   const recipe = describeLinearNumericVectorAppend();
   const append = tx.reserveFunction("append", "append", recipe);
-  const rawLayout: IrVectorLowering = {
+  const rawLayout: IrVecBackendLowering = {
+    valueType: i32,
     elementValType: f64,
     linearMemory: {
       layout: planLinearVectorLayout({ kind: "val", val: f64 }),

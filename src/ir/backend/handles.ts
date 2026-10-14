@@ -181,7 +181,7 @@ export interface LinearRefCellLowering extends IrRefCellLowering {
  *                           declared type when needed.
  */
 export interface IrVecLowering {
-  /** Backend value carrier (`ref $vec` on WasmGC, `i32` arena pointer on linear). */
+  /** WasmGC value carrier (`ref`/`ref_null $vec`); absent keeps the struct-ref default. */
   readonly valueType?: ValType;
   readonly vecStructTypeIdx: number;
   readonly lengthFieldIdx: number;
@@ -438,6 +438,9 @@ export interface IrDynamicLowering {
   emitMemberSet(): readonly Instr[];
 }
 
+/** The existing `i32` member of {@link ValType}; not a separate representation system. */
+export type IrI32ValType = Extract<ValType, { readonly kind: "i32" }>;
+
 /**
  * #1714: linear-memory layout handle for a vec (array). Sibling to
  * {@link IrVecLowering} (the WasmGC handle). The linear backend stores an
@@ -446,14 +449,13 @@ export interface IrDynamicLowering {
  * only representation detail the emitter needs is the element ValType (for
  * stride + load op). Field offsets are fixed by the layout, not per-instance.
  *
- * This is the "different handle shape the linear resolver returns" that the
- * #1713 spec §7 anticipated. The `BackendEmitter` vec methods accept
- * `IrVecLowering | LinearVecLowering`; each emitter narrows to its own shape.
+ * #6920: a genuine linear handle carries its required i32 pointer carrier and
+ * NO WasmGC struct/array/field indices; the two handle shapes are never
+ * intersected. See {@link IrVecBackendLowering}.
  */
-/** A real backend vector handle; Linear has no fabricated WasmGC type coordinates. */
-export type IrVectorLowering = IrVecLowering | LinearVecLowering;
-
 export interface LinearVecLowering {
+  /** Arena pointer carrier for the vector value. */
+  readonly valueType: IrI32ValType;
   /** Element ValType — drives stride (4 vs 8) and the load op. */
   readonly elementValType: ValType;
   readonly linearMemory: {
@@ -464,3 +466,11 @@ export interface LinearVecLowering {
     readonly initializeElement: LinearRuntimeOperation;
   };
 }
+
+/**
+ * #6920: the raw vector handle a resolver may return — the genuine WasmGC
+ * handle or the genuine linear-memory handle. `BackendEmitter` vec methods
+ * accept this union and each emitter narrows to its own shape; generic
+ * lowering normalizes it through `vector-representation.ts`.
+ */
+export type IrVecBackendLowering = IrVecLowering | LinearVecLowering;
