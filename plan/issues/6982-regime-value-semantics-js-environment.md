@@ -20,7 +20,7 @@ loc-budget-allow:
   - src/codegen/property-access-dispatch.ts
   - src/runtime.ts
 import-cycles-allow:
-  - largestSccSize: 706 # 2026-10-14 (#6982): the two new codegen helpers (classes/class-symbol-to-primitive-operand.ts, expressions/import-meta-url-native.ts) call compileExpression/coerceType and are called from binary-ops/property-access-dispatch, so they sit in the codegen SCC like every sibling helper
+  - largestSccSize: 708 # 2026-10-14 (#6982, lead): CI measures the merge preview, where main already carries #6978's two accelerator helpers (SCC 706); this branch's two new codegen helpers (classes/class-symbol-to-primitive-operand.ts, expressions/import-meta-url-native.ts) call compileExpression/coerceType and are called from binary-ops/property-access-dispatch, so they sit in the codegen SCC like every sibling helper
 ---
 
 # Native regime in a JS environment: four value-semantics defects
