@@ -2,7 +2,7 @@
 
 import type { ImportDescriptor, ImportIntent } from "./index.js";
 import type { WasmModule } from "./ir/types.js";
-import type { CompileEnvironment } from "./target-profile.js";
+import type { CompileEnvironment, HostAcceleratorFamily } from "./target-profile.js";
 import { isDomCapabilityImportDescriptor, isDomInteractionImportDescriptor } from "./dom-capability-contract.js";
 
 export type HostImportPolicyClass =
@@ -191,11 +191,71 @@ function isSharedExceptionTag(descriptor: ImportDescriptor): boolean {
 }
 
 /**
+ * (#6978) The host-accelerator family an import belongs to, if any. Only these
+ * four families may be re-classified by a selected accelerator; everything
+ * else keeps its intrinsic class whatever the profile says.
+ */
+function acceleratorFamilyOfEnvImport(descriptor: ImportDescriptor): HostAcceleratorFamily | undefined {
+  const intent = descriptor.intent;
+  switch (intent.type) {
+    case "string_literal":
+    case "string_method":
+      return "js-string";
+    case "date_new":
+    case "date_method":
+      return "date";
+    case "extern_class":
+      if (intent.className === "RegExp") return "regexp";
+      if (intent.className === "Date") return "date";
+      return intent.className === "Intl" || intent.namespacePath?.[0] === "Intl" ? "intl" : undefined;
+    case "declared_global":
+      return intent.name === "Intl" ? "intl" : undefined;
+    case "builtin":
+      if (intent.name === "__date_parse_host") return "date";
+      return intent.name.startsWith("RegExp_") || intent.name.startsWith("__regexp_host_") ? "regexp" : undefined;
+    default:
+      return undefined;
+  }
+}
+
+function acceleratorFamilyOfNonEnvImport(module: string): HostAcceleratorFamily | undefined {
+  return module === "wasm:js-string" || module === "string_constants" || module === "string_constants16"
+    ? "js-string"
+    : undefined;
+}
+
+function acceleratedPolicy(family: HostAcceleratorFamily): HostImportPolicy {
+  return policy(
+    "host-accelerator",
+    family,
+    6978,
+    true,
+    `selected '${family}' host accelerator; the native ${family} provider is the fallback`,
+  );
+}
+
+/**
  * Classify an emitted `env` import by its typed intent. The exhaustive switch
  * makes a new intent a compile error until policy is chosen; name-based
  * `builtin` fallbacks may still return `unknown`, which is deliberately loud.
+ *
+ * (#6978) `accelerators` is the profile's selected host-accelerator list: an
+ * import of a selected family classifies as `host-accelerator`; unselected
+ * families keep their intrinsic class.
  */
-export function classifyHostImport(descriptor: ImportDescriptor, environment?: CompileEnvironment): HostImportPolicy {
+export function classifyHostImport(
+  descriptor: ImportDescriptor,
+  environment?: CompileEnvironment,
+  accelerators?: readonly HostAcceleratorFamily[],
+): HostImportPolicy {
+  if (accelerators !== undefined && accelerators.length > 0) {
+    const family = acceleratorFamilyOfEnvImport(descriptor);
+    if (family !== undefined && accelerators.includes(family)) return acceleratedPolicy(family);
+  }
+  return classifyIntrinsicHostImport(descriptor, environment);
+}
+
+function classifyIntrinsicHostImport(descriptor: ImportDescriptor, environment?: CompileEnvironment): HostImportPolicy {
   if (environment === "none" && isDomInteractionImportDescriptor(descriptor)) {
     return policy("platform-capability", "dom-interaction", 4577, false, "explicit DOM interaction capability");
   }
@@ -362,16 +422,20 @@ export function buildHostImportInventory(
   envManifest: readonly ImportDescriptor[],
   linkedNamespaces: readonly string[] = [],
   environment?: CompileEnvironment,
+  accelerators: readonly HostAcceleratorFamily[] = [],
 ): HostImportInventoryEntry[] {
   const envByName = new Map(envManifest.map((descriptor) => [descriptor.name, descriptor] as const));
   const linkedNamespaceSet = new Set(linkedNamespaces);
   return mod.imports.map((entry) => {
     const descriptor = entry.module === "env" ? envByName.get(entry.name) : undefined;
+    const nonEnvFamily = descriptor ? undefined : acceleratorFamilyOfNonEnvImport(entry.module);
     const classified = descriptor
-      ? classifyHostImport(descriptor, environment)
+      ? classifyHostImport(descriptor, environment, accelerators)
       : entry.module === "env"
         ? policy("unknown", "unclassified", 4401, false, `env import '${entry.name}' has no typed intent`)
-        : classifyNonEnvImport(entry.module, entry.name, linkedNamespaceSet);
+        : nonEnvFamily !== undefined && accelerators.includes(nonEnvFamily)
+          ? acceleratedPolicy(nonEnvFamily)
+          : classifyNonEnvImport(entry.module, entry.name, linkedNamespaceSet);
     return Object.freeze({
       module: entry.module,
       name: entry.name,

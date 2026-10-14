@@ -73,7 +73,7 @@ import {
   closurePrototypeOwnDescriptorGuard,
   hasClosurePrototypeEdges,
 } from "./closure-prototype-edge.js"; // (#2660 M3; #6951 G2 write twin + own-descriptor gate)
-import type { CodegenContext } from "./context/types.js";
+import { type CodegenContext, jsValueBoundary } from "./context/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { nativeStringLiteralInstrs } from "./native-strings.js";
 import { captureProtoIndexReadBinding, protoIndexRecvGetMissInstrs } from "./proto-index-store.js"; // (#4176) inherited proto-named consult
@@ -667,6 +667,23 @@ function fnctorInstanceCarrierTypeIdxs(ctx: CodegenContext): number[] {
 }
 
 /**
+ * (#6983) With the JS value bridge, a HOST object reaches the lookup — e.g. the
+ * `__extern_get` prototype-cache own-key guard consults every receiver's bag.
+ * Its anyref is not `eq`, so the registry walk's `ref.cast eq` trapped
+ * ("illegal cast", acorn's second `parse`). It has no carrier bag: answer the
+ * miss. A host-free module never holds one, so it emits nothing there.
+ */
+function hostReceiverMiss(ctx: CodegenContext): Instr[] {
+  if (!jsValueBoundary(ctx)) return [];
+  return [
+    { op: "local.get", index: 3 }, // recvAny
+    { op: "ref.test", typeIdx: EQ_HEAP_TYPE },
+    { op: "i32.eqz" },
+    { op: "if", blockType: { kind: "empty" }, then: [{ op: "ref.null.extern" }, { op: "return" }] },
+  ];
+}
+
+/**
  * (#4241) Fill the two carrier-bag natives — `__closure_bag_lookup` and
  * `__closure_bag_ensure`.
  *
@@ -784,6 +801,7 @@ function fillCarrierBagHelpers(
       { op: "any.convert_extern" },
       { op: "local.set", index: 3 },
       ...slottedLookupArms(),
+      ...hostReceiverMiss(ctx),
       ...narrowRecvToEq,
       walkLoop(onHit),
       { op: "ref.null.extern" },

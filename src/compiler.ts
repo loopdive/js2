@@ -874,6 +874,7 @@ function buildCodegenOptions(
     nativeStrings: options.nativeStrings,
     hostBridge: options.hostBridge,
     semanticProviders: options.semanticProviders,
+    hostAccelerators: options.hostAccelerators,
     utf8Storage: options.utf8Storage,
     testRuntime: options.testRuntime,
     wasi: targetProfile.target === "wasi",
@@ -1358,7 +1359,14 @@ function finalizePipelineModule(
   // warning-first compatibility lanes (#2961/#2980/#3164) are not an explicit
   // native-first opt-in, while WASI's strict import gate remains authoritative.
   const imports = buildImportManifest(mod);
-  const hostImportInventory = buildHostImportInventory(mod, imports, input.codegenOptions.link, targetEnvironment);
+  // (#6978) Selected host-accelerator families classify as `host-accelerator`.
+  const hostImportInventory = buildHostImportInventory(
+    mod,
+    imports,
+    input.codegenOptions.link,
+    targetEnvironment,
+    targetProfile.accelerators,
+  );
   if (options.semanticProviders === "native-first") {
     const forbidden = hostImportInventory.filter(
       (entry) => entry.classification === "legacy-semantic" || entry.classification === "unknown",
