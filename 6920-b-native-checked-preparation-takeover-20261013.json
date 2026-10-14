@@ -6,8 +6,8 @@
   "status": "in-progress",
   "branch": "codex/6920-b-native-preparation-20261013-01a12827",
   "claimed_at": "2026-10-13T06:38:30.746860Z",
-  "updated_at": "2026-10-14T02:13:25.439183Z",
-  "write_id": "b-native-math-scalar-if-2f835d52-8042-41ce-b307-ca61390d3cc1",
+  "updated_at": "2026-10-14T03:31:57.527375Z",
+  "write_id": "b-native-undefined-alias-552e04f8-e5a6-4217-bac8-61781ce3142e",
   "handoff_scope": [
     "src/ir/program-source.ts: genuine shared logical vector resolver, preparation origin and final checked facts joins",
     "src/ir/from-ast.ts: logical vector admission and executable allocation demand only",
@@ -65,7 +65,8 @@
     "new tests/issue-6920-native-vector-pure-multiply.test.ts and root-only existing zero-push pure-math frontier case: actual pure length/zero-push four-profile live/codec/public execution, source-free and no append helper/demand, complete operand/result/SSA/site/metadata negatives. Reconcile only obsolete owned native frontier assertion after success, intentionally report any case-name change; preserve scalar J212 fallback and all held joined-validation tests byte-exact.",
     "plan/issues/6920-native-linear-shared-source-handoff.md: append finite native-math qualification, exact remaining failures and scope; full migration remains open.",
     "Native-only pure-vector multiplication selector refinement: allow only the original finite scalar-result if grammar with recursively finite primitive const/binary/vec.get/vec.len arms; no nested allocations, structured statements/loops/calls/slots/blockargs. Require a genuine outer-root logical-f64 constructor, an actual f64 logical-length vec.len consumer and exact f64.mul in that same vector-bearing function. Preserve held J3 constructor/read/mul-without-length native fallback and observer/lifetime expectations, old hasStructuredNumericVectors and all generic algorithms byte-exact. This supersedes only the earlier no-scalar-if/no-nested-expression selector boundary after authentic indexed-source IR demonstrates scalar bounds-check if roots; unchanged complete structured replay remains authority.",
-    "Root-only tests/issue-6920-a2-j3-source-qualification.test.ts uncoveredMultiply helper and sole native uncovered-arithmetic case: switch only deliberate all-view/root binary f64.add mutation to genuinely unsupported f64.sub and truthfully rename private helper/caller uncoveredSubtraction. Retain edits>0, every mutation path, exact test identity, expectLocatedUnsupported and detail assertion. Preserve scalarSource, scalar f64.mul fallback/observer/lifetime controls and all other A2/J3 algorithms/assertions byte-exact. This supersedes only obsolete native multiplication exclusion after real length-multiply admission, not the scalar or generic exclusion."
+    "Root-only tests/issue-6920-a2-j3-source-qualification.test.ts uncoveredMultiply helper and sole native uncovered-arithmetic case: switch only deliberate all-view/root binary f64.add mutation to genuinely unsupported f64.sub and truthfully rename private helper/caller uncoveredSubtraction. Retain edits>0, every mutation path, exact test identity, expectLocatedUnsupported and detail assertion. Preserve scalarSource, scalar f64.mul fallback/observer/lifetime controls and all other A2/J3 algorithms/assertions byte-exact. This supersedes only obsolete native multiplication exclusion after real length-multiply admission, not the scalar or generic exclusion.",
+    "Native-only numeric undefined observation correction: new src/ir/native-vector-undefined-provenance.ts pure checker-symbol/source-certified logical-vector provenance query, and bounded src/ir/from-ast.ts import/call in tryLowerUndefinedCompare before an unboxed numeric never-undefined fold. Reconstruct const/transparent aliases and complete function-local declaration/assignment/conditional/loop write closure, preserve actual numeric coercion and initialized numeric ABI/NaN controls, refuse missing/cyclic/unknown provenance rather than treat unseen as defined. Existing direct indexed bounds guard, native-off scalar/legacy algorithms, generic source/type/effect/optimizer/codec/physical selectors remain unchanged; no arithmetic profile widening. One truthful new mixed source boundary leaf row in scripts/compiler-boundaries.json, new tests/issue-6920-native-vector-undefined-observation.test.ts authentic four-profile source/live/codec/public comparisons and own6920 issue append/ordinary scoped LOC grant. This receives only actual alias-to-indexed-read source correctness under the human shared-seam takeover; it does not receive A forwarding, held generic/J3/C1 or class hooks. Full JavaScript undefined value/type/typeof and cross-call/general value representation remain required follow-up scope, not retirement or completion."
   ],
   "handoff_authority": {
     "source": "human scope reply call_fHCisBpMmbCIm9ci7BYIEcqH",
@@ -428,9 +429,20 @@
         "bounded_only": true
       },
       "reason": "Actual expanded cohort124/125: new source22/22 and unchanged joined52/52 pass, while one A2 deliberate-multiplication exclusion now matches the admitted native constructor/length/multiply frontier. Replace only its obsolete unsupported opcode with a genuine unsupported neighbor; preserve all scalar fallback controls."
+    },
+    {
+      "at": "2026-10-14T03:31:57.527375Z",
+      "addition": "Native-only numeric undefined observation correction: new src/ir/native-vector-undefined-provenance.ts pure checker-symbol/source-certified logical-vector provenance query, and bounded src/ir/from-ast.ts import/call in tryLowerUndefinedCompare before an unboxed numeric never-undefined fold. Reconstruct const/transparent aliases and complete function-local declaration/assignment/conditional/loop write closure, preserve actual numeric coercion and initialized numeric ABI/NaN controls, refuse missing/cyclic/unknown provenance rather than treat unseen as defined. Existing direct indexed bounds guard, native-off scalar/legacy algorithms, generic source/type/effect/optimizer/codec/physical selectors remain unchanged; no arithmetic profile widening. One truthful new mixed source boundary leaf row in scripts/compiler-boundaries.json, new tests/issue-6920-native-vector-undefined-observation.test.ts authentic four-profile source/live/codec/public comparisons and own6920 issue append/ordinary scoped LOC grant. This receives only actual alias-to-indexed-read source correctness under the human shared-seam takeover; it does not receive A forwarding, held generic/J3/C1 or class hooks. Full JavaScript undefined value/type/typeof and cross-call/general value representation remain required follow-up scope, not retirement or completion.",
+      "authority": {
+        "source": "human scope reply call_fHCisBpMmbCIm9ci7BYIEcqH",
+        "answer": "Take over the blocking shared seams",
+        "receiving_owner": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+        "bounded_only": true
+      },
+      "reason": "Authentic published7107 GC audit found12 alias undefined comparison misexecutions; length/multiply witnesses found12 further wrong GC values while Linear refused incidentally. Fix source provenance before any native selector widening; exact shared source hook and new leaf only."
     }
   ],
-  "previous_write_id": "b-native-math-scalar-if-c93f0b20-70e9-4eb3-9033-8a0ba43bdb77",
+  "previous_write_id": "b-native-math-scalar-if-2f835d52-8042-41ce-b307-ca61390d3cc1",
   "receiving_worktrees": [
     "codex/6920-b-native-vector-calls-20261013-01a12827",
     "codex/6920-b-vector-control-20261013-01a12827",
