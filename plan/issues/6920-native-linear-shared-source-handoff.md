@@ -15,6 +15,11 @@ loc-budget-allow:
   - src/compiler/ir-program-presentation.ts
   - src/compiler.ts
   - src/ir/program-consumer.ts
+  - src/ir/program-source.ts
+  - src/ir/from-ast.ts
+  - src/ir/identity.ts
+func-budget-allow:
+  - src/ir/program-source.ts::prepareIrProgramSources
 language_feature: arrays
 goal: correctness
 parent: 3518
@@ -4453,3 +4458,222 @@ scalar-pair.json,typing.log,typing.exit,tsconfig.scope.json}.
 This remains a bounded arithmetic checkpoint. Math.min's authentic predecessor
 ownership invariant, class runtime support, complete source coverage, both-backend
 matrices, optimization retirement, Test262 and verified final main remain open.
+
+
+## B class semantic producer receiving checkpoint (2026-10-14)
+
+The signed ledger checkpoint f108c29f receives the released3522 whole-program
+class producer partition in a fresh isolated worktree. Eight authentic source
+probes on pinned Node25.9.0 yield seven class refusals and one scalar positive;
+these are preparation measurements with zero runtime credit. The current
+FunctionDeclaration-only signature/body producer refuses constructors and
+methods; class ABI/layout, physical signature/resource and Linear field/tag
+seams also require coherent later work.
+
+This receiver owns the exact thirteen source/identity/typed class population
+paths recorded in its claim, a genuine source preparation test, this append
+and truthful new boundary leaf rows. The checkpoint captures complete original
+ClassId/body/default/ordered-initializer semantics, uses original explicit
+member declarations and a non-synthetic implicit builder, and joins canonical
+class ABI/unit references. Ordinary algorithms and held source/evidence rules
+remain. Physical consumers, runtime, routing, presentation, optimizers and
+codec algorithms are outside this receiving scope. If genuine preparation
+requires another seam, its exact failure is preserved before refining scope.
+
+Linear class allocation evidence may refuse before physical planning; GC
+preparation/codec success must not be called four-profile readiness. Both
+physical consumers, full closure/inheritance/public class behavior, held
+W1-C super/accessor, full conformance/optimization/retirement and verified main
+delivery remain required work. No architecture completion, direct fallback,
+source reconstruction, fabricated units, or weakening of evidence is allowed.
+Root retains commit/push, PR6662 HOLD and integration; A retains its original
+claims and queue ownership. The full implementation plan and original probes
+are preserved in this receiver's .tmp/class-source-producer/.
+
+
+## B genuine class semantic producer checkpoint (2026-10-14, bounded semantic qualification)
+
+The signed new receiving claim `f108c29f0f197e1ca261940ca096ab105afe4a09`
+was refined at `b2b6325c458ab338944a6881392a2d54da56bdf8` solely for the
+original-class initializer analysis factory. The source checkpoint owns the
+14 exact producer paths, one new test, this appendix and three new leaf
+inventory rows. Parent issue 3522 is released; W1-C super/accessor, foreign
+source/evidence algorithms, physical consumers, routing and queue ownership
+remain outside this checkpoint. No commit or publication is delegated.
+
+Source class census now captures original ClassId shapes, constructor/method
+units, JavaScript undefined field default intents and ordered initializer
+provenance. Explicit bodies use original method/constructor declarations.
+The implicit builder creates no synthetic function or constructor AST and
+shares the original constructor body/field algorithm. Canonical class layout,
+source init/member and class-owned new-support ABI entries derive from declared
+DATA. Typed ownership, full original body population, class/layout/default and
+initializer joins remain mandatory through codec. Recursive class type wrappers
+are owned outside the exact branded nominal shape cells; the shared immutable
+copier and codec algorithms are unchanged. The initializer factory's existing
+function analysis reconstructs byte-for-byte after removing the new factory and
+its single import. No class-array profile or allocation evidence is invented.
+
+The first authentic 32-row probe is retained with its initializer-DATA/layout
+naming defect. The second records 14 genuine GC class preparations/replays,
+two genuine Linear static preparations/replays, six finite-evidence refusals
+and six missing/stale allocation ownership invariant throws. The third records
+those same GC/static positives and 12 authentic source capability refusals
+before allocating class IR/facts, plus all four scalar positive controls.
+A genuine checker-resolved NewExpression/ClassId/terminal-owner census drives
+the new native Linear capability boundary. It promises no class evidence and
+keeps direct typed acquisition's original invariant behavior unchanged.
+Physical class carrier/layout/new-support materialization remains typed
+unsupported; no class runtime execution is credited.
+
+The two AST leaves remain mixed migration debt. The pure class DATA leaf's
+actual resolved import closure contains 25 modules, with all dependencies clean
+and zero unknown/unresolved edges; only its new row is clean ir-program.
+Architecture completion remains false. Class-array source contracts, nested
+initialized-class population, class binding creation/TDZ and definition
+semantics, closure/inheritance/accessor families, public class transport and
+both physical consumers remain explicit full-goal work.
+
+This change-set intentionally grants only three exact owner-hook LOC paths:
+`program-source.ts` (+119 lines at the measured first gate), `from-ast.ts`
+(+90) and `identity.ts` (+2). The source driver must own declaration dispatch,
+source allocation capability timing and typed capture; the lowerer must own
+its private constructor frame/body and native exact-site hooks; the scanner
+must own original implicit constructor population. Class projection, DATA and
+validation logic are extracted into three leaves. There is no total/shared
+baseline grant, checker weakening, unrelated algorithm move, minification or
+comment trimming. The final measured deltas are program-source +69, from-ast +90 and identity +5.
+All failed epochs and raw phase/policy/source outcomes remain private under
+`.tmp/class-source-producer/checks/` for root review and integration.
+
+The new class source capability and original-node call traversal are extracted
+into the owned planner, and class context assembly is extracted into the owned
+lowerer. The remaining `prepareIrProgramSources` owner orchestration measures
+337 lines versus its published 300: establishing the census, attaching its
+resolver/context and body/provenance population, and publishing semantic class
+DATA require the existing source owner. This checkpoint grants only that exact
+function in this issue; no generic source algorithm is relocated, no shared
+baseline is raised, and the original `lowerMethodCall` remains within its
+published function budget. The initial failed function gate is retained.
+
+Final owned qualification is 8/8 tests with terminal exit 0 and no unhandled
+banner, TS7 typing with exclude [] and terminal exit 0, and ten ordinary gates
+with every gate exit 0. The final source suite preserves original explicit
+functions/constructor bodies, authentic source syntax currentness, initializer
+order/membership/array refusals, ten malformed complete class DATA controls,
+post-capture AST/direct-source poisoning, exact class unit/ABI joins and the
+direct typed missing-ownership invariant. These are semantic preparation and
+refusal checks, without class emission or runtime credit.
+
+Eight scalar public artifact rows match every pinned c2 preimage field and
+execute the same scalar/Boolean values. The recipe and c2 provenance are
+retained separately. Additional genuine two-source import-alias/same-name
+class probes prepare and replay on both GC policies with original and reversed
+source inputs (four positives); the four matching Linear attempts retain the
+located undeclared allocation capability refusal. The 32-row first/second/third
+epochs remain intact, including the original six allocation invariant throws.
+
+Three historical source/class-order/codec files complete 37/38 checks. The sole
+failure is the pre-existing exact `program-consumer` export census: it expects
+eight exports while the c2 native-DTS checkpoint already has twelve. Both the
+consumer and that historical test reconstruct byte-equal to c2; this checkpoint
+does not modify that foreign expectation. Root retains broader qualification.
+The existing array inference file reconstructs byte-exact after removing only
+its new factory/import, and original explicit/function/legacy implicit lowering
+function bytes remain equal. Failed typing, test, inventory, gate and measurement
+epochs are retained rather than overwritten.
+
+
+### Root class semantic qualification withheld after authentic TDZ/default audit (2026-10-14)
+
+The local signed class checkpoint1d317c59 and its prepared merge with arithmetic
+7107a741 remain unpublished. The six-file composition passes142/142, source typing
+passes2000 files/68 explicit roots (87 resolved tests/2336 inputs, exclude[]), and
+the full8GiB package build passes. These are structural/control measurements and
+do not establish class semantic correctness. No class artifact or runtime
+execution is credited.
+
+An authentic56-row source audit (terminal process10183 exit0) exposes missing
+class semantics: static calls before a class declaration prepare without a TDZ
+read, while JavaScript throws ReferenceError; an uninitialized numeric field's
+comparison with undefined prepares a false constant on GC, while JavaScript
+returns1. All52 class public attempts still refuse; four scalar public attempts
+succeed. Exact eight-row source/JS/IR/live+codec/consumer/public findings are
+preserved with SHA25617fb31cf53eaaa8d74e42cec6064fb96a2d4618b6d3d0f9f7eaeb315dbac159f.
+These facts supersede any interpretation of the earlier class8/8 as semantic
+preparation readiness. Existing class.new/call/instanceof are a closed neutral
+class model; they must not silently gain JavaScript constructor/prototype meaning.
+
+The verified signed claim refinementc539feca receives a native source capability
+preflight over the complete original class census before any class body IR or
+PreparedIR, including unused classes, until executable definition/binding/TDZ/
+prototype and undefined-field read/type proofs exist. The parallel worker owns
+only the claimed source hooks, owned test reconciliation and issue append;
+generic/legacy/neutral/held algorithms and direct typed invariants are preserved.
+This is an interim fail-closed correction. Full class semantic/physical completion
+remains required by the active migration goal.
+
+Private receiving evidence: .tmp/native-class-composition/{qualification-withdrawn.json,
+tdz-default-findings.json,source-matrix.json}. The qualified arithmetic-only head
+7107a741 is published separately on heldPR6662; the class source remains local.
+
+
+## B native class source closure correction (2026-10-14, admission correction qualified)
+
+The signed refinement `c539feca0dd81e58e0e71f71685257196b739177`
+authorizes only the original native class source capability guard, necessary
+source driver placement, owned test reconciliation and this append. The signed
+17-path checkpoint `1d317c596303d8f7a86909d0c6de2dc7f4480964` remains
+unfinished and unpublished. Its prior 8/8 and class live/codec preparations are
+structural/phase evidence; they do not prove semantic preparation correctness.
+
+The authentic 56-row audit plus 12-row addendum retain source, JavaScript
+reference, original prepared IR, codec/consumer and public outcomes. A module
+static call before its class declaration prepared an unguarded call on all four
+policies although JavaScript throws ReferenceError. A number-annotated field
+without an initializer prepared an undefined comparison as false on both GC
+policies although JavaScript returns 1; Linear retained its earlier capability
+refusal. All 64 class public attempts refused, and no class runtime execution
+or public artifact was produced. Physical refusal prevents an artifact; it does
+not repair the semantic projection. The original epochs and exact findings are
+retained under `.tmp/class-definition-scope/`.
+
+The source preflight now consumes the complete current original class census,
+checks its declared metadata/source identity, and refuses before any body IR,
+allocation facts or semantic PreparedIR is produced. Executable JavaScript
+class definition/binding/TDZ/prototype and undefined-field read/type producers
+are absent; unused original classes are included. This is a capability boundary
+for the complete original family, not a fixture/name/order detector or a caught
+allocation invariant. Original host/ordinary, neutral class, source/evidence,
+codec/verifier and physical algorithms remain unchanged. The sole source owner
+call adds three orchestration lines under its existing exact issue-scoped
+function allowance; no shared baseline or blanket budget grant is introduced.
+
+The reconciled test separates metadata/planner DATA checks from source semantic
+admission. It preserves genuine original node/default/initializer/order/recursive
+and malformed/currentness controls without class body/execution credit, tests
+the exact TDZ/default source regressions and unused bodies, and retains direct
+typed missing-ownership rejection through a deliberately guard-bypassed
+historical source preimage used only as fault injection. That preimage is not a
+production source preparation success. Four-profile scalar public/live/codec
+execution remains the positive control. The final owned suite is 9/9 with
+terminal exit 0 and no unhandled banner; its public/live/codec scalar controls
+instantiate 12 real Wasm modules and check 36 scalar/Boolean values. Its 40 main
+class source attempts refuse before body IR, and all eight public regression
+attempts return failed results with zero binary bytes. One restored-guard
+source refusal and two preserved held-family refusals remain separate controls.
+TS7 typing with exclude [] and all ten ordinary gates pass. The exact eight-row
+scalar artifact recipe matches every pinned c2 field. The 56-row same-recipe
+before/after source matrix now has 52 class source refusals and only four scalar
+preparations; no class body/semantic preparation or runtime credit is granted.
+
+Complete class definition/binding, named-expression self binding, managed
+constructor/prototype identity, undefined default/read semantics, allocation
+producer/evidence and both source-free physical consumers remain mandatory.
+The neutrality inventory explicitly defines existing `class.new/call/instanceof`
+as a closed nominal C++/Java-style projection; JavaScript prototype/constructor
+completion semantics require genuine dialect operations or a proved projection.
+No scalar token, legacy materializer, metadata-only receipt or new opcode name
+supplies readiness. Full class arrays/closures/inheritance/public transport and
+held W1-C super/accessor remain tracked required work. This correction restores
+truthful admission; it does not retire or shrink the supported class goal.

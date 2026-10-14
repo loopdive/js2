@@ -179,6 +179,7 @@ import {
   EmptyArrayElementInference,
   emptyArrayInferenceDiagnostic,
   inferEmptyArrayElementTypes,
+  inferClassInitializerArrayTypes,
 } from "./array-element-inference.js";
 import {
   annotatedArrayElementValType,
@@ -421,6 +422,8 @@ export interface IrExternClassMeta {
  * until Phase 3, so from-ast doesn't see them.
  */
 export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
+  /** Original source-class binding resolved before semantic sealing. */
+  sourceClassShape?(node: ts.Expression): IrClassShape | undefined;
   /** Exact complete-source proof of a local closure's primordial call/apply member. */
   sourceClosureInvocation?(expression: ts.CallExpression): SourceClosureInvocationPlan | undefined;
   /** Exact higher-order parameter certified by the complete source invocation proof. */
@@ -1921,6 +1924,85 @@ export function lowerFunctionAstToIr(
     ...(cx.consumedCountedStringAppends.length > 0
       ? { countedStringAppendPlans: Object.freeze([...cx.consumedCountedStringAppends]) }
       : {}),
+  };
+}
+
+/** A genuine implicit source constructor has no function AST or body to reconstruct. */
+export function lowerPreparedImplicitClassConstructorToIr(
+  declaration: ts.ClassDeclaration | ts.ClassExpression,
+  options: AstToIrOptions & { readonly constructorInitClassShape: IrClassShape },
+): LoweredFunctionResult {
+  const shape = options.constructorInitClassShape;
+  if (shape.parent || shape.constructorParams.length)
+    throw new IrUnsupportedError("class-member-unsupported", "build", "implicit parent constructor remains held");
+  const name = options.funcName ?? `${shape.className}_init`;
+  const type: IrType = { kind: "class", shape };
+  const builder = new IrFunctionBuilder(
+    { unitId: options.ownerUnitId, name },
+    [type],
+    false,
+    options.allocRegistry,
+    undefined,
+    options.sourceMap !== undefined,
+  );
+  const self = builder.addParam("__self", type);
+  builder.openBlock();
+  const scope = new Map<string, ScopeBinding>();
+  scope.set("this", { kind: "local", value: self, type });
+  const sourceScope: FrontendSourceScope | undefined = options.sourceMap
+    ? {
+        builder,
+        sourceMap: options.sourceMap,
+        sourceMapState: {
+          active: new WeakMap(),
+          causes: new WeakMap(),
+          generated: new Set(),
+          synthetic: new WeakMap(),
+          derived: [],
+        },
+        sourceMapBuilderUnitId: options.ownerUnitId,
+        sourceMapFunctionNode: declaration,
+      }
+    : undefined;
+  const initializers = options.constructorFieldInitializers ?? [];
+  const cx: LowerCtx = {
+    ...sourceScope,
+    builder,
+    scope,
+    funcName: name,
+    ownerUnitId: options.ownerUnitId,
+    returnType: type,
+    ...numericProjectionOptions(options),
+    directCalls: options.directCalls,
+    calleeTypes: options.calleeTypes,
+    importedCalls: options.importedCalls,
+    resolver: options.resolver,
+    identityContext: options.identityContext,
+    classShapes: options.classShapes,
+    lifted: [],
+    liftedUnitProvenance: [],
+    liftedCounter: { value: 0 },
+    mutatedLets: new Set(),
+    dynamicStringLocals: new Set(),
+    i32PureNames: new Set(),
+    ownedStringAppendSymbols: new Set(),
+    emptyArrayInference: inferClassInitializerArrayTypes(
+      declaration,
+      initializers.map((i) => i.expression),
+    ),
+    funcKind: "regular",
+    checker: options.checker,
+    oracle: options.oracle,
+    allocRegistry: options.allocRegistry,
+    consumedCountedStringAppends: [],
+    numericLocalScalarForDecl: options.numericLocalScalarForDecl,
+  };
+  lowerConstructorBody(builder, [], options, self, [], cx, name);
+  return {
+    main: builder.finish(),
+    lifted: cx.lifted,
+    liftedUnitProvenance: cx.liftedUnitProvenance,
+    ...sourceMapResult(cx),
   };
 }
 
@@ -7893,6 +7975,14 @@ function lowerNestedFuncCall(
 // Class lowering (#1169d — IR Phase 4 Slice 4)
 // ---------------------------------------------------------------------------
 
+function sourceClassShapeFor(cx: LowerCtx, expression: ts.Expression): IrClassShape | undefined {
+  return cx.resolver?.sourceClassShape
+    ? cx.resolver.sourceClassShape(expression)
+    : ts.isIdentifier(expression)
+      ? cx.classShapes?.get(expression.text)
+      : undefined;
+}
+
 /**
  * Slice 4 (#1169d): lower a `new ClassName(args)` expression.
  *
@@ -7984,7 +8074,7 @@ function lowerNewExpression(expr: ts.NewExpression, cx: LowerCtx): IrValueId {
   // local shape rather than the ambient extern registry's name-only entry.
   // Aliases and non-class shadows have no matching shape and retain the loud
   // extern-shadow invariant below.
-  const shape = cx.classShapes?.get(className);
+  const shape = sourceClassShapeFor(cx, expr.expression);
   const externInfo = cx.resolver?.getExternClassInfo?.(className);
   if (externInfo && !shape) {
     if (cx.resolver?.isAmbientBinding?.(expr.expression) === false) {
@@ -9127,10 +9217,10 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
     ts.isIdentifier(expr.expression.expression) &&
     !receiverIsDirectModuleBinding &&
     cx.scope.get(expr.expression.expression.text) === undefined &&
-    cx.classShapes?.has(expr.expression.expression.text)
+    sourceClassShapeFor(cx, expr.expression.expression) !== undefined
   ) {
     const className = expr.expression.expression.text;
-    const shape = cx.classShapes.get(className)!;
+    const shape = sourceClassShapeFor(cx, expr.expression.expression)!;
     const method = findClassMember(shape, methodName, "static");
     if (!method) {
       demoteToLegacy(
@@ -14162,7 +14252,7 @@ function lowerInstanceOf(expr: ts.BinaryExpression, cx: LowerCtx): IrValueId {
       `ir/from-ast: wrapper instanceof cannot normalize ${describeIrType(lt)} to anyref (${cx.funcName})`,
     );
   }
-  const targetShape = cx.classShapes?.get(className);
+  const targetShape = sourceClassShapeFor(cx, expr.right);
   if (!targetShape) {
     demoteToLegacy(
       "operand-coercion-unsupported",
