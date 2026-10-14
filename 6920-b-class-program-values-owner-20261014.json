@@ -1,0 +1,89 @@
+{
+  "id": "6920",
+  "slice": "class-program-values-owner-successor-20261014",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+  "claimed_at": "2026-10-14T21:32:10.537953+00:00",
+  "updated_at": "2026-10-14T21:32:10.537953+00:00",
+  "write_id": "b-class-program-values-owner-d21cf8fd-8993-46d5-abd6-8ba2c2a21171",
+  "handoff_scope": [
+    {
+      "kind": "class-program-values-owner",
+      "at": "2026-10-14T21:32:10.537953+00:00",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+      "manifest": {
+        "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+        "componentPreimages": [
+          {
+            "path": "src/ir/program-prepare-ir.ts",
+            "bytes": 11318,
+            "sha256": "9cc4b5007d801a1cf59890cd9856364ff3382cf11d2d26a0f8bdea8432ccaf6e"
+          },
+          {
+            "path": "src/ir/program/validation.ts",
+            "bytes": 49198,
+            "sha256": "80a3a8e24089da41ede777b89ed403e66e96f9bfd9999c77dc414950cc18d042"
+          }
+        ],
+        "canonicalNewPaths": [
+          "src/ir/program/native-js-class-values.ts",
+          "tests/issue-6920-native-js-class-value-context.test.ts"
+        ],
+        "policy": {
+          "path": "scripts/compiler-boundaries.json",
+          "preimageBytes": 643323,
+          "preimageSha256": "ec6261b7d51894127c91fcc8cb065ed34394c0aa3dd2c6d4fffcb8100488021e",
+          "exactAppend": [
+            {
+              "path": "src/ir/program/native-js-class-values.ts",
+              "state": "clean",
+              "layer": "ir-program"
+            }
+          ]
+        },
+        "privateCandidate": {
+          "path": ".tmp/class-program-values-owner/normalization.ts",
+          "sha256": "a63525c79457dbc1ec537fba8e95336bad475d84729be241c0d75ad4246febe7",
+          "status": "private conditional context implementation; active13case qualifier; not production placement"
+        },
+        "operations": [
+          "Construct complete current actual ABI/body/startup/global/export normalized input and independently replay internally generated value descriptions. No caller supplied report is accepted.",
+          "Preparation diagnostic after final actual support bodies/ABI, before freeze; unrepresented outcome is a located class-projection-unsupported result.",
+          "Original validation only after full canonical ABI/body/startup owner joins. Selected validation only after exact canonical runtime projection validation, using that actual member functions plus canonical runtime support.",
+          "No result attaches to PreparedIrProgram/codec and no readiness/transport permission derives from conditional descriptive reports."
+        ],
+        "constraints": [
+          "Preserve all unrelated source, public heads, HOLDs and A integration/queue ownership.",
+          "Do not change source root activation, gate rules, exclusions, allowances, codec schema, signatures or physical helper authority.",
+          "Use current complete ABI, original/derived/support owners and canonical startup order. External JS arguments remain UNKNOWN, raw global exports explicitly classified.",
+          "Multiple logical results, async state buffers and unimplemented native live-function initialization remain explicit unrepresented outcomes, never truncated or guessed.",
+          "Reject accessors before execution; no executable callbacks, source/checker data or caller labelled builtin/scalar-entry grant.",
+          "Retain prior failed evidence and protected old B33915; never cancel tests without human authorization.",
+          "Require A/B public-history successor independent qualification and fresh full-source/context/owner tests before hooking into production."
+        ]
+      },
+      "manifestSha256": "88583503cdd01d5c3a9193690b5d2250ec0ffa486b6186016d333206e76f4c0f",
+      "constraints": [
+        "Preserve all unrelated source, public heads, HOLDs and A integration/queue ownership.",
+        "Do not change source root activation, gate rules, exclusions, allowances, codec schema, signatures or physical helper authority.",
+        "Use current complete ABI, original/derived/support owners and canonical startup order. External JS arguments remain UNKNOWN, raw global exports explicitly classified.",
+        "Multiple logical results, async state buffers and unimplemented native live-function initialization remain explicit unrepresented outcomes, never truncated or guessed.",
+        "Reject accessors before execution; no executable callbacks, source/checker data or caller labelled builtin/scalar-entry grant.",
+        "Retain prior failed evidence and protected old B33915; never cancel tests without human authorization.",
+        "Require A/B public-history successor independent qualification and fresh full-source/context/owner tests before hooking into production."
+      ]
+    }
+  ],
+  "predecessors": [
+    "3522-b-native-class-semantic-producer-20261014.json",
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}
