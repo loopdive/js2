@@ -1,0 +1,126 @@
+{
+  "id": "6920",
+  "slice": "productive-kernel-string-owner-successor-20261015",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-class-resource-session-20261015-01a12827",
+  "claimed_at": "2026-10-14T22:32:29.996707+00:00",
+  "updated_at": "2026-10-14T22:32:29.996707+00:00",
+  "write_id": "b-productive-kernel-string-owner-37f201a8-6147-4225-a7d7-d40a97600b8a",
+  "handoff_scope": [
+    {
+      "kind": "productive-kernel-string-owner",
+      "at": "2026-10-14T22:32:29.996707+00:00",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-class-resource-session-20261015-01a12827",
+      "manifest": {
+        "receivingBranch": "codex/6920-b-class-resource-session-20261015-01a12827",
+        "componentPreimages": [
+          {
+            "path": "src/backend/wasmgc/program/native-realm.ts",
+            "bytes": 71309,
+            "sha256": "b49d6c5e63bb054a50c234b4f72f2390e350163e4d0140c26c1ec1ffc11d760b"
+          },
+          {
+            "path": "src/backend/wasmgc/resources/native-object-realm.ts",
+            "bytes": 19412,
+            "sha256": "c56326cfa85b6a7f1525d172b5354cd02d0e633d23a1a7517e787076037ac0d3"
+          },
+          {
+            "path": "src/backend/wasmgc/program/native-string-values.ts",
+            "bytes": 29370,
+            "sha256": "cbd8d80b822e38723479aedfb3e1debf03abb35476c9a7230818a50d3121b81f"
+          },
+          {
+            "path": "src/ir/program-consumer.ts",
+            "bytes": 76468,
+            "sha256": "ca8b922786e16b2e6fd7edf4d4eb075be7014e04f96b5c9f441a759f481f4ccd"
+          }
+        ],
+        "canonicalNewPaths": [],
+        "operations": [
+          "Move whole actual reserveKernelResources physical construction algorithm into existing native-object-realm resource owner via exact concrete issued resource DATA port; private realm owner/currentness/phase/failure stays in actual native-realm owner.",
+          "Move whole actual prepareNativeProgramStringInput physical planner into existing native-string-values owner; main already imports it, switch that named import on same existing edge."
+        ],
+        "constraints": [
+          "Exactly these four existing source paths; no new leaf/reexport facade, code compression, allowance or gate weakening.",
+          "Preserve exact physical recipes/order/handles/error precedence; no class permission callback or borrowed-world readiness.",
+          "Actual complete formatted source must satisfy1500 LOC/300 function and clean active closure; body-only1490 estimate is not proof.",
+          "Actual IR backend/runtime edges remain at most28/9, reverse at most113 and SCC704/4; verify after full wiring, no virtual counts credited.",
+          "Root owns policy/issue only; existing issue dependency may be restored but no new grant.",
+          "Preserve original C historical failed qualifiers and old87043/protectedB33915; no cancellation or public source head changes."
+        ],
+        "proposal": {
+          "status": "read-only proposal; no source changes",
+          "preimages": [
+            {
+              "path": "src/backend/wasmgc/program/native-realm.ts",
+              "bytes": 71309,
+              "sha256": "b49d6c5e63bb054a50c234b4f72f2390e350163e4d0140c26c1ec1ffc11d760b",
+              "rawLines": 1630
+            },
+            {
+              "path": "src/backend/wasmgc/resources/native-object-realm.ts",
+              "bytes": 19412,
+              "sha256": "c56326cfa85b6a7f1525d172b5354cd02d0e633d23a1a7517e787076037ac0d3",
+              "rawLines": 476
+            },
+            {
+              "path": "src/backend/wasmgc/program/native-string-values.ts",
+              "bytes": 29370,
+              "sha256": "cbd8d80b822e38723479aedfb3e1debf03abb35476c9a7230818a50d3121b81f",
+              "rawLines": 657
+            }
+          ],
+          "moves": [
+            {
+              "function": "reserveKernelResources",
+              "start": 352,
+              "end": 448,
+              "lines": 97,
+              "sha256": "eecd9e493fa83f75530f40a57f7a239c0bf7ade9e4f3ad3c6087bdd8d4e7a1ae"
+            },
+            {
+              "function": "prepareNativeProgramStringInput",
+              "start": 573,
+              "end": 615,
+              "lines": 43,
+              "sha256": "94091408588ffe408e4e9b030d1645b65538f731a9967e8b88f7692eeec6fa79"
+            }
+          ],
+          "bodyOnlyProjection": {
+            "nativeRealm": 1490,
+            "objectRealm": 573,
+            "stringValues": 700
+          },
+          "observedGraph": {
+            "irBackend": 28,
+            "irRuntime": 9,
+            "backendIr": 109
+          },
+          "proposedGraph": "IR edges remain 28/9; main switches string function to its existing native-string-values import. Backend->IR requires actual detector after typed import wiring; no cycle waiver.",
+          "qualification": "Body-only arithmetic, not a formatted/typechecked candidate. Import deletions and explicit port call replacement must be measured before claiming <=1500. No source edits."
+        }
+      },
+      "manifestSha256": "f8d60139132121eb564badc1e7d70c2403496facb5b54c174fadea79e5152fc9",
+      "constraints": [
+        "Exactly these four existing source paths; no new leaf/reexport facade, code compression, allowance or gate weakening.",
+        "Preserve exact physical recipes/order/handles/error precedence; no class permission callback or borrowed-world readiness.",
+        "Actual complete formatted source must satisfy1500 LOC/300 function and clean active closure; body-only1490 estimate is not proof.",
+        "Actual IR backend/runtime edges remain at most28/9, reverse at most113 and SCC704/4; verify after full wiring, no virtual counts credited.",
+        "Root owns policy/issue only; existing issue dependency may be restored but no new grant.",
+        "Preserve original C historical failed qualifiers and old87043/protectedB33915; no cancellation or public source head changes."
+      ]
+    }
+  ],
+  "predecessors": [
+    "3522-b-native-class-semantic-producer-20261014.json",
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}
