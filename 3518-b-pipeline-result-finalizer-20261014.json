@@ -50,6 +50,20 @@
       "exactChange": "Private constructor-time descriptor-only snapshots of complete produced artifact fields/shape/nested aliases and original binary bytes. Fixed readonly checker verifies real construction observations before first input issuance and at currentness replay. No public register/callback, caller output token, kind-only authority or snapshot of already caller-mutated first-issuance data.",
       "allowedLifecycle": "Only actually measured trusted optimizer binary/diagnostic transitions may be handled; no caller semantic updates. Preserve original generic finalizer, projection, target/options, recgroup and all other algorithms. New moved-checker body has explicit construction-state/byte guard beyond bounded own optionalflag reads.",
       "controls": "Actual pre-first-issuance importsHelper/DTS/WIT/ABI/importManifest/capability/nested-alias/shape/accessor changes where fields are truly produced; original binary byte alias mutation including a valid semantic-change module where possible;0 getter effects, healthy real productive tuples, old currentness/await/copy/foreign tests. Retain prior88/11/build/4accepted epoch/probe separately, qualify final expanded actual denominator/types/build/gates/four real CLI acceptance."
+    },
+    {
+      "paths": [
+        "src/compiler/pipeline-result-finalizer.ts",
+        "src/compiler/ir-native-number-undefined-optimization.ts",
+        "tests/issue-6920-native-number-undefined-optimization.test.ts",
+        "tests/issue-6920-pipeline-result-finalization.test.ts"
+      ],
+      "purpose": "Cohesive private ownership of actual artifact construction and native optimizer lifecycle; fix measured pre-first-issuance semantic and byte mutation without introducing a dependency cycle.",
+      "exactChange": "Move existing NativeNumberUndefinedOptimizationObservation, Input, inputs/issued WeakMap/WeakSet, fields, observation, invalid, own, optionsData, semanticFields, equal, bytes, equalBytes, current, resolveBackend, nativeNumberUndefinedOptimizationLevel, issueNativeNumberUndefinedOptimizationInput, optimizerData, optimizerFields, applyIssuedNativeNumberUndefinedOptimization and nativeNumberUndefinedOptimizationObservation into pipeline-result-finalizer.ts with conflict-free private names/imports. Old optimizer file becomes compatibility reexports for unchanged public names/types. Productive owner imports optimize.js and physical parser directly, never the facade. Constructor snapshot remains immutable; readonly checker compares constructor baseline before issuance and exact internally maintained expected state afterward. Private checker/current helpers must not recurse. Actual optimizer alone updates expected binary/diagnostic state using its existing transitions.",
+      "testInstrumentation": "Only existing two await-mutation cases' shared preparation block rebinds spy from readonly checker to actual finalizePreparedPipelinePresentation pass-through and captures [presentation, completed.module, completed.artifacts, completed.artifacts.binary]. Preserve real compile fixture, mutation location, actual await, expectations and all other original assertions. New finalizer tests cover complete produced descriptors/shape/nested identities and original bytes before first issue, healthy and real accepted optimization transitions.",
+      "metadata": "Root owns scripts/compiler-boundaries.json and plan/issues/6920-native-linear-shared-source-handoff.md. Re-measure actual closure/cycles and honestly revise existing optimizer compatibility row and finalizer row if needed. Earlier append-only two-row transport proposal is superseded if existing row DATA/raw changes; receive its exact revised continuation before implementation.",
+      "preserve": "Original generic finalizer/projector/target/options/recgroup bodies and unrelated preparation/SDK algorithms; prior failed and qualified epochs; frozen current2018 checkpoint and live714. No public registration/update hooks, caller callback as proof, owner-to-facade edge, self-import for tests, foreign queue/main/HOLD changes.",
+      "qualification": "Fresh whole owned manifest, expanded real denominator with natural exit and no unhandled-error waiver, full explicit typing roots/excludes[], build with correct Node PATH/heap, gates, actual four-profile optimizer CLI acceptance; no reuse of prior88 as repaired evidence."
     }
   ],
   "exact_function_scope": [
@@ -130,8 +144,8 @@
   "receiving_from_B_record": "6920-b-native-public-routing-takeover-20261013.json",
   "publication_dependency": "Separate fresh branch; root current2018 checkpoint and running inventory remain unchanged. Full62+new tests/typing/build and actual inventory/cycle closure qualified before adoption.",
   "claimed_at": "2026-10-14T09:13:13.210178Z",
-  "updated_at": "2026-10-14T10:31:29.075338Z",
-  "write_id": "b-number-undefined-adac15b2-39ef-4be8-9081-9a9417a9a272",
+  "updated_at": "2026-10-14T10:49:40.973294Z",
+  "write_id": "b-number-undefined-618c8e8f-65cb-45ce-976b-867c90108d49",
   "scope_refinements": [
     {
       "at": "2026-10-14T09:23:36.305057Z",
@@ -191,7 +205,31 @@
         "scope": "native Linear API/routing, checked allocation preparation, carrier/emission wiring, startup resources, existing allocator/constructor recipe; preserve existing branches and unrelated work; fresh isolated worktrees and normal checks"
       },
       "reason": "Measured actual registered artifact semantic mutation before first issuance bypasses identity-only custody. Receive exact private constructor-time full semantic/byte observations with readonly replay, preserving generic algorithms and real lifecycle."
+    },
+    {
+      "at": "2026-10-14T10:49:40.973294Z",
+      "addition": {
+        "paths": [
+          "src/compiler/pipeline-result-finalizer.ts",
+          "src/compiler/ir-native-number-undefined-optimization.ts",
+          "tests/issue-6920-native-number-undefined-optimization.test.ts",
+          "tests/issue-6920-pipeline-result-finalization.test.ts"
+        ],
+        "purpose": "Cohesive private ownership of actual artifact construction and native optimizer lifecycle; fix measured pre-first-issuance semantic and byte mutation without introducing a dependency cycle.",
+        "exactChange": "Move existing NativeNumberUndefinedOptimizationObservation, Input, inputs/issued WeakMap/WeakSet, fields, observation, invalid, own, optionsData, semanticFields, equal, bytes, equalBytes, current, resolveBackend, nativeNumberUndefinedOptimizationLevel, issueNativeNumberUndefinedOptimizationInput, optimizerData, optimizerFields, applyIssuedNativeNumberUndefinedOptimization and nativeNumberUndefinedOptimizationObservation into pipeline-result-finalizer.ts with conflict-free private names/imports. Old optimizer file becomes compatibility reexports for unchanged public names/types. Productive owner imports optimize.js and physical parser directly, never the facade. Constructor snapshot remains immutable; readonly checker compares constructor baseline before issuance and exact internally maintained expected state afterward. Private checker/current helpers must not recurse. Actual optimizer alone updates expected binary/diagnostic state using its existing transitions.",
+        "testInstrumentation": "Only existing two await-mutation cases' shared preparation block rebinds spy from readonly checker to actual finalizePreparedPipelinePresentation pass-through and captures [presentation, completed.module, completed.artifacts, completed.artifacts.binary]. Preserve real compile fixture, mutation location, actual await, expectations and all other original assertions. New finalizer tests cover complete produced descriptors/shape/nested identities and original bytes before first issue, healthy and real accepted optimization transitions.",
+        "metadata": "Root owns scripts/compiler-boundaries.json and plan/issues/6920-native-linear-shared-source-handoff.md. Re-measure actual closure/cycles and honestly revise existing optimizer compatibility row and finalizer row if needed. Earlier append-only two-row transport proposal is superseded if existing row DATA/raw changes; receive its exact revised continuation before implementation.",
+        "preserve": "Original generic finalizer/projector/target/options/recgroup bodies and unrelated preparation/SDK algorithms; prior failed and qualified epochs; frozen current2018 checkpoint and live714. No public registration/update hooks, caller callback as proof, owner-to-facade edge, self-import for tests, foreign queue/main/HOLD changes.",
+        "qualification": "Fresh whole owned manifest, expanded real denominator with natural exit and no unhandled-error waiver, full explicit typing roots/excludes[], build with correct Node PATH/heap, gates, actual four-profile optimizer CLI acceptance; no reuse of prior88 as repaired evidence."
+      },
+      "authority": {
+        "answer": "Take over the blocking shared seams",
+        "priorAnswer": "takeover all of session b",
+        "humanRequest": "unblock",
+        "scope": "native Linear API/routing, checked allocation preparation, carrier/emission wiring, startup resources, existing allocator/constructor recipe; preserve existing branches and unrelated work; fresh isolated worktrees and normal checks"
+      },
+      "reason": "Cohesive productive finalizer owns original artifact observations and the actual native optimization lifecycle. Private expected-state updates remain with real optimizer; no reverse import or public update authority. Preserve existing fixtures and rebind only real factory instrumentation."
     }
   ],
-  "previous_write_id": "b-number-undefined-successor-fc14689b-9557-4b42-a53a-9899c089398d"
+  "previous_write_id": "b-number-undefined-adac15b2-39ef-4be8-9081-9a9417a9a272"
 }
