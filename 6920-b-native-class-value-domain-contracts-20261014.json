@@ -1,0 +1,47 @@
+{
+  "id": "6920",
+  "slice": "native-class-value-domain-contracts-successor-20261014",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-native-js-class-source-20261014-01a12827",
+  "claimed_at": "2026-10-14T19:37:59.995731Z",
+  "updated_at": "2026-10-14T19:37:59.995731Z",
+  "write_id": "b-class-value-domain-contracts-c2f1e2a0-d50f-4c85-8d86-eb9a37fc17f8",
+  "handoff_scope": [
+    {
+      "kind": "pure class value-domain contract relocation",
+      "at": "2026-10-14T19:37:59.995731Z",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-native-js-class-source-20261014-01a12827",
+      "manifest": {
+        "receivingBranch": "codex/6920-b-native-js-class-source-20261014-01a12827",
+        "componentPreimages": [
+          {
+            "path": "src/ir/analysis/native-js-class-value-domains.ts",
+            "bytes": 72819,
+            "sha256": "0ce85063472be0502d1fb78ac3b0e3529a02d61343f3b731393f3fa10f656d72",
+            "functions": "Whole unchanged pure DATA prefix relocation with exact type-only imports/backward reexports; entire runtime suffix unchanged"
+          }
+        ],
+        "canonicalNewPaths": [
+          "src/ir/analysis/native-js-class-value-domain-contracts.ts"
+        ],
+        "scope": "one new pure DATA contract leaf plus exact type-only producer imports/backward reexports; no schema changes",
+        "proposalSha256": "df4c013ea97983782e386fa99c03801394ff73e7014156be96c2c2ba01b57dfd",
+        "constraints": "Pure type declarations only; exact13 names and7437 byte prefix unchanged, same algorithms, no runtime import/reexport through schema. Keep existing independent checker type-only compatibility path. No schema/effect/capability relaxation, minification or size budget waiver. This new leaf does not create a scalar bridge, physical carrier or whole migration proof. Preserve all existing owner scopes/branches/HOLDs and original B33915. Root class source hook and canonical source global work remains independently owned."
+      },
+      "manifestSha256": "d73bc52f79ac130507ff804b9c082bdf08d3ab39fd404d4187dffbb3fd46e394",
+      "constraints": "Pure type declarations only; exact13 names and7437 byte prefix unchanged, same algorithms, no runtime import/reexport through schema. Keep existing independent checker type-only compatibility path. No schema/effect/capability relaxation, minification or size budget waiver. This new leaf does not create a scalar bridge, physical carrier or whole migration proof. Preserve all existing owner scopes/branches/HOLDs and original B33915. Root class source hook and canonical source global work remains independently owned."
+    }
+  ],
+  "predecessors": [
+    "3522-b-native-class-semantic-producer-20261014.json",
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}
