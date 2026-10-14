@@ -1,0 +1,89 @@
+{
+  "id": "6920",
+  "slice": "native-class-value-domain-successor-20261014",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-native-js-class-source-20261014-01a12827",
+  "claimed_at": "2026-10-14T17:04:54.653430Z",
+  "updated_at": "2026-10-14T17:04:54.653430Z",
+  "write_id": "b-class-value-domain-6f1c1015-07a9-456f-b273-10bbd2750b53",
+  "handoff_scope": [
+    {
+      "kind": "existing native class value-domain producer and independent replay",
+      "at": "2026-10-14T17:04:54.653430Z",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-native-js-class-source-20261014-01a12827",
+      "manifest": {
+        "receivingBranch": "codex/6920-b-native-js-class-source-20261014-01a12827",
+        "integrationBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+        "checkerBranch": "codex/6920-b-native-js-class-allocation-20261014-01a12827",
+        "componentPreimages": [
+          {
+            "path": "src/ir/program-prepare-ir.ts",
+            "bytes": 11318,
+            "sha256": "9cc4b5007d801a1cf59890cd9856364ff3382cf11d2d26a0f8bdea8432ccaf6e",
+            "functions": "prepareTypedIrProgram bounded native-only actual-context analysis/replay hooks"
+          },
+          {
+            "path": "src/ir/program/validation.ts",
+            "bytes": 49198,
+            "sha256": "80a3a8e24089da41ede777b89ed403e66e96f9bfd9999c77dc414950cc18d042",
+            "functions": "validatePreparedIrProgram original plus authenticated selected namespace replay"
+          }
+        ],
+        "canonicalNewPaths": [
+          "src/ir/analysis/native-js-class-value-domains.ts",
+          "src/ir/analysis/evidence/native-js-class-value-domains.ts",
+          "tests/issue-6920-native-js-class-value-domains.test.ts"
+        ],
+        "specSha256": "49a3ba91070d2502ca32cf4a872d261c52a74658e9760c45c6a33c21b303c81e",
+        "hookProposalSha256": "78763944b59b8bc91f467f9e9155370114dc70a70c7b6652b962980f79ff9e56",
+        "hooks": [
+          {
+            "path": "src/ir/program-prepare-ir.ts",
+            "function": "prepareTypedIrProgram",
+            "insert": "Immediately after const transformedEntries = prepareIrProgramAbiEntries(transformed, transformedRuntime.declarations), before optimizePreparedIrProgramIr",
+            "input": "actual transformed.ir, complete transformed.inventory/derivedUnits, actual transformedEntries and startup; original namespace",
+            "nativeGate": "actual extracted canonical class definitions nonempty and selected policy is native (existing isLegacyHostIrPolicy predicate). Class-free path untouched.",
+            "operation": "Build closed pure actual-context input locally in owner; producer creates description; independent checker verifies every transfer/summary/equation against fresh same actual input. No stored attachment or callback."
+          },
+          {
+            "path": "src/ir/program-prepare-ir.ts",
+            "function": "prepareTypedIrProgram",
+            "insert": "After final entries/completeFinalModule are constructed and before freezePreparedIrRuntimeValue of frozenSemantic; original completed namespace rerun",
+            "input": "completeFinalModule plus finalSource inventory/derivedUnits/startup and actual final entries; includes genuine support bodies and final actual global/callable population",
+            "operation": "Repeat native-only producer+independent checker after all optimizer/body changes; no reuse of pre-optimizer report. UNKNOWN remains readiness obligation, not numeric proof."
+          },
+          {
+            "path": "src/ir/program/validation.ts",
+            "function": "validatePreparedIrProgram",
+            "insert": "After complete original ABI/global/startup joins and before const projections = new Set in runtime projection validation block",
+            "input": "actual current program.ir/inventory/derivedUnits/ABI/startup after existing full validation; original namespace",
+            "operation": "Recompute and independently check source-free original DATA; no report from PreparedIR/codec schema."
+          },
+          {
+            "path": "src/ir/program/validation.ts",
+            "function": "validatePreparedIrProgram",
+            "insert": "Inside each runtime projection loop immediately AFTER assertPreparedIrRuntimeProjection(program, projection)",
+            "input": "actual authenticated projection.prepared.functions plus complete same inventory/derivedUnits/ABI/startup and exact selected projection namespace",
+            "operation": "Recompute selected namespace and independently check. Never merge original SSA IDs with selected IDs; original IDs alone cannot authorize selected module mutation."
+          }
+        ],
+        "scope": "Actual pure native JS class value domains and independent equation replay over complete authentic original/selected modules. Existing two orchestration hooks only. A owns producer/types, sole test and orchestration; B owns independent checker implementation in separate worktree.",
+        "constraints": "No producer runtime import or report equality/hash authority in checker; DATA getter-free custody and full SSA/CFG/heap/call summary census. Actual transport seeds only, UNKNOWN never scalar proof. No public bridge, ordinary caller ABI expansion, constructor/default/dynamic-binding transport, new Prepared schema/attachment, fake sites/calls/roots or implicit execution credit. New shared seams require separate exact receiving. Preserve class-free paths, source custody, B18 current allocation/error replay and C physical recipes; no peer source writes."
+      },
+      "manifestSha256": "1ea3ddb65f6bd7c6e161e95397a1db6659c28d492f0c077c6fa95ada5c72e6ee",
+      "constraints": "No producer runtime import or report equality/hash authority in checker; DATA getter-free custody and full SSA/CFG/heap/call summary census. Actual transport seeds only, UNKNOWN never scalar proof. No public bridge, ordinary caller ABI expansion, constructor/default/dynamic-binding transport, new Prepared schema/attachment, fake sites/calls/roots or implicit execution credit. New shared seams require separate exact receiving. Preserve class-free paths, source custody, B18 current allocation/error replay and C physical recipes; no peer source writes."
+    }
+  ],
+  "predecessors": [
+    "3522-b-native-class-semantic-producer-20261014.json",
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}
