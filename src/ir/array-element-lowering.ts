@@ -19,6 +19,7 @@ import type { IrVectorLowering } from "./backend/handles.js";
 import { vecElemSetProviderSymbol, sourceVectorValueType } from "./ast-vector-representation.js";
 import { asVal, irTypeEquals, irVal, type IrConst, type IrType, type IrValueId } from "./nodes.js";
 import { demoteToLegacy, IrInvariantError, IrUnsupportedError } from "./outcomes.js";
+import { nativeVectorMutationOwnerIsSynchronous } from "./native-vector-mutation-proof.js";
 import type { ValType } from "./types.js";
 
 interface ArrayElementResolver {
@@ -413,6 +414,37 @@ export function tryLowerVecPush(
       host.emptyArrayInference.isResolvedVectorExpression(receiverExpression));
   if (recvType.kind !== "vec" && (!vecRecvVal || (vecRecvVal.kind !== "ref" && !scalarVecReceiver))) {
     return undefined;
+  }
+  if (
+    logical &&
+    logicalElement?.kind === "f64" &&
+    expr.arguments.length > 1 &&
+    !expr.arguments.some(ts.isSpreadElement) &&
+    nativeVectorMutationOwnerIsSynchronous(expr)
+  ) {
+    // JavaScript evaluates every argument before entering push. In particular,
+    // a later argument can observe or append to the same captured receiver.
+    const values = expr.arguments.map((argument) => {
+      const value = ops.lowerExpr(argument, IR_F64);
+      if (asVal(host.builder.typeOf(value))?.kind !== "f64") {
+        demoteToLegacy(
+          "method-call-unsupported",
+          `ir/from-ast: .push value ${ops.describeType(host.builder.typeOf(value))} into f64 vec ` +
+            `not in IR scope (${host.funcName})`,
+        );
+      }
+      return value;
+    });
+    const symbol = vecElemSetProviderSymbol(recvType, vec!);
+    let length!: IrValueId;
+    for (const value of values) {
+      length = host.builder.emitVecLen(recv);
+      const index = host.builder.emitUnary("i32.trunc_sat_f64_s", length, irVal({ kind: "i32" }));
+      host.builder.emitCall(irIntrinsicFuncRef(symbol), [recv, index, value], null);
+    }
+    if (statementPosition) return null;
+    const one = host.builder.emitConst({ kind: "f64", value: 1 }, IR_F64);
+    return host.builder.emitBinary("f64.add", length, one, IR_F64);
   }
   if (expr.arguments.length !== 1 || ts.isSpreadElement(expr.arguments[0]!)) {
     demoteToLegacy(
