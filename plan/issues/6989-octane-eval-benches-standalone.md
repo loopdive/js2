@@ -112,6 +112,14 @@ array. The box only round-trips it.
   calling it in the same function throws. A setup function assigning it and a
   later call using it (code-load's pattern) works.
 
+## Compiler crash found on the way (zlib ahead-of-time probe)
+
+`temporalKindForExpression` (src/codegen/temporal-native.ts) followed variable
+initializers without a cycle guard. Mutually referencing declarations
+(`var a = b, b = a;`, which Emscripten output contains) therefore overflowed
+the stack on the next member access. It now carries a visited set.
+Regression: `tests/issue-6989-temporal-kind-init-cycle.test.ts`.
+
 ## Tests
 
 `tests/quickjs-eval-membrane.test.ts` gains a "[[Construct]] of a compiled
