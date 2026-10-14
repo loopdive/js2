@@ -15,6 +15,18 @@ goal: architecture
 sprint: current
 parent: 5385
 related: [6708, 6979]
+# 2026-10-14: the GetIterator/step arms live in iterator-native.ts (closed-struct
+# closure-`next` arm + boundary host-object carrier test); runtime.ts carries the
+# boundary-import exception wrapping hookup and the `any`-argument null fix;
+# destructuring.ts excludes the native Map/Set struct from the vec probe.
+loc-budget-allow:
+  - src/codegen/iterator-native.ts
+  - src/runtime.ts
+  - src/codegen/statements/destructuring.ts
+func-budget-allow:
+  - src/codegen/iterator-native.ts::buildIteratorBody
+  - src/codegen/iterator-native.ts::fillNativeIteratorLateArms
+  - src/runtime.ts::resolveImport
 ---
 
 # #6980 — regime iterator / generator protocol in a JS environment
