@@ -46,6 +46,7 @@ import { isLinearU8RepresentableNew } from "./linear-uint8-signatures.js";
 import { definedFuncAt, isImportFuncIdx, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2) positional-read chokepoint
 import { wrapHostFacingExportsForThrow } from "./export-throw-boundary.js"; // (#5247) export-boundary throw unwrapping
 import { promoteTrampolineTailCalls } from "./closures/funcref-as-closure.js"; // (#5270 step 1.3) finalize-time return_call promotion
+import { funnelRepeatedReturnTails } from "./helpers/return-tail-funnel.js";
 import { fillHostFnctorMethodDrivers, maxHostFnctorMethodArity } from "./host-fnctor-method-driver.js";
 import { fillNativeConstructDrivers, maxReservedNativeConstructArity } from "./native-construct.js";
 import { fillConstructBoundDriver } from "./construct-bound.js"; // (#4196)
@@ -7213,8 +7214,9 @@ export function generateModule(
       fixupExternConvertAny(ctx, repairSharing.shared.size === 0 ? repairSharing : undefined),
     );
     // (#5270 step 1.3) Last: trampoline `call` → `return_call` against final
-    // types. Nothing after this retypes a function or edits a body.
+    // types. Nothing after this retypes a function; only the exit funnel edits bodies.
     promoteTrampolineTailCalls(ctx);
+    funnelRepeatedReturnTails(mod); // (#6983) after every positional body edit
     verifyFunctionSweep(mod); // #6768 no-op unless JS2WASM_FUNC_SWEEP_VERIFY=1
   } catch (e) {
     recordWholeSourceFailure(ctx, ast.sourceFile, classifyIrFailure(e, "build"), irPlanningIdentityContext);
@@ -11930,6 +11932,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     profilePhase("fixup-extern-convert-any", () =>
       fixupExternConvertAny(ctx, repairSharing.shared.size === 0 ? repairSharing : undefined),
     );
+    funnelRepeatedReturnTails(mod); // (#6983) after every positional body edit
     verifyFunctionSweep(mod); // #6768 no-op unless JS2WASM_FUNC_SWEEP_VERIFY=1
   } catch (e) {
     const failure = classifyIrFailure(e, "build");
