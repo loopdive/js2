@@ -133,6 +133,7 @@ import {
   sameExportedFunction,
 } from "./runtime/exported-function-identity.js";
 import { resolvePlatformCapabilityImport, wrapConsoleForHost } from "./runtime/console-host-marshal.js"; // (#6685)
+import { marshalPlatformArgs } from "./runtime/platform-arg-marshal.js"; // (#6708) regime carriers → JS values
 import {
   CLOCK_CAPABILITY_AUTHORITY,
   createCompiledDomCapabilityRuntime,
@@ -19665,6 +19666,7 @@ export function buildImports(
         hostImportCallState.getCaughtException,
       );
 
+    fn = marshalPlatformArgs(imp, fn, callbackState, _nativePrimitiveToHost, _MISS, _maybeWrapCallableUnknownArity);
     // DOM containment wrapping
     if (options?.domRoot && !domCapabilityRuntime) {
       if (imp.intent.type === "extern_class") {

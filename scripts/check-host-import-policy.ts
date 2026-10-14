@@ -3,9 +3,12 @@
 import { readFileSync } from "node:fs";
 import { compile } from "../src/index.ts";
 
-// (#6686/#5385 S5) The native regime is the compiler's default for a
-// native-first build in a JS environment; this ratchet measures exactly what
-// the compiler ships. Set JS2WASM_NATIVE_REGIME_JS=0 to measure the kill-switch lane.
+// (#6686/#5385 S5, #6708 S6) native-first is the compiler's DEFAULT policy in
+// every environment, and the native regime its default lowering in a JS
+// environment; the probes compile with no semanticProviders option, so this
+// ratchet measures exactly what the compiler ships. The compatibility control
+// spells the retired `host-assisted` profile explicitly. Set
+// JS2WASM_NATIVE_REGIME_JS=0 to measure the kill-switch lane.
 
 interface HostImportPolicyBaseline {
   schemaVersion: 1;
@@ -248,7 +251,6 @@ let nativeUnknownTotal = 0;
 for (const [name, source] of Object.entries(probes)) {
   const result = await compile(source, {
     fileName: `host-import-policy-native-first-${name}.ts`,
-    semanticProviders: "native-first",
   });
   if (!result.success) {
     throw new Error(
@@ -291,7 +293,10 @@ for (const [probe, names] of Object.entries(requiredBoundaryAdapters)) {
   }
 }
 
-const compatibility = await compile(probes.core, { fileName: "host-import-policy-compatibility.ts" });
+const compatibility = await compile(probes.core, {
+  fileName: "host-import-policy-compatibility.ts",
+  semanticProviders: "host-assisted",
+});
 const compatibilityDebt = compatibility.hostImportSummary?.byClassification["legacy-semantic"] ?? 0;
 if (!compatibility.success || compatibilityDebt === 0) {
   throw new Error(

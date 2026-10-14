@@ -40,6 +40,14 @@ single linear progression of "old → new". A change to codegen lives on
 - **Backend axis (lowering)** — WasmGC vs linear memory. **Alternatives**, not
   rivals. The target dictates the choice (browser/JS host → WasmGC; WASI /
   Component Model → linear). Both stay.
+- **Not an axis: JS host vs standalone semantics (#6708).** There is one
+  native semantic core. The `gc` target in a JS environment and
+  `--target standalone` lower ECMAScript through the same provider arms
+  (`targetProfile.nativeRegime`, today spelled `ctx.standalone`); the JS
+  environment adds only the value adapter, explicit platform capabilities and
+  named opt-in *accelerators* (#6978). The retired host-assisted profile
+  survives one release as `semanticProviders: "host-assisted"` and is deleted
+  in S7 — do not add code to it.
 - **Front-end axis (representation)** — direct AST→Wasm vs IR. IR
   **replaces** the accumulated direct-codegen hacks (155+ workarounds tracked
   in #1098). IR adopts AST node kinds step by step; on each adopted kind it

@@ -15241,6 +15241,11 @@
       "layer": "legacy-host"
     },
     {
+      "path": "src/runtime/platform-arg-marshal.ts",
+      "state": "unmigrated",
+      "layer": "legacy-host"
+    },
+    {
       "path": "src/codegen/expressions/declaration-bound-callee.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",

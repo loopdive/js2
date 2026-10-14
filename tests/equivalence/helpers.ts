@@ -1,7 +1,18 @@
 import { expect } from "vitest";
 import { compile, type CompileResult } from "../../src/index.js";
 import { isWasiErrorName } from "../../src/codegen/registry/error-types.js";
-import { buildStringConstants, buildImports as buildRuntimeImports } from "../../src/runtime.js";
+import { buildStringConstants, buildImports as buildRuntimeImports, wrapCompiledExports } from "../../src/runtime.js";
+
+/**
+ * (#6708) Since S6 the default policy is native-first: string (and other
+ * boundary) results cross through the compiled JS value adapter, exactly as a
+ * real embedder sees them. The host-assisted profile keeps the raw exports.
+ */
+function jsFacingExports(result: CompileResult, instance: WebAssembly.Instance): Record<string, Function> {
+  return result.targetProfile?.semanticProviders === "native-first"
+    ? (wrapCompiledExports(result, instance) as Record<string, Function>)
+    : (instance.exports as Record<string, Function>);
+}
 import ts from "typescript";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -344,7 +355,8 @@ export async function instantiateWithRuntime(result: CompileResult) {
   }
   const { instance } = await WebAssembly.instantiate(result.binary, imports);
   setInstanceFn?.(instance);
-  return instance;
+  if (result.targetProfile?.semanticProviders !== "native-first") return instance;
+  return { exports: jsFacingExports(result, instance) } as unknown as WebAssembly.Instance;
 }
 
 /**
@@ -378,7 +390,7 @@ export async function compileToWasm(source: string) {
   const { instance } = await WebAssembly.instantiate(result.binary, manualImports);
   // Set exports so runtime callbacks (iterator protocol, struct field getters) can access them
   setInstanceFn?.(instance);
-  return instance.exports as Record<string, Function>;
+  return jsFacingExports(result, instance);
 }
 
 /**

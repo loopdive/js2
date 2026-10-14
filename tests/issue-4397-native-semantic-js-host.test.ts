@@ -94,6 +94,8 @@ describe("#4397 native semantics in a JavaScript environment", () => {
 
     const compatibility = await compile(`export function value(): number { return 1; }`, {
       fileName: "issue-4397-ambient-compat.ts",
+      // (#6708) the compatibility profile is no longer the default; spell it.
+      semanticProviders: "host-assisted",
     });
     buildCompiledImports(compatibility, { RegExp: observedRegExp });
     expect(definitions).toBeGreaterThan(0);
@@ -195,6 +197,7 @@ describe("#4397 native semantics in a JavaScript environment", () => {
   it("keeps compatibility-profile dynamic values on the identity-preserving host boundary", async () => {
     const result = await compile(`export function echoAny(input: any): any { return input; }`, {
       fileName: "issue-4397-compatibility-dynamic-boundary.ts",
+      semanticProviders: "host-assisted",
     });
     expect(result.success, result.errors.map((error) => error.message).join("; ")).toBe(true);
     expect(result.exportSignatures?.echoAny).toEqual({ params: ["dynamic"], result: "dynamic" });
