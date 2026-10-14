@@ -1,0 +1,44 @@
+{
+  "id": "6920",
+  "slice": "native-class-source-global-assignment-expression-successor-20261014",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+  "claimed_at": "2026-10-14T19:23:35.554846Z",
+  "updated_at": "2026-10-14T19:23:35.554846Z",
+  "write_id": "b-class-source-global-assignment-expression-a723b1f1-cdc7-4e12-91b6-22099bd6bf97",
+  "handoff_scope": [
+    {
+      "kind": "actual source class mutable module globals and TDZ replay",
+      "at": "2026-10-14T19:23:35.554846Z",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+      "manifest": {
+        "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+        "componentPreimages": [
+          {
+            "path": "src/ir/from-ast.ts",
+            "bytes": 805136,
+            "sha256": "f05cb2cf349ed4776496bb354d8daf655814e5284f39323ce8e143ba3be71dec",
+            "functions": "new private native-class captured module assignment expression helper and native-only lowerExprUnchecked arm; genuine existing resolver/owner/type/TDZ/set, RHS returned once"
+          }
+        ],
+        "canonicalNewPaths": [],
+        "scope": "Complete the captured module write expression result needed by original field initializer order fixture. This arrived at existing generic deferred equals capability; add only the genuinely resolved native class module assignment path, retaining generic capability rules.",
+        "constraints": "No broad global/call/opcode waiver, runtime imports into pure analysis, fake guard/call/sourceunit/site, typed manifest relaxation, poststartup claim for classbody, scalar annotation proof, new schema/body bridge or newphysicalindex. Require exact current source global ABI key/ref/type and existing storage mutability; emit real TDZ checks before writes after RHS. Preserve existing ordinary module resolver behavior and source custody. Permit canonical ReferenceError only from actual complete semantic ABI plus exact null message/result/throw types; arbitrary runtime helpers, extern constants, managed globalstores and malformed operations refuse. Original constructor cases/expectedJSvalues retained. No new wholeclass/backend/public/Linear or27master completion credit. Root-only edits; original BWT/live33915 and agents moving snapshots untouched; later safe immutable adoption. No global equals capability waiver or local/foreign assignment admission; original RHS lowered once, current genuine mutable binding owner checked, TDZ before actual store and after RHS, exact RHS value returned."
+      },
+      "manifestSha256": "b49441ab8d6c27f09a3a2052a799b01ad78bb018671b32e4c9a8837652db7487",
+      "constraints": "No broad global/call/opcode waiver, runtime imports into pure analysis, fake guard/call/sourceunit/site, typed manifest relaxation, poststartup claim for classbody, scalar annotation proof, new schema/body bridge or newphysicalindex. Require exact current source global ABI key/ref/type and existing storage mutability; emit real TDZ checks before writes after RHS. Preserve existing ordinary module resolver behavior and source custody. Permit canonical ReferenceError only from actual complete semantic ABI plus exact null message/result/throw types; arbitrary runtime helpers, extern constants, managed globalstores and malformed operations refuse. Original constructor cases/expectedJSvalues retained. No new wholeclass/backend/public/Linear or27master completion credit. Root-only edits; original BWT/live33915 and agents moving snapshots untouched; later safe immutable adoption. No global equals capability waiver or local/foreign assignment admission; original RHS lowered once, current genuine mutable binding owner checked, TDZ before actual store and after RHS, exact RHS value returned."
+    }
+  ],
+  "predecessors": [
+    "3522-b-native-class-semantic-producer-20261014.json",
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}
