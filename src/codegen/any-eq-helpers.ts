@@ -20,7 +20,7 @@
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
-import { buildThrowJsErrorInstrs } from "./js-errors.js";
+import type { buildThrowJsErrorInstrs } from "./js-errors.js";
 import { addFuncType } from "./registry/types.js";
 
 /** (#6931) The deliberate standalone refusal for loose equality on a host value. */
@@ -44,14 +44,17 @@ const STANDALONE_HOST_EQ_MESSAGE = "Cannot compare a host JavaScript value with 
  * structs, arrays — is `eq`; null is native null. Returns undefined (no guard)
  * off the standalone target, so gc / wasi / native-first-in-JS are unchanged.
  */
-function ensureStandaloneHostEqGuard(ctx: CodegenContext): number | undefined {
+function ensureStandaloneHostEqGuard(
+  ctx: CodegenContext,
+  buildThrow: typeof buildThrowJsErrorInstrs,
+): number | undefined {
   if (ctx.standalone !== true) return undefined;
   const name = "__standalone_host_eq_guard";
   const existing = ctx.funcMap.get(name);
   if (existing !== undefined) return existing;
   // Register the in-module TypeError constructor + message BEFORE minting, so
   // the guard's own handle is not interleaved with the constructor's.
-  const throwInstrs = buildThrowJsErrorInstrs(ctx, "TypeError", STANDALONE_HOST_EQ_MESSAGE);
+  const throwInstrs = buildThrow(ctx, "TypeError", STANDALONE_HOST_EQ_MESSAGE);
   const typeIdx = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "externref" }], name);
   const funcIdx = mintDefinedFunc(ctx);
   const returnArg: Instr[] = [{ op: "local.get", index: 0 }, { op: "return" }];
@@ -117,9 +120,11 @@ export function registerAnyEqHelpers(
   strToNumIdx: number,
   tag5ToNumber: (opIdx: number) => Instr[],
   tag5ValueEqThen: () => Instr[],
+  // (#6931) injected so this module keeps type-only imports (import-cycle ratchet)
+  buildThrow: typeof buildThrowJsErrorInstrs,
 ): void {
   // (#6931) Standalone only: refuse a host value before any loose-eq arm reads it.
-  const guardIdx = ensureStandaloneHostEqGuard(ctx);
+  const guardIdx = ensureStandaloneHostEqGuard(ctx, buildThrow);
   const hostGuard: Instr[] =
     guardIdx === undefined
       ? []

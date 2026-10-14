@@ -16,6 +16,14 @@ language_feature: equality
 goal: standalone-gap
 related: [6921, 6920, 2081, 2175, 3673]
 assignee: "ttraenkler/claude-session-c"
+# 2026-10-14 (#6931): any-helpers.ts passes buildThrowJsErrorInstrs into
+# registerAnyEqHelpers so any-eq-helpers.ts keeps type-only imports; a direct
+# value import pulled it into the largest import cycle (704 -> 705, quality).
+# The +11 LOC / +10 lines are that one wiring call, no new logic.
+loc-budget-allow:
+  - src/codegen/any-helpers.ts
+func-budget-allow:
+  - src/codegen/any-helpers.ts::ensureAnyHelpers
 ---
 
 # #6931 — Standalone loose `==` on a host value in an `any` parameter
