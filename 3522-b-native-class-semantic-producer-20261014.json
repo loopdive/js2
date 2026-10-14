@@ -6,15 +6,16 @@
   "status": "in-progress",
   "branch": "codex/3522-b-native-class-producer-20261014-01a12827",
   "claimed_at": "2026-10-14T01:32:58.535944Z",
-  "updated_at": "2026-10-14T01:32:58.535944Z",
-  "write_id": "b-class-producer-bc94ad0e-60cd-42be-9a23-5b5890a07638",
+  "updated_at": "2026-10-14T01:41:20.225326Z",
+  "write_id": "b-class-array-factory-dbc7111b-77db-48e1-b174-eb09393da0d5",
   "authority": "Human active goal complete ir migration and authorized blocking shared-seam takeover. Original3522 parent released; disjoint whole-program semantic producer checkpoint only.",
   "predecessor_released_record": "3522.json",
   "handoff_scope": [
     "New src/ir/source-class-plans.ts, source-class-lowering.ts and program/class-preparation.ts: authentic complete ClassId/member/default/ordered-initializer semantic population; detached immutable DATA, no backend resources or fabricated AST.",
     "src/ir/identity.ts native-only implicit-constructor population hook preserving legacy default and held boundaries; program-source.ts signatures/body/capture dispatch; from-ast.ts non-synthetic implicit constructor builder and exact class site hooks. Preserve ordinary and explicit member algorithms and source ownership.",
     "src/ir/program/input-contracts.ts and input.ts optional complete class DATA own/dense copying; program-abi-contracts.ts and program/prepared-contracts.ts canonical class layout/init/new/member intents; program/class-layouts.ts, population.ts and validation.ts exact complete class unit/ABI/default/initializer joins. Preserve source-origin/evidence/foreign algorithms, no predicate weakening or omission.",
-    "New tests/issue-6920-native-class-source-preparation.test.ts, append-only6920 issue and truthful new boundary leaf rows. Genuine source live/codec preparation and exact supported/refused projection accounting; no runtime/class physical readiness credit."
+    "New tests/issue-6920-native-class-source-preparation.test.ts, append-only6920 issue and truthful new boundary leaf rows. Genuine source live/codec preparation and exact supported/refused projection accounting; no runtime/class physical readiness credit.",
+    "src/ir/array-element-inference.ts: new original-ClassDeclaration/ClassExpression initializer-only analysis factory for the nonsynthetic implicit constructor frame. Validate exact original nonstatic initializer node list/order and reject array literals/unsupported array-capable field contracts; construct genuine closed no-array result inside its existing private AliasGraph/analysis owner. Preserve entire original inferEmptyArrayElementTypes function and all generic array algorithms byte-identical; no fabricated external analysis instance, synthetic AST, unknown-as-scalar inference or array profile widening. New class source preparation test owns foreign/reordered/omitted initializer and array-field refusal controls."
   ],
   "exclusions": [
     "W1-C super/accessor and original A claims/queue",
@@ -28,5 +29,14 @@
     "complete presentation and class public ABI",
     "closures, inheritance, super/accessors and all supported class semantics",
     "full conformance, optimization/performance, retirement and verified main delivery"
-  ]
+  ],
+  "scope_refinements": [
+    {
+      "at": "2026-10-14T01:41:20.225326Z",
+      "addition": "src/ir/array-element-inference.ts: new original-ClassDeclaration/ClassExpression initializer-only analysis factory for the nonsynthetic implicit constructor frame. Validate exact original nonstatic initializer node list/order and reject array literals/unsupported array-capable field contracts; construct genuine closed no-array result inside its existing private AliasGraph/analysis owner. Preserve entire original inferEmptyArrayElementTypes function and all generic array algorithms byte-identical; no fabricated external analysis instance, synthetic AST, unknown-as-scalar inference or array profile widening. New class source preparation test owns foreign/reordered/omitted initializer and array-field refusal controls.",
+      "authority": "Human active goal complete ir migration and authorized blocking shared-seam takeover. Original3522 parent released; disjoint whole-program semantic producer checkpoint only.",
+      "reason": "Measured nonsynthetic LowerCtx dependency: original function factory requires FunctionWithBody and a private AliasGraph. A bounded authentic original-initializer factory avoids fabricated analysis and source AST synthesis."
+    }
+  ],
+  "previous_write_id": "b-class-producer-bc94ad0e-60cd-42be-9a23-5b5890a07638"
 }
