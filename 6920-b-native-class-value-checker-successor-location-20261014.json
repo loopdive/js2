@@ -1,0 +1,49 @@
+{
+  "id": "6920",
+  "slice": "native-class-value-checker-successor-location-successor-20261014",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-class-value-replay-successor-20261014-01a12827",
+  "claimed_at": "2026-10-14T18:38:54.186016Z",
+  "updated_at": "2026-10-14T18:38:54.186016Z",
+  "write_id": "b-class-value-checker-successor-location-33d7af98-7f36-4f40-9b46-787497f7b99e",
+  "handoff_scope": [
+    {
+      "kind": "isolated existing independent checker successor execution location",
+      "at": "2026-10-14T18:38:54.186016Z",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-class-value-replay-successor-20261014-01a12827",
+      "manifest": {
+        "receivingBranch": "codex/6920-b-class-value-replay-successor-20261014-01a12827",
+        "receivingWorktree": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-value-replay-successor-20261014-01a12827",
+        "base": "df466f30d4ee27ab332debad823912ee9155c80c",
+        "oldBranch": "codex/6920-b-native-js-class-allocation-20261014-01a12827",
+        "componentPreimages": [
+          {
+            "path": "src/ir/analysis/evidence/native-js-class-value-domains.ts",
+            "bytes": 60358,
+            "sha256": "4689b53e225032c3e07114d7d179805a3ddb8fca85581736d0430c3e365fa961"
+          }
+        ],
+        "canonicalNewPaths": [],
+        "functions": [
+          "Existing received independent class value-domain checker leaf only; successor execution location"
+        ],
+        "scope": "Continue the already-received independent checker in one fresh isolated worktree captured from exact original B inputs while preserving original B worktree and live erroneous test33915. No new checker authority or feature scope.",
+        "constraints": "Only checker leaf writable; all remaining source/test/config files captured dependencies under original owners. Require complete source/test/config private probe census with before/after old-input hashes, exact copy and immutable snapshot provenance before any code edits. Adopt only separately qualified tag4, types03 data port and logical-role3 patches at recorded safe points. A producer/test/twohooks remain A owned, C resources remain C owned. Preserve old33915 and source files; no termination/restart/reset/stash/history rewrite, no broad Vitest launch. Exact corrected singleton probe selection census required. Full semantic independent replay from BOTTOM/UNKNOWN and current original/selected/source/heap/control provenance unchanged. No producer runtime import, annotation scalar proof, public transport or class readiness. Preserve branches/HOLD/main/queue."
+      },
+      "manifestSha256": "0eb68e02393222a6df2555fea8f19119659029953258e6d194122d399e3b39db",
+      "constraints": "Only checker leaf writable; all remaining source/test/config files captured dependencies under original owners. Require complete source/test/config private probe census with before/after old-input hashes, exact copy and immutable snapshot provenance before any code edits. Adopt only separately qualified tag4, types03 data port and logical-role3 patches at recorded safe points. A producer/test/twohooks remain A owned, C resources remain C owned. Preserve old33915 and source files; no termination/restart/reset/stash/history rewrite, no broad Vitest launch. Exact corrected singleton probe selection census required. Full semantic independent replay from BOTTOM/UNKNOWN and current original/selected/source/heap/control provenance unchanged. No producer runtime import, annotation scalar proof, public transport or class readiness. Preserve branches/HOLD/main/queue."
+    }
+  ],
+  "predecessors": [
+    "3522-b-native-class-semantic-producer-20261014.json",
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}
