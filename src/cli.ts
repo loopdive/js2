@@ -521,6 +521,17 @@ const compileOptions = {
   ...(Object.keys(defines).length > 0 ? { define: defines } : {}),
 };
 
+// (#6978) A misplaced accelerator is a usage error: report it like one.
+if (hostAccelerators.size > 0) {
+  const { resolveCompileTargetProfile } = await import("./target-profile.js");
+  try {
+    resolveCompileTargetProfile(compileOptions);
+  } catch (e) {
+    console.error(`Error: ${e instanceof Error ? e.message : String(e)}`);
+    process.exit(1);
+  }
+}
+
 // #2771 — a single-file `compile()` reads exactly ONE file and strips every
 // import, so an entry that imports a relative `./helper` module leaves those
 // bindings unresolved (they lower to bogus `env.*` host imports the WASI gate

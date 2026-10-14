@@ -82,6 +82,18 @@ describe("#6978 host accelerator selection", () => {
     ).toThrow("only apply to the native-first semantic regime");
   });
 
+  it("rejects the families whose host path does not work under the regime yet", () => {
+    expect(() =>
+      resolveCompileTargetProfile({ semanticProviders: "native-first", hostAccelerators: ["js-string"] }),
+    ).toThrow("Host accelerator(s) js-string not available yet");
+    expect(() =>
+      resolveCompileTargetProfile({ semanticProviders: "native-first", hostAccelerators: ["intl"] }),
+    ).toThrow("Host accelerator(s) intl not available yet");
+    expect(() => resolveCompileTargetProfile({ semanticProviders: "native-first", nativeStrings: false })).toThrow(
+      'the planned "js-string" host accelerator',
+    );
+  });
+
   it("fails the compile instead of silently ignoring a misplaced accelerator", async () => {
     await expect(
       compile(`export function run(): number { return 1; }`, {
@@ -178,5 +190,96 @@ describe("#6978 date accelerator", () => {
     const accelerated = await runRegime(source, ["date"]);
     const expected = Date.parse("Thu, 01 Jan 1970 00:00:00 GMT-0500");
     expect(accelerated.exports.run()).toBe(`${expected}|${expected}`);
+  });
+});
+
+describe("#6978 regexp accelerator", () => {
+  const program = `
+    function scan(): string {
+      const out: string[] = [];
+      const re = /(?<year>\\d{4})-(?<month>\\d{2})/g;
+      let m: RegExpExecArray | null;
+      while ((m = re.exec("2020-01 and 2021-12")) !== null) out.push(m[0] + "@" + m.index + ";" + re.lastIndex);
+      return out.join(",");
+    }
+    function rewrite(): string {
+      return "x1y22z333".replace(/(\\d+)/g, "<$1>") + "|" + "Hello World".replace(/o/g, (s: string) => s.toUpperCase());
+    }
+    function flags(): string {
+      const sticky = /foo/y;
+      sticky.lastIndex = 3;
+      return String(/^abc$/m.test("x\\nabc\\ny")) + String(/a.c/s.test("a\\nc")) + String(sticky.test("barfoo")) +
+        sticky.lastIndex;
+    }
+    function pieces(): string {
+      const all: string[] = [];
+      for (const mm of "a1b2c3".matchAll(/[a-z](\\d)/g)) all.push(mm[1] + "@" + mm.index);
+      return "a, b,c ,d".split(/\\s*,\\s*/).join("|") + "|" + String("XBC".search(/b/i)) + "|" + all.join(",");
+    }
+    function dynamic(): string {
+      let p = "a";
+      if (Date.now() < 0) p = "b";
+      const re = new RegExp(p + "+(b)", "g");
+      const m = re.exec("xaab");
+      return (m ? m[1] + m.index : "-") + String(re.test("xaab")) + re.source;
+    }
+    export function run(): string {
+      return [scan(), rewrite(), flags(), pieces(), dynamic()].join(" ; ");
+    }
+  `;
+  const expected = [
+    "2020-01@0;7,2021-12@12;19",
+    "x<1>y<22>z<333>|HellO WOrld",
+    "truetruetrue6",
+    "a|b|c|d|1|1@0,2@2,3@4",
+    "b1falsea+(b)",
+  ].join(" ; ");
+
+  it("runs every match on the host engine only when selected, with identical results", async () => {
+    const native = await runRegime(program);
+    expect(native.imported.filter((name) => name.startsWith("env::__regexp_host_"))).toEqual([]);
+    expect(native.exports.run()).toBe(expected);
+
+    const result = await compileRegime(program, ["regexp"]);
+    const engine = (result.hostImportInventory ?? []).filter((entry) => entry.name.startsWith("__regexp_host_"));
+    expect(engine.map((entry) => entry.name).sort()).toEqual([
+      "__regexp_host_capture",
+      "__regexp_host_exec",
+      "__regexp_host_register",
+      "__regexp_host_subject",
+    ]);
+    for (const entry of engine) expect(entry).toMatchObject({ classification: "host-accelerator", family: "regexp" });
+
+    // Record the host engine's answers: -1 would mean a native-VM fallback.
+    const imports = buildCompiledImports(result) as ReturnType<typeof buildCompiledImports> & {
+      env: Record<string, (...args: unknown[]) => unknown>;
+    };
+    const answers: number[] = [];
+    const hostExec = imports.env.__regexp_host_exec!;
+    imports.env.__regexp_host_exec = (...args: unknown[]) => {
+      const answer = hostExec(...args) as number;
+      answers.push(answer);
+      return answer;
+    };
+    const { instance } = await WebAssembly.instantiate(result.binary, imports);
+    imports.setInstance?.(instance);
+    const exports = wrapCompiledExports(result, instance) as Record<string, any>;
+    expect(exports.run()).toBe(expected);
+    expect(answers.filter((answer) => answer === 1).length).toBeGreaterThan(10);
+    expect(answers).not.toContain(-1);
+  });
+
+  it("falls back to the native VM for a program the host never registered", async () => {
+    const { resolveRegExpHostImport, hostRegExpMatchFlags } = await import("../src/runtime/regexp-host-accelerator.js");
+    const owner = {};
+    const exec = resolveRegExpHostImport("__regexp_host_exec", owner)!;
+    expect(exec({}, {}, 0, 3, 0, 0)).toBe(-1);
+    // Flag bits mirror src/codegen/regex/bytecode.ts RE_FLAG_*; g/y/d never reach the host program.
+    const bytecode = await import("../src/codegen/regex/bytecode.js");
+    expect(hostRegExpMatchFlags(bytecode.RE_FLAG_I | bytecode.RE_FLAG_M | bytecode.RE_FLAG_G)).toBe("im");
+    expect(
+      hostRegExpMatchFlags(bytecode.RE_FLAG_S | bytecode.RE_FLAG_U | bytecode.RE_FLAG_Y | bytecode.RE_FLAG_D),
+    ).toBe("su");
+    expect(hostRegExpMatchFlags(bytecode.RE_FLAG_V)).toBe("v");
   });
 });

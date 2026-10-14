@@ -19,7 +19,7 @@ import type { CompileResult, ImportDescriptor, ImportIntent, ImportPolicy } from
 import { validateExportBoundaryPolicies } from "./boundary-policy.js";
 import type { BoundaryValuePolicy, ExportBoundaryPolicy } from "./boundary-policy.js";
 import { classifyHostImport } from "./host-import-policy.js";
-import type { HostAcceleratorFamily } from "./target-profile.js";
+import { resolveRegExpHostImport } from "./runtime/regexp-host-accelerator.js";
 import {
   createJavaScriptAdapterManifest,
   validateJavaScriptAdapterManifest,
@@ -12438,6 +12438,7 @@ function resolveImport(
       }
       // #1644/#2678: spec BigInt-to-i64 and host Date.parse for wasm:js-string externrefs.
       if (name === "__date_parse_host") return (s: any): number => Date.parse(s);
+      if (name.startsWith("__regexp_host_")) return resolveRegExpHostImport(name, instanceState)!; // (#6978)
       if (name === "__bigint_ctor") {
         return (v: any): bigint => {
           // ToPrimitive(value, number). WasmGC structs / proxies need our
@@ -19524,8 +19525,7 @@ export interface BuildImportsOptions extends CompiledCapabilityAuthorityOptions 
    * derives false for native-first modules from their frozen target profile.
    */
   ambientCompatibility?: boolean;
-  /** (#6978) Selected host accelerators (from the target profile); the native-first binder admits them. */
-  hostAccelerators?: readonly HostAcceleratorFamily[];
+  hostAccelerators?: readonly import("./target-profile.js").HostAcceleratorFamily[]; // (#6978) admitted by the binder
   /**
    * Runtime implementation for dynamic eval and new Function (#6779).
    *

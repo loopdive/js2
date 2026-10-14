@@ -212,7 +212,7 @@ function acceleratorFamilyOfEnvImport(descriptor: ImportDescriptor): HostAcceler
       return intent.name === "Intl" ? "intl" : undefined;
     case "builtin":
       if (intent.name === "__date_parse_host") return "date";
-      return intent.name.startsWith("RegExp_") ? "regexp" : undefined;
+      return intent.name.startsWith("RegExp_") || intent.name.startsWith("__regexp_host_") ? "regexp" : undefined;
     default:
       return undefined;
   }

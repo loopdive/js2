@@ -65,6 +65,7 @@ import { expressionHasWidenedPropertyType } from "../strict-eq-stale-type.js";
 import { isConsoleValueIdentifier } from "../standalone-console-object.js";
 import { collectorReceiverType } from "../builtin-subclass-receiver.js"; // (#6651 C5) inherited builtin members
 import { hostDateParseLane } from "../helpers/host-date-parse.js";
+import { noteHostRegExpSource, registerHostRegExpImports } from "../helpers/host-regexp-search.js";
 
 /** Accumulated state for the single-pass collector */
 export interface UnifiedCollectorState {
@@ -412,6 +413,7 @@ export function unifiedVisitNode(ctx: CodegenContext, state: UnifiedCollectorSta
   // certified statement shape. Do not arm it for direct eval, a discarded
   // non-string, a shadowed callee, or a value-producing call that stays legacy.
   if (needsHostIndirectEvalImport(ctx, node)) state.hostIndirectEvalNeeded = true;
+  noteHostRegExpSource(ctx, node); // (#6978) regexp host accelerator: register its imports up front
 
   // (#5384) A source `throw` means this module can hand a payload of its own to
   // whoever catches `__exn_tag`, so the host-free `__exn_render_*` readout is
@@ -1864,6 +1866,7 @@ export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedColl
     }
   }
 
+  registerHostRegExpImports(ctx); // (#6978)
   // ── collectDateParseHostImports finalize (#2678) ──
   // HOST mode: register `__date_parse_host(externref) -> f64` up-front so the
   // call sites (Date.parse / new Date(<string>)) get a stable funcidx without a

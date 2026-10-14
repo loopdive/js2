@@ -137,8 +137,29 @@ function resolveHostAccelerators(
         `profile already uses every host provider. Select semanticProviders: "native-first".`,
     );
   }
+  const pending = families.filter((family) => PENDING_HOST_ACCELERATORS[family] !== undefined);
+  if (pending.length > 0) {
+    throw new Error(
+      `Host accelerator(s) ${pending.join(", ")} not available yet: ` +
+        pending.map((family) => PENDING_HOST_ACCELERATORS[family]).join("; "),
+    );
+  }
   return Object.freeze(families);
 }
+
+/**
+ * (#6978) Families the policy already classifies but whose host path does not
+ * work under the native regime yet. Selecting one is an error rather than a
+ * no-op; the measured gap is recorded in plan/issues/6978-host-accelerator-opt-ins.md.
+ */
+const PENDING_HOST_ACCELERATORS: Partial<Record<HostAcceleratorFamily, string>> = {
+  "js-string":
+    "the regime's string providers (self-hosted stdlib, IR string ops) assume the native string struct, " +
+    "so a regime build cannot run on wasm:js-string strings",
+  intl:
+    "host Intl calls do not yet marshal native strings and Wasm-owned option objects, and Intl imports are " +
+    "emitted with or without the accelerator",
+};
 
 export function resolveCompileTargetProfile(input: TargetProfileInput = {}): CompileTargetProfile {
   if (input.wasi && input.standalone) {
@@ -156,7 +177,11 @@ export function resolveCompileTargetProfile(input: TargetProfileInput = {}): Com
   const strictEnvImportGate = input.strictNoHostImports ?? target === "wasi";
   const semanticProviderSelection = input.semanticProviders ?? "auto";
   if (semanticProviderSelection === "native-first" && input.nativeStrings === false) {
-    throw new Error('Compile option semanticProviders: "native-first" conflicts with nativeStrings: false');
+    throw new Error(
+      'Compile option semanticProviders: "native-first" conflicts with nativeStrings: false ' +
+        "(the native regime runs on native strings; host `wasm:js-string` strings under it are the planned " +
+        '"js-string" host accelerator, #6978)',
+    );
   }
 
   let capabilityPolicy: CapabilityPolicy;
