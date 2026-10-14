@@ -1,0 +1,1044 @@
+{
+  "id": "6920",
+  "slice": "class-resource-session-successor-20261015",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-class-resource-session-20261015-01a12827",
+  "claimed_at": "2026-10-14T22:11:38.870218+00:00",
+  "updated_at": "2026-10-14T22:11:38.870218+00:00",
+  "write_id": "b-class-resource-session-723275b0-f0ce-4350-9508-bad315d05375",
+  "handoff_scope": [
+    {
+      "kind": "class-resource-session",
+      "at": "2026-10-14T22:11:38.870218+00:00",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-class-resource-session-20261015-01a12827",
+      "manifest": {
+        "receivingBranch": "codex/6920-b-class-resource-session-20261015-01a12827",
+        "componentPreimages": [
+          {
+            "path": "src/backend/wasmgc/program/native-realm.ts",
+            "exists": true,
+            "bytes": 23351,
+            "sha256": "1dde6a2b34e2fad3177157e68e410d4ff2aa0b4fea7a2b283b907dca81546c83",
+            "boundedWork": [
+              "Move entire actual C private physical owner here, preserving separate source/realm worlds and full canonical+physical currentness; move semantic derivation into real logical acquisition; own actual emitter/TypeConverter/ModuleAssembler integration; whole startup adapter body"
+            ]
+          },
+          {
+            "path": "src/backend/linear/program/reference-error.ts",
+            "exists": true,
+            "bytes": 8034,
+            "sha256": "1e2af0194b6762ba0e357ef145d745c2a2b6944224f5b9669ae1a25b53ebb0a6",
+            "boundedWork": [
+              "Whole old implementation relocates byte-exact except coordinates; exact named/type compatibility reexports only"
+            ]
+          },
+          {
+            "path": "src/ir/program-consumer.ts",
+            "exists": true,
+            "bytes": 76009,
+            "sha256": "8b3121f4cd42e7be5c6e37d3039672989d7416af44c56e8b15f2d6ebb95ad8dd",
+            "boundedWork": [
+              "acceptPreparedIrProgram class neutral preflight import/call only",
+              "reservePhysicalProgramSlots existing authentic C slot association import only",
+              "fillPrimaryBody actual selected-function C plan route (instruction/type census, not sourceClassBody)",
+              "materializePhysicalProgram actual owner imports, typed emitter plan and startup adapter calls; no private acceptance/emission holder move"
+            ]
+          },
+          {
+            "path": "src/ir/program-body-resources.ts",
+            "exists": true,
+            "bytes": 22332,
+            "sha256": "b617ca7c4a6f20f0d49d777dc600e233c8683d12c0c98cb476f950b23bab4413",
+            "boundedWork": [
+              "Extract entire fillStartupAdapter productive body to backend owner; sole src reader main consumer",
+              "physicalSignatureConverter remove only unpublished C pack hook; all generic branches exact; class projection owned by actual backend wrapper"
+            ]
+          },
+          {
+            "path": "src/ir/lower-generic.ts",
+            "exists": true,
+            "bytes": 195456,
+            "sha256": "a21b0aad8633e4d9e1b7fd923651cfacf2a665a7f88150d3d7c3e7a95d058bb4",
+            "boundedWork": [
+              "C-only prelude/terminal dispatch onto actual BackendEmitter procedure; fixed neutral class proof stays before class operand emission; no C physical owner value import; generic algorithms unchanged"
+            ]
+          },
+          {
+            "path": "src/ir/backend/emitter.ts",
+            "exists": true,
+            "bytes": 18048,
+            "sha256": "1b66b428e7c172d509753b54c3e244eebfd035a0c3f5c66fc391673c70eabb19",
+            "boundedWork": [
+              "Additive optional class neutral-legality query and terminal emission procedures through existing five-part contract; no caller-positive-verdict callback or arbitrary registration"
+            ]
+          },
+          {
+            "path": "src/ir/backend/lower-contracts.ts",
+            "exists": true,
+            "bytes": 15440,
+            "sha256": "fffa63f36c973fc67faf065876964febd61068bafc7bc877cfc27a0034922166",
+            "boundedWork": [
+              "Retire only unpublished resolveNativeJsClass executable resolver hook; old NN/generic resolver members unchanged"
+            ]
+          },
+          {
+            "path": "src/ir/backend/native-js-class.ts",
+            "exists": true,
+            "bytes": 1231,
+            "sha256": "210c7fd6e0d99951e797ce82535d71ead0f69a0e509285ce972e7e949d117ba8",
+            "boundedWork": [
+              "Exact class instruction/plan types only as needed for neutral emitter contract; old private physical-port type remains backend-private by use; no value issuer registry"
+            ]
+          },
+          {
+            "path": "src/ir/program-native-invocation.ts",
+            "exists": true,
+            "bytes": 12880,
+            "sha256": "93f1dcce8a0c89c5a0ead6bdd081bb58a74a80d6e8b68ec158c5d25ad77ba640",
+            "boundedWork": [
+              "fillPreparedPrimaryUnit optional concrete already-constructed five-part backend function plan for exact fn; preserve genuine source closure unit/slot/closureSubtype/completion checks and unchanged generic default. Parameter carries actual emitter/type-converter procedures, not verdict/registration callback; main native owner is actual constructor and canonical authority."
+            ]
+          },
+          {
+            "path": "tests/issue-6920-native-js-class-resources.test.ts",
+            "exists": true,
+            "bytes": 60156,
+            "sha256": "57719e3c06eee69b65a078013fa19d2ab05491b97c1f399b08263eea286b6a06",
+            "boundedWork": [
+              "Actual backend-owner import relocation; authentic function-plan/foreign/copied/stale/tx/global/type checks; retain all38 original identities and physical JS oracles; add class-op/type census routing controls"
+            ]
+          },
+          {
+            "path": "tests/issue-6920-native-js-class-execution.test.ts",
+            "exists": true,
+            "bytes": 4001,
+            "sha256": "175ed9c9d30c572f1aaa1299b105c52875f052d6de09458f98da3ea90f7356a4",
+            "boundedWork": [
+              "Preserve required2genuineprepare+2codec+4sourcefree runtime phases/35s/JS1+binarypair oracle; add meaningful source-unit routing observations if needed without oracle/timer suppression"
+            ]
+          },
+          {
+            "path": "src/ir/program-native-js-class-resources.ts",
+            "exists": true,
+            "bytes": 42360,
+            "sha256": "f39868bf96c52e8e16d9c3a5259c4e6b87846353c6de1f21c44122420eb06430",
+            "boundedWork": [
+              "Move whole private productive owner into actual native-realm physical owner; remove unpublished old C file after all readers/tests rewired. No value facade to hide three physical consumer edges."
+            ]
+          }
+        ],
+        "canonicalNewPaths": [
+          "src/ir/program/native-program-resource-requirements.ts",
+          "src/backend/wasmgc/resources/native-reference-error.ts"
+        ],
+        "operations": [
+          "Implement the finite productive ownership cut recorded in exact child manifest; ordinary and module-init class instructions/types participate in actual canonical routing."
+        ],
+        "constraints": [
+          "No edits to B logical/effect/runtime/generic verifier/codec files needed in proposal; new logical acquisition composes fixed public canonical APIs. If that cannot close, report exact held function before edits.",
+          "No root policy/issue/budget/gate changes by child; root classifies real new logical/resource rows and removes deleted row.",
+          "No sourceMap/CABI/public dynamic/callable/global presentation widening; global hook remains received but unimplemented.",
+          "No validation cache, private registration bridge, fake site/type/function/global coordinate, positive-report callback or borrowed world readiness.",
+          "Old historical generic function bodies move only whole startup function; all other generic default algorithms remain byte-exact outside named new-C hooks.",
+          "Active backend placement requires real clean closure; logical acquisition must not import backend type facade as nominal authority. ActualLOC/function gates apply; report needs before expansion.",
+          "No edits in old C worktree while its broad profile has frozen inputs.",
+          "Root owns policy classifications only after actual full source graph and type tests; no gate allowances."
+        ],
+        "childManifestSha256": "388a775e458a79f994eed9c9ae2e48642327371a87ae2d9684cd945685a9302f",
+        "childManifest": {
+          "schema": "private-c-productive-ownership-receiving-proposal-v1",
+          "status": "READ ONLY; parent exact receiving publication/write GO required; no old WT edits/cancellation",
+          "createdUtc": "2026-10-14T22:08:34.230462+00:00",
+          "donorCwd": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-physical-20261014-01a12827",
+          "actualHead": "df466f30d4ee27ab332debad823912ee9155c80c",
+          "baseline": {
+            "fullActualSourcePins": {
+              "path": ".tmp/class-physical/ownership-cut/current-c-source2045-baseline-pins.json",
+              "exists": true,
+              "bytes": 375074,
+              "sha256": "9347d3a45d78d66e49b2761f91eaf8fa9bbd7c1a400a0901f0862214a91dcdb8"
+            },
+            "sourceCount": 2045,
+            "policy": {
+              "path": "scripts/compiler-boundaries.json",
+              "exists": true,
+              "bytes": 644750,
+              "sha256": "6c1d8eadbcde289f7158e030b23c69c90c2a0d136b546af0312f0374912c26ef"
+            },
+            "ownedTests": [
+              {
+                "path": "tests/issue-6920-native-js-class-resources.test.ts",
+                "exists": true,
+                "bytes": 60156,
+                "sha256": "57719e3c06eee69b65a078013fa19d2ab05491b97c1f399b08263eea286b6a06"
+              },
+              {
+                "path": "tests/issue-6920-native-js-class-execution.test.ts",
+                "exists": true,
+                "bytes": 4001,
+                "sha256": "175ed9c9d30c572f1aaa1299b105c52875f052d6de09458f98da3ea90f7356a4"
+              }
+            ],
+            "readonlyTestAndHelperRoots": [
+              {
+                "path": "tests/issue-6920-native-js-class-allocation-evidence.test.ts",
+                "exists": true,
+                "bytes": 28988,
+                "sha256": "adf65b3592120e0b2b5125aee5bb1b3a3d3a0883ae9aacb5c92facb136d499e9"
+              },
+              {
+                "path": "tests/issue-6920-native-js-class-source.test.ts",
+                "exists": true,
+                "bytes": 33777,
+                "sha256": "e0ae872396f8520e2da54d1a2b4e56d901b56398cb7a8da72233859c4ba59e36"
+              },
+              {
+                "path": "tests/issue-6920-native-js-class-contracts.test.ts",
+                "exists": true,
+                "bytes": 10664,
+                "sha256": "33792692d22511562f78b04a6ec32b7009b04c015e74ef4fabfd859ee992f331"
+              },
+              {
+                "path": "tests/issue-6920-native-js-class-constructor-arguments.test.ts",
+                "exists": true,
+                "bytes": 10032,
+                "sha256": "54fbe72fe8a00ac2b98e0e9601bfd4feb77f97b5c2985add4c3e9d8e6afb6804"
+              },
+              {
+                "path": "tests/helpers/ir-identities.ts",
+                "exists": true,
+                "bytes": 3056,
+                "sha256": "42d958bb82f322169236903aef37e0ad68681b5ba06be0c458bfa7412cc213f0"
+              },
+              {
+                "path": "tests/backend-contract.test.ts",
+                "exists": true,
+                "bytes": 9409,
+                "sha256": "67b2302f4de55a14083e655a703fb788b2529b53bea5469a861b878ef01d2cfc"
+              }
+            ],
+            "receivedDependenciesActualBytes": [
+              {
+                "path": "src/ir/analysis/allocation-evidence/native-js-class-effects.ts",
+                "exists": true,
+                "bytes": 9769,
+                "sha256": "0b16898269b5f6b7f53cf8de93bf0b485fbd6b92071a3bc83ace3373b0ba97f0",
+                "bootstrapReceivedSha256": "0b16898269b5f6b7f53cf8de93bf0b485fbd6b92071a3bc83ace3373b0ba97f0",
+                "actualMatchesBootstrap": true
+              },
+              {
+                "path": "src/ir/analysis/allocation-evidence/native-js-class-producer.ts",
+                "exists": true,
+                "bytes": 16418,
+                "sha256": "c6c54da9e1833f178647dd8cebd78733b3d7cfacd4ee1e14327e4a06307c897c",
+                "bootstrapReceivedSha256": "c6c54da9e1833f178647dd8cebd78733b3d7cfacd4ee1e14327e4a06307c897c",
+                "actualMatchesBootstrap": true
+              },
+              {
+                "path": "src/ir/analysis/allocation-evidence/native-js-class-profile.ts",
+                "exists": true,
+                "bytes": 24420,
+                "sha256": "e4e0807fe506d02807e74bae0307cc8d8ff21e16b745fdf313ec7dd6b21ef72f",
+                "bootstrapReceivedSha256": "e4e0807fe506d02807e74bae0307cc8d8ff21e16b745fdf313ec7dd6b21ef72f",
+                "actualMatchesBootstrap": true
+              },
+              {
+                "path": "src/ir/runtime/native-js-class-profile.ts",
+                "exists": true,
+                "bytes": 40563,
+                "sha256": "c7e4f62c36395ba4551ac740ad790396e6e9d5bcc43e6719f1558b52f0e2dc0f",
+                "bootstrapReceivedSha256": "c7e4f62c36395ba4551ac740ad790396e6e9d5bcc43e6719f1558b52f0e2dc0f",
+                "actualMatchesBootstrap": true
+              },
+              {
+                "path": "src/ir/program/native-js-class-allocation-validation.ts",
+                "exists": true,
+                "bytes": 17278,
+                "sha256": "4d344a686b4dee1797a27f0dc859a5caf98542faca1cd8443a5cc462635a5bbe",
+                "bootstrapReceivedSha256": "4d344a686b4dee1797a27f0dc859a5caf98542faca1cd8443a5cc462635a5bbe",
+                "actualMatchesBootstrap": true
+              },
+              {
+                "path": "src/ir/program-middleend-ir.ts",
+                "exists": true,
+                "bytes": 6422,
+                "sha256": "c1a7cd9b358ff489345e28ef4a588978973beb9a41b2c127d39f01ccf7faf9a2",
+                "bootstrapReceivedSha256": "c1a7cd9b358ff489345e28ef4a588978973beb9a41b2c127d39f01ccf7faf9a2",
+                "actualMatchesBootstrap": true
+              },
+              {
+                "path": "src/ir/analysis/linear-memory-plan.ts",
+                "exists": true,
+                "bytes": 7295,
+                "sha256": "909f16a416a2a5b35ab46c01601db6d15bf380ff9e3c1062306485d3d4253064",
+                "bootstrapReceivedSha256": "909f16a416a2a5b35ab46c01601db6d15bf380ff9e3c1062306485d3d4253064",
+                "actualMatchesBootstrap": true
+              },
+              {
+                "path": "src/ir/program-prepare-ir.ts",
+                "exists": true,
+                "bytes": 11318,
+                "sha256": "9cc4b5007d801a1cf59890cd9856364ff3382cf11d2d26a0f8bdea8432ccaf6e",
+                "bootstrapReceivedSha256": "9cc4b5007d801a1cf59890cd9856364ff3382cf11d2d26a0f8bdea8432ccaf6e",
+                "actualMatchesBootstrap": true
+              },
+              {
+                "path": "src/ir/program/linear-allocation-validation.ts",
+                "exists": true,
+                "bytes": 13540,
+                "sha256": "4588e2706f2a2bd8aa1f1746610412ee4de37c6db9c9d30afb857de34946c2fe",
+                "bootstrapReceivedSha256": "4588e2706f2a2bd8aa1f1746610412ee4de37c6db9c9d30afb857de34946c2fe",
+                "actualMatchesBootstrap": true
+              },
+              {
+                "path": "src/ir/program/allocations.ts",
+                "exists": true,
+                "bytes": 6139,
+                "sha256": "aa49aa8345c97f0f5c4f01ea25667738b5ebcec379fe5f2598aeef08ec8a0588",
+                "bootstrapReceivedSha256": "aa49aa8345c97f0f5c4f01ea25667738b5ebcec379fe5f2598aeef08ec8a0588",
+                "actualMatchesBootstrap": true
+              },
+              {
+                "path": "src/ir/analysis/allocation-evidence/contracts.ts",
+                "exists": true,
+                "bytes": 3794,
+                "sha256": "ecfe83ddd70e1ffcfaa9e67ca2378b08965bec5d986c15f7c063227f9db03764",
+                "bootstrapReceivedSha256": "ecfe83ddd70e1ffcfaa9e67ca2378b08965bec5d986c15f7c063227f9db03764",
+                "actualMatchesBootstrap": true
+              },
+              {
+                "path": "tests/issue-6920-native-js-class-allocation-evidence.test.ts",
+                "exists": true,
+                "bytes": 28988,
+                "sha256": "adf65b3592120e0b2b5125aee5bb1b3a3d3a0883ae9aacb5c92facb136d499e9",
+                "bootstrapReceivedSha256": "adf65b3592120e0b2b5125aee5bb1b3a3d3a0883ae9aacb5c92facb136d499e9",
+                "actualMatchesBootstrap": true
+              },
+              {
+                "path": "src/ir/js-class-contracts.ts",
+                "exists": true,
+                "bytes": 207,
+                "sha256": "4b8660185907b5a66398ace6afa92a801263f0193d056f9cc06518f45051355e",
+                "bootstrapReceivedSha256": "4b8660185907b5a66398ace6afa92a801263f0193d056f9cc06518f45051355e",
+                "actualMatchesBootstrap": true
+              },
+              {
+                "path": "src/ir/runtime/js-class-verify.ts",
+                "exists": true,
+                "bytes": 19411,
+                "sha256": "0eae1e79b838e4f3566fe8d370c4f8003ee3d1f4e5d564afe9708a8dbb454780",
+                "bootstrapReceivedSha256": "0eae1e79b838e4f3566fe8d370c4f8003ee3d1f4e5d564afe9708a8dbb454780",
+                "actualMatchesBootstrap": true
+              },
+              {
+                "path": "src/ir/program/js-class-definition.ts",
+                "exists": true,
+                "bytes": 7736,
+                "sha256": "1ccbf1918085a96d6069b9e5e82bad2db7963886e131f6ddaece6e612f4611e7",
+                "bootstrapReceivedSha256": "1ccbf1918085a96d6069b9e5e82bad2db7963886e131f6ddaece6e612f4611e7",
+                "actualMatchesBootstrap": true
+              },
+              {
+                "path": "src/ir/core/dialect/js.ts",
+                "exists": true,
+                "bytes": 36294,
+                "sha256": "f97be03c423e6a454c4804ab3050d96e03b4b6c5f66e3de452bdbcf0f6962fbc",
+                "bootstrapReceivedSha256": "f97be03c423e6a454c4804ab3050d96e03b4b6c5f66e3de452bdbcf0f6962fbc",
+                "actualMatchesBootstrap": true
+              },
+              {
+                "path": "src/ir/core/nodes.ts",
+                "exists": true,
+                "bytes": 100039,
+                "sha256": "4c9a1bd0165694872882a25ad3a248b89ab6335a78751bb5c22e12e6f3647bc8",
+                "bootstrapReceivedSha256": "4c9a1bd0165694872882a25ad3a248b89ab6335a78751bb5c22e12e6f3647bc8",
+                "actualMatchesBootstrap": true
+              },
+              {
+                "path": "src/shared/contracts/ir-identity.ts",
+                "exists": true,
+                "bytes": 3121,
+                "sha256": "5c5df206c6f8fedee45ab7dde22e71b993142856770d9ac4520679435d3aa0d9",
+                "bootstrapReceivedSha256": "5c5df206c6f8fedee45ab7dde22e71b993142856770d9ac4520679435d3aa0d9",
+                "actualMatchesBootstrap": true
+              },
+              {
+                "path": "src/ir/program/prepared-contracts.ts",
+                "exists": true,
+                "bytes": 5449,
+                "sha256": "3b2dcff50a8a9c74994cee7426add0123026a19e0ad3b3b05bf833702a5cb027",
+                "bootstrapReceivedSha256": "3b2dcff50a8a9c74994cee7426add0123026a19e0ad3b3b05bf833702a5cb027",
+                "actualMatchesBootstrap": true
+              },
+              {
+                "path": "src/ir/program/input-contracts.ts",
+                "exists": true,
+                "bytes": 2632,
+                "sha256": "1db6049817841fba134627188a89e02c1da4e75fa6b34169b16bdd6dc480e124",
+                "bootstrapReceivedSha256": "1db6049817841fba134627188a89e02c1da4e75fa6b34169b16bdd6dc480e124",
+                "actualMatchesBootstrap": true
+              },
+              {
+                "path": "src/ir/program/js-class-abi.ts",
+                "exists": true,
+                "bytes": 5978,
+                "sha256": "72cb7e923ead1281a11b44e89062072219ad96ca9466d377b8acd9031b98d343",
+                "bootstrapReceivedSha256": "72cb7e923ead1281a11b44e89062072219ad96ca9466d377b8acd9031b98d343",
+                "actualMatchesBootstrap": true
+              },
+              {
+                "path": "src/ir/program-abi-contracts.ts",
+                "exists": true,
+                "bytes": 12459,
+                "sha256": "83b5350abfda093f7435a1eb81564fdb028cb3eaf136eab56934333eb22dd80c",
+                "bootstrapReceivedSha256": "83b5350abfda093f7435a1eb81564fdb028cb3eaf136eab56934333eb22dd80c",
+                "actualMatchesBootstrap": true
+              },
+              {
+                "path": "src/ir/program/input.ts",
+                "exists": true,
+                "bytes": 7534,
+                "sha256": "cf6021ec9dbcfd97565364a9bd527ad358158234e4c1eca76db9a1aa5f89f8b7",
+                "bootstrapReceivedSha256": "cf6021ec9dbcfd97565364a9bd527ad358158234e4c1eca76db9a1aa5f89f8b7",
+                "actualMatchesBootstrap": true
+              },
+              {
+                "path": "src/ir/runtime/verify.ts",
+                "exists": true,
+                "bytes": 125093,
+                "sha256": "642e0adc606ad501f4a002e9685f8cb64b47914c0074cb86d92264857f6bfaab",
+                "bootstrapReceivedSha256": "642e0adc606ad501f4a002e9685f8cb64b47914c0074cb86d92264857f6bfaab",
+                "actualMatchesBootstrap": true
+              },
+              {
+                "path": "src/ir/dialect/js.ts",
+                "exists": true,
+                "bytes": 3308,
+                "sha256": "92d7bdc616536f9dcde9999b17aa3cd8265f45794feba759deb64020baaabd1e",
+                "bootstrapReceivedSha256": "92d7bdc616536f9dcde9999b17aa3cd8265f45794feba759deb64020baaabd1e",
+                "actualMatchesBootstrap": true
+              },
+              {
+                "path": "src/ir/analysis/effects.ts",
+                "exists": true,
+                "bytes": 27074,
+                "sha256": "fccdbec6e5a0064b95fbf38c34fd685778a9bb8227162a8006121062a07d75f6",
+                "bootstrapReceivedSha256": "fccdbec6e5a0064b95fbf38c34fd685778a9bb8227162a8006121062a07d75f6",
+                "actualMatchesBootstrap": true
+              },
+              {
+                "path": "src/ir/backend/instruction-uses.ts",
+                "exists": true,
+                "bytes": 8812,
+                "sha256": "e305f4031f4651964a953e25e203095582b980bd71fae74093da2d3886d80b06",
+                "bootstrapReceivedSha256": "e305f4031f4651964a953e25e203095582b980bd71fae74093da2d3886d80b06",
+                "actualMatchesBootstrap": true
+              },
+              {
+                "path": "src/ir/passes/inline-small.ts",
+                "exists": true,
+                "bytes": 52930,
+                "sha256": "cea4679ade2bdfeaa2bf0071b1a929e04a744e8e79343cb545919c3386039a67",
+                "bootstrapReceivedSha256": "cea4679ade2bdfeaa2bf0071b1a929e04a744e8e79343cb545919c3386039a67",
+                "actualMatchesBootstrap": true
+              },
+              {
+                "path": "src/ir/passes/monomorphize.ts",
+                "exists": true,
+                "bytes": 39097,
+                "sha256": "abe2b21b2a756397633c58abebdd5c85ecce567af1d258578dc2e497439a0159",
+                "bootstrapReceivedSha256": "abe2b21b2a756397633c58abebdd5c85ecce567af1d258578dc2e497439a0159",
+                "actualMatchesBootstrap": true
+              },
+              {
+                "path": "src/ir/analysis/backend-legality.ts",
+                "exists": true,
+                "bytes": 23638,
+                "sha256": "d06114eb6c5164bb52484b295f01e64cda737de346a4400c669e15512d1993b1",
+                "bootstrapReceivedSha256": "5901725ddeef5879da9264a07b787d41f99d3b5aa3c5dde9f6115fecc46a4f0d",
+                "actualMatchesBootstrap": false
+              },
+              {
+                "path": "src/ir/lower-generic.ts",
+                "exists": true,
+                "bytes": 195456,
+                "sha256": "a21b0aad8633e4d9e1b7fd923651cfacf2a665a7f88150d3d7c3e7a95d058bb4",
+                "bootstrapReceivedSha256": "bf950f88829a5da5731342445e58c5241527fc5508fc57a80f1e9f20aa6a9fbe",
+                "actualMatchesBootstrap": false
+              },
+              {
+                "path": "src/ir/prepared-component-dependencies.ts",
+                "exists": true,
+                "bytes": 70866,
+                "sha256": "2e4ba57c853e805e957f2210c2b2182e82d89bd45ff1d6ee05bf4c2b2a16016b",
+                "bootstrapReceivedSha256": "2e4ba57c853e805e957f2210c2b2182e82d89bd45ff1d6ee05bf4c2b2a16016b",
+                "actualMatchesBootstrap": true
+              },
+              {
+                "path": "src/compiler/pipeline-output-context.ts",
+                "exists": true,
+                "bytes": 838,
+                "sha256": "141405720cb9359de532ebfe24c849db195e571711d95b5ffc91d6ef1b74015c",
+                "bootstrapReceivedSha256": "141405720cb9359de532ebfe24c849db195e571711d95b5ffc91d6ef1b74015c",
+                "actualMatchesBootstrap": true
+              },
+              {
+                "path": "src/compiler/pipeline-result-finalizer.ts",
+                "exists": true,
+                "bytes": 43128,
+                "sha256": "bd6babdf0369e0f815433df47f6c2852ad90c9ae585972216c5bd61f653bb4d6",
+                "bootstrapReceivedSha256": "bd6babdf0369e0f815433df47f6c2852ad90c9ae585972216c5bd61f653bb4d6",
+                "actualMatchesBootstrap": true
+              },
+              {
+                "path": "src/compiler.ts",
+                "exists": true,
+                "bytes": 90409,
+                "sha256": "1933d126068813d8bccb128a35646162c7d0d950786dca44f24ab48bf159adaf",
+                "bootstrapReceivedSha256": "1933d126068813d8bccb128a35646162c7d0d950786dca44f24ab48bf159adaf",
+                "actualMatchesBootstrap": true
+              },
+              {
+                "path": "src/compiler/ir-program-presentation.ts",
+                "exists": true,
+                "bytes": 70901,
+                "sha256": "0fc00cc09f4eabf093d4ca3fab8b4c9d44c092784ccfa10163ba46ed9f58ce69",
+                "bootstrapReceivedSha256": "74affb376216c95c435713a510df9377f985bdf4f4c0d99cb6d460016ef931f0",
+                "actualMatchesBootstrap": false
+              },
+              {
+                "path": "src/compiler/ir-native-number-undefined-optimization.ts",
+                "exists": true,
+                "bytes": 469,
+                "sha256": "851e22d10e3f4eef6b26d7f8f7780224df19b455617943b5eaf668ed918650d3",
+                "bootstrapReceivedSha256": "851e22d10e3f4eef6b26d7f8f7780224df19b455617943b5eaf668ed918650d3",
+                "actualMatchesBootstrap": true
+              },
+              {
+                "path": "src/compiler/native-linear-pipeline.ts",
+                "exists": true,
+                "bytes": 1142,
+                "sha256": "d75e4349731a878e23e6ee1cce2a5847f6de2b73a686c63fde59aa19a1ed84cb",
+                "bootstrapReceivedSha256": "d75e4349731a878e23e6ee1cce2a5847f6de2b73a686c63fde59aa19a1ed84cb",
+                "actualMatchesBootstrap": true
+              },
+              {
+                "path": "src/ir/module-init.ts",
+                "exists": true,
+                "bytes": 4591,
+                "sha256": "d28e678e17e5786e53d741287addacadd7bb0a4d5525529ed8d0229c8b3acd55",
+                "bootstrapReceivedSha256": "d28e678e17e5786e53d741287addacadd7bb0a4d5525529ed8d0229c8b3acd55",
+                "actualMatchesBootstrap": true
+              },
+              {
+                "path": "src/ir/planning-identity.ts",
+                "exists": true,
+                "bytes": 29112,
+                "sha256": "b1186b10c9b6a8d8aefc76f40303291eedeb1d2a65fe0de20e224cc80dc86253",
+                "bootstrapReceivedSha256": "b1186b10c9b6a8d8aefc76f40303291eedeb1d2a65fe0de20e224cc80dc86253",
+                "actualMatchesBootstrap": true
+              },
+              {
+                "path": "src/ir/identity.ts",
+                "exists": true,
+                "bytes": 62539,
+                "sha256": "83359c47f1d5bab73a9b6a5cb65f216f2ca7c280c001cdf69f26ac95c3a49ff6",
+                "bootstrapReceivedSha256": "83359c47f1d5bab73a9b6a5cb65f216f2ca7c280c001cdf69f26ac95c3a49ff6",
+                "actualMatchesBootstrap": true
+              },
+              {
+                "path": "src/ir/module-init-plan.ts",
+                "exists": true,
+                "bytes": 23420,
+                "sha256": "2ca2279f94cf54a89ef6978c4ef1e55ea3b46bbcdd6522b778d95f1669c562b4",
+                "bootstrapReceivedSha256": "2ca2279f94cf54a89ef6978c4ef1e55ea3b46bbcdd6522b778d95f1669c562b4",
+                "actualMatchesBootstrap": true
+              },
+              {
+                "path": "src/ir/program/startup.ts",
+                "exists": true,
+                "bytes": 3188,
+                "sha256": "b89ec7b477d411d731b38436f157c17036ea192d4edc06a4166562a9d9a0bfff",
+                "bootstrapReceivedSha256": "b89ec7b477d411d731b38436f157c17036ea192d4edc06a4166562a9d9a0bfff",
+                "actualMatchesBootstrap": true
+              },
+              {
+                "path": "src/ir/from-ast.ts",
+                "exists": true,
+                "bytes": 806840,
+                "sha256": "036e83d802236e1b7f50e5964e0d1c9e95ef7a8f3894aaebd089d7eb429618c4",
+                "bootstrapReceivedSha256": "036e83d802236e1b7f50e5964e0d1c9e95ef7a8f3894aaebd089d7eb429618c4",
+                "actualMatchesBootstrap": true
+              },
+              {
+                "path": "src/ir/builder.ts",
+                "exists": true,
+                "bytes": 80857,
+                "sha256": "df1f0b6e9d602048a1880347462746c57fd7fbeb9b0e173752b6b9a3bf1bfe3f",
+                "bootstrapReceivedSha256": "df1f0b6e9d602048a1880347462746c57fd7fbeb9b0e173752b6b9a3bf1bfe3f",
+                "actualMatchesBootstrap": true
+              },
+              {
+                "path": "src/ir/program-source.ts",
+                "exists": true,
+                "bytes": 96471,
+                "sha256": "f47127a102eb2fda197d5cb9ebde73644727e194fcd38c2b04e3f77ccd801532",
+                "bootstrapReceivedSha256": "f47127a102eb2fda197d5cb9ebde73644727e194fcd38c2b04e3f77ccd801532",
+                "actualMatchesBootstrap": true
+              },
+              {
+                "path": "src/ir/array-element-inference.ts",
+                "exists": true,
+                "bytes": 32174,
+                "sha256": "c4f0a783c5fe1fbccb2165165ec9806d9731a48f7a47a3cc0087efd7aa7ecf79",
+                "bootstrapReceivedSha256": "c4f0a783c5fe1fbccb2165165ec9806d9731a48f7a47a3cc0087efd7aa7ecf79",
+                "actualMatchesBootstrap": true
+              },
+              {
+                "path": "src/ir/source-js-class-definition.ts",
+                "exists": true,
+                "bytes": 20882,
+                "sha256": "3b40adeb727fcb29f0f2c3fabebdc48f30397adac55f485afbefe3f688e35117",
+                "bootstrapReceivedSha256": "3b40adeb727fcb29f0f2c3fabebdc48f30397adac55f485afbefe3f688e35117",
+                "actualMatchesBootstrap": true
+              },
+              {
+                "path": "src/ir/source-js-class-lowering.ts",
+                "exists": true,
+                "bytes": 14399,
+                "sha256": "b94135900a783b22b83eeb4a949911ed2f4e25e7a2f4a6a6d1ae37427175f7a6",
+                "bootstrapReceivedSha256": "b94135900a783b22b83eeb4a949911ed2f4e25e7a2f4a6a6d1ae37427175f7a6",
+                "actualMatchesBootstrap": true
+              },
+              {
+                "path": "src/ir/program/js-class-startup.ts",
+                "exists": true,
+                "bytes": 3591,
+                "sha256": "d3535b01eadad232bd836d846e93dfc7e45baf9f70eacaf0b27e88176781cace",
+                "bootstrapReceivedSha256": "d3535b01eadad232bd836d846e93dfc7e45baf9f70eacaf0b27e88176781cace",
+                "actualMatchesBootstrap": true
+              },
+              {
+                "path": "src/ir/program/population.ts",
+                "exists": true,
+                "bytes": 9861,
+                "sha256": "c1f2d44652f26eb3e54d4d5238f1aebcc8680d388eebf5f94bdb33062a286601",
+                "bootstrapReceivedSha256": "c1f2d44652f26eb3e54d4d5238f1aebcc8680d388eebf5f94bdb33062a286601",
+                "actualMatchesBootstrap": true
+              },
+              {
+                "path": "src/ir/program/validation.ts",
+                "exists": true,
+                "bytes": 49198,
+                "sha256": "80a3a8e24089da41ede777b89ed403e66e96f9bfd9999c77dc414950cc18d042",
+                "bootstrapReceivedSha256": "80a3a8e24089da41ede777b89ed403e66e96f9bfd9999c77dc414950cc18d042",
+                "actualMatchesBootstrap": true
+              },
+              {
+                "path": "tests/issue-6920-native-js-class-source.test.ts",
+                "exists": true,
+                "bytes": 33777,
+                "sha256": "e0ae872396f8520e2da54d1a2b4e56d901b56398cb7a8da72233859c4ba59e36",
+                "bootstrapReceivedSha256": "e0ae872396f8520e2da54d1a2b4e56d901b56398cb7a8da72233859c4ba59e36",
+                "actualMatchesBootstrap": true
+              },
+              {
+                "path": "tests/issue-6920-native-js-class-contracts.test.ts",
+                "exists": true,
+                "bytes": 10664,
+                "sha256": "33792692d22511562f78b04a6ec32b7009b04c015e74ef4fabfd859ee992f331",
+                "bootstrapReceivedSha256": "33792692d22511562f78b04a6ec32b7009b04c015e74ef4fabfd859ee992f331",
+                "actualMatchesBootstrap": true
+              },
+              {
+                "path": "src/ir/runtime/contracts/manifest.ts",
+                "exists": true,
+                "bytes": 29598,
+                "sha256": "4ad3b61ffa8b3f1c2cae8b68c0cd8dbb0d5df7da7d3f0aabcad27db6d8b4a444",
+                "bootstrapReceivedSha256": "4ad3b61ffa8b3f1c2cae8b68c0cd8dbb0d5df7da7d3f0aabcad27db6d8b4a444",
+                "actualMatchesBootstrap": true
+              },
+              {
+                "path": "src/ir/runtime/callable-declarations.ts",
+                "exists": true,
+                "bytes": 4093,
+                "sha256": "7232ef3d2b61d36071760292fc1605d96a040a5cfec8c2fbfa3908349eb72931",
+                "bootstrapReceivedSha256": "7232ef3d2b61d36071760292fc1605d96a040a5cfec8c2fbfa3908349eb72931",
+                "actualMatchesBootstrap": true
+              },
+              {
+                "path": "src/ir/runtime/manifest.ts",
+                "exists": true,
+                "bytes": 105017,
+                "sha256": "b6e6b4c7f9049cd823200a3b9d630f66f00a4033e29930bc63019b941e78531e",
+                "bootstrapReceivedSha256": "b6e6b4c7f9049cd823200a3b9d630f66f00a4033e29930bc63019b941e78531e",
+                "actualMatchesBootstrap": true
+              },
+              {
+                "path": "src/ir/runtime/intrinsic-preparation.ts",
+                "exists": true,
+                "bytes": 50166,
+                "sha256": "afdf971e5ecf048ff177aeba84eb456b4baa095a3c1006a241f65fa16042b1ec",
+                "bootstrapReceivedSha256": "afdf971e5ecf048ff177aeba84eb456b4baa095a3c1006a241f65fa16042b1ec",
+                "actualMatchesBootstrap": true
+              },
+              {
+                "path": "src/ir/program/runtime-abi.ts",
+                "exists": true,
+                "bytes": 5143,
+                "sha256": "8a18f6765489434fedb5f0cb030c026f7978b31ba609b69cd26ee6ae4c006333",
+                "bootstrapReceivedSha256": "8a18f6765489434fedb5f0cb030c026f7978b31ba609b69cd26ee6ae4c006333",
+                "actualMatchesBootstrap": true
+              },
+              {
+                "path": "src/ir/runtime/native-js-class-error-callables.ts",
+                "exists": true,
+                "bytes": 8209,
+                "sha256": "39c098403e1b98f3514bba272b2e83b246f2d024c0a80116f4db3289849dff55",
+                "bootstrapReceivedSha256": "39c098403e1b98f3514bba272b2e83b246f2d024c0a80116f4db3289849dff55",
+                "actualMatchesBootstrap": true
+              },
+              {
+                "path": "src/codegen/builtin-tags.ts",
+                "exists": true,
+                "bytes": 515,
+                "sha256": "3dc95aeeba78973f8228728c3aade95f20909a71144edf69629ec2e2f0bd4d65",
+                "bootstrapReceivedSha256": "3dc95aeeba78973f8228728c3aade95f20909a71144edf69629ec2e2f0bd4d65",
+                "actualMatchesBootstrap": true
+              },
+              {
+                "path": "src/shared/contracts/js-builtin-tags.ts",
+                "exists": true,
+                "bytes": 11865,
+                "sha256": "0c034fc6be08d27ddb4803e645a595d0449a43e430d011d52eb62821f7587e13",
+                "bootstrapReceivedSha256": "0c034fc6be08d27ddb4803e645a595d0449a43e430d011d52eb62821f7587e13",
+                "actualMatchesBootstrap": true
+              },
+              {
+                "path": "tests/issue-6920-native-js-class-constructor-arguments.test.ts",
+                "exists": true,
+                "bytes": 10032,
+                "sha256": "54fbe72fe8a00ac2b98e0e9601bfd4feb77f97b5c2985add4c3e9d8e6afb6804",
+                "bootstrapReceivedSha256": "54fbe72fe8a00ac2b98e0e9601bfd4feb77f97b5c2985add4c3e9d8e6afb6804",
+                "actualMatchesBootstrap": true
+              },
+              {
+                "path": "src/ir/core/js-class-contracts.ts",
+                "exists": true,
+                "bytes": 4449,
+                "sha256": "84a49e93057ea7ed66edd19b7c3e56e4da28406c1603abb7515dbaf7bbbcbeb3",
+                "bootstrapReceivedSha256": "84a49e93057ea7ed66edd19b7c3e56e4da28406c1603abb7515dbaf7bbbcbeb3",
+                "actualMatchesBootstrap": true
+              },
+              {
+                "path": "src/ir/program-callable-bindings.ts",
+                "exists": true,
+                "bytes": 38556,
+                "sha256": "1fdce9ac296fb1b8b244b6c5fb35ee5d1140097b7c911a577e221115e5f2261d",
+                "bootstrapReceivedSha256": "1fdce9ac296fb1b8b244b6c5fb35ee5d1140097b7c911a577e221115e5f2261d",
+                "actualMatchesBootstrap": true
+              },
+              {
+                "path": "src/shared/contracts/js-value-tags.ts",
+                "exists": true,
+                "bytes": 2089,
+                "sha256": "cbbd38f292ab040fbd0de08832ce11e415146384a2bac3384089b4bd0810fddb",
+                "bootstrapReceivedSha256": "cbbd38f292ab040fbd0de08832ce11e415146384a2bac3384089b4bd0810fddb",
+                "actualMatchesBootstrap": true
+              },
+              {
+                "path": "src/ir/core/js-value-tag-identities.ts",
+                "exists": true,
+                "bytes": 755,
+                "sha256": "35bc397916e6acb5e1ee3341e2852a740dfe4b3bb3b4e9e7acbcc184a32e238b",
+                "bootstrapReceivedSha256": "35bc397916e6acb5e1ee3341e2852a740dfe4b3bb3b4e9e7acbcc184a32e238b",
+                "actualMatchesBootstrap": true
+              },
+              {
+                "path": "src/runtime/contracts/js-value-tags.ts",
+                "exists": true,
+                "bytes": 279,
+                "sha256": "70e2e548597c4b9eb4eb83a7b3fff51c05f64e7eb0cfb41a301e347990e2689d",
+                "bootstrapReceivedSha256": "70e2e548597c4b9eb4eb83a7b3fff51c05f64e7eb0cfb41a301e347990e2689d",
+                "actualMatchesBootstrap": true
+              },
+              {
+                "path": "src/ir/runtime/js-tag-domain.ts",
+                "exists": true,
+                "bytes": 13384,
+                "sha256": "203f966aabafd1023300d3f48bcbbfc9138346a9da5f15a7870d47964300bc1e",
+                "bootstrapReceivedSha256": "203f966aabafd1023300d3f48bcbbfc9138346a9da5f15a7870d47964300bc1e",
+                "actualMatchesBootstrap": true
+              },
+              {
+                "path": "src/ir/core/binding-references.ts",
+                "exists": true,
+                "bytes": 11367,
+                "sha256": "a2642825b7001a7125bed04850bd4b5e0de9a708b4dece5fda1fe5b715d02865",
+                "bootstrapReceivedSha256": "a2642825b7001a7125bed04850bd4b5e0de9a708b4dece5fda1fe5b715d02865",
+                "actualMatchesBootstrap": true
+              }
+            ],
+            "canonicalGateDependencies": [
+              {
+                "path": "scripts/check-ir-kind-neutrality.mjs",
+                "exists": true,
+                "bytes": 72384,
+                "sha256": "f275bdce2c703235544b819d5a63fd899024ed5759f91526d4408d0ba80d5304"
+              },
+              {
+                "path": "scripts/ir-kind-neutrality-baseline.json",
+                "exists": true,
+                "bytes": 37742,
+                "sha256": "39f3de03aae07b9b4ea1a2dfb593eb8a65735f8574ab06d105fe81fe9ff80e12"
+              },
+              {
+                "path": "scripts/lib/check-canonical-ir-dialect.mjs",
+                "exists": true,
+                "bytes": 6406,
+                "sha256": "8bf7a204c4a56838ee313c92ca89d10821623a5570db8e35d9c09e6bccb177f4"
+              },
+              {
+                "path": "scripts/check-jstag-seam.mjs",
+                "exists": true,
+                "bytes": 10798,
+                "sha256": "d3379e6f0ef1108245dc47d85fcb542ea54f657dab724e23a4d13dbae78ea5b3"
+              }
+            ],
+            "configs": [
+              {
+                "path": "vitest.config.ts",
+                "exists": true,
+                "bytes": 5006,
+                "sha256": "2c4e2e3a237278e39d6235aa3e200c5e9e0718315a4f89d5bf3c8ce910b1c53f"
+              },
+              {
+                "path": "tsconfig.json",
+                "exists": true,
+                "bytes": 448,
+                "sha256": "c520c3a1d8da732e73833cb53571f93609d0c899f6bcf638d752cb91b8c1fa79"
+              },
+              {
+                "path": "tsconfig.ts7.json",
+                "exists": true,
+                "bytes": 1069,
+                "sha256": "e739b6bbafbc3026dd7769692798bb6a01b5b9efe3149038756d80ab57cfb1e2"
+              },
+              {
+                "path": "package.json",
+                "exists": true,
+                "bytes": 29841,
+                "sha256": "9920596a1661f4aa62043b0af3e5a53130eaff8f129a8063e844ea412a7f9470"
+              }
+            ],
+            "privateTypingConfig": {
+              "path": ".tmp/class-physical/tsconfig.json",
+              "exists": true,
+              "bytes": 403,
+              "sha256": "0c7f122559db85d91109c169cfa77b5aa46569e9abb6e752e762ce2726457e94"
+            },
+            "doNotCopyOrExecute": [
+              ".tmp/class-physical/profile-observational/vitest.config.ts (accidental additive include)",
+              "live accidental process87043 and its inputs are protected; receipts may be copied as evidence only"
+            ]
+          },
+          "modify": [
+            {
+              "path": "src/backend/wasmgc/program/native-realm.ts",
+              "exists": true,
+              "bytes": 23351,
+              "sha256": "1dde6a2b34e2fad3177157e68e410d4ff2aa0b4fea7a2b283b907dca81546c83",
+              "boundedWork": [
+                "Move entire actual C private physical owner here, preserving separate source/realm worlds and full canonical+physical currentness; move semantic derivation into real logical acquisition; own actual emitter/TypeConverter/ModuleAssembler integration; whole startup adapter body"
+              ]
+            },
+            {
+              "path": "src/backend/linear/program/reference-error.ts",
+              "exists": true,
+              "bytes": 8034,
+              "sha256": "1e2af0194b6762ba0e357ef145d745c2a2b6944224f5b9669ae1a25b53ebb0a6",
+              "boundedWork": [
+                "Whole old implementation relocates byte-exact except coordinates; exact named/type compatibility reexports only"
+              ]
+            },
+            {
+              "path": "src/ir/program-consumer.ts",
+              "exists": true,
+              "bytes": 76009,
+              "sha256": "8b3121f4cd42e7be5c6e37d3039672989d7416af44c56e8b15f2d6ebb95ad8dd",
+              "boundedWork": [
+                "acceptPreparedIrProgram class neutral preflight import/call only",
+                "reservePhysicalProgramSlots existing authentic C slot association import only",
+                "fillPrimaryBody actual selected-function C plan route (instruction/type census, not sourceClassBody)",
+                "materializePhysicalProgram actual owner imports, typed emitter plan and startup adapter calls; no private acceptance/emission holder move"
+              ]
+            },
+            {
+              "path": "src/ir/program-body-resources.ts",
+              "exists": true,
+              "bytes": 22332,
+              "sha256": "b617ca7c4a6f20f0d49d777dc600e233c8683d12c0c98cb476f950b23bab4413",
+              "boundedWork": [
+                "Extract entire fillStartupAdapter productive body to backend owner; sole src reader main consumer",
+                "physicalSignatureConverter remove only unpublished C pack hook; all generic branches exact; class projection owned by actual backend wrapper"
+              ]
+            },
+            {
+              "path": "src/ir/lower-generic.ts",
+              "exists": true,
+              "bytes": 195456,
+              "sha256": "a21b0aad8633e4d9e1b7fd923651cfacf2a665a7f88150d3d7c3e7a95d058bb4",
+              "boundedWork": [
+                "C-only prelude/terminal dispatch onto actual BackendEmitter procedure; fixed neutral class proof stays before class operand emission; no C physical owner value import; generic algorithms unchanged"
+              ]
+            },
+            {
+              "path": "src/ir/backend/emitter.ts",
+              "exists": true,
+              "bytes": 18048,
+              "sha256": "1b66b428e7c172d509753b54c3e244eebfd035a0c3f5c66fc391673c70eabb19",
+              "boundedWork": [
+                "Additive optional class neutral-legality query and terminal emission procedures through existing five-part contract; no caller-positive-verdict callback or arbitrary registration"
+              ]
+            },
+            {
+              "path": "src/ir/backend/lower-contracts.ts",
+              "exists": true,
+              "bytes": 15440,
+              "sha256": "fffa63f36c973fc67faf065876964febd61068bafc7bc877cfc27a0034922166",
+              "boundedWork": [
+                "Retire only unpublished resolveNativeJsClass executable resolver hook; old NN/generic resolver members unchanged"
+              ]
+            },
+            {
+              "path": "src/ir/backend/native-js-class.ts",
+              "exists": true,
+              "bytes": 1231,
+              "sha256": "210c7fd6e0d99951e797ce82535d71ead0f69a0e509285ce972e7e949d117ba8",
+              "boundedWork": [
+                "Exact class instruction/plan types only as needed for neutral emitter contract; old private physical-port type remains backend-private by use; no value issuer registry"
+              ]
+            },
+            {
+              "path": "src/ir/program-native-invocation.ts",
+              "exists": true,
+              "bytes": 12880,
+              "sha256": "93f1dcce8a0c89c5a0ead6bdd081bb58a74a80d6e8b68ec158c5d25ad77ba640",
+              "boundedWork": [
+                "fillPreparedPrimaryUnit optional concrete already-constructed five-part backend function plan for exact fn; preserve genuine source closure unit/slot/closureSubtype/completion checks and unchanged generic default. Parameter carries actual emitter/type-converter procedures, not verdict/registration callback; main native owner is actual constructor and canonical authority."
+              ]
+            },
+            {
+              "path": "tests/issue-6920-native-js-class-resources.test.ts",
+              "exists": true,
+              "bytes": 60156,
+              "sha256": "57719e3c06eee69b65a078013fa19d2ab05491b97c1f399b08263eea286b6a06",
+              "boundedWork": [
+                "Actual backend-owner import relocation; authentic function-plan/foreign/copied/stale/tx/global/type checks; retain all38 original identities and physical JS oracles; add class-op/type census routing controls"
+              ]
+            },
+            {
+              "path": "tests/issue-6920-native-js-class-execution.test.ts",
+              "exists": true,
+              "bytes": 4001,
+              "sha256": "175ed9c9d30c572f1aaa1299b105c52875f052d6de09458f98da3ea90f7356a4",
+              "boundedWork": [
+                "Preserve required2genuineprepare+2codec+4sourcefree runtime phases/35s/JS1+binarypair oracle; add meaningful source-unit routing observations if needed without oracle/timer suppression"
+              ]
+            }
+          ],
+          "new": [
+            {
+              "path": "src/ir/program/native-program-resource-requirements.ts",
+              "exists": false,
+              "bytes": null,
+              "sha256": null,
+              "boundedWork": [
+                "Genuine issued logical acquisition, not barrel: full prepared program/current original+all-selected/support conjunction, actual class occurrences/types/binding/unit/source rows, neutral representability and existing realm/string/vector/invocation/value/output derivation. Complete descriptor DATA, private ownership, currentness and invalid-before-coverage. No backend value imports/physical indices/callback proof. Compose existing B/class APIs unchanged."
+              ]
+            },
+            {
+              "path": "src/backend/wasmgc/resources/native-reference-error.ts",
+              "exists": false,
+              "bytes": null,
+              "sha256": null,
+              "boundedWork": [
+                "Whole genuine current ReferenceError resource implementation/state/body/error precedence from old Linear path, renamed only import coordinates."
+              ]
+            }
+          ],
+          "delete": [
+            {
+              "path": "src/ir/program-native-js-class-resources.ts",
+              "exists": true,
+              "bytes": 42360,
+              "sha256": "f39868bf96c52e8e16d9c3a5259c4e6b87846353c6de1f21c44122420eb06430",
+              "boundedWork": [
+                "Move whole private productive owner into actual native-realm physical owner; remove unpublished old C file after all readers/tests rewired. No value facade to hide three physical consumer edges."
+              ]
+            }
+          ],
+          "routing": {
+            "mandatoryInputs": "actual current original and every selected/support function with canonical ABI/source/unit/type and complete operation census",
+            "include": [
+              "module-init unit with define/frame/binding operations even without sourceClassBody",
+              "ordinary exported/helper source function containing construct/get/set/invoke/binding operations",
+              "constructor/method/initializer class USER or SUPPORT original units",
+              "any actual class-owned box or class support-role/dynamic type occurrence requiring declared carrier"
+            ],
+            "rule": "actual function identity and occurrence/type membership from current independently verified logical acquisition, not name/sourceClassBody/source-only syntax/profile whitelist. Missing class/type census or unresolved original-selected join refuses before emission. Unrelated scalar functions retain unchanged generic path.",
+            "closureCustody": "preserve existing fillPreparedPrimaryUnit association/completion checks with concrete emitter+TypeConverter plan; never silently route around genuine source closure owner"
+          },
+          "counterBudget": {
+            "observed": {
+              "irBackend": 32,
+              "irRuntime": 10,
+              "backendIr": 115,
+              "sccLargest": 704,
+              "sccCount": 4
+            },
+            "proposedMaximum": {
+              "irBackend": 28,
+              "irRuntime": 9,
+              "backendIr": 113,
+              "sccLargest": 704,
+              "sccCount": 4
+            },
+            "authority": "actual canonical graph virtual scope8b0edd..., not implementation/gate credit; optional concrete function-plan seam can remove need for direct backend lowerer import (112), but keep conservative113 until actual source measured"
+          },
+          "boundaries": [
+            "No edits to B logical/effect/runtime/generic verifier/codec files needed in proposal; new logical acquisition composes fixed public canonical APIs. If that cannot close, report exact held function before edits.",
+            "No root policy/issue/budget/gate changes by child; root classifies real new logical/resource rows and removes deleted row.",
+            "No sourceMap/CABI/public dynamic/callable/global presentation widening; global hook remains received but unimplemented.",
+            "No validation cache, private registration bridge, fake site/type/function/global coordinate, positive-report callback or borrowed world readiness.",
+            "Old historical generic function bodies move only whole startup function; all other generic default algorithms remain byte-exact outside named new-C hooks.",
+            "Active backend placement requires real clean closure; logical acquisition must not import backend type facade as nominal authority. ActualLOC/function gates apply; report needs before expansion."
+          ]
+        }
+      },
+      "manifestSha256": "1bc2f708d3048e6ef8512046e84807e3fbba215ea76b14bd1303a14d03b30598",
+      "constraints": [
+        "No edits to B logical/effect/runtime/generic verifier/codec files needed in proposal; new logical acquisition composes fixed public canonical APIs. If that cannot close, report exact held function before edits.",
+        "No root policy/issue/budget/gate changes by child; root classifies real new logical/resource rows and removes deleted row.",
+        "No sourceMap/CABI/public dynamic/callable/global presentation widening; global hook remains received but unimplemented.",
+        "No validation cache, private registration bridge, fake site/type/function/global coordinate, positive-report callback or borrowed world readiness.",
+        "Old historical generic function bodies move only whole startup function; all other generic default algorithms remain byte-exact outside named new-C hooks.",
+        "Active backend placement requires real clean closure; logical acquisition must not import backend type facade as nominal authority. ActualLOC/function gates apply; report needs before expansion.",
+        "No edits in old C worktree while its broad profile has frozen inputs.",
+        "Root owns policy classifications only after actual full source graph and type tests; no gate allowances."
+      ]
+    }
+  ],
+  "predecessors": [
+    "3522-b-native-class-semantic-producer-20261014.json",
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}

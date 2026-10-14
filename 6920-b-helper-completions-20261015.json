@@ -1,0 +1,62 @@
+{
+  "id": "6920",
+  "slice": "helper-completions-successor-20261015",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-helper-completions-20261015-01a12827",
+  "claimed_at": "2026-10-14T22:11:38.870218+00:00",
+  "updated_at": "2026-10-14T22:11:38.870218+00:00",
+  "write_id": "b-helper-completions-0a91c150-fc68-44c0-95c3-d7f8b2a2cadd",
+  "handoff_scope": [
+    {
+      "kind": "helper-completions",
+      "at": "2026-10-14T22:11:38.870218+00:00",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-helper-completions-20261015-01a12827",
+      "manifest": {
+        "receivingBranch": "codex/6920-b-helper-completions-20261015-01a12827",
+        "componentPreimages": [
+          {
+            "path": "src/ir/program-source.ts",
+            "bytes": 96471,
+            "sha256": "f47127a102eb2fda197d5cb9ebde73644727e194fcd38c2b04e3f77ccd801532"
+          },
+          {
+            "path": "src/ir/from-ast.ts",
+            "bytes": 807104,
+            "sha256": "7a0620460eb15716a19bca432764ea21b0635f66db5d6ae188f3225d36192bbc"
+          }
+        ],
+        "canonicalNewPaths": [
+          "tests/issue-6920-native-js-class-helper-completions.test.ts"
+        ],
+        "operations": [
+          "Preserve actual ordinary helper JS completion before body/direct call/ABI planning within existing native-class population. Return expressions evaluated once and boxed with existing genuine nativeJsClassStoredValue; bare/fallthrough returns actual undefined. Preserve abrupt completion and statement-call effects."
+        ],
+        "constraints": [
+          "Exactly two source paths plus new meaningful test in fresh isolated successor. Do not change A117 frozen donor.",
+          "No new opcode/schema/backend physical recipe or result-brand guess from scalar annotation.",
+          "Actual full-source typing, coupled source tests and existing ordinary checks; locate unsupported finally/cleanup rather than suppress.",
+          "All other source/test edits require exact held-function report first. No main push, HOLD or queue changes."
+        ]
+      },
+      "manifestSha256": "68a19d200f2d6d55e0961bdf82c4c37fa7abcfcac68d661e7b82c194df0d4464",
+      "constraints": [
+        "Exactly two source paths plus new meaningful test in fresh isolated successor. Do not change A117 frozen donor.",
+        "No new opcode/schema/backend physical recipe or result-brand guess from scalar annotation.",
+        "Actual full-source typing, coupled source tests and existing ordinary checks; locate unsupported finally/cleanup rather than suppress.",
+        "All other source/test edits require exact held-function report first. No main push, HOLD or queue changes."
+      ]
+    }
+  ],
+  "predecessors": [
+    "3522-b-native-class-semantic-producer-20261014.json",
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}
