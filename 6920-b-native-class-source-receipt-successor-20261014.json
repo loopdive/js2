@@ -126,6 +126,11 @@
         "All3 current caller hashes after actual authorized hooks and complete inverse receipts",
         "New outer helper/receipt external hashes and actual registered controls"
       ]
+    },
+    {
+      "path": "tests/issue-6920-native-number-undefined-source-successor.test.ts",
+      "clarification": "The received initial-reader composition includes snapshot(): create one FRESH authenticated outer reader at each snapshot invocation, then unchanged required.map consumes that private per-operation reader. All callback bodies, assertions, literals and deadlines remain exact; no cross-operation/global cache or callback authority. Whole caller inverse and reciprocal replay include the exact initial snapshot binding.",
+      "readCounts": "Outer capture nine fixed physical inputs. Composed default inventory call adds two genuine older Deno-anchor unknown passthroughs, each once; total11 physical. Old5 logical calls contain3mapped+2unknown. Do not claim all5mapped or9total physical."
     }
   ],
   "exclusions": [
@@ -137,8 +142,8 @@
   ],
   "donor_policy": "Original donor records and branches preserved; this record transfers only two named B current-reader hooks into fresh isolated receiving worktree.",
   "claimed_at": "2026-10-14T05:51:36.168310Z",
-  "updated_at": "2026-10-14T08:55:13.713399Z",
-  "write_id": "b-number-undefined-successor-0a29fab3-4a61-4015-98d8-ee37115c63f4",
+  "updated_at": "2026-10-14T09:36:28.294108Z",
+  "write_id": "b-number-undefined-68b0ebef-a0a0-40ed-aabf-91b02865ea13",
   "scope_refinements": [
     {
       "at": "2026-10-14T07:14:58.880101Z",
@@ -241,7 +246,25 @@
         "priorHumanAnswer": "takeover all of session b"
       },
       "reason": "Receive exact2018-to-2016 authenticated policy/caller transport, named default-input hooks and one explicit physical-save preparation operand; preserve historical algorithms and assertions. Implementation waits final62 and714 natural terminals/seals."
+    },
+    {
+      "at": "2026-10-14T09:36:28.294108Z",
+      "addition": {
+        "path": "tests/issue-6920-native-number-undefined-source-successor.test.ts",
+        "clarification": "The received initial-reader composition includes snapshot(): create one FRESH authenticated outer reader at each snapshot invocation, then unchanged required.map consumes that private per-operation reader. All callback bodies, assertions, literals and deadlines remain exact; no cross-operation/global cache or callback authority. Whole caller inverse and reciprocal replay include the exact initial snapshot binding.",
+        "readCounts": "Outer capture nine fixed physical inputs. Composed default inventory call adds two genuine older Deno-anchor unknown passthroughs, each once; total11 physical. Old5 logical calls contain3mapped+2unknown. Do not claim all5mapped or9total physical."
+      },
+      "authority": {
+        "answer": "Take over the blocking shared seams",
+        "priorAnswer": "takeover all of session b",
+        "preservedRecordAuthority": {
+          "source": "human all Session B takeover plus blocking shared-seam takeover",
+          "answer": "takeover all of session b; Take over the blocking shared seams",
+          "bounded_only": true
+        }
+      },
+      "reason": "Clarify already received initial-input orchestration: one fresh outer authentication per SOURCE35 snapshot, preserving all callbacks/timers and exact whole-caller inverse. Correct total composed inventory physical reads to9fixed plus2olderunknown anchors."
     }
   ],
-  "previous_write_id": "b-number-undefined-successor-9a6f8640-78e8-4b6f-8335-dcca921f9c0b"
+  "previous_write_id": "b-number-undefined-successor-0a29fab3-4a61-4015-98d8-ee37115c63f4"
 }
