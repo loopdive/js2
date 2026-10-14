@@ -1,0 +1,117 @@
+{
+  "id": "6920",
+  "slice": "mapped-class-origin-data-successor-20261015",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+  "claimed_at": "2026-10-14T22:52:53.893708+00:00",
+  "updated_at": "2026-10-14T22:52:53.893708+00:00",
+  "write_id": "b-mapped-class-origin-data-cd04c182-2ef9-4240-8431-d0dc1aa76996",
+  "handoff_scope": [
+    {
+      "kind": "mapped-class-origin-data",
+      "at": "2026-10-14T22:52:53.893708+00:00",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+      "manifest": {
+        "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+        "componentPreimages": [
+          {
+            "worktree": "codex-6920-b-native-js-class-integration-20261014-01a12827",
+            "path": "src/ir/analysis/allocation-evidence/native-js-class-producer.ts",
+            "bytes": 17162,
+            "sha256": "72f558656ba5b699919346cb94827a6497ac6fc2b441e00265947a8d3cfa15e7"
+          },
+          {
+            "worktree": "codex-6920-b-native-js-class-integration-20261014-01a12827",
+            "path": "src/ir/analysis/allocation-evidence/native-js-class-profile.ts",
+            "bytes": 25198,
+            "sha256": "ce5659ed41270e5317bc50361f3640857c95387f75a06f517460dee56cad84a5"
+          },
+          {
+            "worktree": "codex-6920-b-native-js-class-integration-20261014-01a12827",
+            "path": "tests/issue-6920-native-js-class-allocation-evidence.test.ts",
+            "bytes": 28988,
+            "sha256": "adf65b3592120e0b2b5125aee5bb1b3a3d3a0883ae9aacb5c92facb136d499e9"
+          }
+        ],
+        "canonicalNewPaths": [],
+        "privateProposal": {
+          "worktree": "codex-6920-b-class-value-replay-successor-20261014-01a12827",
+          "path": ".tmp/mapped-allocation-triage/receiving-proposal.json",
+          "bytes": 4952,
+          "sha256": "50cbd38fca58d60b3435eb5428e5ee090a1bee16d451d43bba3abda6e98a7c75"
+        },
+        "operations": [
+          {
+            "path": "src/ir/analysis/allocation-evidence/native-js-class-producer.ts",
+            "preimage": {
+              "worktree": "codex-6920-b-native-js-class-integration-20261014-01a12827",
+              "path": "src/ir/analysis/allocation-evidence/native-js-class-producer.ts",
+              "bytes": 17162,
+              "sha256": "72f558656ba5b699919346cb94827a6497ac6fc2b441e00265947a8d3cfa15e7"
+            },
+            "function": "analyzeNativeJsClass",
+            "replace": "site.origin !== instr.site",
+            "with": "preparedIrDataMismatch(site.origin, instr.site) !== undefined"
+          },
+          {
+            "path": "src/ir/analysis/allocation-evidence/native-js-class-profile.ts",
+            "preimage": {
+              "worktree": "codex-6920-b-native-js-class-integration-20261014-01a12827",
+              "path": "src/ir/analysis/allocation-evidence/native-js-class-profile.ts",
+              "bytes": 25198,
+              "sha256": "ce5659ed41270e5317bc50361f3640857c95387f75a06f517460dee56cad84a5"
+            },
+            "function": "inspectNativeJsClassNamespaces",
+            "replace": "allocation.origin !== instruction.site",
+            "with": "preparedIrDataMismatch(allocation.origin, instruction.site) !== undefined"
+          },
+          {
+            "path": "tests/issue-6920-native-js-class-allocation-evidence.test.ts",
+            "preimage": {
+              "worktree": "codex-6920-b-native-js-class-integration-20261014-01a12827",
+              "path": "tests/issue-6920-native-js-class-allocation-evidence.test.ts",
+              "bytes": 28988,
+              "sha256": "adf65b3592120e0b2b5125aee5bb1b3a3d3a0883ae9aacb5c92facb136d499e9"
+            },
+            "scope": "append genuine mapped-source fixture/new tests only; preserve every existing function/callback body and default",
+            "newFixture": "actual analyzeMultiSource+capture-source-map projection, original source/class/typed capture, genuine runtime declarations/ABI+canonical evidence domain; no authored body/site",
+            "positive": "all four GC/Linear standalone/WASI source policies; independently copied registry preserves complete source-point DATA, producer+neutral+runtime accept; actual typed+codec when A contextual source-map successor adopted",
+            "negative": "change sourceId/donorUnitId/analyzed and original spans/mapping/line/column, replace source with generated origin, remove origin, malformed accessor/prototype: DATA guards/semantic comparison must refuse; getters0",
+            "existingControls": "unmapped/default source and every original source/currentness/namespace/physical identity check unchanged"
+          }
+        ],
+        "qualificationPlan": [
+          "source/registry immutable mapped positive and actual origin-drift/getter negatives on all four policies",
+          "actual genuine current source+typed+codec only after authenticated A contextual source-map dependency adoption",
+          "whole allocation/evidence+source/helper+owner equations suite exact list/census, full typing/excludes[] and style/static",
+          "preserve root producer208179a71ed and prior failures"
+        ],
+        "constraints": [
+          "Preserve all unrelated owners, source checkpoints, original failures, HOLDs and public source branches.",
+          "No oracle/verifier weakening, new allowances, readiness cache, source push, merge or main writes.",
+          "Freeze all qualifier inputs per epoch; wait for natural terminal before edits. Ordinary checks and actual census required.",
+          "B alone owns these two logical origin comparisons and append-only existing test additions. Runtime and independent checker remain read-only. Preserve physical identities; exact recursive origin DATA equality only."
+        ]
+      },
+      "manifestSha256": "ecfeba110b06f8632fb7ed00bdbec735d75cc5e03471619a9e39d4ed129e3de5",
+      "constraints": [
+        "Preserve all unrelated owners, source checkpoints, original failures, HOLDs and public source branches.",
+        "No oracle/verifier weakening, new allowances, readiness cache, source push, merge or main writes.",
+        "Freeze all qualifier inputs per epoch; wait for natural terminal before edits. Ordinary checks and actual census required.",
+        "B alone owns these two logical origin comparisons and append-only existing test additions. Runtime and independent checker remain read-only. Preserve physical identities; exact recursive origin DATA equality only."
+      ]
+    }
+  ],
+  "predecessors": [
+    "3522-b-native-class-semantic-producer-20261014.json",
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}

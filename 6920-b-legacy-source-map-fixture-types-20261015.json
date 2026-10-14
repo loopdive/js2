@@ -1,0 +1,95 @@
+{
+  "id": "6920",
+  "slice": "legacy-source-map-fixture-types-successor-20261015",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-helper-completions-20261015-01a12827",
+  "claimed_at": "2026-10-14T22:52:53.893708+00:00",
+  "updated_at": "2026-10-14T22:52:53.893708+00:00",
+  "write_id": "b-legacy-source-map-fixture-types-0cfcad98-5ead-41ed-9d30-3b7ef80dbaff",
+  "handoff_scope": [
+    {
+      "kind": "legacy-source-map-fixture-types",
+      "at": "2026-10-14T22:52:53.893708+00:00",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-helper-completions-20261015-01a12827",
+      "manifest": {
+        "receivingBranch": "codex/6920-b-helper-completions-20261015-01a12827",
+        "componentPreimages": [
+          {
+            "path": "tests/issue-3525-source-map-frontend-origins.test.ts",
+            "bytes": 13729,
+            "sha256": "74acb38242a5b63ae406e6a59e62d88773e8090a03f5be102e765cb1405d09e1"
+          },
+          {
+            "path": "tests/issue-3525-source-map-prepared-codec.test.ts",
+            "bytes": 3560,
+            "sha256": "faf7dfe2c856c3655535be53a88f7dfeb3a713bbdbd8a91c8b414c4b2da32e56"
+          }
+        ],
+        "canonicalNewPaths": [],
+        "privateProposal": {
+          "worktree": "codex-6920-b-helper-completions-20261015-01a12827",
+          "path": ".tmp/helper-completion/legacy-fixture-type-proposal/proposal.json",
+          "bytes": 1637,
+          "sha256": "b605b780bcc2bbcd5667b163cdb20c56f6f8f19ac9ccbf1d4d9d588d741ad8a8"
+        },
+        "operations": [
+          {
+            "path": "tests/issue-3525-source-map-frontend-origins.test.ts",
+            "before": {
+              "bytes": 13729,
+              "sha256": "74acb38242a5b63ae406e6a59e62d88773e8090a03f5be102e765cb1405d09e1"
+            },
+            "candidate": {
+              "path": ".tmp/helper-completion/legacy-fixture-type-proposal/issue-3525-source-map-frontend-origins.test.ts",
+              "bytes": 13720,
+              "sha256": "55d827acfda9b496dae0ec21a8f6e56fe1b206bc28f6eb3064d6565ba70c7238"
+            },
+            "change": "move existing satisfies fixture element type onto const binding; no casts/values/callback/assertion changes",
+            "erasedJavaScriptByteEqual": true,
+            "erasedJavaScriptSha256": "3ce94d9ac792e99fe7e09e5743f7c2bd25f2007d530a837d9a599e7cf7870afc"
+          },
+          {
+            "path": "tests/issue-3525-source-map-prepared-codec.test.ts",
+            "before": {
+              "bytes": 3560,
+              "sha256": "faf7dfe2c856c3655535be53a88f7dfeb3a713bbdbd8a91c8b414c4b2da32e56"
+            },
+            "candidate": {
+              "path": ".tmp/helper-completion/legacy-fixture-type-proposal/issue-3525-source-map-prepared-codec.test.ts",
+              "bytes": 3551,
+              "sha256": "6be0130633420aae355fa7605649f81ed3b12fc29062df99558938314ac4a740"
+            },
+            "change": "move existing satisfies fixture element type onto const binding; no casts/values/callback/assertion changes",
+            "erasedJavaScriptByteEqual": true,
+            "erasedJavaScriptSha256": "8c539c85a41bbf95692bd3b8899c52358efd24deb06bd6224bfdb6b01c84ccc7"
+          }
+        ],
+        "constraints": [
+          "Preserve all unrelated owners, source checkpoints, original failures, HOLDs and public source branches.",
+          "No oracle/verifier weakening, new allowances, readiness cache, source push, merge or main writes.",
+          "Freeze all qualifier inputs per epoch; wait for natural terminal before edits. Ordinary checks and actual census required.",
+          "A alone owns exactly these two fixture annotations. Erased JavaScript must remain byte-equal. Preserve every value, callback, assertion and historical receipt; no casts."
+        ]
+      },
+      "manifestSha256": "4d9aad85acdd4b4773450247a0d8a8afb40a91b13f3eb3a035d33fae4e14eeea",
+      "constraints": [
+        "Preserve all unrelated owners, source checkpoints, original failures, HOLDs and public source branches.",
+        "No oracle/verifier weakening, new allowances, readiness cache, source push, merge or main writes.",
+        "Freeze all qualifier inputs per epoch; wait for natural terminal before edits. Ordinary checks and actual census required.",
+        "A alone owns exactly these two fixture annotations. Erased JavaScript must remain byte-equal. Preserve every value, callback, assertion and historical receipt; no casts."
+      ]
+    }
+  ],
+  "predecessors": [
+    "3522-b-native-class-semantic-producer-20261014.json",
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}

@@ -1,0 +1,72 @@
+{
+  "id": "6920",
+  "slice": "class-inline-argument-transport-successor-20261015",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+  "claimed_at": "2026-10-14T22:52:53.893708+00:00",
+  "updated_at": "2026-10-14T22:52:53.893708+00:00",
+  "write_id": "b-class-inline-argument-transport-068dc1bc-6ca9-4796-abe8-b7f6272e3877",
+  "handoff_scope": [
+    {
+      "kind": "class-inline-argument-transport",
+      "at": "2026-10-14T22:52:53.893708+00:00",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+      "manifest": {
+        "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+        "componentPreimages": [
+          {
+            "path": "src/ir/passes/inline-small.ts",
+            "bytes": 53263,
+            "sha256": "5e274000f8dd06362bcf93a6a1761729d10404093e8429761eb5cb1b1445c643"
+          }
+        ],
+        "canonicalNewPaths": [
+          "tests/issue-6920-js-class-inline-transport.test.ts",
+          "tests/fixtures/native-js-class-inline-transport.json"
+        ],
+        "privateProof": {
+          "path": ".tmp/class-inline-transport-audit/candidate-proof.json",
+          "bytes": 1124,
+          "sha256": "14e8434a990c4cd8c3bc1e3e33f437013ee2ddf22f57fcf39532f7f31f61bf23"
+        },
+        "actualFourPolicyProof": {
+          "path": ".tmp/class-inline-transport-audit/json-packet-results.json",
+          "bytes": 511,
+          "sha256": "a6646f513e142f627f0e72d328aafba320c42c23ad63c799125251a70f18eebf"
+        },
+        "operations": [
+          "Root alone repairs js.class.invoke signature.params following actual inliner SSA substitutions, including callee param substitution when numeric IDs coincide.",
+          "Use actual parameter/block/instruction types; retain result signature, tags, allocation and source provenance. Reject missing, non-dynamic or contradictory transport.",
+          "Meaningful genuine captured source/full-program fixture with JavaScript oracle, pre/post actual optimizer check, all four policy typed+codec transactions, adversarial substitutions, existing inline/source-map/allocation suites."
+        ],
+        "constraints": [
+          "Preserve all unrelated owners, source checkpoints, original failures, HOLDs and public source branches.",
+          "No oracle/verifier weakening, new allowances, readiness cache, source push, merge or main writes.",
+          "Freeze all qualifier inputs per epoch; wait for natural terminal before edits. Ordinary checks and actual census required.",
+          "No public generic operand renamer/GVN API changes, no disabled optimization, no verifier or source-validator changes.",
+          "Prototype not qualification. Root production writes wait until B root qualifier boundary so complete source epochs cannot race."
+        ]
+      },
+      "manifestSha256": "41e3a449e4924670f11e851a4294208462ee92f82550c2beb80057528e5a8fe9",
+      "constraints": [
+        "Preserve all unrelated owners, source checkpoints, original failures, HOLDs and public source branches.",
+        "No oracle/verifier weakening, new allowances, readiness cache, source push, merge or main writes.",
+        "Freeze all qualifier inputs per epoch; wait for natural terminal before edits. Ordinary checks and actual census required.",
+        "No public generic operand renamer/GVN API changes, no disabled optimization, no verifier or source-validator changes.",
+        "Prototype not qualification. Root production writes wait until B root qualifier boundary so complete source epochs cannot race."
+      ]
+    }
+  ],
+  "predecessors": [
+    "3522-b-native-class-semantic-producer-20261014.json",
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}

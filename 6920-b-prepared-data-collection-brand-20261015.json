@@ -1,0 +1,77 @@
+{
+  "id": "6920",
+  "slice": "prepared-data-collection-brand-successor-20261015",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-class-resource-session-20261015-01a12827",
+  "claimed_at": "2026-10-14T22:52:53.893708+00:00",
+  "updated_at": "2026-10-14T22:52:53.893708+00:00",
+  "write_id": "b-prepared-data-collection-brand-43fdd006-a1a7-48d3-b19c-2a27c482fda1",
+  "handoff_scope": [
+    {
+      "kind": "prepared-data-collection-brand",
+      "at": "2026-10-14T22:52:53.893708+00:00",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-class-resource-session-20261015-01a12827",
+      "manifest": {
+        "receivingBranch": "codex/6920-b-class-resource-session-20261015-01a12827",
+        "componentPreimages": [
+          {
+            "path": "src/shared/contracts/prepared-ir-data.ts",
+            "bytes": 12546,
+            "sha256": "914529ca30ad166b591f495cf6be96b089f87a0b6672dd7f6ef8986661234094",
+            "functions": [
+              "nativeCollectionBrand private captured intrinsics",
+              "hasNativeCollectionState",
+              "immutableCopy ordinary-copy allocation only"
+            ]
+          }
+        ],
+        "canonicalNewPaths": [
+          "tests/issue-6920-prepared-data-collection-brand.test.ts"
+        ],
+        "privateProposal": {
+          "worktree": "codex-6920-b-class-resource-session-20261015-01a12827",
+          "path": ".tmp/productive-owner-implementation/foundation-brand-proposal.json",
+          "bytes": 3419,
+          "sha256": "de867219a08818e8d0b1eae4a334257bcdf17af884629dd6d2f4d0d132064e3c"
+        },
+        "operations": [
+          "Capture Array.isArray and Object.create alongside existing native methods.",
+          "Before throwing collection probes: captured Array.isArray(value) true is a genuine array brand and therefore cannot have native Map/Set/Weak collection slots; record false only for this authenticated array brand.",
+          "Use captured Object.create(null) for the actual new ordinary immutableCopy copy; privately seed only that exact fresh copy false in the existing slot-brand WeakMap. Do not seed caller inputs or a value returned by caller .map/species.",
+          "Keep four native-method probes for every otherwise unknown object, including prototype-masked native collections. Keep all live prototype/descriptor/value/entry/cycle/refusal checks and all generic verifier algorithms. No positive DATA/semantic/topology cache or new exported authority."
+        ],
+        "qualificationPlan": {
+          "cpuAB": "Same exact one-case fixture/config/35s, parent WITHOUT cpu-prof flags to prevent inherited name collision, explicit worker CPU profile+8192 only. LIST one each; record Node/PID/flags/phases/background load/hash before/after. Run original A to natural terminal before changing foundation; B same unchanged inputs after amendment. No runtime/performance-green solely from profiling.",
+          "typing": "full source+owned roots TS7 excludes[]",
+          "foundationCompatibility": "Existing held C1 masked collection cases read-only; run selected relevant cases without edits if root authorizes.",
+          "other": "Meaningful new controls, actual source-free live/codec runtime, inventory/layer/cycle/LOC/style without waivers."
+        },
+        "constraints": [
+          "Preserve all unrelated owners, source checkpoints, original failures, HOLDs and public source branches.",
+          "No oracle/verifier weakening, new allowances, readiness cache, source push, merge or main writes.",
+          "Freeze all qualifier inputs per epoch; wait for natural terminal before edits. Ordinary checks and actual census required.",
+          "C alone owns foundation private intrinsic/brand optimization and new hostile controls. No semantic/topology positive cache. Same exact one-case A/B baseline natural terminal before amendment; retain unchanged timeout."
+        ]
+      },
+      "manifestSha256": "bbbedf554ef5097aee1fff7a1647bf9ab4390e61b64ca20530421044971f76d5",
+      "constraints": [
+        "Preserve all unrelated owners, source checkpoints, original failures, HOLDs and public source branches.",
+        "No oracle/verifier weakening, new allowances, readiness cache, source push, merge or main writes.",
+        "Freeze all qualifier inputs per epoch; wait for natural terminal before edits. Ordinary checks and actual census required.",
+        "C alone owns foundation private intrinsic/brand optimization and new hostile controls. No semantic/topology positive cache. Same exact one-case A/B baseline natural terminal before amendment; retain unchanged timeout."
+      ]
+    }
+  ],
+  "predecessors": [
+    "3522-b-native-class-semantic-producer-20261014.json",
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}
