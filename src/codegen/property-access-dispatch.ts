@@ -1927,13 +1927,19 @@ export function tryGlobalThisAndProcessRead(
       // object the JS-host import answers when no `process` exists (react's
       // NODE_ENV gate). (#6910) The process is a PLATFORM capability: a JS
       // environment reads the host's, admitted at the value boundary.
-      if (ctx.standalone && procProp === "env" && (hostFreeEnvironment(ctx) || !jsValueBoundary(ctx))) {
+      const noHostProcess = ctx.standalone && (hostFreeEnvironment(ctx) || !jsValueBoundary(ctx));
+      if (noHostProcess && procProp === "env") {
         const idx = ensureLateImport(ctx, "__new_plain_object", [], [{ kind: "externref" }]);
         flushLateImportShifts(ctx, fctx);
         if (idx !== undefined) fctx.body.push({ op: "call", funcIdx: idx });
         else fctx.body.push({ op: "ref.null.extern" });
         return { kind: "externref" };
       }
+      // (#6987) Every other `process.*` getter is a JS-host import a host-free
+      // build may not carry. Fall through to the ordinary unresolvable-global
+      // lowering (`process` is undeclared there: ReferenceError on read,
+      // `typeof process === "undefined"`), exactly like `process.exit`.
+      if (noHostProcess) return PA_FALLTHROUGH;
       if (hostImport !== undefined) {
         const idx = ensureLateImport(ctx, hostImport, [], [{ kind: "externref" }]);
         flushLateImportShifts(ctx, fctx);
