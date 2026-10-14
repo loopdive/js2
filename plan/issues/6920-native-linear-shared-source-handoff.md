@@ -4,13 +4,31 @@ title: "Native Linear numeric-vector shared source handoff and integration plan"
 status: in-progress
 sprint: current
 created: 2026-10-08
-updated: 2026-10-08
+updated: 2026-10-14
 priority: high
 horizon: l
 feasibility: hard
 reasoning_effort: high
 task_type: planning
 area: ir
+loc-budget-allow:
+  - src/ir/lower-generic.ts
+  - src/compiler/ir-program-presentation.ts
+  - src/compiler.ts
+  - src/ir/program-consumer.ts
+  - src/ir/program-source.ts
+  - src/ir/from-ast.ts
+  - src/ir/identity.ts
+func-budget-allow:
+  - src/ir/program-physical-plan.ts::planPhysicalSetup
+  - src/ir/program-consumer.ts::materializePhysicalProgram
+  - src/ir/lower-generic.ts::emitInstrTree
+  - src/ir/lower-generic.ts::lowerIrFunctionBody
+  - src/ir/from-ast.ts::lowerFunctionAstToIr
+  - src/ir/from-ast.ts::lowerExprUnchecked
+  - src/ir/program-source.ts::prepareIrProgramSources
+import-cycles-allow:
+  - ir->backend: 28 # 2026-10-14 (#6920): three measured native Number/Undefined physical reserve/fill/completion recipe joins remain honest mixed IR/backend debt
 language_feature: arrays
 goal: correctness
 parent: 3518
@@ -2907,3 +2925,2540 @@ inventory remains valid but architecture-incomplete, with graphComplete false;
 it is not full IR acceptance. The original first 50/51 run is retained in
 private evidence, including the explicit-undefined fixture-construction defect
 fixed in the new suite. No existing failure or fixture was rewritten.
+
+## Session B bounded native takeover — 2026-10-13
+
+The project lead explicitly approved takeover of the blocking native Linear
+API/routing, checked preparation, physical carrier/emission, startup resource,
+and existing allocator/constructor seams. Assignment commit
+`5bb1d7663622366b34f54d7f4ea9df7ba16e530e` records five bounded receiving claims
+and exact dispositions in 28 predecessor claims. All predecessor assignees,
+branches and unrelated scopes remain; 3,034 unrelated records are unchanged.
+The signed commit and all 33 changed records were verified against the server.
+Normal push hooks passed, including 18/18 numeric-local parity controls.
+
+Three isolated implementers started from canonical
+`529b092b6f80682538c1c2b7f7e136f5ca9d72c2`: checked facts/common preparation;
+public backend/environment routing and startup; canonical allocator/constructor
+extraction and real vector carrier selection. Root owns the fourth isolated
+memory-pack/consumer composition. Existing donor bytes and original failures
+are retained. The four forwarding claims remain with Session A.
+
+The common consumer now owns a private monotone emission lifetime spanning
+construction and observation. Emission-local resolver operations require the
+original active acceptance and are revoked after completion or failure;
+observer exceptions retain their original identity. Existing physical body and
+startup helpers move to finite program leaves to satisfy ordinary driver
+budgets without allowances. The WASI startup plan admits its already declared
+`wasi-start-export` adapter, reserves no second initializer, publishes `_start`
+through the existing reservation and refuses source export collisions.
+
+This is implementation entry, not migration completion. Native allocation
+execution, Linear ReferenceError/TDZ resources, full no-host parity, source-free
+replay and eventual direct frontend retirement remain required. Existing PR
+heads, HOLDs and Session A's final integration/queue custody are preserved.
+
+### Session B shared-source integration checkpoint — 2026-10-13
+
+The authorized bounded takeover is active under the five receiving claims in signed ledger commit `5bb1d7663622366b34f54d7f4ea9df7ba16e530e`. Integration source is isolated on `codex/6920-b-native-memory-integration-20261013-01a12827`, based on canonical `529b092b6f80682538c1c2b7f7e136f5ca9d72c2`; foreign branches, the four A forwarding claims, existing PR heads, HOLDs and queue ownership are preserved.
+
+The genuine numeric array fixture now executes through the common consumer with authentic arena/constructor/initializer/forwarding reservations: root source-free live/codec checks pass 4/4 across standalone and WASI, reading actual length/capacity/f64 payload bytes and preserving the first allocation after a second call. The routing lane's bounded presentation successor executes the corresponding public fixture as well, 6/6 total. Whole-attempt memory bindings revoke after successful emission; failures and ownership checks remain explicit. Genuine closed zero-allocation validation may omit the Linear memory pack; this grants no fabricated empty facts or runtime resources. Unsupported option recipes and located diagnostics are under separate review.
+
+The frontend origin successor retains actual Program/checker/source/resolution/options/library currentness; its original 16 controls pass. Semantic startup now retains explicit defer intent and uses the complete requested runtime census for TDZ proofs. The same sealed program can select target-specific physical startup adapters without source reanalysis. Linear exception lowering passes its independent 9 execution controls. The real ReferenceError recipe passes 10 canonical token/Wasm controls, using the shared externref ABI, tag -16, real native name literal and canonical Error body/type. Its public presentation resource receipt is still being connected; early returns inside try remain a separately preserved source limitation.
+
+A preparation guard introduced six host codec regressions: the unchanged canonical suite passes 27/27 on the preserved baseline, 21/27 before correction, and 27/27 with the bounded compatibility successor. Its selected 79/79 controls preserve all prior native-host refusal assertions and original codec test bytes. Root adopted the immutable five-path successor after the immutable origin/startup packets.
+
+Root combined source and owned-test typing passes, ordinary function and file budgets pass with no allowances, and the complete inventory reports zero errors with architecture explicitly incomplete. Full common-frontend migration, broader parity/performance qualification, final source publication and legacy/default-path retirement are not complete. Receipt files and all historical failed runs remain under `.tmp/native-takeover/`; this checkpoint does not close the migration goal.
+
+### Session B executed shared seams and preservation qualification — 2026-10-13
+
+The receiving carrier claim was extended by signed assignment commit
+`20b459d6bc0015a0a87c64c90b4a7abecac676ea` only for
+`deriveNativeVectorResourcePlan` in `src/ir/program/native-vector-resources.ts`:
+actual f64 vector layout discovery under WasmGC/WASI. All 3,067 other records,
+including the four A forwarding claims, remain unchanged. The exact receiving
+record and signature were read back from the server. Ordinary repository push
+hooks subsequently passed using configured Node 25.9.0, including 18/18 numeric
+controls. This permits neither externref vectors nor host Linear resources in
+WasmGC; their existing refusals remain.
+
+The joined consumer now authenticates the original issued Linear allocation
+plan instead of minting a physical copy. Its carrier census includes block
+arguments, instruction results and async values before acceptance. The existing
+bump allocator, array constructor, vector initializer and forwarding resolver
+remain the runtime recipes. Canonical Linear ReferenceError resources use the
+actual Error type/body, native name literal and tag -16. A completed presentation
+receipt binds the emitted original module after the executable acceptance has
+been revoked; it cannot revive an emission resolver. Failure diagnostics retain
+the actual allocation owner and source location. Unsupported imported/linked
+memory, reset, custom allocator and external-import recipes still refuse.
+
+Shared DATA, invariant errors, the class marker, string resource keys and pure
+ABI/contracts have one canonical owner with identity-preserving compatibility
+exports. Exact helper extraction and type ownership removed the new import
+cycles and driver budget excesses. No budget allowance, permitted boundary edge
+or cycle baseline changed. Strict source/owned-test typing, function/file
+budgets, import cycles, inventory, dead exports, oracle and coercion ratchets
+all exited zero. The boundary inventory remains architecture-incomplete:
+`graphComplete` and `architectureComplete` are false.
+
+The normal package build exited zero. The final build source still matches all
+1,961 entries in the retained source manifest. Separate executed controls passed
+63/63, 75/75 and 73/73; lint and formatting passed across 130 TypeScript paths.
+These finite cohorts are not a full migration or conformance result. The first
+36-file combined qualification is retained with 343 passes, 28 failures and one
+todo. All 28 failures are in the original allocation provenance/rule-sharing
+preservation drivers: their closed receipts correctly refuse the changed
+allocation type source hashes. No production behavior was changed to bypass
+that refusal, and the source checkpoint remains unpublished while it is red.
+
+The required successor must authenticate all four current allocation type
+ownership files on every invocation, recover their complete original source
+pins through exact inverse moves, reproduce the current files through an
+independent forward assembly, and retain the runtime `ALLOC_NAMESPACES` binding.
+Original helper/receipt anchors and all 28 original assertions remain immutable.
+The old drivers will explicitly test the authenticated predecessor stage; a
+separate live suite must reject current source/destination drift, missing input,
+repinned receipts, false forward proofs and changes after an earlier success.
+Three isolated agents own the successor, the two driver adapters and the
+independent bypass review respectively.
+
+The exploratory eight-case public Error preparation suite remains preserved
+with four passes and four refusals for early-return/finally or uninitialized
+module variables. It is explicitly outside the 36-file shipment cohort, not
+claimed green. Fixed f64 arena vectors, the separate target startup matrix and
+bounded Error/TDZ controls do not establish mixed/growing arrays, all async
+layouts or general cleanup semantics. Full frontend retirement, no-host parity,
+performance/CI qualification and final migration acceptance remain open.
+
+### Session B current preservation and source-facts result — 2026-10-13
+
+The closed allocation type ownership successor authenticates the actual four
+current sources and four immutable predecessor anchors on every call, including
+passthrough reads. Exact inverse moves recover the original whole-file pins;
+an independent test-side forward assembly reproduces all current bytes. The
+actual `ALLOC_NAMESPACES` reexport retains object identity. Its 33 live controls
+pass; the chronological driver adapters retain all 28 original assertions
+byte-for-byte. The joined 61/61 run passed. The intermediate 60/61 failure from
+one predecessor helper's default reader is preserved; an explicit reader wrapper
+corrected it without changing that assertion or any historical receipt/helper.
+
+The first complete 37-file successor run passed 404 tests with one todo. An
+additional source-facts experiment had been omitted from that cohort and exposed
+13/18 passing controls. Four actual codec omissions were corrected: the shape
+entry now checks own attachment schema/exact fields, the final registry join and
+the complete semantic/Linear body allocation population through the existing
+pure verifier. It performs neither producer inference nor layout selection.
+One newer experiment had explicitly expected an unknown schema to pass shape
+validation; that expectation was changed to structural refusal while retaining
+complete-validation and encoding refusals. This tightens the asserted transport
+type and grants no semantic authority. Its original source and failed run remain.
+
+The fifth old source-facts expectation incorrectly accepted present undefined
+canonical encoding metadata on a numeric array. Published AE17/AE19 and domain
+controls explicitly forbid that cell, even when its value is undefined. Those
+guards remain unchanged. The current test instead proves undefined extension
+metadata and raw surrogate custody, plus structurally coherent canonical
+encoding-undefined refusals at preparation, encoding and complete decoding.
+DATA-only decoding preserves the claimed structure without native acceptance.
+The other 17 controls remain byte-identical; exact original 18-case bytes and
+the 13/18 failure evidence are retained. This successor passes 19/19.
+
+The actual complete current-root cohort now passes 423 tests with one todo
+across 38 files, natural exit zero. Strict typing includes that additional
+source-facts suite. Function/file budgets, cycles and boundary inventory all
+exit zero without new allowances; the separate original codec regression
+cohort passes 35/35. The prepared source review scope contains 137 paths; the
+eight-case exploratory Error preparation file remains an explicitly preserved
+outstanding limitation and is excluded from publication. No entire migration,
+graph closure, frontend retirement or final integration/queue release follows
+from these finite results. Publication must still qualify the upstream merge
+and run ordinary hooks.
+
+### Session B vector index correctness blocker found before publication — 2026-10-13
+
+The normal pre-commit chain passed its selected 20 files and all ordinary fast
+checks, then signing failed because the shell had no SSH agent connection.
+No source commit was created. The existing macOS agent has the configured
+matching public key loaded; its socket was located without changing signing
+configuration or disabling hooks. The checkpoint remains private and staged.
+
+Final functional review exposed a separate correctness defect. Actual public
+compilation of a fixed numeric array followed by reads at `0.5`, `-0.5` and
+`0/0` succeeded under both Linear targets and returned the first element, 1.25,
+instead of the existing numeric undefined carrier, NaN. Six wrong observations
+out of twelve source/target rows are retained with valid emitted binaries.
+Integer negative/out-of-range reads returned NaN and dynamic numeric indices
+remained loud finite-profile refusals. Saturation narrowed the invalid property
+index to zero before the existing length condition could distinguish it.
+
+An independent source-free functional comparison used authentic prepared fixed
+vectors and ordinary exported numeric calls. Across live/codec and both targets,
+eight in-range calls returned the correct value. The eight GC calls at negative
+or out-of-range integer indices raised the specified runtime error; the eight
+corresponding Linear calls instead returned numeric data. No memory inspection
+was used. The actual 24 observations and unchanged source snapshot are retained.
+The typed IR `vec.get` contract lowers to GC `array.get`; the newly reachable
+Linear terminal operation must preserve that bounds behavior.
+
+Publication is held for two disjoint successors. Source lowering must retain
+the original numeric index, prove exact integer/property-key identity before
+narrowing selects an element, and preserve the existing undefined carrier for
+non-integer/NaN reads. The existing in-bounds shortcut cannot bypass that proof.
+Physical Linear terminal operations must check the exact requested backing
+extent of the same local defining `vec.new_fixed` instruction with an unsigned
+index comparison before access, using each operand exactly once and retaining
+actual resolver/resource ownership. Logical length is not a sound substitute:
+GC permits raw access to default elements in an empty constructor with positive
+requested capacity, while the Linear allocator may pad physical capacity to 16.
+The first header-length candidate is retained as an unadopted epoch. Native
+admission already requires this exact local construction; ambiguous nonlocal
+operands retain their located refusal. Stores must evaluate their value before
+a failing bounds check, preserving the original evaluation order. GC instructions, recipes, DATA
+schemas, prior metadata guards and broader dynamic-index refusal stay fixed.
+Two isolated implementers own these separate seams; the third independently
+checks public numeric observations. All prior passing/failing epochs remain
+historical evidence, not current publication credit after these source changes.
+
+
+### Session B bounded index successors and joined qualification — 2026-10-13
+
+The numeric source successor preserves the original f64 index and requires its
+identity with the signed i32 round trip before an element can be selected. It
+retains the existing undefined carrier for fractions, NaN, infinities and
+out-of-range numbers. An f64 range proof cannot bypass that identity check.
+Its three-path producer packet passes 37/37, including 44 numeric observations
+and two dynamic-index refusals. The original four GC golden cells remain the
+same 182-byte binary and digest; no historical golden was rewritten.
+
+The bounded constant-fold successor implements the existing signed i32-to-f64
+conversion and partial boolean AND only with scoped, known i32 operands. A
+constant one can substitute a pure comparison that actually produces 0/1; it
+cannot substitute arbitrary integers. Child facts cannot leak to siblings.
+Its 65/65 producer run includes 23 new domain/scope/conversion controls and
+42 existing optimizer controls. The effect-rule source and its closed custody
+chain remain byte-identical; dynamic numeric indices are still refused.
+
+The raw terminal get/store successor joins the exact local defining constructor
+and checks its requested backing capacity, preserving evaluation order and
+one resolver lookup. Empty logical vectors with positive requested capacity
+retain their valid GC default-element accesses. Physical padding grants no
+extra extent. Stores evaluate the new value before trapping. A cohesive,
+actively called helper replaces the previous get/store branches; ordinary
+function and file budgets pass without allowances. Its 17-control predecessor
+passed 13 and failed four Linear cases; the successor passes 17/17. An
+independent review authenticates all three source paths and all 66 evidence
+members. The inventory records the helper's remaining mixed-contract debt.
+
+The root's actual 46-file joined run executes 542 tests: 539 pass, two fail and
+one remains a todo. The two failures are the existing dynamic-element legacy
+comparisons in `tests/issue-1169o.test.ts`: computed and bitwise indices return
+NaN where 300 and 7 are expected. Authentic base `529b092b6f80682538c1c2b7f7e136f5ca9d72c2`
+independently executes those same nine controls with seven pass and the same
+two failures at the legacy-result assertion. They predate this entire source
+checkpoint, not merely the index successor. Their assertions and failures are
+preserved; no skip, expectation replacement or gate allowance is introduced.
+The joined root source census has 1,964 files and is unchanged during execution.
+
+An independent replay of the original twelve public index rows now yields ten
+correct NaN observations and two expected dynamic refusals, replacing the six
+previously wrong numeric results. Four additional boolean-key public cases are
+refused, while both numeric controls return 7; no unsupported boolean result is
+quietly accepted. Strict typing, import cycles, inventory, dead exports, oracle,
+coercion, formatting and ordinary budgets pass across all 103 changed source
+paths. The inventory JSON formatting repair preserves complete semantic equality.
+The explicit review scope now contains 142 paths; the original exploratory
+Error file remains untouched and excluded.
+
+The next cleanup slice has a complete read-only plan for capturing a return
+value before inner-to-outer cleanup, with independent initialized-counter
+controls. It can proceed without fabricating undefined storage. The old
+uninitialized-counter fixture remains a separate oracle/storage limitation.
+Legacy grow/push recipe extraction has a private plan but is outside the five
+receiving source claims: a fresh bounded owner handoff and genuine f64 setter
+ABI, allocation facts, alias and backing-extent joins are prerequisites before
+source admission. Neither plan adds implementation or runtime credit here.
+
+The upstream integration, final build and ordinary signed commit/push hooks
+still require qualification. Existing PR heads, HOLDs and A's final integration
+and queue authority remain unchanged; no whole IR migration completion follows.
+
+
+### Verified upstream integration and final source qualification — 2026-10-13
+
+The normally checked, SSH-signed source commit is
+`41e43787421432b356d5e27af447b68a5c696e8f`. Its author is Thomas Tränkler; its
+Codex co-author and configured-model trailer are retained. Cryptographic
+verification uses the matching existing public key. All 142 committed path
+hashes equal the reviewed manifest after the hooks, with zero source or
+receipt drift. Existing branches and claim records were not rewritten.
+
+Upstream `a8b79f3110884d09dd0a1f7e9989061b73ffb88f` merged automatically into
+this isolated branch. The only overlapping inventory file combined cleanly;
+all upstream source and baseline changes remain. The actual combined tree has
+1,967 source files, unchanged throughout its second 46-file run. It again
+executes 542 tests: 539 pass, the same two original legacy cases fail, and one
+is a todo. Both the authentic original base and the complete pre-index source
+snapshot separately execute nine unchanged legacy controls with seven pass
+and those exact same two failures. There is no whole-suite green claim.
+
+The normal build exits zero. All eleven final checks exit zero, including
+strict typing, function/file budgets against this exact upstream base, import
+cycles, compiler inventory, dead exports, oracle/coercion limits, lint,
+formatting and whitespace. The broader graph and architecture completion
+flags remain false. Final merge/push hooks and public review publication are
+still pending at this record; no queue release or full migration completion
+is inferred. The separate next cleanup implementation is private and outside
+this checkpoint.
+
+
+### Published checkpoint and bounded parity repair — 2026-10-13
+
+The SSH-signed combined head `82bb39d34b407b6427f393d0e6f11773fa96f76c`
+was normally pushed to the isolated fork review branch and published as
+https://github.com/loopdive/js2/pull/6662. The PR is ready, open, labelled
+`hold`, and has no auto-merge request. A retains integration and queue ownership.
+
+The unchanged cross-backend parity job found a real regression in
+`control/try-finally-early-exit`: the retained Linear body-batch resolver lacked
+`ensureExnTag` when the new backend legality admitted a `try`. The failure
+occurs before binary emission, with `resolver cannot resolve __exn tag for try
+(breakRunsFinally)`. Exact tracked predecessor `529b092b6f80682538c1c2b7f7e136f5ca9d72c2`
+passes all 33 unchanged controls; exact published head passes 32/33. Their
+tracked driver/corpus hashes match. Local Node 24 positive controls and the
+same failing fixture confirm the failure independently of CI's Node version.
+This advisory job failure is preserved and repaired, not waived.
+
+The bounded receiving transaction `9474e518cd8571ba88ea46c4ea6365e20235e63f`
+adds only the existing carrier receiver's actual body-resource preflight and
+read-only exception-tag resolver join. The predecessor frozen-body-batch claim
+retains its original owner, branch and partial disposition. All 3,066 other
+rows remain identical. No return/finally algorithm, source-admission widening,
+selector change or host ABI is transferred. Subsequent exact one-row helper-home
+refinements retain 3,067 other rows and do not change any source PR head.
+
+The repair reserves the real opaque `(externref)->()` tag before any body
+consumer. Demand validation and existing forwarding checks retain their order.
+The resolver reads an issued reservation on the original module; actual tag
+identity, type identity/signature, imported-tag offset and direct physical
+coordinates must still match. Emission never allocates a replacement tag.
+Numeric-only bodies reserve no exception resource. Canonical recursive type
+groups before the direct interner's type coordinate are explicitly refused.
+The old public resource-demand type remains available through its type alias,
+and the extracted runtime lookup preserves its actual-table lookup and import
+offset without changing any routing.
+
+The final helper home remains an unmigrated IR backend adapter. An intermediate
+backend/program home added a reverse dependency; a physical-layer attempt was
+then correctly rejected by inventory because this complete helper still owns
+IR demand inspection and injected legacy ports. Neither failure is suppressed;
+no allowance, active-layer demotion, false clean classification or historical
+receipt rewrite is introduced. Physical-resource separation and the whole
+compiler graph remain incomplete.
+
+The permanent 21-test file covers unissued reads, repeated reservation without
+mutation, original-module custody, nine reservation/type/offset mutations,
+unreserved name collision, wrong interner type, recursive-coordinate changes,
+genuine typed-IR throw-only demand, displaced real Wasm indices, original opaque
+payload catch/rethrow identity, cleanup exactly once, numeric no-tag output and
+public nested break/continue execution. Root's pre-relocation combined controls
+execute 54/54 (33 unchanged parity plus 21 permanent regressions). Peer review
+of the supplied source and test definitions is reasoning-only because agent
+shell startup is blocked by the symlinked sandbox root; it supplies no
+independent execution credit. The separate private return/finally semantic
+packet remains outside this source repair and its foreign ownership is retained.
+Final post-relocation qualification and ordinary source commit/push are pending.
+
+
+### Final adapter-home qualification and repair publication preparation — 2026-10-13
+
+The final exact one-row receiver refinement is SSH-signed
+`98fd2b92b63cd014d82ef90f61c459975201550f`, normally pushed and effect-verified
+on `upstream/issue-assignments`. It retains 3,067 unrelated rows unchanged.
+The complete helper is now `src/ir/backend/linear-body-batch-resources.ts`,
+with exactly equivalent body bytes apart from its three canonical type imports.
+Both intermediate unpublished helper paths are absent. Its single inventory
+row remains `unmigrated` / `mixed-needs-split`, destination `wasm-physical`.
+All prior layer definitions, activations, baselines and allowance policy remain
+semantically identical. Actual module-level migration debt is preserved.
+
+The final root run executes all 48 selected files, 596 tests: 593 pass,
+the same two authentic-predecessor legacy results fail, and one is a todo.
+All 33 unchanged parity controls and all 21 new resource regressions pass.
+All eleven source checks and the full build exit zero; no assertion, corpus,
+exception rule, source selector or budget allowance was relaxed. The complete
+1,968-file source census is unchanged throughout qualification. Existing
+four-profile native/GC behavior and the original GC binary digest are retained.
+
+The reviewed repair contains exactly five files: this issue, the one-row
+inventory addition, the existing integration adapter, its new complete
+resource helper, and the permanent 21-test file. The exploratory public Error
+file remains untouched and excluded. Normal signed source commit and push
+hooks are still required before publication. New-head remote CI is pending;
+local parity repair is not a whole-suite, whole-graph or whole-IR completion.
+The public PR stays on HOLD under A's integration and queue authority.
+
+
+### Canonical physical exception-tag closure — 2026-10-13
+
+Signed receiving transaction `1b8ba99dd1e12c5b5b7127773bb9d97ad67d98e9`
+extends only B's existing carrier claim for the exact physical-provider span.
+It also binds the already B-owned default allocator safety successor; 3,067
+other existing rows and all predecessor records remain identical. Normal push
+hooks and the upstream ref effect were verified before either source write.
+Foreign finally semantics, source grow/push and A's queue ownership remain out
+of scope.
+
+The complete exception-tag contract, single private WeakMap, constants and
+reserve/read implementation now live in
+`src/wasm/physical/linear-body-batch-exception-tag.ts`. The entire executable
+span is byte-identical to published predecessor
+`5555c7213825d4abb702d24e4819e160db5b7bf5`; the resource interface changes only
+by becoming exported. The complete IR demand/forwarding/preflight function is
+also byte-identical. Compatibility exports reference the very same functions,
+not wrappers or copied state. The actual integration resolver consumes the
+canonical physical read endpoint; reservation remains before body consumption.
+
+The actual inventory graph, including type edges, proves a three-module full
+provider closure: the new physical leaf and the canonical Wasm module-records
+and instructions files. All are clean and within the existing allowed layers.
+The only source incoming edges are real preflight/import/reexport and resolver
+consumers. Original policy equals the successor after removing just the new
+clean provider row and restoring the adapter's debt description. No allowance,
+activation, baseline, suppression or graph-completion flag changes.
+The IR adapter remains unmigrated because injected legacy/semantic demand
+orchestration has not completed its own closure.
+
+The same 48-file qualification executes 597 tests: 594 pass, the same two
+independently reproduced legacy results fail, and one remains a todo. All 33
+unchanged parity controls, the original 21 resource regressions and the added
+canonical export-identity control pass. All eleven source checks and the full
+build exit zero. The entire 1,969-file source census is stable during the run;
+physical state/implementation and complete preflight spans remain exactly equal
+after formatting. Peer review is reasoning-only from the supplied code and
+root measurements, not an independent execution claim.
+
+The getter validates present resource identity, opaque signature, import offset
+and direct type coordinates. It does not latch permanent revocation or detect
+an earlier mutation restored before observation; whole-attempt revocation
+remains the separate prepared-consumer contract. This is actual physical-provider
+boundary closure, not whole-preflight, graph or full migration completion.
+The default allocator safety candidate is isolated on its own successor branch
+and is not part of this checkpoint. Normal source commit/push remains pending
+at this preparation record, and the PR remains held for A's integration.
+
+### Explicit owned-test typing correction and current upstream composition — 2026-10-13
+
+Signed allocator donor `616a2cbb1227116cc8df7bd22bc1afeb159bd44e` is
+composed with the physical tag provider and current upstream
+`c1081873965c93b430f1dc4296187cf33b099767` in signed merge
+`4f67ecaed2` after normal hooks. The immutable combined 52-file execution
+run has 648 passes, the same two issue-1169o legacy failures, nine existing
+artifact skips and one todo (660 cases). Ten non-strict gates and build
+pass; the 1,970-file source census is stable. Those outcomes do not prove
+complete IR migration or remove HOLD/A integration ownership.
+
+**Correction to historical typing coverage claims:** earlier private
+`tsconfig.source-and-owned-current.json` and similarly inherited configs
+kept `tsconfig.json`'s `exclude: [node_modules, dist, website, tests]`. Their
+success proves source typing only. Historical paragraphs/receipts that
+called those runs “source and owned-test typing” overstate test coverage;
+this correction applies to those claims without rewriting their configs,
+logs, seals or independent runtime outcomes.
+
+The corrected private config explicitly sets `exclude: []`. Its actual
+TS7 `--listFilesOnly` output has 2,269 files: all 1,968 source TypeScript
+files, all 42 selected issue-6920 test inputs (41 tracked and one preserved
+private exploratory file), plus the explicit issue-6865
+and issue-6917 tests, with zero missing selected inputs. The separate
+source census includes two non-TypeScript files. Inclusion alone is not
+typing success: the first real test-inclusive run reports nine diagnostics
+in three B-owned helpers and no source diagnostics. An earlier malformed
+relative-path probe and the nine-error run remain preserved.
+
+Published receiver `984408b4e6ff7538d0fd07bd9f3be1391159aa3a` releases
+only these owned helper corrections: canonical f64 ValType arguments in
+resolver lifetime probes, concrete ArrayBuffer byte inputs at Wasm API
+boundaries, and a local module-based instantiate signature admitting the
+genuine exception-tag import absent from DOM typings. No runtime source
+algorithm, existing behavioral assertion, historical fixture, baseline
+or allowance changes. Final test-inclusive typing and affected runtime
+results are recorded after their natural completion in
+`.tmp/native-takeover/test-harness-typing-01/`; the broad runtime run above
+is preserved as its own epoch and is not retroactively credited.
+
+Final affected-runtime repair qualification: all **34/34** tests across the
+three changed helpers pass. The same explicit test-inclusive TS7 config
+now finishes with zero diagnostics, including all previously failing
+helpers and the preserved private exploratory input. A separately sealed
+explicit tracked-file config checks the 41 published issue-6920 tests plus
+issue-6865/6917 without depending on the untracked exploratory file; its
+result is kept as a separate epoch. Neither run types the unrelated
+issue-6891 historical harness, whose two old diagnostics are preserved in
+the authentic-predecessor allocator record. The 34 affected checks overlap
+the combined cohort and are not added to its 660-case denominator.
+
+### Complete canonical native vector initializer receiver — 2026-10-13
+
+Published claim `1711a5c39a52332bcf2d115fe797e7222da95faf` binds B's
+complete existing f64 element initializer to the isolated receiver
+`codex/6920-b-native-vector-initializer-20261013-01a12827` from signed
+predecessor `882b244b2519406ef539da3fcde0b5222bca9243`. The full
+seven-instruction body is retained byte-exact in
+`src/wasm/physical/linear-vector-initialization.ts`. Its canonical fresh
+descriptor owns the existing `(f64 value, i32 pointer, i32 index) -> void`
+signature and empty locals. The native memory pack directly consumes
+that descriptor and body; existing function key/name/order, caller
+operands, storage alignment/offset and reservation/lifetime authority
+remain unchanged. The old B initializer path is a direct identity
+reexport, retained as legacy compatibility debt.
+
+Only the new canonical leaf and the exact old compatibility policy row
+change classification. A's four forwarding claims, forwarding provider
+source/import/policy, all other policy records, old golden fixtures and
+source admission remain preserved. This removes one direct legacy-path
+provider dependency and duplicated descriptor from the native consumer;
+it does not close the whole pack or full IR retirement.
+
+The authentic predecessor source archive, unchanged original fixture and
+identical paired instrumentation are sealed under `.tmp/native-initializer/`.
+Complete emitted module DATA, binary and runtime/header/payload
+observations for all four backend/target profiles in both live and codec
+modes are compared against that predecessor. Their actual results and
+ordinary gate outcomes are appended after natural completion; no new
+conformance or retirement claim follows before those results.
+
+Measured paired qualification: all **16/16** cases pass, with eight paired
+profile/mode rows equal in complete emitted module DATA hash, encoded
+whole-program hash, binary length/hash and runtime observations. Linear
+outputs are 515 bytes, SHA256
+`53dfe1c7fa59ffa83af45a9c86d4a5b9bd2062239f864a8ad7a5805ad7ced0fe`;
+GC outputs retain 182 bytes and the established
+`9d0b81ec0f857912d0019f54d6ee6f1f5ce81aae9e7a34d5e4b433093aab3ca8`.
+Both return `[1.25, 15]`. Actual Linear headers, payloads and memory
+observations match. The first private probe wrongly assumed capacity two
+and the second pointer 1056 on both arms; observed capacity 16 requires
+aligned pointer 1168. That failed 8/16 instrumentation epoch is preserved.
+The corrected identical probe derives the next pointer from the observed
+header and retains the independent expected second payload `[4, 9]`.
+
+Direct custody checks confirm old-facade/canonical builder identity,
+unchanged body DATA against the authentic predecessor, and fresh descriptor
+nested-object/array mutation isolation. Complete actual dependency closure
+is three clean modules: the physical leaf, canonical Wasm instruction DATA
+and the zero-import shared layout contract, including type edges. Only the
+native memory pack and compatibility reexport consume the leaf. A's
+forwarding provider dependency remains present and outside this closure.
+
+The first unchanged **52-file / 660-case** cohort has 647 passes, three
+failures, nine existing artifact skips and one todo. Two failures are the
+same issue-1169o legacy cases; the third is an existing fault-injection
+control still spying on the old compatibility namespace, so it no longer
+intercepts the native pack's actual canonical provider. Its original
+failure, binding revocation and unpublished-export assertions remain
+unchanged while only the injection import is moved to the actual owner.
+This first full epoch remains preserved. Ten non-format gates and build
+pass, and the 1,971-file source census is stable. The first policy serializer expanded unrelated formatting and
+failed Prettier; that epoch is preserved, and the final policy edit is
+reconstructed from predecessor bytes at only the two authorized records.
+Final format/inventory/explicit typing checks qualify that bounded final
+policy epoch separately. No source behavior, golden, admission, baseline,
+allowance or A forwarding record is changed by this correction. Full IR
+retirement and A's final integration remain open; HOLD is retained.
+
+After published test-seam refinement
+`43105db4a94b926c398f61a2d7d5e1a06fba0219`, the only changed test
+byte sequence is the initializer-provider import path. The full affected
+pack file now passes **16/16**, including genuine provider construction
+failure, rejected completion/later bindings and empty exports. The final
+explicit source/published-test typing and formatting checks also finish
+with zero diagnostics. These 16 affected controls overlap the first broad
+cohort; the broad 647/3/9/1 result remains its own unchanged record rather
+than being relabeled as a fresh full-suite pass.
+
+
+### Internal synchronous vector transport receiver — 2026-10-13
+
+Signed receiver `1d92a9a70791a5b18a1226369b3adb57439c4c9a` extends
+only the existing B checked-preparation and carrier claims. Source producer
+`codex/6920-b-native-vector-calls-20261013-01a12827` starts from authentic
+published `68d2b17bb594cb4fc9c21030f41cd741d7ef61fe`.
+The ten-sample whole-program feature audit executes the local f64 vector
+positive control on all four profiles (four correct executions). Internal
+vector parameters/results and the multi-source factory fail shared callable
+signature preparation. Constant/mutable vector globals fail exact storage
+admission, Boolean vectors fail the current family element contract, indexed
+assignment fails allocation-free admission, and the loop fails the finite
+allocation-evidence profile. Push preparation throws for the undeclared
+`__ir_vec_elem_set_f64` intrinsic; that failure remains preserved. This is a
+first-boundary audit, not a conformance population estimate.
+
+The next implementation joins real synchronous signatures, body-derived
+conservative allocation evidence and complete acyclic unit-bound call/return
+origins. Parameters and returned aliases create no allocation sites. Every
+origin remains the actual creating instruction's site and requested extent.
+All four A forwarding claims, original async collector, legacy growth source,
+old fixtures, HOLDs and A queue authority remain preserved. Full migration
+and retirement remain open. Actual results follow qualification.
+
+
+Internal transport qualification retains the original asynchronous collector
+byte-exact. The dedicated synchronous source collector uses authenticated
+unit-bound call plans and checker contracts; nullable callable types remain
+distinct from nonnullable literal allocations. The separate
+`single-block-numeric-vector-call-v1` verifier replays original intraprocedural
+conservative ownership/escape annotations without calling the producer solver.
+Whole-program flow summaries substitute actual formal arguments and terminal
+vector returns. Every demanded receiver joins all authentic creating sites and
+a consistent requested backing capacity. Transport introduces no allocation
+site. The issued native pack checks unit/SSA capacity queries throughout the
+active emission attempt; the physical access guard uses requested extent,
+retaining actual arena padding and the existing A forwarding provider.
+
+The seven-source, four-profile live/codec matrix has **56/56** correct
+executions. The same sources on authentic published predecessor `68d` have
+eight correct local-control executions; the other six sources refuse at
+shared signature preparation. All eight existing local-control pairs retain
+complete encoded program, emitted module DATA, binary and runtime/memory
+identity. No successful predecessor binaries exist for the six newly admitted
+sources. Final candidate output records remain identical after the finite
+selector correction. Static retained allocation sites are separately measured:
+two nested-call fixtures retain an original factory site plus an inlined site,
+while each runtime invocation still performs its expected single allocation.
+
+The new test file has **12/12** checks, including 56 executions, actual callee
+site ownership, argument ordinal recomputation, stale local return evidence,
+recursive/mixed-extent refusals, removed caller/forged unit and post-attempt
+capacity capability revocation. The affected three-file group passes **41/41**.
+The first broad cohort reports 659 passes, three failures, nine skips and one
+todo across 672 cases: two historic issue-1169o legacy failures and a new
+selector traversal stack overflow on the retained cyclic-buffer control.
+That failed epoch is preserved. The selector now uses a finite buffer census
+and keeps the old no-call profile untouched; the new profile also diagnoses
+an active native buffer cycle as invalid, with a real positive-control probe.
+The corrected **53-file / 672-case** cohort reports **660 passes, two failures,
+nine skips and one todo**. Original assertions and fixtures are retained.
+
+Final source census is stable throughout qualification. Typing covers
+**1,972/1,972** source TypeScript modules and **44/44** explicitly named
+published tests (2,273 actual typed inputs; `exclude: []`). Build, lint, format,
+whitespace, dead exports, oracle and coercion checks pass. Ordinary file and
+function budgets pass without new allowances. Inventory has zero errors and
+remains explicitly graph/architecture incomplete. Both earlier over-budget
+epochs, initial test count assumptions, diagnostic-order failures and the
+cyclic failure remain under `.tmp/native-vector-calls/`.
+
+The implementation admits the finite synchronous single-block profile with
+scalar conditional children and terminal returns. Early returns, multiple
+blocks, async/slot bodies, unresolved/indirect vector calls, public vector ABI,
+mixed requested extents and recursive vector flow remain refused. Global
+vector storage, mutation/growth/loops, full IR frontend parity/retirement,
+merge-group conformance and A's final integration remain open. The held PR
+is a review checkpoint, not verified main delivery.
+
+Authentic `68d` reconfirmation runs the unchanged issue-1169o harness in the
+existing default JS-host lane: **seven passes / two failures / nine cases**. The
+same computed/bitwise legacy-return assertions fail before the IR comparison.
+The source collector, producer and old fixture remain unpatched. This
+reconfirms the two remaining broad-cohort failures without assigning them to
+the new native transport change.
+
+
+### Public internal-vector declaration gate follow-up (2026-10-13)
+
+The published internal-call checkpoint `54e88ce6b523ecdc2465bd9de34ffed9b9dec324` passes 56/56 shared-consumer executions. A separate actual public `compile()` probe fails 4/4 native profiles before shared preparation: the complete declaration capture incorrectly requires every function, including internal factory/picker functions, to have scalar parameters/results. The preserved public-route-02 log is a measured public-route failure; the shared-consumer count is not public compilation coverage.
+
+Receiver ledger `0715cf65b4a086df63bd148414cd03c32a0acc75` extends only B's native public routing scope for genuine synchronous numeric-vector source capture and shared callable joins. The fresh isolated presentation receiver starts from immutable54e. It preserves complete declaration census and logical type agreement, checks actual public export/alias bindings independently, and grants no public vector ABI, host/async widening or A forwarding/queue ownership. Actual public runtime and regression qualification remain pending.
+
+
+The first declaration fix passes Linear 2/4 and leaves GC 2/4 refused at the independent nondefaultable-reference gate. The completed consumer now retains its exact canonical vector reservation pack and offers read-only, currentness-checked layout DATA; presentation admits only the actual native-GC f64 carrier/backing reference indices through the existing detached finalization proof. This changes no shared emitted bodies or types. WIT observation accepts only the exact authenticated completed detached copy, retaining whole original/output snapshots.
+
+Actual multi-source qualification then exposed original-name aliases and four module-alias callable contracts. Native `compileMulti` now uses the checker's existing filename normalization with unchanged original text and rejects canonical-name collisions. Source signature and public export joins share a cycle-aware alias resolver; every callable entry is still checked against its captured source signature. Imported dependency helpers remain internal; actual public vector re-exports and aliases remain refused.
+
+The nine-fixture public matrix passes **36/36** actual compilations and **72/72** scalar invocations across Linear/GC x standalone/WASI, plus Boolean false/true behavior and requested scalar WIT. Its **36/36** negative requests fail with zero binary and located errors, including public vector boundaries, async/Boolean/optional/default vector shapes and canonical-source collisions; no direct generator is invoked. The final four new physical/WIT controls and broader 62-file regression cohort are pending. The preserved failed epochs include a test fixture extraction error, missing classifier import, the four source-key refusals and four alias-contract refusals; none is credited as runtime coverage.
+
+Both exact checkpoints execute eight scalar/Boolean paired controls: candidate versus immutable54e has equal source hashes, binary hashes, WAT, declarations, import helpers, WIT, export signatures, imports and capability requirements. All four profiles' numeric controls return7 and Boolean controls return0/1. Strict typing includes **1,972/1,972** source TypeScript modules and **53/53** explicitly named tests (**2,293** actual typed inputs, `exclude: []`). Build, lint, formatting, whitespace, ordinary file/function budgets, import cycles, dead exports, oracle and coercion checks pass. Complete inventory has zero errors and explicitly reports graph/architecture incomplete. Raw epochs are preserved under the isolated receiver's `.tmp/native-presentation-calls/`.
+
+
+Final isolated feature run passes **12/12** with no unhandled errors: 36 public compilations, 72 scalar invocations, 36 located zero-binary refusals and four physical/WIT custody controls. The first complete **62-file / 965-case** cohort records **907 passes, 48 failures, nine skips and one todo**, plus one worker `onTaskUpdate` timeout; this broad run is explicitly red. All source bytes remain stable throughout that cohort.
+
+The unchanged authentic54e checkpoint executes the same eight added presentation suites: **235 passes / 46 failures / 281 cases**, plus the same worker timeout. All 46 failure identities and assertion/error texts match candidate: 45 fail the complete historical classification raw-source profile pin; one expects a former externref Linear legality refusal. Their original tests, expectations and sealed receipts are unchanged. Authentic54e also reproduces the two legacy computed/bitwise failures (**seven passes / two failures / nine cases**) before IR comparison. No new failure identity is observed in the candidate cohort; these comparisons do not make the broader run green or establish full conformance. The transient/error channel remains reported, and no hook or expectation is bypassed.
+
+The complete shared-source/ABI migration, global vectors, broader vector control flow and operations, IR-only retirement, full merge-group qualification and verified main integration remain open. This bounded public-route correction is prepared for the existing held B review branch; A's original branches, four forwarding claims, HOLDs and integration/queue authority remain unchanged.
+
+### Synchronous numeric-vector control audit (2026-10-13, predecessor 8acbfe0474)
+
+Measured eight genuine public source programs on Linear and WasmGC, standalone
+and WASI: 32 requests. Local fixed-vector reads execute correctly in 4/4;
+local and internal-parameter counted loops and plain early vector returns each
+execute correctly in 2/4 (GC), with Linear refused by evidence coverage.
+Conditional vector results fail in 4/4 during logical expression capture.
+Internal element assignment, top-level vectors and push growth each remain
+unsupported or invariant failures in 4/4. Exact original source/configuration,
+error rows and literal independent expected answers are retained privately.
+
+The next receiver work advances source conditional facts, actual producer/return
+origin unions and independent scalar-slot/control-flow allocation evidence
+together. Historical profiles, foreign completion lowering, source push/grow
+algorithms and A's final integration ownership remain preserved. This audit is
+not a full conformance population or IR migration completion claim.
+
+### Qualified native vector control flow (2026-10-13)
+
+The native source collector now authenticates conditional vector arm types.
+Linear recomputes both actual conditional origins, all ordinary/nested return
+payloads and complete caller substitutions. Whole-native preparation selects
+an independent structured checker with lexical SSA, acyclic outer CFG and
+scalar slot initialization checks. Plain loops, statement branches and early
+returns retain their original execution semantics and original allocation sites.
+
+A separate annotation producer covers actual synchronous native numeric-vector
+control effects. The generic ownership/escape producers and the standalone
+finite evidence checker remain byte-identical to 8acbfe0474. Existing two-argument
+allocation preparation retains its original producer behavior; the authenticated
+native preparation context explicitly requests the extension. Arrays are excluded
+from the existing annotation-only stack consumer, and returned vectors survive
+subsequent allocations in the runtime controls. The checker does not invoke the
+producer, including after codec restoration. Unknown executable forms remain
+conservative and unsupported.
+
+Qualification: 20/20 new tests; fourteen genuine programs on four native
+profiles, live and serialized IR, plus public compilation. These cover both
+conditional branches, zero/one/multiple loop iterations, ordinary and nested
+returns, formal/call/constructor origin joins, scalar slots, single-arm allocation
+and lifetime across another allocation. The focused compatibility cohort passes
+103/103. The broader 65-file cohort has 948 pass / 48 fail / 9 skip / 1 todo
+among 1,006 cases; its exact 48 failure identities equal the authentic 8ac
+predecessor. The initial 41 additional compatibility failures were resolved by
+preserving sealed generic producer bytes and the standalone checker's grammar.
+Original receipts, assertions and the initial failure report are retained.
+
+Typing covers 1,977/1,977 source TS files and 54/54 named tests, with 2,298 actual
+inputs and no exclusions or diagnostics. The two unchanged older analysis tests
+retain six typing diagnostics, exactly reproduced on 8ac; their 21 runtime
+cases pass on both versions. Build, lint, formatting, whitespace, ordinary LOC
+and function budgets, cycles, reachability, oracle/coercion ratchets and compiler
+inventory pass. Eight scalar/Boolean WIT result pairs are byte-identical to 8ac.
+The 32-request public audit improves from 10 to 20 correct executions; mutation,
+globals and growth remain explicitly open. Inventory still reports incomplete
+architecture. No full conformance, retirement or main-delivery claim is made.
+
+
+### Native fixed-vector mutation receiver (2026-10-13)
+
+The published structured-control checkpoint is c3daab06f5e124796ce0e2ed5359ce3aef3cdce2
+on held PR6662. Normal commit and push hooks passed; the remote PR head and
+exact reviewed body digest were verified. Main integration remains A-owned.
+
+A genuine predecessor probe executes sixteen public requests: four mutation
+sources on the four native profiles. All sixteen refuse logical element-store
+lowering. The first candidate probe executes the same sixteen correctly.
+This probe is a finite matrix, not full mutation or conformance coverage.
+
+Receiver ledger 23d046c287b3468f9917213b69d698c26fc16941 registers the fresh
+isolated B mutation worktree. Native plain stores, supported numeric compound
+stores and discarded increments bypass physical source resolution only when
+checker symbols, original loop declaration and actual i32 slot agree. The
+body-only proof requires a strict vector-length bound, let integer initialization
+and ++ update. Signed native constructor length bounds prevent counter overflow.
+Unknown calls, property/alias writes, declaration writes and lost symbol/slot
+association refuse; the historical read proof and legacy growth are unchanged.
+The captured receiver/index are reused; compound reads precede the RHS.
+
+The first new test run reports seven passes and three failures among ten cases.
+Two failures expose an unsupported scalar assignment expression in one intended
+positive fixture; this original source and failure epoch are retained. The
+remaining failure is a harness assumption that refusal binary is undefined,
+where the real public API returns an empty Uint8Array. The corrected sequential
+scalar-effect fixture uses existing statement semantics and the unsupported
+expression remains a negative control. No result is credited until the final
+source qualification runs. Initial module-import and typecheck-path failures
+also remain under .tmp/vector-mutation/.
+
+Final source/runtime/codec/public, broader regression and gate qualification
+is recorded in the next entry. Globals, growth, general property writes, non-counted mutation,
+async/cleanup, IR retirement, full conformance and verified main delivery remain
+open. A forwarding claims, branches, HOLDs and integration/queue ownership remain
+unchanged.
+
+### Qualified native fixed-vector mutation (2026-10-13)
+
+The final source boundary is synchronous FunctionDeclaration-owned f64-vector
+mutation under a restricted counted-loop/effect profile. Original checker
+symbols, actual i32 slot records, a strict logical-length bound, let integer
+initialization and same-symbol ++ update must agree. Native constructors and
+independent structured replay require lengths at most 2,147,483,647. Unknown
+calls, object/any coercion, getters, declaration writes and property/alias effects
+remain refused. Async owners cannot borrow this proof; the original async
+collector and generic ownership/escape/checker bytes remain preserved.
+
+Qualification passes 13/13 feature tests. Ten actual synchronous programs run
+on all four native profiles using the same prepared program live and through
+codec restoration: 80 emissions and 160 correct runtime calls. Public compilation
+adds 40 compilations and 80 correct calls. Seventeen negative sources produce
+68 located zero-binary refusals. The separate checker control queries authentic
+sync, async and implicit object-coercion owners; it grants only the first and is
+not counted as execution coverage. The earlier 115/115 focused run predates the
+last two boundary refinements; the final broad cohort covers its unchanged
+compatibility cases and all thirteen feature cases.
+
+The final sealed 66-file / 1,019-case cohort records 961 pass / 48 fail / nine
+skip / one todo, actual process exit 1. Its exact 48 failure identities match
+published c3daab06f5e124796ce0e2ed5359ce3aef3cdce2; source hashes are identical
+before and after this run. No new failure identity is observed, and the cohort
+remains red. Initial fixture, harness, shadowing, typing and budget failure
+epochs are retained without changing predecessor assertions.
+
+Typing covers 1,980/1,980 source TS files and 55/55 explicitly named tests,
+with 2,303 actual inputs, no exclusions and zero diagnostics. The two unchanged
+older analysis tests retain six predecessor typing diagnostics outside that
+scope; their 21 runtime cases passed on both authentic versions. All ten source
+gates pass, including ordinary LOC/function budgets without a new allowance.
+The four extracted logical source-guard function bodies are byte-identical to
+c3da with the original imported error identity and call contracts preserved.
+The inventory honestly retains incomplete architecture. Eight scalar/Boolean
+WIT artifact pairs on the final source exactly match c3da.
+
+The ordinary full build passes with an 8 GiB Node heap. The initial default
+4 GiB run failed with V8 heap exhaustion (exit 134); its full failure log is
+preserved. No build stage or hook is skipped.
+
+Receiver ledger c01fcfcb6646733c7c6cf500162e9b0f83f2c0e0 records the expanded
+source-helper scope, retaining all foreign rows. Private exact manifests,
+source hashes, raw results, full logs and predecessor comparisons are retained
+under .tmp/vector-mutation/. This is a held B checkpoint; no verified main
+integration is claimed. Globals, growth, general writes, non-counted mutation,
+async/cleanup, IR retirement and full conformance remain open. A forwarding
+claims, branches, HOLDs and final integration/queue ownership are preserved.
+
+### Native internal module-vector receiver audit (2026-10-13)
+
+Mutation checkpoint 99eb0b9e1d0c6bbb007df3efe3769cb7170cc99b is signed and
+published to held PR6662 with normal hooks; exact remote head/body and HOLD were
+verified. Claim cc5332428c83c5bc9415305f33dab49318921b60 registers the fresh
+isolated global receiver in four B-owned takeover rows, preserving all foreign
+claims and source branches.
+
+The authentic checkpoint refuses direct whole preparation of the genuine source
+`const a=[2,5];export function run():number{return a[0]+a[1];}` at the real module
+initializer: binding a has no exact typed storage. Existing canonical ABI global
+contracts already contain IrType and authentic global/TDZ/storage-owner identities;
+there is no need for a second global identity map. The finite receiving profile
+starts with internal const numeric literals and synchronous reads. It must retain
+original AST allocation sites, real construction/store/TDZ order, escaping lifetime,
+issued backend storage and codec replay. Native-off classifiers, public vector
+exports, unsupported initializers, unknown writers, cross-module aliases/cycles,
+legacy source growth and A final integration remain preserved or refused.
+
+The existing startup plan promises exactlyOnce while its current physical adapter
+contains only flat calls. Repeated exported startup therefore needs measured
+qualification and a genuine guarded resource join before this profile can claim
+once-only construction. Initial source classification/collection edits are
+experimental; final execution, regression, type and gate qualification are pending.
+
+### Qualified native internal module vectors (2026-10-13)
+
+The finite source profile now prepares and executes genuine internal const f64
+literal vectors through their original canonical global and TDZ contracts.
+It keeps logical nonnull types separate from actual issued Linear i32 and GC
+nullable storage; GC reads receive nonnull refinement only from the current
+issued resolver. Public vector transport and unsupported source writers remain
+refused. No source or producer replay is used by live/codec consumers.
+
+Independent restored-IR checks census the unique unconditional original value
+and initialized-flag writers, prove value-before-flag publication, and require
+the authentic ReferenceError guard for reads without a prior guaranteed flag.
+Nested buffers inherit prior parent initialization without publishing their
+own facts to parent or sibling paths. Original initializer reads resolve their
+already-constructed SSA producer without recursively summarizing the same unit.
+The physical adapter uses a privately reserved once-state only for this native
+global profile, with actual semantic callee order and completed resource joins.
+
+Thirteen feature cases pass. Seven genuine sources execute through four profiles
+and live/codec consumers (56 emissions); all seven also pass the public source
+facade across four profiles (28 compilations). They cover scalar initializer
+order returning 52, length, empty storage, two original vectors, symbol shadowing,
+internal call transport, later-allocation lifetime and retained mutations across
+repeated startup. Both actual backends also pass deferred-startup TDZ and
+idempotence controls. Fourteen unsupported sources produce 56 located zero-binary
+requests. Ten detached-IR mutations refuse, including wrong writer/type/guard/TDZ
+identity, conditional or repeated writes, flag reset/order and read before flag
+publication. Runtime failure/reentry is unmeasured for this literal-only profile;
+the once-state recipe checks do not claim that execution coverage.
+
+The final 67-file / 1,032-case cohort is 974 pass / 48 fail / nine skip / one todo,
+actual exit 1. Its exact 48 failure identities match published predecessor
+99eb0b9e1d0c6bbb007df3efe3769cb7170cc99b. All 1,988 source hashes remain unchanged
+before/after qualification. The final malformed-control object shape was typed
+and its two affected tests separately rechecked after that shape correction.
+The cohort remains red; no fresh CI-green or full-conformance claim is made.
+
+Typing includes 1,988/1,988 source TS files, 56/56 explicitly named tests and
+2,312 actual inputs, exclude [], zero diagnostics. All ten normal gates pass;
+ordinary LOC/function budgets use predecessor 99eb with no new allowance
+(29 changed source files, net +662 LOC). Seven complete relocated helper bodies
+are byte-identical to that predecessor. Eight scalar/Boolean artifacts exactly
+match it. The full ordinary build passes with an 8 GiB Node heap and every stage
+retained. The inventory honestly retains incomplete architecture.
+
+Signed receiver claim eb66cbc06873c529f1a41b42fe070ed4d5e7c8ec is verified on the
+remote, expanding only four existing B takeover rows; all other rows and source
+branches are unchanged. Private exact manifests, full logs, earlier failures,
+source seals and authentic predecessor pairs are retained in .tmp/vector-globals/.
+This remains a held B checkpoint. Growth, general/mutable globals, broader
+initializers, async/cleanup, retirement and verified main integration remain
+open. A forwarding claims and final integration/queue ownership are preserved;
+legacy source push/grow implementations are untouched.
+
+### Native growth audit receiver and source refusal gap (2026-10-13)
+
+Global checkpoint 91f12e2c2ebe8de6b9fbdad252fb4548b9945c5c is signed and verified
+on held PR6662 with normal hooks. Its 32-file manifest and exact description are
+sealed; the foreign untracked integration test remains preserved. Fresh receiver
+codex/6920-b-vector-growth-20261013-01a12827 starts from that checkpoint.
+Signed claim e760fc8ce3a7abb218862d3cdac60034e73a716b registers this bounded audit
+and source capability correction in two existing B rows, preserving all others.
+
+The authentic direct source `export function run():number{const a=[2,5];return
+ a.push(11)+a.length+a[2];}` reaches the actual common f64 grow/store intrinsic
+but then throws invalid-prepared-data: calls an undeclared callable
+intrinsic|21:__ir_vec_elem_set_f64. Native resources declare only the externref
+variant. A genuine unsupported source operation must be refused by source
+capability preparation before constructing sealed Program data; restored data
+with an undeclared callable must continue failing the existing invariant.
+
+Parallel review confirms current source lowering already evaluates the argument
+before reading length and emits the three-argument indexed grow/store operation;
+push expression result is captured length+1. Two-argument legacy __arr_push is
+not that ABI. The current issued forwarding endpoint preserves Linear identity,
+but raw access still authenticates original requested extent, not padding16.
+Growth needs a real callable/resource and dynamic semantic-extent contract; no
+placeholder declaration, removed bounds check or forged literal site is allowed.
+A proposed append-only extent policy E=max(original requested extent,current
+logical length) needs complete authenticated initialization/append writers,
+backing assurance, checked arithmetic and publication before it can be adopted;
+general growth requires a broader explicit extent resource.
+
+### Qualified source growth capability correction (2026-10-13)
+
+The native synchronous source wrapper now scans each actual main/lifted function
+for the canonical intrinsic f64 grow/store binding. A genuine layout-free logical
+f64 receiver yields array-representation-unsupported@build before sealing;
+missing, foreign, wrong-element or layoutful receiver evidence yields the existing
+producer type-map-failure invariant. An ordinary unit with the same display name
+executes unchanged. Restored DATA never runs this source helper and retains the
+undeclared-callable invariant. No callable declaration or growth resource was
+invented, and no bounds check was removed.
+
+The new pure helper has canonical ir-program ownership in the boundary inventory.
+The existing sourceVectorCollector has one source consumer. Its original collect
+arrow AST is unchanged inside the orchestration object. Boolean assertion receives
+the same captured original checker, declaration and main function; the re-export
+is the identical original helper binding. Native-off and async-family behavior
+preserve the original collector/Boolean path. No size allowance was added.
+
+Final measurement: eight/eight growth-boundary feature cases pass, including
+eight genuine local/global preparations, eight located public zero-binary
+refusals, four executing unit-binding namesake profiles, four genuine generated-IR
+receiver mutations and restored undeclared-callable rejection. These are capability
+and invariant controls, not successful growth executions. Eight additional source
+cases across four profiles give 32 outcomes exactly equal to published predecessor
+91f12e2c2ebe8de6b9fbdad252fb4548b9945c5c: argument arity/spread, Boolean
+argument/receiver, unrelated push, async owner, Boolean return and two-function
+vector facts. Eight scalar/Boolean artifact rows also match that predecessor
+exactly.
+
+The final 69-file / 1,071-case cohort is 1,009 pass / 52 fail / nine skip / one
+todo, actual exit 1. Exact failure identities equal the previously measured
+67-file global cohort's 48 plus the separately paired 31-case externref cohort's
+four on the published predecessor. All four externref normalized full failure
+messages are identical. The broad cohort remains red. All 1,989 source hashes
+remain unchanged before/after the final qualification.
+
+Typing includes 1,989/1,989 source TS files, 57/57 named tests and 2,313 actual
+inputs, exclude [], zero diagnostics. All ten ordinary gates pass, with three
+changed source files net +58 LOC against published predecessor 91f12 and no new
+LOC/function/cycle allowance. The full ordinary build passes with an 8 GiB Node
+heap and every stage retained. Earlier failed gate, test-fixture and instrumentation
+epochs remain recorded privately; the final measurements supersede their claims.
+
+Signed remote receiver refinement fc4d44b4235bdfa670d8ff721d74ba58cd410f50
+changes one existing B preparation row on claim e760fc8ce3a7abb218862d3cdac60034e73a716b;
+all other rows, source branches and original owners remain preserved. Six exact
+tracked paths and raw evidence are sealed in .tmp/vector-growth/. Parallel
+reasoning review of the next append contract is retained there and does not
+claim independent execution. Actual growth still needs a canonical f64 callable,
+complete append/length-writer proof, allocation resources, failure-atomic
+publication, alias survival and current semantic extent on both backends.
+Original externref/async collectors, legacy push/grow and A's forwarding and
+integration/queue ownership remain preserved. Growth, remaining migration,
+retirement/conformance and verified main delivery remain open; this is a held B
+checkpoint.
+
+### Actual native numeric append receiver (2026-10-13)
+
+Published source-capability checkpoint 72ce5a7b1dad207b02c94bdf64ccfc69f244c92b
+is the measured predecessor; native push remains unsupported there. Receiver
+codex/6920-b-vector-append-20261013-01a12827 now owns the actual append protocol,
+checked physical transactions, current extent and common/public integration.
+Signed receiving claim 96118f3c9f4164fd9c3ed86fff11a44d2d2042f8 is verified on
+the remote. Three existing B rows and the finite native-vector resource handoff
+change; every other row, the original parent owner/branch and A forwarding and
+queue ownership remain preserved.
+
+The actual initializer is value-first (f64,i32 pointer,i32 index)->void and only
+stores; it cannot substitute for the three-argument vector/index/f64 append ABI.
+Implement a dedicated endpoint whose allocation/copy/value/length preparation
+precedes publication, preserving original aliases through the current forwarding
+provider. Numeric raw accesses need E=max(original requested N,current logical L)
+on both backends under a complete closed append/length-writer proof; physical
+padding grants no access. Catalog declaration alone must never grant admission.
+
+Physical recipe qualification, semantic/effect/origin replay, real resource/ABI
+issuance, source-free live/codec execution and public four-profile execution are
+in progress. No new execution, gate or complete-growth claim is made yet.
+
+The first actual append components are now implemented locally. Dedicated Linear
+and GC recipes execute real backing growth, copy/store-before-publication and
+alias preservation. Linear validates resolved tag/alignment and full widened
+old/new ranges, checked capacity and index, and publishes one complete forwarding
+header last. Actual default memory.grow failure preserves vector, forwarding,
+heap and memory size; invalid/overlapping endpoints, overflowing/unaddressable
+headers and wrong indices fail before mutation. GC retains NaN bits and negative
+zero through array copying and guards nullable input before touching a carrier.
+
+Genuine raw source IR proved the internal formal receiver is nullable in IR;
+the canonical numeric declaration and GC signature therefore retain that precise
+contract. Complete original constructor origins must still prove actual values
+when admission is joined. The separate source-free sequence/length-writer check
+covers six actual sources including nested RHS append, call transport and loop
+occurrences, and refuses an RHS moved after length capture. It is descriptive
+verification, not emission/Program authority or a substitute for lexical,
+allocation, global, effect and original-extent proof.
+
+The canonical numeric feature/provider is added beside the unchanged externref
+catalog; its original complete collector function bytes are identical to 72ce5a7.
+Typed malformed DATA now fails the rederived runtime ABI population invariant
+before reaching an undeclared-callable check, preserving refusal and the forbidden
+source-replay control. Source admission remains guarded while actual resource
+bindings, whole-program replay and current raw extent are still being wired.
+
+Latest local focused run: three files, 50/50 cases pass, actual exit0: 32 real
+physical transaction cases, ten raw source protocol/catalog cases and eight
+preserved source/DATA boundary cases. The earlier 81-case run is 76pass/5fail;
+four failures are the exact predecessor's 31-case externref cohort messages,
+and the fifth was the obsolete diagnostic assertion now replaced by its strict
+typed ABI invariant control. Earlier harness export-key and protocol/type
+failures remain recorded. Typing covers 1,993/1,993 source files and 59/59 named
+tests, 2,319 inputs, exclude[], zero diagnostics. No full gates/build, live/codec
+native append, public append success, source publication or completion is claimed
+for this working receiver. Common/public integration and full migration remain
+open; published held PR6662 is unchanged at 72ce5a7.
+
+
+The numeric append path is now locally wired through real preparation, canonical
+ABI, owned physical reservations and public output joins. Source admission validates
+its original captured-length sequence; independent source-free structured evidence
+replays actual writes while preserving conservative callable escape facts. Physical
+terminal access captures receiver/index/RHS first, then refreshes both backing and
+logical length. Its issued extent is max(original requested N,current L), so physical
+padding does not authorize access. Compound reads retain their old value before RHS
+append effects. Neither legacy source push/grow nor the original externref helper
+algorithm/collector is changed.
+
+Measured before the final structural extraction: all eight genuine live/codec
+numeric append programs execute on four profiles; 34/34 physical transactions pass,
+including real capacity16 growth during index/RHS, compound old-value preservation,
+zero original extent and padding boundaries. Fourteen separate resource cases pass,
+including both genuine Linear prepared resource packs; exact output joins now admit
+eight public local/global append calls. The five-file admission rerun passes74/74.
+No mocked validation/emission or direct legacy generator fallback grants admission.
+
+A 73-file broader run measures1,137 cases:1,074pass/53fail/9skip/1todo. Its52 predecessor
+failure IDs remain, plus one old global fixture expecting push refusal; that exact
+qualified fixture is being moved to positive source/live/codec coverage. Four initial
+structural gates failed (inventory ownership, driver LOC/function budgets and a
+new directory dependency), without requesting allowances. GC append custody remains
+separate inside the existing vector resource owner, preserving the original helper;
+common vector emission coordination is extracted from the driver and honestly
+recorded as migration debt beside it. The semantic IR-program layer's backend/physical
+prohibition is retained. Final scoped tests, gates, build, artifact preservation and
+publication are still in progress. PR6662 remains held at72ce5a7 until those steps finish.
+
+Constant-index source stores with an effectful RHS still refuse at the existing
+stable mutation proof. The raw physical path is qualified, but extending source
+store admission requires a separate complete constructor-length/index/effect proof;
+no general store or unknown-call admission is inferred from append availability.
+Full migration, retirement/conformance and verified main delivery remain open.
+
+
+Final local qualification on 2026-10-14: six focused files pass88/88; the73-file
+broader run measures1,138 cases (1,076pass/52fail/9skip/1todo), retaining exactly
+all52 predecessor failure IDs with no additions/removals. The qualified original
+prefix/global append fixture now has positive source/live/codec coverage. All ten
+structural gates and the extra directory budget gate pass; the full8GiB build passes.
+Typing covers1,995/1,995 source files and61/61 scoped tests,2,323 inputs,exclude[],
+zero diagnostics. All32 paired source compatibility outcomes and eight complete
+scalar artifact rows remain identical. Six original functions (the whole vector
+collector, both externref helper methods, allocation, constructor and forwarding
+resolver bodies) remain byte-identical. All earlier failed epochs remain recorded
+privately. Exact source/evidence receipts are under .tmp/vector-append/; normal
+commit/push hooks and remote publication verification are the remaining steps.
+Full migration and held integration remain open.
+
+
+### B original-length store receiver (2026-10-14, qualified local checkpoint)
+
+The human shared-seam takeover now has a separate receiver,
+`codex/6920-b-vector-stores-20261014-01a12827`, starting at the published append
+checkpoint `4b90c5a5d90d68f1e7604035a1bc8923c63b4662`. The signed live preparation
+claim was refined through `2b55de1`, `7b8c227` and `0067e45`; only that B row
+changed, with every foreign owner, branch and other ledger row preserved.
+
+Exact synchronous nonnegative integral literal indices are admitted provisionally
+by the existing frontend mutation leaf. No source annotation grants bounds. A
+source-free Program checker recomputes all actual constructor origins and requires
+an index below every original `elements.length`; capacity and `E=max(N,L)` remain
+separate raw-memory facts. Every dynamic native store must instead match its actual
+live counted-loop guard, slot initialization and unit-step update. The actual index
+read must execute within the guarded body, preventing a stale outer-iteration read
+from borrowing a later counter guard. The complete closed effect population permits
+authenticated append, exact internal calls and the canonical native ReferenceError
+constructor; unknown effects, arbitrary length writes, recursion and incomplete
+origins refuse. Distinct global-load SSA values use the canonical const/startup/TDZ
+contracts and independent complete writer/read census. GC-only preparation and
+encoder/decoder/consumer entry points also recheck the proof.
+
+The first genuine RHS-growth fixture exposed two separate preparation defects:
+`isSideEffecting` did not seed `vec.set`/`vec.set_length` operand liveness, and
+monomorphization ignored parameter uses inside loop buffers while dropping local
+slot declarations. The receiver adds the two exact liveness roots, replays nested
+parameter consumption for the existing specialization restriction, and preserves
+fresh local-slot rows in legitimate clones. Other effect-summary arms, generic
+allocation/ownership/escape producers and foreign algorithms are unchanged.
+
+Current measured focused epoch: 45/45 distinct passing cases across five files.
+The four-file cohort passes 43/43, the final store file independently passes 8/8
+after its added hidden scalar/global length-writer control, and the genuine clone
+file passes 1/1. The two new files contain nine cases. Coverage includes all four
+native profiles live/codec/public, original mutation,
+global lifetime/repeated startup and append coverage. The negative matrix includes
+empty and mixed-original-length origins with equal capacities, fractional/public
+indices, unknown length effects, altered guards/updates, a stale outer-iteration
+index read and a type-correct arbitrary dynamic index after warm GC-only validation
+and codec mutation. The old global `a[0]=9` refusal is replaced by genuine positive
+execution; `a[2]=9` retains the out-of-original-length refusal control.
+
+All ten structural checks and the full 8 GiB build passed. Complete scoped typing
+uses `exclude: []` with 1,996 source files and 63 explicit test roots; the resolved
+2,327-file compilation includes 82 test files, with zero diagnostics. Thirty-two source
+compatibility outcomes and all eight complete scalar artifact rows are exactly
+unchanged against `4b90c5a`. The pinned Node 25.9.0 broader comparison measures
+74 files and 1,147 cases: 1,085 passing, 52 failing, nine skipped and one todo.
+Exactly all 52 predecessor failure IDs and full normalized messages remain, with
+no additions, removals or changed messages. The one-case clone file passes
+separately; it is not counted in that 74-file command. Source publication remains
+pending; `.tmp/vector-stores/` retains every failed earlier epoch and the
+current command/result records. No main delivery, async/externref completion,
+optimization equality or full IR retirement is claimed. PR6662 remains held,
+ready, without auto-merge; A retains integration/queue ownership.
+
+
+Parallel dependency audit for this receiver reproduced all four GVN/replay
+configurations of the existing async-resource diagnostic. Each retains five source
+functions, sixteen prepared functions and thirty allocation sites, then refuses
+at `entry.ts:17:1` with `body-shape-rejected`, build stage, and the same complete
+39-gap physical resource population. The historical scheduler/promise diagnostic
+substring is absent; the four assertion failures are wording drift over a genuinely
+unsupported family, not four independently attributed externref-vector defects.
+The two refused `extern:Promise` results belong to synchronous `delay` and derived
+`fetchUser__ir_async_state_0`, both calling `__ir_promise_delay_native`; they require
+the authentic separately claimed Promise provider/inventory and async frame owners.
+No generic `externref` retagging, new acceptance or foreign implementation takeover
+is inferred. Exact full diagnostics are retained in `.tmp/vector-stores/`.
+
+The next bounded numeric source candidate is synchronous logical-f64 multi-argument
+nonspread `push`: `const a=[2,5]; const n=a.push(7,11); return n*100+a[2]*10+a[3]`
+currently refuses at `array-element-lowering.ts` with `method-call-unsupported`.
+Its expected result is 481. The proposed slice must evaluate the receiver once and
+all arguments left-to-right before the first append/length capture, then reuse the
+already issued helper/protocol; no implementation is included in this checkpoint.
+Fresh sole ownership and an exact native-f64 leaf partition must be registered
+before any writes. Genuine public/live/codec, aliases/global receivers, capacity
+crossing, later-argument throw, protocol mutation and preserved legacy/non-f64/spread
+controls remain required.
+
+
+## B native immutable declaration receiver (2026-10-14, qualified pending integration)
+
+The registered public-routing receiver now derives native Number, Boolean and
+void callable declarations from the actual immutable program ABI, canonical
+source unit/formals/results and the consumer's completed physical signatures.
+The consumer retains the exact accepted program pointer; structurally equal
+identities are not authority to pair another program with an emission. The
+native finalizer captures both the original module and the existing canonical
+detached/widened output even when WIT is absent, then rechecks those observations
+before emitting final artifacts. Legacy and host declaration generation retain
+their original source renderer.
+
+The complete physical export census distinguishes source callables, source
+globals, authenticated startup exports and planned Linear memory exports.
+Unknown runtime/support/callback exports refuse rather than disappear. Original
+consumer reservations authenticate emitted exception tags and other physical
+resources. Source globals remain an explicit callable-DTS omission: the current
+wrapper returns a WebAssembly.Global, so declaring a scalar value would be wrong.
+Public vector transport, async/reference declaration contracts and global
+declarations remain migration work; this checkpoint does not complete the goal.
+
+The intended behavior corrections are inferred numeric return declarations,
+canonical aliases/reexports, actual `default` export naming and valid Unicode
+identifiers. Reserved/arbitrary export names use deterministic collision-free
+local declarations and TypeScript aliases. No source annotation renderer is
+pre-called and no rendered declaration text enters PreparedIR or its codec.
+Qualification is running in the isolated native-DTS receiver; no source commit,
+push or PR comment has been produced by this writer. A's queue ownership and
+PR6662 HOLD remain unchanged.
+
+Qualification uses pinned Node 25.9.0. The new declaration test passes 7/7;
+vector presentation passes 12/12 and existing Error controls pass 14/14 across
+three files, giving 33/33 cases across five distinct files in separate commands.
+The declaration tests exercise four native profiles, eight live/codec renders,
+four public executions with the legacy declaration renderer and post-Prepared
+AST fields forbidden, genuine foreign-program/token refusals, eight actual
+physical mutations, five malformed semantic records, and both original/output
+snapshot mutations with WIT absent. TypeScript validates the generated
+declarations. All source files and the named declaration test typecheck with
+`exclude: []`.
+
+Eight ordinary scalar/Boolean artifact rows remain exactly equal to the prior
+control, including binary, WAT, declaration text, WIT, imports helper, signatures
+and capability data. A separate native WasmGC/standalone source matrix compares
+13 forms against clean commit `4b90c5a5d90d68f1e7604035a1bc8923c63b4662`: 12
+forms produce artifacts on both sides and eight change only declaration text
+(inferred numeric return, alias, reexport, named default, Unicode, reserved name,
+arbitrary export name and a generated-local collision). All remaining measured
+artifact fields agree. The inferred-Boolean form retains the identical located
+source/ABI signature refusal on both sides and remains a preparation gap.
+
+The first declaration-test epoch retained two instrument failures from implicit
+ambient Node types: a trivial declaration control reproduces five `undici-types`
+resolution diagnostics; setting the declaration instrument's `types: []` yields
+zero without changing generated declarations. The initial 13-form matrix stopped
+on the real inferred-Boolean preparation refusal; its retry records that refusal
+explicitly. Every failed epoch remains in the receiver's private evidence.
+
+This change intentionally permits only three measured existing owner hooks in
+this issue's LOC allowance: presentation grows 31 counted lines for its private
+original/finalized authority map, compiler grows seven for native dispatch and
+preflight, and consumer grows five for the exact immutable program pointer and
+association/currentness assertion. Declaration algorithms live in the new
+subsystem leaf. Moving those authority hooks would require an unrelated generic
+verifier relocation or weaken the owning capability boundary; neither occurred.
+There is no total or shared-baseline allowance, no generic source renderer change
+and no legacy emitter/allocator body change. The inventory remains explicitly
+`architectureComplete: false`, with the new leaf marked `mixed-needs-split` until
+its complete consumer/program import closure is separated.
+
+### B numeric multi-argument push receiver (2026-10-14)
+
+The preceding original-length store checkpoint is normally signed and published
+as `6da053a18da7e18616f349c8d7d2b39bed2d5136` on held, ready PR6662. Fresh remote
+`issue-assignments` verification at
+`fe7078fc8077761f82fee10a756a03a4bd357f6d` records the sole existing B claim and
+the isolated `codex/6920-b-vector-multipush-20261014-01a12827` receiver before
+source writes. Its source partition is only synchronous logical-f64 multi-argument
+nonspread `tryLowerVecPush`; no forwarding, grow, allocator, constructor, original
+externref, async, legacy or counted-push algorithm is reassigned or edited.
+
+The receiver lowers all arguments left-to-right before the first outer append or
+length capture. Each argument then uses the existing authentic numeric append
+intrinsic and independently captured length sequence; the final append returns
+its new logical length. The existing exact synchronous-function-declaration gate
+excludes async and generator syntax; complete existing append validation separately
+requires a closed owner population. Removing only the new 32-line partition
+and import reconstructs the complete original 23,982-byte array-lowering file
+exactly against `6da053a`, including every old zero-argument, spread, narrowed-i32,
+externref, counted-push and legacy arm. No new grow algorithm or aggregate source
+grouping certificate is introduced.
+
+The new six-case test file qualifies genuine local, statement, internal-call,
+alias and global receivers, ordered argument appends to the same receiver,
+a later argument reading the original length, a side-effecting receiver factory
+evaluated once, capacity crossing and exact NaN/negative-zero/infinity payloads.
+Nine source exports execute 72 times through four native profiles live/codec and
+36 times through the genuine public path. Both direct source generators are
+forbidden; live/codec binaries are equal. An authentic existing TDZ exception in
+the later argument leaves length two, with eight live/codec and four public
+executions on those same profiles. A source-free negative changes an actual
+per-append index conversion after warm validation and rejects through the protocol
+collector, encoder and decoder; it claims no authority over a different valid IR
+program containing separately interleaved appends. Native zero-argument, spread,
+non-f64 and async controls still refuse.
+
+The final new-file qualification passes 6/6 with pinned Node 25.9.0, both default
+and JSON reporters, recorded subprocess exit zero and zero unhandled errors.
+Earlier six-pass JSON reports concealed a real Vitest `onTaskUpdate` RPC timeout;
+the owned live/codec matrix tests now yield between profiles. The first matrix
+also has a local 120-second test deadline: its final measured duration is 36.45
+seconds, beyond the existing 35-second default. Assertions, compiler source and
+global test/RPC/hook policy remain unchanged by those test scheduling repairs.
+
+Predecessor controls pass 34/34 across narrowed-i32 element and legacy argument-order
+files. The separate seven-file native/legacy preservation command measures 86
+cases: 65 pass and 21 fail. Three native public-matrix cases reached the 35-second
+deadline; their targeted 120-second rerun passes 3/3 with recorded exit zero,
+zero unhandled errors and 25 filtered skips. The other 18 failures are four
+legacy selector/string expectations in `issue-2956.test.ts` and fourteen missing
+`string_constants` host-import harness failures in `issue-385.test.ts`. Their
+matching predecessor comparison remains root qualification work; neither a
+regression nor preserved-baseline attribution is inferred from their signatures.
+Complete source plus the new explicit test-root typing passes with `exclude: []`;
+Biome lint, Prettier, LOC and
+function budgets, import cycles, IR layering, dialect/kind neutrality, flat-directory
+budget and compiler-boundary inventory checks pass without policy or inventory
+changes. The complete-boundary check still reports the existing truthful
+`inventory-valid-architecture-incomplete` state, with no inventory errors.
+`.tmp/vector-multipush/` retains every failed or conflicting earlier epoch, exact
+commands and preservation receipts. This source slice is uncommitted pending
+root qualification/publication; HOLD, A's queue/integration ownership and all
+foreign branches remain preserved. No main delivery or full IR migration/retirement
+is claimed.
+
+### Root numeric multi-argument qualification (2026-10-14)
+
+Pinned Node25.9.0 root qualification against published `6da053a` resolves the
+18 legacy preservation failures exactly: every failure ID and complete normalized
+message matches the measured two-file predecessor control. Complete source plus
+64 explicit native test roots typechecks with empty excludes: 1,996 source files,
+83 resolved test files and 2,328 total inputs. Eight scalar artifact rows match
+the predecessor in every field. Of 32 source compatibility rows, 28 retain exact
+outcomes and only the four native multi-argument arity refusals become Prepared.
+
+The frozen default-runner 78-file command measures 1,188 cases: 1,108 pass, 70
+fail, nine skip and one todo. All 70 IDs and complete normalized messages equal
+the measured original 52 plus the measured 18 legacy controls. That epoch also
+records one real onTaskUpdate IPC timeout, preserved as a separate job error.
+A temporary per-run default-runner subclass yields with setImmediate and awaits
+a fresh empty progress ACK before each try; it asserts no universal drain proof.
+Its independent two-long-file predecessor control passes 33/33 with exit zero
+and no unhandled errors. Its final frozen 78-file run retains the same 70 IDs,
+assertion/diagnostic payloads and application frames, with zero IPC/unhandled
+banners; actual subprocess exit remains one because those failures exist.
+Four raw stacks differ only in Vitest runner and Node task-queue frames. Their
+complete differences are preserved; only those exact framework frame families
+are removed on both sides for the instrument comparison. No dependency, global
+test deadline, RPC or hook policy is edited. Exact argv/exits and all failed
+epochs remain in `.tmp/multipush-root-qualification/` and `.tmp/multipush-control/`.
+
+Ordinary change-scoped commit hooks use the already-published `6da053a` checkpoint
+as their supported local base and run the new root test. The independently
+recorded complete broader comparison remains part of qualification. HOLD,
+original foreign ownership, full architecture and main integration remain open.
+
+
+## B native zero-argument push receiver (2026-10-14, qualified finite slice)
+
+The refined checked-preparation claim admits zero arguments only for the
+existing synchronous logical-f64 source partition. The receiver SSA value is
+already evaluated once by the original method-call lowerer; the new sibling
+branch emits the existing f64 `vec.len` and discards its result in statement
+position. It adds no append/growth operation, length writer, capacity rewrite,
+allocation site, helper, provider or PreparedIR schema. Removing the exact
+407-byte, 11-line partition restores the entire 25,402-byte published `c2ae3e76`
+lowerer byte-for-byte (SHA256
+`54884d553bbb6f82949609fb106d141e7d5d5971fd84b668efe2272acfb8feef`),
+with no import change. All pre-existing source branches remain byte-preserved.
+
+The final owned eight-case suite exits zero: 160 actual successful zero-push
+calls comprise 80 mixed live/codec calls, 40 public calls, 24 pure-module
+live/codec calls and 16 deferred-global reads. Eight additional authentic Wasm
+TDZ exceptions occur before deferred initialization. All four native profiles
+validate and execute, each live/codec binary pair is equal, and the mixed
+fixtures match independent JavaScript results. They exercise empty/nonempty
+vectors, expressions/statements, once-only side-effect receivers, aliases,
+module globals, loop-bodied internal receivers, and current length after
+capacity growth. Pure exact-length/statement fixtures have no semantic append
+calls or length writers, no append/helper physical reservation, and zero
+append demand uses. Actual public compilation forbids both direct renderers,
+the legacy DTS generator, and source-AST fields after PreparedIR sealing.
+Malformed vec.len operands, result type/integer facts, and genuinely requested
+ownership metadata refuse after warm validation and before encoding. Spread,
+non-f64, async, mutable, unknown-producer and public-vector refusal controls
+remain explicit. The earlier 56+16 `.length` runs are design evidence only.
+
+The pure-module `f64.mul` fixture remains an open full-goal gap. Its actual
+zero-push preparation refuses with `array-representation-unsupported` at
+resolve, `not-covered/numeric-opcode` in the plain function at root 5. The same
+scalar math and four-policy options with `.length` on clean published
+`c2ae3e76` reproduce that exact refusal. Mixed-profile execution does not close
+the pure-profile gap; no generic allocation analysis was widened. A tiny
+inlined internal helper also retains the distinct original-formal callerless
+Linear acceptance refusal when embedded in the authentic mixed program.
+
+Final exclude-empty scoped typing and all ten ordinary qualification gates
+exit zero. Eight scalar artifact rows match clean published `c2ae3e76` in every
+recorded field. Exact argv, terminal exits, failed instrumentation epochs,
+control sources/results, whole-file reconstruction and the three-path seal
+remain in `.tmp/zero-push/`. A progress-message byte-count transcription error
+is separately recorded; the original reconstruction hash receipt was correct.
+The old multipush zero-refusal row is untouched by this receiver: root owns
+its finite expectation update under the prior claim. Source/test/issue are the
+only owned paths. Root retains integration, publication and queue operations,
+including PR6662 HOLD. Full architecture completion remains false.
+
+
+## B root zero-argument integration qualification (2026-10-14)
+
+The remotely verified `7d1c24ba` ownership refinement authorizes the root-only
+update of the former multipush zero-argument refusal. That single case now
+asserts genuine successful preparation for zero arguments while preserving its
+spread, non-f64 and async refusal assertions. Its name changes intentionally;
+all six multipush cases remain. The receiver's original three-path seal remains
+preserved in `.tmp/zero-push/handoff-sealed.json`.
+
+The actual default/JSON combined command passes all 14 cases (eight zero-push
+and six multipush), exits zero, and reports no unhandled errors. Exclude-empty
+scoped typing exits zero across 1,997 source files, 66 explicit native test roots,
+85 resolved test files and 2,331 total inputs. The modified predecessor test's
+scoped Biome and whitespace checks pass. The whole-source reconstruction and
+eight-row scalar comparison remain exact. Full migration and the documented
+pure-math/callerless-helper frontiers remain open; HOLD and A's integration/queue
+ownership remain. The broader current-composition run and full package build
+are recorded separately with actual terminal results before publication.
+
+The final 8GiB package build exits zero, including declaration pruning and both
+Test262 CLI/worker bundles. The actual build log and terminal status remain in
+`.tmp/zero-push-root/build.log` and `build.exit`.
+
+
+The final broader current-composition command executes 80 files and 1,203
+cases: 1,123 pass, 70 fail, nine skip and one todo; actual exit is 1 because
+of the failures. The per-run progress ACK/yield instrument reports zero
+unhandled errors. Compared with the measured b579 multipush broader epoch,
+all 70 failed identities and full normalized diagnostics/application frames
+are identical; no failure is added or removed. Both sides normalize only
+worktree prefixes and TypeScript stack-frame coordinates and remove only
+Vitest-runner/Node-task-queue framework frames. Full raw reports remain.
+Parameterized duplicate names are preserved by ordered occurrence identity.
+This comparison includes the composed DTS checkpoint and is not an isolated
+c2 A/B attribution or a full-green-suite claim. Existing shared hook/RPC/test
+policies remain unchanged. Final argv, report hashes, terminal status and
+comparison are in `.tmp/zero-push-root/`.
+
+
+## B native-only pure vector multiplication receiver (2026-10-14)
+
+The published f108c29f refinement receives a separate private native selector
+in the existing208-line structured-vector-profile owner, plus selection OR,
+a genuine new pure-multiply test and this issue append. Its source base is
+the signed365e89f62 zero-push checkpoint. The exact old structured selector,
+historical verifier, generic producers/effect rules, scalar J212 fallback and
+held joined-validation tests remain byte-preserved. No new policy leaf or
+inventory-domain change is needed.
+
+This selector only schedules the unchanged complete structured verifier for
+a finite one-block module with genuine nonnullable logical-f64 constructors,
+vector reads and exact f64.mul in the same vector-bearing function. Existing
+contextual/provenance/all-view and metadata guards remain authoritative. It
+does not declare scalar programs covered or supply fabricated evidence.
+
+An explicitly instrumented design control on the genuine length-math source
+passes1/1: original producers plus spy-selected unchanged structured replay
+prepare and execute24 live/codec calls on four profiles, with matching225/0/2
+values, matching per-profile binaries and no numeric append helper. Scalar-only
+multiplication prepares with zero selected dispatches. This is design evidence
+and provides no uninstrumented production admission or clean-base runtime
+credit. Actual new-source qualification remains required. Root separately owns
+reconciliation of the old zero-push math refusal only after this feature passes.
+The complete class/closure, runtime, conformance/performance/retirement and main
+goal remains open. Root controls commits/push, PR6662 HOLD and A's queue boundary.
+
+
+### Native pure length multiplication receiving checkpoint (2026-10-14, Session B)
+
+The remotely verified e633ac9b refinement adds one private finite selector in
+structured-vector-profile.ts and its native-only dispatch OR. The original
+208-line module is recovered byte-for-byte by removing those additions;
+the complete old hasStructuredNumericVectors function, historical verifier,
+effect rules, generic producers and held scalar/codec algorithms remain exact.
+The receiving module is275 lines, with no new compiler inventory leaf or domain.
+
+Selection requires a genuine nonnullable logical-f64 outer constructor, an
+actual F64 vec.len consumer and exact f64.mul in the same function. Every
+function remains regular and single-block, without slots, block arguments,
+calls, structured statements, loops or exotic function forms. Only old
+primitive constants, finite binary operations and primitive-result scalar if
+expressions with recursively finite read/math arms are admitted; allocations
+inside arms and foreign reference constants remain outside this profile.
+Selection schedules the unchanged independent structured replay after the
+existing canonical, provenance, facts, all-view and namespace guards. It
+supplies no metadata and grants no generic scalar coverage.
+
+Actual new-source qualification is23/23, exit0, on the requested original
+indexed225 fixture for both length and zero-push forms. There are48 live/codec
+runtime calls across all four profiles,24 public-compile calls with direct
+generators forbidden, and8 scalar calls with exact historical/current program
+and per-profile binary equality. The live/codec paths poison source
+reconstruction, execute independent JavaScript-derived225/0/2 values, retain
+real f64.mul and require zero append operations, helpers and demand uses.
+Operand/result/SSA and arm scope, site/type/state, namespaces, facts,
+runtime-view currentness and finite grammar exclusions have genuine hostile
+controls. Neighboring sub/div remain unsupported. No scalar-only or scalar
+sibling multiplication triggers this selector.
+
+The first strict no-nested epoch collected17 definitions but refused in setup
+before every body because authentic indexed reads lower to old scalar if arms.
+That failed epoch remains preserved. The first generic cohort is100/103;
+length discrimination restores the held joined suite to52/52. The subsequent
+combined epoch is124/125, with the new suite22/22 at that epoch and one old
+A2 source negative still asserting that deliberately rewritten multiply
+instructions are unsupported. Its actual xs[0]+xs[1]+xs.length fixture becomes
+multiply in every original/runtime root, genuinely entering this new profile.
+Root separately owns reconciliation to a still-unsupported opcode; this
+worker does not change that A2 file, its scalar-only f64.mul fallback controls,
+or the old zero-push frontier expectation. No combined green claim is made.
+
+The neighboring Math.min ownership invariant reproduces on clean365e89f62
+with the exact same program-allocations stale-ownership diagnostic. It remains
+a pre-existing genuine invariant, not sourceUnsupported or a covered feature;
+its observations and failed epochs remain private receipts rather than a
+production test freezing the unrelated defect.
+
+Full source plus every issue6920 root types cleanly with exclude:[]; the
+optional issue3518 cohort retains five separate pre-existing transport,
+WebAssembly and provider typing diagnostics. Seven structural, inventory and
+function-budget gates pass. Complete compiler-boundaries mode still reports
+inventory-valid architecture-incomplete; the complete migration, class and
+runtime seams, conformance, performance, retirement and verified-main goals
+remain open. No commit, staging, push or claim mutation was performed here.
+All exact cases, failures, argv, byte seals and terminal records are under
+.tmp/native-pure-multiply for root integration review.
+
+
+### Session B root arithmetic checkpoint qualification (2026-10-14)
+
+The verified shared-seam claim is 2194d8ae8b2ca481e4b5af68a98cbd232e2010c5.
+The private native selector admits genuine logical f64 vector length plus multiplication
+with the existing structured verifier authoritative; no generic verifier/effect rules
+or held J3 algorithms changed. Removing the private selector restores the original
+208-line module byte-for-byte. The worker's three-path frozen receipt was verified
+before root reconciliation.
+
+Root reconciled exactly two obsolete frontier controls. The A2 fixture still mutates
+all root/runtime f64.add instructions and asserts at least one edit, but now uses
+f64.sub (uncoveredSubtraction); all other bytes and all assertions remain unchanged.
+The eight-case zero-push suite's obsolete multiplication refusal now runs its exact
+source against JavaScript and executes 48 actual calls across live/codec and four
+profiles, with binary equality; its other seven cases remain byte-exact. The new
+23-case arithmetic suite remains worker-sealed unchanged.
+
+The five-file combined run executed 134/134 passing tests, actual exit 0, no unhandled
+errors, with default and JSON reporters and the existing 120-second deadlines. It
+includes the complete 52-case held joined-validation suite, 29-case A2 suite and
+22-case allocation-evidence suite. Full-source/native typing used 1997 source files
+and 67 explicit test roots with exclude [], actual exit 0. Eight scalar artifact
+rows compare all fields byte-exact with published predecessor 365e89f6. Scoped
+format, lint and whitespace checks passed. Worker structural/inventory gates also
+passed; historical failed qualification epochs remain preserved.
+
+Evidence: .tmp/native-pure-multiply/final-receipt.json and
+.tmp/native-pure-multiply-root/{combined.json,combined.exit,root-reconciliation.json,
+scalar-pair.json,typing.log,typing.exit,tsconfig.scope.json}.
+This remains a bounded arithmetic checkpoint. Math.min's authentic predecessor
+ownership invariant, class runtime support, complete source coverage, both-backend
+matrices, optimization retirement, Test262 and verified final main remain open.
+
+
+## B class semantic producer receiving checkpoint (2026-10-14)
+
+The signed ledger checkpoint f108c29f receives the released3522 whole-program
+class producer partition in a fresh isolated worktree. Eight authentic source
+probes on pinned Node25.9.0 yield seven class refusals and one scalar positive;
+these are preparation measurements with zero runtime credit. The current
+FunctionDeclaration-only signature/body producer refuses constructors and
+methods; class ABI/layout, physical signature/resource and Linear field/tag
+seams also require coherent later work.
+
+This receiver owns the exact thirteen source/identity/typed class population
+paths recorded in its claim, a genuine source preparation test, this append
+and truthful new boundary leaf rows. The checkpoint captures complete original
+ClassId/body/default/ordered-initializer semantics, uses original explicit
+member declarations and a non-synthetic implicit builder, and joins canonical
+class ABI/unit references. Ordinary algorithms and held source/evidence rules
+remain. Physical consumers, runtime, routing, presentation, optimizers and
+codec algorithms are outside this receiving scope. If genuine preparation
+requires another seam, its exact failure is preserved before refining scope.
+
+Linear class allocation evidence may refuse before physical planning; GC
+preparation/codec success must not be called four-profile readiness. Both
+physical consumers, full closure/inheritance/public class behavior, held
+W1-C super/accessor, full conformance/optimization/retirement and verified main
+delivery remain required work. No architecture completion, direct fallback,
+source reconstruction, fabricated units, or weakening of evidence is allowed.
+Root retains commit/push, PR6662 HOLD and integration; A retains its original
+claims and queue ownership. The full implementation plan and original probes
+are preserved in this receiver's .tmp/class-source-producer/.
+
+
+## B genuine class semantic producer checkpoint (2026-10-14, bounded semantic qualification)
+
+The signed new receiving claim `f108c29f0f197e1ca261940ca096ab105afe4a09`
+was refined at `b2b6325c458ab338944a6881392a2d54da56bdf8` solely for the
+original-class initializer analysis factory. The source checkpoint owns the
+14 exact producer paths, one new test, this appendix and three new leaf
+inventory rows. Parent issue 3522 is released; W1-C super/accessor, foreign
+source/evidence algorithms, physical consumers, routing and queue ownership
+remain outside this checkpoint. No commit or publication is delegated.
+
+Source class census now captures original ClassId shapes, constructor/method
+units, JavaScript undefined field default intents and ordered initializer
+provenance. Explicit bodies use original method/constructor declarations.
+The implicit builder creates no synthetic function or constructor AST and
+shares the original constructor body/field algorithm. Canonical class layout,
+source init/member and class-owned new-support ABI entries derive from declared
+DATA. Typed ownership, full original body population, class/layout/default and
+initializer joins remain mandatory through codec. Recursive class type wrappers
+are owned outside the exact branded nominal shape cells; the shared immutable
+copier and codec algorithms are unchanged. The initializer factory's existing
+function analysis reconstructs byte-for-byte after removing the new factory and
+its single import. No class-array profile or allocation evidence is invented.
+
+The first authentic 32-row probe is retained with its initializer-DATA/layout
+naming defect. The second records 14 genuine GC class preparations/replays,
+two genuine Linear static preparations/replays, six finite-evidence refusals
+and six missing/stale allocation ownership invariant throws. The third records
+those same GC/static positives and 12 authentic source capability refusals
+before allocating class IR/facts, plus all four scalar positive controls.
+A genuine checker-resolved NewExpression/ClassId/terminal-owner census drives
+the new native Linear capability boundary. It promises no class evidence and
+keeps direct typed acquisition's original invariant behavior unchanged.
+Physical class carrier/layout/new-support materialization remains typed
+unsupported; no class runtime execution is credited.
+
+The two AST leaves remain mixed migration debt. The pure class DATA leaf's
+actual resolved import closure contains 25 modules, with all dependencies clean
+and zero unknown/unresolved edges; only its new row is clean ir-program.
+Architecture completion remains false. Class-array source contracts, nested
+initialized-class population, class binding creation/TDZ and definition
+semantics, closure/inheritance/accessor families, public class transport and
+both physical consumers remain explicit full-goal work.
+
+This change-set intentionally grants only three exact owner-hook LOC paths:
+`program-source.ts` (+119 lines at the measured first gate), `from-ast.ts`
+(+90) and `identity.ts` (+2). The source driver must own declaration dispatch,
+source allocation capability timing and typed capture; the lowerer must own
+its private constructor frame/body and native exact-site hooks; the scanner
+must own original implicit constructor population. Class projection, DATA and
+validation logic are extracted into three leaves. There is no total/shared
+baseline grant, checker weakening, unrelated algorithm move, minification or
+comment trimming. The final measured deltas are program-source +69, from-ast +90 and identity +5.
+All failed epochs and raw phase/policy/source outcomes remain private under
+`.tmp/class-source-producer/checks/` for root review and integration.
+
+The new class source capability and original-node call traversal are extracted
+into the owned planner, and class context assembly is extracted into the owned
+lowerer. The remaining `prepareIrProgramSources` owner orchestration measures
+337 lines versus its published 300: establishing the census, attaching its
+resolver/context and body/provenance population, and publishing semantic class
+DATA require the existing source owner. This checkpoint grants only that exact
+function in this issue; no generic source algorithm is relocated, no shared
+baseline is raised, and the original `lowerMethodCall` remains within its
+published function budget. The initial failed function gate is retained.
+
+Final owned qualification is 8/8 tests with terminal exit 0 and no unhandled
+banner, TS7 typing with exclude [] and terminal exit 0, and ten ordinary gates
+with every gate exit 0. The final source suite preserves original explicit
+functions/constructor bodies, authentic source syntax currentness, initializer
+order/membership/array refusals, ten malformed complete class DATA controls,
+post-capture AST/direct-source poisoning, exact class unit/ABI joins and the
+direct typed missing-ownership invariant. These are semantic preparation and
+refusal checks, without class emission or runtime credit.
+
+Eight scalar public artifact rows match every pinned c2 preimage field and
+execute the same scalar/Boolean values. The recipe and c2 provenance are
+retained separately. Additional genuine two-source import-alias/same-name
+class probes prepare and replay on both GC policies with original and reversed
+source inputs (four positives); the four matching Linear attempts retain the
+located undeclared allocation capability refusal. The 32-row first/second/third
+epochs remain intact, including the original six allocation invariant throws.
+
+Three historical source/class-order/codec files complete 37/38 checks. The sole
+failure is the pre-existing exact `program-consumer` export census: it expects
+eight exports while the c2 native-DTS checkpoint already has twelve. Both the
+consumer and that historical test reconstruct byte-equal to c2; this checkpoint
+does not modify that foreign expectation. Root retains broader qualification.
+The existing array inference file reconstructs byte-exact after removing only
+its new factory/import, and original explicit/function/legacy implicit lowering
+function bytes remain equal. Failed typing, test, inventory, gate and measurement
+epochs are retained rather than overwritten.
+
+
+### Root class semantic qualification withheld after authentic TDZ/default audit (2026-10-14)
+
+The local signed class checkpoint1d317c59 and its prepared merge with arithmetic
+7107a741 remain unpublished. The six-file composition passes142/142, source typing
+passes2000 files/68 explicit roots (87 resolved tests/2336 inputs, exclude[]), and
+the full8GiB package build passes. These are structural/control measurements and
+do not establish class semantic correctness. No class artifact or runtime
+execution is credited.
+
+An authentic56-row source audit (terminal process10183 exit0) exposes missing
+class semantics: static calls before a class declaration prepare without a TDZ
+read, while JavaScript throws ReferenceError; an uninitialized numeric field's
+comparison with undefined prepares a false constant on GC, while JavaScript
+returns1. All52 class public attempts still refuse; four scalar public attempts
+succeed. Exact eight-row source/JS/IR/live+codec/consumer/public findings are
+preserved with SHA25617fb31cf53eaaa8d74e42cec6064fb96a2d4618b6d3d0f9f7eaeb315dbac159f.
+These facts supersede any interpretation of the earlier class8/8 as semantic
+preparation readiness. Existing class.new/call/instanceof are a closed neutral
+class model; they must not silently gain JavaScript constructor/prototype meaning.
+
+The verified signed claim refinementc539feca receives a native source capability
+preflight over the complete original class census before any class body IR or
+PreparedIR, including unused classes, until executable definition/binding/TDZ/
+prototype and undefined-field read/type proofs exist. The parallel worker owns
+only the claimed source hooks, owned test reconciliation and issue append;
+generic/legacy/neutral/held algorithms and direct typed invariants are preserved.
+This is an interim fail-closed correction. Full class semantic/physical completion
+remains required by the active migration goal.
+
+Private receiving evidence: .tmp/native-class-composition/{qualification-withdrawn.json,
+tdz-default-findings.json,source-matrix.json}. The qualified arithmetic-only head
+7107a741 is published separately on heldPR6662; the class source remains local.
+
+
+## B native class source closure correction (2026-10-14, admission correction qualified)
+
+The signed refinement `c539feca0dd81e58e0e71f71685257196b739177`
+authorizes only the original native class source capability guard, necessary
+source driver placement, owned test reconciliation and this append. The signed
+17-path checkpoint `1d317c596303d8f7a86909d0c6de2dc7f4480964` remains
+unfinished and unpublished. Its prior 8/8 and class live/codec preparations are
+structural/phase evidence; they do not prove semantic preparation correctness.
+
+The authentic 56-row audit plus 12-row addendum retain source, JavaScript
+reference, original prepared IR, codec/consumer and public outcomes. A module
+static call before its class declaration prepared an unguarded call on all four
+policies although JavaScript throws ReferenceError. A number-annotated field
+without an initializer prepared an undefined comparison as false on both GC
+policies although JavaScript returns 1; Linear retained its earlier capability
+refusal. All 64 class public attempts refused, and no class runtime execution
+or public artifact was produced. Physical refusal prevents an artifact; it does
+not repair the semantic projection. The original epochs and exact findings are
+retained under `.tmp/class-definition-scope/`.
+
+The source preflight now consumes the complete current original class census,
+checks its declared metadata/source identity, and refuses before any body IR,
+allocation facts or semantic PreparedIR is produced. Executable JavaScript
+class definition/binding/TDZ/prototype and undefined-field read/type producers
+are absent; unused original classes are included. This is a capability boundary
+for the complete original family, not a fixture/name/order detector or a caught
+allocation invariant. Original host/ordinary, neutral class, source/evidence,
+codec/verifier and physical algorithms remain unchanged. The sole source owner
+call adds three orchestration lines under its existing exact issue-scoped
+function allowance; no shared baseline or blanket budget grant is introduced.
+
+The reconciled test separates metadata/planner DATA checks from source semantic
+admission. It preserves genuine original node/default/initializer/order/recursive
+and malformed/currentness controls without class body/execution credit, tests
+the exact TDZ/default source regressions and unused bodies, and retains direct
+typed missing-ownership rejection through a deliberately guard-bypassed
+historical source preimage used only as fault injection. That preimage is not a
+production source preparation success. Four-profile scalar public/live/codec
+execution remains the positive control. The final owned suite is 9/9 with
+terminal exit 0 and no unhandled banner; its public/live/codec scalar controls
+instantiate 12 real Wasm modules and check 36 scalar/Boolean values. Its 40 main
+class source attempts refuse before body IR, and all eight public regression
+attempts return failed results with zero binary bytes. One restored-guard
+source refusal and two preserved held-family refusals remain separate controls.
+TS7 typing with exclude [] and all ten ordinary gates pass. The exact eight-row
+scalar artifact recipe matches every pinned c2 field. The 56-row same-recipe
+before/after source matrix now has 52 class source refusals and only four scalar
+preparations; no class body/semantic preparation or runtime credit is granted.
+
+Complete class definition/binding, named-expression self binding, managed
+constructor/prototype identity, undefined default/read semantics, allocation
+producer/evidence and both source-free physical consumers remain mandatory.
+The neutrality inventory explicitly defines existing `class.new/call/instanceof`
+as a closed nominal C++/Java-style projection; JavaScript prototype/constructor
+completion semantics require genuine dialect operations or a proved projection.
+No scalar token, legacy materializer, metadata-only receipt or new opcode name
+supplies readiness. Full class arrays/closures/inheritance/public transport and
+held W1-C super/accessor remain tracked required work. This correction restores
+truthful admission; it does not retire or shrink the supported class goal.
+
+
+### Session B native numeric undefined observation receiver (2026-10-14)
+
+Verified shared-seam claim 0e1eff37ea00ccee0574aff075efc15632fa5d95 adds a source-only
+checker-symbol all-writes provenance guard before native unboxed numeric
+undefined comparison folding. Generic/non-native folds and dynamic tag tests
+remain unchanged. The new mixed boundary retains checker AST authority; it
+asserts no completed migration or generic runtime undefined carrier.
+
+The clean7107 private audits preserve genuine GC alias miscompilation and
+current Linear refusal. Numeric conversion creates a defined NaN; it must not
+be confused with preserving source undefined. Missing, cyclic, cross-function
+or unknown provenance refuses rather than relying on TypeScript number types.
+All-write analysis conservatively retains possible absence after overwrite and
+across branches/loops. Source provenance does not grant in-bounds proof at a
+later alias use. Actual receiving qualification remains pending.
+
+
+#### Actual native undefined-observation receiver qualification
+
+The finite guard additionally authenticates numeric ABI parameter definedness
+with canonical source/unit identity, actual checker module-export symbols,
+current lowered f64 parameter bindings and a complete source-population
+checker-symbol incoming-use census. Aliases resolve through checker symbols;
+called, captured, nonpublic, aliased, cyclic, missing or unknown provenance
+refuses. No interprocedural value admission, dynamic tag algorithm, typeof
+algorithm, old native profile grammar, source-origin or C1 algorithm changed.
+Removing only the import and numeric hook restores the original from-ast bytes.
+
+Actual Node25.9.0 command 59382 exits0 with all33 owned cases passed and no
+unhandled errors. Public/live/codec positives execute96 independently checked
+JavaScript value comparisons, with32 byte-equal live/codec pairs. Four healthy
+scalar prepared artifacts and four actual emitted binary pairs match the
+historical no-provenance fold; four scalar binaries execute correctly.
+Initialized NaN vector-cell aliases conservatively refuse: immutable constructor
+extent/read-site mutation and escape proof remains unfinished. Nonpublic and
+incoming-called numeric parameter comparisons now refuse, closing the separately
+retained genuine JS1/GC0 draft crossing. Existing arithmetic/zero suites contribute
+31 actual passed cases in the preceding64-case command, which exited1 because
+one newly added captured-alias expectation was wrong; no full64 green credit.
+
+All failed epochs remain private: first19/24, second52/57; JSON-only59/59 and
+independent30/30 both had Node1. The default-reporter diagnostic30/30 epoch
+records one actual worker RPC onTaskUpdate timeout. Genuine setImmediate yields
+between test policy iterations restore worker responsiveness without altering
+any test timeout, global policy or admission predicate. Later64=63/1 and
+33=32/1 failures were captured-alias diagnostic expectations, with no RPC error.
+The direct captured alias refuses type-resolution-unsupported/build (no exact
+module storage); public compilation separately refuses numeric source
+classification for that top-level global. Both exact payloads are retained.
+
+Project TS7 full typing has1998 source files and58 actual6920 root tests,
+excludes[]; source/type gates, ordinary scoped LOC allowance, inventory,
+formatting and lint pass. Separate TS5 instrument failure retains23 existing
+WebAssembly Tag/Exception ambient diagnostics. No source/test/claim/index/git
+writes occurred outside the five assigned paths and private receipts; no commit
+or push was performed by this receiver.
+
+This is a source-only failclosed observation boundary, not complete undefined
+semantics or full IR migration. Private genuine next-frontier probes preserve
+JS1/GC0 for two absent indexed reads compared with each other on both GC
+targets; current Linear profiles refuse. Those comparisons contain no undefined
+literal and are outside this hook. First-class absent-read semantics or a
+qualified source presence proof must precede wider equality/inequality coverage.
+The source typeof/string frontier and current ABI/call/read-site proof refusals
+also remain separate dependencies. No known wrong answer was frozen as a
+production green expectation.
+
+
+## B guarded class and numeric provenance composition (2026-10-14)
+
+The root composes signed guarded class checkpoint da36fcc and signed native
+numeric provenance correction61ae6 with exact original source bytes, all three
+class inventory rows and the single alias row. The actual policy has2001 rows,
+633127 bytes and SHA25660bfda84dda819fc45e60ebb370e06d6007001f5885f2a934f24c3c5c1757dc7.
+Both issue appends and class budget allowances remain; the foreign untracked
+public-error control is untouched. No generic/J3/C1 algorithm is rewritten.
+
+Actual independent qualification: seven files,176/176 passed, Node exit0 and no
+unhandled errors. TS7 checks all2001 source files,69 explicit native roots,
+88 resolved tests and2338 inputs, excludes[]. The full8GiB package build and
+all ten dialect/neutrality/layering/cycle/directory/inventory/budget/lint/format
+gates exit0. Inventory is valid but graphComplete remains false: graph closure
+and migration debt are not credited. Class semantic preparation/runtime still
+has zero credit; all52 audited original class sources refuse before body IR.
+The provenance guard retains initialized scalar NaN and public numeric ABI
+controls and refuses unknown/aliased/called parameter absence before folding.
+
+The broader83-file run executes1268 cases:1181 passed,77 failed,9 skipped and
+one todo, actual Node exit1 with no unhandled errors. All original70 failure
+identities and symmetrically normalized diagnostic payload/application frames
+remain identical to the published7107 arithmetic epoch. Seven additional
+failures are S02/S14/S16 in allocation-provenance-preservation and
+AP02/AP03/AP11/AP12 in allocation-rule-sharing-preservation. Every one stops
+at the authenticated complete SHA256/length pin for
+src/ir/program/class-layouts.ts in ir-validation-analysis-relocation. That
+first stop is preserved; it does not validate the rest of any callback or
+attribute its entire outcome to one defect. The class producer changed that
+actual module. The historical validation-relocation authority and all held
+C1/generic preservation controls remain untouched; a complete finite source
+receipt continuation and fresh downstream qualification remain required.
+No failure is waived, relabeled passed, removed or hidden by historical input.
+
+Exact row payloads, independent reports/terminals, source seals and symmetric
+comparison are in root .tmp/native-undefined-composition/. Earlier failed
+merge-resolution assertions are retained in merge-resolved.json; no source
+change was made to satisfy an expected hash. Normal signed commit/push checks
+and remote head/HOLD readback remain required for publication.
+
+The genuine Number/Undefined carrier is separate ongoing work, received in
+bounded source/checker, physical and singleton scopes38e6fc3f, demand/issued
+memory interfaces50c79e0a and the exact evidence profile unionae9efcbc. Three
+isolated workers continue source/evidence, physical resources and the actual
+2001-row inventory continuation. Their unfinished drafts supply no runtime or
+architecture completion credit. Double-OOB equality still needs real absence
+values; initialized vector NaN aliases, captures, mutable slots, broader calls,
+typeof/string/public dynamic transport, full JavaScript class semantics,
+conformance/optimization/retirement and verified main remain required work.
+PR6662 retains HOLD, no auto-merge; A retains original forwarding and queue
+ownership. This is a reviewable guarded checkpoint, not full-green migration.
+
+## B native Number/Undefined bounded draft grants (2026-10-14)
+
+Root receives only the measured native source hooks in from-ast and
+program-source: original metadata and generic algorithms are preserved.
+The existing from-ast LOC allowance remains; program-source and the three
+named functions receive ordinary scoped allowances for the small native
+hooks. These grants do not permit historical reflow or unrelated growth.
+The draft source/evidence controls and typing are partial qualification,
+not four-profile runtime or full migration credit. Physical resources and
+source-free live/codec/public execution require the exact frozen composition.
+Prototype/shadow custody and complete admission proofs remain mandatory.
+
+## B native Number/Undefined physical draft grants (2026-10-14)
+
+Ordinary root grants cover only the measured carrier lowering, physical-plan
+and consumer hooks; historical formatter reflow is excluded. The exact existing
+canonical layout ID is record:box:scalar:f64, with unchanged planner geometry.
+Source-independent GC resource tests are partial qualification only; Linear
+and complete original/runtime body, ABI, reservation, lifetime and source-free
+execution joins require the exact frozen composition. Concrete emission and
+memory descriptors remain migration debt; imported closure purity alone does
+not certify semantic IR-core ownership. The runtime recipe and foreign
+generic/core/tag/native-values/C1 contracts remain unchanged.
+
+
+## B joined native Number/Undefined component qualification (2026-10-14)
+
+The isolated root carrier composition qualifies six original/new source, evidence,
+checked GC allocation, class-refusal, physical-resource and legality suites together:
+113 registered and executed cases, 113 passes, no skipped or todo cases, actual
+Node exit0 after192.708 seconds and no unhandled errors. The JSON suite aggregate
+reports9 suites; the actual testResults and command have exactly6 file identities.
+All original assertion identities are preserved. Explicit TS7 typing includes all
+2015 source files,7 genuine test roots,8 resolved test/helper inputs and2272 total
+inputs with excludes[], actual exit0. All37 owned TypeScript files pass lint and
+format checking; diff checking also exits0. This is component qualification, not
+final public or optimization execution. The exact39-file seal and reports are in
+.tmp/number-undefined-composition/joined113-receipt.json.
+
+The normal architecture gates pass dialect, kind neutrality, layering, directory
+budget, truthful2015-row inventory, function budget and LOC budget. The first
+cycle check against the fixedc1081873965c93b430f1dc4296187cf33b099767 base refuses
+twoWayDirEdges[ir->backend]25->28. Its full report is retained. Read-only physical
+auditing attributes the three actual value edges to program-consumer's GC
+completion recipe and the flat Number/Undefined orchestrator's GC and Linear
+reserve/fill recipes. These are concrete target dispatch and lifetime joins;
+callback injection or reexporting them would not remove transitive physical
+debt. An exact issue-owned allowance records28 without altering the baseline,
+algorithms or unrelated allowances. The involved policy rows remain mixed,
+not clean logical IR ownership. A real future target-dispatch relocation remains
+required architectural work.
+
+Source-free runtime epoch c78da qualified10 cases,608 JavaScript value comparisons,
+80 real binaries and40 live/codec byte pairs with actual Node0/no unhandled
+errors. Earlier RPC-timeout epochs are retained without completion credit. The
+subsequent public epoch df223 retained10 failures at the unchanged primitive
+numeric-global presentation contract. The final f886 test adds both legacy
+generator poison controls and expands to1344 comparisons,160 binaries and40
+source-free byte pairs; it remains unqualified pending the received finite
+singleton presentation implementation. No known public refusal or earlier
+failure is waived, removed, hidden or credited as success.
+
+The published held review branch is39c255ea0fb8ae364124c087acce7335285cbc33,
+containing the separate2001-input inventory and class source-receipt checkpoints.
+This2015-input carrier composition is still uncommitted and unpublished. The
+source-receipt and inventory continuations, public runtime/optimization matrix,
+broader failures, full class semantics, typeof/string/general dynamic transport,
+conformance, retirement and verified main remain required work.
+
+
+## B frozen2016 public singleton composition and optimizer receiver (2026-10-14)
+
+Root adopted the exact independently frozen singleton helper02093810 and
+presentation4cf88ea0, preserving every unrelated historical function. The sole
+new compiler row is honestly unmigrated/mixed-needs-split; all prior2015 rows
+and non-files bytes remain exact. Actual policy2016 is637204 bytes, SHA256
+f1934c0f22726ed604b009bc764ac3110f251f2aefb2533fa0dca7c13f874d88.
+The all2016-source/policy freeze isde4745435f8b47edd04f70569d30db6520780ea12548e4d78a31438c20f4d77f;
+the signed class55 and inventory562 dependencies from39c255 are adopted exactly.
+None of their current outer continuations is yet credited by this paragraph.
+
+Actual joined root qualification is7 files149/149, no skips/todos, natural
+Node0/no unhandled errors after289.99 seconds. Full TS7 checks all2016 source
+files,8 explicit test roots,9 resolved test/helper inputs and2274 total inputs,
+excludes[], exit0. Every frozen source and policy hash is unchanged afterward.
+All8 ordinary architecture gates exit0 against the fixedc108 baseline and
+measured issue-owned28 physical-edge allowance. Exact root149 report/seal:
+.tmp/number-undefined-composition/root149/qualified-receipt.json, SHA256
+747bfdc6b78dab3abc7d3f8d019529dd30f51386edf397b472c18b8bcecd62bd.
+The presentation suite adds real four-profile optimize:false native binaries
+and32 independent JS comparisons with both legacy generators poisoned.
+
+Worker epochs are preserved separately: initial24/25 stopped at an impossible
+immutable-module getter setup; corrected34 assertion successes still had actual
+process1 from a Vitest onTaskUpdate RPC timeout. Event-loop yields between
+complete cases preserve assertions/fixtures/deadlines;35/35 actual0 and the new
+selected1/1 actual0 precede the root full36/36 included in149. No RPC epoch is
+reported as a clean terminal. The first cycle refusal remains in the full
+joined-cycles-verbose.log; current2016 positive gate logs are archived separately
+in public2016-static. The old113 receipt retains its actual result payloads;
+some positive log output paths were reused by the later2016 gate invocation,
+and those files must not be cited as untouched2015 raw logs.
+
+The untouched f886 complete runtime/optimization oracle actually executes all10
+fixtures but fails10/10 at the existing capturePresentation optimize:true gate.
+All672 source-free comparisons/80 binaries/40 byte pairs and initial public
+false-mode rows are reached before the exact unproved-output-option refusal;
+this failed process supplies no full-suite or complete public matrix credit.
+Removing the numeric-global refusal did not complete optimization.
+
+Root receives the exact finite five-path optimizer lifecycle contract in signed
+claim a938cafba3192c6c431ecca73e270a656b4687ff, normal push0/remote verified.
+A fresh isolated writer owns two new compiler/physical leaves, only the named
+presentation capture/deferred-proof hooks, actual finalized-artifacts issuance
+and both existing async optimizer adapters, plus an independent new suite.
+The generic optimizer, singleton helper, C1/defaults, source-map/C ABI immediate
+refusals, other source/global/widening algorithms and f886 oracle stay exact.
+Actual async optimizer invocation/accepted-byte provenance, numeric public ABI,
+closed imports/start/memory/data/currentness and genuine canonical rec-group
+proof must qualify before optimized acceptance credit. Internal GC DCE/reindex
+is permitted under the complete closed public contract; transformed bytes never
+inherit original opaque emission/binding authority. Root owns truthful future
+2018 inventory rows and ordinary measured grants after the new source freeze.
+
+In parallel, exact source6 and inventory4 outer continuations qualify the frozen
+2016 epoch, preserving all55 and562 callback bodies/literals/defaults. Their
+active processes/typing/templates are not completed test results. Public full
+optimization, broader held failures, class semantics, general dynamic transport,
+conformance/retirement and verified main remain required. PR6662 current39c255
+retains HOLD and no auto-merge; this carrier checkpoint is still unpublished.
+
+
+## B actual source6 receipt composition (2026-10-14)
+
+The exact six owned source-receipt paths are adopted from sealed handoff
+f1aaa161852ee7bd0dd5893c09e0de325239c6790c0f2f9b542aa05f6f217c39.
+Final helper6768 bytes/SHAf5ee7cf91cb521c643c1a2c41cfd801b547de0fa1440c85edf551ba388ae4122
+and fixed DATA32537 bytes/SHA660b59f167026c48f33f8b34e9ef785d54874a4abdb2f3348b761458a228e750
+authenticate95 current source operands,10 unchanged helper/receipt anchors,
+3 complete current callers and one new receipt:109 physical reads per explicit
+operation, mapped rereads0, unknown physical read once. Exact allocation3-span
+and caller2/2/5-span inverses plus independent reciprocal replay preserve
+the complete qualified preimages. All55 old callbacks/bodies/literal pins are
+unchanged.35 independent controls exercise actual source/live/codec GC joins,
+original/selected malformed coverage and namespace refusal, descriptor getters
+at0, complete caller/source/anchor custody, mutation/restoration and no cache.
+The corrected new-helper construction comment is retained in an exact cleanup
+receipt and independent helper pin; historical pins remain untouched.
+
+Worker final90/90 naturally0/no unhandled errors, four files,56.429 seconds;
+AP03 maximum14.309402542 seconds stays below unchanged35 seconds. Full2016
+typing/2276 inputs/excludes[] and all11 static/style/whitespace checks naturally0.
+All frozen production/policy/read-only dependencies remain exact.
+
+Independent root full composition now11 files239/239, no skips/todos, natural
+Node0/no unhandled errors after382.5896456 seconds. TS7 includes all2016 source
+files,12 genuine test roots,19 resolved test/helper files and2284 inputs,
+excludes[], actual0. Two private root config path/rootDir mistakes are retained
+as failed typing setup epochs; corrected configuration does not exclude tests
+or change any source. Root full-source/policy/source6 seals remain unchanged.
+Exact independent receipt SHA80b611c55bd87faed0ed1e76fc754b54e7745a017e4ea5202044717b731908a6
+is .tmp/number-undefined-composition/root239/qualified-receipt.json.
+
+Inventory714 remains active and unqualified; no test is cancelled or expectation
+changed. The optimizer lane separately receives actual compiler-private
+finalization custody13898a93 and measured active DataCount grammarb63f2114.
+Earlier fabricated-artifact issuance failure and premature candidate-acceptance
+epochs are retained without acceptance credit. Every candidate check must
+finish before accepted bytes/state commit; real finalized compiler object
+identity/completed receipt cannot be replaced by original emission or a copy.
+Actual Linear optimizer output has count2 and two active sparse segments at
+1024[1,0,0,0,8] and1038[248,127]; count/full tails/offset/memory observations
+remain mandatory, passive/unknown forms still refuse. No Linear optimized
+acceptance or full f886 result is inferred before the new actual terminal.
+The current2016 checkpoint remains unpublished/held; all broader obligations
+and ordinary commit/push/integration checks remain required.
+
+
+## B native optimization metadata candidate (2026-10-14)
+
+This future2018 source epoch receives two exact inventory rows: the opaque
+optimizer/finalized-artifact orchestration remains unmigrated/mixed-needs-split
+with actual1932-file transitive closure and1564 existing debt operands. The
+finite raw binary projection has no imports, closure1/debt0, and is a clean
+wasm-physical leaf. Neither row changes any previous2016 row/non-files field.
+The first ordinary cycle refusal is retained: SCC count4->5 and new two-way
+compiler->compiler.ts0->1 / compiler.ts->compiler0->15. Private constructor-only
+finalization provenance cannot be replaced by an exported registration callback
+or a kind/report marker. These exact issue-owned allowances record the actual
+temporary cycle; baseline and every unreceived algorithm remain untouched.
+The reverse edge makes existing forward imports count as a two-way pair; it
+does not mean15 newly added imports. Removing mixed dependency/custody debt
+through genuine artifact production ownership remains required architecture
+work before full migration completion. No LOC/function allowance is needed
+by the actual first ordinary gate outcomes.
+
+The running53-case full command is unqualified until natural terminal and
+current input seals. Prior37/37 actual0, four actual backend/target optimizer
+acceptances and malformed/original-artifact failure/repair epochs are separate
+observations, not replacement full-matrix credit. Rootf886 oracle, generic
+optimizer, singleton helper and every2016 peer source/policy input stay exact.
+Root2016 is frozen while source/inventory continuations qualify; this metadata
+exists only in the isolated optimizer worktree after the active epoch finishes.
+
+
+## B actual optimized native carrier and bounded future-policy receiver (2026-10-14)
+
+The isolated optimizer final qualification naturally exited0 at its original
+process handle:2 files62/62, no skips/todos or unhandled errors. The52 new
+optimizer controls join the unchanged f88610-fixture oracle:1,344 independent
+JS comparisons,160 executed binaries and40 actual live-codec byte pairs.
+Actual accepted optimized:true output is observed for all four backend/target
+profiles. Both parent Node and the bundled optimizer executable shebang use
+explicit Node25 PATH. The prior53/53 epoch used Node25 parent but inherited
+Node24 optimizer PATH; it remains a separate preserved observation.
+All11 final static/style/type checks naturally exited0, with full2018 source
+inputs and actual test roots/excludes[]. Exact frozen five-path manifest is
+.tmp/optimization/frozen-five-paths.json in the isolated optimization worktree.
+The complete source/policy remains frozen; no full migration completion follows.
+
+Signed ownership refinement b5e78e68fcb0defd0739a90d556a440f78ff9bf6
+is normally pushed and its issue-assignments remote head verified. It receives
+three new authenticated2018-to-2016 policy transport files and three exact
+initial caller joins, preserving historical full-policy preimages and helper
+algorithms/defaults. The inventory caller additionally needs named default
+input adapters and one explicit original=disk to original=actualDisk physical
+save operand: otherwise mapped historical bytes would overwrite the genuine
+current caller during its real mutation test restoration. That one preparation
+change is explicit; its callback cannot be claimed byte-identical. Assertions,
+test identity, actual writes/restoration and all other callbacks stay preserved.
+
+The new isolated integration worktree composes all frozen2016 production with
+the five qualified optimizer paths and exact2018 policy. All root issue history
+and failed epochs are retained. Its independent9-file211-case run is active,
+not yet credited; production/policy hashes are frozen. The full714 inventory
+process remains active on its original2016 inputs. Receipt implementation
+waits its natural terminal and sealed four-file adoption; no running input is
+modified. Public branch39c255/PR6662 remains held pending actual combined
+qualification and normal commit/push hooks. Generic finalization ownership,
+full supported JS semantics, complete separation/zero debt, retirement, all
+backend/target conformance and verified main remain required work.
+
+
+The fresh integration full TS7 invocation naturally exited0:2,018 actual
+source files,13 explicit test roots,20 resolved test/helper inputs,2,287
+total inputs and excludes[]. Input census is recorded independently from
+--listFilesOnly output. The normal Node25/8GiB pnpm build naturally exited0
+after106.4907 seconds; all2,018 source/policy hashes remain unchanged. Build
+log SHA256b06bbb298fb5c2cc19b595cfeb7210b18ee28e8deaeb9f0dba76eca805f022dc.
+The root211 and inventory714 commands are still active at this observation;
+no completed combined result or publication is inferred from typing/build.
+
+
+The independent fresh integration command now naturally exits0:9 files211/211,
+no skips/todos or unhandled errors. All actual2,018 source/policy and9 complete
+test-file hashes remain unchanged. The untouched f886 full runtime oracle
+passes10/10 with1,344 JS comparisons,160 executed binaries and40 live-codec
+byte pairs; Node25 is explicit for parent and optimizer PATH. Root receipt
+.tmp/optimization-policy-composition/root211/qualified-receipt.json SHA256
+de2a3903f13b7a74e0a832ba26c59ca7ad308573972fbd6dee7dbc4fc901569b.
+Typing/build natural0 remain measured separately. This result does not credit
+future-policy SOURCE35/class55/inventory714 before their authenticated caller
+transport, nor full semantics/separation/retirement/conformance/main.
+
+
+The unchanged full inventory rerun now naturally exits0 at its original
+process handle96997:714/714 (historical562/562 plusnew152/152), no skips or
+unhandled errors,2,435.0275 seconds. Exact four-file sealed manifest SHA256
+0ac76ec89d56c6f20fb23e04572342ae866aa821d409d871e1fea4e8bcee3f65
+is adopted alone into this2018 integration worktree. Both historical helper
+and DATA anchors remain byte-identical; complete current caller inverse
+restores the exact old82ef5407 preimage. The earlier712pass/2diagnostic-wording
+fail epoch and targeted154-only success remain separately preserved. Full
+2016 source typing2,269 inputs/excludes[], format/lint/diff checks actual0.
+This qualified2016 component does not itself authenticate future2018 inputs.
+
+All prerequisites are now satisfied for the exact six-test-path policy
+transport underb5e78e68. That implementation proceeds in this worktree while
+the exact eight-path productive finalizer extraction proceeds in a separate
+worktree under058c7ee9. An independent reader reviews default-input semantics,
+wholecaller inverse authentication and genuine physical restoration. Existing
+2018 production/policy and publicPR6662 source head remain unchanged.
+
+
+The final current2018 policy-transport source command now naturally exits0:
+five files152/152 (historicalSOURCE90 plusnew62), no unhandled errors,89.03
+seconds, maximum case11.424 seconds. Full TS7 checks all2,018 source files,
+seven explicit roots and2,283 inputs/excludes[], exit0; all11 owned static/
+style/whitespace checks naturally0. A private rootDir configuration error
+is retained and corrected only in the private config. Primitive-path0IO/
+0coercion, lazy malformed-input0IO, genuine composed11 reads and preserved
+raw-vs-semantic error categories are tested. All old helpers/callbacks/pins
+remain unchanged except the previously named physical-save operand.
+The complete714 current-policy run is now live on its original59182 handle
+and final six-file/source2018 freeze; no cancellation, restart or active
+input edit occurs. Current-publication readiness still needs that natural
+terminal plus normal commit/push and actual fork/PR head readback.
+
+The same current-policy inventory process59182 now exits naturally0:
+714/714 with no skipped tests, todos or unhandled errors, and the complete
+original test identity counter unchanged. Duration2,467.35 seconds and
+maximum case14.216 seconds are measured from that actual run. Together with
+the separate152 source/transport cases,866 distinct cases pass on this epoch.
+Final six-path seal SHA25652653ffa2ae433067f33c9bcabff8344a96133fa13eabc357e37fad6d2ee8ea7
+checks all2,018 source files, current policy, four historical anchors and the
+complete reciprocal caller inverses. The actual value-import graph has65
+modules and the direct-type union95, with no compiler incoming edge.
+
+The final root typing union independently passes:2,018 source files,16
+explicit test roots,26 resolved test/helper files and2,293 total inputs,
+excludes[]. Full59-file formatting passes. Normal signed commit and push
+checks remain the publication prerequisite.
+
+This held2018 checkpoint preserves the measured private finalization tuple
+and currentness checks. A separate2020 productive-owner repair addresses the
+observed pre-first-issuance semantic/byte custody window; it is not included
+or credited here. Its exact cohesive lifecycle scope is published at
+38ba24a355e36450790f6840c931b8cd9ce028d4, and parallel implementation/review
+continue in isolated worktrees. Complete migration and verified upstream-main
+integration remain open.
+
+## B received productive finalizer ownership for master3518 (2026-10-14)
+
+For3518 IR-only default and direct front-end retirement, actual signed ledger
+058c7ee9afa057ec5339190fabe7500f8fcc6c8e is normally pushed/remote verified.
+Both held compiler-result-finalizer and output-finalizer-context slices are
+received by B into this fresh isolated worktree; previous owner/write/branch
+records and branches are preserved. Native artifact projection relocation is
+explicitly received; object finalization and all other algorithms remain held.
+The eight-path contract moves real finalization, actual artifact construction
+and private tuple custody together. The productive factory derives output
+from genuine presentation and its real completion receipt; no registration
+helper, caller-result/module/callback or copied-artifact authority is permitted.
+Every unchanged moved algorithm and unrelated compiler function must retain
+its exact body, ordering and error precedence. Source/test implementation
+remains unqualified pending actual controls/typing/build/gates. New output
+contracts/finalizer are honestly mixed until their real dependency closure
+is separated; no full architecture or migration completion follows.
+
+
+## B productive finalization metadata2020 (2026-10-14)
+
+The finalizer extraction receives two honest unmigrated/mixed-needs-split
+compiler rows. All2,018 predecessor rows and every non-files value/byte remain
+unchanged; only the two received leaf entries are appended. Actual type-inclusive
+closure is1,934 source files with1,577 nonclean operands under the2018 profile;
+value-only closure is1,764 for productive owner and1 for output context. Two
+existing computed/nonliteral references remain explicit unknown/debt. The
+output contract remains mixed despite its type-only value closure; there is
+no clean compiler activation or complete boundary credit. The old optimizer
+row retains its frozen2018 boundary history; current closures are recorded
+here instead of silently interpreting its old numbers as current2020 counts.
+
+Seven first ordinary architecture gates exit0; inventory alone rejects the two
+missing rows before this addition. Measured cycles return to4 nontrivial SCCs
+and10 two-way pairs; largest SCC remains704. The three issue-owned2018 private
+compiler cycle allowances are removed here. Required physical ir/backend28
+allowance remains; baseline is unchanged. Explicit new untracked-file counts
+are474/16 raw file lines and moved finalizer267 function lines, below actual
+1,500 file/300 function caps; no new budget allowance is requested. Ordinary
+pre-stage budget results alone do not prove coverage of untracked files.
+
+The prior default-heap packagebuild actual134/OOM is retained; explicit8GiB
+build naturally exits0 before the membership hook. The first12 cases8pass/4fail
+and initial duplicate membership-hook script/typing transform failures remain
+separate epochs. Corrected private successful-constructor WeakSet/readonly
+identity assertion has actual24/24 natural0 and full typing0. The final
+old62+new24 combined command and full final build/types/gates remain unqualified
+until their own natural terminals and exact stable source/policy seals.
+
+
+## B finalizer inherited optional-field probe and correction (2026-10-14)
+
+The actual prior2020 qualification naturally exits0:3 files86/86 (unchanged
+f88610 plusold52 optimizer andnew24 productive-owner cases), all11 static
+checks0 and15-root full typing2,292 inputs/excludes[]. Final8GiB packagebuild
+then naturally exits0; an unchanged selected four-profile test plus realCLI
+journal proves all four actual accepted optimized outputs rather than inferring
+acceptance from a test that permits fallback. These complete prior-epoch
+observations remain preserved in .tmp/finalization/prior-qualified86.
+
+A subsequent genuine Linear presentation hostile probe contradicts full
+getter safety: requiresDetachedFinalization is absent on that frozen instance,
+and a getter installed on Object.prototype after preparation is invoked by
+both fixed productive entry and moved readonlychecker. Membership itself
+does not make an absent optional property safe. The wider option probe fails
+as an instrument because actual captured options have null prototype; no
+broader option defect is inferred. The owned new finalizer fixes exactly the
+two optionalflag reads via private own-descriptor checking after genuine
+identity/tuple checks. Own absence meansfalse; own canonicaltrue is accepted;
+inherited shadow/accessor/noncanonical form refuses before callbacks.
+
+Targeted two real after-preparation/after-finalization regressions naturally
+exit0 withgetter counters0 and realprototype descriptors restored in finally.
+The moved readonlychecker body is now explicitly different at its bounded
+own-field read; all other original generic finalizer/target/options/recgroup/
+projector and unrelated algorithms remain byte-exact. New full88-case/type/
+build/static/provenance qualification remains pending its actual terminals.
+No prior86 pass is substituted for this corrected epoch.
+
+
+The next bounded2020-to-2018 reader continuation is received in signed ledger
+e014a62af6727c54b6bc7b3da89406171bbf531b, normally pushed/remote verified.
+It owns only three new test transport files plus four finite caller initial
+joins; every predecessor helper/JSON, callback, literal and timer remains
+unchanged. Twelve fixed physical captures map the old nine; two genuine older
+Deno unknown anchors add once each, making fourteen physical default reads.
+The old supplied-reader eleven-count assertion remains literal and authentic.
+No new physical-save callback operand is needed. Implementation waits the
+qualified/published2018 checkpoint and corrected final2020 owner seal; this
+receiving record does not block2018 publication. The same ledger explicitly
+records the proven optionalflag own-field checker exception in the new owner.
+
+
+## B pre-first-issuance artifact custody probe (2026-10-14)
+
+The bounded ownflag correction completes its prior full88/88 natural0
+qualification. A subsequent real productive construction probe exposes a
+separate window before first input issuance: the caller changes importsHelper
+on the ACTUAL registered artifact object and the exported native issuer still
+returns a sync-pending receipt. Identity/binary matching is insufficient to
+prove semantic fields are the ones the real constructor produced. The private
+probe and prior88/static/build/provenance epochs are preserved separately; no
+readiness is inferred from those earlier green results.
+
+The owned productive finalizer records complete actual semantic field/shape/
+alias observations internally at construction before returning; readonly
+currentness validates those before first issuance. Only actually established
+trusted binary/diagnostic lifecycle changes may be exempted. No public
+registration, callback, caller-authored output or semantic mutation authority
+is introduced. Original generic finalizer/projector/target/options/recgroup
+algorithms remain exact; the moved checker has this additional explicit
+construction-custody guard. Full expanded tests/types/build/gates and actual
+four-profile accepted optimizer provenance remain required after the repair.
+
+## B cohesive finalizer and optimizer ownership (2026-10-14)
+
+The shared-seam takeover refinement is published on the assignment ledger at
+38ba24a355e36450790f6840c931b8cd9ce028d4, with normal push checks and exact
+remote readback. It includes the constructor-observation refinement at
+92d49519d412719b975e4c1dc8e49e43699f6d2a. The source index and previous
+owners' branches are preserved. Two independent reviews find the existing
+eight-path scope sufficient for the repair.
+
+Actual finalization and the native optimizer's private state move into one
+productive owner. The old optimization module retains compatibility exports;
+the owner imports the real optimizer and binary parser directly. Immutable
+constructor observations remain separate from expected state updated only by
+actual private optimization transitions. The checker must not recurse through
+currentness, and no public registration or state-update callback supplies
+authority. Generic finalization algorithms remain unchanged.
+
+Only the shared preparation block of two existing await-mutation tests observes
+the genuine completed factory instead of spying on a now-local checker. Their
+public compilation fixture, actual await mutation and assertions remain intact.
+The earlier 88-test qualification predates this repair and supplies no readiness
+credit. Fresh tests, typing, build, dependency measurements and four accepted
+real optimizer profiles remain required.
+
+The earlier append-only two-row policy transport proposal must be revised if
+the compatibility or finalizer policy rows change. Its implementation waits for
+the published current 2018 checkpoint and the final qualified 2020 policy seal.
+The separate 714-test current-inventory run remains frozen and pending; this
+ownership publication does not publish new source to the held pull request.
+
+The actual cohesive owner and compatibility exports are now implemented in
+the separate worktree. Initial full TS7 typing exits0, the preserved real
+pre-first-issuance importsHelper mutation refuses, and four selected real
+optimizer lifecycle cases pass naturally; the other48 cases were not run in
+that selection. Construction and extra-field controls remain under development,
+so these observations do not establish the final qualification.
+
+Root updates only policy rows2016 and2019: the old optimizer becomes an honest
+compatibility adapter with the same four function identities and observation
+type, while the productive-owner description records its private construction
+and optimization state. Policy remains2020 rows,639,290 bytes, SHA256
+d0d2fdb7591c875303a0197fb413076a1f316c0ecb38ed7bcbc35ce40448f985.
+All other rows and nonfiles fields remain unchanged; the exact raw inverse
+restores the prior639,110-byte policy. Import closure and final gates still
+require measurement. This is an ownership change, not clean-boundary credit.
+
+The exact existing-row successor refinement is also remotely received at
+02a30a8c926eb8ae8a191397a5a40b26ca0c4db0 with normal push checks and matching
+remote head. Its seven already-owned test paths must restore the complete
+original optimizer row and remove the two new rows, proving reciprocal whole
+raw and DATA equality. Implementation waits for the published qualified2018
+checkpoint and corrected final2020 seal; source pin or callback drift cannot
+be hidden by receipt replacement.
+
+## B qualified cohesive finalizer integration (2026-10-14)
+
+The exact eight-path finalizer handoff is frozen at SHA256
+a49c812b3dd69cc2d54e81312730363c9d9b46bd588346a87a30ef034d71b394.
+Actual115/115 tests exit naturally0 with no unhandled errors. Two later pure
+population assertions affect only five existing cases; those five pass naturally
+and final typing/style checks pass on unchanged production. All eleven static
+checks and the Node25/8GiB package build pass. Four actual Binaryen125 optimizer
+executions exit0 and all four backend/target receipts report accepted outputs.
+
+Private constructor observations bind descriptors, semantic values, aliases and
+original bytes before issuance. Only actual private optimizer transitions update
+expected output bytes and diagnostics. The direct checker always replays original
+bytes, including after optimization; witness registration requires the genuine
+completed Number/Undefined population. Ordinary scalar artifacts retain their
+behavior. Independent final review SHA256
+0076b39c2c1e2609f2fd1a23e837fdc951c874e5e50aeeed1f9f2795783e486b
+finds no remaining blocking implementation issue.
+
+The published predecessor is now df466f30d4ee27ab332debad823912ee9155c80c,
+with normal signed commit/push checks and exact fork/PR6662 title/body/head
+readback. HOLD remains. This receiving branch advances to that commit without
+changing any working source/test/policy/issue bytes, then composes the qualified
+2020 source/policy with all final2018 historical caller and anchor inputs.
+
+The received seven-path policy transport is under implementation. Its private
+preparation proves complete raw and DATA round trips, four current caller
+preimages, six historical anchors and all95 unchanged source pins. A separate
+ten-file public integration run reaches its natural terminal at12:20:40 UTC:
+264/264 tests pass, all original211 identities remain present, and the53 new
+finalizer cases pass. There are no unhandled errors, skips or todos; all frozen
+2020 production, policy and selected test/helper inputs remain unchanged.
+Remaining1934-file closure,1579 nonclean
+operands and two computed references remain explicit migration debt. This
+checkpoint does not establish full class semantics, retirement or main delivery.
+
+The bounded original-class Phase A receive is published and read back at
+93950c365716cc1403edc799de3df98cd297bc2e with normal push checks. Its manifest
+069485ca53c022b54af1ac60f692b2fe1ff0f91986fc0113e0e275dee7d99f0f
+names30 existing paths, seven new production leaves and two new suites.
+Five held records retain their owners, statuses, branches and original
+algorithms; only the exact additive native class hooks are transferred.
+Implementation proceeds in a fresh isolated branch from publisheddf466.
+Genuine allocation evidence and both materializers remain required before any
+class runtime credit. Per-activation frame geometry remains an explicit
+allocation producer/replay agreement, never an implicit fabricated child site.
+
+That concrete geometry agreement receives one additional same-path typed JS
+operation at8d203798d6fe3f00957a6899cffc7fdce582c247, with normal push and exact
+remote readback. The pinned frame refinement is
+cfd5a6c21523549bdceac446f6da53505ccf64ab8784ab3ef4eb4318f7011893.
+The original callee entry receives environment/this/homeObject/newTarget roots
+and explicitly allocates a fresh activation frame before source work. The
+initializer still receives zero user arguments. Frame referents retain their
+existing roots; instance, definition, capture cells and activation sites remain
+distinct. This is the fifteenth operation in the same received file set.
+Independent B replay and both C materializers remain required.
+
+Independent corrected seven-path review
+860498b8e8a3040235996d637d5f34712a09af52f9898c7551dc6ac357302430
+proves all359 historical function bodies and all complete reciprocal raw/DATA
+transforms. It catches and resolves a mapped-reader physical-save hazard before
+the714-case run starts: inventory actualDisk retains its original physical reader
+identity, while only the known default constructor path maps historical views.
+The original save callback stays byte-exact. Final current root typing passes
+on2020 source files,18 explicit test roots,29 resolved test/helper inputs and
+2298 total inputs, with exclude[] and unchanged source/policy/root tests.
+Corrected transport runtime qualification remains separately pending.
+
+The corrected72 controls pass naturally0. Two original physical-save controls
+also pass naturally0 with transparent write tracing: the361,029-byte current
+caller is saved, the361,030-byte mutant is written, then the exact original
+caller bytes and SHA256 are restored. All seven received files,2020 production
+files and the policy retain their pins. The714-case historical run starts only
+after independent review and root typing checksum clearance; its natural
+terminal is still pending and no result is inferred.
+
+The finite class allocation evidence receive is published and read back at
+23e0d50882101c27e888e8e025b07707b5b72e94 with normal push checks. Proposal
+522e63e6fe64c34cdfd8fdd9387db7e8751cfd0cda9104ac38c6a981f63afcf0
+and fresh collision audit
+a49f82416ad53aedd7b4f077ffed838ac7036f3d716db93b99655ec48fe288b1
+receive six existing preparation hooks, five new production leaves and one
+suite in a separate isolated worktree fromdf466. All six existing preimages
+match exactly. The eleven foreign exact mentions already have the bounded
+checked-preparation handoff; original algorithms remain held. The only source
+overlap is a distinct prepare-ir domain-argument insertion coordinated with
+the original-class descriptor forwarding. Pure analysis and runtime validation
+cannot import program owners or accept producer reports as authority.
+Actual class API seals, canonical independent replay and both materializers
+remain required before integrated class runtime credit.
+
+## B concrete class physical handoff preparation (2026-10-14)
+
+Root reads the actual composed2020 planner, memory-demand collector, physical
+consumer, signature converters and existing GC/Linear carrier recipes. The
+bounded physical proposal is13746 bytes, SHA256
+880a6ddab8a306eaa51a6e78b4e6cb7555b975479694bb6c0b4cee8d717596fa,
+with twelve existing hooks, seven new production leaves and two new suites.
+It is private preparation only; no tracked physical code or claim is changed.
+
+The actual frozen-facts layout dispatcher knows only older object/class/refcell/
+box/vector/string allocations. New class roots otherwise reach opaqueLayout,
+whose type key rejects support-ref. The memory-demand collector likewise refuses
+new allocating instructions. Both physical signature converters admit only the
+older narrow carriers, and the primitive-only native value proof requires no
+reference signatures or allocations. These are concrete required extensions;
+none can be bypassed by a nominal class shape, generic support-ref allowance,
+profile flag, copied verified report or selecting native-string to evade the
+absence proof.
+
+The source implementer confirms that uninitialized scalar fields have logical
+dynamic valueType with actual Undefined, regardless of a number annotation.
+Its original-source census now reports one genuine class and four original
+units including module-init for the preserved default-field example. This is
+source-census progress only, with no body, sealed program or runtime credit.
+The physical recipes must preserve real tagged property values, own presence,
+prototype lookup and fresh managed identity. Constructor, instance, definition,
+capture-cell and per-activation frame roots retain genuine disjoint provenance;
+constructor replacement and throw partial effects remain part of the proof.
+
+Exact aggregate bytes, alignments, pointer maps, call/helper/table resources,
+realm resources and both materializers remain uncomputed. Actual A/B API and
+evidence seals plus a fresh finite receiving refinement are required before
+physical writes. The proposed runtime matrix is all four GC/Linear by standalone/
+WASI profiles and their live codec counterparts, with observed JS values and
+actual emitted bytes. A located unsupported is retained for any uncovered
+semantic family; the full migration still requires those families, retirement,
+conformance and main delivery.
+
+The actual constructor source census currently gives a located pre-IR refusal
+for default, optional, rest, destructured and parameter-property semantics.
+Supported required scalar user parameters do not authorize missing/Undefined
+adaptation; marshalling those values as numeric0 remains prohibited. An actual
+original constructor-body default path and field-before-default ordering are
+still required future implementation and runtime controls, not credit from
+the current body.params DATA or source-census typing.
+
+## B final corrected policy transport qualification (2026-10-14)
+
+The original714-case owner process reaches natural exit0 after2486.77 seconds:
+714/714 tests pass in two files, with no failures, skips or unhandled errors.
+The corrected72 controls and two actual physical-save controls pass in separate
+natural epochs. Final eleven typing/style/architecture checks also exit0.
+The two save controls are a deliberate selection from152 registered cases;
+the other150 are skipped in that selection and subsequently included in the
+complete714-case natural pass. The selection is not a second full152 result.
+All2020 source files, the full policy, seven owned files, six historical anchors
+and95 source pins remain byte-exact after runtime and final checks.
+
+The final seven-path handoff is809989 bytes, SHA256
+bd7a73dcba8b7a0c203cf01868b237c89c0e78025b31fe39a4686cd7d8fc8d58.
+Independent final review is4081 bytes, SHA256
+21f1800811160baf0d02d989d8e00319de6b6284ddbcac330ef349fe872fdbe7.
+It rechecks exact seven hashes, all final reports and the pass-through physical
+restoration journal without duplicate runtime. The earlier source90 plus outer62
+152-case result remains explicitly a prior alias/receipt epoch with eligibility
+limits; it is not presented as a final-hash152 result.
+
+Root composes only the exact eight frozen finalizer paths, seven frozen transport
+paths, truthful policy and issue evidence: seventeen paths total. Full root
+typing,264 public integration cases and final helper controls are actual separate
+proofs. Normal signed commit/push and exact held PR6662 readback remain the final
+publication steps. This does not establish class runtime, compiler retirement,
+full conformance or main delivery.

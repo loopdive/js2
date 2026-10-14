@@ -1,5 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-import { ts } from "../ts-api.js";
+import { ts, createOriginLanguageService, originTypeChecker, compilerLibraryEpoch } from "../ts-api.js";
 import type { AnalyzeOptions, MultiTypedAST, TypedAST } from "./index.js";
 import {
   filterRecognizedDenoStdioDiagnostics,
@@ -153,10 +153,11 @@ export class IncrementalLanguageService {
 
     this.host = {
       getCompilationSettings: () => this.compilerOptions,
-      getProjectVersion: () => String(this.projectVersion),
+      getProjectVersion: () => `${this.projectVersion}:${compilerLibraryEpoch()}`,
       getScriptFileNames: () => [this.fileName],
       getScriptKind: (name: string) => (this.isCurrentFile(name) ? this.scriptKind : ts.ScriptKind.TS),
-      getScriptVersion: (name: string) => (this.isCurrentFile(name) ? `${this.serviceId}:${this.sourceVersion}` : "0"),
+      getScriptVersion: (name: string) =>
+        this.isCurrentFile(name) ? `${this.serviceId}:${this.sourceVersion}` : String(compilerLibraryEpoch()),
       getScriptSnapshot: (name: string) => this.getScriptSnapshot(name),
       getCurrentDirectory: () => "/",
       getDefaultLibFileName: () => this.defaultLibName,
@@ -170,7 +171,7 @@ export class IncrementalLanguageService {
       realpath: (name: string) => name,
     };
 
-    this.service = ts.createLanguageService(this.host, SHARED_DOCUMENT_REGISTRY);
+    this.service = createOriginLanguageService(this.host, SHARED_DOCUMENT_REGISTRY);
   }
 
   /** Update the source snapshot for the next compilation. */
@@ -202,7 +203,7 @@ export class IncrementalLanguageService {
       analyzeOptions?.allowJs === true || this.scriptKind === ts.ScriptKind.JS || this.scriptKind === ts.ScriptKind.JSX;
     const nextDefaultLibName =
       analyzeOptions?.platform === "node" || analyzeOptions?.platform === "deno" ? "lib.no-dom.d.ts" : "lib.d.ts";
-    const nextOptionsKey = this.optionsKey(allowJs, nextDefaultLibName);
+    const nextOptionsKey = `${this.optionsKey(allowJs, nextDefaultLibName)}:${compilerLibraryEpoch()}`;
     if (nextOptionsKey !== this.compilerOptionsKey) {
       this.compilerOptions = this.buildCompilerOptions(allowJs);
       this.defaultLibName = nextDefaultLibName;
@@ -214,7 +215,7 @@ export class IncrementalLanguageService {
       // attached. Recreate the service on any configuration change; source-only
       // edits stay on the fast incremental path.
       this.service.dispose();
-      this.service = ts.createLanguageService(this.host, SHARED_DOCUMENT_REGISTRY);
+      this.service = createOriginLanguageService(this.host, SHARED_DOCUMENT_REGISTRY);
     }
 
     const program = this.service.getProgram();
@@ -225,7 +226,7 @@ export class IncrementalLanguageService {
       program.getSourceFiles().find((candidate) => this.isCurrentFile(candidate.fileName));
     if (!sourceFile) throw new Error(`Incremental TypeScript Program is missing source file '${this.fileName}'`);
 
-    const checker = program.getTypeChecker();
+    const checker = originTypeChecker(program);
     const syntacticDiagnostics = this.service.getSyntacticDiagnostics(sourceFile.fileName);
     const semanticDiagnostics = analyzeOptions?.skipSemanticDiagnostics
       ? ([] as ts.Diagnostic[])
@@ -275,13 +276,13 @@ export class IncrementalLanguageService {
 
     const libName = virtualLibName(name);
     if (!libName) return undefined;
-    const cached = SHARED_LIB_SNAPSHOTS.get(libName);
+    const cached = SHARED_LIB_SNAPSHOTS.get(`${compilerLibraryEpoch()}:${libName}`);
     if (cached) return cached;
 
     const sourceFile = getLibSourceFile(libName, this.compilerOptions.target ?? ts.ScriptTarget.ES2022);
     if (!sourceFile) return undefined;
     const snapshot = ts.ScriptSnapshot.fromString(sourceFile.text);
-    SHARED_LIB_SNAPSHOTS.set(libName, snapshot);
+    SHARED_LIB_SNAPSHOTS.set(`${compilerLibraryEpoch()}:${libName}`, snapshot);
     return snapshot;
   }
 
@@ -329,12 +330,12 @@ export class IncrementalProjectLanguageService {
   constructor() {
     this.host = {
       getCompilationSettings: () => this.compilerOptions,
-      getProjectVersion: () => String(this.projectVersion),
+      getProjectVersion: () => `${this.projectVersion}:${compilerLibraryEpoch()}`,
       getScriptFileNames: () => this.rootNames,
       getScriptKind: (name: string) => this.documentFor(name)?.scriptKind ?? ts.ScriptKind.TS,
       getScriptVersion: (name: string) => {
         const document = this.documentFor(name);
-        return document ? `${this.serviceId}:${document.version}` : "0";
+        return document ? `${this.serviceId}:${document.version}` : String(compilerLibraryEpoch());
       },
       getScriptSnapshot: (name: string) => this.getScriptSnapshot(name),
       getCurrentDirectory: () => "",
@@ -357,7 +358,7 @@ export class IncrementalProjectLanguageService {
           ),
         })),
     };
-    this.service = ts.createLanguageService(this.host, SHARED_DOCUMENT_REGISTRY);
+    this.service = createOriginLanguageService(this.host, SHARED_DOCUMENT_REGISTRY);
   }
 
   /** Replace the visible project graph while retaining every unchanged document. */
@@ -392,6 +393,7 @@ export class IncrementalProjectLanguageService {
     }
 
     const nextSpecifierMapKey = JSON.stringify(Object.entries(specifierMap ?? {}));
+    const resolutionChanged = nextSpecifierMapKey !== this.specifierMapKey || nextEntryFile !== this.entryFile;
     const changed =
       nextEntryFile !== this.entryFile ||
       nextSpecifierMapKey !== this.specifierMapKey ||
@@ -403,6 +405,12 @@ export class IncrementalProjectLanguageService {
     this.entryFile = nextEntryFile;
     this.specifierMapKey = nextSpecifierMapKey;
     this.bareSpecifierLookup = buildBareSpecifierLookup(nextDocuments, specifierMap);
+    // TypeScript may reuse a Program when only the host's bare-specifier map changes.
+    // That old Program still owns the old symbol bindings; it cannot be re-certified.
+    if (resolutionChanged) {
+      this.service.dispose();
+      this.service = createOriginLanguageService(this.host, SHARED_DOCUMENT_REGISTRY);
+    }
     if (changed) this.projectVersion++;
   }
 
@@ -420,14 +428,14 @@ export class IncrementalProjectLanguageService {
     });
     const nextDefaultLibName =
       analyzeOptions?.platform === "node" || analyzeOptions?.platform === "deno" ? "lib.no-dom.d.ts" : "lib.d.ts";
-    const nextOptionsKey = `${allowJs ? "js" : "ts"}:${hasJsx ? "jsx" : "plain"}:${nextDefaultLibName}`;
+    const nextOptionsKey = `${allowJs ? "js" : "ts"}:${hasJsx ? "jsx" : "plain"}:${nextDefaultLibName}:${compilerLibraryEpoch()}`;
     if (nextOptionsKey !== this.compilerOptionsKey) {
       this.compilerOptions = this.buildCompilerOptions(allowJs, hasJsx);
       this.defaultLibName = nextDefaultLibName;
       this.compilerOptionsKey = nextOptionsKey;
       this.projectVersion++;
       this.service.dispose();
-      this.service = ts.createLanguageService(this.host, SHARED_DOCUMENT_REGISTRY);
+      this.service = createOriginLanguageService(this.host, SHARED_DOCUMENT_REGISTRY);
     }
 
     const program = this.service.getProgram();
@@ -447,7 +455,7 @@ export class IncrementalProjectLanguageService {
     return {
       sourceFiles: this.orderSourceFiles(program, entrySourceFile),
       entryFile: entrySourceFile,
-      checker: program.getTypeChecker(),
+      checker: originTypeChecker(program),
       program,
       diagnostics,
       syntacticDiagnostics,
@@ -485,13 +493,13 @@ export class IncrementalProjectLanguageService {
 
     const libName = virtualLibName(name);
     if (!libName) return undefined;
-    const cached = SHARED_LIB_SNAPSHOTS.get(libName);
+    const cached = SHARED_LIB_SNAPSHOTS.get(`${compilerLibraryEpoch()}:${libName}`);
     if (cached) return cached;
 
     const sourceFile = getLibSourceFile(libName, this.compilerOptions.target ?? ts.ScriptTarget.ES2022);
     if (!sourceFile) return undefined;
     const snapshot = ts.ScriptSnapshot.fromString(sourceFile.text);
-    SHARED_LIB_SNAPSHOTS.set(libName, snapshot);
+    SHARED_LIB_SNAPSHOTS.set(`${compilerLibraryEpoch()}:${libName}`, snapshot);
     return snapshot;
   }
 

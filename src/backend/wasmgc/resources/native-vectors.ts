@@ -4,7 +4,7 @@ import type { IrType } from "../../../ir/core/types.js";
 import type { NativeVectorElement, NativeVectorResourcePlan } from "../../../ir/program/native-vector-resources.js";
 import { VECTOR_CALLABLE_DECLARATION } from "../../../ir/runtime/vector-callables.js";
 import { irCallableBindingKey } from "../../../ir/core/callable-bindings.js";
-import { preparedIrDataMismatch } from "../../../ir/program/data.js";
+import { preparedIrDataMismatch } from "../../../shared/contracts/prepared-ir-data.js";
 import type { ValType } from "../../../wasm/model/instructions.js";
 import {
   type PhysicalModuleReservations,
@@ -20,6 +20,13 @@ import {
   createVectorBackingArrayType,
   createVectorCarrierType,
 } from "../../../runtime/wasmgc/values/vector-grow-store.js";
+
+import { NUMERIC_APPEND_DECLARATION } from "../../../ir/runtime/numeric-vector-callables.js";
+import { PreparedIrProgramInvariantError } from "../../../shared/contracts/prepared-ir-invariant-error.js";
+import {
+  describeGcNumericVectorAppend,
+  buildGcNumericVectorAppendBody,
+} from "../../../wasm/physical/gc-vector-append.js";
 
 export interface NativeVectorLayout {
   readonly vecStructTypeIdx: number;
@@ -253,4 +260,104 @@ export function fillNativeVectorHelper(
       gapFill: { kind: "default" },
     }),
   );
+}
+
+/** Opaque in-process identity; numeric append never borrows the externref helper. */
+export interface NativeNumericAppendReservation {
+  readonly kind: "native-numeric-append";
+}
+interface Owner {
+  readonly tx: PhysicalModuleReservations;
+  readonly plan: NativeVectorResourcePlan;
+  readonly snapshot: NativeVectorResourcePlan;
+  readonly types: NativeVectorTypeReservations;
+  readonly fn: FunctionReservation;
+  readonly assertEmissionActive: () => void;
+  state: "reserved" | "filled" | "complete" | "failed";
+}
+const owners = new WeakMap<NativeNumericAppendReservation, Owner>();
+function invalid(detail: string): never {
+  throw new PreparedIrProgramInvariantError("emission-failed", `numeric append resources: ${detail}`);
+}
+function layout(tx: PhysicalModuleReservations, plan: NativeVectorResourcePlan, types: NativeVectorTypeReservations) {
+  requireNativeVectorTypeReservations(tx, types, plan);
+  const row = types.layouts.find((item) => item.element === "f64");
+  if (!row) invalid("missing original f64 carrier/backing reservations");
+  return row;
+}
+export function reserveNativeNumericAppend(
+  tx: PhysicalModuleReservations,
+  plan: NativeVectorResourcePlan,
+  types: NativeVectorTypeReservations,
+  assertEmissionActive: () => void,
+): NativeNumericAppendReservation | undefined {
+  assertEmissionActive();
+  if (!plan.numericAppendHelper) return undefined;
+  if (tx.state !== "reserving") invalid("append must reserve before freeze");
+  const binding = plan.numericAppendHelper;
+  if (
+    binding.referenceKey !== irCallableBindingKey(NUMERIC_APPEND_DECLARATION.ref.binding) ||
+    binding.name !== NUMERIC_APPEND_DECLARATION.ref.name ||
+    !plan.demands.some((owner) => owner.uses.some((use) => use.feature === NUMERIC_APPEND_DECLARATION.feature))
+  )
+    invalid("noncanonical numeric append demand/binding");
+  const row = layout(tx, plan, types);
+  const recipe = describeGcNumericVectorAppend(row.carrier.typeIndex, row.array.typeIndex);
+  const fn = tx.reserveFunction(binding.bindingId, binding.name, recipe);
+  const result = Object.freeze({ kind: "native-numeric-append" as const });
+  owners.set(result, { tx, plan, snapshot: structuredClone(plan), types, fn, assertEmissionActive, state: "reserved" });
+  return result;
+}
+function use<T>(
+  tx: PhysicalModuleReservations,
+  resource: NativeNumericAppendReservation,
+  action: (owner: Owner) => T,
+): T {
+  const owner = owners.get(resource);
+  if (!owner) invalid("unknown append reservation");
+  try {
+    if (owner.tx !== tx || owner.state === "failed") invalid("foreign or failed append reservation");
+    owner.assertEmissionActive();
+    if (tx.state !== "filling") invalid("append use requires frozen reservation space");
+    if (preparedIrDataMismatch(owner.plan, owner.snapshot) !== undefined) invalid("stale append plan");
+    layout(tx, owner.plan, owner.types);
+    tx.physicalIndex(owner.fn);
+    return action(owner);
+  } catch (error) {
+    owner.state = "failed";
+    throw error;
+  }
+}
+/** Read the actual owned token, never a caller-supplied function/type coordinate. */
+export function nativeNumericAppendFunction(
+  tx: PhysicalModuleReservations,
+  resource: NativeNumericAppendReservation,
+): FunctionReservation {
+  return use(tx, resource, (owner) => owner.fn);
+}
+export function fillNativeNumericAppend(
+  tx: PhysicalModuleReservations,
+  resource: NativeNumericAppendReservation,
+): void {
+  use(tx, resource, (owner) => {
+    if (owner.state !== "reserved") invalid("duplicate append fill");
+    const row = layout(tx, owner.plan, owner.types);
+    const recipe = describeGcNumericVectorAppend(row.carrier.typeIndex, row.array.typeIndex);
+    tx.fillFunction(owner.fn, {
+      locals: recipe.locals,
+      body: buildGcNumericVectorAppendBody(row.carrier.typeIndex, row.array.typeIndex),
+    });
+    tx.assertCompletedReservation(owner.fn);
+    owner.state = "filled";
+  });
+}
+export function requireCompletedNativeNumericAppend(
+  tx: PhysicalModuleReservations,
+  resource: NativeNumericAppendReservation,
+): void {
+  use(tx, resource, (owner) => {
+    if (owner.state !== "filled" && owner.state !== "complete") invalid("append body is incomplete");
+    tx.assertCompletedReservation(owner.fn);
+    owner.state = "complete";
+  });
 }

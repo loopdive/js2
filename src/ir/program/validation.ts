@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
+import { assertPreparedStartupInvocation } from "./startup-validation.js";
 import type { TypedIrProgramInput } from "./input-contracts.js";
 import type { IrModuleInitPlan, IrModuleInitBindingIntent } from "./startup.js";
 import type { IrSiteId, IrInstr } from "../core/nodes.js";
@@ -42,6 +43,14 @@ import { numberFormatRadixSupportDeclarations } from "./formatter-support.js";
 import { assertPreparedIrRuntimeSupportDependencies } from "./runtime-support-dependencies.js";
 import { irRuntimeCallableHasNoSlot } from "../runtime/native-async-callables.js";
 import { assertPreparedIrRuntimeProjection, assertPreparedIrSemanticRuntimeSeparation } from "./runtime-validation.js";
+import {
+  screenPreparedIrLinearAllocationEntry,
+  validatePreparedIrLinearAllocationEvidence,
+  type PreparedLinearMemoryInput,
+} from "./linear-allocation-validation.js";
+import type { PreparedIrProgramRuntimeProjection } from "./prepared-contracts.js";
+import { nativeVectorStoreFailure } from "./native-vector-store-proof.js";
+import { nativeModuleGlobalEvidence } from "./native-module-vector-context.js";
 
 function invalid(detail: string): never {
   throw new PreparedIrProgramInvariantError("invalid-prepared-data", detail);
@@ -193,6 +202,25 @@ function validateRuntimeCallables(program: PreparedIrProgram): void {
 
 /** Complete source-free validation precedes lookup reconstruction, backend acceptance and replay. */
 export function assertPreparedIrProgram(program: PreparedIrProgram, options?: IrVerificationOptions): void {
+  validatePreparedIrProgram(program, false, undefined, options);
+}
+
+/** Required native entry shares every canonical context check with generic validation. */
+export function assertPreparedIrProgramLinearAllocationEvidence(
+  program: PreparedIrProgram,
+  projection?: PreparedIrProgramRuntimeProjection,
+  options?: IrVerificationOptions,
+): PreparedLinearMemoryInput | undefined {
+  return validatePreparedIrProgram(program, true, projection, options);
+}
+
+function validatePreparedIrProgram(
+  program: PreparedIrProgram,
+  requiredLinearEvidence: boolean,
+  selectedProjection?: PreparedIrProgramRuntimeProjection,
+  options?: IrVerificationOptions,
+): PreparedLinearMemoryInput | undefined {
+  const attached = screenPreparedIrLinearAllocationEntry(program, requiredLinearEvidence);
   if (program.schema !== "prepared-ir-program-v1" || program.reconciliation !== "complete" || program.sealed !== true)
     invalid("program is not a complete prepared program");
   assertPreparedIrProgramPopulation(program);
@@ -201,7 +229,7 @@ export function assertPreparedIrProgram(program: PreparedIrProgram, options?: Ir
     invalid("runtime support must be absent rather than own-property undefined");
   assertIrRuntimeSupport(program, program.runtimeSupport);
   assertPreparedIrSemanticRuntimeSeparation(program);
-  assertPreparedIrProgramAllocations(program);
+  if (!attached && !requiredLinearEvidence) assertPreparedIrProgramAllocations(program);
   assertPreparedIrClassLayouts(program);
   if (program.units.size !== program.inventory.terminalUnits.length)
     invalid("program unit receipt denominator differs from original inventory");
@@ -311,6 +339,16 @@ export function assertPreparedIrProgram(program: PreparedIrProgram, options?: Ir
       declaredGlobals.set(irBindingKey(entry.contract.ref.binding)!, entry.contract.type);
     }
   }
+  // Pass tables remain partial, but every supplied row must agree with the
+  // complete ABI authority. Preserve their absence in the checked module.
+  if (attached || requiredLinearEvidence) {
+    for (const [key, signature] of program.ir.declaredSignatures ?? [])
+      if (preparedIrDataMismatch(signature, declaredSignatures.get(key)) !== undefined)
+        invalid(`declared signature ${key} contradicts complete ABI`);
+    for (const [key, type] of program.ir.declaredGlobals ?? [])
+      if (preparedIrDataMismatch(type, declaredGlobals.get(key)) !== undefined)
+        invalid(`declared global ${key} contradicts complete ABI`);
+  }
   const bodies = [
     ...[...functions.values()].map((fn) => ({ fn, own: entries.get(irUnitCallableBindingId(fn.unitId)) })),
     ...(program.runtimeSupport?.batches ?? []).map((batch) => ({
@@ -346,6 +384,13 @@ export function assertPreparedIrProgram(program: PreparedIrProgram, options?: Ir
             invalid(
               `body ${fn.unitId} calls an undeclared callable ${irCallableBindingKey(instruction.target.binding)}`,
             );
+          if (
+            (instruction.kind === "class.new" ||
+              instruction.kind === "class.call" ||
+              instruction.kind === "class.static_call") &&
+            (!instruction.target || !calls.has(irCallableBindingKey(instruction.target.binding)))
+          )
+            invalid(`body ${fn.unitId} references an undeclared class callable`);
           if (instruction.kind === "closure.new" && !calls.has(irCallableBindingKey(instruction.liftedFunc.binding)))
             invalid(`body ${fn.unitId} captures an undeclared callable`);
           if (
@@ -359,6 +404,7 @@ export function assertPreparedIrProgram(program: PreparedIrProgram, options?: Ir
   }
   if (program.startup.length !== program.inventory.sources.length) invalid("startup omits or duplicates a source");
   for (const [index, plan] of program.startup.entries()) {
+    assertPreparedStartupInvocation(plan);
     const source = program.inventory.sources[index]!;
     if (plan.sourceId !== source.id) invalid("startup contradicts canonical dependency order");
     const original = program.inventory.terminalUnits.filter(
@@ -392,6 +438,10 @@ export function assertPreparedIrProgram(program: PreparedIrProgram, options?: Ir
     });
     assertPreparedIrRuntimeProjection(program, projection);
   }
+  const storeFailure = nativeVectorStoreFailure(program.ir, () => nativeModuleGlobalEvidence(program));
+  if (storeFailure) invalid(`${storeFailure.unitId}: ${storeFailure.detail}`);
+  if (attached || requiredLinearEvidence)
+    return validatePreparedIrLinearAllocationEvidence(program, requiredLinearEvidence, selectedProjection);
 }
 
 type SourceMapInput = Pick<TypedIrProgramInput, "inventory" | "ir" | "derivedUnits" | "startup" | "sourceMap">;

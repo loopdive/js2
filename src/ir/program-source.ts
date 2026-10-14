@@ -1,7 +1,17 @@
+import { nativeNumberUndefinedSource } from "./native-number-undefined-source.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
-import { ts } from "../ts-api.js";
-import { sourceBooleanAnyResult, assertSourceBooleanAnyReturns } from "../frontend/boolean-return-boundary.js";
+import {
+  prepareSourceClassPlans,
+  assertSourceClassPolicies,
+  refuseUnimplementedSourceClassSemantics,
+  populateSourceClassDirectCalls,
+} from "./source-class-plans.js";
+import { lowerSourceClassProgramUnit, ownSourceClassBodyTypes } from "./source-class-lowering.js";
+import type { IrPreparedSourceClass } from "./program/class-preparation.js";
+import { nativeSynchronousVectorParameter, nativeSynchronousVectorResult } from "./program-sync-vectors.js";
+import { storageType } from "./native-module-vector-source.js";
+import { ts, assertCurrentProgramSources } from "../ts-api.js";
 import { preparedIrProgramCallableResults } from "./program-callable-contract.js";
 import { prepareSourceClosureInvocations } from "./source-closure-invocation.js";
 import type { TypedIrProgramInput } from "./program/input-contracts.js";
@@ -42,6 +52,13 @@ import type { IrDirectCallLoweringPlan, ModuleBindingGlobal } from "./ast-loweri
 import type { PreparedIrFunction as IrFunction, PreparedIrModule as IrModule } from "./runtime/contracts/prepared.js";
 import type { IrType } from "./core/types.js";
 import { freezePreparedIrRuntimeValue, preparedIrDataMismatch } from "./program/data.js";
+import {
+  sourceDataField,
+  selectNativeLinearVectorProjection,
+  sourceVectorCollector,
+  sourceBooleanAnyResult,
+  selectNativeAsyncFamilyProjection,
+} from "./native-source-selection.js";
 import { classifyIrFailure, IrUnsupportedError } from "./outcomes.js";
 import type { ProgramAbiDerivedUnitRecord } from "./program/abi.js";
 import { preparedIrProgramOwner } from "./program.js";
@@ -847,6 +864,8 @@ export interface IrProgramSourceInput {
   readonly oracle?: TypeOracle;
   readonly inventoryOptions?: BuildIrUnitInventoryOptions;
   readonly policy: RuntimeManifestPolicy;
+  /** Actual requested projections constrain source-level startup proofs jointly. */
+  readonly runtimePolicies?: readonly RuntimeManifestPolicy[];
   readonly deferTopLevelInit: boolean;
   /**
    * Explicit frontend lowering selection; not provider availability or
@@ -859,10 +878,13 @@ export interface IrProgramSourceInput {
   readonly nativeStringValueProjection?: "standalone-native";
   /** Independent string-only console intents; no async family or runtime availability is implied. */
   readonly nativeStringOutputProjection?: "standalone-native";
+  /** Frontend-only shared native f64 logical vectors; no runtime availability or serialized authority. */
+  readonly linearVectorProjection?: "native-f64";
 }
 
 /** Frontend-only carrier; declarations never cross into PreparedIrProgram. */
 export interface IrProgramSourcePreparation {
+  readonly classes?: readonly IrPreparedSourceClass[];
   readonly kind: "prepared";
   readonly sourceMap?: IrPreparedSourceMap;
   readonly inventory: IrUnitInventory;
@@ -872,17 +894,6 @@ export interface IrProgramSourcePreparation {
   readonly callables: readonly IrProgramCallableBindingRecord[];
   readonly globals: readonly { readonly binding: ModuleBindingGlobal; readonly identity: IrModuleBindingIdentity }[];
   readonly allocations: AllocSiteRegistry;
-}
-
-/** Read only an explicitly selected own data field; never evaluate a getter. */
-function sourceDataField<T extends object, K extends keyof T>(object: T, key: K): T[K] {
-  const descriptor = Object.getOwnPropertyDescriptor(object, key);
-  if (!descriptor || !("value" in descriptor))
-    throw new PreparedIrProgramInvariantError(
-      "invalid-prepared-data",
-      `source capture requires own data field ${String(key)}`,
-    );
-  return descriptor.value;
 }
 
 /** Explicit frontend projection; capture all semantic fields jointly with allocations. */
@@ -897,6 +908,7 @@ export function captureTypedIrProgramInput(
   const startup = sourceDataField(source, "startup");
   const callables = sourceDataField(source, "callables");
   const sourceGlobals = sourceDataField(source, "globals");
+  const classes = Object.hasOwn(source, "classes") ? sourceDataField(source, "classes") : undefined;
   const sourceMap = Object.hasOwn(source, "sourceMap") ? sourceDataField(source, "sourceMap") : undefined;
   if (Object.hasOwn(source, "sourceMap") && sourceMap === undefined)
     sourceMapCaptureInvalid("present source map must contain a catalog");
@@ -937,6 +949,7 @@ export function captureTypedIrProgramInput(
     startup,
     callables,
     globals,
+    ...(classes === undefined ? {} : { classes }),
     ...(sourceMap === undefined ? {} : { sourceMap }),
     ...(runtimeSupport === undefined ? {} : { runtimeSupport }),
   });
@@ -948,6 +961,7 @@ export function captureTypedIrProgramInput(
     callables: captured.data.callables,
     globals: captured.data.globals,
     allocations: captured.allocations,
+    ...(captured.data.classes === undefined ? {} : { classes: captured.data.classes }),
     ...(captured.data.sourceMap === undefined ? {} : { sourceMap: captured.data.sourceMap }),
     ...(captured.data.runtimeSupport === undefined ? {} : { runtimeSupport: captured.data.runtimeSupport }),
   };
@@ -1089,22 +1103,6 @@ function hostAsyncAnyResult(checker: ts.TypeChecker, declaration: ts.FunctionDec
   return { kind: "dynamic" };
 }
 
-function storageType(identity: IrModuleBindingIdentity): IrType {
-  const value = identity.valueKind;
-  switch (value.kind) {
-    case "f64":
-      return { kind: "val", val: { kind: "f64" } };
-    case "i32":
-      return { kind: "val", val: { kind: "i32", boolean: true } };
-    case "string":
-      return { kind: "string" };
-    case "dynamic":
-      return { kind: "dynamic" };
-    default:
-      return unsupported(`whole-program source storage has no typed carrier for ${value.kind}`);
-  }
-}
-
 /** Validate the explicit source request before inventory construction or source planning. */
 function selectNativePromiseDelaySourceProjection(
   input: Pick<IrProgramSourceInput, "promiseDelayProjection" | "policy">,
@@ -1120,23 +1118,6 @@ function selectNativePromiseDelaySourceProjection(
       "Promise-delay source projection requires an explicit standalone-native request with wasmgc:standalone policy",
     );
   return nativeDelay;
-}
-
-/** Validate full-family selection independently from delay selection and runtime availability. */
-function selectNativeAsyncFamilyProjection(input: IrProgramSourceInput): boolean {
-  const projection = input.asyncFamilyProjection;
-  if (projection === undefined || projection === "disabled") return false;
-  if (
-    projection !== "standalone-native" ||
-    input.promiseDelayProjection !== "standalone-native" ||
-    input.policy.backend !== "wasmgc" ||
-    input.policy.target !== "standalone"
-  )
-    throw new PreparedIrProgramInvariantError(
-      "invalid-prepared-data",
-      "native async family source projection requires explicit native delay and wasmgc:standalone policy",
-    );
-  return true;
 }
 
 /** Resolve before source planning; never infer string-number lowering from the target. */
@@ -1398,7 +1379,7 @@ function validateNativePromiseDelaySourceLowering(
 /** Keep callable carriers separate from semantic fulfillment signatures. */
 function prepareSourceFunctionSignatures(
   checker: ts.TypeChecker,
-  policy: RuntimeManifestPolicy,
+  policy: RuntimeManifestPolicy & { readonly nativeLinearVectors: boolean },
   inventory: IrUnitInventory,
   identity: ReturnType<typeof buildIrPlanningIdentityContext>,
   types: ReturnType<typeof buildIrUnitTypeMap>,
@@ -1407,11 +1388,27 @@ function prepareSourceFunctionSignatures(
   signatures: Map<IrUnitId, { params: readonly IrType[]; returnType: IrType | null }>,
   bodyResults: Map<IrUnitId, IrType | null>,
   diagnostic: SourceDiagnosticOwner,
+  classes?: ReturnType<typeof prepareSourceClassPlans>,
 ): void {
   for (const unit of inventory.terminalUnits) {
     diagnostic.active = unit.id;
     if (unit.kind === "module-init") continue;
     const declaration = identity.declarationByUnitId.get(unit.id);
+    const classPlan = classes?.byUnit.get(unit.id);
+    if (classPlan) {
+      const shape = classPlan.data.shape;
+      const descriptor = shape.methods.find((m) => m.placement?.unitId === unit.id);
+      const isConstructor = unit.id === classPlan.data.constructorUnitId;
+      const params = isConstructor
+        ? [...shape.constructorParams, { kind: "class" as const, shape }]
+        : descriptor!.memberKind === "static"
+          ? descriptor!.params
+          : [{ kind: "class" as const, shape }, ...descriptor!.params];
+      const result = isConstructor ? { kind: "class" as const, shape } : descriptor!.returnType;
+      signatures.set(unit.id, { params, returnType: result });
+      bodyResults.set(unit.id, result);
+      continue;
+    }
     if (!declaration || !ts.isFunctionDeclaration(declaration) || !declaration.body)
       unsupported(`whole-program source producer has no body producer for ${unit.kind}`);
     const propagated = types.get(unit.id);
@@ -1420,38 +1417,46 @@ function prepareSourceFunctionSignatures(
     const hostAsync = isAsync && policy.backend === "wasmgc" && policy.target === "host";
     const params =
       family?.params ??
-      declaration.parameters.map((param, index) =>
-        param.type
-          ? ((hostAsync ? hostAsyncParameter(checker, param) : undefined) ??
-            checkerCallable(checker, param.type, unit.displayName) ??
-            typeNodeToIr(param.type, unit.displayName))
-          : propagated?.params[index]
-            ? lowerTypeToIrType(propagated.params[index]!)
-            : checkerScalar(checker, param),
+      declaration.parameters.map(
+        (param, index) =>
+          classes?.classTypeOf(param) ??
+          (param.type
+            ? (nativeSynchronousVectorParameter(checker, declaration, param, policy.nativeLinearVectors) ??
+              (hostAsync ? hostAsyncParameter(checker, param) : undefined) ??
+              checkerCallable(checker, param.type, unit.displayName) ??
+              typeNodeToIr(param.type, unit.displayName))
+            : propagated?.params[index]
+              ? lowerTypeToIrType(propagated.params[index]!)
+              : checkerScalar(checker, param)),
       );
     if (params.some((type) => !type)) unsupported(`function ${unit.displayName} has an unresolved parameter contract`);
     const returnNode = isAsync ? unwrapPromiseTypeNode(declaration.type) : declaration.type;
+    const nativeResult =
+      (!isAsync && declaration.type ? classes?.classTypeOf(declaration.type) : undefined) ??
+      nativeSynchronousVectorResult(checker, declaration, policy.nativeLinearVectors);
     const dynamicResult = hostAsync ? hostAsyncAnyResult(checker, declaration) : undefined;
     const result: IrType | null = certifiedDelays.has(unit.id)
       ? { kind: "extern", className: "Promise" }
       : family
         ? family.result
-        : dynamicResult
-          ? dynamicResult
-          : returnNode?.kind === ts.SyntaxKind.VoidKeyword
-            ? null
-            : !isAsync &&
-                returnNode &&
-                ts.isTypeReferenceNode(returnNode) &&
-                ts.isIdentifier(returnNode.typeName) &&
-                returnNode.typeName.text === "Promise"
-              ? { kind: "val", val: { kind: "externref" } }
-              : returnNode
-                ? (sourceBooleanAnyResult(checker, declaration) ??
-                  checkerCallable(checker, returnNode, unit.displayName) ??
-                  typeNodeToIr(returnNode, unit.displayName))
-                : (checkerInferredCallableResult(checker, declaration, unit.displayName) ??
-                  (propagated ? lowerTypeToIrType(propagated.returnType) : null));
+        : nativeResult
+          ? nativeResult
+          : dynamicResult
+            ? dynamicResult
+            : returnNode?.kind === ts.SyntaxKind.VoidKeyword
+              ? null
+              : !isAsync &&
+                  returnNode &&
+                  ts.isTypeReferenceNode(returnNode) &&
+                  ts.isIdentifier(returnNode.typeName) &&
+                  returnNode.typeName.text === "Promise"
+                ? { kind: "val", val: { kind: "externref" } }
+                : returnNode
+                  ? (sourceBooleanAnyResult(checker, declaration) ??
+                    checkerCallable(checker, returnNode, unit.displayName) ??
+                    typeNodeToIr(returnNode, unit.displayName))
+                  : (checkerInferredCallableResult(checker, declaration, unit.displayName) ??
+                    (propagated ? lowerTypeToIrType(propagated.returnType) : null));
     bodyResults.set(unit.id, result);
     const callableResults = preparedIrProgramCallableResults({
       funcKind: isAsync ? "async" : "regular",
@@ -1589,19 +1594,27 @@ function prepareStartupDirectCalls(
   }
 }
 
+/** Keep the selected source population and checker paired at the inventory boundary. */
+function sourceUnitInventory(input: IrProgramSourceInput): ReturnType<typeof buildIrUnitInventory> {
+  return buildIrUnitInventory(input.sourceFiles, {
+    ...input.inventoryOptions,
+    entrySource: input.entrySource,
+    checker: input.checker,
+    wholeProgramClassConstructors: input.policy.target !== "host",
+  });
+}
+
 export function prepareIrProgramSources(
   input: IrProgramSourceInput,
 ): IrProgramSourcePreparation | PreparedIrProgramFailure {
+  const nativeLinearVectors = selectNativeLinearVectorProjection(input);
+  if (nativeLinearVectors) assertCurrentProgramSources(input.checker, input.sourceFiles, input.entrySource);
   const sourceMapRequest = selectSourceMapCapture(input);
   const nativeDelay = selectNativePromiseDelaySourceProjection(input);
   const nativeAsyncFamily = selectNativeAsyncFamilyProjection(input);
   const nativeStringValues = selectNativeStringValueProjection(input);
   const nativeStringOutput = selectNativeStringOutputProjection(input);
-  const inventory = buildIrUnitInventory(input.sourceFiles, {
-    ...input.inventoryOptions,
-    entrySource: input.entrySource,
-    checker: input.checker,
-  });
+  const inventory = sourceUnitInventory(input);
   if (sourceMapRequest !== undefined) sourceMapPreflightScannerTree(inventory);
   const identity = buildIrPlanningIdentityContext(inventory);
   const sourceFiles = inventory.sources.map((source) => identity.sourceFileBySourceId.get(source.id)!);
@@ -1627,6 +1640,18 @@ export function prepareIrProgramSources(
   const { promiseDelaysBySource, certifiedDelays } = delayPlans;
   const diagnostic: SourceDiagnosticOwner = { active: undefined };
   try {
+    const classes =
+      inventory.classes.length && input.policy.target !== "host"
+        ? prepareSourceClassPlans(input.checker, identity, (id) => {
+            diagnostic.active = id;
+          })
+        : undefined;
+    refuseUnimplementedSourceClassSemantics(classes, identity, (id) => {
+      diagnostic.active = id;
+    });
+    assertSourceClassPolicies(classes, [input.policy, ...(input.runtimePolicies ?? [])], (id) => {
+      diagnostic.active = id;
+    });
     const types = buildIrUnitTypeMap(sourceFiles, input.checker, identity);
     const callGraph = buildIrProgramCallableBindingGraph({
       checker: input.checker,
@@ -1637,6 +1662,7 @@ export function prepareIrProgramSources(
       input.checker,
       {
         numberStorage: "f64",
+        allowNativeF64VectorStorage: nativeLinearVectors,
         allowHostExterns: input.policy.target === "host",
         allowBuiltinMapExtern: input.policy.target === "host" && input.policy.stringConst?.storage !== "native",
         allowNativeMapStorage: input.policy.stringConst?.storage === "native",
@@ -1666,7 +1692,7 @@ export function prepareIrProgramSources(
         : new Map(sourceMapProjector.sourceMap.sources.map((row) => [row.sourceId, row]));
     const entryId = identity.sourceIdBySourceFile.get(input.entrySource)!;
     diagnostic.active = undefined;
-    const postStartupUnits = postStartupCallableUnits(input.checker, identity, startup);
+    const postStartupUnits = postStartupCallableUnits(input.checker, identity, startup, input);
     const exportedBindings = new Set(
       startup
         .find((plan) => plan.sourceId === entryId)!
@@ -1686,7 +1712,7 @@ export function prepareIrProgramSources(
       : undefined;
     prepareSourceFunctionSignatures(
       input.checker,
-      input.policy,
+      { ...input.policy, nativeLinearVectors },
       inventory,
       identity,
       types,
@@ -1695,6 +1721,7 @@ export function prepareIrProgramSources(
       signatures,
       bodyResults,
       diagnostic,
+      classes,
     );
     for (const source of sourceFiles) {
       for (const statement of source.statements) {
@@ -1715,7 +1742,7 @@ export function prepareIrProgramSources(
             tdzGlobalRef: lexical ? irSourceGlobalRef(global.tdzBindingId, `${declaration.name.text}$tdz`) : null,
             globalName: declaration.name.text,
             tdzGlobalName: lexical ? `${declaration.name.text}$tdz` : null,
-            type: storageType(global),
+            type: storageType(global, input.checker, unsupported),
           };
           const entry = { binding, identity: global };
           globals.push(entry);
@@ -1739,7 +1766,9 @@ export function prepareIrProgramSources(
         signature,
       });
     }
+    populateSourceClassDirectCalls(classes, input.checker, identity, signatures, directCalls);
     prepareStartupDirectCalls(input.checker, sourceFiles, identity, startup, signatures, directCalls, diagnostic);
+    const collectVectors = sourceVectorCollector(input.checker, directCalls, globals, nativeLinearVectors);
     for (const unit of inventory.terminalUnits) {
       diagnostic.active = unit.id;
       if (functions.some((fn) => fn.unitId === unit.id)) continue;
@@ -1758,10 +1787,13 @@ export function prepareIrProgramSources(
         return {
           ...global.binding,
           ownerUnitId: unit.id,
-          ...(postStartupUnits.has(unit.id) ? { omitTdzReadCheck: true as const } : {}),
+          ...(postStartupUnits.has(unit.id) && global.binding.type.kind !== "vec"
+            ? { omitTdzReadCheck: true as const }
+            : {}),
         };
       };
       const resolver: IrFromAstResolver = {
+        ...(classes ? { sourceClassShape: (node: ts.Expression) => classes.shapeAt(node) } : {}),
         sourceClosureInvocation: (expression) => closureInvocations.get(expression),
         sourceClosureCallableParameter: (node) => closureCallableParameters.has(node),
         resolveModuleBinding: resolveBinding,
@@ -1779,6 +1811,28 @@ export function prepareIrProgramSources(
         },
         ...family?.resolver,
       };
+      const classPlan = classes?.byUnit.get(unit.id);
+      if (classPlan) {
+        const lowered = lowerSourceClassProgramUnit(
+          classPlan,
+          unit,
+          classes!,
+          identity,
+          { checker: input.checker, oracle: input.oracle, allocRegistry: allocations, directCalls, resolver },
+          (roots) => prepareSourceBuiltinResolvers(input, roots),
+          sourceMapProjector === undefined
+            ? undefined
+            : Object.freeze<IrFunctionSourceMapContext>({
+                source: sourceMapSources!.get(unit.sourceId)!,
+                donorUnitId: unit.id,
+                project: sourceMapProjector.project,
+              }),
+        );
+        functions.push(lowered.main, ...lowered.lifted);
+        appendLiftedSourceProvenance(lowered.liftedUnitProvenance, inventory, unit, derivedUnits);
+        if (derivedSourceRows !== undefined) appendSourceMapDerivedRows(derivedSourceRows, lowered, identity, unit);
+        continue;
+      }
       const source = identity.sourceFileBySourceId.get(unit.sourceId)!;
       const moduleInit = unit.kind === "module-init";
       const declaration = moduleInit
@@ -1793,7 +1847,14 @@ export function prepareIrProgramSources(
         ),
       );
       const signature = signatures.get(unit.id);
+      const logicalVectorTypes = family?.logicalVectorTypes ?? collectVectors.collect(declaration, unit.sourceId);
+      const numberUndefined =
+        nativeLinearVectors && !family
+          ? nativeNumberUndefinedSource(input.checker, declaration, logicalVectorTypes, identity)
+          : undefined;
       const lowered = lowerFunctionAstToIr(declaration, {
+        ...(classes ? { classShapes: classes.lexicalShapes(declaration) } : {}),
+        ...(numberUndefined === undefined ? {} : { nativeNumberUndefinedSource: numberUndefined }),
         booleanReturnBoundary: sourceBooleanAnyResult(input.checker, declaration) ? declaration : undefined,
         ownerUnitId: unit.id,
         ...(sourceMapProjector === undefined
@@ -1819,7 +1880,7 @@ export function prepareIrProgramSources(
         ...(nativeStringValues ? { stringNumericCoercion: "number-boundary" as const } : {}),
         numericThrow: "number-boundary",
         ...(nativeDelay ? { promiseDelays: promiseDelaysBySource.get(source) } : {}),
-        ...(family ? { logicalVectorTypes: family.logicalVectorTypes } : {}),
+        ...(logicalVectorTypes === undefined ? {} : { logicalVectorTypes }),
         ...(moduleInit
           ? {
               moduleInitUnit: true,
@@ -1837,7 +1898,7 @@ export function prepareIrProgramSources(
             ? "number"
             : undefined,
       });
-      assertSourceBooleanAnyReturns(input.checker, declaration, lowered.main);
+      collectVectors.assertFunction(declaration, lowered, family !== undefined);
       if (certifiedDelays.has(unit.id) && (lowered.lifted.length !== 0 || lowered.liftedUnitProvenance.length !== 0))
         throw new PreparedIrProgramInvariantError(
           "invalid-prepared-data",
@@ -1847,6 +1908,7 @@ export function prepareIrProgramSources(
       appendLiftedSourceProvenance(lowered.liftedUnitProvenance, inventory, unit, derivedUnits);
       if (derivedSourceRows !== undefined) appendSourceMapDerivedRows(derivedSourceRows, lowered, identity, unit);
     }
+    classes?.assertCurrent();
     nativeFamily?.assertCurrent();
     if (nativeDelay)
       validateNativePromiseDelaySourceLowering(
@@ -1861,9 +1923,10 @@ export function prepareIrProgramSources(
         : finishSourceMapCatalog(sourceMapProjector, derivedSourceRows!, derivedUnits);
     const prepared: IrProgramSourcePreparation = {
       kind: "prepared",
+      ...(classes ? { classes: classes.plans.map((row) => row.data) } : {}),
       ...(sourceMap === undefined ? {} : { sourceMap }),
       inventory,
-      ir: { functions },
+      ir: { functions: classes ? functions.map(ownSourceClassBodyTypes) : functions },
       derivedUnits,
       startup,
       callables: callGraph.records,
@@ -1871,6 +1934,7 @@ export function prepareIrProgramSources(
       allocations,
     };
     if (sourceMap !== undefined) assertPreparedSourceMap(prepared);
+    if (nativeLinearVectors) assertCurrentProgramSources(input.checker, input.sourceFiles, input.entrySource);
     return prepared;
   } catch (error) {
     const owner = diagnostic.active

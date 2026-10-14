@@ -13,6 +13,7 @@ import type { IrCanonicalPromiseAbi } from "../core/async-plan.js";
 import type { PreparedIrModule as IrModule, PreparedIrRuntimeManifest } from "../runtime/contracts/prepared.js";
 import type { RuntimeManifestPolicy } from "../../runtime/contracts/provider-policy.js";
 import type { AllocRegistrySnapshot } from "../analysis/contracts/allocations.js";
+import type { LinearPreparedAllocationFacts } from "../analysis/linear/contracts/allocation-facts.js";
 import type { ProgramAbiDerivedUnitRecord, ProgramAbiPlanEntry } from "./abi.js";
 import type { PreparedComponentAbiLookup } from "./abi-lookup.js";
 import type { IrModuleInitPlan } from "./startup.js";
@@ -29,7 +30,12 @@ export type PreparedIrAbiContract =
     }
   | { readonly kind: "global"; readonly ref: IrGlobalRef; readonly type: IrType; readonly mutable: boolean }
   | { readonly kind: "type"; readonly ref: IrTypeRef; readonly type: IrType }
-  | { readonly kind: "class"; readonly ref: IrTypeRef; readonly shape: IrClassShape }
+  | {
+      readonly kind: "class";
+      readonly ref: IrTypeRef;
+      readonly shape: IrClassShape;
+      readonly preparation?: import("./class-preparation.js").IrPreparedSourceClass;
+    }
   | { readonly kind: "export"; readonly externalName: string; readonly targetId: IrBindingId }
   | { readonly kind: "support"; readonly role: string };
 
@@ -86,6 +92,11 @@ export interface PreparedIrProgram {
   /** Includes empty sources and preserves semantic module evaluation order. */
   readonly startup: readonly IrModuleInitPlan[];
   readonly allocations: AllocRegistrySnapshot;
+  /** Final DATA evidence; every acquisition re-establishes its semantic truth. */
+  readonly linearAllocationFacts?: {
+    readonly schema: "linear-allocation-facts-v1";
+    readonly facts: LinearPreparedAllocationFacts;
+  };
   readonly runtimeSupport?: IrRuntimeSupport;
   readonly sourceMap?: IrPreparedSourceMap;
   readonly runtime: readonly PreparedIrProgramRuntimeProjection[];

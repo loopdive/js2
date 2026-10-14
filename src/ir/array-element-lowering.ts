@@ -15,15 +15,16 @@ import {
 import { IrFunctionBuilder } from "./builder.js";
 import { irIntrinsicFuncRef } from "./callable-bindings.js";
 import type { I32PureNames } from "./i32-pure-bitwise.js";
-import type { IrVecLowering } from "./lower.js";
+import type { IrVectorLowering } from "./backend/handles.js";
+import { vecElemSetProviderSymbol, sourceVectorValueType } from "./ast-vector-representation.js";
 import { asVal, irTypeEquals, irVal, type IrConst, type IrType, type IrValueId } from "./nodes.js";
 import { demoteToLegacy, IrInvariantError, IrUnsupportedError } from "./outcomes.js";
+import { nativeVectorMutationOwnerIsSynchronous } from "./native-vector-mutation-proof.js";
 import type { ValType } from "./types.js";
-import { irVecElemSetSymbol } from "./vector-runtime.js";
 
 interface ArrayElementResolver {
-  resolveVec?(valType: ValType): IrVecLowering | null;
-  resolveVecForElement?(elementValType: ValType): IrVecLowering | null;
+  resolveVec?(valType: ValType): IrVectorLowering | null;
+  resolveVecForElement?(elementValType: ValType): IrVectorLowering | null;
   resolveVecOutOfBoundsConst?(elementValType: ValType): IrConst | null;
   isVecValueExpression?(expression: ts.Expression): boolean;
   preparedAsyncPromiseVectorLocal?(declaration: ts.VariableDeclaration): boolean;
@@ -331,7 +332,11 @@ export function annotatedArrayElementValType(
  * Distinguish a narrowed number[] from another i32-element vector, such as
  * boolean[]. The representation and the receiver-specific proof must agree.
  */
-export function isNarrowedI32Vec(vec: IrVecLowering, receiver: ts.Expression, host: ArrayElementLoweringHost): boolean {
+export function isNarrowedI32Vec(
+  vec: IrVectorLowering,
+  receiver: ts.Expression,
+  host: ArrayElementLoweringHost,
+): boolean {
   return vec.elementValType.kind === "i32" && host.emptyArrayInference.isInt32NarrowedVectorExpression(receiver);
 }
 
@@ -404,11 +409,53 @@ export function tryLowerVecPush(
         : null;
   if (!vec && !logical) return undefined;
   const scalarVecReceiver =
-    (vec?.valueType?.kind === "i32" || vecRecvVal?.kind === "i32") &&
+    ((vec && sourceVectorValueType(vec, false).kind === "i32") || vecRecvVal?.kind === "i32") &&
     (host.resolver?.isVecValueExpression?.(receiverExpression) === true ||
       host.emptyArrayInference.isResolvedVectorExpression(receiverExpression));
   if (recvType.kind !== "vec" && (!vecRecvVal || (vecRecvVal.kind !== "ref" && !scalarVecReceiver))) {
     return undefined;
+  }
+  if (
+    logical &&
+    logicalElement?.kind === "f64" &&
+    expr.arguments.length === 0 &&
+    nativeVectorMutationOwnerIsSynchronous(expr)
+  ) {
+    // The receiver has already been evaluated once. Zero arguments only read
+    // its current logical length; no append or backing-storage change occurs.
+    const length = host.builder.emitVecLen(recv);
+    return statementPosition ? null : length;
+  }
+  if (
+    logical &&
+    logicalElement?.kind === "f64" &&
+    expr.arguments.length > 1 &&
+    !expr.arguments.some(ts.isSpreadElement) &&
+    nativeVectorMutationOwnerIsSynchronous(expr)
+  ) {
+    // JavaScript evaluates every argument before entering push. In particular,
+    // a later argument can observe or append to the same captured receiver.
+    const values = expr.arguments.map((argument) => {
+      const value = ops.lowerExpr(argument, IR_F64);
+      if (asVal(host.builder.typeOf(value))?.kind !== "f64") {
+        demoteToLegacy(
+          "method-call-unsupported",
+          `ir/from-ast: .push value ${ops.describeType(host.builder.typeOf(value))} into f64 vec ` +
+            `not in IR scope (${host.funcName})`,
+        );
+      }
+      return value;
+    });
+    const symbol = vecElemSetProviderSymbol(recvType, vec!);
+    let length!: IrValueId;
+    for (const value of values) {
+      length = host.builder.emitVecLen(recv);
+      const index = host.builder.emitUnary("i32.trunc_sat_f64_s", length, irVal({ kind: "i32" }));
+      host.builder.emitCall(irIntrinsicFuncRef(symbol), [recv, index, value], null);
+    }
+    if (statementPosition) return null;
+    const one = host.builder.emitConst({ kind: "f64", value: 1 }, IR_F64);
+    return host.builder.emitBinary("f64.add", length, one, IR_F64);
   }
   if (expr.arguments.length !== 1 || ts.isSpreadElement(expr.arguments[0]!)) {
     demoteToLegacy(
@@ -468,8 +515,7 @@ export function tryLowerVecPush(
     const nextLength = host.builder.emitBinary("i32.add", lenI32, one, irVal({ kind: "i32" }));
     host.builder.emitVecSetLength(recv, nextLength);
   } else {
-    const symbol =
-      recvType.kind === "vec" ? irVecElemSetSymbol(recvType.elementType) : `__vec_elem_set_${vec!.vecStructTypeIdx}`;
+    const symbol = vecElemSetProviderSymbol(recvType, vec!);
     host.builder.emitCall(irIntrinsicFuncRef(symbol), [recv, lenI32, value], null);
   }
   if (statementPosition) return null;
@@ -542,6 +588,8 @@ export function emitSafeVecGet(
    * it replaces. Omitted, the backend/default behaviour is unchanged.
    */
   oobOverride?: IrConst,
+  /** Logical numeric indices must survive f64-to-i32 narrowing without changing their value. */
+  indexIsExact?: IrValueId,
 ): IrValueId {
   const elemIr = irVal(elemValType);
   let makeOobDefault: (() => IrValueId) | null = null;
@@ -570,7 +618,11 @@ export function emitSafeVecGet(
   }
 
   const lenI32 = host.builder.emitVecLenI32(recv);
-  const cond = host.builder.emitBinary("i32.lt_u", idxI32, lenI32, irVal({ kind: "i32" }));
+  const inBounds = host.builder.emitBinary("i32.lt_u", idxI32, lenI32, irVal({ kind: "i32" }));
+  const cond =
+    indexIsExact === undefined
+      ? inBounds
+      : host.builder.emitBinary("i32.and", indexIsExact, inBounds, irVal({ kind: "i32" }));
   let thenValue!: IrValueId;
   const thenBody = host.builder.collectBodyInstrs(() => {
     thenValue = host.builder.emitVecGet(recv, idxI32, elemIr);

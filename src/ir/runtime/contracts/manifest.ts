@@ -395,9 +395,15 @@ export const NATIVE_ASYNC_CALLABLE_RUNTIME_PROVIDER_IDS = Object.freeze([
 export type NativeAsyncCallableRuntimeProviderId = (typeof NATIVE_ASYNC_CALLABLE_RUNTIME_PROVIDER_IDS)[number];
 
 /** One measured grow/store callable; not a prefix registry or async frame intent. */
-export const VECTOR_CALLABLE_RUNTIME_FEATURES = Object.freeze(["js.vector.elem-set.externref"] as const);
+export const VECTOR_CALLABLE_RUNTIME_FEATURES = Object.freeze([
+  "js.vector.elem-set.externref",
+  "js.vector.append.f64",
+] as const);
 export type VectorCallableRuntimeFeature = (typeof VECTOR_CALLABLE_RUNTIME_FEATURES)[number];
-export const VECTOR_CALLABLE_RUNTIME_PROVIDER_IDS = Object.freeze(["native.js.vector.elem-set.externref"] as const);
+export const VECTOR_CALLABLE_RUNTIME_PROVIDER_IDS = Object.freeze([
+  "native.js.vector.elem-set.externref",
+  "native.js.vector.append.f64",
+] as const);
 export type VectorCallableRuntimeProviderId = (typeof VECTOR_CALLABLE_RUNTIME_PROVIDER_IDS)[number];
 
 /** Semantic declarations only; no physical provider is granted by this catalogue. */

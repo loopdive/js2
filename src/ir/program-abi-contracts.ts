@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
-import { preparedIrTypeKey, preparedIrCallableSignature } from "./program/abi-signatures.js";
+import { preparedIrClassLayoutKey, preparedIrTypeKey, preparedIrCallableSignature } from "./program/abi-signatures.js";
 export {
   preparedIrTypeKey,
   preparedIrDataKey,
@@ -12,7 +12,7 @@ import { preparedIrProgramCallableResults } from "./program-callable-contract.js
 import type { IrBindingId, IrSourceId, IrUnitId } from "../shared/contracts/ir-identity.js";
 import type { IrUnitInventory } from "../shared/contracts/ir-unit-inventory.js";
 import { irCallableBindingKey, irUnitCallableBindingId, irUnitFuncRef } from "./callable-bindings.js";
-import { irGlobalBindingKey, irTypeBindingKey } from "./abi-bindings.js";
+import { irClassTypeRef, irGlobalBindingKey, irTypeBindingKey } from "./abi-bindings.js";
 import type { PreparedIrModule as IrModule } from "./runtime/contracts/prepared.js";
 import type { IrType } from "./core/types.js";
 import type { IrGlobalRef } from "./core/value-references.js";
@@ -35,6 +35,7 @@ import {
 export { preparedIrDraftAbiLookup } from "./program/draft-abi-lookup.js";
 
 export interface PrepareIrProgramAbiInput {
+  readonly classes?: readonly import("./program/class-preparation.js").IrPreparedSourceClass[];
   readonly inventory: IrUnitInventory;
   readonly ir: IrModule;
   readonly derivedUnits: readonly ProgramAbiDerivedUnitRecord[];
@@ -100,6 +101,43 @@ export function prepareIrProgramAbiEntries(
         results,
         ...(fn.asyncPlan ? { promise: fn.asyncPlan.abi } : {}),
       },
+    });
+  }
+  for (const row of input.classes ?? []) {
+    const ref = irClassTypeRef(row.classId, row.shape.className);
+    entries.push({
+      plan: {
+        id: ref.binding.bindingId,
+        order: order(row.sourceId),
+        displayName: ref.name,
+        structuralReferenceKey: irTypeBindingKey(ref.binding),
+        slotPolicy: "required",
+        slotSpace: "type",
+        intent: { kind: "class", classId: row.classId, layoutKey: preparedIrClassLayoutKey(row.shape) },
+      },
+      contract: { kind: "class", ref, shape: row.shape, preparation: row },
+    });
+    const target = row.shape.constructorTarget!;
+    if (target.binding.kind !== "support")
+      throw new PreparedIrProgramInvariantError("invalid-prepared-data", "class new lacks support identity");
+    const params = row.shape.constructorParams.map((type) => (type.kind === "class" ? { ...type } : type)),
+      results: IrType[] = [{ kind: "class", shape: row.shape }];
+    entries.push({
+      plan: {
+        id: target.binding.bindingId,
+        order: order(row.sourceId),
+        displayName: target.name,
+        structuralReferenceKey: irCallableBindingKey(target.binding),
+        slotPolicy: "required",
+        slotSpace: "function",
+        intent: {
+          kind: "callable",
+          origin: "support",
+          classId: row.classId,
+          signature: preparedIrCallableSignature(params, results),
+        },
+      },
+      contract: { kind: "callable", ref: target, params, results },
     });
   }
   for (const { binding, identity } of input.globals) {

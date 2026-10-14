@@ -1,5 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-import type { FuncTypeDef, GlobalDef, Instr, ValType, WasmModule } from "../ir/types.js";
+import type { Instr, ValType, WasmModule } from "../ir/types.js";
 import {
   LINEAR_ARRAY_FORWARDING,
   LINEAR_STRING_PAYLOAD_PREFIX_BYTES,
@@ -16,6 +16,12 @@ import {
   linkedMallocPrologue,
 } from "./linked-arena.js";
 import { isLinearStringLiteralCacheGlobal } from "./string-literals.js";
+import {
+  buildLinearBumpAllocationBody,
+  buildLinearBumpAllocationCommitBody,
+  describeLinearBumpArena,
+} from "./runtime/arena/bump-allocation.js";
+import { buildLinearArrayConstructorBody, describeLinearArrayConstructor } from "./runtime/arrays/constructor.js";
 import { linearStringSliceBoundInstrs } from "./runtime/string-slice.js";
 
 /**
@@ -182,7 +188,7 @@ export function addRuntime(mod: WasmModule, opts: ArenaOptions = {}): void {
   // an imported memory is legal but deliberately not done here: the owner
   // already exports it, and a second export invites two names for one memory.
   if (mod.memories.length === 0 && !hasImportedMemory(mod)) {
-    mod.memories.push({ min: 1, max: 256 });
+    mod.memories.push(describeLinearBumpArena().memory);
     // Export memory so tests can inspect it
     mod.exports.push({
       name: "memory",
@@ -192,12 +198,7 @@ export function addRuntime(mod: WasmModule, opts: ArenaOptions = {}): void {
 
   // Add __heap_ptr global
   const heapPtrGlobalIdx = mod.globals.length;
-  const heapPtrGlobal: GlobalDef = {
-    name: "__heap_ptr",
-    type: { kind: "i32" },
-    mutable: true,
-    init: [{ op: "i32.const", value: heapStart }],
-  };
+  const heapPtrGlobal = describeLinearBumpArena(heapStart).heapPointer;
   mod.globals.push(heapPtrGlobal);
 
   // Linked mode carries one extra global: the end of the chunk currently being
@@ -217,26 +218,13 @@ export function addRuntime(mod: WasmModule, opts: ArenaOptions = {}): void {
 
   // Register __malloc function type
   const mallocTypeIdx = mod.types.length;
-  const mallocType: FuncTypeDef = {
-    kind: "func",
-    name: "$type___malloc",
-    params: [{ kind: "i32" }], // size
-    results: [{ kind: "i32" }], // pointer
-  };
+  const mallocArena = describeLinearBumpArena();
+  const mallocType = mallocArena.allocatorType;
   mod.types.push(mallocType);
 
-  // __malloc implementation (bump allocator with on-demand memory growth):
-  // 1. ret  = __heap_ptr (the address handed back to the caller)
-  // 2. next = align8(ret + size)            ; new bump position
-  // 3. if next > (memory.size * PAGE_SIZE)   ; would overflow current pages?
-  //       grow memory by ceil((next - cur_bytes) / PAGE_SIZE) pages
-  // 4. __heap_ptr = next
-  // 5. return ret
-  //
-  // The growth check is what makes the arena usable for non-trivial
-  // short-lived programs (#1856). `memory.grow` returns -1 on failure; we do
-  // not branch on that here — a -1 means the engine's max was hit, and the
-  // subsequent store traps cleanly rather than corrupting live data.
+  // The default arena proves unsigned endpoint/alignment additions, grows in
+  // page units, and traps on failed growth before heap or header publication.
+  // Linked and malloc-v1 arenas retain their original chunk prologue and frame.
   const local_ret = 1; // local 0 is the `size` param
   const local_next = 2;
   const local_chunk = 3; // linked mode only
@@ -244,97 +232,30 @@ export function addRuntime(mod: WasmModule, opts: ArenaOptions = {}): void {
   // Standalone prologue: we own the address space, so "not enough room" means
   // "grow the memory". Leaves `ret` = the address to hand back and `next` = the
   // new bump position.
-  const standalonePrologue: Instr[] = [
-    // ret = __heap_ptr
-    { op: "global.get", index: heapPtrGlobalIdx },
-    { op: "local.set", index: local_ret },
-    // next = align8(ret + size) = (ret + size + 7) & ~7
-    { op: "local.get", index: local_ret },
-    { op: "local.get", index: 0 }, // size
-    { op: "i32.add" },
-    { op: "i32.const", value: 7 },
-    { op: "i32.add" },
-    { op: "i32.const", value: -8 }, // ~7 = 0xFFFFFFF8
-    { op: "i32.and" },
-    { op: "local.set", index: local_next },
-    // if (next > memory.size * PAGE_SIZE) grow
-    { op: "local.get", index: local_next },
-    { op: "memory.size" },
-    { op: "i32.const", value: WASM_PAGE_SIZE },
-    { op: "i32.mul" },
-    { op: "i32.gt_u" },
-    {
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [
-        // pages_needed = ceil((next - cur_bytes) / PAGE_SIZE)
-        //              = (next - cur_bytes + PAGE_SIZE - 1) / PAGE_SIZE
-        { op: "local.get", index: local_next },
-        { op: "memory.size" },
-        { op: "i32.const", value: WASM_PAGE_SIZE },
-        { op: "i32.mul" },
-        { op: "i32.sub" },
-        { op: "i32.const", value: WASM_PAGE_SIZE - 1 },
-        { op: "i32.add" },
-        { op: "i32.const", value: WASM_PAGE_SIZE },
-        { op: "i32.div_u" },
-        { op: "memory.grow" },
-        // discard memory.grow's result (prev page count, or -1 on failure)
-        { op: "drop" },
-      ],
-      else: [],
-    },
-  ];
 
-  const mallocBody: Instr[] = [
-    ...(linked === undefined
-      ? standalonePrologue
-      : linkedMallocPrologue({
-          heapPtrGlobalIdx,
-          arenaLimitGlobalIdx,
-          hostMallocIdx,
-          chunkBytes,
-          localRet: local_ret,
-          localNext: local_next,
-          localChunk: local_chunk,
-        })),
-    // __heap_ptr = next
-    { op: "local.get", index: local_next },
-    { op: "global.set", index: heapPtrGlobalIdx },
-    // Zero the record header word so every hand-out starts in a known state.
-    // The string runtime memoises its ASCII verdict in byte 1 of this word
-    // (see STRING_ASCII_CACHE_OFFSET); without this, an embedder that recycles
-    // the arena through `__arena_reset` could serve a *stale* verdict from the
-    // previous tenant of the address. Guarded on `size >= 4` purely so a
-    // zero-size request at the very end of memory cannot store out of bounds —
-    // every real record is header-bearing and takes the store.
-    { op: "local.get", index: 0 }, // size
-    { op: "i32.const", value: 4 },
-    { op: "i32.ge_u" },
-    {
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [
-        { op: "local.get", index: local_ret },
-        { op: "i32.const", value: 0 },
-        { op: "i32.store", align: 2, offset: 0 },
-      ],
-      else: [],
-    },
-    // return ret
-    { op: "local.get", index: local_ret },
-  ];
+  const mallocBody: Instr[] =
+    linked === undefined
+      ? buildLinearBumpAllocationBody(heapPtrGlobalIdx)
+      : [
+          ...linkedMallocPrologue({
+            heapPtrGlobalIdx,
+            arenaLimitGlobalIdx,
+            hostMallocIdx,
+            chunkBytes,
+            localRet: local_ret,
+            localNext: local_next,
+            localChunk: local_chunk,
+          }),
+          ...buildLinearBumpAllocationCommitBody(heapPtrGlobalIdx),
+        ];
 
   mod.functions.push({
     name: "__malloc",
     typeIdx: mallocTypeIdx,
-    locals: [
-      { name: "__malloc_ret", type: { kind: "i32" } },
-      { name: "__malloc_next", type: { kind: "i32" } },
-      // The chunk-size scratch exists only on the linked path, so the
-      // standalone frame — and therefore the emitted bytes — is unchanged.
-      ...(linked !== undefined ? [{ name: "__malloc_chunk", type: { kind: "i32" } as ValType }] : []),
-    ],
+    locals:
+      linked === undefined
+        ? mallocArena.allocatorLocals
+        : [...mallocArena.allocatorBaseLocals, { name: "__malloc_chunk", type: { kind: "i32" } as ValType }],
     body: mallocBody,
     exported: false,
   });
@@ -849,40 +770,18 @@ export function addArrayRuntime(mod: WasmModule): void {
   ensureArrayResolveRuntime(mod); // accessors below resolve forwarded arrays (#1977)
   const mallocIdx = findFuncIndex(mod, "__malloc");
 
+  const arrayConstructor = describeLinearArrayConstructor();
   // __arr_new: allocate header(8) + len(4) + cap(4) + elements(cap*8)
   // Tag byte at offset 0: 0x01 = Array
   // extra locals: local 1 = ptr
   addRuntimeFunc(
     mod,
     "__arr_new",
-    [{ kind: "i32" }],
-    [{ kind: "i32" }],
+    arrayConstructor.params,
+    arrayConstructor.results,
     [],
-    (local1Idx) => [
-      // Allocate: 16 + cap*8
-      { op: "i32.const", value: 16 },
-      { op: "local.get", index: 0 }, // cap
-      { op: "i32.const", value: 8 },
-      { op: "i32.mul" },
-      { op: "i32.add" },
-      { op: "call", funcIdx: mallocIdx },
-      { op: "local.set", index: local1Idx },
-      // Store tag byte 0x01 (Array) at ptr+0
-      { op: "local.get", index: local1Idx },
-      { op: "i32.const", value: 0x01 },
-      { op: "i32.store8", align: 0, offset: 0 },
-      // Store len=0 at ptr+8
-      { op: "local.get", index: local1Idx },
-      { op: "i32.const", value: 0 },
-      { op: "i32.store", align: 2, offset: 8 },
-      // Store cap at ptr+12
-      { op: "local.get", index: local1Idx },
-      { op: "local.get", index: 0 }, // cap
-      { op: "i32.store", align: 2, offset: 12 },
-      // Return ptr
-      { op: "local.get", index: local1Idx },
-    ],
-    1,
+    (local1Idx) => buildLinearArrayConstructorBody(mallocIdx, local1Idx),
+    arrayConstructor.locals.length,
   );
 
   const arrResolveIdx = findFuncIndex(mod, "__arr_resolve");

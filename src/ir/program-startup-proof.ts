@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import { ts } from "../ts-api.js";
+import type { RuntimeManifestPolicy } from "../runtime/contracts/provider-policy.js";
 import type { IrUnitId } from "./identity.js";
 import type { IrModuleInitPlan } from "./module-init-plan.js";
 import type { IrPlanningIdentityContext } from "./planning-identity.js";
@@ -15,7 +16,19 @@ export function postStartupCallableUnits(
   checker: ts.TypeChecker,
   identity: IrPlanningIdentityContext,
   startup: readonly IrModuleInitPlan[],
+  options: {
+    readonly policy: RuntimeManifestPolicy;
+    readonly runtimePolicies?: readonly RuntimeManifestPolicy[];
+    readonly deferTopLevelInit: boolean;
+  },
 ): ReadonlySet<IrUnitId> {
+  const policies = options.runtimePolicies ?? [options.policy];
+  if (
+    options.deferTopLevelInit ||
+    policies.length === 0 ||
+    policies.some((policy) => !["host", "standalone", "strict-no-host"].includes(policy.target))
+  )
+    return new Set();
   if (startup.some((plan) => plan.executable && plan.invocation.kind !== "wasm-start")) return new Set();
   const references = new Map<IrUnitId, Set<IrUnitId>>();
   const inspect = (owner: IrUnitId, node: ts.Node): void => {

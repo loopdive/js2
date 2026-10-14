@@ -4,6 +4,7 @@
 import type { IrUnitId } from "../../shared/contracts/ir-identity.js";
 import type {
   AllocSiteId,
+  IrValueId,
   IrClassShape,
   IrClosureSignature,
   IrDomCallbackAuthority,
@@ -26,6 +27,7 @@ import type {
   IrRefCellLowering,
   IrUnionLowering,
   IrVecLowering,
+  IrVectorLowering,
 } from "./handles.js";
 
 export type {
@@ -38,9 +40,16 @@ export type {
   IrRefCellLowering,
   IrUnionLowering,
   IrVecLowering,
+  IrVectorLowering,
 } from "./handles.js";
 
 export interface IrLowerResolver {
+  /** Original checked native Number/Undefined owner; absent on every ordinary resolver. */
+  resolveNativeNumberUndefined?(
+    fn: import("../core/nodes.js").IrFunction,
+  ): import("./native-number-undefined.js").NativeNumberUndefinedLowering | undefined;
+  /** Issued native program storage refinement; absent on every legacy resolver. */
+  nativeVectorGlobalReadNonNull?(ref: IrGlobalRef, type: Extract<IrType, { kind: "vec" }>): boolean;
   resolveFunc(ref: IrFuncRef): number;
   /** Exact post-call carrier adaptation for a provider with a legacy ABI. */
   callResultAdapter?(ref: IrFuncRef): "native-string-from-externref" | undefined;
@@ -137,7 +146,9 @@ export interface IrLowerResolver {
    * the type isn't a recognisable vec — caller treats that as a bug
    * (selector should have rejected the for-of).
    */
-  resolveVec?(valType: ValType): IrVecLowering | null;
+  /** The accepted physical backend; used to reject foreign persisted vector layouts. */
+  readonly vectorRepresentation?: "wasmgc" | "linear";
+  resolveVec?(valType: ValType): IrVectorLowering | null;
   /**
    * #1804 — resolve (registering if needed) the vec struct for an *element*
    * ValType, used by `vec.new_fixed` construction where a fresh literal has no
@@ -147,7 +158,8 @@ export interface IrLowerResolver {
    * legacy `compileArrayLiteral` output (===, instanceof Array, the for-of fast
    * path). Returns the same `IrVecLowering` shape as `resolveVec`.
    */
-  resolveVecForElement?(elementValType: ValType, alloc?: AllocSiteId): IrVecLowering | null;
+  resolveVecForElement?(elementValType: ValType, alloc?: AllocSiteId): IrVectorLowering | null;
+  requestedVectorCapacity?(unitId: IrUnitId, value: IrValueId): number;
   /**
    * Resolve the Wasm value type used for `IrType.string` in the active
    * backend.

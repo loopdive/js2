@@ -73,13 +73,21 @@
       "roots": [
         "src/frontend/builtins/contracts.ts",
         "src/frontend/builtins/prepare-string-output.ts",
-        "src/frontend/typescript.ts"
+        "src/frontend/typescript.ts",
+        "src/frontend/program-origin.ts",
+        "src/frontend/program-origin-census.ts",
+        "src/frontend/program-origin-host.ts",
+        "src/frontend/ts5-trace.ts"
       ],
       "required": true,
       "entries": [
         "src/frontend/builtins/contracts.ts",
         "src/frontend/builtins/prepare-string-output.ts",
-        "src/frontend/typescript.ts"
+        "src/frontend/typescript.ts",
+        "src/frontend/program-origin.ts",
+        "src/frontend/program-origin-census.ts",
+        "src/frontend/program-origin-host.ts",
+        "src/frontend/ts5-trace.ts"
       ],
       "minModules": 3
     },
@@ -138,7 +146,11 @@
         "src/ir/analysis/dominance.ts",
         "src/ir/analysis/alloc-verification.ts",
         "src/ir/analysis/nested-stackification.ts",
-        "src/ir/analysis/backend-legality.ts"
+        "src/ir/analysis/backend-legality.ts",
+        "src/ir/analysis/allocations/snapshot.ts",
+        "src/ir/analysis/linear/contracts/allocation-facts.ts",
+        "src/ir/analysis/linear/allocation-facts.ts",
+        "src/ir/analysis/linear-memory-from-facts.ts"
       ],
       "required": true,
       "entries": [
@@ -160,7 +172,11 @@
         "src/ir/analysis/allocation-evidence/effect-rules.ts",
         "src/ir/analysis/allocation-evidence/census.ts",
         "src/ir/analysis/allocation-evidence/metadata.ts",
-        "src/ir/analysis/allocation-evidence/verify.ts"
+        "src/ir/analysis/allocation-evidence/verify.ts",
+        "src/ir/analysis/allocations/snapshot.ts",
+        "src/ir/analysis/linear/contracts/allocation-facts.ts",
+        "src/ir/analysis/linear/allocation-facts.ts",
+        "src/ir/analysis/linear-memory-from-facts.ts"
       ],
       "minModules": 19
     },
@@ -2005,6 +2021,14 @@
       "destination": "backend-wasmgc",
       "owner": "3518-coordinator",
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/ir/backend/vector-element-access.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Common vector get/store lowering preserves target emission and exact fixed-construction bounds; mixed emitter/handle contracts remain, so this helper does not establish pure-IR or compiler graph closure."
     },
     {
       "path": "src/runtime/wasmgc/values/string-create-body.ts",
@@ -16042,6 +16066,659 @@
       "destination": "backend-wasmgc",
       "owner": "3518-coordinator",
       "nextBoundary": "Keep this pure, data-injected locale parser as unactivated migration debt until a separately-owned backend/wasmgc integration supplies a pinned generated source table, observable generic locale-list semantics, %Intl% identity, and native error exposure."
+    },
+    {
+      "path": "src/shared/contracts/compile-target.ts",
+      "state": "clean",
+      "layer": "foundation"
+    },
+    {
+      "path": "src/shared/contracts/compile-target-policy.ts",
+      "state": "clean",
+      "layer": "foundation"
+    },
+    {
+      "path": "src/ir/analysis/allocations/snapshot.ts",
+      "state": "clean",
+      "layer": "ir-analysis"
+    },
+    {
+      "path": "src/ir/analysis/linear/contracts/allocation-facts.ts",
+      "state": "clean",
+      "layer": "ir-analysis"
+    },
+    {
+      "path": "src/ir/analysis/linear/allocation-facts.ts",
+      "state": "clean",
+      "layer": "ir-analysis"
+    },
+    {
+      "path": "src/ir/analysis/linear-memory-from-facts.ts",
+      "state": "clean",
+      "layer": "ir-analysis"
+    },
+    {
+      "path": "src/ir/program/linear-allocation-facts.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/linear-allocation-validation.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/linear-allocation-outcome.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/linear-memory-demand.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/runtime/target-admission.ts",
+      "state": "clean",
+      "layer": "ir-runtime"
+    },
+    {
+      "path": "src/ir/program-sync-vectors.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "6920-native-preparation",
+      "nextBoundary": "Genuine synchronous checker-bound vector signatures and complete source-owner expression facts. Retain frontend debt until shared source preparation relocation; no physical representation."
+    },
+    {
+      "path": "src/ir/program/linear-vector-flow.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/analysis/allocation-evidence/vector-call-profile.ts",
+      "state": "clean",
+      "layer": "ir-analysis"
+    },
+    {
+      "path": "src/ir/native-source-selection.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "6920-native-preparation",
+      "nextBoundary": "Checker-bound source selectors and genuine logical vector collector; preserve frontend ownership until source preparation moves to frontend/ts. No physical representation or pure IR claim."
+    },
+    {
+      "path": "src/ir/ast-vector-representation.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "6920-native-preparation",
+      "nextBoundary": "Compatibility carrier reads for actual backend vector handles at the existing source bridge; native prepared vectors retain logical element types. Relocate with source preparation; no pure IR or backend-independent physical claim."
+    },
+    {
+      "path": "src/ir/program-body-resources.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-program",
+      "owner": "6920-session-b-native-takeover",
+      "nextBoundary": "Separate shared body carriers from concrete WasmGC resource selection while retaining the sole physical reservation and common emission attempt."
+    },
+    {
+      "path": "src/ir/program/physical-startup.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/codegen-linear/runtime/arena/bump-allocation.ts",
+      "state": "compatibility-adapter",
+      "layer": "legacy-linear",
+      "reason": "Identity-preserving direct reexports of canonical physical Linear runtime body builders."
+    },
+    {
+      "path": "src/codegen-linear/runtime/arrays/constructor.ts",
+      "state": "compatibility-adapter",
+      "layer": "legacy-linear",
+      "reason": "Identity-preserving direct reexports of canonical physical Linear runtime body builders."
+    },
+    {
+      "path": "src/ir/backend/vector-representation.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "6920-session-b-native-takeover",
+      "nextBoundary": "Separate common logical vector carriers from concrete legacy and GC type coordinates with real runtime reservations."
+    },
+    {
+      "path": "src/wasm/physical/linear-bump-allocation.ts",
+      "state": "clean",
+      "layer": "wasm-physical"
+    },
+    {
+      "path": "src/wasm/physical/linear-array-constructor.ts",
+      "state": "clean",
+      "layer": "wasm-physical"
+    },
+    {
+      "path": "src/wasm/physical/linear-vector-initialization.ts",
+      "state": "clean",
+      "layer": "wasm-physical"
+    },
+    {
+      "path": "src/frontend/program-origin.ts",
+      "state": "clean",
+      "layer": "frontend-ts"
+    },
+    {
+      "path": "src/frontend/program-origin-census.ts",
+      "state": "clean",
+      "layer": "frontend-ts"
+    },
+    {
+      "path": "src/frontend/program-origin-host.ts",
+      "state": "clean",
+      "layer": "frontend-ts"
+    },
+    {
+      "path": "src/frontend/ts5-trace.ts",
+      "state": "clean",
+      "layer": "frontend-ts"
+    },
+    {
+      "path": "src/shared/contracts/environment-value.ts",
+      "state": "clean",
+      "layer": "foundation"
+    },
+    {
+      "path": "src/ir/program/startup-validation.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/wasm/physical/linear-body-batch-exception-tag.ts",
+      "state": "clean",
+      "layer": "wasm-physical"
+    },
+    {
+      "path": "src/ir/backend/linear-body-batch-resources.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "wasm-physical",
+      "owner": "6920-session-b-native-takeover",
+      "nextBoundary": "Body-batch orchestration still combines canonical IR demand inspection with injected legacy adapter ports. Physical exception-tag custody now uses the canonical Wasm-only provider; establish remaining semantic/provider consumer closure before layer activation. No whole-preflight or whole-compiler closure is established."
+    },
+    {
+      "path": "src/backend/linear/program/contracts.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "wasm-physical",
+      "owner": "6920-session-b-native-takeover",
+      "nextBoundary": "Retain actual shared consumer/runtime recipe ownership and audit the complete source-free import closure before layer activation."
+    },
+    {
+      "path": "src/backend/linear/program/memory.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "wasm-physical",
+      "owner": "6920-session-b-native-takeover",
+      "nextBoundary": "Retain actual shared consumer/runtime recipe ownership and audit the complete source-free import closure before layer activation."
+    },
+    {
+      "path": "src/backend/linear/program/reference-error.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "wasm-physical",
+      "owner": "6920-session-b-native-takeover",
+      "nextBoundary": "Retain actual shared consumer/runtime recipe ownership and audit the complete source-free import closure before layer activation."
+    },
+    {
+      "path": "src/codegen-linear/runtime/arrays/forwarding-resolver.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "legacy-linear",
+      "owner": "6920-session-b-native-takeover",
+      "nextBoundary": "Retain actual shared consumer/runtime recipe ownership and audit the complete source-free import closure before layer activation."
+    },
+    {
+      "path": "src/codegen-linear/runtime/vector-initialization.ts",
+      "state": "unmigrated",
+      "layer": "legacy-linear",
+      "reason": "Identity-preserving direct reexport of the complete canonical physical f64 vector initialization body."
+    },
+    {
+      "path": "src/compiler/ir-program-startup-presentation.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "compiler",
+      "owner": "6920-session-b-native-takeover",
+      "nextBoundary": "Retain actual shared consumer/runtime recipe ownership and audit the complete source-free import closure before layer activation."
+    },
+    {
+      "path": "src/compiler/native-linear-pipeline.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "compiler",
+      "owner": "6920-session-b-native-takeover",
+      "nextBoundary": "Retain actual shared consumer/runtime recipe ownership and audit the complete source-free import closure before layer activation."
+    },
+    {
+      "path": "src/ir/backend/linear-exceptions.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "6920-session-b-native-takeover",
+      "nextBoundary": "Retain actual shared consumer/runtime recipe ownership and audit the complete source-free import closure before layer activation."
+    },
+    {
+      "path": "src/ir/program-reference-error.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "6920-session-b-native-takeover",
+      "nextBoundary": "Retain actual shared consumer/runtime recipe ownership and audit the complete source-free import closure before layer activation."
+    },
+    {
+      "path": "src/ir/runtime/reference-error-callable.ts",
+      "state": "clean",
+      "layer": "ir-runtime"
+    },
+    {
+      "path": "src/ir/program/physical-diagnostics.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program-linear-memory.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "wasm-physical",
+      "owner": "6920-session-b-native-takeover",
+      "nextBoundary": "Separate descriptive canonical Linear planning from backend resource selection while preserving authenticated issuance."
+    },
+    {
+      "path": "src/compiler/ir-program-error-presentation.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "compiler",
+      "owner": "6920-session-b-native-takeover",
+      "nextBoundary": "Separate authenticated completed-resource presentation from the shared consumer while preserving the original emission and exact ownership census."
+    },
+    {
+      "path": "src/compiler/ir-program-memory-presentation.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "compiler",
+      "owner": "6920-session-b-native-takeover",
+      "nextBoundary": "Separate authenticated completed-resource presentation from the shared consumer while preserving the original emission and exact ownership census."
+    },
+    {
+      "path": "src/ir/program/physical-vector-carriers.ts",
+      "state": "clean",
+      "layer": "ir-program",
+      "owner": "6920-session-b-native-takeover"
+    },
+    {
+      "path": "src/shared/contracts/prepared-ir-data.ts",
+      "state": "clean",
+      "layer": "foundation",
+      "owner": "6920-session-b-native-takeover"
+    },
+    {
+      "path": "src/shared/contracts/prepared-ir-invariant-error.ts",
+      "state": "clean",
+      "layer": "foundation",
+      "owner": "6920-session-b-native-takeover"
+    },
+    {
+      "path": "src/shared/contracts/ir-class-shape-marker.ts",
+      "state": "clean",
+      "layer": "foundation",
+      "owner": "6920-session-b-native-takeover"
+    },
+    {
+      "path": "src/shared/contracts/native-string-resource-keys.ts",
+      "state": "clean",
+      "layer": "foundation",
+      "owner": "6920-session-b-native-takeover"
+    },
+    {
+      "path": "src/ir/program/native-primitive-boundary-abi.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/physical-body-requirements.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/prepared-linear-memory-contracts.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/physical-body-resource-contracts.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/runtime/contracts/native-resource-declarations.ts",
+      "state": "clean",
+      "layer": "runtime-contracts"
+    },
+    {
+      "path": "src/ir/program/native-primitive-boundary-contracts.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/core/native-conditional-type.ts",
+      "state": "clean",
+      "layer": "ir-core"
+    },
+    {
+      "path": "src/ir/analysis/allocation-evidence/structured-vector-facts.ts",
+      "state": "clean",
+      "layer": "ir-analysis"
+    },
+    {
+      "path": "src/ir/analysis/allocation-evidence/structured-vector-body.ts",
+      "state": "clean",
+      "layer": "ir-analysis"
+    },
+    {
+      "path": "src/ir/analysis/allocation-evidence/structured-vector-profile.ts",
+      "state": "clean",
+      "layer": "ir-analysis"
+    },
+    {
+      "path": "src/ir/analysis/allocation-evidence/native-control-producer.ts",
+      "state": "clean",
+      "layer": "ir-analysis"
+    },
+    {
+      "path": "src/ir/native-vector-mutation-proof.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "6920-native-preparation",
+      "nextBoundary": "Checker-bound native mutation proof; move with source preparation to frontend/ts. No physical layout or pure IR claim."
+    },
+    {
+      "path": "src/ir/native-vector-mutation.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "6920-native-preparation",
+      "nextBoundary": "Checker-bound native logical mutation lowering; move with source preparation to frontend/ts. No physical layout or pure IR claim."
+    },
+    {
+      "path": "src/ir/logical-vector-source-facts.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "6920-native-preparation",
+      "nextBoundary": "Existing owned logical source facts and consumption checks, extracted unchanged from the frontend driver; move with source preparation to frontend/ts."
+    },
+    {
+      "path": "src/compiler/native-vector-global-presentation.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "compiler",
+      "owner": "6920-native-preparation",
+      "nextBoundary": "Actual native internal global capture and canonical source/issued storage joins; frontend presentation debt remains."
+    },
+    {
+      "path": "src/ir/backend/native-global-read.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "6920-native-preparation",
+      "nextBoundary": "Bounded native program global read emission through issued storage endpoint; no layout/source ownership or completion claim."
+    },
+    {
+      "path": "src/ir/module-binding-declarations.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "6920-native-preparation",
+      "nextBoundary": "Original complete checker/oracle declaration query and cache subsystem; moved without changing calls or bodies. Remains source preparation debt."
+    },
+    {
+      "path": "src/ir/native-module-vector-source.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "6920-native-preparation",
+      "nextBoundary": "Actual checker-owned module const literal facts; move with source preparation. No backend resources or pure IR admission."
+    },
+    {
+      "path": "src/ir/withdrawn-unit-references.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-program",
+      "owner": "6920-native-preparation",
+      "nextBoundary": "Complete existing unit reference census relocated with preserved public reexport; no architecture activation claim."
+    },
+    {
+      "path": "src/ir/backend/instruction-uses.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "6920-native-preparation",
+      "nextBoundary": "Complete existing generic instruction SSA-use census moved byte-identically out of lowering; retain actual consumers and historical grammar, no architecture activation claim."
+    },
+    {
+      "path": "src/ir/program/native-module-vector-context.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/analysis/allocation-evidence/module-vector-globals.ts",
+      "state": "clean",
+      "layer": "ir-analysis"
+    },
+    {
+      "path": "src/ir/program/native-vector-growth-source.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/native-vector-store-proof.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/wasm/physical/linear-vector-append.ts",
+      "state": "clean",
+      "layer": "wasm-physical"
+    },
+    {
+      "path": "src/wasm/physical/gc-vector-append.ts",
+      "state": "clean",
+      "layer": "wasm-physical"
+    },
+    {
+      "path": "src/ir/analysis/allocation-evidence/numeric-append-protocol.ts",
+      "state": "clean",
+      "layer": "ir-analysis"
+    },
+    {
+      "path": "src/ir/runtime/numeric-vector-callables.ts",
+      "state": "clean",
+      "layer": "ir-runtime"
+    },
+    {
+      "path": "src/compiler/native-numeric-append-presentation.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "compiler",
+      "owner": "6920-native-preparation",
+      "nextBoundary": "Canonical append DATA joined to immutable completed support and physical ABI; frontend presentation debt remains."
+    },
+    {
+      "path": "src/ir/program-native-vector-emission.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "6920-session-b-native-takeover",
+      "nextBoundary": "Injected common emission coordination retains original GC and Linear reservation owners; move with the consumer after separating portable origin lookup from target resource ports."
+    },
+    {
+      "path": "src/compiler/native-ir-dts.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "compiler",
+      "owner": "6920-session-b-native-takeover",
+      "nextBoundary": "Source-free native scalar declarations derive from immutable semantic ABI and authentic current emissions; Prepared program and consumer imports retain migration debt until their complete import closure is separated."
+    },
+    {
+      "path": "src/ir/source-class-plans.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "3522-b-native-class-producer",
+      "nextBoundary": "Original checker/AST class census, source type/default/initializer and allocation-site plans; no pure IR classification until source preparation moves to frontend/ts."
+    },
+    {
+      "path": "src/ir/source-class-lowering.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "3522-b-native-class-producer",
+      "nextBoundary": "Original class member orchestration and non-synthetic implicit constructor entry remain frontend lowering; separate source adapters from neutral typed DATA."
+    },
+    {
+      "path": "src/ir/program/class-preparation.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/native-vector-undefined-provenance.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "6920-session-b-native-takeover",
+      "nextBoundary": "Checker-symbol native numeric defined-value provenance retains TypeScript AST authority; migrate with source lowering, never infer runtime absence from unboxed carriers."
+    },
+    {
+      "path": "src/ir/native-number-undefined-source.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "6920-session-b-native-takeover",
+      "nextBoundary": "Original checker-symbol/local dense-vector source and complete incoming/prototype-effect census remains frontend authority; migrate with source preparation, without serializing capabilities or inferring runtime absence from numeric types."
+    },
+    {
+      "path": "src/ir/core/native-number-undefined-lowering.ts",
+      "state": "clean",
+      "layer": "ir-core"
+    },
+    {
+      "path": "src/ir/analysis/allocation-evidence/native-number-undefined-body.ts",
+      "state": "clean",
+      "layer": "ir-analysis"
+    },
+    {
+      "path": "src/ir/analysis/allocation-evidence/native-number-undefined-profile.ts",
+      "state": "clean",
+      "layer": "ir-analysis"
+    },
+    {
+      "path": "src/ir/analysis/allocation-evidence/native-number-undefined-producer.ts",
+      "state": "clean",
+      "layer": "ir-analysis"
+    },
+    {
+      "path": "src/ir/program/native-number-undefined-requirements.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/native-number-undefined-abi.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/runtime/native-number-undefined-profile.ts",
+      "state": "clean",
+      "layer": "ir-runtime"
+    },
+    {
+      "path": "src/ir/backend/native-number-undefined.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "6920-session-b-native-takeover",
+      "nextBoundary": "Separate portable IR binding/proof contracts from concrete ValType/Instr carrier emission, scratch-local and memory-offset descriptors before core activation; all-import closure purity alone does not certify semantic core ownership."
+    },
+    {
+      "path": "src/backend/wasmgc/resources/native-number-undefined.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/backend/linear/program/native-number-undefined.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "wasm-physical",
+      "owner": "6920-session-b-native-takeover",
+      "nextBoundary": "Separate target-specific IR tags/errors/checker types from reusable physical record operations before activation; the current source-free recipe preserves exact existing allocation geometry and requires the issued Linear pack, without asserting a clean Wasm foundation boundary."
+    },
+    {
+      "path": "src/ir/program-number-undefined-resources.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "6920-session-b-native-takeover",
+      "nextBoundary": "Retain complete independent logical/source evidence and exact whole-attempt checks while consuming genuine target-specific reservations; split physical emission orchestration from portable independently issued proof after the separate proof receiving scope. No clean ir-program activation is inferred from a source-free closure."
+    },
+    {
+      "path": "src/ir/analysis/allocation-evidence/native-number-undefined-legality.ts",
+      "state": "clean",
+      "layer": "ir-analysis"
+    },
+    {
+      "path": "src/ir/program/native-number-undefined-allocation-validation.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/compiler/ir-native-number-undefined-presentation.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "compiler",
+      "owner": "6920-session-b-native-takeover",
+      "nextBoundary": "Separate completed native support-singleton authentication and concrete GC/Linear carrier/type/initializer/data joins from portable program presentation, retaining complete original/selected semantic evidence and opaque emission currentness. No clean compiler activation or general public dynamic ABI is inferred."
+    },
+    {
+      "path": "src/compiler/ir-native-number-undefined-optimization.ts",
+      "state": "compatibility-adapter",
+      "layer": "mixed-needs-split",
+      "destination": "compiler",
+      "owner": "6920-session-b-native-takeover",
+      "nextBoundary": "Identity-preserving direct reexports of the four native Number/Undefined optimization functions and observation type now owned by pipeline-result-finalizer.ts. Keep this one-way compatibility path until its callers migrate; all constructor snapshots, issued state, currentness and optimizer execution live in the productive owner. The owner retains mixed frontend/output/legacy dependencies; no clean compiler activation or general dynamic ABI follows."
+    },
+    {
+      "path": "src/wasm/physical/native-number-undefined-binary.ts",
+      "state": "clean",
+      "layer": "wasm-physical"
+    },
+    {
+      "path": "src/compiler/pipeline-output-context.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "compiler",
+      "owner": "6920-session-b-native-takeover",
+      "nextBoundary": "Separate output-only source/checker presentation facts from source-free productive finalization contracts, preserving exact output fields and diagnostic/source-map custody. Type-only extraction does not establish clean transitive architecture."
+    },
+    {
+      "path": "src/compiler/pipeline-result-finalizer.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "compiler",
+      "owner": "6920-session-b-native-takeover",
+      "nextBoundary": "Separate productive finalization and private constructor/optimization state ownership from retained generic CABI/DTS/WIT/source-map, output and validation dependencies without changing completion ordering, rec-group checks, one-shot native optimization, atomic candidate acceptance or old generic algorithms. Direct optimization ownership and one-way compatibility exports remove the new lifecycle authority cycle; measured mixed transitive closure remains migration work, not full boundary closure."
     }
   ]
 }

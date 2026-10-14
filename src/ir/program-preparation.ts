@@ -4,22 +4,23 @@ import { prepareIrProgramSources, captureTypedIrProgramInput, type IrProgramSour
 import { resolveIrPreparationControlsFromEnv } from "./program-middleend.js";
 import { createGvnCounters } from "./passes/gvn-core.js";
 import { recordLegacyGvnCountersOnce } from "./passes/gvn.js";
+import { assertNativeIrPolicy, isLegacyHostIrPolicy } from "./runtime/target-admission.js";
 import { prepareTypedIrProgram } from "./program-prepare-ir.js";
 import { preparedIrDataMismatch } from "./program/data.js";
 import { PreparedIrProgramInvariantError } from "./program/errors.js";
 import type { IrProgramPreparationResult } from "./program/prepared-contracts.js";
 import { observePreparedIrProgram } from "./program-observation.js";
-import type { RuntimeManifestPolicy } from "./runtime-manifest.js";
 import { prepareNumberFormatRuntimeSupport } from "../frontend/builtins/prepare-number-format.js";
 
-export interface IrWholeProgramPreparationInput extends IrProgramSourceInput {
-  /** Internal resolved projection requests; all consume the same semantic module. */
-  readonly runtimePolicies?: readonly RuntimeManifestPolicy[];
-}
+export type IrWholeProgramPreparationInput = IrProgramSourceInput;
 
 /** One complete preparation before any backend has permission to allocate or emit. */
 export function prepareWholeIrProgram(input: IrWholeProgramPreparationInput): IrProgramPreparationResult {
   const policies = input.runtimePolicies ?? [input.policy];
+  if (Object.hasOwn(input, "linearVectorProjection") || ![input.policy, ...policies].every(isLegacyHostIrPolicy)) {
+    assertNativeIrPolicy(input.policy);
+    for (const policy of policies) assertNativeIrPolicy(policy);
+  }
   const keys = new Set(policies.map((policy) => `${policy.backend}:${policy.target}`));
   if (
     keys.size !== policies.length ||
@@ -62,7 +63,7 @@ export function prepareWholeIrProgram(input: IrWholeProgramPreparationInput): Ir
       "invalid-prepared-data",
       "native string output projection cannot request a runtime projection outside wasmgc:standalone",
     );
-  const source = prepareIrProgramSources(input);
+  const source = prepareIrProgramSources({ ...input, runtimePolicies: policies });
   if (source.kind !== "prepared") return source;
   const runtimeSupport = prepareNumberFormatRuntimeSupport(source, input.policy);
   if (

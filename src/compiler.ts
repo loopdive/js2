@@ -1,5 +1,18 @@
+import {
+  finalizePipelineModule,
+  finalizePreparedPipelinePresentation,
+  runtimeRecGroupDrift,
+} from "./compiler/pipeline-result-finalizer.js";
+import type { PipelineOutputContext } from "./compiler/pipeline-output-context.js";
+export type { PipelineOutputContext } from "./compiler/pipeline-output-context.js";
+import {
+  issueNativeNumberUndefinedOptimizationInput,
+  applyIssuedNativeNumberUndefinedOptimization,
+} from "./compiler/ir-native-number-undefined-optimization.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { ts } from "./ts-api.js";
+import { normalizeMultiFileName } from "./checker/multi-file-paths.js";
+import { isNativeIrCompileProfile } from "./ir/runtime/target-admission.js";
 import {
   analyzeFiles,
   analyzeMultiSource,
@@ -34,21 +47,9 @@ import { isFatalCodegenDiagnostic } from "./codegen/context/errors.js";
 import type { WasmModule } from "./ir/types.js";
 import {
   prepareIrProgramPresentation,
-  beginPreparedPresentationFinalization,
-  completePreparedPresentationFinalization,
-  preparedPresentationWitView,
-  type PreparedPresentationFinalization,
-  type PreparedPresentationFinalizationReceipt,
-  type IrProgramPresentationResult,
-  type IrProgramPresentationGap,
   type PreparedIrPipelinePresentationResult,
 } from "./compiler/ir-program-presentation.js";
-import { freezePreparedIrValue, PreparedIrProgramInvariantError, type PreparedIrBackendOptions } from "./ir/program.js";
-import { buildHostImportInventory, summarizeHostImportInventory } from "./host-import-policy.js";
-import { buildCapabilityRequirements, validatePlatformCapabilityRequirements } from "./capability-registry.js";
-import { createJavaScriptAdapterManifest } from "./adapter-manifest.js";
-import { buildExportBoundaryPolicies } from "./boundary-policy.js";
-import { buildCompileExplanation } from "./compile-explain.js";
+import { freezePreparedIrValue, type PreparedIrBackendOptions } from "./ir/program.js";
 import {
   findSmallestNodeAtPosition,
   isBindingPatternFalsePositive,
@@ -61,35 +62,14 @@ import {
   DOWNGRADE_DIAG_CODES,
   looksLikeTsSyntaxOnJs,
 } from "./compiler/import-manifest.js";
-import {
-  applyCabiTransform,
-  EMPTY_FAILURE_TELEMETRY,
-  failResult,
-  generateDts,
-  generateImportsHelper,
-  widenNonDefaultableTypes,
-  type FailureTelemetry,
-} from "./compiler/output.js";
-import { stampAllocationOwners } from "./wasm/physical/allocation-owner.js";
+import { EMPTY_FAILURE_TELEMETRY, failResult, type FailureTelemetry } from "./compiler/output.js";
 import {
   detectEarlyErrors,
-  gateEmittedModule,
   pushSourceAnchoredDiagnostic,
   rewriteEvalSuperCallWithMap,
   validateHardenedMode,
   validateSafeMode,
 } from "./compiler/validation.js";
-import { emitBinary, emitBinaryWithSourceMap, emitSourceMappingURLSection } from "./emit/binary.js";
-import {
-  extractRuntimeGroup,
-  fingerprintRuntimeGroup,
-  RUNTIME_RECGROUP_TYPE_NAMES,
-  verifyRuntimeRecGroupBinary,
-  type RuntimeGroupFingerprint,
-} from "./emit/canonical-recgroup.js";
-import { WasmEncoder } from "./emit/encoder.js";
-import { generateSourceMap } from "./emit/sourcemap.js";
-import { emitWat } from "./emit/wat.js";
 import { applyDefineSubstitutions, applyDefineSubstitutionsWithMap } from "./compiler/define-substitution.js";
 import { collectGraphNodeBuiltinImports } from "./compiler/node-builtin-import-collector.js";
 import { rewriteCjsRequire, rewriteCjsRequireWithMap } from "./cjs-rewrite.js";
@@ -97,6 +77,7 @@ import { injectTimerShimOnly, preprocessImports } from "./import-resolver.js";
 import { PositionMap } from "./position-map.js";
 import { profileCount, profilePhase } from "./compile-profile.js";
 import { resolveCompileTargetProfile } from "./target-profile.js";
+import { prepareNativeLinearPipeline, preparedPipelineArtifacts } from "./compiler/native-linear-pipeline.js";
 import { injectProcessStdinPrelude } from "./process-stdin-prelude.js";
 import { injectIteratorStaticsPrelude } from "./iterator-statics-prelude.js";
 import { applyIntlListFormatPrelude, applyIntlListFormatPreludeToFiles } from "./intl-listformat-prelude.js";
@@ -106,7 +87,6 @@ import * as irIds from "./compiler/ir-outcome-inventory.js";
 import { buildLinearOptions } from "./compiler/linear-options.js";
 import type { CompileError, CompileOptions, CompileResult } from "./index.js";
 import { optimizeBinaryAsync } from "./optimize.js";
-import { generateWit, renderPreparedWit } from "./wit-generator.js";
 import {
   foldGroundCallsInMultiFilesForCompile as foldGroundCallsInMulti,
   foldGroundExportCallsForCompile as foldGroundCalls,
@@ -683,45 +663,6 @@ function detectRawWasiImports(source: string): { rawWasi: Set<string>; memAccess
  * canonical range marker. A partial name scan is not a link contract: a
  * provider and consumer must both retain the complete contiguous group.
  */
-function getRuntimeRecGroupFingerprint(mod: WasmModule): RuntimeGroupFingerprint | undefined {
-  const range = mod.canonicalRuntimeRecGroup;
-  if (!range) return undefined;
-  const expectedCount = range.end - range.start + 1;
-  const members = extractRuntimeGroup(mod);
-  const fingerprint = fingerprintRuntimeGroup(mod);
-  const namesMatch =
-    fingerprint.count === RUNTIME_RECGROUP_TYPE_NAMES.length &&
-    fingerprint.members.every((name, index) => name === RUNTIME_RECGROUP_TYPE_NAMES[index]);
-  const rangeMatches =
-    members.length === expectedCount && members.every((member, index) => member.absIndex === range.start + index);
-  if (
-    range.start < 0 ||
-    range.end < range.start ||
-    fingerprint.count !== expectedCount ||
-    !namesMatch ||
-    !rangeMatches
-  ) {
-    throw new Error(
-      `canonical runtime rec-group metadata disagrees with the type table ` +
-        `(range ${range.start}..${range.end}, named members ${fingerprint.members.join(", ")})`,
-    );
-  }
-  if (fingerprint.abiVersion !== range.abiVersion) {
-    throw new Error(
-      `canonical runtime rec-group ABI mismatch (metadata v${range.abiVersion}, ` +
-        `fingerprint v${fingerprint.abiVersion})`,
-    );
-  }
-  return fingerprint;
-}
-
-/** Return a concise drift reason, or undefined when the binary is link-safe. */
-function runtimeRecGroupDrift(binary: Uint8Array, expected?: RuntimeGroupFingerprint): string | undefined {
-  if (!expected) return undefined;
-  const verification = verifyRuntimeRecGroupBinary(binary, expected);
-  return verification.valid ? undefined : (verification.detail ?? "the canonical runtime rec-group was not found");
-}
-
 /**
  * #1927 — apply the optional Binaryen wasm-opt pass in place over an already
  * produced {@link CompileResult}. This is the ONLY async step in the pipeline;
@@ -736,6 +677,8 @@ async function applyOptimize(
   options: CompileOptions,
   anchor: ts.SourceFile,
 ): Promise<CompileResult> {
+  const nativeOptimized = await applyIssuedNativeNumberUndefinedOptimization(result, options);
+  if (nativeOptimized) return nativeOptimized;
   if (!options.optimize || !result.success) return result;
   const level = typeof options.optimize === "number" ? options.optimize : 3;
   const optResult = await optimizeBinaryAsync(result.binary, {
@@ -976,15 +919,6 @@ interface PipelineInput {
   options: CompileOptions;
 }
 
-/** Frontend presentation facts only; body generation never consumes this context. */
-export type PipelineOutputContext = Pick<
-  PipelineInput,
-  "errors" | "options" | "entryAst" | "diagnosticAnchor" | "sourcesContent"
-> & {
-  readonly codegenOptions: Pick<CodegenOptions, "link">;
-  readonly preparedStartup?: Extract<IrProgramPresentationResult, { kind: "prepared-presentation" }>["startup"];
-};
-
 /** The existing pre-generation validation, shared by both internal routes. */
 function validatePipelineSource(input: PipelineInput): CompileResult | undefined {
   const { errors, options, entryAst, userSourceFiles } = input;
@@ -1096,6 +1030,19 @@ function runPipeline(input: PipelineInput): CompileResult {
   let mod;
   let telemetry: Partial<FailureTelemetry> = EMPTY_FAILURE_TELEMETRY;
   try {
+    if (
+      (useLinear || options.backend === "wasmgc") &&
+      (targetProfile.target === "standalone" || targetProfile.target === "wasi")
+    ) {
+      const prepared = runPreparedIrPipelinePresentation(input);
+      if (prepared.kind === "artifacts" || prepared.kind === "output-failed") return prepared.artifacts;
+      const detail =
+        prepared.kind === "unsupported"
+          ? `${prepared.failure.code}: ${prepared.failure.detail}`
+          : prepared.gaps.map((gap) => gap.detail).join("; ");
+      pushSourceAnchoredDiagnostic(errors, diagnosticAnchor, `Prepared IR: ${detail}`, "error");
+      return failResult(errors);
+    }
     if (useLinear) {
       mod = multiAst
         ? generateLinearMultiModule(multiAst, { exposeArenaReset: options.allocator === "arena-reset" })
@@ -1207,13 +1154,18 @@ export function runPreparedIrPipelinePresentation(input: PipelineInput): Prepare
     moduleName: options.moduleName ?? "module",
     ...(targetProfile.backend === "linear" ? { linear: buildLinearOptions(options, undefined) } : {}),
   };
-  const prepared = prepareIrProgramPresentation({
+  const prepare =
+    targetProfile.backend === "linear" && (target === "standalone" || target === "wasi")
+      ? prepareNativeLinearPipeline
+      : prepareIrProgramPresentation;
+  const prepared = prepare({
     preparation: {
       sourceFiles: multiAst?.sourceFiles ?? [entryAst.sourceFile],
       entrySource: entryAst.sourceFile,
       checker: entryAst.checker,
       policy: { backend: backendOptions.backend, target },
       deferTopLevelInit: options.deferTopLevelInit === true,
+      ...(target === "host" ? {} : { linearVectorProjection: "native-f64" as const }),
     },
     backendOptions,
     output: {
@@ -1226,25 +1178,10 @@ export function runPreparedIrPipelinePresentation(input: PipelineInput): Prepare
     },
   });
   if (prepared.kind !== "prepared-presentation") return prepared;
-  const finalization: PreparedMixedFinalization | undefined = prepared.requiresDetachedFinalization
-    ? { token: beginPreparedPresentationFinalization(prepared) }
-    : undefined;
-  const wit: PreparedWitFinalization | undefined = options.wit ? { presentation: prepared } : undefined;
-  const finalized = finalizePipelineModule(
-    { ...prepared.output, preparedStartup: prepared.startup },
-    finalization?.token.outputModule ?? prepared.emission.module,
-    undefined,
-    { targetProfile, emitWatOutput: options.emitWat !== false, emitSourceMap: options.sourceMap === true },
-    finalization,
-    wit,
-  );
-  if (wit?.gaps) return { kind: "presentation-unsupported", gaps: wit.gaps };
-  if (finalized.success && finalization && !finalization.receipt)
-    throw new PreparedIrProgramInvariantError(
-      "invalid-transaction-capability",
-      "mixed prepared output lacks completed finalization evidence",
-    );
-  const artifacts = preparedPipelineArtifacts(finalized);
+  const completed = finalizePreparedPipelinePresentation(prepared);
+  if (completed.kind === "presentation-unsupported") return completed;
+  const { finalized, artifacts, module, finalization } = completed;
+  if (finalized.success) issueNativeNumberUndefinedOptimizationInput(prepared, module, artifacts);
   if (!finalized.success) return { kind: "output-failed", errors: finalized.errors, artifacts };
   return {
     kind: "artifacts",
@@ -1252,315 +1189,7 @@ export function runPreparedIrPipelinePresentation(input: PipelineInput): Prepare
     emission: prepared.emission,
     startup: prepared.startup,
     artifacts,
-    ...(finalization ? { finalization: finalization.receipt! } : {}),
-  };
-}
-
-/** Preserve produced artifact fields without inventing legacy route telemetry. */
-function preparedPipelineArtifacts(
-  result: CompileResult,
-): Extract<PreparedIrPipelinePresentationResult, { kind: "artifacts" }>["artifacts"] {
-  return {
-    binary: result.binary,
-    wat: result.wat,
-    dts: result.dts,
-    importsHelper: result.importsHelper,
-    success: result.success,
-    errors: result.errors,
-    stringPool: result.stringPool,
-    sourceMap: result.sourceMap,
-    imports: result.imports,
-    runtimeRecGroupFingerprint: result.runtimeRecGroupFingerprint,
-    targetProfile: result.targetProfile,
-    hostImportInventory: result.hostImportInventory,
-    hostImportSummary: result.hostImportSummary,
-    capabilityRequirements: result.capabilityRequirements,
-    capabilityProviderDiagnostics: result.capabilityProviderDiagnostics,
-    cHeader: result.cHeader,
-    wit: result.wit,
-    hasMain: result.hasMain,
-    hasTopLevelStatements: result.hasTopLevelStatements,
-    exportSignatures: result.exportSignatures,
-    exportBoundaryPolicies: result.exportBoundaryPolicies,
-    adapterManifest: result.adapterManifest,
-    explanation: result.explanation,
-  };
-}
-
-/** Private holder; only genuine mixed presentation creates a finalization token. */
-interface PreparedMixedFinalization {
-  readonly token: PreparedPresentationFinalization;
-  receipt?: PreparedPresentationFinalizationReceipt;
-}
-
-/** Only the private prepared entry supplies a genuine presentation here. */
-interface PreparedWitFinalization {
-  readonly presentation: Extract<IrProgramPresentationResult, { kind: "prepared-presentation" }>;
-  text?: string;
-  gaps?: readonly IrProgramPresentationGap[];
-}
-
-/** Shared output contract; generation and its diagnostics finish before entry. */
-function finalizePipelineModule(
-  input: PipelineOutputContext,
-  mod: WasmModule,
-  telemetry: Partial<FailureTelemetry> | undefined,
-  output: {
-    targetProfile: ReturnType<typeof resolveCompileTargetProfile>;
-    emitWatOutput: boolean;
-    emitSourceMap: boolean;
-  },
-  finalization?: PreparedMixedFinalization,
-  wit?: PreparedWitFinalization,
-): CompileResult {
-  const { errors, options, entryAst, diagnosticAnchor } = input;
-  const { targetProfile, emitWatOutput, emitSourceMap } = output;
-  const targetEnvironment = targetProfile.environment;
-
-  // Step 2b: Apply C ABI transformations if requested (linear target only).
-  let cHeader: string | undefined;
-  if (options.abi === "c" && options.target === "linear") {
-    const cabiResult = applyCabiTransform(mod, options.moduleName ?? "module", entryAst);
-    cHeader = cabiResult.cHeader;
-  }
-
-  // Step 2c: Widen non-defaultable ref types to ref_null in locals, params, and
-  // results. Avoids "uninitialized non-defaultable local" and struct.get/set
-  // type errors.
-  if (options.standaloneAllocationOwnerExport !== undefined) {
-    try {
-      stampAllocationOwners(mod, options.standaloneAllocationOwnerExport);
-    } catch (error) {
-      pushSourceAnchoredDiagnostic(
-        errors,
-        diagnosticAnchor,
-        `Allocation provenance: ${error instanceof Error ? error.message : String(error)}`,
-        "error",
-      );
-      return failResult(errors, telemetry);
-    }
-  }
-  widenNonDefaultableTypes(mod);
-  if (finalization) finalization.receipt = completePreparedPresentationFinalization(finalization.token);
-
-  // #4401 — An explicitly selected native-first profile is a
-  // semantic-provider contract, not a best-effort hint. Never publish a module
-  // that silently recovered an implicit JS semantic fallback (or an
-  // unclassified import) after a native lowering declined. Value adapters,
-  // lifecycle hooks, explicit platform capabilities, and named accelerators
-  // remain valid imports; only the two policy classes that cannot justify
-  // publication are rejected here.
-  //
-  // Run this before binary/WAT/helper emission so an unsupported construct
-  // fails as a compile diagnostic rather than becoming a valid-looking module
-  // that depends on the compatibility runtime. Target-derived standalone/WASI
-  // profiles keep their established fallback/refusal behavior: standalone's
-  // warning-first compatibility lanes (#2961/#2980/#3164) are not an explicit
-  // native-first opt-in, while WASI's strict import gate remains authoritative.
-  const imports = buildImportManifest(mod);
-  const hostImportInventory = buildHostImportInventory(mod, imports, input.codegenOptions.link, targetEnvironment);
-  if (options.semanticProviders === "native-first") {
-    const forbidden = hostImportInventory.filter(
-      (entry) => entry.classification === "legacy-semantic" || entry.classification === "unknown",
-    );
-    if (forbidden.length > 0) {
-      const details = forbidden
-        .map((entry) => `${entry.module}::${entry.name} (${entry.classification}, owner #${entry.ownerIssue})`)
-        .join(", ");
-      pushSourceAnchoredDiagnostic(
-        errors,
-        diagnosticAnchor,
-        `Native-first semantic-provider policy rejected implicit or unclassified host imports: ${details}. ` +
-          `Use the host-assisted compatibility profile for this source until its native provider is implemented.`,
-        "error",
-      );
-      return failResult(errors, telemetry);
-    }
-  }
-
-  // Requested prepared WIT must be complete before any final artifacts are emitted.
-  let preparedCapabilities: ReturnType<typeof buildCapabilityRequirements> | undefined;
-  if (wit) {
-    const view = preparedPresentationWitView(wit.presentation, mod);
-    preparedCapabilities = buildCapabilityRequirements(mod, hostImportInventory, targetEnvironment);
-    const rendered = renderPreparedWit(view, {
-      ...(typeof options.wit === "object" ? options.wit : {}),
-      imports: mod.imports,
-      types: mod.types,
-      capabilities: preparedCapabilities,
-    });
-    if (rendered.kind === "unsupported") {
-      wit.gaps = rendered.gaps;
-      return failResult(errors, telemetry);
-    }
-    wit.text = rendered.text;
-  }
-
-  // Step 3: Emit binary (with source map collection if enabled).
-  let binary: Uint8Array;
-  let sourceMapJson: string | undefined;
-  try {
-    if (emitSourceMap) {
-      const emitResult = profilePhase("emit-binary-source-map", () => emitBinaryWithSourceMap(mod));
-      const sourceMap = generateSourceMap(emitResult.sourceMapEntries, input.sourcesContent);
-      sourceMapJson = JSON.stringify(sourceMap);
-      // Append sourceMappingURL custom section to the binary.
-      const sourceMapUrl = options.sourceMapUrl ?? "module.wasm.map";
-      const urlSection = new WasmEncoder();
-      emitSourceMappingURLSection(urlSection, sourceMapUrl);
-      const urlSectionBytes = urlSection.finish();
-      const combined = new Uint8Array(emitResult.binary.length + urlSectionBytes.length);
-      combined.set(emitResult.binary);
-      combined.set(urlSectionBytes, emitResult.binary.length);
-      binary = combined;
-    } else {
-      binary = profilePhase("emit-binary", () => emitBinary(mod));
-    }
-  } catch (e) {
-    if (isWasmException(e)) throw e;
-    pushSourceAnchoredDiagnostic(
-      errors,
-      diagnosticAnchor,
-      `Binary emit error: ${e instanceof Error ? (e.stack ?? e.message) : String(e)}`,
-      "error",
-    );
-    return failResult(errors, telemetry);
-  }
-
-  // #2527 — retain a link-time proof for the frozen GC type ABI. This check
-  // runs on the raw bytes produced by the compiler, before optional Binaryen
-  // optimization, so a bad emitter or an accidental DCE/layout change cannot
-  // be mistaken for a link-compatible artifact.
-  let runtimeRecGroupFingerprint: RuntimeGroupFingerprint | undefined;
-  try {
-    runtimeRecGroupFingerprint = getRuntimeRecGroupFingerprint(mod);
-    const drift = runtimeRecGroupDrift(binary, runtimeRecGroupFingerprint);
-    if (drift) {
-      pushSourceAnchoredDiagnostic(
-        errors,
-        diagnosticAnchor,
-        `emitted WebAssembly does not contain the canonical runtime rec-group — ${drift}`,
-        "error",
-      );
-      return failResult(errors, telemetry);
-    }
-  } catch (e) {
-    pushSourceAnchoredDiagnostic(
-      errors,
-      diagnosticAnchor,
-      `runtime rec-group ABI verification failed: ${e instanceof Error ? e.message : String(e)}`,
-      "error",
-    );
-    return failResult(errors, telemetry);
-  }
-
-  // Step 3b: Optimize — applied by the async entry adapters via applyOptimize,
-  // not here. This synchronous core ignores options.optimize.
-
-  // Step 4: Emit WAT (optional, non-fatal on failure).
-  let wat = "";
-  if (emitWatOutput) {
-    try {
-      wat = profilePhase("emit-wat", () =>
-        emitWat(
-          mod,
-          options.emitWatOnlyFunctions ? { onlyFunctions: new Set(options.emitWatOnlyFunctions) } : undefined,
-        ),
-      );
-    } catch (e) {
-      pushSourceAnchoredDiagnostic(
-        errors,
-        diagnosticAnchor,
-        `WAT emit warning: ${e instanceof Error ? e.message : String(e)}`,
-        "warning",
-      );
-    }
-  }
-
-  // Step 5: Generate .d.ts.
-  const dts = profilePhase("emit-dts", () => generateDts(entryAst, mod));
-
-  const hostImportSummary = summarizeHostImportInventory(hostImportInventory);
-  const capabilityRequirements =
-    preparedCapabilities ?? buildCapabilityRequirements(mod, hostImportInventory, targetEnvironment);
-  const capabilityProviderDiagnostics = validatePlatformCapabilityRequirements(
-    capabilityRequirements,
-    targetEnvironment,
-  );
-  const exportBoundaryPolicies = buildExportBoundaryPolicies(mod.exportSignatures, targetProfile);
-  // Step 6: Generate WIT from the same frozen capability requirements used by
-  // explain output and adapter validation, never from a parallel authority map.
-  let witOutput: string | undefined;
-  if (wit) {
-    if (wit.text === undefined)
-      throw new PreparedIrProgramInvariantError(
-        "invalid-transaction-capability",
-        "prepared WIT lacks preflighted text",
-      );
-    witOutput = wit.text;
-  } else if (options.wit) {
-    const witOpts = typeof options.wit === "object" ? options.wit : undefined;
-    witOutput = generateWit(entryAst, {
-      ...witOpts,
-      imports: mod.imports,
-      types: mod.types,
-      capabilities: capabilityRequirements,
-    });
-  }
-  const adapterManifest = createJavaScriptAdapterManifest({
-    targetProfile,
-    imports,
-    stringPool: mod.stringPool,
-    capabilities: capabilityRequirements,
-    exportSignatures: mod.exportSignatures,
-    exportBoundaries: exportBoundaryPolicies,
-  });
-  // Step 7: Generate the helper from the same frozen adapter plan returned to
-  // API callers. The serialized helper therefore cannot silently recover the
-  // low-level buildImports compatibility defaults.
-  const importsHelper = generateImportsHelper(adapterManifest);
-
-  // Step 8 (#4420, #6776): engine validation, ON unless `validate: false`.
-  // Wired HERE, at the one exit every driver funnels through (compileSourceSync
-  // / compileSource / compileMultiSource / compileFilesSource all return
-  // runPipeline's result), so no caller can be validated while another is not.
-  // Runs BEFORE the async wasm-opt pass, which validates its own output
-  // (#1941), so this gate answers for what CODEGEN produced. The binary is
-  // still returned on failure — a caller that just learned its module is
-  // invalid needs the bytes to dump or diff.
-  const emittedBinaryAccepted = gateEmittedModule(binary, options, errors, diagnosticAnchor);
-
-  return {
-    binary,
-    wat,
-    dts,
-    importsHelper,
-    success: emittedBinaryAccepted,
-    errors,
-    stringPool: mod.stringPool,
-    sourceMap: sourceMapJson,
-    imports,
-    runtimeRecGroupFingerprint,
-    targetProfile,
-    hostImportInventory,
-    hostImportSummary,
-    capabilityRequirements,
-    capabilityProviderDiagnostics,
-    cHeader,
-    wit: witOutput,
-    hasMain: mod.exports.some((e) => e.name === "main" && e.desc.kind === "func"),
-    hasTopLevelStatements: input.preparedStartup?.hasTopLevelStatements ?? mod.hasTopLevelStatements === true,
-    exportSignatures: mod.exportSignatures,
-    exportBoundaryPolicies,
-    adapterManifest,
-    explanation: buildCompileExplanation({
-      target: targetProfile,
-      hostImports: hostImportSummary,
-      capabilities: capabilityRequirements,
-      capabilityDiagnostics: capabilityProviderDiagnostics,
-      exportBoundaries: exportBoundaryPolicies,
-    }),
-    ...telemetry,
+    ...(finalization ? { finalization } : {}),
   };
 }
 
@@ -1641,6 +1270,8 @@ export async function compileSource(
   // optimizes.
   const result = compileSourceSync(source, withDefaultIrCompileRoute(options, "compile"), languageService);
 
+  const nativeOptimized = await applyIssuedNativeNumberUndefinedOptimization(result, options);
+  if (nativeOptimized) return nativeOptimized;
   if (options.optimize && result.success) {
     const level = typeof options.optimize === "number" ? options.optimize : 3;
     const optResult = await optimizeBinaryAsync(result.binary, {
@@ -2060,7 +1691,17 @@ export async function compileMultiSource(
   };
   const sourcesContent = new Map<string, string>();
   for (const [name, content] of Object.entries(files)) {
-    sourcesContent.set(name, content);
+    const key = isNativeIrCompileProfile(multiTargetProfile) ? normalizeMultiFileName(name) : name;
+    if (sourcesContent.has(key)) {
+      pushSourceAnchoredDiagnostic(
+        errors,
+        multiAst.entryFile,
+        "Prepared IR: multiple source paths share one canonical source identity",
+        "error",
+      );
+      return failResult(errors);
+    }
+    sourcesContent.set(key, content);
   }
   // #2771 — detect WASI fd-IO surfaces across EVERY bundled file (entry + its
   // relative `./*.ts` deps), not just the entry. The multi path resolves cross-

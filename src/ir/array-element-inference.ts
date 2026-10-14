@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
+import { IrUnsupportedError } from "./outcomes.js";
 import type { TypeFact, TypeOracle } from "../checker/oracle.js";
 import { forEachChild, ts } from "../ts-api.js";
 import type { ValType } from "./types.js";
@@ -337,6 +338,43 @@ export function inferEmptyArrayElementTypes(
   }
 
   return new EmptyArrayElementInference(aliases, results, emptyLiterals);
+}
+
+/** Original implicit-constructor initializers with a proved closed no-array domain. */
+export function inferClassInitializerArrayTypes(
+  declaration: ts.ClassDeclaration | ts.ClassExpression,
+  expressions: readonly ts.Expression[],
+): EmptyArrayElementInference {
+  const refuse = (detail: string): never => {
+    throw new IrUnsupportedError("array-representation-unsupported", "build", `class initializer analysis: ${detail}`);
+  };
+  const fields = declaration.members
+    .filter(ts.isPropertyDeclaration)
+    .filter((field) => !ts.getModifiers(field)?.some((m) => m.kind === ts.SyntaxKind.StaticKeyword));
+  const expected = fields.flatMap((field) => (field.initializer ? [field.initializer] : []));
+  if (
+    expected.length !== expressions.length ||
+    expected.some((node, index) => node !== expressions[index]) ||
+    fields.some((field) => field.parent !== declaration)
+  )
+    refuse("foreign, omitted or reordered original initializer");
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isArrayLiteralExpression(node) ||
+      ts.isArrayTypeNode(node) ||
+      ts.isTupleTypeNode(node) ||
+      (ts.isTypeReferenceNode(node) &&
+        ts.isIdentifier(node.typeName) &&
+        (node.typeName.text === "Array" || node.typeName.text === "ReadonlyArray"))
+    )
+      refuse("array-capable fields/initializers require their complete analysis owner");
+    forEachChild(node, visit);
+  };
+  for (const field of fields) {
+    if (field.type) visit(field.type);
+    if (field.initializer) visit(field.initializer);
+  }
+  return new EmptyArrayElementInference(new AliasGraph(), new Map(), []);
 }
 
 export function emptyArrayInferenceDiagnostic(result: EmptyArrayInferenceResult, funcName: string): string {

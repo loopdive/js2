@@ -1,3 +1,5 @@
+import { appendNativeNumberUndefinedAbi } from "./program/native-number-undefined-abi.js";
+import { collectNativeNumberUndefinedRequirements } from "./program/native-number-undefined-requirements.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import { ownTypedIrProgramInput, ownTypedIrProgramOptions } from "./program/input.js";
@@ -9,11 +11,20 @@ import { assertPreparedIrProgramPopulation } from "./program-population.js";
 import { prepareIrProgramRuntimeCallables } from "./program-runtime-abi.js";
 import { prepareWholeProgramAsyncFunctions, prepareWholeProgramRuntimeManifest } from "./runtime-program-producers.js";
 import { irProgramRuntimeDemands } from "./program-runtime-demands.js";
-import { assertPreparedIrProgram } from "./program-validation.js";
-import { assertIrRuntimeSupport, irNumberFormatDemandOwners } from "./program/runtime-support.js";
+import { assertPreparedIrProgram, assertPreparedIrProgramLinearAllocationEvidence } from "./program-validation.js";
+import { assertNativeIrPolicy, isLegacyHostIrPolicy } from "./runtime/target-admission.js";
+import { prepareLinearAllocationFacts } from "./analysis/linear-memory-plan.js";
+import { preparedLinearAllocationOutcome } from "./program/linear-allocation-outcome.js";
+import {
+  assertIrRuntimeSupport,
+  irNumberFormatDemandOwners,
+  irRuntimeSupportFunctions,
+} from "./program/runtime-support.js";
 import { analyzeIrRuntimeSupportAllocations } from "./program-allocations.js";
 import { freezePreparedIrValue, freezePreparedIrRuntimeValue, preparedIrReadonlyMap } from "./program/data.js";
 import { PreparedIrProgramInvariantError } from "./program/errors.js";
+import { nativeVectorStoreFailure } from "./program/native-vector-store-proof.js";
+import { nativeModuleGlobalEvidence } from "./program/native-module-vector-context.js";
 import type {
   IrProgramPreparationResult,
   PreparedIrProgram,
@@ -55,6 +66,15 @@ export function prepareTypedIrProgram(
   const resolved = ownTypedIrProgramOptions(options);
   const { input: source, allocations } = ownTypedIrProgramInput(input);
   assertPreparedIrProgramPopulation(source);
+  // Restored canonical allocation types, not a caller's source-target label,
+  // distinguish the new layout-free native vector capability from legacy DATA.
+  const nativeVectors = source.allocations.entries.some(
+    (entry) => entry.state === "live" && entry.site.type.kind === "vec" && !entry.site.type.layout,
+  );
+  if (nativeVectors || ![resolved.policy, ...resolved.runtimePolicies].every(isLegacyHostIrPolicy)) {
+    assertNativeIrPolicy(resolved.policy);
+    for (const policy of resolved.runtimePolicies) assertNativeIrPolicy(policy);
+  }
   assertIrRuntimeSupport(source, source.runtimeSupport);
   if (
     source.runtimeSupport !== undefined &&
@@ -104,21 +124,81 @@ export function prepareTypedIrProgram(
   analyzeIrRuntimeSupportAllocations(finalSource.runtimeSupport, allocations, resolved.controls);
   const finalRuntime = prepareIrProgramRuntimeCallables(finalSource);
   if (finalRuntime.kind !== "prepared") return finalRuntime;
-  const entries = prepareIrProgramAbiEntries(finalSource, finalRuntime.declarations);
+  const numberUndefined = nativeVectors
+    ? collectNativeNumberUndefinedRequirements(finalSource.ir, allocations.snapshot())
+    : undefined;
+  const entries = appendNativeNumberUndefinedAbi(
+    prepareIrProgramAbiEntries(finalSource, finalRuntime.declarations),
+    source.inventory,
+    numberUndefined,
+  );
+  const supportBodies = irRuntimeSupportFunctions(finalSource.runtimeSupport);
+  const completeFinalModule =
+    supportBodies.length === 0
+      ? finalSource.ir
+      : { ...finalSource.ir, functions: [...finalSource.ir.functions, ...supportBodies] };
+  if (nativeVectors || ![resolved.policy, ...resolved.runtimePolicies].every(isLegacyHostIrPolicy)) {
+    const failure = nativeVectorStoreFailure(completeFinalModule, () =>
+      nativeModuleGlobalEvidence({ abi: { entries }, startup: source.startup }),
+    );
+    if (failure) {
+      const owner = source.inventory.allUnits.find((unit) => unit.id === failure.unitId);
+      const record = source.inventory.sources.find((item) => item.id === owner?.sourceId);
+      if (!owner || !record)
+        throw new PreparedIrProgramInvariantError("invalid-prepared-data", "store proof lacks its actual source owner");
+      return {
+        kind: "unsupported",
+        code: "element-store-unsupported",
+        stage: "resolve",
+        detail: failure.detail,
+        unitId: owner.id,
+        sourceFile: record.originalFileName,
+        location: {
+          sourceId: owner.sourceId,
+          line: owner.line,
+          column: owner.column,
+          declarationStart: owner.declarationStart,
+          declarationEnd: owner.declarationEnd,
+        },
+      };
+    }
+  }
+  const linearAllocationFacts = resolved.runtimePolicies.some(
+    (policy) => policy.backend === "linear" && policy.target !== "host",
+  )
+    ? {
+        schema: "linear-allocation-facts-v1" as const,
+        facts: prepareLinearAllocationFacts(completeFinalModule, allocations, nativeVectors),
+      }
+    : undefined;
   // Freeze semantic data BEFORE runtime attachments authenticate exact identities.
   // Attached objects must never be cloned after authentication.
-  const semantic = freezePreparedIrValue({
+  const frozenSemantic = freezePreparedIrValue({
     inventory: source.inventory,
     ...optimized,
     abi: { entries },
     startup: source.startup,
     ...(source.sourceMap === undefined ? {} : { sourceMap: source.sourceMap }),
     ...(finalSource.runtimeSupport === undefined ? {} : { runtimeSupport: finalSource.runtimeSupport }),
-    allocations: allocations.snapshot(),
+    allocations: linearAllocationFacts?.facts.registry ?? allocations.snapshot(),
+    ...(linearAllocationFacts === undefined ? {} : { linearAllocationFacts }),
   }) as Pick<
     PreparedIrProgram,
-    "inventory" | "ir" | "derivedUnits" | "abi" | "startup" | "allocations" | "runtimeSupport" | "sourceMap"
+    | "inventory"
+    | "ir"
+    | "derivedUnits"
+    | "abi"
+    | "startup"
+    | "allocations"
+    | "runtimeSupport"
+    | "sourceMap"
+    | "linearAllocationFacts"
   >;
+  // Rejoin the completed frozen snapshot before runtime identity authentication.
+  const semantic = Object.freeze({
+    ...frozenSemantic,
+    allocations: frozenSemantic.linearAllocationFacts?.facts.registry ?? frozenSemantic.allocations,
+  });
   const runtime: PreparedIrProgramRuntimeProjection[] = [];
   const demands = new Map(semantic.ir.functions.map((fn) => [fn.unitId, irProgramRuntimeDemands(fn)]));
   for (const policy of resolved.runtimePolicies) {
@@ -140,6 +220,16 @@ export function prepareTypedIrProgram(
     reconciliation: "complete",
     sealed: true,
   });
-  assertPreparedIrProgram(program, { verifyDominanceNaive: resolved.controls.verifyDominanceNaive });
+  const verification = { verifyDominanceNaive: resolved.controls.verifyDominanceNaive };
+  assertPreparedIrProgram(program, verification);
+  // Every exact native Linear view must meet the current complete-context contract.
+  for (const projection of program.runtime) {
+    if (projection.backend !== "linear" || projection.target === "host") continue;
+    try {
+      assertPreparedIrProgramLinearAllocationEvidence(program, projection, verification);
+    } catch (error) {
+      return preparedLinearAllocationOutcome(error);
+    }
+  }
   return { kind: "prepared", program };
 }

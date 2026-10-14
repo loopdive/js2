@@ -77,6 +77,8 @@ export function constantFold(fn: IrFunction, registry?: AllocSiteRegistry): IrFu
     instr: IrInstr,
     scope: Map<IrValueId, IrConst>,
     stringScope: Map<IrValueId, IrInstrStringConst>,
+    comparisons: Map<IrValueId, IrInstrBinary>,
+    i32Values: Set<IrValueId>,
   ): IrInstr => {
     // 0. A pre-existing `const` is visible to later ops in this scope. Top-level
     // consts are already globally pre-seeded; this records buffer-interior ones
@@ -89,7 +91,7 @@ export function constantFold(fn: IrFunction, registry?: AllocSiteRegistry): IrFu
       stringScope.set(instr.result, instr);
     }
     // 1. Fold this instr's own operands (binary/unary → const).
-    let rewritten = tryFoldInstr(instr, scope, stringScope);
+    let rewritten = tryFoldInstr(instr, scope, stringScope, comparisons, i32Values);
     if (rewritten !== instr) {
       changed = true;
       if (instr.alloc !== undefined && rewritten.alloc === undefined) {
@@ -102,9 +104,12 @@ export function constantFold(fn: IrFunction, registry?: AllocSiteRegistry): IrFu
         stringScope.set(rewritten.result, rewritten);
       }
     }
+    if (isBooleanComparison(rewritten) && rewritten.result !== null) comparisons.set(rewritten.result, rewritten);
     // 2. Recurse into nested buffers (loop/if/for-of/try) with a child scope.
-    rewritten = mapNestedBuffers(rewritten, (buffer) => foldBuffer(buffer, scope, stringScope));
+    rewritten = mapNestedBuffers(rewritten, (buffer) => foldBuffer(buffer, scope, stringScope, comparisons, i32Values));
     if (rewritten !== instr) changed = true;
+    if (rewritten.result !== null && rewritten.resultType?.kind === "val" && rewritten.resultType.val.kind === "i32")
+      i32Values.add(rewritten.result);
     return rewritten;
   };
 
@@ -115,13 +120,17 @@ export function constantFold(fn: IrFunction, registry?: AllocSiteRegistry): IrFu
     buffer: readonly IrInstr[],
     parent: Map<IrValueId, IrConst>,
     stringParent: Map<IrValueId, IrInstrStringConst>,
+    comparisonParent: Map<IrValueId, IrInstrBinary>,
+    i32Parent: Set<IrValueId>,
   ): readonly IrInstr[] => {
     const child = new Map(parent);
     const stringChild = new Map(stringParent);
+    const comparisons = new Map(comparisonParent);
+    const i32Values = new Set(i32Parent);
     let bufChanged = false;
     const out: IrInstr[] = [];
     for (const instr of buffer) {
-      const folded = foldInstr(instr, child, stringChild);
+      const folded = foldInstr(instr, child, stringChild, comparisons, i32Values);
       if (folded !== instr) bufChanged = true;
       out.push(folded);
     }
@@ -131,8 +140,19 @@ export function constantFold(fn: IrFunction, registry?: AllocSiteRegistry): IrFu
   const newBlocks: IrBlock[] = fn.blocks.map((block) => {
     const newInstrs: IrInstr[] = [];
     let blockChanged = false;
+    // Only prior definitions in this block dominate its linear instruction scope.
+    const comparisons = new Map<IrValueId, IrInstrBinary>();
+    const i32Values = new Set(
+      fn.params
+        .filter((param) => param.type.kind === "val" && param.type.val.kind === "i32")
+        .map((param) => param.value),
+    );
+    block.blockArgs.forEach((value, index) => {
+      const type = block.blockArgTypes[index];
+      if (type?.kind === "val" && type.val.kind === "i32") i32Values.add(value);
+    });
     for (const instr of block.instrs) {
-      const rewritten = foldInstr(instr, constDefs, stringDefs);
+      const rewritten = foldInstr(instr, constDefs, stringDefs, comparisons, i32Values);
       if (rewritten !== instr) blockChanged = true;
       newInstrs.push(rewritten);
     }
@@ -168,8 +188,10 @@ function tryFoldInstr(
   instr: IrInstr,
   constDefs: ReadonlyMap<IrValueId, IrConst>,
   stringDefs: ReadonlyMap<IrValueId, IrInstrStringConst>,
+  comparisons: ReadonlyMap<IrValueId, IrInstrBinary>,
+  i32Values: ReadonlySet<IrValueId>,
 ): IrInstr {
-  if (instr.kind === "binary") return tryFoldBinary(instr, constDefs);
+  if (instr.kind === "binary") return tryFoldBinary(instr, constDefs, comparisons, i32Values);
   if (instr.kind === "unary") return tryFoldUnary(instr, constDefs);
   if (instr.kind === "string.concat") return tryFoldStringConcat(instr, stringDefs);
   // (#1392) `if` is value-producing but its arms are sequences of IR
@@ -182,7 +204,61 @@ function tryFoldInstr(
   return instr;
 }
 
-function tryFoldBinary(instr: IrInstrBinary, constDefs: ReadonlyMap<IrValueId, IrConst>): IrInstr {
+/** These Wasm comparisons produce exactly 0 or 1; arbitrary i32 values do not. */
+function isBooleanComparison(instr: IrInstr): instr is IrInstrBinary {
+  return (
+    instr.kind === "binary" &&
+    instr.resultType?.kind === "val" &&
+    instr.resultType.val.kind === "i32" &&
+    /^(?:i32\.(?:eq|ne|(?:lt|gt|le|ge)_[su])|f64\.(?:eq|ne|lt|gt|le|ge))$/.test(instr.op)
+  );
+}
+
+function tryFoldBooleanAnd(
+  instr: IrInstrBinary,
+  constDefs: ReadonlyMap<IrValueId, IrConst>,
+  comparisons: ReadonlyMap<IrValueId, IrInstrBinary>,
+  i32Values: ReadonlySet<IrValueId>,
+): IrInstr {
+  if (!i32Values.has(instr.lhs) || !i32Values.has(instr.rhs)) return instr;
+  if (instr.op !== "i32.and" || instr.resultType?.kind !== "val" || instr.resultType.val.kind !== "i32") return instr;
+  for (const [constant, other] of [
+    [instr.lhs, instr.rhs],
+    [instr.rhs, instr.lhs],
+  ] as const) {
+    const value = constDefs.get(constant);
+    const bits = value?.kind === "i32" ? value.value | 0 : value?.kind === "bool" ? Number(value.value) : undefined;
+    if (bits === 0)
+      return {
+        kind: "const",
+        value: { kind: "i32", value: 0 },
+        result: instr.result,
+        resultType: instr.resultType,
+        site: instr.site,
+      };
+    const comparison = bits === 1 ? comparisons.get(other) : undefined;
+    if (comparison)
+      return {
+        kind: "binary",
+        op: comparison.op,
+        lhs: comparison.lhs,
+        rhs: comparison.rhs,
+        result: instr.result,
+        resultType: instr.resultType,
+        site: instr.site,
+      };
+  }
+  return instr;
+}
+
+function tryFoldBinary(
+  instr: IrInstrBinary,
+  constDefs: ReadonlyMap<IrValueId, IrConst>,
+  comparisons: ReadonlyMap<IrValueId, IrInstrBinary>,
+  i32Values: ReadonlySet<IrValueId>,
+): IrInstr {
+  const boolean = tryFoldBooleanAnd(instr, constDefs, comparisons, i32Values);
+  if (boolean !== instr) return boolean;
   const l = constDefs.get(instr.lhs);
   const r = constDefs.get(instr.rhs);
   if (!l || !r) return instr;
@@ -368,6 +444,9 @@ function foldUnary(op: IrUnop, rand: IrConst): IrConst | null {
       if (rand.kind !== "f64" || !Number.isFinite(rand.value) || !Number.isInteger(rand.value)) return null;
       if (rand.value < -(2 ** 63) || rand.value >= 2 ** 63) return null;
       return { kind: "i64", value: BigInt(rand.value) };
+    case "f64.convert_i32_s":
+      if (rand.kind !== "i32") return null;
+      return { kind: "f64", value: rand.value | 0 };
     case "f64.convert_i64_s":
       if (rand.kind !== "i64") return null;
       return { kind: "f64", value: Number(rand.value) };

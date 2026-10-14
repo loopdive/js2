@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
+import { assertNativeNumberUndefinedGcAllocations } from "./native-number-undefined-allocation-validation.js";
 import { AllocSiteRegistry, ALLOC_NAMESPACES } from "../analysis/alloc-registry.js";
 import { analyzeOwnership } from "../analysis/ownership.js";
 import { analyzeEscape } from "../analysis/escape.js";
@@ -31,7 +32,8 @@ export function analyzeIrRuntimeSupportAllocations(
 
 /** Reconstruct the existing registry's read authority, then verify every final artifact. */
 export function assertPreparedIrProgramAllocations(
-  program: Pick<PreparedIrProgram, "allocations" | "ir" | "runtimeSupport">,
+  program: Pick<PreparedIrProgram, "allocations" | "ir" | "runtimeSupport"> &
+    Partial<Pick<PreparedIrProgram, "runtime">>,
 ): void {
   const snapshot = program.allocations;
   const invalid = (detail: string): never => {
@@ -108,6 +110,7 @@ export function assertPreparedIrProgramAllocations(
     analyze(fn);
     assertPreparedIrFunctionAllocationTypesAndStates(fn, registry);
   }
+  if (assertNativeNumberUndefinedGcAllocations(program)) return;
   const expected = new Map(registry.snapshot().metadata.map((row) => [row.id, new Map(row.entries)]));
   const actual = new Map(snapshot.metadata.map((row) => [row.id, new Map(row.entries)]));
   for (let index = 0; index < snapshot.size; index++) {

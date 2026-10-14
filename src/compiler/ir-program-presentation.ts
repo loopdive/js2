@@ -1,17 +1,35 @@
+import { completedNativeNumberUndefinedPresentation } from "./ir-native-number-undefined-presentation.js";
+import { createNativePreparedDtsView, renderNativePreparedDts, type NativePreparedDtsView } from "./native-ir-dts.js";
+import { completedNumericAppendPresentation } from "./native-numeric-append-presentation.js";
+import { completedErrorPresentation, type CompletedErrorPresentation } from "./ir-program-error-presentation.js";
+import { completedLinearMemorySupportKeys } from "./ir-program-memory-presentation.js";
+import { joinPreparedStartup, type IrProgramPresentationStartup } from "./ir-program-startup-presentation.js";
+export type { IrProgramPresentationStartup } from "./ir-program-startup-presentation.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-import { absoluteFuncIndex } from "../emit/resolve-layout.js";
+import { resolveCompileTargetProfile } from "../target-profile.js";
+import { isNativeIrCompileProfile } from "../ir/runtime/target-admission.js";
 import { ts } from "../ts-api.js";
-import type { PipelineOutputContext } from "../compiler.js";
+import { nativeSynchronousVectorParameter, nativeSynchronousVectorResult } from "../ir/program-sync-vectors.js";
+import {
+  booleanExportSignature,
+  captureVectorGlobal,
+  checkNativeGlobalPresentation,
+  type GlobalCapture,
+} from "./native-vector-global-presentation.js";
+import { IrUnsupportedError } from "../ir/outcomes.js";
+import type { PipelineOutputContext } from "./pipeline-output-context.js";
 import type { CompileResult } from "../index.js";
 import type { IrWholeProgramPreparationInput } from "../ir/program-preparation.js";
 import {
   freezePreparedIrValue,
+  PreparedIrProgramInvariantError,
   type PreparedIrBackendOptions,
   type PreparedIrProgram,
   type EmittedPreparedIrProgram,
 } from "../ir/program.js";
 import {
   emittedPhysicalSetupPlan,
+  emittedNativeVectorLayouts,
   emittedProgramBindingIndex,
   emittedStartupAdapterIndex,
   emittedSupportFunctionReceipts,
@@ -44,21 +62,6 @@ export interface IrProgramPresentationGap {
   readonly unitId?: IrUnitId;
   readonly bindingId?: IrBindingId;
 }
-export type IrProgramPresentationStartup =
-  | { readonly kind: "none"; readonly hasTopLevelStatements: false }
-  | {
-      readonly kind: "wasm-start";
-      readonly hasTopLevelStatements: true;
-      readonly adapterIndex: number;
-      readonly unitIds: readonly IrUnitId[];
-    }
-  | {
-      readonly kind: "deferred-export";
-      readonly hasTopLevelStatements: true;
-      readonly adapterIndex: number;
-      readonly unitIds: readonly IrUnitId[];
-      readonly exportName: "__module_init";
-    };
 export type IrProgramPresentationResult =
   | {
       readonly kind: "prepared-presentation";
@@ -113,7 +116,7 @@ export type PreparedIrPipelinePresentationResult =
     }
   | Exclude<IrProgramPresentationResult, { kind: "prepared-presentation" }>;
 
-type PresentationSlot = "number" | "boolean" | "promise";
+type PresentationSlot = "number" | "boolean" | "promise" | Extract<IrType, { kind: "vec" }>;
 interface DeclarationCapture {
   readonly sourceFile: string;
   readonly start: number;
@@ -131,6 +134,7 @@ function booleanCarrier(type: ValType): boolean {
   return type.kind === "i32" && type.boolean === true && type.symbol === undefined && type.int32 === undefined;
 }
 function sourceSlotMatches(slot: PresentationSlot, type: IrType | undefined): boolean {
+  if (typeof slot !== "string") return preparedIrDataMismatch(slot, type) === undefined;
   if (slot === "promise")
     return type?.kind === "val" && preparedIrDataMismatch(type.val, { kind: "externref" }) === undefined;
   if (!type || type.kind !== "val") return false;
@@ -138,6 +142,7 @@ function sourceSlotMatches(slot: PresentationSlot, type: IrType | undefined): bo
   return numeric(type.val) && (type.val.kind !== "i32" || type.val.boolean !== true);
 }
 function physicalSlotMatches(slot: PresentationSlot, physical: ValType, logical: IrType | undefined): boolean {
+  if (typeof slot !== "string") return false; // Public vector carriers have no admitted boundary contract.
   return (
     sourceSlotMatches(slot, logical) &&
     (slot === "promise"
@@ -146,55 +151,61 @@ function physicalSlotMatches(slot: PresentationSlot, physical: ValType, logical:
     (slot !== "boolean" || booleanCarrier(physical))
   );
 }
-function booleanExportSignature(declaration: DeclarationCapture): ExportSignature | undefined {
-  if (![...declaration.params, ...declaration.results].some((slot) => slot === "boolean" || slot === "promise"))
-    return undefined;
-  const signature: ExportSignature = {
-    params: declaration.params.map((slot) => (slot === "boolean" ? "boolean" : "other")),
-    result:
-      declaration.results[0] === "promise" ? "promise" : declaration.results[0] === "boolean" ? "boolean" : "other",
-  };
-  Object.freeze(signature.params);
-  return Object.freeze(signature);
+
+function unprovedReference(type: ValType, vectorRefs?: ReadonlySet<number>): boolean {
+  return type.kind === "ref" && !vectorRefs?.has(type.typeIdx);
 }
-function typeNeedsWidening(type: TypeDef): boolean {
+function typeNeedsWidening(
+  type: TypeDef,
+  ownedRecords?: ReadonlySet<object>,
+  vectorRefs?: ReadonlySet<number>,
+): boolean {
+  if (ownedRecords?.has(type)) return false;
   switch (type.kind) {
     case "func":
-      return [...type.params, ...type.results].some((value) => value.kind === "ref");
+      return [...type.params, ...type.results].some((value) => unprovedReference(value, vectorRefs));
     case "struct":
-      return type.fields.some((field) => field.type.kind === "ref");
+      return type.fields.some((field) => unprovedReference(field.type, vectorRefs));
     case "array":
-      return type.element.kind === "ref";
+      return unprovedReference(type.element, vectorRefs);
     case "rec":
-      return type.types.some(typeNeedsWidening);
+      return type.types.some((member) => typeNeedsWidening(member, ownedRecords, vectorRefs));
     case "sub":
-      return typeNeedsWidening(type.type);
+      return typeNeedsWidening(type.type, ownedRecords, vectorRefs);
   }
 }
-function bodyNeedsWidening(body: readonly Instr[], visited = new Set<readonly Instr[]>()): boolean {
+function bodyNeedsWidening(
+  body: readonly Instr[],
+  vectorRefs?: ReadonlySet<number>,
+  visited = new Set<readonly Instr[]>(),
+): boolean {
   if (visited.has(body)) return false;
   visited.add(body);
   for (const instruction of body) {
-    if ("blockType" in instruction && instruction.blockType.kind === "val" && instruction.blockType.type.kind === "ref")
+    if (
+      "blockType" in instruction &&
+      instruction.blockType.kind === "val" &&
+      unprovedReference(instruction.blockType.type, vectorRefs)
+    )
       return true;
     switch (instruction.op) {
       case "block":
       case "loop":
       case "try_table":
-        if (bodyNeedsWidening(instruction.body, visited)) return true;
+        if (bodyNeedsWidening(instruction.body, vectorRefs, visited)) return true;
         break;
       case "if":
         if (
-          bodyNeedsWidening(instruction.then, visited) ||
-          (instruction.else && bodyNeedsWidening(instruction.else, visited))
+          bodyNeedsWidening(instruction.then, vectorRefs, visited) ||
+          (instruction.else && bodyNeedsWidening(instruction.else, vectorRefs, visited))
         )
           return true;
         break;
       case "try":
         if (
-          bodyNeedsWidening(instruction.body, visited) ||
-          instruction.catches.some((row) => bodyNeedsWidening(row.body, visited)) ||
-          (instruction.catchAll && bodyNeedsWidening(instruction.catchAll, visited))
+          bodyNeedsWidening(instruction.body, vectorRefs, visited) ||
+          instruction.catches.some((row) => bodyNeedsWidening(row.body, vectorRefs, visited)) ||
+          (instruction.catchAll && bodyNeedsWidening(instruction.catchAll, vectorRefs, visited))
         )
           return true;
         break;
@@ -205,6 +216,21 @@ function bodyNeedsWidening(body: readonly Instr[], visited = new Set<readonly In
 const unsupported = (gaps: readonly IrProgramPresentationGap[]): IrProgramPresentationResult =>
   Object.freeze({ kind: "presentation-unsupported", gaps: Object.freeze([...gaps]) });
 
+const issuedPreparedPipelinePresentations = new WeakSet<object>();
+/** Read-only identity assertion; only the productive constructor registers presentations. */
+export function assertPreparedPipelinePresentation(
+  presentation: unknown,
+): asserts presentation is Extract<IrProgramPresentationResult, { kind: "prepared-presentation" }> {
+  if (
+    typeof presentation !== "object" ||
+    presentation === null ||
+    !issuedPreparedPipelinePresentations.has(presentation)
+  )
+    throw new PreparedIrProgramInvariantError(
+      "invalid-transaction-capability",
+      "prepared pipeline presentation requires actual constructor identity",
+    );
+}
 /** One synchronous source-capture/driver transaction, never an emitted-packet input. */
 type GapRecorder = (
   field: string,
@@ -212,13 +238,7 @@ type GapRecorder = (
   detail: string,
   association?: Partial<IrProgramPresentationGap>,
 ) => void;
-interface GlobalCapture {
-  sourceFile: string;
-  start: number;
-  end: number;
-  name: string;
-  numeric: boolean;
-}
+
 interface PresentationCapture {
   input: IrWholeProgramPreparationInput;
   backend: PreparedIrBackendOptions;
@@ -262,15 +282,22 @@ function capturePresentation(request: IrProgramPresentationRequest, gap: GapReco
         sourceFile: source.fileName,
       });
   }
+  const profile = resolveCompileTargetProfile(options);
+  const native = isNativeIrCompileProfile(profile);
   if (
-    backend.target !== "host" ||
+    (backend.target !== "host" && !native) ||
     policy.target !== backend.target ||
     policy.backend !== backend.backend ||
+    (native && backend.target !== profile.target) ||
     (backend.backend !== "wasmgc" && backend.backend !== "linear")
   )
-    gap("backend", "option-association", "only matching wasmgc:host or linear:host projections are admitted");
+    gap(
+      "backend",
+      "option-association",
+      "only matching host or explicit native backend/environment projections are admitted",
+    );
   if (
-    (options.target === "linear" ? "linear" : "wasmgc") !== backend.backend ||
+    profile.backend !== backend.backend ||
     (options.moduleName ?? "module") !== backend.moduleName ||
     (options.sharedExceptionTag === true) !== backend.sharedExceptionTag ||
     (options.utf8Storage === true) !== backend.utf8Storage ||
@@ -281,7 +308,7 @@ function capturePresentation(request: IrProgramPresentationRequest, gap: GapReco
       "option-association",
       "resolved backend/module/storage/startup options disagree with presentation options",
     );
-  if (options.sourceMap || backend.sourceMap || options.abi === "c" || options.optimize)
+  if (options.sourceMap || backend.sourceMap || options.abi === "c" || (options.optimize && !native))
     gap(
       "options",
       "unproved-output-option",
@@ -296,7 +323,7 @@ function capturePresentation(request: IrProgramPresentationRequest, gap: GapReco
   )
     gap("codegenOptions.link", "option-association", "resolved link collection must agree with captured options");
   const declarations: DeclarationCapture[] = [];
-  const globals: { sourceFile: string; start: number; end: number; name: string; numeric: boolean }[] = [];
+  const globals: GlobalCapture[] = [];
   function classify(type: ts.Type): "number" | "boolean" | "void" | undefined {
     if ((type.flags & ts.TypeFlags.NumberLike) !== 0) return "number";
     if ((type.flags & ts.TypeFlags.BooleanLike) !== 0) return "boolean";
@@ -308,17 +335,18 @@ function capturePresentation(request: IrProgramPresentationRequest, gap: GapReco
       if (!ts.isVariableStatement(statement)) continue;
       for (const declaration of statement.declarationList.declarations) {
         if (ts.isIdentifier(declaration.name))
-          globals.push({
-            sourceFile: source.fileName,
-            start: declaration.getStart(source),
-            end: declaration.end,
-            name: declaration.name.text,
-            numeric: classify(input.checker.getTypeAtLocation(declaration)) === "number",
-          });
+          globals.push(
+            captureVectorGlobal(
+              input.checker,
+              declaration,
+              source,
+              native && input.linearVectorProjection === "native-f64",
+            ),
+          );
       }
     }
     for (const row of globals.filter((row) => row.sourceFile === source.fileName)) {
-      if (!row.numeric)
+      if (!row.numeric && !row.vector)
         gap("declaration", "non-numeric-boundary", "top-level global storage needs a numeric source classification", {
           sourceFile: source.fileName,
         });
@@ -326,6 +354,20 @@ function capturePresentation(request: IrProgramPresentationRequest, gap: GapReco
     const visit = (node: ts.Node): void => {
       if (ts.isFunctionDeclaration(node) && node.body) {
         const signature = input.checker.getSignatureFromDeclaration(node);
+        const synchronous =
+          !node.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) && !node.asteriskToken;
+        const nativeVectors = native && input.linearVectorProjection === "native-f64" && synchronous;
+        const vector = (parameter?: ts.ParameterDeclaration): Extract<IrType, { kind: "vec" }> | undefined => {
+          try {
+            return parameter
+              ? nativeSynchronousVectorParameter(input.checker, node, parameter, nativeVectors)
+              : nativeSynchronousVectorResult(input.checker, node, nativeVectors);
+          } catch (error) {
+            if (!(error instanceof IrUnsupportedError)) throw error;
+            gap("declaration", "non-numeric-boundary", error.message, { sourceFile: source.fileName });
+            return undefined;
+          }
+        };
         const params: PresentationSlot[] = [];
         let unsupportedParam = false;
         for (const param of node.parameters) {
@@ -335,21 +377,30 @@ function capturePresentation(request: IrProgramPresentationRequest, gap: GapReco
             (kind === "boolean" && !param.questionToken && !param.dotDotDotToken && !param.initializer)
           )
             params.push(kind);
-          else unsupportedParam = true;
+          else {
+            const logical = vector(param);
+            if (
+              logical &&
+              ts.isIdentifier(param.name) &&
+              !param.questionToken &&
+              !param.dotDotDotToken &&
+              !param.initializer
+            )
+              params.push(freezePreparedIrValue(logical) as typeof logical);
+            else unsupportedParam = true;
+          }
         }
         const returnType = signature && input.checker.getReturnTypeOfSignature(signature);
         const fulfillmentType = returnType && sourcePromiseFulfillment(input.checker, returnType);
         const fulfillment = fulfillmentType && classify(fulfillmentType);
         const result: PresentationSlot | "void" | undefined = fulfillment
           ? "promise"
-          : returnType && classify(returnType);
-        const synchronous =
-          !node.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) && !node.asteriskToken;
+          : ((returnType && classify(returnType)) ?? vector());
         if (!signature || unsupportedParam || !result || (!synchronous && (result !== "promise" || node.asteriskToken)))
           gap(
             "declaration",
             "non-numeric-boundary",
-            "complete synchronous numeric or Boolean function declarations are required",
+            "complete admitted scalar, native synchronous vector or Promise function declarations are required",
             { sourceFile: source.fileName },
           );
         else
@@ -366,7 +417,7 @@ function capturePresentation(request: IrProgramPresentationRequest, gap: GapReco
                     ),
                   }
                 : {}),
-              results: Object.freeze(result === "void" ? [] : [result]),
+              results: Object.freeze(result === "void" ? [] : [freezePreparedIrValue(result) as PresentationSlot]),
               synchronous,
               name: node.name?.text,
               exported: node.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword) === true,
@@ -412,6 +463,18 @@ function joinDeclarations(
   }
   return captures;
 }
+function resolvePresentationAlias(
+  entries: ReadonlyMap<IrBindingId, PreparedIrProgram["abi"]["entries"][number]>,
+  target: PreparedIrProgram["abi"]["entries"][number] | undefined,
+): PreparedIrProgram["abi"]["entries"][number] | undefined {
+  const seen = new Set<IrBindingId>();
+  while (target?.plan.slotPolicy === "alias") {
+    if (seen.has(target.plan.id)) return undefined;
+    seen.add(target.plan.id);
+    target = entries.get(target.plan.aliasOf);
+  }
+  return target;
+}
 function checkAbiExports(
   program: PreparedIrProgram,
   emission: EmittedPreparedIrProgram,
@@ -422,8 +485,11 @@ function checkAbiExports(
   mixed: boolean,
   asyncNames: Set<string>,
   witExports?: PreparedWitExport[],
+  errorBindingId?: IrBindingId,
+  numberUndefinedBindingId?: IrBindingId,
 ): Set<string> {
   const mod = emission.module;
+  const append = completedNumericAppendPresentation(program, emission, capture.backend);
   const { globals } = capture;
   const entries = new Map(program.abi.entries.map((entry) => [entry.plan.id, entry]));
   if (entries.size !== program.abi.entries.length)
@@ -432,8 +498,27 @@ function checkAbiExports(
   for (const entry of program.abi.entries) {
     const { plan, contract } = entry;
     if (contract.kind === "callable") {
+      const sourceIntent = resolvePresentationAlias(entries, entry)?.plan.intent;
+      const declaration =
+        sourceIntent?.kind === "callable" && sourceIntent.origin === "source" && sourceIntent.unitId
+          ? captures.get(sourceIntent.unitId)
+          : undefined;
+      // Public exposure is checked below through the authoritative export/alias binding join.
+      const nativeVectorCallable =
+        capture.backend.target !== "host" &&
+        capture.input.linearVectorProjection === "native-f64" &&
+        declaration?.synchronous === true &&
+        !contract.promise &&
+        [...declaration.params, ...declaration.results].some((slot) => typeof slot !== "string") &&
+        declaration.params.length === contract.params.length &&
+        declaration.results.length === contract.results.length &&
+        declaration.params.every((slot, index) => sourceSlotMatches(slot, contract.params[index])) &&
+        declaration.results.every((slot, index) => sourceSlotMatches(slot, contract.results[index]));
       if (
         !mixed &&
+        !nativeVectorCallable &&
+        plan.id !== errorBindingId &&
+        plan.id !== append?.bindingId &&
         (contract.promise ||
           [...contract.params, ...contract.results].some((type) => type.kind !== "val" || !numeric(type.val)))
       )
@@ -443,13 +528,7 @@ function checkAbiExports(
           "promise/reference callable contracts require an explicit boundary producer",
           { bindingId: plan.id },
         );
-      if (
-        plan.intent.kind === "callable" &&
-        plan.intent.origin === "source" &&
-        plan.intent.unitId &&
-        captures.has(plan.intent.unitId)
-      ) {
-        const declaration = captures.get(plan.intent.unitId)!;
+      if (declaration) {
         if (
           contract.params.length !== declaration.params.length ||
           contract.results.length !== declaration.results.length ||
@@ -458,12 +537,21 @@ function checkAbiExports(
           !promiseContractMatches(declaration, contract.promise)
         )
           gap("abi.callable", "signature-join", "source declaration and prepared callable slots disagree", {
-            unitId: plan.intent.unitId,
+            unitId: sourceIntent?.kind === "callable" ? sourceIntent.unitId : undefined,
             bindingId: plan.id,
           });
       }
     }
-    if (contract.kind === "global" && (contract.type.kind !== "val" || !numeric(contract.type.val)))
+    if (contract.kind === "global" && contract.type.kind === "vec") {
+      if (!checkNativeGlobalPresentation(program, emission, plan.id, contract.type, globals, capture.backend.backend))
+        gap("abi.global", "vector-global-join", "internal vector global must retain exact source and issued storage", {
+          bindingId: plan.id,
+        });
+    } else if (
+      contract.kind === "global" &&
+      plan.id !== numberUndefinedBindingId &&
+      (contract.type.kind !== "val" || !numeric(contract.type.val))
+    )
       gap("abi.global", "non-numeric-contract", "global resources require a primitive numeric contract", {
         bindingId: plan.id,
       });
@@ -471,16 +559,7 @@ function checkAbiExports(
     if (joinedExports.has(contract.externalName))
       gap("exports", "duplicate-export", "export contract names must be unique", { bindingId: plan.id });
     joinedExports.add(contract.externalName);
-    let target = entries.get(contract.targetId);
-    const seen = new Set<IrBindingId>();
-    while (target?.plan.slotPolicy === "alias") {
-      if (seen.has(target.plan.id)) {
-        target = undefined;
-        break;
-      }
-      seen.add(target.plan.id);
-      target = entries.get(target.plan.aliasOf);
-    }
+    const target = resolvePresentationAlias(entries, entries.get(contract.targetId));
     if (target?.contract.kind === "global") {
       const targetId = target.plan.id;
       const bindings = program.startup.flatMap((row) =>
@@ -611,8 +690,8 @@ function captureWitExport(
     !declaration.witParamNames ||
     declaration.witParamNames.length !== declaration.params.length ||
     declaration.witParamNames.some((name) => !name) ||
-    declaration.params.some((kind) => kind === "promise") ||
-    declaration.results.includes("promise")
+    declaration.params.some((kind) => typeof kind !== "string" || kind === "promise") ||
+    declaration.results.some((kind) => typeof kind !== "string" || kind === "promise")
   ) {
     gap(
       "wit.exports",
@@ -624,11 +703,11 @@ function captureWitExport(
   }
   const params: PreparedWitExport["params"][number][] = [];
   for (const [index, kind] of declaration.params.entries()) {
-    if (kind === "promise") return;
+    if (typeof kind !== "string" || kind === "promise") return;
     params.push(Object.freeze({ sourceName: declaration.witParamNames[index]!, kind }));
   }
   const result = declaration.results[0];
-  if (result === "promise") return;
+  if (typeof result === "object" || result === "promise") return;
   exports.push(Object.freeze({ externalName, params: Object.freeze(params), result: result ?? null, ...association }));
 }
 /** Numeric finalization admits only exact completed canonical remainder supports. */
@@ -636,9 +715,22 @@ function numberRemainderSupportMatches(
   program: PreparedIrProgram,
   emission: EmittedPreparedIrProgram,
   providers: readonly RuntimeProviderDefinition[],
+  backend: PreparedIrBackendOptions,
+  error: CompletedErrorPresentation | undefined,
 ): boolean {
   const physical = emittedPhysicalSetupPlan(emission);
-  const support = emittedSupportFunctionReceipts(emission);
+  const memoryKeys = completedLinearMemorySupportKeys(emission, backend);
+  const append = completedNumericAppendPresentation(program, emission, backend);
+  if (!memoryKeys || !error || !append) return false;
+  providers = providers.filter(
+    (row) =>
+      (!error.bindingId || row.feature !== "error.reference.construct") &&
+      (!append.bindingId || row.feature !== "js.vector.append.f64"),
+  );
+  const support = emittedSupportFunctionReceipts(emission).filter(
+    (row) =>
+      !memoryKeys.includes(row.key) && !error.supportKeys.includes(row.key) && !append.supportKeys.includes(row.key),
+  );
   if (
     !physical ||
     physical.numberRemainders.length !== providers.length ||
@@ -685,6 +777,8 @@ function checkResourceDemand(
   emission: EmittedPreparedIrProgram,
   backend: PreparedIrBackendOptions,
   gap: GapRecorder,
+  error: CompletedErrorPresentation | undefined,
+  vectorRefs: ReadonlySet<number>,
 ): void {
   const mod = emission.module;
   const runtime = program.runtime.filter((row) => row.backend === backend.backend && row.target === backend.target);
@@ -694,7 +788,7 @@ function checkResourceDemand(
     if (
       manifest.hostCapabilities.length ||
       manifest.hostCapabilityRecords.length ||
-      !numberRemainderSupportMatches(program, emission, manifest.providers) ||
+      !numberRemainderSupportMatches(program, emission, manifest.providers, backend, error) ||
       runtime[0]!.prepared.functions.some((fn) => fn.asyncPlan || fn.asyncRuntime)
     )
       gap("runtime", "runtime-demand", "host provider or async demand is outside this numeric presentation contract");
@@ -725,122 +819,20 @@ function checkResourceDemand(
       "numeric boundary absence must be preserved, not filled with all-other rows",
     );
   if (
-    mod.functions.some((fn) => fn.locals.some((local) => local.type.kind === "ref") || bodyNeedsWidening(fn.body)) ||
-    mod.types.some(typeNeedsWidening) ||
-    mod.globals.some((global) => global.type.kind === "ref")
+    mod.functions.some(
+      (fn) =>
+        !error?.ownedRecords.has(fn) &&
+        (fn.locals.some((local) => unprovedReference(local.type, vectorRefs)) ||
+          bodyNeedsWidening(fn.body, vectorRefs)),
+    ) ||
+    mod.types.some((type) => typeNeedsWidening(type, error?.ownedRecords, vectorRefs)) ||
+    mod.globals.some((global) => !error?.ownedRecords.has(global) && unprovedReference(global.type, vectorRefs))
   )
     gap(
       "physical",
       "widening-demand",
       "nondefaultable reference widening needs a separately authenticated physical post-state",
     );
-}
-function joinStartup(
-  program: PreparedIrProgram,
-  emission: EmittedPreparedIrProgram,
-  input: IrWholeProgramPreparationInput,
-  gap: GapRecorder,
-): IrProgramPresentationStartup {
-  const mod = emission.module;
-  const executable = program.startup.filter((row) => row.executable);
-  if (
-    program.startup.length !== program.inventory.sources.length ||
-    program.startup.some(
-      (row, index) =>
-        row.sourceId !== program.inventory.sources[index]?.id ||
-        row.gaps.length ||
-        row.invocation.target !== "host" ||
-        row.executable !== (row.evaluations.length > 0 || row.liveSeeds.length > 0),
-    )
-  )
-    gap(
-      "startup",
-      "startup-census",
-      "source order, executable evaluations and startup policy must be complete and consistent",
-    );
-  const adapterIndex = emittedStartupAdapterIndex(emission);
-  let startup: IrProgramPresentationStartup = Object.freeze({ kind: "none", hasTopLevelStatements: false });
-  if (executable.length === 0) {
-    if (
-      adapterIndex !== undefined ||
-      mod.startFuncIdx !== undefined ||
-      program.startup.some((row) => row.invocation.kind !== "none")
-    )
-      gap(
-        "startup",
-        "unexpected-startup",
-        "zero executable demand must have no authenticated startup adapter or Wasm start",
-      );
-  } else {
-    const unitIds = Object.freeze(executable.flatMap((row) => (row.unitId ? [row.unitId] : [])));
-    if (adapterIndex !== undefined) {
-      const adapter = mod.functions[adapterIndex - functionImportCount(mod)];
-      const signature = adapter && mod.types[adapter.typeIdx];
-      const slots = unitIds.map((unitId) => {
-        const matches = program.abi.entries.filter(
-          (entry) =>
-            entry.plan.intent.kind === "callable" &&
-            entry.plan.intent.unitId === unitId &&
-            entry.plan.slotPolicy === "required",
-        );
-        return matches.length === 1 ? emittedProgramBindingIndex(emission, matches[0]!.plan.id) : undefined;
-      });
-      if (
-        !signature ||
-        signature.kind !== "func" ||
-        signature.params.length ||
-        signature.results.length ||
-        !adapter ||
-        adapter.locals.length ||
-        adapter.body.length !== unitIds.length ||
-        adapter.body.some(
-          (instruction, index) =>
-            instruction.op !== "call" ||
-            slots[index]?.space !== "function" ||
-            absoluteFuncIndex(mod, instruction.funcIdx) !== slots[index]?.index,
-        )
-      )
-        gap(
-          "startup",
-          "startup-call-order",
-          "completed adapter must call each authenticated startup unit once in semantic order",
-        );
-    }
-    if (
-      unitIds.length !== executable.length ||
-      adapterIndex === undefined ||
-      !mod.functions[adapterIndex - functionImportCount(mod)]
-    )
-      gap("startup", "startup-adapter", "executable source units require a genuine completed physical startup adapter");
-    else if (
-      !input.deferTopLevelInit &&
-      executable.every((row) => row.invocation.kind === "wasm-start") &&
-      mod.startFuncIdx === adapterIndex
-    )
-      startup = Object.freeze({ kind: "wasm-start", hasTopLevelStatements: true, adapterIndex, unitIds });
-    else if (
-      input.deferTopLevelInit &&
-      executable.every((row) => row.invocation.kind === "deferred-export") &&
-      mod.startFuncIdx === undefined &&
-      mod.exports.filter(
-        (row) => row.name === "__module_init" && row.desc.kind === "func" && row.desc.index === adapterIndex,
-      ).length === 1
-    )
-      startup = Object.freeze({
-        kind: "deferred-export",
-        hasTopLevelStatements: true,
-        adapterIndex,
-        unitIds,
-        exportName: "__module_init",
-      });
-    else
-      gap(
-        "startup",
-        "startup-disposition",
-        "authenticated adapter and actual start/export disagree with captured invocation policy",
-      );
-  }
-  return startup;
 }
 /** One synchronous source-capture/driver transaction, never an emitted-packet input. */
 export function prepareIrProgramPresentation(request: IrProgramPresentationRequest): IrProgramPresentationResult {
@@ -858,11 +850,38 @@ export function prepareIrProgramPresentation(request: IrProgramPresentationReque
   const result = runIrProgramDriver(capture.input, capture.backend);
   if (result.kind !== "emitted") return result;
   const { program, emission } = result;
+  const numberUndefined = completedNativeNumberUndefinedPresentation(program, emission, capture.backend);
+  if (
+    capture.context.options.optimize ||
+    (numberUndefined && capture.context.options.optimize !== undefined && capture.context.options.optimize !== false)
+  ) {
+    const value = capture.context.options.optimize;
+    if (!numberUndefined || !(value === true || value === 1 || value === 2 || value === 3 || value === 4)) {
+      gap(
+        "options",
+        "unproved-output-option",
+        "source maps, C ABI and optimization require a separate complete presentation contract",
+      );
+      return unsupported(gaps);
+    }
+  }
   const mod = emission.module;
   emittedSupportFunctionReceipts(emission);
   const captures = joinDeclarations(program, capture, gap);
   const signatures: Record<string, ExportSignature> = Object.create(null);
   const mixed = [...captures.values()].some((row) => row.results.includes("promise"));
+  const error = mixed ? undefined : completedErrorPresentation(program, emission, capture.backend);
+  const vectorRefs = new Set(
+    capture.backend.backend === "wasmgc" &&
+      capture.backend.target !== "host" &&
+      capture.input.linearVectorProjection === "native-f64"
+      ? emittedNativeVectorLayouts(emission)
+          .filter((row) => row.elementValType.kind === "f64")
+          .flatMap((row) => [row.vecStructTypeIdx, row.arrayTypeIdx])
+      : [],
+  );
+  const detached = mixed || Boolean(error?.bindingId) || vectorRefs.size > 0;
+  for (const index of numberUndefined?.carrierTypeIndices ?? []) vectorRefs.add(index);
   const asyncNames = new Set<string>();
   const witExports: PreparedWitExport[] | undefined = capture.context.options.wit ? [] : undefined;
   const joinedExports = checkAbiExports(
@@ -875,6 +894,8 @@ export function prepareIrProgramPresentation(request: IrProgramPresentationReque
     mixed,
     asyncNames,
     witExports,
+    error?.bindingId,
+    numberUndefined?.bindingId,
   );
   if (witExports && (mixed || mod.imports.length)) {
     const promise = [...captures].find(([, declaration]) => declaration.results.includes("promise"));
@@ -889,8 +910,8 @@ export function prepareIrProgramPresentation(request: IrProgramPresentationReque
     );
   }
   if (mixed) checkMixedDemand(program, emission, capture.backend, captures, gap);
-  else checkResourceDemand(program, emission, capture.backend, gap);
-  const startup = joinStartup(program, emission, capture.input, gap);
+  else checkResourceDemand(program, emission, capture.backend, gap, error, vectorRefs);
+  const startup = joinPreparedStartup(program, emission, capture.input, gap);
   if (!mod.functions.length || !program.inventory.terminalUnits.length)
     gap("emission", "empty-population", "presentation requires genuine nonempty emitted and terminal populations");
   if (mixed)
@@ -906,7 +927,7 @@ export function prepareIrProgramPresentation(request: IrProgramPresentationReque
       (!joinedExports.has(row.name) &&
         !(
           row.desc.kind === "func" &&
-          startup.kind === "deferred-export" &&
+          (startup.kind === "deferred-export" || startup.kind === "wasi-start-export") &&
           row.name === startup.exportName &&
           row.desc.index === startup.adapterIndex
         ))
@@ -927,9 +948,15 @@ export function prepareIrProgramPresentation(request: IrProgramPresentationReque
     emission,
     output: Object.freeze({ ...capture.context, preparedStartup: startup }),
     startup,
-    ...(mixed ? { requiresDetachedFinalization: true as const } : {}),
+    ...(detached ? { requiresDetachedFinalization: true as const } : {}),
   });
-  if (mixed)
+  if (capture.backend.target !== "host")
+    nativeDtsPresentations.set(presentation, {
+      view: createNativePreparedDtsView(program, emission),
+      module: mod,
+      original: observeModuleData(mod),
+    });
+  if (detached)
     mixedPresentations.set(presentation, {
       plan: emittedPhysicalSetupPlan(emission),
       original: observeModuleData(mod),
@@ -942,6 +969,7 @@ export function prepareIrProgramPresentation(request: IrProgramPresentationReque
       view: Object.freeze({ entryFile: capture.input.entrySource.fileName, exports: Object.freeze(witExports) }),
       original: observeModuleData(mod),
     });
+  issuedPreparedPipelinePresentations.add(presentation);
   return presentation;
 }
 
@@ -1569,6 +1597,20 @@ export function completePreparedPresentationFinalization(
     verifyDataObservation(row, observation.widening.get(row.value), known, replacements);
   if (emittedPhysicalSetupPlan(observation.presentation.emission) !== observation.plan)
     finalizationFailure("original-changed");
+  const dts = nativeDtsPresentations.get(observation.presentation);
+  if (dts)
+    nativeDtsPresentations.set(observation.presentation, {
+      ...dts,
+      finalizedModule: token.outputModule,
+      finalized: observeModuleData(token.outputModule),
+    });
+  const wit = witPresentations.get(observation.presentation);
+  if (wit)
+    witPresentations.set(observation.presentation, {
+      ...wit,
+      finalizedModule: token.outputModule,
+      finalized: observeModuleData(token.outputModule),
+    });
   return Object.freeze({
     kind: "prepared-presentation-finalization",
     phase: "after-reference-widening",
@@ -1582,6 +1624,8 @@ interface WitPresentationObservation {
   readonly module: WasmModule;
   readonly plan: PhysicalSetupPlan;
   readonly view: PreparedWitView;
+  readonly finalizedModule?: WasmModule;
+  readonly finalized?: readonly DataObservation[];
   readonly original: readonly DataObservation[];
 }
 const witPresentations = new WeakMap<object, WitPresentationObservation>();
@@ -1592,9 +1636,10 @@ export function preparedPresentationWitView(
 ): PreparedWitView {
   const observation = witPresentations.get(presentation);
   if (!observation) throw new Error("prepared presentation WIT: invalid presentation");
-  if (module !== observation.module) throw new Error("prepared presentation WIT: foreign module");
+  if (module !== observation.module && module !== observation.finalizedModule)
+    throw new Error("prepared presentation WIT: foreign module");
   try {
-    for (const row of observation.original) verifyDataObservation(row);
+    for (const row of [...observation.original, ...(observation.finalized ?? [])]) verifyDataObservation(row);
     emittedSupportFunctionReceipts(observation.emission);
     if (emittedPhysicalSetupPlan(observation.emission) !== observation.plan)
       throw new Error("prepared presentation WIT: physical plan changed");
@@ -1603,4 +1648,30 @@ export function preparedPresentationWitView(
     throw error;
   }
   return observation.view;
+}
+
+interface NativeDtsPresentationObservation {
+  readonly view: NativePreparedDtsView;
+  readonly module: WasmModule;
+  readonly original: readonly DataObservation[];
+  readonly finalizedModule?: WasmModule;
+  readonly finalized?: readonly DataObservation[];
+}
+const nativeDtsPresentations = new WeakMap<object, NativeDtsPresentationObservation>();
+/** Exact native presentation and authorized detached post-state, including when WIT is absent. */
+export function preparedPresentationNativeDts(
+  presentation: Extract<IrProgramPresentationResult, { kind: "prepared-presentation" }>,
+  module: WasmModule,
+): string {
+  const observation = nativeDtsPresentations.get(presentation);
+  if (!observation) throw new Error("native prepared DTS: invalid presentation");
+  if (module !== observation.module && module !== observation.finalizedModule)
+    throw new Error("native prepared DTS: foreign module");
+  try {
+    for (const row of [...observation.original, ...(observation.finalized ?? [])]) verifyDataObservation(row);
+    return renderNativePreparedDts(observation.view);
+  } catch (error) {
+    nativeDtsPresentations.delete(presentation);
+    throw error;
+  }
 }
