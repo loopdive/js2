@@ -1,10 +1,11 @@
 ---
 id: 6982
 title: "Native regime in a JS environment: Symbol.toPrimitive, indexOf(undefined), await-settled yield, import.meta.url"
-status: in-progress
+status: done
 sprint: current
 created: 2026-10-14
 updated: 2026-10-14
+completed: 2026-10-14
 priority: high
 horizon: s
 feasibility: medium
