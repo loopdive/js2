@@ -1,0 +1,158 @@
+{
+  "id": "6920",
+  "slice": "native-class-invoke-successor-20261014",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-native-js-class-source-20261014-01a12827",
+  "claimed_at": "2026-10-14T16:28:44.666471Z",
+  "updated_at": "2026-10-14T16:28:44.666471Z",
+  "write_id": "b-class-invoke-27efbe69-3383-4a51-9880-8383ccba2666",
+  "handoff_scope": [
+    {
+      "kind": "existing native class dynamic invocation semantic refinement",
+      "at": "2026-10-14T16:28:44.666471Z",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-native-js-class-source-20261014-01a12827",
+      "manifest": {
+        "receivingBranch": "codex/6920-b-native-js-class-source-20261014-01a12827",
+        "integrationBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+        "componentPreimages": [
+          {
+            "path": "src/ir/core/dialect/js.ts",
+            "bytes": 35766,
+            "sha256": "744b7b72cf27b80afaa8aa42875246ed8b4227cbf74a402d5ba2d318a267b311",
+            "functions": "IrInstrJsClassInvoke contract comment only; existing fields kept"
+          },
+          {
+            "path": "src/ir/runtime/js-class-verify.ts",
+            "bytes": 17983,
+            "sha256": "f08f400ec4628874554cc1a6f71ead64142ff2785cc1ef35b70ed5c3b335e915",
+            "functions": "verifyIrJsClassInstruction invoke callable/actual argument/completion rules"
+          },
+          {
+            "path": "src/ir/source-js-class-definition.ts",
+            "bytes": 21002,
+            "sha256": "a26c1d43c74338a700c06209e91845eb0d0c75d53b6c1a8a0a8662dff580a827",
+            "functions": "prepareSourceJsClassDefinitions method USER/completion signatures only; constructor signatures unchanged"
+          },
+          {
+            "path": "src/ir/source-js-class-lowering.ts",
+            "bytes": 13836,
+            "sha256": "b5bf6999002d1aed1ba5326029e5db9c0b1e9196923d4b891cd8ec84d4ae9b45",
+            "functions": "lowerNativeJsClassExpression actual getter→argument evaluation→invoke, no nominal cast"
+          },
+          {
+            "path": "src/ir/from-ast.ts",
+            "bytes": 804624,
+            "sha256": "bca3726af3ebe85e2187782ba5d3e2876457c2a18a4a58c55464c660b99fa004",
+            "functions": "lowerNativeJsClassBodyToIr and native-only original return/statement consumers, genuine boxing at original sites"
+          },
+          {
+            "path": "src/ir/program-source.ts",
+            "bytes": 96010,
+            "sha256": "ede8ced1c9f71a9130d68927df1dd7b4f9698207a6e0434132ae8c23a4d24fd8",
+            "functions": "prepareSourceFunctionSignatures and native-only caller/value-projection joins"
+          },
+          {
+            "path": "src/ir/program/js-class-definition.ts",
+            "bytes": 7736,
+            "sha256": "1ccbf1918085a96d6069b9e5e82bad2db7963886e131f6ddaece6e612f4611e7",
+            "functions": "assertPreparedIrJsClassDefinitions actual body/frame/User/result joins"
+          },
+          {
+            "path": "src/ir/program/js-class-abi.ts",
+            "bytes": 5917,
+            "sha256": "069084cca1df4872a487d613c0b47adb52f10f00dcf3325ae157be88cd4fe388",
+            "functions": "prepareIrJsClassAbiEntries actual callable transport joins if needed; no newkind or fabricated allocation"
+          }
+        ],
+        "donorPreimages": [
+          {
+            "path": "src/ir/core/dialect/js.ts",
+            "bytes": 35769,
+            "sha256": "83ffe984ac1be31ed9cbd1034442de8e9d60ab44c77a166f0974e1443b58014b"
+          },
+          {
+            "path": "src/ir/runtime/js-class-verify.ts",
+            "bytes": 17983,
+            "sha256": "f08f400ec4628874554cc1a6f71ead64142ff2785cc1ef35b70ed5c3b335e915"
+          },
+          {
+            "path": "src/ir/source-js-class-definition.ts",
+            "bytes": 19027,
+            "sha256": "fc4c5f58186d420fd6ff373033efa95a12696c6be358c76bd0db6a2b2812f37a"
+          },
+          {
+            "path": "src/ir/source-js-class-lowering.ts",
+            "bytes": 13836,
+            "sha256": "b5bf6999002d1aed1ba5326029e5db9c0b1e9196923d4b891cd8ec84d4ae9b45"
+          },
+          {
+            "path": "src/ir/from-ast.ts",
+            "bytes": 804624,
+            "sha256": "bca3726af3ebe85e2187782ba5d3e2876457c2a18a4a58c55464c660b99fa004"
+          },
+          {
+            "path": "src/ir/program-source.ts",
+            "bytes": 96010,
+            "sha256": "ede8ced1c9f71a9130d68927df1dd7b4f9698207a6e0434132ae8c23a4d24fd8"
+          },
+          {
+            "path": "src/ir/program/js-class-definition.ts",
+            "bytes": 7731,
+            "sha256": "ec29b605a0b477d6d21937a1bcc6d9b1460871c900d3270d1cccd6c613ba926a"
+          },
+          {
+            "path": "src/ir/program/js-class-abi.ts",
+            "bytes": 5901,
+            "sha256": "51d47d05354dba70600c5b8c62601c74466d749eb13a47c72eed728b8abcd46e"
+          }
+        ],
+        "canonicalNewPaths": [],
+        "proposalSha256": "fbc921974752d77030032b5d511591e5d54e19504452d82c166d3bf30c73b5c2",
+        "scope": "Existing eight A paths and two alreadyownedtests for actual dynamic invoke/method USER+completion ABI; no newopcode/field/type/schema. Newvalue-domain leaf excluded pendingexactAPI/algorithmreceive.",
+        "semanticRefinement": {
+          "callable": "actual captured dynamic JSValue from property.get; never a member-name-derived managed-method cast",
+          "receiver": "actual once-evaluated original base reference; preserved as this",
+          "args": "evaluate each original argument left-to-right after getter and before callable validation; preserve evaluated Number/Boolean/dynamic value. Real primitive boxes at actual argument source sites; dynamic values passed unchanged",
+          "signature": "actual evaluated-argument transport types, not proof of target identity/formal parameters/result; params correspond one-for-one to actual args even if declared formal arity differs",
+          "result": "irDynamic() actual immutable JSValue completion for every invocation, including void/Undefined; statement position ignores returned value only after effects",
+          "checkTiming": "only invoke validates actual callable after all argument expressions complete; a throwing argument prevents the TypeError check; arguments mutating original property do not replace the captured getter value",
+          "errors": "actual issued TypeError realm/provider on noncallable/class-without-new; no fake source call, no wrong ReferenceError provider"
+        },
+        "methodABI": {
+          "params": "actual method USER values remain JSValues; annotations do not convert missing/Boolean/Undefined inputs at function entry",
+          "hidden": "existing exact environment/this/home/newTarget4; actual first callee frame.new site remains genuine and disjoint",
+          "normalCompletion": "source-owned box/Undefined producer at actual original returns/fallthrough, not a hidden physical wrapper allocation",
+          "numericAndBooleanOperations": "coerce according to original operation using existing JS dialect operations, preserving input values until that operation; no annotation-directed eager unbox",
+          "ctor": "constructor/default/field-order protocol remains separate required work; this receive does not authorize defaults/derived/accessor scope"
+        },
+        "bJoins": {
+          "worker": "numeric_undefined_representation",
+          "pureEffects": "existing reads/opaque/aliases over callable+receiver+args already conservative; no new hidden invoke allocation",
+          "canonical": "replay actual A local verifier and full method/body ABI; independently authenticate operand/result equality, never member-by-name or caller signature as target proof",
+          "sites": "all added primitive return/argument boxes must be genuine original source sites; frame.new remains actual callee entry site. No fake derived helper/unit/site"
+        },
+        "cJoins": {
+          "ownedPhysicalLeaf": "src/ir/analysis/evidence/native-js-class-legality.ts",
+          "requirements": "real dynamic callable/tag/reference query and target dispatch AFTER evaluated operands; adapt actual argument list/missing values to authentic method USER JSValue ABI; return genuine callee completion without scalar guess",
+          "allocationRuntimeProfileRemainsB": "src/ir/runtime/native-js-class-profile.ts",
+          "existingPhysicalOwnerScopeUnchanged": true
+        },
+        "constraints": "Only actual source operand order/getter snapshot/afterargs callablecheck/JSValue USER+completion and real source boxsites. Preserve hidden4/frame/currentness/sourcecustody/exactABI. No nominalannotation/name-target proof, fakecalls/sites, scalar guessedprojection, source reconstruction or unsupported unknown admission. Value-domain newleaf remains unreceived and unwritten; actual scalar projection proof and heterogeneous publictransport remain fullgoalrequired. Cphysicalprotocol andBerror/resourceeffects must close before anyexecutioncredit."
+      },
+      "manifestSha256": "8cfe15845b262b014ef169c40354c4f1992cd181ae874300089cff9058a16301",
+      "constraints": "Only actual source operand order/getter snapshot/afterargs callablecheck/JSValue USER+completion and real source boxsites. Preserve hidden4/frame/currentness/sourcecustody/exactABI. No nominalannotation/name-target proof, fakecalls/sites, scalar guessedprojection, source reconstruction or unsupported unknown admission. Value-domain newleaf remains unreceived and unwritten; actual scalar projection proof and heterogeneous publictransport remain fullgoalrequired. Cphysicalprotocol andBerror/resourceeffects must close before anyexecutioncredit."
+    }
+  ],
+  "predecessors": [
+    "3522-b-native-class-semantic-producer-20261014.json",
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}
