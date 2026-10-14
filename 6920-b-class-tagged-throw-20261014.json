@@ -1,0 +1,64 @@
+{
+  "id": "6920",
+  "slice": "class-tagged-throw-successor-20261014",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+  "claimed_at": "2026-10-14T20:22:34.821853+00:00",
+  "updated_at": "2026-10-14T20:22:34.821853+00:00",
+  "write_id": "b-class-tagged-throw-d9da954b-2de5-42f4-9f51-0861cea05a85",
+  "handoff_scope": [
+    {
+      "kind": "class-tagged-throw",
+      "at": "2026-10-14T20:22:34.821853+00:00",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+      "manifest": {
+        "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+        "componentPreimages": [
+          {
+            "path": "src/ir/from-ast.ts",
+            "bytes": 806840,
+            "sha256": "036e83d802236e1b7f50e5964e0d1c9e95ef7a8f3894aaebd089d7eb429618c4",
+            "functions": "lowerThrowStatement native class body arm: actual existing JSValue boxing then existing reference conversion/throw"
+          },
+          {
+            "path": "src/ir/analysis/allocation-evidence/native-js-class-producer.ts",
+            "bytes": 16418,
+            "sha256": "c6c54da9e1833f178647dd8cebd78733b3d7cfacd4ee1e14327e4a06307c897c",
+            "functions": "Actual dynamic-to-externref exception conversion/throw validation, conversion alias preservation, thrown roots opaque escape; existing exact global/ReferenceError checks preserved"
+          },
+          {
+            "path": "src/ir/analysis/allocation-evidence/native-js-class-profile.ts",
+            "bytes": 24420,
+            "sha256": "e4e0807fe506d02807e74bae0307cc8d8ff21e16b745fdf313ec7dd6b21ef72f",
+            "functions": "Independent lexical conversion/throw and dependency edge replay, thrown root escape"
+          },
+          {
+            "path": "src/ir/runtime/native-js-class-profile.ts",
+            "bytes": 40563,
+            "sha256": "c7e4f62c36395ba4551ac740ad790396e6e9d5bcc43e6719f1558b52f0e2dc0f",
+            "functions": "Complete canonical instruction replay of actual tagged conversion and throw only; no foreign externref/throw admission"
+          }
+        ],
+        "canonicalNewPaths": [
+          "tests/issue-6920-native-js-class-tagged-throw.test.ts"
+        ],
+        "scope": "Preserve actual tagged Number/Boolean/Undefined/field JSValue thrown from original class method/constructor, using genuine existing source boxes and conversion/throw instructions. Keep alias roots through externref conversion and exception escape in producer and independent replay.",
+        "constraints": "No scalar JS proof from annotations, replacement Error helper, forged alloc/unit/site, foreign extern constants or generic externref admission. Verify actual SSA dynamic input, exact externref conversion result and defining throw operand. Existing canonical TDZ ReferenceError path/ABI unchanged. Only class source bodies box additional primitive throws; other source bodies remain owned/unchanged. No backend execution/public scalar readiness claim before real resource/emission tests. Preserve source capsules, peer algorithm epochs, HOLDs and all27 master obligations."
+      },
+      "manifestSha256": "8cacffe04553968ae8172483a9fe081e004556223c07f2857f023a0fcfeb0494",
+      "constraints": "No scalar JS proof from annotations, replacement Error helper, forged alloc/unit/site, foreign extern constants or generic externref admission. Verify actual SSA dynamic input, exact externref conversion result and defining throw operand. Existing canonical TDZ ReferenceError path/ABI unchanged. Only class source bodies box additional primitive throws; other source bodies remain owned/unchanged. No backend execution/public scalar readiness claim before real resource/emission tests. Preserve source capsules, peer algorithm epochs, HOLDs and all27 master obligations."
+    }
+  ],
+  "predecessors": [
+    "3522-b-native-class-semantic-producer-20261014.json",
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}
