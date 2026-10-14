@@ -1,0 +1,55 @@
+{
+  "id": "6920",
+  "slice": "allocation-suite-event-loop-yield-successor-20261015",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+  "claimed_at": "2026-10-14T23:16:23.991505+00:00",
+  "updated_at": "2026-10-14T23:16:23.991505+00:00",
+  "write_id": "b-allocation-suite-event-loop-yield-67387b6f-d90c-499e-b476-fcf8a22ae766",
+  "handoff_scope": [
+    {
+      "kind": "allocation-suite-event-loop-yield",
+      "at": "2026-10-14T23:16:23.991505+00:00",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+      "manifest": {
+        "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+        "componentPreimages": [
+          {
+            "path": "tests/issue-6920-native-js-class-allocation-evidence.test.ts",
+            "bytes": 36981,
+            "sha256": "2f97bad131b3011464e0ddb6af9ca6168e4aabfc20deb62b9270cc30b5805bb0"
+          }
+        ],
+        "canonicalNewPaths": [],
+        "operations": [
+          "B appends standard afterEach(()=>yieldTestLoop()) using captured node:timers/promises setImmediate import alias; preserve existing setImmediate use.",
+          "Preserve all81 original callback/function bodies,52 case identities/assertions, source2, runtime35s limit and default Vitest/RPC settings.",
+          "Retain failed354 epoch03 all354assertions plusone onTaskUpdate UHE; no cleancombined credit. Fresh list/actual zero-UHE rerun on final root frozen epoch."
+        ],
+        "constraints": [
+          "Explicit human shared-seam takeover applies; preserve other owners and public branches/HOLDs/main.",
+          "Freeze actual qualifier inputs until natural terminal; no timeout/RPC change, new allowance or oracle weakening.",
+          "Sole test path only; await receiving GO. Current component4/TS34/static12 remains sealed; preserve all old failures and immutable input packet."
+        ]
+      },
+      "manifestSha256": "a91cc2bbe185ff8baca908ca95a3dd58f6630d2e47a4e7ede25134842a0bbcd3",
+      "constraints": [
+        "Explicit human shared-seam takeover applies; preserve other owners and public branches/HOLDs/main.",
+        "Freeze actual qualifier inputs until natural terminal; no timeout/RPC change, new allowance or oracle weakening.",
+        "Sole test path only; await receiving GO. Current component4/TS34/static12 remains sealed; preserve all old failures and immutable input packet."
+      ]
+    }
+  ],
+  "predecessors": [
+    "3522-b-native-class-semantic-producer-20261014.json",
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}
