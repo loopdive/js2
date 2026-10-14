@@ -1,0 +1,74 @@
+{
+  "id": "6920",
+  "slice": "native-core-js-tag-identities-successor-20261014",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+  "claimed_at": "2026-10-14T17:49:31.455644Z",
+  "updated_at": "2026-10-14T17:49:31.455644Z",
+  "write_id": "b-core-js-tag-identities-d7643fc6-4b1c-418a-92be-ac96e725987a",
+  "handoff_scope": [
+    {
+      "kind": "existing canonical foundation/core JS tag identities",
+      "at": "2026-10-14T17:49:31.455644Z",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+      "manifest": {
+        "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+        "integrationBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+        "componentPreimages": [
+          {
+            "path": "src/runtime/contracts/js-value-tags.ts",
+            "bytes": 2089,
+            "sha256": "cbbd38f292ab040fbd0de08832ce11e415146384a2bac3384089b4bd0810fddb",
+            "functions": "Whole existing import-free JsTag enum, jsTagUnboxKind function and ABI alias constants; replace oldfile by directreexports"
+          },
+          {
+            "path": "src/ir/runtime/js-tag-domain.ts",
+            "bytes": 13605,
+            "sha256": "638c06163bcab51c2982103d869c199feccc438e5e5cddfc6b2ef2503ec60a5c",
+            "functions": "JS_TAG_IDS value table extraction plus direct canonical import/reexport only; all JS_TAG_DOMAIN functions unchanged"
+          },
+          {
+            "path": "scripts/check-jstag-seam.mjs",
+            "bytes": 10641,
+            "sha256": "1c79d8413825090023d7460c6de3d03adfd83b47366836a524cfaba876571513",
+            "functions": "EXEMPT canonical seam-owned path set only, plus adjacent documentation"
+          }
+        ],
+        "canonicalNewPaths": [
+          "src/shared/contracts/js-value-tags.ts",
+          "src/ir/core/dialect/js-tags.ts"
+        ],
+        "scope": "Root receives actual JS value tag identities as shared/core DATA so new pure class analysis need not depend on runtime. Move the whole import-free existing canonical enum/function/ABI aliases byte-for-byte into foundation; extract exact existing opaque JS_TAG_IDS table to core JS dialect. Forward legacy runtime paths to preserve singular values and factory identities, then retire readers during full migration. Receive the exact canonical EXEMPT path transfer in scripts/check-jstag-seam.mjs and its documentation, with all counters and consumer rows unchanged.",
+        "constraints": "No duplicated numeric tag literals, changed enum values, carrier functions, language coercion methods, physical layouts, tag-domain callbacks or runtime effects. All JS domain functions and complete canonical mapping remain unchanged. No dependency-edge exception or source-context import into core/analysis. Preserve generic opaque TagId handling and non-JS controls. A/B newownedleaves may rewire only their JS_TAG_IDS import to qualified newcoreleaf after dependency safe point; do not edit peer moving files. Source facade retirement remains required, not waived. No public branches/main/HOLD/queue change. Transfer only existing canonical JsTag seam definition exemptions to exact relocated foundation/core leaves; remove old runtime-contract forwarder exemption. No baseline reseed or consumer count allowances.",
+        "canonicalGateOwnership": {
+          "remove": "src/runtime/contracts/js-value-tags.ts",
+          "add": [
+            "src/shared/contracts/js-value-tags.ts",
+            "src/ir/core/dialect/js-tags.ts"
+          ],
+          "preserve": [
+            "all scanned source scope",
+            "valueImports and refs counters",
+            "all generic producer and consumer baseline rows",
+            "default failure behavior",
+            "unknown code refusal"
+          ]
+        }
+      },
+      "manifestSha256": "811ee74f66536e7fd64b9e7c44ec7091a4ce5bd2a084daa22c4d944b486fb640",
+      "constraints": "No duplicated numeric tag literals, changed enum values, carrier functions, language coercion methods, physical layouts, tag-domain callbacks or runtime effects. All JS domain functions and complete canonical mapping remain unchanged. No dependency-edge exception or source-context import into core/analysis. Preserve generic opaque TagId handling and non-JS controls. A/B newownedleaves may rewire only their JS_TAG_IDS import to qualified newcoreleaf after dependency safe point; do not edit peer moving files. Source facade retirement remains required, not waived. No public branches/main/HOLD/queue change. Transfer only existing canonical JsTag seam definition exemptions to exact relocated foundation/core leaves; remove old runtime-contract forwarder exemption. No baseline reseed or consumer count allowances."
+    }
+  ],
+  "predecessors": [
+    "3522-b-native-class-semantic-producer-20261014.json",
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}
