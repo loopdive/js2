@@ -43,6 +43,13 @@
         "answer": "Take over the blocking shared seams",
         "priorAnswer": "takeover all of session b"
       }
+    },
+    {
+      "path": "src/compiler/pipeline-result-finalizer.ts",
+      "purpose": "Bind native optimization authority to complete ACTUAL artifact construction semantic state before public return/first issuance.",
+      "exactChange": "Private constructor-time descriptor-only snapshots of complete produced artifact fields/shape/nested aliases and original binary bytes. Fixed readonly checker verifies real construction observations before first input issuance and at currentness replay. No public register/callback, caller output token, kind-only authority or snapshot of already caller-mutated first-issuance data.",
+      "allowedLifecycle": "Only actually measured trusted optimizer binary/diagnostic transitions may be handled; no caller semantic updates. Preserve original generic finalizer, projection, target/options, recgroup and all other algorithms. New moved-checker body has explicit construction-state/byte guard beyond bounded own optionalflag reads.",
+      "controls": "Actual pre-first-issuance importsHelper/DTS/WIT/ABI/importManifest/capability/nested-alias/shape/accessor changes where fields are truly produced; original binary byte alias mutation including a valid semantic-change module where possible;0 getter effects, healthy real productive tuples, old currentness/await/copy/foreign tests. Retain prior88/11/build/4accepted epoch/probe separately, qualify final expanded actual denominator/types/build/gates/four real CLI acceptance."
     }
   ],
   "exact_function_scope": [
@@ -123,8 +130,8 @@
   "receiving_from_B_record": "6920-b-native-public-routing-takeover-20261013.json",
   "publication_dependency": "Separate fresh branch; root current2018 checkpoint and running inventory remain unchanged. Full62+new tests/typing/build and actual inventory/cycle closure qualified before adoption.",
   "claimed_at": "2026-10-14T09:13:13.210178Z",
-  "updated_at": "2026-10-14T10:10:51.153700Z",
-  "write_id": "b-number-undefined-successor-fc14689b-9557-4b42-a53a-9899c089398d",
+  "updated_at": "2026-10-14T10:31:29.075338Z",
+  "write_id": "b-number-undefined-adac15b2-39ef-4be8-9081-9a9417a9a272",
   "scope_refinements": [
     {
       "at": "2026-10-14T09:23:36.305057Z",
@@ -167,7 +174,24 @@
         "priorHumanAnswer": "takeover all of session b"
       },
       "reason": "Receive exact2020-to-2018 continuation initial joins preserving all predecessor callbacks/defaults/pins plus explicit own-field optionalflag currentness fix. New policy transport waits qualified/published2018 and final2020 seals."
+    },
+    {
+      "at": "2026-10-14T10:31:29.075338Z",
+      "addition": {
+        "path": "src/compiler/pipeline-result-finalizer.ts",
+        "purpose": "Bind native optimization authority to complete ACTUAL artifact construction semantic state before public return/first issuance.",
+        "exactChange": "Private constructor-time descriptor-only snapshots of complete produced artifact fields/shape/nested aliases and original binary bytes. Fixed readonly checker verifies real construction observations before first input issuance and at currentness replay. No public register/callback, caller output token, kind-only authority or snapshot of already caller-mutated first-issuance data.",
+        "allowedLifecycle": "Only actually measured trusted optimizer binary/diagnostic transitions may be handled; no caller semantic updates. Preserve original generic finalizer, projection, target/options, recgroup and all other algorithms. New moved-checker body has explicit construction-state/byte guard beyond bounded own optionalflag reads.",
+        "controls": "Actual pre-first-issuance importsHelper/DTS/WIT/ABI/importManifest/capability/nested-alias/shape/accessor changes where fields are truly produced; original binary byte alias mutation including a valid semantic-change module where possible;0 getter effects, healthy real productive tuples, old currentness/await/copy/foreign tests. Retain prior88/11/build/4accepted epoch/probe separately, qualify final expanded actual denominator/types/build/gates/four real CLI acceptance."
+      },
+      "authority": {
+        "answer": "Take over the blocking shared seams",
+        "priorAnswer": "takeover all of session b",
+        "humanRequest": "unblock",
+        "scope": "native Linear API/routing, checked allocation preparation, carrier/emission wiring, startup resources, existing allocator/constructor recipe; preserve existing branches and unrelated work; fresh isolated worktrees and normal checks"
+      },
+      "reason": "Measured actual registered artifact semantic mutation before first issuance bypasses identity-only custody. Receive exact private constructor-time full semantic/byte observations with readonly replay, preserving generic algorithms and real lifecycle."
     }
   ],
-  "previous_write_id": "b-number-undefined-a444ed1f-8964-4edc-bf85-519e670c0081"
+  "previous_write_id": "b-number-undefined-successor-fc14689b-9557-4b42-a53a-9899c089398d"
 }
