@@ -1,0 +1,68 @@
+{
+  "id": "6920",
+  "slice": "native-class-source-global-successor-20261014",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+  "claimed_at": "2026-10-14T19:07:14.871607Z",
+  "updated_at": "2026-10-14T19:07:14.871607Z",
+  "write_id": "b-class-source-global-97ac8ed6-0a0f-422e-94c0-531414391c4a",
+  "handoff_scope": [
+    {
+      "kind": "actual source class mutable module globals and TDZ replay",
+      "at": "2026-10-14T19:07:14.871607Z",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+      "manifest": {
+        "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+        "componentPreimages": [
+          {
+            "path": "src/ir/program-source.ts",
+            "bytes": 96010,
+            "sha256": "ede8ced1c9f71a9130d68927df1dd7b4f9698207a6e0434132ae8c23a4d24fd8",
+            "functions": "prepareIrProgramSources existing module-binding resolver extraction/reuse for exactnativeclass bodyunit only; preserve ordinary unit resolver body, owner/mutability/TDZ proof"
+          },
+          {
+            "path": "src/ir/analysis/allocation-evidence/native-js-class-producer.ts",
+            "bytes": 11137,
+            "sha256": "9c7963d8e0dbd557af944895e05f9240fda6ab909837874d28d5a3352db379c5",
+            "functions": "analyzeNativeJsClass: genuine scalar globals, canonical declared ReferenceError call, exact null-error argument and real throws; conservative managed escape"
+          },
+          {
+            "path": "src/ir/analysis/allocation-evidence/native-js-class-profile.ts",
+            "bytes": 18805,
+            "sha256": "e9c2a3fa631be8b0a8ba20dd2623b4a60b15be4835b8ff5a493e79c43c6bd347",
+            "functions": "independent lexical replay: scalar global declaration/type/write replay, exact ReferenceError callable declaration/operand and normal/abrupt nested control"
+          },
+          {
+            "path": "src/ir/runtime/native-js-class-profile.ts",
+            "bytes": 34996,
+            "sha256": "7d097b3066eaa0a5fc8430753f496a635ffd054936b14854ccb9420b3f3a67e8",
+            "functions": "canonical replay actual global ABI refs/types/mutability and canonical ReferenceError runtime calls with actual manifest/shape, literal null extern and throw paths only"
+          },
+          {
+            "path": "tests/issue-6920-native-js-class-constructor-arguments.test.ts",
+            "bytes": 5634,
+            "sha256": "95a13408080355a53f1303fdbf71a88e7f139344aca86e673131940da23c5943",
+            "functions": "retain all original sixcase24 positive source/typed/codec/order expectations; add actual global and error-ref forgery refusals"
+          }
+        ],
+        "canonicalNewPaths": [],
+        "scope": "Close actual source captured mutable module writes and genuine scalar global/TDZ instructions exposed by the preserved constructor ordering fixtures. Use the existing real sourceglobal resolver and exact actual original source owner, globals ABI and canonical ReferenceError semantics; independent replay from actual IR, not report approval.",
+        "constraints": "No broad global/call/opcode waiver, runtime imports into pure analysis, fake guard/call/sourceunit/site, typed manifest relaxation, poststartup claim for classbody, scalar annotation proof, new schema/body bridge or newphysicalindex. Require exact current source global ABI key/ref/type and existing storage mutability; emit real TDZ checks before writes after RHS. Preserve existing ordinary module resolver behavior and source custody. Permit canonical ReferenceError only from actual complete semantic ABI plus exact null message/result/throw types; arbitrary runtime helpers, extern constants, managed globalstores and malformed operations refuse. Original constructor cases/expectedJSvalues retained. No new wholeclass/backend/public/Linear or27master completion credit. Root-only edits; original BWT/live33915 and agents moving snapshots untouched; later safe immutable adoption."
+      },
+      "manifestSha256": "699d65ff5c4d20c64eb6e27712b79322be7112062846d8f1ed3ebde099de67d8",
+      "constraints": "No broad global/call/opcode waiver, runtime imports into pure analysis, fake guard/call/sourceunit/site, typed manifest relaxation, poststartup claim for classbody, scalar annotation proof, new schema/body bridge or newphysicalindex. Require exact current source global ABI key/ref/type and existing storage mutability; emit real TDZ checks before writes after RHS. Preserve existing ordinary module resolver behavior and source custody. Permit canonical ReferenceError only from actual complete semantic ABI plus exact null message/result/throw types; arbitrary runtime helpers, extern constants, managed globalstores and malformed operations refuse. Original constructor cases/expectedJSvalues retained. No new wholeclass/backend/public/Linear or27master completion credit. Root-only edits; original BWT/live33915 and agents moving snapshots untouched; later safe immutable adoption."
+    }
+  ],
+  "predecessors": [
+    "3522-b-native-class-semantic-producer-20261014.json",
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}
