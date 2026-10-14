@@ -1,0 +1,53 @@
+{
+  "id": "6920",
+  "slice": "native-builtin-tag-portable-authority-successor-20261014",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+  "claimed_at": "2026-10-14T19:33:19.694984Z",
+  "updated_at": "2026-10-14T19:33:19.694984Z",
+  "write_id": "b-builtin-tag-portable-authority-71174912-43ef-4eda-bc53-2b69b55c8c94",
+  "handoff_scope": [
+    {
+      "kind": "portable canonical builtin tag authority",
+      "at": "2026-10-14T19:33:19.694984Z",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+      "manifest": {
+        "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+        "componentPreimages": [
+          {
+            "path": "src/codegen/builtin-tags.ts",
+            "bytes": 11865,
+            "sha256": "0c034fc6be08d27ddb4803e645a595d0449a43e430d011d52eb62821f7587e13",
+            "functions": "Whole unchanged import-free contract relocation, compatibility reexports preserving object/function identity"
+          },
+          {
+            "path": "scripts/compiler-boundaries.json",
+            "bytes": 643665,
+            "sha256": "6ee2e860d19c35e5b4dabf8eabe59b35c0e8c8062955fc6bac1635ef2ad0eb26",
+            "functions": "Exact old compatibility row and new foundation row; no new dependency permissions"
+          }
+        ],
+        "canonicalNewPaths": [
+          "src/shared/contracts/js-builtin-tags.ts",
+          "tests/issue-6920-portable-builtin-tags.test.ts"
+        ],
+        "scope": "Make the existing whole import-free builtin type tag contract canonical in foundation so genuine Error ancestors use its authority without importing codegen. Keep all15 source and2 test reader paths compatible.",
+        "constraints": "Whole11865 byte contract and all functions/data unchanged; oldpath direct reexports preserve identity. Classify actual foundation/compatibility rows only. No copied Error tag, new JS TagDomain waiver, gate relaxation, public source generic Error declaration or fake callable/provider. Root standalone dependency qualification then immutable safe peer adoption. Preserves all old owner work, branches, HOLDs and queue."
+      },
+      "manifestSha256": "55a9da56e172411f283c333882c3e9c68c1a7298e283857a09120172314b96e5",
+      "constraints": "Whole11865 byte contract and all functions/data unchanged; oldpath direct reexports preserve identity. Classify actual foundation/compatibility rows only. No copied Error tag, new JS TagDomain waiver, gate relaxation, public source generic Error declaration or fake callable/provider. Root standalone dependency qualification then immutable safe peer adoption. Preserves all old owner work, branches, HOLDs and queue."
+    }
+  ],
+  "predecessors": [
+    "3522-b-native-class-semantic-producer-20261014.json",
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}
