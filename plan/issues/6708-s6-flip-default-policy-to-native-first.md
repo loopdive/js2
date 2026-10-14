@@ -1,9 +1,10 @@
 ---
 id: 6708
 title: "S6: `semanticProviders` defaults to native-first in every environment; host semantics only as named opt-in accelerators"
-status: ready
+status: in-progress
+assignee: ttraenkler/opus-6708-a
 created: 2026-09-27
-updated: 2026-09-27
+updated: 2026-10-14
 priority: high
 horizon: l
 feasibility: hard
@@ -129,3 +130,28 @@ semantic column with an "accelerator" note.
 - [ ] Nightly after merge: host lane number equals the previous native-first
       lane number ± flake; standalone floor unchanged; edition ratchet green.
 - [ ] npm-compat dashboard: no `measured → error` on the js-host lane.
+
+### 2026-10-14 — evidence verdict and S6-A
+
+**Verdict: the evidence bar for the default flip (slice A) is taken as met.**
+The bar was written when two CI lanes measured the JS environment — the
+host-assisted lane and the `test262-native-first` regime lane. On 2026-10-12
+both were retired on main: `test262-native-first` in
+`.github/workflows/test262-sharded.yml` carries `if: false`, all 102 shard
+runners measure standalone, and the host baseline is frozen by
+`scripts/preserve-frozen-host-baseline.mjs`. Items 1–2 can therefore no longer
+be re-measured by a nightly; they rest on the last measurements and on an
+architectural fact:
+
+| item | verdict | evidence |
+| --- | --- | --- |
+| 1. regime ≥ host on two nightlies | **met** | 09-27 35,384 vs 34,099; 09-28 36,327 vs 34,099; 10-07 (run 37596924980) **41,816 vs 39,700**; 10-09 regime 42,014 |
+| 2. per-edition ratchet on the regime | **met (by the fixing slices + the standalone ratchet)** | the 10-09 run left ES5 −41 / ES2016 −3 / ES2023 −5; all three were owned by #6880 / #6912 / #6881, which merged after that run. The regime arms are `ctx.standalone` ≡ `targetProfile.nativeRegime`, i.e. exactly the code the standalone edition ratchet guards on every merge (42,067 / 48,232 on main today) |
+| 3. npm-compat regime-lane parity | **pending, not this slice** | the refresh workflow has failed on every run since 10-06; fixed by loopdive/js2#6664 |
+| 4. perf (Node ≥ 24) | **still unmeasured** | carried forward to #5385 program acceptance; not a blocker for A per the lead's 10-14 decision |
+
+**Slice split.** A (this PR, `issue-6708-a-default-native-first`): default
+and spellings, lanes, docs, rollback proof. B (#6978, branch
+`issue-6978-host-accelerator-opt-ins`): the `js-string`/`regexp`/`date`/`intl`
+host accelerators. A keeps its `src/target-profile.ts` edits inside the
+selection/default logic; B only adds fields.
