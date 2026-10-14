@@ -4144,3 +4144,99 @@ There is no total or shared-baseline allowance, no generic source renderer chang
 and no legacy emitter/allocator body change. The inventory remains explicitly
 `architectureComplete: false`, with the new leaf marked `mixed-needs-split` until
 its complete consumer/program import closure is separated.
+
+### B numeric multi-argument push receiver (2026-10-14)
+
+The preceding original-length store checkpoint is normally signed and published
+as `6da053a18da7e18616f349c8d7d2b39bed2d5136` on held, ready PR6662. Fresh remote
+`issue-assignments` verification at
+`fe7078fc8077761f82fee10a756a03a4bd357f6d` records the sole existing B claim and
+the isolated `codex/6920-b-vector-multipush-20261014-01a12827` receiver before
+source writes. Its source partition is only synchronous logical-f64 multi-argument
+nonspread `tryLowerVecPush`; no forwarding, grow, allocator, constructor, original
+externref, async, legacy or counted-push algorithm is reassigned or edited.
+
+The receiver lowers all arguments left-to-right before the first outer append or
+length capture. Each argument then uses the existing authentic numeric append
+intrinsic and independently captured length sequence; the final append returns
+its new logical length. The existing exact synchronous-function-declaration gate
+excludes async and generator syntax; complete existing append validation separately
+requires a closed owner population. Removing only the new 32-line partition
+and import reconstructs the complete original 23,982-byte array-lowering file
+exactly against `6da053a`, including every old zero-argument, spread, narrowed-i32,
+externref, counted-push and legacy arm. No new grow algorithm or aggregate source
+grouping certificate is introduced.
+
+The new six-case test file qualifies genuine local, statement, internal-call,
+alias and global receivers, ordered argument appends to the same receiver,
+a later argument reading the original length, a side-effecting receiver factory
+evaluated once, capacity crossing and exact NaN/negative-zero/infinity payloads.
+Nine source exports execute 72 times through four native profiles live/codec and
+36 times through the genuine public path. Both direct source generators are
+forbidden; live/codec binaries are equal. An authentic existing TDZ exception in
+the later argument leaves length two, with eight live/codec and four public
+executions on those same profiles. A source-free negative changes an actual
+per-append index conversion after warm validation and rejects through the protocol
+collector, encoder and decoder; it claims no authority over a different valid IR
+program containing separately interleaved appends. Native zero-argument, spread,
+non-f64 and async controls still refuse.
+
+The final new-file qualification passes 6/6 with pinned Node 25.9.0, both default
+and JSON reporters, recorded subprocess exit zero and zero unhandled errors.
+Earlier six-pass JSON reports concealed a real Vitest `onTaskUpdate` RPC timeout;
+the owned live/codec matrix tests now yield between profiles. The first matrix
+also has a local 120-second test deadline: its final measured duration is 36.45
+seconds, beyond the existing 35-second default. Assertions, compiler source and
+global test/RPC/hook policy remain unchanged by those test scheduling repairs.
+
+Predecessor controls pass 34/34 across narrowed-i32 element and legacy argument-order
+files. The separate seven-file native/legacy preservation command measures 86
+cases: 65 pass and 21 fail. Three native public-matrix cases reached the 35-second
+deadline; their targeted 120-second rerun passes 3/3 with recorded exit zero,
+zero unhandled errors and 25 filtered skips. The other 18 failures are four
+legacy selector/string expectations in `issue-2956.test.ts` and fourteen missing
+`string_constants` host-import harness failures in `issue-385.test.ts`. Their
+matching predecessor comparison remains root qualification work; neither a
+regression nor preserved-baseline attribution is inferred from their signatures.
+Complete source plus the new explicit test-root typing passes with `exclude: []`;
+Biome lint, Prettier, LOC and
+function budgets, import cycles, IR layering, dialect/kind neutrality, flat-directory
+budget and compiler-boundary inventory checks pass without policy or inventory
+changes. The complete-boundary check still reports the existing truthful
+`inventory-valid-architecture-incomplete` state, with no inventory errors.
+`.tmp/vector-multipush/` retains every failed or conflicting earlier epoch, exact
+commands and preservation receipts. This source slice is uncommitted pending
+root qualification/publication; HOLD, A's queue/integration ownership and all
+foreign branches remain preserved. No main delivery or full IR migration/retirement
+is claimed.
+
+### Root numeric multi-argument qualification (2026-10-14)
+
+Pinned Node25.9.0 root qualification against published `6da053a` resolves the
+18 legacy preservation failures exactly: every failure ID and complete normalized
+message matches the measured two-file predecessor control. Complete source plus
+64 explicit native test roots typechecks with empty excludes: 1,996 source files,
+83 resolved test files and 2,328 total inputs. Eight scalar artifact rows match
+the predecessor in every field. Of 32 source compatibility rows, 28 retain exact
+outcomes and only the four native multi-argument arity refusals become Prepared.
+
+The frozen default-runner 78-file command measures 1,188 cases: 1,108 pass, 70
+fail, nine skip and one todo. All 70 IDs and complete normalized messages equal
+the measured original 52 plus the measured 18 legacy controls. That epoch also
+records one real onTaskUpdate IPC timeout, preserved as a separate job error.
+A temporary per-run default-runner subclass yields with setImmediate and awaits
+a fresh empty progress ACK before each try; it asserts no universal drain proof.
+Its independent two-long-file predecessor control passes 33/33 with exit zero
+and no unhandled errors. Its final frozen 78-file run retains the same 70 IDs,
+assertion/diagnostic payloads and application frames, with zero IPC/unhandled
+banners; actual subprocess exit remains one because those failures exist.
+Four raw stacks differ only in Vitest runner and Node task-queue frames. Their
+complete differences are preserved; only those exact framework frame families
+are removed on both sides for the instrument comparison. No dependency, global
+test deadline, RPC or hook policy is edited. Exact argv/exits and all failed
+epochs remain in `.tmp/multipush-root-qualification/` and `.tmp/multipush-control/`.
+
+Ordinary change-scoped commit hooks use the already-published `6da053a` checkpoint
+as their supported local base and run the new root test. The independently
+recorded complete broader comparison remains part of qualification. HOLD,
+original foreign ownership, full architecture and main integration remain open.
