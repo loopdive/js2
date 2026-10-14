@@ -1,0 +1,74 @@
+{
+  "id": "6920",
+  "slice": "class-emission-operation-boundary-successor-20261015",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+  "claimed_at": "2026-10-14T23:51:18.840508+00:00",
+  "updated_at": "2026-10-14T23:51:18.840508+00:00",
+  "write_id": "b-class-emission-operation-boundary-11a0905a-113b-4083-b024-db8cd4fc48e9",
+  "handoff_scope": [
+    {
+      "kind": "class-emission-operation-boundary",
+      "at": "2026-10-14T23:51:18.840508+00:00",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+      "manifest": {
+        "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+        "componentPreimages": [
+          {
+            "path": "src/backend/wasmgc/program/native-realm.ts",
+            "bytes": 65779,
+            "sha256": "60a0840d817bf6ca2822c50ec427b486da2077a7e73ef3baf4e884d7b909dd79"
+          }
+        ],
+        "canonicalNewPaths": [
+          "tests/issue-6920-native-js-class-emission-guards.test.ts"
+        ],
+        "reviewedProposal": {
+          "path": ".tmp/class-common-cpu-profile-c/repair-proposal/spec.md",
+          "bytes": 14258,
+          "sha256": "39293c4e7ea28c427a97e6f42139dbe33e3c0595f0898dc97d7fbd460fb0c5d4"
+        },
+        "measuredPredecessor": {
+          "path": ".tmp/class-common-cpu-profile-c/epoch-final/sealed.json",
+          "bytes": 8782,
+          "sha256": "cd4a5aa7dfe2f234687b62f892928b7b5c97b1ed346c8c74a9ff61b44c2f51cb"
+        },
+        "operations": [
+          "C alone implements lexical private finite class recipe operation inside existing native-realm owner. Each public helper/port direct use retains full entry/exit; terminal emitter full entry, exact recipe, actual raw output effects, full exit. No stored checked owner/verdict/skip flag.",
+          "Remove immediate duplicate assertion plus valueType checks with one full operation boundary. Add post-effect full currentness after generic resolver/converter/signature fallback; preserve original throws and actual physical checks after scratch before sensitive reads.",
+          "Private ReferenceError callback phase-only after complete pre-reservation canonical validation and proven pack nonescape; every publicly reachable class constructor/operation remains complete current checked. Shared Error and all canonical algorithms unchanged.",
+          "New suite genuine issued healthy controls plus foreign/copied/stale, mutable original/selected/equation/DATA, scratch/raw/fallback/reentrant/throw/currentness controls. Every old resource41/execution8/foundation25 case remains byte-exact."
+        ],
+        "constraints": [
+          "Take over blocking shared seams human authority; receiving successor same Session B owner, no unrelated branch/main/publicsource changes.",
+          "NO source/test writes until B current397/type/static ALL naturallyterminal and root GO. Root may run sealed8 codec diagnostic read-only before writes.",
+          "Only source owner path and new test above. No policy/budget/checker/oracle/timeout/RPC changes, positive validation/semantic/topology caches, optional bypass flags, canceled tests or source reconstruction.",
+          "Ordinary formatted native-realm limit1500 remains. If exceeded report actual whole-component move before extra source writes.",
+          "Full2053source typing/exclude[] and ordinary12static, all hostile guard controls, original runtime75 exactoracles/unchanged35s, one-case CPU phases/profile naturalterminal; retain all failed predecessors.",
+          "Root owns policy/issue outside this worker; donor worktrees remain frozen. Performance and logical source success do not establish physical construct/invoke/public readiness."
+        ]
+      },
+      "manifestSha256": "c322ba4f4e2fcbfa11d7af19c753b2ef254c791e859b3081f19ca8ea1fe056e6",
+      "constraints": [
+        "Take over blocking shared seams human authority; receiving successor same Session B owner, no unrelated branch/main/publicsource changes.",
+        "NO source/test writes until B current397/type/static ALL naturallyterminal and root GO. Root may run sealed8 codec diagnostic read-only before writes.",
+        "Only source owner path and new test above. No policy/budget/checker/oracle/timeout/RPC changes, positive validation/semantic/topology caches, optional bypass flags, canceled tests or source reconstruction.",
+        "Ordinary formatted native-realm limit1500 remains. If exceeded report actual whole-component move before extra source writes.",
+        "Full2053source typing/exclude[] and ordinary12static, all hostile guard controls, original runtime75 exactoracles/unchanged35s, one-case CPU phases/profile naturalterminal; retain all failed predecessors.",
+        "Root owns policy/issue outside this worker; donor worktrees remain frozen. Performance and logical source success do not establish physical construct/invoke/public readiness."
+      ]
+    }
+  ],
+  "predecessors": [
+    "3522-b-native-class-semantic-producer-20261014.json",
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}
