@@ -19,7 +19,7 @@
 import { describe, expect, it } from "vitest";
 import ts from "typescript";
 import { compile } from "../src/index.js";
-import { buildImports, instantiateWasm } from "../src/runtime.js";
+import { buildCompiledImports, buildImports, instantiateWasm, wrapCompiledExports } from "../src/runtime.js";
 
 const MESSAGE = "TypeError: Cannot compare a host JavaScript value with == in a standalone module";
 
@@ -124,6 +124,31 @@ describe("#6931 standalone loose == on a host value in an `any` parameter", () =
       for (const [label, mk] of NATIVE_INPUTS) expect(ex[fn](mk()), `${fn}(${label})`).toBe(node[fn]!(mk()));
       for (const [, mk] of HOST_INPUTS) expectHostRefusal(ex, () => ex[fn](mk()));
     }
+  });
+
+  it("native-first in a JavaScript environment is NOT refused (guard is standalone-target only)", async () => {
+    // Review of #6669: `ctx.standalone` is also the native semantic regime for
+    // `semanticProviders: "native-first"` on the gc target. Host values there
+    // are readable, so the standalone refusal must not fire.
+    const src = `export function eqs(o: any): number { return o == "1" ? 1 : 0; }\n`;
+    const node = nodeOracle(src);
+    const r = await compile(src, {
+      fileName: "issue-6931-js.ts",
+      trackIrOutcomes: true,
+      semanticProviders: "native-first",
+    });
+    expect(r.success, r.success ? undefined : r.errors.map((e) => e.message).join("\n")).toBe(true);
+    expect(r.targetProfile?.environment).toBe("javascript");
+    expect((r.irOutcomes ?? []).find((u) => u.displayName === "eqs")?.irBodyEmitted).toBe(true);
+    const imp = buildCompiledImports(r);
+    const { instance } = await instantiateWasm(r.binary, imp.env, imp.string_constants);
+    (imp as { setExports?: (e: unknown) => void }).setExports?.(instance.exports);
+    const ex = wrapCompiledExports(r, instance);
+    for (const [label, mk] of [
+      ["{}", () => ({})],
+      ['"x"', () => "x"],
+    ] as const)
+      expect(ex.eqs(mk()), `eqs(${label})`).toBe(node.eqs!(mk()));
   });
 
   it("standalone legacy path (PRE-EXISTING, not fixed by #6931): native values match Node, host values do not trap", async () => {

@@ -42,13 +42,17 @@ const STANDALONE_HOST_EQ_MESSAGE = "Cannot compare a host JavaScript value with 
  * "Host value" ≡ non-null externref whose internalized anyref is not `eq`. Every
  * standalone carrier — `$AnyValue`, `$AnyString`, number/boolean boxes, i31,
  * structs, arrays — is `eq`; null is native null. Returns undefined (no guard)
- * off the standalone target, so gc / wasi / native-first-in-JS are unchanged.
+ * off the standalone TARGET (environment "none"), so gc / wasi / native-first
+ * in a JavaScript environment are unchanged.
  */
 function ensureStandaloneHostEqGuard(
   ctx: CodegenContext,
   buildThrow: typeof buildThrowJsErrorInstrs,
 ): number | undefined {
-  if (ctx.standalone !== true) return undefined;
+  // Key on the TARGET, not `ctx.standalone`: that flag is the native semantic
+  // regime, also true for `semanticProviders: "native-first"` in a JavaScript
+  // environment, where host values are readable and must not be refused.
+  if (ctx.targetProfile.target !== "standalone") return undefined;
   const name = "__standalone_host_eq_guard";
   const existing = ctx.funcMap.get(name);
   if (existing !== undefined) return existing;
