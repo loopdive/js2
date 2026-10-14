@@ -6,8 +6,8 @@
   "status": "in-progress",
   "branch": "codex/6920-b-native-preparation-20261013-01a12827",
   "claimed_at": "2026-10-13T06:38:30.746860Z",
-  "updated_at": "2026-10-14T06:05:57.162990Z",
-  "write_id": "b-number-undefined-7876020d-4abb-4b59-ada6-a4e0a575316d",
+  "updated_at": "2026-10-14T12:41:08.570116Z",
+  "write_id": "b-class-allocation-3436ec50-c50c-46d4-bf98-591e0c8bc975",
   "handoff_scope": [
     "src/ir/program-source.ts: genuine shared logical vector resolver, preparation origin and final checked facts joins",
     "src/ir/from-ast.ts: logical vector admission and executable allocation demand only",
@@ -71,7 +71,178 @@
     "Additional precise native Number/Undefined demand hook only: src/ir/program/linear-memory-demand.ts::collectPreparedLinearMemoryDemand accepts an optional issued independent native Number/Undefined requirements parameter. Preserve complete existing domain/facts/provenance validation; exclude only exact independently certified box occurrences from the vector-only rejection after authentic joins, because the new genuine native-box demand separately owns those occurrences. Retain every vector flow/census and all old behavior without the optional parameter. Source/checker worker owns this hook, physical worker consumes it; no generic demand suppression, synthetic sites, broad allocation allowance or other ownership/effect algorithms.",
     "Additional precise checked native evidence contract receive only: src/ir/analysis/allocation-evidence/contracts.ts::AllocationEvidenceCheck verified.profile union adds exactly native-number-undefined-v1. Preserve every existing union member, interface field, generic/J3 algorithm, producer result and historical profile name. Complete profile-reader census reports no production profile switch/consumer and unchanged historical assertions in eight6920 files; preserve that raw audit in source receiver .tmp/native-number-undefined/profile-readers.txt. This union value identifies the independent genuine new whole-body Number/Undefined checker, never relabels its evidence as an old vector profile and never provides an unauthenticated parallel report capability. Source/checker worker owns this one type-literal addition plus already received new checker leaves; no held generic algorithm or other contract changes.",
     "Exact native Number/Undefined logical boundary repair receive. Move newly owned lowering leaf to src/ir/core/native-number-undefined-lowering.ts; canonical opaque Number/Undefined TagId arguments are supplied at only two already received from-ast call sites, not copied enum/literal runtime knowledge in core. Pure analysis native body/producer/profile reconstruct consistent distinct opaque partitions and exact complete lexical/allocation/guard/effect/namespace populations. Add closed-subset independent block0/return arity and exact scalar types, constant kind/type, actual vector initializer/read/length and index types, permitted nine binary/five unary operand/result rules, actual value IDs and absence of symbolic/call/declaration/typeRef domains; no generic verifier copy/edit or opcode widening. New src/ir/runtime/native-number-undefined-profile.ts retains unchanged full verifyIrFunction at the same selected-body prelude order and authenticates canonical actual JS NumberF64/Undefined tags before any verified evidence/capability. Runtime profile owns the verified API; pure namespace kernel confers no runtime authority. Existing received program/native-number-undefined-requirements.ts must execute that complete runtime validation before every WeakMap issuance/replay, with prior not-covered/invalid precedence preserved. Update only existing received linear-allocation-validation import and new owned evidence tests; direct public pure proof admits representability only, never claims JS canonical semantics. Full runtime verifier, canonical tags, generic analysis/profile/schema algorithms and foreign held C1/core/source contracts remain unchanged. Root owns exact new boundary rows and existing scoped grants; no allowedEdges/activation weakening. Preserve prior frozen checkpoint/failure evidence and old tests; new meaningful malformed/forged/refined/type-domain controls required.",
-    "Exact native GC checked-allocation integration receive for observed site1 ownership contradiction. New src/ir/program/native-number-undefined-allocation-validation.ts and tests/issue-6920-native-number-undefined-gc-allocation.test.ts independently validate actual original plus every selected native GC module (actual complete logical declarations/support join), unchanged canonical full runtime verifier+JS partitions, complete namespace DATA/domain and genuine ownership-and-escape; selected views independently run existing final provenance and allocation type/state checks first. No caches, producer assertions, cloned fake origins or blanket native approval. Existing src/ir/program/allocations.ts::assertPreparedIrProgramAllocations ONLY optional runtime projection context typed field and one native-only independently validated branch AFTER original full snapshot/alias/namespace domain and original generic analysis/final provenance/type-state loop, BEFORE old expected-vs-actual namespace comparison. Nonempty/all-GC original current projections required; legacy 3field/no-runtime inputs preserve exact original fallback/comparison/diagnostics. Examine all invalid current views before coverage; missing/malformed/one-namespace evidence never authorizes return. All other native/generic profiles, analyzers, schema/opcodes, C1 default/receipts, codec/current/public source ABI and old algorithm bodies stay unchanged; no selected Linear bypass. Source worker owns exact two new leaves and bounded allocation hook, with direct full GC preparation+currentness/malformed tests (ordinary flags false/true); physical/emission credit separate. Root owns truthful new program row/issue/scoped grants/integration/publication, retaining all prior frozen source20 byte manifests and failed physical GC evidence, A forwarding/queues/HOLD and original foreign branches."
+    "Exact native GC checked-allocation integration receive for observed site1 ownership contradiction. New src/ir/program/native-number-undefined-allocation-validation.ts and tests/issue-6920-native-number-undefined-gc-allocation.test.ts independently validate actual original plus every selected native GC module (actual complete logical declarations/support join), unchanged canonical full runtime verifier+JS partitions, complete namespace DATA/domain and genuine ownership-and-escape; selected views independently run existing final provenance and allocation type/state checks first. No caches, producer assertions, cloned fake origins or blanket native approval. Existing src/ir/program/allocations.ts::assertPreparedIrProgramAllocations ONLY optional runtime projection context typed field and one native-only independently validated branch AFTER original full snapshot/alias/namespace domain and original generic analysis/final provenance/type-state loop, BEFORE old expected-vs-actual namespace comparison. Nonempty/all-GC original current projections required; legacy 3field/no-runtime inputs preserve exact original fallback/comparison/diagnostics. Examine all invalid current views before coverage; missing/malformed/one-namespace evidence never authorizes return. All other native/generic profiles, analyzers, schema/opcodes, C1 default/receipts, codec/current/public source ABI and old algorithm bodies stay unchanged; no selected Linear bypass. Source worker owns exact two new leaves and bounded allocation hook, with direct full GC preparation+currentness/malformed tests (ordinary flags false/true); physical/emission credit separate. Root owns truthful new program row/issue/scoped grants/integration/publication, retaining all prior frozen source20 byte manifests and failed physical GC evidence, A forwarding/queues/HOLD and original foreign branches.",
+    {
+      "kind": "exact native JS class allocation producer and independent replay",
+      "at": "2026-10-14T12:41:08.570116Z",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b"
+      },
+      "receivingBranch": "codex/6920-b-native-js-class-allocation-20261014-01a12827",
+      "sourceHead": "df466f30d4ee27ab332debad823912ee9155c80c",
+      "proposalSha256": "522e63e6fe64c34cdfd8fdd9387db7e8751cfd0cda9104ac38c6a981f63afcf0",
+      "proposal": {
+        "kind": "finite Session B native JS class allocation-evidence receiving proposal, no edits authorized by this artifact",
+        "basis": {
+          "path": ".tmp/native-js-class-evidence-spec/spec.json",
+          "bytes": 16922,
+          "sha256": "1139054b44fdabc8cf61c0ba269e2d0c0ac02ebfa22696b8877921e7eb11ffbf"
+        },
+        "preimageContext": "Current cohesive finalizer integration WT; production2020/source bytes frozen. Future B isolatedWT mustverify all exact priors and rebase current root-authored A metadata before edits.",
+        "partition": "B owns genuine effects/producer/independent evidence/runtime canonical wrapper + bounded preparation joins. A owns all15 class op schema/builders/original population/semantic definition-data joins. C owns checked physical layouts/resources/emission; no previous allocator readiness inferred.",
+        "newFiles": [
+          {
+            "path": "src/ir/analysis/allocation-evidence/native-js-class-effects.ts",
+            "apis": [
+              "NativeJsClassEvidenceDomain DATA type",
+              "nativeJsClassEffects(instruction,domain) closedoperand/effectgrammar"
+            ],
+            "boundary": "Pure core/shared contracts and type-only IrJsClassDefinition from ir/js-class-contracts; no program/runtime/backend/compiler imports. Domain contains actual extracted descriptor DATA plus original unit-role/frame/binding projections, immutable by data validation; no computed producer report or callback."
+          },
+          {
+            "path": "src/ir/analysis/allocation-evidence/native-js-class-producer.ts",
+            "apis": [
+              "analyzeNativeJsClass(module,registry,domain):boolean"
+            ],
+            "boundary": "Pure own inference and existingregistry namespace mutation only. false iffcomplete census absentclass. selected unsupported/malformed typedrefusal; writes both existing ownership/escape namespaces forall real selectedsites independent ordinaryflag. Sharinggrammar only, neververifier summary."
+          },
+          {
+            "path": "src/ir/analysis/allocation-evidence/native-js-class-profile.ts",
+            "apis": [
+              "inspectNativeJsClassNamespaces(module,snapshot,domain):undefined|invalid|not-covered|representable"
+            ],
+            "boundary": "Pure independent completed-body/root/alias/call effects and metadata replay; no canonicalJS verifiedclaim or authoritytoken. closedunknown namespace fail; absence !=admission. Existing broadownership/escape states compared exactly, not NN-local-only matcher."
+          },
+          {
+            "path": "src/ir/runtime/native-js-class-profile.ts",
+            "apis": [
+              "verifyNativeJsClassEvidence(module,snapshot,domain):AllocationEvidenceCheck|undefined"
+            ],
+            "boundary": "Full unchanged verifyIrFunction +A canonicalclass/role/frame/op validator and pure independentprofile. Onlycanonical runtime conjunction returns verifiednative-js-class-v1; no programowner import."
+          },
+          {
+            "path": "src/ir/program/native-js-class-allocation-validation.ts",
+            "apis": [
+              "nativeJsClassEvidenceDomainFromProgram(context,module):NativeJsClassEvidenceDomain|undefined",
+              "assertNativeJsClassAllocations(program):boolean"
+            ],
+            "boundary": "Honest program orchestration. Calls preparedIrJsClassDefinitions(entries) from A-owned program/js-class-definition; binds actual inventory/ABI/startup/original/sourceClassBody +frame/callee/body joins, projects neutral DATA with no source map sidechannel. Complete original+selected+runtimeSupport canonical replay before positive. Partial oldprogram contexts tolerated only absentclass, selected requires allsourcefree fields. No registration/proof callback."
+          },
+          {
+            "path": "tests/issue-6920-native-js-class-allocation-evidence.test.ts",
+            "apis": [
+              "independent effects/provenance/mutation/native bothnamespace/graph/frame tests"
+            ],
+            "boundary": "Meaningful tests original/livecodec/selected snapshot; preserve existingclassguard until full A/B/C composition."
+          }
+        ],
+        "existingHooks": [
+          {
+            "path": "src/ir/program-middleend-ir.ts",
+            "function": "optimizePreparedIrProgramIr",
+            "scope": "Final native-only complete class domain construction/producer after existing analyses; selected class suppresses incompatible NN selector only; normal nonclass path unchanged.",
+            "preimage": {
+              "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-cohesive-finalizer-integration-20261014-01a12827/src/ir/program-middleend-ir.ts",
+              "bytes": 6014,
+              "sha256": "0197d8c754d9b9b3501f5898f0ade0a66b35a9d315250492f31683c5806fcc9c"
+            }
+          },
+          {
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "function": "prepareLinearAllocationFacts",
+            "scope": "Optional fourth pure domain DATA parameter, old3arguments/defaults unchanged; selected class overlay after generic+stack phase before factsfreeze; full provenance/facts extraction unchanged.",
+            "preimage": {
+              "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-cohesive-finalizer-integration-20261014-01a12827/src/ir/analysis/linear-memory-plan.ts",
+              "bytes": 6961,
+              "sha256": "9b7f5848f3befc7bd508e65a942129c8752e9264301da5d63ec846e4611d3ea1"
+            }
+          },
+          {
+            "path": "src/ir/program-prepare-ir.ts",
+            "function": "prepareTypedIrProgram",
+            "scope": "One native-only final domain construction and optionalfourth argument to existing prepareLinearAllocationFacts at completeFinalModule; no preparation ordering/freeze/runtime authenticity change.",
+            "preimage": {
+              "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-cohesive-finalizer-integration-20261014-01a12827/src/ir/program-prepare-ir.ts",
+              "bytes": 10847,
+              "sha256": "461e522da3217232923d19ea60d8fbf205681bc6e1f9fe33808483aa1642c8d1"
+            }
+          },
+          {
+            "path": "src/ir/program/linear-allocation-validation.ts",
+            "function": "validatePreparedIrLinearAllocationEvidence",
+            "scope": "Exact class sibling dispatch on everyoriginal/selected view with canonical domain; inspect allinvalid first; preserve facts/provenance/namespace/domain checks and bothnamespaces requirement.",
+            "preimage": {
+              "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-cohesive-finalizer-integration-20261014-01a12827/src/ir/program/linear-allocation-validation.ts",
+              "bytes": 13394,
+              "sha256": "ab1ff774873fce122ffccbf54cd7ed4b698aed7714ce7aa618d2a8cfe3c653a9"
+            }
+          },
+          {
+            "path": "src/ir/program/allocations.ts",
+            "function": "assertPreparedIrProgramAllocations",
+            "scope": "Optionalclass context input fields inventory/abi/startup/derivedUnits preserve existingpartial nonclass callers; selectedclass requirescomplete genuine context and native-only class validator after old provenance/type/namespace guards, before NN/generic replay.",
+            "preimage": {
+              "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-cohesive-finalizer-integration-20261014-01a12827/src/ir/program/allocations.ts",
+              "bytes": 5864,
+              "sha256": "8289267472ecee7e17ac0de1de1b2918ad70d7a94a5b84ad2014e3c5d2273037"
+            }
+          },
+          {
+            "path": "src/ir/analysis/allocation-evidence/contracts.ts",
+            "function": "AllocationEvidenceCheck",
+            "scope": "One exactnative-js-class-v1 verifiedliteral only; no unrelated coverage/state extensions.",
+            "preimage": {
+              "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-cohesive-finalizer-integration-20261014-01a12827/src/ir/analysis/allocation-evidence/contracts.ts",
+              "bytes": 3763,
+              "sha256": "760bad18bbd59c2849714f4bcb8b8aec3975f9c30ec9dad223abb074d8004e59"
+            }
+          }
+        ],
+        "frameRefinement": {
+          "op": "js.class.frame.new",
+          "root": "Genuine existing object-kind AllocSite with frame support-ref result; independent frameallocating occurrence in original ctor/method/initializer body entry. Constructor/initializer hiddenparams carry actualenv,this,homeObject,newTarget, initializerzeroUSERargs.",
+          "joins": "Descriptor records genuinecallee/unit, hiddenABI order/types and actualframe.new site/result. Verify domination before frame.get and exact originallexical/terminal owner; no synthetic unit/source site.",
+          "lifetime": "Each runtimeactivation including recursion allocates new frame at genuine static site. Static AllocSite is provenance/summary key, never runtime identity. Frame content references existing env/instance/home/constructor roots, not ownedchildren; frame.get propagates those aliases. All reachable escape raisesroot/lifetime conservatively; unknown recursion firstrefuses or conservativelyopaque, never source-family waiver.",
+          "geometry": "B provides logical site/role/reachability/effects, no numeric layout guessed. C must supply exact frame record geometry/pointermap/currentreservation/allocator forGC+Linear after receipt."
+        },
+        "construction": {
+          "self": "construct owns realinstance allocation and passes actualself/newTarget tooriginalctor.",
+          "replacement": "constructor.complete replacementresult aliases existingreturned object root; primitiveignored/base normalreturnsrealself. Freshself site remains genuine even unused; throwpartialescape tracked.",
+          "disjoint": "Definition-owned freshinnercells and separatebinding.new refcell roots are mutuallyexclusive exactinventory. Externalcaptures are preexisting independent roots; define/instance/frame/bindingcell never sharefabricated sites."
+        },
+        "graphGeometry": "Definition oneobject graphroot valid onlyuniformlifetime +fullchildalias/lifetime closure. Ownconstructor/proto/method/environment subnodes exactrecipe; externalcaptured values/cells remain separate. Instance→definition andframe→root edges scanned transitively. Physical C must proveallaggregate bytes/pointers/nonoverlap/lifetime, never useoldflatclasslayout asJavaScriptproof.",
+        "scopeExclusions": [
+          "No generic ownership.ts/escape.ts/stack-alloc.ts edits or globalmarkerstripping.",
+          "No genericallocfactsmemorygeometry/core/tag/ABI-kind/schema algorithm edits.",
+          "A-owned alloc-verification newopcode mapping and source/population hook changes remain A scope, not B impliedownership.",
+          "No C allocator/helper/resource/emitter readiness, no dynamicpublic/generalclass fallback waivers.",
+          "Root owns policy/issue/grants/ledger/publication; B contributes honest leafboundary proposals only."
+        ],
+        "necessaryAInputs": [
+          "src/ir/js-class-contracts.ts IrJsClassDefinition actualclosed descriptor",
+          "src/ir/program/js-class-definition.ts preparedIrJsClassDefinitions(entries) extraction +canonicalunit/role/frame validator usable via pure A contractkernel",
+          "All15op operand tables/sourcefree codec/clone/effects verifier hooks including frame.new",
+          "OriginalSourceFile modulebody +truthfulsourceClassBody initializer provenance and hiddenparameter signature"
+        ],
+        "APIHandshake": "Concrete neutraldomain field names finalized against sealedA packet before code; domain reconstructed from exactcontext each use. Pureproducer may materializefacts but report alone not authority; program projection and runtime canonicalchecker cannot accept caller-authoredpass callbacks.",
+        "firstValidation": [
+          "Preservedsix oldLinear site0 failures and unchangedsourceguard; independentstackCandidate stale-marker control.",
+          "Defgraphchildescape/externalcaptures/instance-retains-definition/mutablejoins +peractivationframe roots.",
+          "Realconstructorreplacement root vsfreshself +partialthrow escape; zero-user-arginitializer andexacthiddenframe/captureidentity.",
+          "Foreign/missing/stale/undefined metadata/namespace/site/type/body/role/descriptor/op/clone/root count +getters0/prototype/copy/warmdrift.",
+          "Bothnamespaces produced evenordinaryflagsfalse; fulloriginal/selected/runtimeSupport census andlivecodec currentness.",
+          "FullNode25/TS7 excludes[]/actualnewtests plus relevantexistingcontrols, normalhooks only afterroot authorization."
+        ],
+        "implementationReadiness": "Proposal only; awaiting exactrootpublishedBreceiving refinement and isolatedWT GO. Puredomain/sourcecensus can proceed on receivedA files, but no allocating/emissionseal beforeactualframe/cell/instance graphagreement and canonicalreader closure."
+      },
+      "collisionAuditSha256": "a49f82416ad53aedd7b4f077ffed838ac7036f3d716db93b99655ec48fe288b1",
+      "existingForeignHandoffs": "All eleven exact foreign mentions already bounded to this receiving checked-preparation record; owners/statuses/branches/original algorithms retained. No generic release inferred.",
+      "sourceAOverlap": "3522-b-native-class-semantic-producer-20261014.json received15 source/provenance/definition hooks inclprepare-ir; B fourthdomain argument is distinct insertion. No independent old prepare rewrite or A descriptor/population edit. Coordinate fresh seals before composition.",
+      "runtimeHandshake": "A runtime/js-class-verify.ts will implement verifyIrJsClassDefinitionData(value) +verifyIrJsClassInstruction actualSSA/role/frame. B runtime consumes runtime-local leaf, never program owner; B program uses preparedIrJsClassDefinitions(entries) and authentic inventory/ABI/startup joins. Await actual A API seal; no undeclared helper assumed.",
+      "prerequisites": "Actual A fifteen-operation/closed descriptor/runtime validator API seals required before integrated qualification. Both C materializers required before class runtime credit.",
+      "predecessorRecordSha256": "ce5e7a2d06583d77b9806c7d39e7061fa4786fb2173f488fdb440c2b0081857b"
+    }
   ],
   "handoff_authority": {
     "source": "human scope reply call_fHCisBpMmbCIm9ci7BYIEcqH",
@@ -500,9 +671,180 @@
         "bounded_only": true
       },
       "reason": "Measured genuine alias, internal parameter and double-OOB JS/GC divergence require real primitive carrier semantics, beyond a source guard; receive only explicit native seams while preserving foreign contracts."
+    },
+    {
+      "kind": "exact native JS class allocation producer and independent replay",
+      "at": "2026-10-14T12:41:08.570116Z",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b"
+      },
+      "receivingBranch": "codex/6920-b-native-js-class-allocation-20261014-01a12827",
+      "sourceHead": "df466f30d4ee27ab332debad823912ee9155c80c",
+      "proposalSha256": "522e63e6fe64c34cdfd8fdd9387db7e8751cfd0cda9104ac38c6a981f63afcf0",
+      "proposal": {
+        "kind": "finite Session B native JS class allocation-evidence receiving proposal, no edits authorized by this artifact",
+        "basis": {
+          "path": ".tmp/native-js-class-evidence-spec/spec.json",
+          "bytes": 16922,
+          "sha256": "1139054b44fdabc8cf61c0ba269e2d0c0ac02ebfa22696b8877921e7eb11ffbf"
+        },
+        "preimageContext": "Current cohesive finalizer integration WT; production2020/source bytes frozen. Future B isolatedWT mustverify all exact priors and rebase current root-authored A metadata before edits.",
+        "partition": "B owns genuine effects/producer/independent evidence/runtime canonical wrapper + bounded preparation joins. A owns all15 class op schema/builders/original population/semantic definition-data joins. C owns checked physical layouts/resources/emission; no previous allocator readiness inferred.",
+        "newFiles": [
+          {
+            "path": "src/ir/analysis/allocation-evidence/native-js-class-effects.ts",
+            "apis": [
+              "NativeJsClassEvidenceDomain DATA type",
+              "nativeJsClassEffects(instruction,domain) closedoperand/effectgrammar"
+            ],
+            "boundary": "Pure core/shared contracts and type-only IrJsClassDefinition from ir/js-class-contracts; no program/runtime/backend/compiler imports. Domain contains actual extracted descriptor DATA plus original unit-role/frame/binding projections, immutable by data validation; no computed producer report or callback."
+          },
+          {
+            "path": "src/ir/analysis/allocation-evidence/native-js-class-producer.ts",
+            "apis": [
+              "analyzeNativeJsClass(module,registry,domain):boolean"
+            ],
+            "boundary": "Pure own inference and existingregistry namespace mutation only. false iffcomplete census absentclass. selected unsupported/malformed typedrefusal; writes both existing ownership/escape namespaces forall real selectedsites independent ordinaryflag. Sharinggrammar only, neververifier summary."
+          },
+          {
+            "path": "src/ir/analysis/allocation-evidence/native-js-class-profile.ts",
+            "apis": [
+              "inspectNativeJsClassNamespaces(module,snapshot,domain):undefined|invalid|not-covered|representable"
+            ],
+            "boundary": "Pure independent completed-body/root/alias/call effects and metadata replay; no canonicalJS verifiedclaim or authoritytoken. closedunknown namespace fail; absence !=admission. Existing broadownership/escape states compared exactly, not NN-local-only matcher."
+          },
+          {
+            "path": "src/ir/runtime/native-js-class-profile.ts",
+            "apis": [
+              "verifyNativeJsClassEvidence(module,snapshot,domain):AllocationEvidenceCheck|undefined"
+            ],
+            "boundary": "Full unchanged verifyIrFunction +A canonicalclass/role/frame/op validator and pure independentprofile. Onlycanonical runtime conjunction returns verifiednative-js-class-v1; no programowner import."
+          },
+          {
+            "path": "src/ir/program/native-js-class-allocation-validation.ts",
+            "apis": [
+              "nativeJsClassEvidenceDomainFromProgram(context,module):NativeJsClassEvidenceDomain|undefined",
+              "assertNativeJsClassAllocations(program):boolean"
+            ],
+            "boundary": "Honest program orchestration. Calls preparedIrJsClassDefinitions(entries) from A-owned program/js-class-definition; binds actual inventory/ABI/startup/original/sourceClassBody +frame/callee/body joins, projects neutral DATA with no source map sidechannel. Complete original+selected+runtimeSupport canonical replay before positive. Partial oldprogram contexts tolerated only absentclass, selected requires allsourcefree fields. No registration/proof callback."
+          },
+          {
+            "path": "tests/issue-6920-native-js-class-allocation-evidence.test.ts",
+            "apis": [
+              "independent effects/provenance/mutation/native bothnamespace/graph/frame tests"
+            ],
+            "boundary": "Meaningful tests original/livecodec/selected snapshot; preserve existingclassguard until full A/B/C composition."
+          }
+        ],
+        "existingHooks": [
+          {
+            "path": "src/ir/program-middleend-ir.ts",
+            "function": "optimizePreparedIrProgramIr",
+            "scope": "Final native-only complete class domain construction/producer after existing analyses; selected class suppresses incompatible NN selector only; normal nonclass path unchanged.",
+            "preimage": {
+              "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-cohesive-finalizer-integration-20261014-01a12827/src/ir/program-middleend-ir.ts",
+              "bytes": 6014,
+              "sha256": "0197d8c754d9b9b3501f5898f0ade0a66b35a9d315250492f31683c5806fcc9c"
+            }
+          },
+          {
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "function": "prepareLinearAllocationFacts",
+            "scope": "Optional fourth pure domain DATA parameter, old3arguments/defaults unchanged; selected class overlay after generic+stack phase before factsfreeze; full provenance/facts extraction unchanged.",
+            "preimage": {
+              "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-cohesive-finalizer-integration-20261014-01a12827/src/ir/analysis/linear-memory-plan.ts",
+              "bytes": 6961,
+              "sha256": "9b7f5848f3befc7bd508e65a942129c8752e9264301da5d63ec846e4611d3ea1"
+            }
+          },
+          {
+            "path": "src/ir/program-prepare-ir.ts",
+            "function": "prepareTypedIrProgram",
+            "scope": "One native-only final domain construction and optionalfourth argument to existing prepareLinearAllocationFacts at completeFinalModule; no preparation ordering/freeze/runtime authenticity change.",
+            "preimage": {
+              "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-cohesive-finalizer-integration-20261014-01a12827/src/ir/program-prepare-ir.ts",
+              "bytes": 10847,
+              "sha256": "461e522da3217232923d19ea60d8fbf205681bc6e1f9fe33808483aa1642c8d1"
+            }
+          },
+          {
+            "path": "src/ir/program/linear-allocation-validation.ts",
+            "function": "validatePreparedIrLinearAllocationEvidence",
+            "scope": "Exact class sibling dispatch on everyoriginal/selected view with canonical domain; inspect allinvalid first; preserve facts/provenance/namespace/domain checks and bothnamespaces requirement.",
+            "preimage": {
+              "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-cohesive-finalizer-integration-20261014-01a12827/src/ir/program/linear-allocation-validation.ts",
+              "bytes": 13394,
+              "sha256": "ab1ff774873fce122ffccbf54cd7ed4b698aed7714ce7aa618d2a8cfe3c653a9"
+            }
+          },
+          {
+            "path": "src/ir/program/allocations.ts",
+            "function": "assertPreparedIrProgramAllocations",
+            "scope": "Optionalclass context input fields inventory/abi/startup/derivedUnits preserve existingpartial nonclass callers; selectedclass requirescomplete genuine context and native-only class validator after old provenance/type/namespace guards, before NN/generic replay.",
+            "preimage": {
+              "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-cohesive-finalizer-integration-20261014-01a12827/src/ir/program/allocations.ts",
+              "bytes": 5864,
+              "sha256": "8289267472ecee7e17ac0de1de1b2918ad70d7a94a5b84ad2014e3c5d2273037"
+            }
+          },
+          {
+            "path": "src/ir/analysis/allocation-evidence/contracts.ts",
+            "function": "AllocationEvidenceCheck",
+            "scope": "One exactnative-js-class-v1 verifiedliteral only; no unrelated coverage/state extensions.",
+            "preimage": {
+              "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-cohesive-finalizer-integration-20261014-01a12827/src/ir/analysis/allocation-evidence/contracts.ts",
+              "bytes": 3763,
+              "sha256": "760bad18bbd59c2849714f4bcb8b8aec3975f9c30ec9dad223abb074d8004e59"
+            }
+          }
+        ],
+        "frameRefinement": {
+          "op": "js.class.frame.new",
+          "root": "Genuine existing object-kind AllocSite with frame support-ref result; independent frameallocating occurrence in original ctor/method/initializer body entry. Constructor/initializer hiddenparams carry actualenv,this,homeObject,newTarget, initializerzeroUSERargs.",
+          "joins": "Descriptor records genuinecallee/unit, hiddenABI order/types and actualframe.new site/result. Verify domination before frame.get and exact originallexical/terminal owner; no synthetic unit/source site.",
+          "lifetime": "Each runtimeactivation including recursion allocates new frame at genuine static site. Static AllocSite is provenance/summary key, never runtime identity. Frame content references existing env/instance/home/constructor roots, not ownedchildren; frame.get propagates those aliases. All reachable escape raisesroot/lifetime conservatively; unknown recursion firstrefuses or conservativelyopaque, never source-family waiver.",
+          "geometry": "B provides logical site/role/reachability/effects, no numeric layout guessed. C must supply exact frame record geometry/pointermap/currentreservation/allocator forGC+Linear after receipt."
+        },
+        "construction": {
+          "self": "construct owns realinstance allocation and passes actualself/newTarget tooriginalctor.",
+          "replacement": "constructor.complete replacementresult aliases existingreturned object root; primitiveignored/base normalreturnsrealself. Freshself site remains genuine even unused; throwpartialescape tracked.",
+          "disjoint": "Definition-owned freshinnercells and separatebinding.new refcell roots are mutuallyexclusive exactinventory. Externalcaptures are preexisting independent roots; define/instance/frame/bindingcell never sharefabricated sites."
+        },
+        "graphGeometry": "Definition oneobject graphroot valid onlyuniformlifetime +fullchildalias/lifetime closure. Ownconstructor/proto/method/environment subnodes exactrecipe; externalcaptured values/cells remain separate. Instance→definition andframe→root edges scanned transitively. Physical C must proveallaggregate bytes/pointers/nonoverlap/lifetime, never useoldflatclasslayout asJavaScriptproof.",
+        "scopeExclusions": [
+          "No generic ownership.ts/escape.ts/stack-alloc.ts edits or globalmarkerstripping.",
+          "No genericallocfactsmemorygeometry/core/tag/ABI-kind/schema algorithm edits.",
+          "A-owned alloc-verification newopcode mapping and source/population hook changes remain A scope, not B impliedownership.",
+          "No C allocator/helper/resource/emitter readiness, no dynamicpublic/generalclass fallback waivers.",
+          "Root owns policy/issue/grants/ledger/publication; B contributes honest leafboundary proposals only."
+        ],
+        "necessaryAInputs": [
+          "src/ir/js-class-contracts.ts IrJsClassDefinition actualclosed descriptor",
+          "src/ir/program/js-class-definition.ts preparedIrJsClassDefinitions(entries) extraction +canonicalunit/role/frame validator usable via pure A contractkernel",
+          "All15op operand tables/sourcefree codec/clone/effects verifier hooks including frame.new",
+          "OriginalSourceFile modulebody +truthfulsourceClassBody initializer provenance and hiddenparameter signature"
+        ],
+        "APIHandshake": "Concrete neutraldomain field names finalized against sealedA packet before code; domain reconstructed from exactcontext each use. Pureproducer may materializefacts but report alone not authority; program projection and runtime canonicalchecker cannot accept caller-authoredpass callbacks.",
+        "firstValidation": [
+          "Preservedsix oldLinear site0 failures and unchangedsourceguard; independentstackCandidate stale-marker control.",
+          "Defgraphchildescape/externalcaptures/instance-retains-definition/mutablejoins +peractivationframe roots.",
+          "Realconstructorreplacement root vsfreshself +partialthrow escape; zero-user-arginitializer andexacthiddenframe/captureidentity.",
+          "Foreign/missing/stale/undefined metadata/namespace/site/type/body/role/descriptor/op/clone/root count +getters0/prototype/copy/warmdrift.",
+          "Bothnamespaces produced evenordinaryflagsfalse; fulloriginal/selected/runtimeSupport census andlivecodec currentness.",
+          "FullNode25/TS7 excludes[]/actualnewtests plus relevantexistingcontrols, normalhooks only afterroot authorization."
+        ],
+        "implementationReadiness": "Proposal only; awaiting exactrootpublishedBreceiving refinement and isolatedWT GO. Puredomain/sourcecensus can proceed on receivedA files, but no allocating/emissionseal beforeactualframe/cell/instance graphagreement and canonicalreader closure."
+      },
+      "collisionAuditSha256": "a49f82416ad53aedd7b4f077ffed838ac7036f3d716db93b99655ec48fe288b1",
+      "existingForeignHandoffs": "All eleven exact foreign mentions already bounded to this receiving checked-preparation record; owners/statuses/branches/original algorithms retained. No generic release inferred.",
+      "sourceAOverlap": "3522-b-native-class-semantic-producer-20261014.json received15 source/provenance/definition hooks inclprepare-ir; B fourthdomain argument is distinct insertion. No independent old prepare rewrite or A descriptor/population edit. Coordinate fresh seals before composition.",
+      "runtimeHandshake": "A runtime/js-class-verify.ts will implement verifyIrJsClassDefinitionData(value) +verifyIrJsClassInstruction actualSSA/role/frame. B runtime consumes runtime-local leaf, never program owner; B program uses preparedIrJsClassDefinitions(entries) and authentic inventory/ABI/startup joins. Await actual A API seal; no undeclared helper assumed.",
+      "prerequisites": "Actual A fifteen-operation/closed descriptor/runtime validator API seals required before integrated qualification. Both C materializers required before class runtime credit.",
+      "predecessorRecordSha256": "ce5e7a2d06583d77b9806c7d39e7061fa4786fb2173f488fdb440c2b0081857b"
     }
   ],
-  "previous_write_id": "b-number-undefined-c878549a-ca59-488f-831a-bb5d16843ef6",
+  "previous_write_id": "b-number-undefined-7876020d-4abb-4b59-ada6-a4e0a575316d",
   "receiving_worktrees": [
     "codex/6920-b-native-vector-calls-20261013-01a12827",
     "codex/6920-b-vector-control-20261013-01a12827",
