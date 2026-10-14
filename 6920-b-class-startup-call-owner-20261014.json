@@ -1,0 +1,44 @@
+{
+  "id": "6920",
+  "slice": "class-startup-call-owner-successor-20261014",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+  "claimed_at": "2026-10-14T20:01:19.897132+00:00",
+  "updated_at": "2026-10-14T20:01:19.897132+00:00",
+  "write_id": "b-class-startup-call-owner-f3b86abc-e198-4d8b-8781-e838d824f7d7",
+  "handoff_scope": [
+    {
+      "kind": "class-startup-call-owner",
+      "at": "2026-10-14T20:01:19.897132+00:00",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+      "manifest": {
+        "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+        "componentPreimages": [
+          {
+            "path": "src/ir/program-source.ts",
+            "bytes": 96363,
+            "sha256": "125a54848a3d8ab66b57d6b0e4aaebbc111f9d9e341d932d917b6ab60a661082",
+            "functions": "prepareStartupDirectCalls: stop class body traversal so actual field/constructor/method caller plans retain indexed owner, not module-init owner"
+          }
+        ],
+        "canonicalNewPaths": [],
+        "scope": "The original field fixture proves stale module-init ownership: startup call planning walks deferred instance initializer calls and overwrites their genuine body owner. Limit class body caller roots to the original indexed callable graph.",
+        "constraints": "No broad missing-plan waiver, callback/name fallback or newunit/site. Current native class evaluation accepts base/static-noncomputed shape; preserve all located refusals. Other top-level call and fixed-target binding behavior unchanged, modules and class evaluation kept separate according to actual source execution. Root graph/new helpercall test alreadyreceived at1b169ff; no other source changes."
+      },
+      "manifestSha256": "ddaad01db249b582b59846e15fb4981bdb7fd69d19796e972660fa59eda7680f",
+      "constraints": "No broad missing-plan waiver, callback/name fallback or newunit/site. Current native class evaluation accepts base/static-noncomputed shape; preserve all located refusals. Other top-level call and fixed-target binding behavior unchanged, modules and class evaluation kept separate according to actual source execution. Root graph/new helpercall test alreadyreceived at1b169ff; no other source changes."
+    }
+  ],
+  "predecessors": [
+    "3522-b-native-class-semantic-producer-20261014.json",
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}

@@ -1,0 +1,47 @@
+{
+  "id": "6920",
+  "slice": "class-value-domain-checker-kernel-successor-20261014",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-class-value-replay-successor-20261014-01a12827",
+  "claimed_at": "2026-10-14T20:01:19.897132+00:00",
+  "updated_at": "2026-10-14T20:01:19.897132+00:00",
+  "write_id": "b-class-value-domain-checker-kernel-e8231f7c-7404-4165-8bd3-4d73a6575368",
+  "handoff_scope": [
+    {
+      "kind": "class-value-domain-checker-kernel",
+      "at": "2026-10-14T20:01:19.897132+00:00",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-class-value-replay-successor-20261014-01a12827",
+      "manifest": {
+        "receivingBranch": "codex/6920-b-class-value-replay-successor-20261014-01a12827",
+        "componentPreimages": [
+          {
+            "path": "src/ir/analysis/evidence/native-js-class-value-domains.ts",
+            "bytes": 88535,
+            "sha256": "f6f0aafddbb3ff0a38d948edd5900bb361dfea79824c36391c32e62232622611",
+            "functions": "Exact independent DATA/SSA/CFG/type/lattice/world helper partition plus cellKey relocation; explicit inputPopulation assertPreparedIrData entry guard before observations. Every other86 named declaration body unchanged."
+          }
+        ],
+        "canonicalNewPaths": [
+          "src/ir/analysis/evidence/native-js-class-value-domain-replay-kernel.ts"
+        ],
+        "scope": "ONE independent checker replay kernel plus exact adjacent type/value imports/exports; whole original partition inverse unchanged,86 named bodies byteexact, inputPopulation separately gains failclosed DATA entry screening.",
+        "proposalSha256": "2484a496ccae41ba9261611707e5c52cd168b66676c1f7783f5174280c967ae9",
+        "constraints": "No shared producer/A runtime algorithm or helper; both original/new leaf <=1500 measured nonblank and all functions<=300. Exact structural/schema and every algorithm body unchanged during extraction; no waiver/minification/report registration. Existing measured solver corrections remain separately owned in successor; old B33915 remains protected. Preserve paired source36/A53 and all failed epochs, all owner branches/HOLDs/queue. After exact extraction, independent CFG branch blockArgTypes and slot index/type census checks may be corrected as separately measured owned epochs; no schema/report or producer algorithm changes."
+      },
+      "manifestSha256": "b18c62ce1d0b720ced116a01cda76de6187f260589125c6823fdfe06c0217a8a",
+      "constraints": "No shared producer/A runtime algorithm or helper; both original/new leaf <=1500 measured nonblank and all functions<=300. Exact structural/schema and every algorithm body unchanged during extraction; no waiver/minification/report registration. Existing measured solver corrections remain separately owned in successor; old B33915 remains protected. Preserve paired source36/A53 and all failed epochs, all owner branches/HOLDs/queue. After exact extraction, independent CFG branch blockArgTypes and slot index/type census checks may be corrected as separately measured owned epochs; no schema/report or producer algorithm changes."
+    }
+  ],
+  "predecessors": [
+    "3522-b-native-class-semantic-producer-20261014.json",
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}
