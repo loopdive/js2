@@ -1,10 +1,11 @@
 ---
 id: 6978
 title: "S6-B: per-family opt-in host accelerators (js-string, regexp, date, intl) for the native semantic regime"
-status: in-progress
+status: done
 sprint: current
 created: 2026-10-14
 updated: 2026-10-14
+completed: 2026-10-14
 priority: high
 horizon: l
 feasibility: hard
@@ -187,6 +188,19 @@ but not the options object). Gating emission behind the accelerator would turn
 every such program into a compile error on the default lane once #6708 slice A
 flips, so emission is unchanged here. Follow-up: marshal Intl arguments and
 results through the JS value boundary, then gate emission on `intl`.
+
+### Validation (2026-10-14)
+
+- `tests/issue-6978-host-accelerators.test.ts` 9/9,
+  `tests/issue-4396-target-profile.test.ts` 12/12,
+  `tests/issue-4401-host-import-policy.test.ts` 7/7,
+  `tests/issue-6686-js-value-boundary-regime.test.ts` 5/5,
+  `tests/issue-4397-native-semantic-js-host.test.ts` 28/30 — the two reds
+  ("object-rest CopyDataProperties…", "dynamic operators…") fail identically
+  on the base commit with this branch's `src/` swapped out.
+- `node scripts/equivalence-gate.mjs`: 1748 passing, 22 failing (all 22 known
+  in the baseline), "No new equivalence regressions".
+- `pnpm run check:host-import-policy`: numbers above.
 
 ### Other findings
 
