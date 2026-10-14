@@ -1,0 +1,83 @@
+{
+  "id": "6920",
+  "slice": "source-map-validator-current-reader-successor-20261015",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-helper-completions-20261015-01a12827",
+  "claimed_at": "2026-10-14T22:57:48.209263+00:00",
+  "updated_at": "2026-10-14T22:57:48.209263+00:00",
+  "write_id": "b-source-map-validator-current-reader-4c7e4234-37c9-4831-b62c-0cb004db4b6f",
+  "handoff_scope": [
+    {
+      "kind": "source-map-validator-current-reader",
+      "at": "2026-10-14T22:57:48.209263+00:00",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-helper-completions-20261015-01a12827",
+      "manifest": {
+        "receivingBranch": "codex/6920-b-helper-completions-20261015-01a12827",
+        "componentPreimages": [
+          {
+            "path": "tests/issue-3525-source-map-validator-proof.test.ts",
+            "bytes": 13408,
+            "sha256": "447e36da40ea03643d69ebd4b0314c40731e7a24e096548b375cf88eefa17436"
+          }
+        ],
+        "canonicalNewPaths": [
+          "tests/helpers/ir-source-map-validator-current-successor.ts",
+          "tests/helpers/ir-source-map-validator-current-successor.json",
+          "tests/issue-3525-source-map-validator-current-successor.test.ts"
+        ],
+        "proposal": {
+          "path": ".tmp/source-map-validator-successor-spec/proposal.json",
+          "bytes": 7820,
+          "sha256": "3b4452c1d708c6ecbb028f70c2e54e58f1ba2f0b5625283bea530b0ba3fd8870"
+        },
+        "current20SourcesVerifiedExactRoot": true,
+        "operations": {
+          "API": "captureSourceMapValidatorCurrentSuccessor(actualRead): {readActual(path), readHistoricalCurrent(path)}; createSourceMapValidatorCurrentSuccessorReader(actualRead): Reader",
+          "fixedReads": "25 per new capture: own receipt1 + source20 + old helper/epoch/relocation/caller4; exact sequence recorded independently. Whole new helper is externally pinned by independent suite/root seal, not its own receipt.",
+          "authentication": "Primitive nonempty path and primitive source text before coercion. Own receipt raw/canonical full hash+closed keys; complete source and four anchor full hashes; complete caller custody inverse and forward; exact nine source inverses and reciprocal forwards with unaffected bytes untouched. Current source union includes all eleven epoch inputs plus all ten relocation inputs with validator deduped.",
+          "historicalView": "Map only fixed20 source paths and immutable old helper/JSON/caller anchors after full current authentication. Direct original callback-mutated values remain untouched at old helper entry. Unknown primitive paths pass through once per captured reader; no cross-operation cache.",
+          "freshness": "Every explicit physical(path) call creates one fresh complete capture before returning historical-current operand. No global or warm authority cache. An optional later operation batching optimization would require exact received harness scope and explicit counts; not assumed here.",
+          "oldCallbacks": "Original12 retain their old thirteen supplied-reader trace and old literals. They are explicitly labeled historical-chain witnesses conditional on separately authenticated actual current outer proof; their physicalCurrent45816 log is not reported as current physical49504."
+        },
+        "independentControls": [
+          "Capture all twenty actual source operands once plus four anchors/ownreceipt; independently pin true current whole files and compare returned actual bytes to supplied values.",
+          "Independently inverse each of nine changed whole files from raw caller DATA using explicit spans and verify whole historical-current pins, reciprocal forward identity and all eleven untouched source pins.",
+          "Independently carry validator actual49504 -> source-map historical45816 -> relocated19448 -> donor19427, and all five donor/facade pairs, without producer-returned reports as authority.",
+          "Verify old helper46642/epoch49534/relocation27069 and historical12 callback bodies/literals remain exact via whole caller inverse/forward; external fullhelper hash in new suite and root seal avoids circular selfpin.",
+          "Every changed source mutation, unchanged source mutation, omission/duplicate/foreign path, nine span coordinate/text/hole/overlap/suffix mutation, wholecaller drift, helper suffix drift, each oldanchor drift refuse; restoration passes freshcapture.",
+          "Raw/canonical receipt metadata/keys/JSON mutations refuse; boxed/getter source/path/receipt counters stay0; unknown valid primitive missingpath preserves actual ENOENT; unknown path one read per capturedreader.",
+          "Warm source mutation after prior healthy capture cannot authorize next operation; prior immutable snapshot stays prior; actual operation readcount25 and no hidden rereads independently observed.",
+          "Do not modify old suppliedReader override semantics: malformed oldepoch/mutatedsource/boxedsource direct arguments flow unchanged into original helper refusal, and original13 upstream logical requests remain exact."
+        ],
+        "constraints": [
+          "User explicitly authorized takeover of blocking shared seams; preserve unrelated owners, original failures, HOLDs and public source branches.",
+          "No verifier/reader/oracle weakening, no new allowance, no source push/main write. Freeze qualifier inputs until natural terminal.",
+          "ONLY additive import + rename original primitive physical binding to actualPhysical + initial physical(path) composition through one fresh outer captured reader. Original twelve assertion callback bodies/literals/identities, reader/healthy/inverse/replay bodies and old helper imports remain byte-exact. No old helper/JSON/default or source/policy writes.",
+          "Historical helper/epoch/relocation complete bytes remain read-only. Original12 callback bodies/literals and direct suppliedReader override semantics unchanged.25 actual reads per new captured operation; no warm authority cache.",
+          "New suite proves actual current source independently and exact inverse/forward chain, not a producer report; no claim that old45816 historical log is current49504."
+        ],
+        "qualificationPlan": "After exact root scope receipt and finalcurrent pins, freeze candidate and run original12 plus new independent suite (actual registered denominator), all five source-map roots, helper/source coupled controls, fullsrc typing excludes[], scopedstyle and gates. Retain69/81 prior epoch and all original failures. No live/current or runtime claim from this private measured recipe."
+      },
+      "manifestSha256": "0c31f52c03cab8836669fa7d5c6e9b07c7edda277e29e0373bc3a430d542cfb2",
+      "constraints": [
+        "User explicitly authorized takeover of blocking shared seams; preserve unrelated owners, original failures, HOLDs and public source branches.",
+        "No verifier/reader/oracle weakening, no new allowance, no source push/main write. Freeze qualifier inputs until natural terminal.",
+        "ONLY additive import + rename original primitive physical binding to actualPhysical + initial physical(path) composition through one fresh outer captured reader. Original twelve assertion callback bodies/literals/identities, reader/healthy/inverse/replay bodies and old helper imports remain byte-exact. No old helper/JSON/default or source/policy writes.",
+        "Historical helper/epoch/relocation complete bytes remain read-only. Original12 callback bodies/literals and direct suppliedReader override semantics unchanged.25 actual reads per new captured operation; no warm authority cache.",
+        "New suite proves actual current source independently and exact inverse/forward chain, not a producer report; no claim that old45816 historical log is current49504."
+      ]
+    }
+  ],
+  "predecessors": [
+    "3522-b-native-class-semantic-producer-20261014.json",
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}
