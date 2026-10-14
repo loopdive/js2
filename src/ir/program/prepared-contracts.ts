@@ -30,7 +30,12 @@ export type PreparedIrAbiContract =
     }
   | { readonly kind: "global"; readonly ref: IrGlobalRef; readonly type: IrType; readonly mutable: boolean }
   | { readonly kind: "type"; readonly ref: IrTypeRef; readonly type: IrType }
-  | { readonly kind: "class"; readonly ref: IrTypeRef; readonly shape: IrClassShape }
+  | {
+      readonly kind: "class";
+      readonly ref: IrTypeRef;
+      readonly shape: IrClassShape;
+      readonly preparation?: import("./class-preparation.js").IrPreparedSourceClass;
+    }
   | { readonly kind: "export"; readonly externalName: string; readonly targetId: IrBindingId }
   | { readonly kind: "support"; readonly role: string };
 

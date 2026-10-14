@@ -384,6 +384,13 @@ function validatePreparedIrProgram(
             invalid(
               `body ${fn.unitId} calls an undeclared callable ${irCallableBindingKey(instruction.target.binding)}`,
             );
+          if (
+            (instruction.kind === "class.new" ||
+              instruction.kind === "class.call" ||
+              instruction.kind === "class.static_call") &&
+            (!instruction.target || !calls.has(irCallableBindingKey(instruction.target.binding)))
+          )
+            invalid(`body ${fn.unitId} references an undeclared class callable`);
           if (instruction.kind === "closure.new" && !calls.has(irCallableBindingKey(instruction.liftedFunc.binding)))
             invalid(`body ${fn.unitId} captures an undeclared callable`);
           if (

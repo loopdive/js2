@@ -16571,6 +16571,27 @@
       "destination": "compiler",
       "owner": "6920-session-b-native-takeover",
       "nextBoundary": "Source-free native scalar declarations derive from immutable semantic ABI and authentic current emissions; Prepared program and consumer imports retain migration debt until their complete import closure is separated."
+    },
+    {
+      "path": "src/ir/source-class-plans.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "3522-b-native-class-producer",
+      "nextBoundary": "Original checker/AST class census, source type/default/initializer and allocation-site plans; no pure IR classification until source preparation moves to frontend/ts."
+    },
+    {
+      "path": "src/ir/source-class-lowering.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "3522-b-native-class-producer",
+      "nextBoundary": "Original class member orchestration and non-synthetic implicit constructor entry remain frontend lowering; separate source adapters from neutral typed DATA."
+    },
+    {
+      "path": "src/ir/program/class-preparation.ts",
+      "state": "clean",
+      "layer": "ir-program"
     }
   ]
 }
