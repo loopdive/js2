@@ -1,0 +1,73 @@
+{
+  "id": "6920",
+  "slice": "constructor-equation-producer-repair-successor-20261015",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+  "claimed_at": "2026-10-14T23:37:46.041544+00:00",
+  "updated_at": "2026-10-14T23:37:46.041544+00:00",
+  "write_id": "b-constructor-equation-producer-repair-8ff4eba6-0d36-499e-abb6-5dec2d3f407c",
+  "handoff_scope": [
+    {
+      "kind": "constructor-equation-producer-repair",
+      "at": "2026-10-14T23:37:46.041544+00:00",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+      "manifest": {
+        "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+        "componentPreimages": [
+          {
+            "path": "src/ir/analysis/allocation-evidence/js-class-value-domains/producer.ts",
+            "bytes": 60730,
+            "sha256": "1d2d0ae33ce0516710d4b1caea7314bfe907e528fa0dab9c7f38ab24b16715bc"
+          },
+          {
+            "path": "tests/issue-6920-native-js-class-value-domains.test.ts",
+            "bytes": 55396,
+            "sha256": "476889fd2b2df3ffb9eedcd1703f0b0ffb05151c542aace34d330059c3bcb8d9"
+          }
+        ],
+        "canonicalNewPaths": [],
+        "privateProposal": {
+          "path": ".tmp/constructor-equation-triage/receiving-proposal.json",
+          "bytes": 5246,
+          "sha256": "b2dd13af679e6c7253f6beee4813c9cf8cb8355d0f7e7f23e03c551affbaa66c"
+        },
+        "operations": [
+          "B alone repairs ValueDomainSolver.call construct branch: remove stale construct-only nominal arity adaptation obligation under explicit logical op semantics; ordinary direct-unit arity obligations stay.",
+          "Stop class field initializer loop before speculative store or laterfields when its summary has no normal completion/BOTTOM. Preserve actual normal Undefined/unknown writes and all real effects/obligations.",
+          "Append genuine24-source/postmiddleend replay controls and strictnegatives to sole modeltest; preserve everyoldcase. Independent/kernel/input/contracts unchanged."
+        ],
+        "constraints": [
+          "Explicit shared-seam takeover authority; preserve unrelated owners/HOLDs/publicsource/main.",
+          "Freeze qualifier inputs to naturalterminal; no oracle/checker weakening, newallowance, sourcepush, canceledtest or timeout/RPCchange.",
+          "Prove caller-evaluated extras and issuedUndefined missing-formal semantics from actual contracts; physical construct/invoke adapter remains explicitly unsupported and not ready.",
+          "Preserve phantomwrite trace and original16failures/captured24packet. Privatecandidate24replay0 is not productionqualification. First private5/5negative claim was invalidprecondition and retained; corrected controls require actualpreconditions outsidecatch.",
+          "Root source currently2053 with commonphysical75 six timeouts. No rootproduction or solver writes while rootCPUprofile/qualifiers active; coordinate exactfreeze boundary."
+        ],
+        "qualificationPlan": [
+          "Recheck24immutableactualinputs afterproductionrepair+independentdiff, meaningful healthy and strictnegative/genericarity/normalUndefined controls.",
+          "Fresh full model/context/paired/source/constructor population with actualcensus, fulltyping/excludes[], normalstatic/style and zeroUHE."
+        ]
+      },
+      "manifestSha256": "427f301ad870114c3e0d67189a99ea86f588f2eb73e3b722788535a26d2c958a",
+      "constraints": [
+        "Explicit shared-seam takeover authority; preserve unrelated owners/HOLDs/publicsource/main.",
+        "Freeze qualifier inputs to naturalterminal; no oracle/checker weakening, newallowance, sourcepush, canceledtest or timeout/RPCchange.",
+        "Prove caller-evaluated extras and issuedUndefined missing-formal semantics from actual contracts; physical construct/invoke adapter remains explicitly unsupported and not ready.",
+        "Preserve phantomwrite trace and original16failures/captured24packet. Privatecandidate24replay0 is not productionqualification. First private5/5negative claim was invalidprecondition and retained; corrected controls require actualpreconditions outsidecatch.",
+        "Root source currently2053 with commonphysical75 six timeouts. No rootproduction or solver writes while rootCPUprofile/qualifiers active; coordinate exactfreeze boundary."
+      ]
+    }
+  ],
+  "predecessors": [
+    "3522-b-native-class-semantic-producer-20261014.json",
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}

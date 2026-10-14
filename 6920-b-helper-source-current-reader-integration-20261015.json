@@ -1,0 +1,95 @@
+{
+  "id": "6920",
+  "slice": "helper-source-current-reader-integration-successor-20261015",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+  "claimed_at": "2026-10-14T23:37:46.041544+00:00",
+  "updated_at": "2026-10-14T23:37:46.041544+00:00",
+  "write_id": "b-helper-source-current-reader-integration-2e8fa318-af93-4b6e-937b-2c0de75213cb",
+  "handoff_scope": [
+    {
+      "kind": "helper-source-current-reader-integration",
+      "at": "2026-10-14T23:37:46.041544+00:00",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+      "manifest": {
+        "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+        "componentPreimages": [
+          {
+            "path": "src/ir/program-source.ts",
+            "bytes": 96471,
+            "sha256": "f47127a102eb2fda197d5cb9ebde73644727e194fcd38c2b04e3f77ccd801532"
+          },
+          {
+            "path": "src/ir/from-ast.ts",
+            "bytes": 807104,
+            "sha256": "7a0620460eb15716a19bca432764ea21b0635f66db5d6ae188f3225d36192bbc"
+          },
+          {
+            "path": "tests/issue-6920-native-js-class-source.test.ts",
+            "bytes": 33777,
+            "sha256": "e0ae872396f8520e2da54d1a2b4e56d901b56398cb7a8da72233859c4ba59e36"
+          },
+          {
+            "path": "tests/issue-3525-source-map-frontend-origins.test.ts",
+            "bytes": 13729,
+            "sha256": "74acb38242a5b63ae406e6a59e62d88773e8090a03f5be102e765cb1405d09e1"
+          },
+          {
+            "path": "tests/issue-3525-source-map-prepared-codec.test.ts",
+            "bytes": 3560,
+            "sha256": "faf7dfe2c856c3655535be53a88f7dfeb3a713bbdbd8a91c8b414c4b2da32e56"
+          },
+          {
+            "path": "tests/issue-3525-source-map-validator-proof.test.ts",
+            "bytes": 13408,
+            "sha256": "447e36da40ea03643d69ebd4b0314c40731e7a24e096548b375cf88eefa17436"
+          }
+        ],
+        "canonicalNewPaths": [
+          "tests/issue-6920-native-js-class-helper-completions.test.ts",
+          "tests/helpers/ir-source-map-validator-current-successor.ts",
+          "tests/helpers/ir-source-map-validator-current-successor.json",
+          "tests/issue-3525-source-map-validator-current-successor.test.ts"
+        ],
+        "qualifiedDonor": {
+          "path": ".tmp/helper-completion/final01/handoff/sealed.json",
+          "bytes": 30691,
+          "sha256": "3b0a93fd4cb8b001025401a1a48726eb8014c05d2f08c26f8988091966771699"
+        },
+        "initialThreeProof": {
+          "path": ".tmp/helper-completion/initial-preimage-deltas/manifest.json",
+          "bytes": 3358,
+          "sha256": "76062b70f855140a2bcc9e081d45670a69fb0b301d78851ca5d04677d079f896"
+        },
+        "operations": [
+          "Root adopts exactly A10 immutable snapshots after initial source3 and all other preimages match: class-context ordinary helper completion/body+call+ABI, contextual source-map donation, two erased fixture annotations, current inverse reader and preserved12 oldcallbacks.",
+          "No class-free ordinarycompletion scope or public dynamic/NN/DTS transport claim. Donor390 has374pass+16constructor failures; retain that frontier, no fullcoupled credit.",
+          "Olddonor/sourcevalidator anchors and root25logical/physical integration remain untouched; only listed10paths. Fresh common qualification afteractual rootadoption."
+        ],
+        "constraints": [
+          "Explicit shared-seam takeover authority; preserve unrelated owners/HOLDs/publicsource/main.",
+          "Freeze qualifier inputs to naturalterminal; no oracle/checker weakening, newallowance, sourcepush, canceledtest or timeout/RPCchange.",
+          "A remains owner of donor snapshots; root copies borrowed qualified component only. Typed/codec/source positives do not imply physical construct/invoke readiness."
+        ]
+      },
+      "manifestSha256": "facb25af73b1992940a33bf01a6ace56acd9591047c0f288e616f03054baf2cd",
+      "constraints": [
+        "Explicit shared-seam takeover authority; preserve unrelated owners/HOLDs/publicsource/main.",
+        "Freeze qualifier inputs to naturalterminal; no oracle/checker weakening, newallowance, sourcepush, canceledtest or timeout/RPCchange.",
+        "A remains owner of donor snapshots; root copies borrowed qualified component only. Typed/codec/source positives do not imply physical construct/invoke readiness."
+      ]
+    }
+  ],
+  "predecessors": [
+    "3522-b-native-class-semantic-producer-20261014.json",
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}
