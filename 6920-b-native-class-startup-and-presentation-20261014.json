@@ -1,0 +1,268 @@
+{
+  "id": "6920",
+  "slice": "native-class-boundary-presentation-successor-20261014",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+  "claimed_at": "2026-10-14T15:37:47.825286Z",
+  "updated_at": "2026-10-14T15:37:47.825286Z",
+  "write_id": "b-class-boundary-presentation-b9f33366-f43a-482c-91dc-da2f92fe010e",
+  "handoff_scope": [
+    {
+      "kind": "exact startup ingress split and class global presentation custody",
+      "at": "2026-10-14T15:37:47.825286Z",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+      "manifest": {
+        "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+        "additionalReceivingBranch": "codex/6920-b-native-js-class-physical-20261014-01a12827",
+        "componentPreimages": [
+          {
+            "path": "src/ir/program/js-class-startup.ts",
+            "bytes": 5170,
+            "sha256": "7f1b843a35df7d7db2cafa6c004db866708009e6272c125bf6966f19645be135"
+          },
+          {
+            "path": "src/ir/source-js-class-definition.ts",
+            "bytes": 18379,
+            "sha256": "ec12257698c77c595388ec08f01304fa0a802fc309c0de2e25bbb698e084c3b9"
+          },
+          {
+            "path": "src/ir/module-init-plan.ts",
+            "bytes": 23418,
+            "sha256": "62e05521ed22bf4f7ee6ea1a919750302433fc9c256db456367716d762dcd58d"
+          },
+          {
+            "path": "src/compiler/ir-program-presentation.ts",
+            "bytes": 70868,
+            "sha256": "74affb376216c95c435713a510df9377f985bdf4f4c0d99cb6d460016ef931f0"
+          }
+        ],
+        "canonicalNewPaths": [],
+        "startupSplit": {
+          "kind": "Read-only finite canonical startup ingress split and exact verifier footprint; no tracked edits",
+          "sourceHead": "df466f30d4ee27ab332debad823912ee9155c80c",
+          "files": [
+            {
+              "path": "src/ir/program/js-class-startup.ts",
+              "preimage": {
+                "bytes": 5170,
+                "sha256": "7f1b843a35df7d7db2cafa6c004db866708009e6272c125bf6966f19645be135"
+              },
+              "privateCandidate": {
+                "path": ".tmp/class-startup-boundary-plan/candidate/src/ir/program/js-class-startup.ts",
+                "bytes": 3586,
+                "sha256": "175cc07b01560ed7f5bea9e7d4c210d8baf5c10d57f3c62e73ae7d8c6426564c"
+              }
+            },
+            {
+              "path": "src/ir/source-js-class-definition.ts",
+              "preimage": {
+                "bytes": 18379,
+                "sha256": "ec12257698c77c595388ec08f01304fa0a802fc309c0de2e25bbb698e084c3b9"
+              },
+              "privateCandidate": {
+                "path": ".tmp/class-startup-boundary-plan/candidate/src/ir/source-js-class-definition.ts",
+                "bytes": 20058,
+                "sha256": "be37af59e9f4352b178a41e2d5e6bb84a28fc2de723d409da2ae65711ee9b2b2"
+              }
+            },
+            {
+              "path": "src/ir/module-init-plan.ts",
+              "preimage": {
+                "bytes": 23418,
+                "sha256": "62e05521ed22bf4f7ee6ea1a919750302433fc9c256db456367716d762dcd58d"
+              },
+              "privateCandidate": {
+                "path": ".tmp/class-startup-boundary-plan/candidate/src/ir/module-init-plan.ts",
+                "bytes": 23420,
+                "sha256": "2ca2279f94cf54a89ef6978c4ef1e55ea3b46bbcdd6522b778d95f1669c562b4"
+              }
+            }
+          ],
+          "functions": {
+            "producer": {
+              "from": "src/ir/program/js-class-startup.ts",
+              "to": "src/ir/source-js-class-definition.ts",
+              "name": "prepareIrJsClassStartup",
+              "bodyBytes": 1190,
+              "bodySha256": "579a068728b5c2e5911e1e760cdc09e133837c77877e9ef5ca0bcc4bd6242951",
+              "bodyExactlyUnchanged": true
+            },
+            "dataAssertion": {
+              "path": "src/ir/program/js-class-startup.ts",
+              "name": "assertPreparedIrJsClassStartup",
+              "bodyBytes": 2642,
+              "bodySha256": "2f6f5c13ff226d6d03a8803c44b974d6c8b3979687d55d970208cb2b357af5b6",
+              "bodyExactlyUnchanged": true
+            },
+            "privateErrorHelper": {
+              "sourceCopy": "src/ir/source-js-class-definition.ts",
+              "assertionCopy": "src/ir/program/js-class-startup.ts",
+              "bodyExactlyUnchanged": true,
+              "reason": "stateless same invariant constructor/message; preserve both original function bodies with no cross-boundary forwarding facade"
+            }
+          },
+          "rewires": [
+            {
+              "path": "src/ir/module-init-plan.ts",
+              "symbol": "prepareIrJsClassStartup",
+              "from": "./program/js-class-startup.js",
+              "to": "./source-js-class-definition.js",
+              "callExpressionAndPlannerBodyUnchanged": true
+            }
+          ],
+          "readers": {
+            "producer": [
+              "src/ir/module-init-plan.ts:buildIrModuleInitPlan"
+            ],
+            "assertion": [
+              "src/ir/program/validation.ts:validatePreparedIrProgram",
+              "tests/issue-6920-native-js-class-source.test.ts:five existing startup assertions"
+            ],
+            "startupData": [
+              "src/ir/program-source.ts:sourceMapStartupOccurrences authentic original source occurrence join",
+              "src/ir/module-init-plan.ts:verifyIrModuleInitPlan executable/evaluation census",
+              "src/ir/program/validation.ts:validatePreparedIrProgram and sourceMapStartupRanges DATA validation",
+              "src/ir/program/startup.ts:IrModuleInitPlan.jsClassStartup type field",
+              "tests/issue-6920-native-js-class-source.test.ts:startup and four policy preparation assertions"
+            ]
+          },
+          "mutators": {
+            "source": "reads original SourceFile statements/kind/modifiers/parent/span only; no source mutation",
+            "output": "new immutable copied startup DATA only",
+            "assertion": "reads closed DATA/actual inventory; no SourceFile/checker"
+          },
+          "candidateGraph": {
+            "programValueClosure": [
+              "src/ir/core/binding-key-primitives.ts",
+              "src/ir/core/tag-refinement.ts",
+              "src/ir/core/types.ts",
+              "src/ir/program/errors.ts",
+              "src/ir/program/js-class-definition.ts",
+              "src/ir/program/js-class-startup.ts",
+              "src/ir/runtime/js-class-verify.ts",
+              "src/shared/contracts/identity-values.ts",
+              "src/shared/contracts/ir-class-shape-marker.ts",
+              "src/shared/contracts/prepared-ir-invariant-error.ts"
+            ],
+            "programFrontendValueClosure": [],
+            "newIngressToCallerReachable": false,
+            "noNewValueCycle": true
+          },
+          "verifier": {
+            "path": "src/ir/runtime/verify.ts",
+            "baseBytes": 122476,
+            "baseSha256": "2d42cdd44b7a979ee0c960369c5ace9f75d2e7c47ccf3c17c8bc9f592f8dd74b",
+            "currentBytes": 125236,
+            "currentSha256": "309e4b299ea4c3824739dec6b81994b8ced77564bb4bfaa3bb20c71b38cf7617",
+            "addedLines": 68,
+            "deletedLines": 0,
+            "oldFileExactlyReconstructed": true,
+            "footprint": {
+              "leafImport": 1,
+              "collectUses15Cases": 31,
+              "typeRuleStatus15Entries": 15,
+              "supportRefFlowClassPermission": 1,
+              "forward15TypeRulesToLeaf": 20
+            },
+            "boundedGrantProse": "Allow runtime/verify.ts exactly+68 additive owner lines: one pure class validator import, exhaustive SSA operand visibility for15 new class operations (31), matching checked status entries (15), one class support-ref permission arm, and15-case forwarding/error joins (20). Full class DATA/shape algorithms live in runtime/js-class-verify.ts. Removing these68 additions reconstructs the complete df466 verifier byte-exactly; no old verifier algorithm/body or catch path changes. Unknown kinds retain collectUses throwing/default never checks; the prefix permission is constrained by that closed union dispatcher, not a new unknown-op authority."
+          },
+          "qualificationRequired": [
+            "actual source50 and full DATA-only malformed startup controls unchanged",
+            "full TS7 allsrc+owned roots excludes[]",
+            "import/current-policy activation frontend closure proof after root canonical schema relocation",
+            "scoped lint/format/dialect/neutrality/whitespace and root exact LOCgrant; no policy allowedEdge waiver",
+            "Existing startup projection DATA field readers, planner body and generic algorithms remain byte exact; function-body relocation proof does not claim runtime class conformance"
+          ],
+          "sourceDependencies": {
+            "addedToExistingSourceLeaf": [
+              "type IrSourceId",
+              "type IrJsClassStartup",
+              "value irJsClassDefinitionBindingId"
+            ],
+            "alreadyPresent": [
+              "ts",
+              "copyIrJsClassData",
+              "PreparedIrProgramInvariantError"
+            ],
+            "removedFromProgramLeaf": [
+              "value ts-api.ts",
+              "type IrSourceId/IrUnitId"
+            ],
+            "noNewFiles": true,
+            "policy": "program leaf must be classified clean DATA-only after graph proof; existing flat source leaf remains truthful mixed ingress; no allowance edge"
+          }
+        },
+        "presentationHook": {
+          "status": "proposal-only; no presentation edit or completed class authority exists",
+          "existingHook": {
+            "path": "src/compiler/ir-program-presentation.ts",
+            "bytes": 70868,
+            "sha256": "74affb376216c95c435713a510df9377f985bdf4f4c0d99cb6d460016ef931f0",
+            "function": "checkAbiExports",
+            "scope": "one fixed completed-class global custody query near entry; extend only existing nonnumeric global guard with exact returned owned binding membership; add direct import of owned program-native-js-class-resources checker",
+            "callerChanges": []
+          },
+          "ownedProvider": {
+            "path": "src/ir/program-native-js-class-resources.ts",
+            "proposedExport": "completedNativeJsClassGlobalPresentation(program, emission, backend)",
+            "contract": "undefined for genuinely absent native class population; otherwise fixed opaque completed-emission validation and canonical original/all-selected/support requirements replay; never filling capability or callback verdict; return immutable exact authenticated binding identities after physical joins"
+          },
+          "populations": [
+            {
+              "role": "realm",
+              "bindings": "actual entry-source Object.prototype, Function.prototype, ReferenceError, TypeError global-domain refs",
+              "mutability": false,
+              "types": "exact A declared prototype/method/constructor role support refs; actual populated resources mandatory"
+            },
+            {
+              "role": "module binding",
+              "bindings": "each actual outer/inner module valueGlobal and tdzGlobal pair",
+              "mutability": true,
+              "types": "actual nullable constructor support ref plus i32; null/zero startup state and source-ordered once initialization audited"
+            }
+          ],
+          "requiredJoins": [
+            "authentic emitted program identity and exact backend/target projection",
+            "complete original and selected canonical class runtime proof and namespaces",
+            "actual descriptor source owner, ABI intent/contract/global structural key",
+            "required physical binding slot and exact emitted global object/type/mutability/initializer",
+            "real managed common-root type mapping, not declaring-class nominal cast",
+            "actual populated realm objects/functions/error resources and immutable boxed snapshots",
+            "module TDZ/value pair, startup order and genuine once guard",
+            "no source export, alias-to-export, physical export or public dynamic boundary permission",
+            "descriptor-DATA screening before artifact reads; opaque completed-emission replay before and after reads"
+          ],
+          "unsupportedBeforeClosure": [
+            "C values-only primitive pack cannot issue this receipt",
+            "realm catalogue implementation and error/helper/table/startup conjunction pending",
+            "unknown inherited property keys must refuse before reservation/admission unless actual catalogue semantics populated"
+          ],
+          "authorityLimits": [
+            "no name/profile/role-only waiver",
+            "no public dynamic class exports",
+            "no reopening sealed reservation capabilities",
+            "no changes to existing callable/export/alias/source-map/CABI/type-widening gates"
+          ],
+          "possibleSeparateGap": "exact managed-role type indices may need separately received finite type-widening join after concrete completed C artifact demonstrates rejection; not included in this global hook"
+        },
+        "canonicalImportOverlay": "Remaining program DATA class contracts import uses ../core/js-class-contracts.js; import-only body-preserving amendment. Source mixed owner remains debt.",
+        "verifierGrant": "Allow runtime/verify.ts exactly+68 additive owner lines: one pure class validator import, exhaustive SSA operand visibility for15 new class operations (31), matching checked status entries (15), one class support-ref permission arm, and15-case forwarding/error joins (20). Full class DATA/shape algorithms live in runtime/js-class-verify.ts. Removing these68 additions reconstructs the complete df466 verifier byte-exactly; no old verifier algorithm/body or catch path changes. Unknown kinds retain collectUses throwing/default never checks; the prefix permission is constrained by that closed union dispatcher, not a new unknown-op authority.",
+        "constraints": "Only three exact root startup boundary paths with unchanged function bodies and canonical type import, and the C/root checkAbiExports global custody hook/direct import. Preserve all gates/foreign owners; no activation/allowedEdges waiver. Verifier exact68additions grant only in current issue. No completed class resource permission absent authentic completion."
+      },
+      "manifestSha256": "91343ec56993825b8d6622125ae8ffb4772ff2072861088a97fc9327413ae824",
+      "constraints": "Only three exact root startup boundary paths with unchanged function bodies and canonical type import, and the C/root checkAbiExports global custody hook/direct import. Preserve all gates/foreign owners; no activation/allowedEdges waiver. Verifier exact68additions grant only in current issue. No completed class resource permission absent authentic completion."
+    }
+  ],
+  "predecessors": [
+    "3522-b-native-class-semantic-producer-20261014.json",
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}
