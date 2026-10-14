@@ -1,0 +1,144 @@
+{
+  "id": "6920",
+  "slice": "class-canonical-coordinate-successor-20261014",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-native-js-class-physical-20261014-01a12827",
+  "claimed_at": "2026-10-14T20:43:56.821348+00:00",
+  "updated_at": "2026-10-14T20:43:56.821348+00:00",
+  "write_id": "b-class-canonical-coordinate-f9c4ab9d-e058-4b8a-b032-82a3be38b6ca",
+  "handoff_scope": [
+    {
+      "kind": "class-canonical-coordinate",
+      "at": "2026-10-14T20:43:56.821348+00:00",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-native-js-class-physical-20261014-01a12827",
+      "manifest": {
+        "receivingBranch": "codex/6920-b-native-js-class-physical-20261014-01a12827",
+        "componentPreimages": [
+          {
+            "path": "src/ir/program/js-class-abi.ts",
+            "bytes": 5962,
+            "sha256": "2ca6bb6290a2e4a1526adf05f051c30215061ec977d8dd060c9ae063da6ac88f",
+            "exists": true,
+            "coordinates": [
+              "import { irSupportGlobalRef, irTypeBindingKey, irGlobalBindingKey } from \"../abi-bindings.js\";",
+              "import type { IrJsClassBinding, IrJsClassDefinition, IrJsClassRole } from \"../js-class-contracts.js\";"
+            ]
+          },
+          {
+            "path": "src/ir/analysis/allocation-evidence/native-js-class-effects.ts",
+            "bytes": 9764,
+            "sha256": "d49ddd8944a824d043e89b008e3673fce6d12f245959397665fc49f0491c5c66",
+            "exists": true,
+            "coordinates": [
+              "import type { IrJsClassDefinition, IrJsClassFrameAccess } from \"../../js-class-contracts.js\";"
+            ]
+          },
+          {
+            "path": "src/ir/runtime/native-js-class-profile.ts",
+            "bytes": 40558,
+            "sha256": "556e2c5f49e218b35c24b82aa7d030f22a8911a94999d8949838f2e8ef2b4c02",
+            "exists": true,
+            "coordinates": [
+              "import type { IrJsClassBody, IrJsClassDefinition } from \"../js-class-contracts.js\";"
+            ]
+          },
+          {
+            "path": "src/ir/program/js-class-definition.ts",
+            "bytes": 7731,
+            "sha256": "ec29b605a0b477d6d21937a1bcc6d9b1460871c900d3270d1cccd6c613ba926a",
+            "exists": true,
+            "coordinates": [
+              "import type { IrJsClassBody, IrJsClassDefinition } from \"../js-class-contracts.js\";"
+            ]
+          },
+          {
+            "path": "src/ir/program/input-contracts.ts",
+            "bytes": 2627,
+            "sha256": "46990496517390c4f13a547266a3b20f85a36b9e642dded59f2452e17404ef13",
+            "exists": true,
+            "coordinates": [
+              "readonly jsClassDefinitions?: readonly import(\"../js-class-contracts.js\").IrJsClassDefinition[];"
+            ]
+          },
+          {
+            "path": "src/ir/program/startup.ts",
+            "bytes": 3183,
+            "sha256": "c6dcecc1c8a9fe5c5f159eb1285e1d95762999fc2a14cd38acccd7998bcba1ba",
+            "exists": true,
+            "coordinates": [
+              "readonly jsClassStartup?: import(\"../js-class-contracts.js\").IrJsClassStartup;"
+            ]
+          },
+          {
+            "path": "src/ir/program/prepared-contracts.ts",
+            "bytes": 5444,
+            "sha256": "d0c37ad478f48b0f5d0707237257cc47fde1f6bba31581abf7e558a00d101144",
+            "exists": true,
+            "coordinates": [
+              "| { readonly kind: \"support\"; readonly role: string; readonly nativeJsClassDefinition?: import(\"../js-class-contracts.js\").IrJsClassDefinition };"
+            ]
+          },
+          {
+            "path": "src/ir/program/js-class-startup.ts",
+            "bytes": 5170,
+            "sha256": "7f1b843a35df7d7db2cafa6c004db866708009e6272c125bf6966f19645be135",
+            "exists": true,
+            "coordinates": [
+              "import type { IrJsClassDefinition, IrJsClassStartup } from \"../js-class-contracts.js\";"
+            ]
+          },
+          {
+            "path": "src/ir/module-init-plan.ts",
+            "bytes": 23418,
+            "sha256": "62e05521ed22bf4f7ee6ea1a919750302433fc9c256db456367716d762dcd58d",
+            "coordinates": [
+              "prepareIrJsClassStartup import only: ./program/js-class-startup.js -> ./source-js-class-definition.js"
+            ]
+          }
+        ],
+        "canonicalNewPaths": [
+          "src/ir/core/binding-references.ts"
+        ],
+        "donorSnapshots": [
+          {
+            "path": "src/ir/core/binding-references.ts",
+            "bytes": 11367,
+            "sha256": "a2642825b7001a7125bed04850bd4b5e0de9a708b4dece5fda1fe5b715d02865",
+            "snapshot": ".tmp/class-canonical-coordinate-receive/dependency-snapshot/src/ir/core/binding-references.ts"
+          },
+          {
+            "path": "src/ir/program/js-class-startup.ts",
+            "bytes": 3591,
+            "sha256": "d3535b01eadad232bd836d846e93dfc7e45baf9f70eacaf0b27e88176781cace",
+            "snapshot": ".tmp/class-canonical-coordinate-receive/dependency-snapshot/src/ir/program/js-class-startup.ts"
+          },
+          {
+            "path": "src/ir/module-init-plan.ts",
+            "bytes": 23420,
+            "sha256": "2ca2279f94cf54a89ef6978c4ef1e55ea3b46bbcdd6522b778d95f1669c562b4",
+            "snapshot": ".tmp/class-canonical-coordinate-receive/dependency-snapshot/src/ir/module-init-plan.ts"
+          }
+        ],
+        "proposalSha256": "df0f96e381d030036d8211761300ddd5b3366f74a4ec6e96c11f7ef45664084f",
+        "proposalCorrection": "C proposal listed absent src/ir/program/module-init-plan.ts; real received planner is src/ir/module-init-plan.ts with exact preimage above. No other new path.",
+        "scope": "Seven existing canonical class TYPE-reader coordinates only; classABI three existing pure binding helper imports to canonical core authority; one exact root core/binding-references dependency; remaining two qualified startup ingress split paths. Preserve all other C algorithms and taggedthrow/runtime bodies; source-js-class-definition already exactly donor.",
+        "policy": "Exact received14 plus C7 classification rows and one canonical binding dependency row only, current layout remains truthful mixed->ir-analysis. No all-other-policy/rule/root/allowance/evidence/baseline changes. Clean candidates require actual ordinary full transitive detector.",
+        "constraints": "Wait every C live runtime/typing qualifier natural terminal before adoption. Preserve all38 failure epochs and physical/JS source assertions. Full source/type/static qualification after adoption. No roots waiver, shared algorithm copy, callback authority, source bridge or public/native whole-class credit; preserve peer worktrees, HOLDs and protected B33915."
+      },
+      "manifestSha256": "2b0b28bd7b4e064b682ebac1df26679fa120ab1050ff834fab826cbcc9c888f2",
+      "constraints": "Wait every C live runtime/typing qualifier natural terminal before adoption. Preserve all38 failure epochs and physical/JS source assertions. Full source/type/static qualification after adoption. No roots waiver, shared algorithm copy, callback authority, source bridge or public/native whole-class credit; preserve peer worktrees, HOLDs and protected B33915."
+    }
+  ],
+  "predecessors": [
+    "3522-b-native-class-semantic-producer-20261014.json",
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}
