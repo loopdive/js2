@@ -6,8 +6,8 @@
   "status": "in-progress",
   "branch": "codex/6920-b-native-preparation-20261013-01a12827",
   "claimed_at": "2026-10-13T06:38:30.746860Z",
-  "updated_at": "2026-10-14T13:35:36.839874Z",
-  "write_id": "b-class-optimizer-domain-559988a6-2fa0-4584-8186-1ab5dd905376",
+  "updated_at": "2026-10-14T14:06:10.742425Z",
+  "write_id": "b-class-physical-52930965-0d20-4dc1-aa78-c93fed304f74",
   "handoff_scope": [
     "src/ir/program-source.ts: genuine shared logical vector resolver, preparation origin and final checked facts joins",
     "src/ir/from-ast.ts: logical vector admission and executable allocation demand only",
@@ -284,6 +284,394 @@
       "refinementSha256": "e81289058e16e12e5a5c550bc6ea08d5194743152b94aabc4bec9ab0913f9afd",
       "predecessorRecordSha256": "930f0ddf353cfdcac6dadd960832d0be84a4722e21707e45911393aff0b7333e",
       "constraints": "Same two previously received paths only. Actual transformed full ABI vector captured once, same old draft lookup, optional fifth optimizer argument. Separate final Linear domain/current fourth argument. No held lookup/input/schema rewrite, no final approval from early DATA."
+    },
+    {
+      "kind": "finite genuine native class both-backend materializers",
+      "at": "2026-10-14T14:06:10.742425Z",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b"
+      },
+      "receivingBranch": "codex/6920-b-native-js-class-physical-20261014-01a12827",
+      "manifestPath": "../codex-6920-b-cohesive-finalizer-integration-20261014-01a12827/.tmp/native-js-class-physical-spec/owner-review/receiver-exact-manifest.json",
+      "manifestBytes": 57003,
+      "manifestSha256": "479d6d651e8727de4771109e9c77f7812a6acaeda0406d223ea7617fff1db1b2",
+      "existingHooks": [
+        {
+          "path": "src/ir/analysis/linear-memory-from-facts.ts",
+          "functions": [
+            "planLinearMemoryFromFrozenFacts",
+            "layoutForAllocation",
+            "collectModuleFacts",
+            "collectGlobalStorage"
+          ],
+          "scope": "Optional closed class layout DATA and exact new-operation cases; preserve all existing layout algorithms and foreign support-ref refusal. No callback chooses arbitrary layouts.",
+          "preimage": {
+            "bytes": 27125,
+            "sha256": "b9860677b6ac73a2ac7d34b1ec66738c5365dbec120603f0ba7dc00fa0c94e04"
+          },
+          "actualCurrentPreimage": {
+            "path": "src/ir/analysis/linear-memory-from-facts.ts",
+            "bytes": 27125,
+            "sha256": "b9860677b6ac73a2ac7d34b1ec66738c5365dbec120603f0ba7dc00fa0c94e04"
+          },
+          "actualReceiverPreimage": {
+            "path": "src/ir/analysis/linear-memory-from-facts.ts",
+            "bytes": 27125,
+            "sha256": "b9860677b6ac73a2ac7d34b1ec66738c5365dbec120603f0ba7dc00fa0c94e04"
+          }
+        },
+        {
+          "path": "src/ir/program/linear-memory-demand.ts",
+          "functions": [
+            "collectPreparedLinearMemoryDemand"
+          ],
+          "scope": "Independent complete selected class allocation occurrence demand; certify only actual definition/instance/cell/frame roots from canonical class requirements before old allocation refusal.",
+          "preimage": {
+            "bytes": 12617,
+            "sha256": "5d08f0ae7fa2898d153b8e04e6cc96d9f90f8d2aa547020f429d4972dce8f688"
+          },
+          "actualCurrentPreimage": {
+            "path": "src/ir/program/linear-memory-demand.ts",
+            "bytes": 12617,
+            "sha256": "5d08f0ae7fa2898d153b8e04e6cc96d9f90f8d2aa547020f429d4972dce8f688"
+          },
+          "actualReceiverPreimage": {
+            "path": "src/ir/program/linear-memory-demand.ts",
+            "bytes": 12617,
+            "sha256": "5d08f0ae7fa2898d153b8e04e6cc96d9f90f8d2aa547020f429d4972dce8f688"
+          }
+        },
+        {
+          "path": "src/backend/linear/program/memory.ts",
+          "functions": [
+            "planPreparedLinearMemory",
+            "reservePreparedLinearMemory",
+            "preparedLinearMemoryBindings",
+            "fillPreparedLinearMemory",
+            "requireCompletedPreparedLinearMemory"
+          ],
+          "scope": "Join exact canonical class allocation catalogue to actual existing allocator, reservations, all aggregate sizes/pointers/roots/lifetimes and attempt currentness; retain generic allocator/constructor bodies.",
+          "preimage": {
+            "bytes": 27755,
+            "sha256": "7f6aea9c939ab75cef464c5501486c1ed6fa131095b14c2d83bba3342c2ada07"
+          },
+          "actualCurrentPreimage": {
+            "path": "src/backend/linear/program/memory.ts",
+            "bytes": 27755,
+            "sha256": "7f6aea9c939ab75cef464c5501486c1ed6fa131095b14c2d83bba3342c2ada07"
+          },
+          "actualReceiverPreimage": {
+            "path": "src/backend/linear/program/memory.ts",
+            "bytes": 27755,
+            "sha256": "7f6aea9c939ab75cef464c5501486c1ed6fa131095b14c2d83bba3342c2ada07"
+          }
+        },
+        {
+          "path": "src/ir/program/prepared-linear-memory-contracts.ts",
+          "functions": [
+            "PreparedLinearMemoryPlan"
+          ],
+          "scope": "Closed native class memory descriptor DATA inside existing issued plan; no generic facts/schema rewrite or out-of-band fake authority.",
+          "preimage": {
+            "bytes": 2121,
+            "sha256": "e4ac0d52e4086f2325f6e33e8896a63af5f6029e836d934fd540df85e9d79daf"
+          },
+          "actualCurrentPreimage": {
+            "path": "src/ir/program/prepared-linear-memory-contracts.ts",
+            "bytes": 2121,
+            "sha256": "e4ac0d52e4086f2325f6e33e8896a63af5f6029e836d934fd540df85e9d79daf"
+          },
+          "actualReceiverPreimage": {
+            "path": "src/ir/program/prepared-linear-memory-contracts.ts",
+            "bytes": 2121,
+            "sha256": "e4ac0d52e4086f2325f6e33e8896a63af5f6029e836d934fd540df85e9d79daf"
+          }
+        },
+        {
+          "path": "src/ir/program-physical-plan.ts",
+          "functions": [
+            "PhysicalSetupPlan",
+            "physicalSignatureConverter",
+            "planPhysicalSetup"
+          ],
+          "scope": "Full canonical original/selected class census and B independent evidence; exact role/signature/global/callable/resource declarations before acceptance. Missing recipes remain located unsupported.",
+          "preimage": {
+            "bytes": 65952,
+            "sha256": "edde3685ea1750cd4bf25dcdb1357b858f8751b9a62a61510b067d776eee83d9"
+          },
+          "actualCurrentPreimage": {
+            "path": "src/ir/program-physical-plan.ts",
+            "bytes": 65952,
+            "sha256": "edde3685ea1750cd4bf25dcdb1357b858f8751b9a62a61510b067d776eee83d9"
+          },
+          "actualReceiverPreimage": {
+            "path": "src/ir/program-physical-plan.ts",
+            "bytes": 65952,
+            "sha256": "edde3685ea1750cd4bf25dcdb1357b858f8751b9a62a61510b067d776eee83d9"
+          }
+        },
+        {
+          "path": "src/ir/program-consumer.ts",
+          "functions": [
+            "emitAcceptedIrProgram"
+          ],
+          "scope": "Reserve all class resources before all source bodies; bind exact real ABI/type/global/helper inventories, fill/check completion and revoke whole attempt. Source class definitions execute only in their actual original IR owner.",
+          "preimage": {
+            "bytes": 72390,
+            "sha256": "0e7275f8bd77288e36fbaa7b7c43b54c57a5713cfcab966106e43a4aff468d0d"
+          },
+          "actualCurrentPreimage": {
+            "path": "src/ir/program-consumer.ts",
+            "bytes": 72390,
+            "sha256": "0e7275f8bd77288e36fbaa7b7c43b54c57a5713cfcab966106e43a4aff468d0d"
+          },
+          "actualReceiverPreimage": {
+            "path": "src/ir/program-consumer.ts",
+            "bytes": 72390,
+            "sha256": "0e7275f8bd77288e36fbaa7b7c43b54c57a5713cfcab966106e43a4aff468d0d"
+          }
+        },
+        {
+          "path": "src/ir/program-body-resources.ts",
+          "functions": [
+            "physicalBodyResolver",
+            "physicalSignatureConverter",
+            "bindPhysicalAbi"
+          ],
+          "scope": "Resolve only canonical class role types and genuine current emission resources; exact physical ABI signatures and runtime body currentness.",
+          "preimage": {
+            "bytes": 20842,
+            "sha256": "5bd12abf77672119d96c924f6df1df35db4fe24cb243ca5535ca906f3c229d26"
+          },
+          "actualCurrentPreimage": {
+            "path": "src/ir/program-body-resources.ts",
+            "bytes": 20842,
+            "sha256": "5bd12abf77672119d96c924f6df1df35db4fe24cb243ca5535ca906f3c229d26"
+          },
+          "actualReceiverPreimage": {
+            "path": "src/ir/program-body-resources.ts",
+            "bytes": 20842,
+            "sha256": "5bd12abf77672119d96c924f6df1df35db4fe24cb243ca5535ca906f3c229d26"
+          }
+        },
+        {
+          "path": "src/ir/program/physical-body-requirements.ts",
+          "functions": [
+            "physicalBodyResourceRequirements"
+          ],
+          "scope": "Complete fifteen-operation, hidden frame ABI, callable/global/type/realm and dynamic property resource census; unknown is a gap, never absence.",
+          "preimage": {
+            "bytes": 5807,
+            "sha256": "c9eaf9c599bdc7406d6a283ee51c01b94aa22beb95bfab3bab675318a9b3132e"
+          },
+          "actualCurrentPreimage": {
+            "path": "src/ir/program/physical-body-requirements.ts",
+            "bytes": 5807,
+            "sha256": "c9eaf9c599bdc7406d6a283ee51c01b94aa22beb95bfab3bab675318a9b3132e"
+          },
+          "actualReceiverPreimage": {
+            "path": "src/ir/program/physical-body-requirements.ts",
+            "bytes": 5807,
+            "sha256": "c9eaf9c599bdc7406d6a283ee51c01b94aa22beb95bfab3bab675318a9b3132e"
+          }
+        },
+        {
+          "path": "src/ir/backend/lower-contracts.ts",
+          "functions": [
+            "IrLowerResolver"
+          ],
+          "scope": "New exact current native class lowering interface port, absent on unrelated resolver; genuine checker/resource source remains in orchestration, not callback-supplied authority.",
+          "preimage": {
+            "bytes": 15306,
+            "sha256": "4f915ceb7611739a3f557a39a14af98bc89c448fea8da807e010316e8560ed35"
+          },
+          "actualCurrentPreimage": {
+            "path": "src/ir/backend/lower-contracts.ts",
+            "bytes": 15306,
+            "sha256": "4f915ceb7611739a3f557a39a14af98bc89c448fea8da807e010316e8560ed35"
+          },
+          "actualReceiverPreimage": {
+            "path": "src/ir/backend/lower-contracts.ts",
+            "bytes": 15306,
+            "sha256": "4f915ceb7611739a3f557a39a14af98bc89c448fea8da807e010316e8560ed35"
+          }
+        },
+        {
+          "path": "src/ir/lower-generic.ts",
+          "functions": [
+            "lowerIrFunctionBody",
+            "lowerIrTypeToValType"
+          ],
+          "scope": "Actual fifteen-op typed lowering and exact admitted dynamic/class support-ref values from genuine C pack; no broad support-ref/dynamic waiver, NOP or old class.new substitution.",
+          "preimage": {
+            "bytes": 193831,
+            "sha256": "aaa8f5286025465ea82fad0da9f70bd2b91d1da4586f0e5704fb9fe68c87f7ec"
+          },
+          "actualCurrentPreimage": {
+            "path": "src/ir/lower-generic.ts",
+            "bytes": 193831,
+            "sha256": "aaa8f5286025465ea82fad0da9f70bd2b91d1da4586f0e5704fb9fe68c87f7ec"
+          },
+          "actualReceiverPreimage": {
+            "path": "src/ir/lower-generic.ts",
+            "bytes": 194517,
+            "sha256": "bf950f88829a5da5731342445e58c5241527fc5508fc57a80f1e9f20aa6a9fbe"
+          }
+        },
+        {
+          "path": "src/ir/analysis/backend-legality.ts",
+          "functions": [
+            "verifyIrBackendLegality"
+          ],
+          "scope": "Exact independently checked pure class representability token/context with full current operand/type census; runtime JS semantics stay canonical A/B conjunction. Preserve all unrelated errors.",
+          "preimage": {
+            "bytes": 22782,
+            "sha256": "6ee2f763e8de4b06bf5d4adf6beb3ad211f891a7c4af843b61bc3147bfb65b8d"
+          },
+          "actualCurrentPreimage": {
+            "path": "src/ir/analysis/backend-legality.ts",
+            "bytes": 22782,
+            "sha256": "6ee2f763e8de4b06bf5d4adf6beb3ad211f891a7c4af843b61bc3147bfb65b8d"
+          },
+          "actualReceiverPreimage": {
+            "path": "src/ir/analysis/backend-legality.ts",
+            "bytes": 22897,
+            "sha256": "5901725ddeef5879da9264a07b787d41f99d3b5aa3c5dde9f6115fecc46a4f0d"
+          }
+        },
+        {
+          "path": "src/ir/program/native-value-resources.ts",
+          "functions": [
+            "deriveNativeValueResourcePlan",
+            "calculate"
+          ],
+          "scope": "Actual class value requirements sibling/conjunction. Existing primitive-only affirmative absence proof remains exact; selecting native-string merely to evade absence proof is prohibited.",
+          "preimage": {
+            "bytes": 6657,
+            "sha256": "b1cc24170a4935fbc24b667154a43328e1edaa0423258625b16164c219b0ad0f"
+          },
+          "actualCurrentPreimage": {
+            "path": "src/ir/program/native-value-resources.ts",
+            "bytes": 6657,
+            "sha256": "b1cc24170a4935fbc24b667154a43328e1edaa0423258625b16164c219b0ad0f"
+          },
+          "actualReceiverPreimage": {
+            "path": "src/ir/program/native-value-resources.ts",
+            "bytes": 6657,
+            "sha256": "b1cc24170a4935fbc24b667154a43328e1edaa0423258625b16164c219b0ad0f"
+          }
+        },
+        {
+          "path": "src/ir/program/physical-startup.ts",
+          "functions": [
+            "planPhysicalStartup"
+          ],
+          "scope": "Class startup source order and genuine once-guard demand; preserve adapters/exports.",
+          "preimage": {
+            "path": "src/ir/program/physical-startup.ts",
+            "bytes": 2978,
+            "sha256": "dd9792d77df99d1232cad3151bd2bed6bbc70acebb7ff37a59d57a720224867a"
+          },
+          "actualCurrentPreimage": {
+            "path": "src/ir/program/physical-startup.ts",
+            "bytes": 2978,
+            "sha256": "dd9792d77df99d1232cad3151bd2bed6bbc70acebb7ff37a59d57a720224867a"
+          },
+          "actualReceiverPreimage": {
+            "path": "src/ir/program/physical-startup.ts",
+            "bytes": 2978,
+            "sha256": "dd9792d77df99d1232cad3151bd2bed6bbc70acebb7ff37a59d57a720224867a"
+          }
+        },
+        {
+          "path": "src/ir/program/native-realm-requirements.ts",
+          "functions": [
+            "calculate",
+            "deriveNativeRealmRequirements",
+            "assertNativeRealmRequirementsCurrent"
+          ],
+          "scope": "Closed actual class realm binding demands; four exact binding IDs must resolve real Object/Function prototypes and error constructors, no catalog-only occurrence.",
+          "preimage": {
+            "path": "src/ir/program/native-realm-requirements.ts",
+            "bytes": 7442,
+            "sha256": "4cf869f7c88d3f82edf75564966d927b272f31933bcb9b80f6358c54080e277d"
+          },
+          "actualCurrentPreimage": {
+            "path": "src/ir/program/native-realm-requirements.ts",
+            "bytes": 7442,
+            "sha256": "4cf869f7c88d3f82edf75564966d927b272f31933bcb9b80f6358c54080e277d"
+          },
+          "actualReceiverPreimage": {
+            "path": "src/ir/program/native-realm-requirements.ts",
+            "bytes": 7442,
+            "sha256": "4cf869f7c88d3f82edf75564966d927b272f31933bcb9b80f6358c54080e277d"
+          }
+        },
+        {
+          "path": "src/backend/wasmgc/program/native-realm.ts",
+          "functions": [
+            "nativeRealmReservationInventory",
+            "requireCompletedNativeRealmBootstrap"
+          ],
+          "scope": "Fixed readonly issued class realm binding/resource port if actual existing inventory lacks bindings; reserve missing canonical resources through existing phase before bodies, no filling capability revival.",
+          "preimage": {
+            "path": "src/backend/wasmgc/program/native-realm.ts",
+            "bytes": 23351,
+            "sha256": "1dde6a2b34e2fad3177157e68e410d4ff2aa0b4fea7a2b283b907dca81546c83"
+          },
+          "actualCurrentPreimage": {
+            "path": "src/backend/wasmgc/program/native-realm.ts",
+            "bytes": 23351,
+            "sha256": "1dde6a2b34e2fad3177157e68e410d4ff2aa0b4fea7a2b283b907dca81546c83"
+          },
+          "actualReceiverPreimage": {
+            "path": "src/backend/wasmgc/program/native-realm.ts",
+            "bytes": 23351,
+            "sha256": "1dde6a2b34e2fad3177157e68e410d4ff2aa0b4fea7a2b283b907dca81546c83"
+          }
+        }
+      ],
+      "newPaths": [
+        {
+          "path": "src/ir/analysis/native-js-class-linear-layout.ts",
+          "purpose": "Pure canonical class physical layout DATA derivation/replay from genuine logical descriptor/site/role context; exact aggregate geometry, pointer maps, old catalogue integration."
+        },
+        {
+          "path": "src/ir/analysis/allocation-evidence/native-js-class-legality.ts",
+          "purpose": "Pure independent current representability proof for original/selected body/type/operand/resource census; no JS semantic verdict callback."
+        },
+        {
+          "path": "src/ir/backend/native-js-class.ts",
+          "purpose": "Typed emission contract for all fifteen actual operations and exact class/value carrier mappings."
+        },
+        {
+          "path": "src/ir/program/native-js-class-requirements.ts",
+          "purpose": "Canonical full A/B runtime conjunction and original/selected/runtimeSupport joins; requirements are current descriptive DATA, not authority from copied reports."
+        },
+        {
+          "path": "src/ir/program-native-js-class-resources.ts",
+          "purpose": "Honest mixed physical orchestration, issuance/currentness/private ownership and lowering pack. Keep this orchestration outside pure ir/program layer."
+        },
+        {
+          "path": "src/backend/wasmgc/resources/native-js-class.ts",
+          "purpose": "Genuine fresh class/constructor/prototype/method/environment/cell/frame/value graph recipes, types/globals/functions and physical operations using ordinary reservations."
+        },
+        {
+          "path": "src/backend/linear/program/native-js-class.ts",
+          "purpose": "Genuine exact managed graph/value pointer geometry and operation emission using canonical checked allocator catalogue, memory pack and function table resources."
+        },
+        {
+          "path": "tests/issue-6920-native-js-class-resources.test.ts",
+          "purpose": "Meaningful malformed/foreign/copied/stale/partial resources, layout/pointer/lifetime/identity/attempt revocation and exact fifteen-op coverage controls."
+        },
+        {
+          "path": "tests/issue-6920-native-js-class-execution.test.ts",
+          "purpose": "Actual public original+live-codec execution all four GC/Linear by standalone/WASI profiles; observed JS values, fresh identities, bytes and partial effects."
+        }
+      ],
+      "dependencyEpoch": "Exact frozen A20 plus limited B12 and finalizer6 production paths adopted, measured2029source. Runtime full inventory/ABI/startup B successor and A original module/startup still pending. No class admission from limited negative controls.",
+      "constraints": "Only fifteen exact bounded class hooks, seven new production leaves and two new tests. Independently replay canonical A/B original and all-selected/support contracts before admission; true aggregate topology/lifetimes/immutable dynamic snapshots, physical geometry/carriers/realm/helper/table/error resources and private attempt issuance/currentness. Preserve every old allocator/constructor/vector/source/runtime/codec algorithm and held SessionC vector representation. Missing recipes refuse; no fake IR units/sites/indices, hidden allocation, callback/report authority or empty proof. Root owns issue/policy/publication; normal hooks and HOLD preserved."
     }
   ],
   "handoff_authority": {
@@ -926,9 +1314,397 @@
       "refinementSha256": "e81289058e16e12e5a5c550bc6ea08d5194743152b94aabc4bec9ab0913f9afd",
       "predecessorRecordSha256": "930f0ddf353cfdcac6dadd960832d0be84a4722e21707e45911393aff0b7333e",
       "constraints": "Same two previously received paths only. Actual transformed full ABI vector captured once, same old draft lookup, optional fifth optimizer argument. Separate final Linear domain/current fourth argument. No held lookup/input/schema rewrite, no final approval from early DATA."
+    },
+    {
+      "kind": "finite genuine native class both-backend materializers",
+      "at": "2026-10-14T14:06:10.742425Z",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b"
+      },
+      "receivingBranch": "codex/6920-b-native-js-class-physical-20261014-01a12827",
+      "manifestPath": "../codex-6920-b-cohesive-finalizer-integration-20261014-01a12827/.tmp/native-js-class-physical-spec/owner-review/receiver-exact-manifest.json",
+      "manifestBytes": 57003,
+      "manifestSha256": "479d6d651e8727de4771109e9c77f7812a6acaeda0406d223ea7617fff1db1b2",
+      "existingHooks": [
+        {
+          "path": "src/ir/analysis/linear-memory-from-facts.ts",
+          "functions": [
+            "planLinearMemoryFromFrozenFacts",
+            "layoutForAllocation",
+            "collectModuleFacts",
+            "collectGlobalStorage"
+          ],
+          "scope": "Optional closed class layout DATA and exact new-operation cases; preserve all existing layout algorithms and foreign support-ref refusal. No callback chooses arbitrary layouts.",
+          "preimage": {
+            "bytes": 27125,
+            "sha256": "b9860677b6ac73a2ac7d34b1ec66738c5365dbec120603f0ba7dc00fa0c94e04"
+          },
+          "actualCurrentPreimage": {
+            "path": "src/ir/analysis/linear-memory-from-facts.ts",
+            "bytes": 27125,
+            "sha256": "b9860677b6ac73a2ac7d34b1ec66738c5365dbec120603f0ba7dc00fa0c94e04"
+          },
+          "actualReceiverPreimage": {
+            "path": "src/ir/analysis/linear-memory-from-facts.ts",
+            "bytes": 27125,
+            "sha256": "b9860677b6ac73a2ac7d34b1ec66738c5365dbec120603f0ba7dc00fa0c94e04"
+          }
+        },
+        {
+          "path": "src/ir/program/linear-memory-demand.ts",
+          "functions": [
+            "collectPreparedLinearMemoryDemand"
+          ],
+          "scope": "Independent complete selected class allocation occurrence demand; certify only actual definition/instance/cell/frame roots from canonical class requirements before old allocation refusal.",
+          "preimage": {
+            "bytes": 12617,
+            "sha256": "5d08f0ae7fa2898d153b8e04e6cc96d9f90f8d2aa547020f429d4972dce8f688"
+          },
+          "actualCurrentPreimage": {
+            "path": "src/ir/program/linear-memory-demand.ts",
+            "bytes": 12617,
+            "sha256": "5d08f0ae7fa2898d153b8e04e6cc96d9f90f8d2aa547020f429d4972dce8f688"
+          },
+          "actualReceiverPreimage": {
+            "path": "src/ir/program/linear-memory-demand.ts",
+            "bytes": 12617,
+            "sha256": "5d08f0ae7fa2898d153b8e04e6cc96d9f90f8d2aa547020f429d4972dce8f688"
+          }
+        },
+        {
+          "path": "src/backend/linear/program/memory.ts",
+          "functions": [
+            "planPreparedLinearMemory",
+            "reservePreparedLinearMemory",
+            "preparedLinearMemoryBindings",
+            "fillPreparedLinearMemory",
+            "requireCompletedPreparedLinearMemory"
+          ],
+          "scope": "Join exact canonical class allocation catalogue to actual existing allocator, reservations, all aggregate sizes/pointers/roots/lifetimes and attempt currentness; retain generic allocator/constructor bodies.",
+          "preimage": {
+            "bytes": 27755,
+            "sha256": "7f6aea9c939ab75cef464c5501486c1ed6fa131095b14c2d83bba3342c2ada07"
+          },
+          "actualCurrentPreimage": {
+            "path": "src/backend/linear/program/memory.ts",
+            "bytes": 27755,
+            "sha256": "7f6aea9c939ab75cef464c5501486c1ed6fa131095b14c2d83bba3342c2ada07"
+          },
+          "actualReceiverPreimage": {
+            "path": "src/backend/linear/program/memory.ts",
+            "bytes": 27755,
+            "sha256": "7f6aea9c939ab75cef464c5501486c1ed6fa131095b14c2d83bba3342c2ada07"
+          }
+        },
+        {
+          "path": "src/ir/program/prepared-linear-memory-contracts.ts",
+          "functions": [
+            "PreparedLinearMemoryPlan"
+          ],
+          "scope": "Closed native class memory descriptor DATA inside existing issued plan; no generic facts/schema rewrite or out-of-band fake authority.",
+          "preimage": {
+            "bytes": 2121,
+            "sha256": "e4ac0d52e4086f2325f6e33e8896a63af5f6029e836d934fd540df85e9d79daf"
+          },
+          "actualCurrentPreimage": {
+            "path": "src/ir/program/prepared-linear-memory-contracts.ts",
+            "bytes": 2121,
+            "sha256": "e4ac0d52e4086f2325f6e33e8896a63af5f6029e836d934fd540df85e9d79daf"
+          },
+          "actualReceiverPreimage": {
+            "path": "src/ir/program/prepared-linear-memory-contracts.ts",
+            "bytes": 2121,
+            "sha256": "e4ac0d52e4086f2325f6e33e8896a63af5f6029e836d934fd540df85e9d79daf"
+          }
+        },
+        {
+          "path": "src/ir/program-physical-plan.ts",
+          "functions": [
+            "PhysicalSetupPlan",
+            "physicalSignatureConverter",
+            "planPhysicalSetup"
+          ],
+          "scope": "Full canonical original/selected class census and B independent evidence; exact role/signature/global/callable/resource declarations before acceptance. Missing recipes remain located unsupported.",
+          "preimage": {
+            "bytes": 65952,
+            "sha256": "edde3685ea1750cd4bf25dcdb1357b858f8751b9a62a61510b067d776eee83d9"
+          },
+          "actualCurrentPreimage": {
+            "path": "src/ir/program-physical-plan.ts",
+            "bytes": 65952,
+            "sha256": "edde3685ea1750cd4bf25dcdb1357b858f8751b9a62a61510b067d776eee83d9"
+          },
+          "actualReceiverPreimage": {
+            "path": "src/ir/program-physical-plan.ts",
+            "bytes": 65952,
+            "sha256": "edde3685ea1750cd4bf25dcdb1357b858f8751b9a62a61510b067d776eee83d9"
+          }
+        },
+        {
+          "path": "src/ir/program-consumer.ts",
+          "functions": [
+            "emitAcceptedIrProgram"
+          ],
+          "scope": "Reserve all class resources before all source bodies; bind exact real ABI/type/global/helper inventories, fill/check completion and revoke whole attempt. Source class definitions execute only in their actual original IR owner.",
+          "preimage": {
+            "bytes": 72390,
+            "sha256": "0e7275f8bd77288e36fbaa7b7c43b54c57a5713cfcab966106e43a4aff468d0d"
+          },
+          "actualCurrentPreimage": {
+            "path": "src/ir/program-consumer.ts",
+            "bytes": 72390,
+            "sha256": "0e7275f8bd77288e36fbaa7b7c43b54c57a5713cfcab966106e43a4aff468d0d"
+          },
+          "actualReceiverPreimage": {
+            "path": "src/ir/program-consumer.ts",
+            "bytes": 72390,
+            "sha256": "0e7275f8bd77288e36fbaa7b7c43b54c57a5713cfcab966106e43a4aff468d0d"
+          }
+        },
+        {
+          "path": "src/ir/program-body-resources.ts",
+          "functions": [
+            "physicalBodyResolver",
+            "physicalSignatureConverter",
+            "bindPhysicalAbi"
+          ],
+          "scope": "Resolve only canonical class role types and genuine current emission resources; exact physical ABI signatures and runtime body currentness.",
+          "preimage": {
+            "bytes": 20842,
+            "sha256": "5bd12abf77672119d96c924f6df1df35db4fe24cb243ca5535ca906f3c229d26"
+          },
+          "actualCurrentPreimage": {
+            "path": "src/ir/program-body-resources.ts",
+            "bytes": 20842,
+            "sha256": "5bd12abf77672119d96c924f6df1df35db4fe24cb243ca5535ca906f3c229d26"
+          },
+          "actualReceiverPreimage": {
+            "path": "src/ir/program-body-resources.ts",
+            "bytes": 20842,
+            "sha256": "5bd12abf77672119d96c924f6df1df35db4fe24cb243ca5535ca906f3c229d26"
+          }
+        },
+        {
+          "path": "src/ir/program/physical-body-requirements.ts",
+          "functions": [
+            "physicalBodyResourceRequirements"
+          ],
+          "scope": "Complete fifteen-operation, hidden frame ABI, callable/global/type/realm and dynamic property resource census; unknown is a gap, never absence.",
+          "preimage": {
+            "bytes": 5807,
+            "sha256": "c9eaf9c599bdc7406d6a283ee51c01b94aa22beb95bfab3bab675318a9b3132e"
+          },
+          "actualCurrentPreimage": {
+            "path": "src/ir/program/physical-body-requirements.ts",
+            "bytes": 5807,
+            "sha256": "c9eaf9c599bdc7406d6a283ee51c01b94aa22beb95bfab3bab675318a9b3132e"
+          },
+          "actualReceiverPreimage": {
+            "path": "src/ir/program/physical-body-requirements.ts",
+            "bytes": 5807,
+            "sha256": "c9eaf9c599bdc7406d6a283ee51c01b94aa22beb95bfab3bab675318a9b3132e"
+          }
+        },
+        {
+          "path": "src/ir/backend/lower-contracts.ts",
+          "functions": [
+            "IrLowerResolver"
+          ],
+          "scope": "New exact current native class lowering interface port, absent on unrelated resolver; genuine checker/resource source remains in orchestration, not callback-supplied authority.",
+          "preimage": {
+            "bytes": 15306,
+            "sha256": "4f915ceb7611739a3f557a39a14af98bc89c448fea8da807e010316e8560ed35"
+          },
+          "actualCurrentPreimage": {
+            "path": "src/ir/backend/lower-contracts.ts",
+            "bytes": 15306,
+            "sha256": "4f915ceb7611739a3f557a39a14af98bc89c448fea8da807e010316e8560ed35"
+          },
+          "actualReceiverPreimage": {
+            "path": "src/ir/backend/lower-contracts.ts",
+            "bytes": 15306,
+            "sha256": "4f915ceb7611739a3f557a39a14af98bc89c448fea8da807e010316e8560ed35"
+          }
+        },
+        {
+          "path": "src/ir/lower-generic.ts",
+          "functions": [
+            "lowerIrFunctionBody",
+            "lowerIrTypeToValType"
+          ],
+          "scope": "Actual fifteen-op typed lowering and exact admitted dynamic/class support-ref values from genuine C pack; no broad support-ref/dynamic waiver, NOP or old class.new substitution.",
+          "preimage": {
+            "bytes": 193831,
+            "sha256": "aaa8f5286025465ea82fad0da9f70bd2b91d1da4586f0e5704fb9fe68c87f7ec"
+          },
+          "actualCurrentPreimage": {
+            "path": "src/ir/lower-generic.ts",
+            "bytes": 193831,
+            "sha256": "aaa8f5286025465ea82fad0da9f70bd2b91d1da4586f0e5704fb9fe68c87f7ec"
+          },
+          "actualReceiverPreimage": {
+            "path": "src/ir/lower-generic.ts",
+            "bytes": 194517,
+            "sha256": "bf950f88829a5da5731342445e58c5241527fc5508fc57a80f1e9f20aa6a9fbe"
+          }
+        },
+        {
+          "path": "src/ir/analysis/backend-legality.ts",
+          "functions": [
+            "verifyIrBackendLegality"
+          ],
+          "scope": "Exact independently checked pure class representability token/context with full current operand/type census; runtime JS semantics stay canonical A/B conjunction. Preserve all unrelated errors.",
+          "preimage": {
+            "bytes": 22782,
+            "sha256": "6ee2f763e8de4b06bf5d4adf6beb3ad211f891a7c4af843b61bc3147bfb65b8d"
+          },
+          "actualCurrentPreimage": {
+            "path": "src/ir/analysis/backend-legality.ts",
+            "bytes": 22782,
+            "sha256": "6ee2f763e8de4b06bf5d4adf6beb3ad211f891a7c4af843b61bc3147bfb65b8d"
+          },
+          "actualReceiverPreimage": {
+            "path": "src/ir/analysis/backend-legality.ts",
+            "bytes": 22897,
+            "sha256": "5901725ddeef5879da9264a07b787d41f99d3b5aa3c5dde9f6115fecc46a4f0d"
+          }
+        },
+        {
+          "path": "src/ir/program/native-value-resources.ts",
+          "functions": [
+            "deriveNativeValueResourcePlan",
+            "calculate"
+          ],
+          "scope": "Actual class value requirements sibling/conjunction. Existing primitive-only affirmative absence proof remains exact; selecting native-string merely to evade absence proof is prohibited.",
+          "preimage": {
+            "bytes": 6657,
+            "sha256": "b1cc24170a4935fbc24b667154a43328e1edaa0423258625b16164c219b0ad0f"
+          },
+          "actualCurrentPreimage": {
+            "path": "src/ir/program/native-value-resources.ts",
+            "bytes": 6657,
+            "sha256": "b1cc24170a4935fbc24b667154a43328e1edaa0423258625b16164c219b0ad0f"
+          },
+          "actualReceiverPreimage": {
+            "path": "src/ir/program/native-value-resources.ts",
+            "bytes": 6657,
+            "sha256": "b1cc24170a4935fbc24b667154a43328e1edaa0423258625b16164c219b0ad0f"
+          }
+        },
+        {
+          "path": "src/ir/program/physical-startup.ts",
+          "functions": [
+            "planPhysicalStartup"
+          ],
+          "scope": "Class startup source order and genuine once-guard demand; preserve adapters/exports.",
+          "preimage": {
+            "path": "src/ir/program/physical-startup.ts",
+            "bytes": 2978,
+            "sha256": "dd9792d77df99d1232cad3151bd2bed6bbc70acebb7ff37a59d57a720224867a"
+          },
+          "actualCurrentPreimage": {
+            "path": "src/ir/program/physical-startup.ts",
+            "bytes": 2978,
+            "sha256": "dd9792d77df99d1232cad3151bd2bed6bbc70acebb7ff37a59d57a720224867a"
+          },
+          "actualReceiverPreimage": {
+            "path": "src/ir/program/physical-startup.ts",
+            "bytes": 2978,
+            "sha256": "dd9792d77df99d1232cad3151bd2bed6bbc70acebb7ff37a59d57a720224867a"
+          }
+        },
+        {
+          "path": "src/ir/program/native-realm-requirements.ts",
+          "functions": [
+            "calculate",
+            "deriveNativeRealmRequirements",
+            "assertNativeRealmRequirementsCurrent"
+          ],
+          "scope": "Closed actual class realm binding demands; four exact binding IDs must resolve real Object/Function prototypes and error constructors, no catalog-only occurrence.",
+          "preimage": {
+            "path": "src/ir/program/native-realm-requirements.ts",
+            "bytes": 7442,
+            "sha256": "4cf869f7c88d3f82edf75564966d927b272f31933bcb9b80f6358c54080e277d"
+          },
+          "actualCurrentPreimage": {
+            "path": "src/ir/program/native-realm-requirements.ts",
+            "bytes": 7442,
+            "sha256": "4cf869f7c88d3f82edf75564966d927b272f31933bcb9b80f6358c54080e277d"
+          },
+          "actualReceiverPreimage": {
+            "path": "src/ir/program/native-realm-requirements.ts",
+            "bytes": 7442,
+            "sha256": "4cf869f7c88d3f82edf75564966d927b272f31933bcb9b80f6358c54080e277d"
+          }
+        },
+        {
+          "path": "src/backend/wasmgc/program/native-realm.ts",
+          "functions": [
+            "nativeRealmReservationInventory",
+            "requireCompletedNativeRealmBootstrap"
+          ],
+          "scope": "Fixed readonly issued class realm binding/resource port if actual existing inventory lacks bindings; reserve missing canonical resources through existing phase before bodies, no filling capability revival.",
+          "preimage": {
+            "path": "src/backend/wasmgc/program/native-realm.ts",
+            "bytes": 23351,
+            "sha256": "1dde6a2b34e2fad3177157e68e410d4ff2aa0b4fea7a2b283b907dca81546c83"
+          },
+          "actualCurrentPreimage": {
+            "path": "src/backend/wasmgc/program/native-realm.ts",
+            "bytes": 23351,
+            "sha256": "1dde6a2b34e2fad3177157e68e410d4ff2aa0b4fea7a2b283b907dca81546c83"
+          },
+          "actualReceiverPreimage": {
+            "path": "src/backend/wasmgc/program/native-realm.ts",
+            "bytes": 23351,
+            "sha256": "1dde6a2b34e2fad3177157e68e410d4ff2aa0b4fea7a2b283b907dca81546c83"
+          }
+        }
+      ],
+      "newPaths": [
+        {
+          "path": "src/ir/analysis/native-js-class-linear-layout.ts",
+          "purpose": "Pure canonical class physical layout DATA derivation/replay from genuine logical descriptor/site/role context; exact aggregate geometry, pointer maps, old catalogue integration."
+        },
+        {
+          "path": "src/ir/analysis/allocation-evidence/native-js-class-legality.ts",
+          "purpose": "Pure independent current representability proof for original/selected body/type/operand/resource census; no JS semantic verdict callback."
+        },
+        {
+          "path": "src/ir/backend/native-js-class.ts",
+          "purpose": "Typed emission contract for all fifteen actual operations and exact class/value carrier mappings."
+        },
+        {
+          "path": "src/ir/program/native-js-class-requirements.ts",
+          "purpose": "Canonical full A/B runtime conjunction and original/selected/runtimeSupport joins; requirements are current descriptive DATA, not authority from copied reports."
+        },
+        {
+          "path": "src/ir/program-native-js-class-resources.ts",
+          "purpose": "Honest mixed physical orchestration, issuance/currentness/private ownership and lowering pack. Keep this orchestration outside pure ir/program layer."
+        },
+        {
+          "path": "src/backend/wasmgc/resources/native-js-class.ts",
+          "purpose": "Genuine fresh class/constructor/prototype/method/environment/cell/frame/value graph recipes, types/globals/functions and physical operations using ordinary reservations."
+        },
+        {
+          "path": "src/backend/linear/program/native-js-class.ts",
+          "purpose": "Genuine exact managed graph/value pointer geometry and operation emission using canonical checked allocator catalogue, memory pack and function table resources."
+        },
+        {
+          "path": "tests/issue-6920-native-js-class-resources.test.ts",
+          "purpose": "Meaningful malformed/foreign/copied/stale/partial resources, layout/pointer/lifetime/identity/attempt revocation and exact fifteen-op coverage controls."
+        },
+        {
+          "path": "tests/issue-6920-native-js-class-execution.test.ts",
+          "purpose": "Actual public original+live-codec execution all four GC/Linear by standalone/WASI profiles; observed JS values, fresh identities, bytes and partial effects."
+        }
+      ],
+      "dependencyEpoch": "Exact frozen A20 plus limited B12 and finalizer6 production paths adopted, measured2029source. Runtime full inventory/ABI/startup B successor and A original module/startup still pending. No class admission from limited negative controls.",
+      "constraints": "Only fifteen exact bounded class hooks, seven new production leaves and two new tests. Independently replay canonical A/B original and all-selected/support contracts before admission; true aggregate topology/lifetimes/immutable dynamic snapshots, physical geometry/carriers/realm/helper/table/error resources and private attempt issuance/currentness. Preserve every old allocator/constructor/vector/source/runtime/codec algorithm and held SessionC vector representation. Missing recipes refuse; no fake IR units/sites/indices, hidden allocation, callback/report authority or empty proof. Root owns issue/policy/publication; normal hooks and HOLD preserved."
     }
   ],
-  "previous_write_id": "b-class-allocation-3436ec50-c50c-46d4-bf98-591e0c8bc975",
+  "previous_write_id": "b-class-optimizer-domain-559988a6-2fa0-4584-8186-1ab5dd905376",
   "receiving_worktrees": [
     "codex/6920-b-native-vector-calls-20261013-01a12827",
     "codex/6920-b-vector-control-20261013-01a12827",
