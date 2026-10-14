@@ -1,0 +1,50 @@
+{
+  "id": "6920",
+  "slice": "native-class-dynamic-signature-reader-successor-20261014",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-native-js-class-physical-20261014-01a12827",
+  "claimed_at": "2026-10-14T17:29:28.154262Z",
+  "updated_at": "2026-10-14T17:29:28.154262Z",
+  "write_id": "b-class-dynamic-signature-reader-c8b7402e-e066-4a7a-87a1-ee0bcb9861fa",
+  "handoff_scope": [
+    {
+      "kind": "existing exact unresolved dynamic physical presentation reader",
+      "at": "2026-10-14T17:29:28.154262Z",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-native-js-class-physical-20261014-01a12827",
+      "manifest": {
+        "receivingBranch": "codex/6920-b-native-js-class-physical-20261014-01a12827",
+        "integrationBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+        "componentPreimages": [
+          {
+            "path": "src/compiler/ir-program-presentation.ts",
+            "bytes": 70868,
+            "sha256": "74affb376216c95c435713a510df9377f985bdf4f4c0d99cb6d460016ef931f0",
+            "functions": "physicalTypes: include dynamic among existing unresolved logical alternatives that return undefined"
+          }
+        ],
+        "canonicalNewPaths": [],
+        "scope": "One existing physical presentation reader must recognize the genuine logical dynamic member added in C-owned PhysicalSignatureType. Preserve refusal until authenticated physical class callable mapping is separately implemented and received.",
+        "exactEdit": {
+          "function": "physicalTypes",
+          "insert": "type.kind === \"dynamic\" || alongside vec/string/closure/callable/boxed unresolved alternatives",
+          "behavior": "return undefined for unresolved dynamic; retain all old support-ref lookup and scalar comparisons"
+        },
+        "constraints": "No public dynamic/export/callable admission, signature guess, class-role blanket acceptance, fake physical type coordinate, new schema field, suppression/cast or gate removal. Existing checkAbiExports/global-only receive remains distinct; this extends only this exact reader. Preserve all old comparison branches. Root does not apply until actual C union successor is captured. No branches/HOLD/queue changes."
+      },
+      "manifestSha256": "bc61c40b1916dd61d38c8274c9fdba6e2e3eddacdf7ddb1887a9b77a3cb97aed",
+      "constraints": "No public dynamic/export/callable admission, signature guess, class-role blanket acceptance, fake physical type coordinate, new schema field, suppression/cast or gate removal. Existing checkAbiExports/global-only receive remains distinct; this extends only this exact reader. Preserve all old comparison branches. Root does not apply until actual C union successor is captured. No branches/HOLD/queue changes."
+    }
+  ],
+  "predecessors": [
+    "3522-b-native-class-semantic-producer-20261014.json",
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}
