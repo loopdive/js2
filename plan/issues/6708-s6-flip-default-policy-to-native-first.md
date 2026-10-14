@@ -256,11 +256,18 @@ returning `""`, Map/Set IR capability violations, generator `.return()`
 values, `Symbol.toPrimitive` in arithmetic, `await null` interleaving,
 `indexOf(undefined)`, `import.meta.url`, five compile failures, and nine
 `issue-1197` WAT-shape assertions that pin the host-assisted element
-specialisation. Status stays `in-progress` until they are decided: fix them as
-regime slices, or pin those tests to `semanticProviders: "host-assisted"` with
-a follow-up issue. The equivalence baseline was NOT touched.
+specialisation. The equivalence baseline was NOT touched.
 
-The 50 rows (file :: test):
+**Decision (lead, 2026-10-14): fix, not pin.** The rows reproduce today with an
+explicit `semanticProviders: "native-first"`, so they are fixed on main by
+#6980 (iterators/generators), #6981 (IR path + compile failures) and #6982
+(toPrimitive/indexOf/await/import.meta); this PR re-merges main once they land.
+The one exception: the nine `issue-1197` structure rows pin the host-assisted
+element specialisation that S7 deletes, so they are re-pinned to
+`semanticProviders: "host-assisted"` (#6979). 41 rows remain. Status stays
+`in-progress` until the gate is green.
+
+The original 50 rows (file :: test):
 
 - array-indexof-no-arg :: indexOf / lastIndexOf finds an element that IS undefined; finds the LAST element that is undefined
 - await-settled-operand-yields :: `await null` in an async arrow returns to the caller first; sibling async functions interleave like JS
@@ -272,7 +279,7 @@ The 50 rows (file :: test):
 - import-meta :: import.meta.url stored in a variable; reflects the loader-injected value
 - ir-slice10-error :: (a)–(e) Error/TypeError/RangeError `.message`, empty message, catch composition
 - ir-slice10-map-set :: (d) `new Set().size === 0`; (e) Set add + size + has
-- issue-1197 :: nine "structure: WAT contains __vec_i32 …" assertions
+- issue-1197 :: nine "structure: WAT contains __vec_i32 …" assertions — re-pinned to host-assisted (#6979)
 - issue-1388 :: static async generator method, detached + iterator
 - issue-1454 :: plain-array fast path; Map destructure; null/undefined throws; rest element
 - issue-2033 :: all eight custom-iterable spread / destructure rows
