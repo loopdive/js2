@@ -4240,3 +4240,93 @@ Ordinary change-scoped commit hooks use the already-published `6da053a` checkpoi
 as their supported local base and run the new root test. The independently
 recorded complete broader comparison remains part of qualification. HOLD,
 original foreign ownership, full architecture and main integration remain open.
+
+
+## B native zero-argument push receiver (2026-10-14, qualified finite slice)
+
+The refined checked-preparation claim admits zero arguments only for the
+existing synchronous logical-f64 source partition. The receiver SSA value is
+already evaluated once by the original method-call lowerer; the new sibling
+branch emits the existing f64 `vec.len` and discards its result in statement
+position. It adds no append/growth operation, length writer, capacity rewrite,
+allocation site, helper, provider or PreparedIR schema. Removing the exact
+407-byte, 11-line partition restores the entire 25,402-byte published `c2ae3e76`
+lowerer byte-for-byte (SHA256
+`54884d553bbb6f82949609fb106d141e7d5d5971fd84b668efe2272acfb8feef`),
+with no import change. All pre-existing source branches remain byte-preserved.
+
+The final owned eight-case suite exits zero: 160 actual successful zero-push
+calls comprise 80 mixed live/codec calls, 40 public calls, 24 pure-module
+live/codec calls and 16 deferred-global reads. Eight additional authentic Wasm
+TDZ exceptions occur before deferred initialization. All four native profiles
+validate and execute, each live/codec binary pair is equal, and the mixed
+fixtures match independent JavaScript results. They exercise empty/nonempty
+vectors, expressions/statements, once-only side-effect receivers, aliases,
+module globals, loop-bodied internal receivers, and current length after
+capacity growth. Pure exact-length/statement fixtures have no semantic append
+calls or length writers, no append/helper physical reservation, and zero
+append demand uses. Actual public compilation forbids both direct renderers,
+the legacy DTS generator, and source-AST fields after PreparedIR sealing.
+Malformed vec.len operands, result type/integer facts, and genuinely requested
+ownership metadata refuse after warm validation and before encoding. Spread,
+non-f64, async, mutable, unknown-producer and public-vector refusal controls
+remain explicit. The earlier 56+16 `.length` runs are design evidence only.
+
+The pure-module `f64.mul` fixture remains an open full-goal gap. Its actual
+zero-push preparation refuses with `array-representation-unsupported` at
+resolve, `not-covered/numeric-opcode` in the plain function at root 5. The same
+scalar math and four-policy options with `.length` on clean published
+`c2ae3e76` reproduce that exact refusal. Mixed-profile execution does not close
+the pure-profile gap; no generic allocation analysis was widened. A tiny
+inlined internal helper also retains the distinct original-formal callerless
+Linear acceptance refusal when embedded in the authentic mixed program.
+
+Final exclude-empty scoped typing and all ten ordinary qualification gates
+exit zero. Eight scalar artifact rows match clean published `c2ae3e76` in every
+recorded field. Exact argv, terminal exits, failed instrumentation epochs,
+control sources/results, whole-file reconstruction and the three-path seal
+remain in `.tmp/zero-push/`. A progress-message byte-count transcription error
+is separately recorded; the original reconstruction hash receipt was correct.
+The old multipush zero-refusal row is untouched by this receiver: root owns
+its finite expectation update under the prior claim. Source/test/issue are the
+only owned paths. Root retains integration, publication and queue operations,
+including PR6662 HOLD. Full architecture completion remains false.
+
+
+## B root zero-argument integration qualification (2026-10-14)
+
+The remotely verified `7d1c24ba` ownership refinement authorizes the root-only
+update of the former multipush zero-argument refusal. That single case now
+asserts genuine successful preparation for zero arguments while preserving its
+spread, non-f64 and async refusal assertions. Its name changes intentionally;
+all six multipush cases remain. The receiver's original three-path seal remains
+preserved in `.tmp/zero-push/handoff-sealed.json`.
+
+The actual default/JSON combined command passes all 14 cases (eight zero-push
+and six multipush), exits zero, and reports no unhandled errors. Exclude-empty
+scoped typing exits zero across 1,997 source files, 66 explicit native test roots,
+85 resolved test files and 2,331 total inputs. The modified predecessor test's
+scoped Biome and whitespace checks pass. The whole-source reconstruction and
+eight-row scalar comparison remain exact. Full migration and the documented
+pure-math/callerless-helper frontiers remain open; HOLD and A's integration/queue
+ownership remain. The broader current-composition run and full package build
+are recorded separately with actual terminal results before publication.
+
+The final 8GiB package build exits zero, including declaration pruning and both
+Test262 CLI/worker bundles. The actual build log and terminal status remain in
+`.tmp/zero-push-root/build.log` and `build.exit`.
+
+
+The final broader current-composition command executes 80 files and 1,203
+cases: 1,123 pass, 70 fail, nine skip and one todo; actual exit is 1 because
+of the failures. The per-run progress ACK/yield instrument reports zero
+unhandled errors. Compared with the measured b579 multipush broader epoch,
+all 70 failed identities and full normalized diagnostics/application frames
+are identical; no failure is added or removed. Both sides normalize only
+worktree prefixes and TypeScript stack-frame coordinates and remove only
+Vitest-runner/Node-task-queue framework frames. Full raw reports remain.
+Parameterized duplicate names are preserved by ordered occurrence identity.
+This comparison includes the composed DTS checkpoint and is not an isolated
+c2 A/B attribution or a full-green-suite claim. Existing shared hook/RPC/test
+policies remain unchanged. Final argv, report hashes, terminal status and
+comparison are in `.tmp/zero-push-root/`.

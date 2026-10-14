@@ -237,9 +237,10 @@ it("executes the genuine public later-argument TDZ throw without a first outer a
   expect(linear).not.toHaveBeenCalled();
   expect(gc).not.toHaveBeenCalled();
 });
-it("retains native zero-argument, spread and non-f64 multi-argument refusals", () => {
+it("admits native zero-argument push and retains spread, non-f64 and async refusals", () => {
+  const zero = prepare("export function run():number{const a=[2,5];return a.push();}");
+  expect(zero.kind).toBe("prepared");
   for (const text of [
-    "export function run():number{const a=[2,5];return a.push();}",
     "export function run():number{const a=[2,5];const b=[7,11];return a.push(...b);}",
     "export function run():number{const a=[true,false];return a.push(true,false);}",
     "export async function run():Promise<number>{const a=[2,5];return a.push(7,11);}",

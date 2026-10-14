@@ -418,6 +418,17 @@ export function tryLowerVecPush(
   if (
     logical &&
     logicalElement?.kind === "f64" &&
+    expr.arguments.length === 0 &&
+    nativeVectorMutationOwnerIsSynchronous(expr)
+  ) {
+    // The receiver has already been evaluated once. Zero arguments only read
+    // its current logical length; no append or backing-storage change occurs.
+    const length = host.builder.emitVecLen(recv);
+    return statementPosition ? null : length;
+  }
+  if (
+    logical &&
+    logicalElement?.kind === "f64" &&
     expr.arguments.length > 1 &&
     !expr.arguments.some(ts.isSpreadElement) &&
     nativeVectorMutationOwnerIsSynchronous(expr)
