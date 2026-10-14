@@ -67,6 +67,7 @@ import {
 } from "./expressions/helpers.js";
 import { canonicalUndefinedExternInstrs, nullishExternTestInstrs } from "./any-helpers.js"; // (#4519) §7.3.2 receiver check: null OR the undefined singleton
 import { emitUndefined } from "./expressions/late-imports.js"; // (#5269 B-d) the canonical `undefined` carrier
+import { emitNativeImportMetaUrl } from "./expressions/import-meta-url-native.js"; // (#6982)
 import { receiverIsUndefinedIdentifier } from "./nullish-receiver-coercible.js"; // (#4519) the one decline that guard needs
 import { tracesToTypedArrayIntrinsicProto } from "./expressions/calls.js"; // (#6769 S7a) `%TypedArray%.prototype` receiver
 import { resolvesToAmbientGlobal } from "./expressions/non-constructable.js";
@@ -1791,6 +1792,8 @@ export function trySuperAndImportMetaRead(
     expr.expression.name.text === "meta"
   ) {
     if (propName === "url") {
+      const nativeUrl = emitNativeImportMetaUrl(ctx, fctx); // (#6982) native strings + JS embedder
+      if (nativeUrl !== null) return nativeUrl;
       // #1494 — Bind to the host's `import.meta.url` (passed by the generated
       // loader via deps.importMetaUrl). Falls back to undefined when no
       // loader is present.

@@ -159,6 +159,7 @@ import { createObjectCreateClassInstanceRuntime } from "./runtime/object-create-
 import * as classStaticParent from "./runtime/class-static-parent.js";
 const _classParents = classStaticParent.classParentsFor; // (#6790) one registry per instance
 import { getWebHostConstructors } from "./runtime/web-host-constructors.js";
+import { scheduleNativeMicrotaskCheckpoint } from "./runtime/native-microtask-checkpoint.js"; // (#6982)
 import {
   _rerouteStringSymbolMethodPrimitive,
   _makeLegacyRegExpState,
@@ -20023,6 +20024,7 @@ export function wrapExports(
       let result: any;
       try {
         result = (val as Function).apply(this, marshalled);
+        scheduleNativeMicrotaskCheckpoint(exportsForMarshal); // (#6982)
       } catch (error) {
         const payload = normalizeModuleCallbackException(
           error,
