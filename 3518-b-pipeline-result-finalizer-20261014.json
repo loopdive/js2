@@ -19,7 +19,20 @@
     "src/compiler/ir-native-number-undefined-optimization.ts",
     "src/compiler/native-linear-pipeline.ts",
     "tests/issue-6920-native-number-undefined-optimization.test.ts",
-    "tests/issue-6920-pipeline-result-finalization.test.ts"
+    "tests/issue-6920-pipeline-result-finalization.test.ts",
+    {
+      "path": "src/compiler/ir-program-presentation.ts",
+      "addition": "Private WeakSet of actual prepared-presentation instances, populated ONLY inside actual successful prepareIrProgramPresentation constructor return(s); fixed readonly assertPreparedPipelinePresentation(p) verifies membership before any field/property/getter read. No public registration/token/callback, caller-result authority, structural/kind acceptance or changed old capture/observe/preparation/validation/emission algorithms. Existing context type-import hook preserved.",
+      "consumers": "src/compiler/pipeline-result-finalizer.ts productive factory asserts actual membership before any field read; native actual new artifact witness still only after real finalized module/completion and native DTS/currentness proof. Generic actual presentation output compatibility remains; no generic native witness.",
+      "pureDependency": "New productive owner may contain byte-identical PRIVATE seven-line isWasmException predicate required by unchanged movedfinalizer; keep compiler original helper body exact and do not import compiler.ts.",
+      "exclusions": [
+        "arbitrary/exported registration",
+        "public membership mutation",
+        "non-owned presentation algorithms",
+        "A object-finalizer/queue/main/HOLDs",
+        "false clean/zero-debt claim"
+      ]
+    }
   ],
   "exact_function_scope": [
     "pipeline-output-context.ts: move only existing explicit PipelineOutputContext contract; no PipelineInput or body generation state.",
@@ -99,6 +112,32 @@
   "receiving_from_B_record": "6920-b-native-public-routing-takeover-20261013.json",
   "publication_dependency": "Separate fresh branch; root current2018 checkpoint and running inventory remain unchanged. Full62+new tests/typing/build and actual inventory/cycle closure qualified before adoption.",
   "claimed_at": "2026-10-14T09:13:13.210178Z",
-  "updated_at": "2026-10-14T09:13:13.210178Z",
-  "write_id": "b-finalization-owner-5e936cde-7f06-400b-9835-5cb720670d01"
+  "updated_at": "2026-10-14T09:23:36.305057Z",
+  "write_id": "b-number-undefined-a444ed1f-8964-4edc-bf85-519e670c0081",
+  "scope_refinements": [
+    {
+      "at": "2026-10-14T09:23:36.305057Z",
+      "addition": {
+        "path": "src/compiler/ir-program-presentation.ts",
+        "addition": "Private WeakSet of actual prepared-presentation instances, populated ONLY inside actual successful prepareIrProgramPresentation constructor return(s); fixed readonly assertPreparedPipelinePresentation(p) verifies membership before any field/property/getter read. No public registration/token/callback, caller-result authority, structural/kind acceptance or changed old capture/observe/preparation/validation/emission algorithms. Existing context type-import hook preserved.",
+        "consumers": "src/compiler/pipeline-result-finalizer.ts productive factory asserts actual membership before any field read; native actual new artifact witness still only after real finalized module/completion and native DTS/currentness proof. Generic actual presentation output compatibility remains; no generic native witness.",
+        "pureDependency": "New productive owner may contain byte-identical PRIVATE seven-line isWasmException predicate required by unchanged movedfinalizer; keep compiler original helper body exact and do not import compiler.ts.",
+        "exclusions": [
+          "arbitrary/exported registration",
+          "public membership mutation",
+          "non-owned presentation algorithms",
+          "A object-finalizer/queue/main/HOLDs",
+          "false clean/zero-debt claim"
+        ]
+      },
+      "authority": {
+        "answer": "Take over the blocking shared seams",
+        "priorAnswer": "takeover all of session b",
+        "humanRequest": "unblock",
+        "scope": "native Linear API/routing, checked allocation preparation, carrier/emission wiring, startup resources, existing allocator/constructor recipe; preserve existing branches and unrelated work; fresh isolated worktrees and normal checks"
+      },
+      "reason": "Productive finalizer must authenticate actual presentation identity before anyfieldread, includinggenericprepared host products; exact private successfulconstructor membership/read-onlyassertion prevents copied/hostile p without public registration."
+    }
+  ],
+  "previous_write_id": "b-finalization-owner-5e936cde-7f06-400b-9835-5cb720670d01"
 }
