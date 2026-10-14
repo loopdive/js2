@@ -6,8 +6,8 @@
   "status": "in-progress",
   "branch": "codex/3522-b-native-class-producer-20261014-01a12827",
   "claimed_at": "2026-10-14T01:32:58.535944Z",
-  "updated_at": "2026-10-14T02:38:16.585465Z",
-  "write_id": "b-class-closure-refusal-9b1459a4-fb04-4032-94ad-f9d16c6d1267",
+  "updated_at": "2026-10-14T12:27:01.023845Z",
+  "write_id": "b-class-phase-a-d879501f-f573-40ef-b209-80a1aff01924",
   "authority": "Human active goal complete ir migration and authorized blocking shared-seam takeover. Original3522 parent released; disjoint whole-program semantic producer checkpoint only.",
   "predecessor_released_record": "3522.json",
   "handoff_scope": [
@@ -16,7 +16,462 @@
     "src/ir/program/input-contracts.ts and input.ts optional complete class DATA own/dense copying; program-abi-contracts.ts and program/prepared-contracts.ts canonical class layout/init/new/member intents; program/class-layouts.ts, population.ts and validation.ts exact complete class unit/ABI/default/initializer joins. Preserve source-origin/evidence/foreign algorithms, no predicate weakening or omission.",
     "New tests/issue-6920-native-class-source-preparation.test.ts, append-only6920 issue and truthful new boundary leaf rows. Genuine source live/codec preparation and exact supported/refused projection accounting; no runtime/class physical readiness credit.",
     "src/ir/array-element-inference.ts: new original-ClassDeclaration/ClassExpression initializer-only analysis factory for the nonsynthetic implicit constructor frame. Validate exact original nonstatic initializer node list/order and reject array literals/unsupported array-capable field contracts; construct genuine closed no-array result inside its existing private AliasGraph/analysis owner. Preserve entire original inferEmptyArrayElementTypes function and all generic array algorithms byte-identical; no fabricated external analysis instance, synthetic AST, unknown-as-scalar inference or array profile widening. New class source preparation test owns foreign/reordered/omitted initializer and array-field refusal controls.",
-    "src/ir/source-class-plans.ts native-only executable-class semantic capability preflight, with any required owned program-source.ts call placement: original complete class census must refuse before class body IR/PreparedIR because executable definition/binding/TDZ/prototype and undefined-field read/type proofs do not yet exist. Include unused original class bodies, preserve original source locations, ordinary/legacy algorithms, all generic verifier/effect/optimizer/codec behavior and direct typed missing-evidence invariants. No fixture/name/order whitelist, caught/relabelled invariants, fake constants, skipped class census or physical readiness. Reconcile only owned tests/issue-6920-native-class-source-preparation.test.ts to genuine source capability refusals plus independent scalar/public controls and original metadata/planner DATA tests without class execution/preparation credit; append6920 issue with exact measured TDZ and default-fold source negatives. Preserve all existing signed class checkpoint/source epochs as unfinished evidence; complete class semantic/physical implementation remains required, not retired or out of scope."
+    "src/ir/source-class-plans.ts native-only executable-class semantic capability preflight, with any required owned program-source.ts call placement: original complete class census must refuse before class body IR/PreparedIR because executable definition/binding/TDZ/prototype and undefined-field read/type proofs do not yet exist. Include unused original class bodies, preserve original source locations, ordinary/legacy algorithms, all generic verifier/effect/optimizer/codec behavior and direct typed missing-evidence invariants. No fixture/name/order whitelist, caught/relabelled invariants, fake constants, skipped class census or physical readiness. Reconcile only owned tests/issue-6920-native-class-source-preparation.test.ts to genuine source capability refusals plus independent scalar/public controls and original metadata/planner DATA tests without class execution/preparation credit; append6920 issue with exact measured TDZ and default-fold source negatives. Preserve all existing signed class checkpoint/source epochs as unfinished evidence; complete class semantic/physical implementation remains required, not retired or out of scope.",
+    {
+      "kind": "received native JS class Phase A original-source and typed protocol hooks",
+      "sourceHead": "df466f30d4ee27ab332debad823912ee9155c80c",
+      "receivingBranch": "codex/6920-b-native-js-class-source-20261014-01a12827",
+      "manifestSha256": "069485ca53c022b54af1ac60f692b2fe1ff0f91986fc0113e0e275dee7d99f0f",
+      "proposalSha256": "cf6e02b48ce3274c95687c34538dcd8a2c9c7f821be2b4debe140318f7d905d7",
+      "existingPaths": [
+        {
+          "path": "src/ir/module-init.ts",
+          "functions": [
+            "new collectNativeClassModuleInitPopulation"
+          ],
+          "scope": "Add original-source native sibling population collector including executable class declarations in their source positions. Entire legacy collectModuleInitPopulation/sourceOwnsModuleInitUnit/makeModuleInitSynthetic algorithms unchanged. Do not manufacture a SourceFile, function, declaration, body or legacy queue entry.",
+          "preimage": {
+            "bytes": 4089,
+            "sha256": "4ff2453fcb3e792fea3f4e29e9a9fbadd84bb776a05b5495280bcbddc85b2f53"
+          }
+        },
+        {
+          "path": "src/ir/planning-identity.ts",
+          "functions": [
+            "buildIrPlanningIdentityContext"
+          ],
+          "scope": "Consume private exact scanner-owned native original module population and verify original parent/source identity/order; legacy inventories retain the old collector. This closes identity/planning population currentness without a caller option authorizing readiness.",
+          "preimage": {
+            "bytes": 29068,
+            "sha256": "781d9da5603d2d35e404f5626ec3a2190d039bc941d10cd39e33b7a7db701107"
+          }
+        },
+        {
+          "path": "src/ir/identity.ts",
+          "functions": [
+            "SourceInventoryBuilder.build",
+            "IrInventoryScannerMetadata",
+            "buildIrUnitInventory"
+          ],
+          "scope": "Native original runtime class declarations join the original SourceFile module population; do not process/scan each declaration twice. Capture that exact ordered original-node population in private scanner metadata alongside each original source, then mint one existing module-init terminal. Preserve original ClassId/member/constructor identities and all host/nonclass grammar. Explicit native population is producer grammar, never a readiness flag or runtime token.",
+          "preimage": {
+            "bytes": 61689,
+            "sha256": "2d0239c27b4f88bd69026d16b750f41cdf7bc08dd742bb0c87dc08a6625f2685"
+          }
+        },
+        {
+          "path": "src/ir/module-init-plan.ts",
+          "functions": [
+            "BuildIrModuleInitPlanInput",
+            "buildIrModuleInitPlan",
+            "verifyIrModuleInitPlan"
+          ],
+          "scope": "Native-only optional jsClassStartup closed DATA joins original module class declarations/outer module bindings to descriptor binding IDs, spans and source order. executable and invocation include genuine native definition work even when old evaluations/liveSeeds are empty. Existing evaluation kinds, legacyKey, reconciliation queue and old plan outcomes unchanged. New startup leaf independently validates canonical schedule; no fake legacy class-definition event.",
+          "preimage": {
+            "bytes": 22858,
+            "sha256": "718a0a88fda91d31ace69fb8b5b6fcebe78cf3984c2176081cf9b2366659f476"
+          }
+        },
+        {
+          "path": "src/ir/program/startup.ts",
+          "functions": [
+            "IrModuleInitPlan"
+          ],
+          "scope": "Optional closed native JS definition/binding schedule DATA, not a fake legacy queue key or new legacy event.",
+          "preimage": {
+            "bytes": 3102,
+            "sha256": "25cf8c2b6d039f8a1fd8f7daf74e1503b358c04eb28c8a7dc23e157ec8679912"
+          }
+        },
+        {
+          "path": "src/ir/from-ast.ts",
+          "functions": [
+            "AstToIrOptions",
+            "LowerCtx",
+            "lowerFunctionAstToIr",
+            "lowerStatementListPrefix",
+            "lowerExpr",
+            "lowerExprUnchecked",
+            "lowerCall",
+            "lowerNewExpression",
+            "lowerVariableDeclaration",
+            "lowerVarDecl",
+            "lowerIdentifierAssignment",
+            "lowerPropertyAccess",
+            "lowerPropertyAssignment",
+            "tryLowerUndefinedCompare",
+            "new lowerNativeJsClassModuleAstToIr",
+            "new lowerNativeJsClassInitializerAstToIr",
+            "lowerStmt",
+            "lowerTail",
+            "lowerDiscardedExpression",
+            "lowerBinary"
+          ],
+          "scope": "Finite native source siblings for genuine definition/binding/frame/construct/invoke/property protocols, before old nominal/source-type folds. Original SourceFile statement-language builder and original PropertyDeclaration expression builder reuse owned SSA/control primitives, not fabricated FunctionDeclaration or copied AST. Initializer hidden frame has zero user parameters; constructor parameters/defaults belong the separate original constructor body. Original neutral, ordinary, host, super/accessor algorithms remain byte-exact outside named hooks. Original implicit constructor intent gets a non-synthetic builder without a fake node. Native constructor return/normal completion hooks cover lowerTail/lowerStmt without changing generator/async/neutral return paths; fresh managed identity/instanceof precede old scalar/nominal binary paths.",
+          "preimage": {
+            "bytes": 790446,
+            "sha256": "b56850486d662ddcf19ba0de55a2c3f4987af6323dad551af7674f1e729a3cf1"
+          }
+        },
+        {
+          "path": "src/ir/program-source.ts",
+          "functions": [
+            "prepareIrProgramSources",
+            "prepareSourceFunctionSignatures",
+            "captureTypedIrProgramInput",
+            "sourceMapStartupOccurrences",
+            "createSourceMapProjector"
+          ],
+          "scope": "Dispatch authentic new JS source plans; carry closed jsClassDefinitions; original module/class member support bodies and hidden frame signatures. All original source bodies remain accounted; no callback or option creates readiness. Source-map catalog joins new class declaration/instantiation spans to exact original module owner; no fake generated-source lineage.",
+          "preimage": {
+            "bytes": 90135,
+            "sha256": "629ada44954b3d48affbeecc08cbdb3395b2883bed7e58c1de1e2a79fcd25316"
+          }
+        },
+        {
+          "path": "src/ir/core/dialect/js.ts",
+          "functions": [
+            "IrInstrJsClass interfaces"
+          ],
+          "scope": "Declare explicit JS operation interfaces importing pure sibling DATA contracts; no intrinsic disguise.",
+          "preimage": {
+            "bytes": 30849,
+            "sha256": "dbe4e49d49cbb8e2ffdc5552a75c5a3d2692b1764aa54df81d987861fa5e231d"
+          }
+        },
+        {
+          "path": "src/ir/core/nodes.ts",
+          "functions": [
+            "IrInstr",
+            "forEachNestedBuffer",
+            "mapNestedBuffers",
+            "directUses"
+          ],
+          "scope": "Assemble/reexport new JS kinds through existing sole core→dialect edge; all are leaf instructions. Exact complete new operands and no phantom nested buffers.",
+          "preimage": {
+            "bytes": 96440,
+            "sha256": "edbebcf99227dc64eaf1dd83cec02a2431b21c25992e20138c0917f09487dccd"
+          }
+        },
+        {
+          "path": "src/ir/builder.ts",
+          "functions": [
+            "IrFunctionBuilder"
+          ],
+          "scope": "Typed emitters for each operation, genuine builder-issued graph/cell/instance allocation sites under the agreed B recipe; no child-site fabrication.",
+          "preimage": {
+            "bytes": 79538,
+            "sha256": "c689c21b0a1eb19c8cc8f7b0d442447bf3707b5c380f9a831029d21bc9947a0d"
+          }
+        },
+        {
+          "path": "src/shared/contracts/ir-identity.ts",
+          "functions": [
+            "IrFunctionIdentity"
+          ],
+          "scope": "Truthful optional original class sourceBodyKind for inventoried support bodies, distinct from synthetic/lifted-closure role; parent/ordinal/source owner mandatory.",
+          "preimage": {
+            "bytes": 2741,
+            "sha256": "ef9427c37f81455e06b81cf4f2599601d50e80f0d83abcacda447c9048fa4d0f"
+          }
+        },
+        {
+          "path": "src/ir/runtime/verify.ts",
+          "functions": [
+            "verifySymbolicReferences",
+            "collectUses",
+            "checkSupportRefFlow",
+            "TYPE_RULE_STATUS",
+            "verifyInstrTypeRules::checkInstr"
+          ],
+          "scope": "New JS semantic verifier delegation plus explicit checked status, complete operands/SSA/symbol refs. Program-owned declaration DATA context; no verifier report callback or arbitrary support-ref allowance.",
+          "preimage": {
+            "bytes": 122476,
+            "sha256": "2d42cdd44b7a979ee0c960369c5ace9f75d2e7c47ccf3c17c8bc9f592f8dd74b"
+          }
+        },
+        {
+          "path": "src/ir/analysis/effects.ts",
+          "functions": [
+            "effectsOf",
+            "isSideEffecting"
+          ],
+          "scope": "New definition/binding/construct/property/invoke/completion effects kept/ordered; conservative heap/control barriers initially. Actual identity is pure; frame capture reads depend on live-binding mode. No old classification changes.",
+          "preimage": {
+            "bytes": 26395,
+            "sha256": "cdcd241b4bdd43958d27825ad74b16f0c86aef8e121ac4aa01e93a5db3e65a5c"
+          }
+        },
+        {
+          "path": "src/ir/backend/instruction-uses.ts",
+          "functions": [
+            "collectIrUses"
+          ],
+          "scope": "Exact new SSA use closure including constructor/newTarget/receiver/args/captures/cell/frame/value variants.",
+          "preimage": {
+            "bytes": 7524,
+            "sha256": "8aa3b550869f322049b83bc49153c6c60035fa1fd034f76bba24cd41becd42eb"
+          }
+        },
+        {
+          "path": "src/ir/passes/inline-small.ts",
+          "functions": [
+            "renameInstrOperands",
+            "forkInlineAllocation"
+          ],
+          "scope": "Rename every new operand; preserve descriptor IDs and real provenance. Do not splice frame-local IDs or manufacture source bodies.",
+          "preimage": {
+            "bytes": 49460,
+            "sha256": "c11c5317b2e0927de2ce3a79c13dd927b29cef8dd7bd445e5a40de4630cdde7d"
+          }
+        },
+        {
+          "path": "src/ir/passes/monomorphize.ts",
+          "functions": [
+            "collectUses",
+            "cloneWithParamTypes",
+            "forkSpecializationAllocations"
+          ],
+          "scope": "New use cases; any real clone must not falsely retain original sourceBodyKind; descriptor-target population and current source roles remain coherent.",
+          "preimage": {
+            "bytes": 37809,
+            "sha256": "925dce9140710073a8a1a21b570cc2bd16deb80ee79bdd432d2604315a2d59ec"
+          }
+        },
+        {
+          "path": "src/ir/prepared-component-dependencies.ts",
+          "functions": [
+            "implicitSupportRequirement",
+            "collectFunctionEvidence",
+            "recordSupportTypeReference",
+            "recordUnitReference",
+            "recordGlobalReference"
+          ],
+          "scope": "Explicit dependencies from new symbolic definition/binding references and descriptor constructor/method/initializer/capture/realm refs; preserve old nominal-class algorithms.",
+          "preimage": {
+            "bytes": 70294,
+            "sha256": "7954d8385517afb23689382abb066a8cec016a50b277ae37fd81e895c6fcf10f"
+          }
+        },
+        {
+          "path": "src/ir/program/input-contracts.ts",
+          "functions": [
+            "TypedIrProgramInput"
+          ],
+          "scope": "Optional complete jsClassDefinitions DATA census; no source/checker/function/caller capability stored.",
+          "preimage": {
+            "bytes": 2528,
+            "sha256": "8369ba73f4f79f145192b39acb85876c91f47f2ea55d922d658de3c3c66ee0bc"
+          }
+        },
+        {
+          "path": "src/ir/program/input.ts",
+          "functions": [
+            "ownTypedIrProgramInput"
+          ],
+          "scope": "Closed allowed field and dense-array capture; native descriptor/body/signature/startup validation. Keep old classes/global/source model assertions.",
+          "preimage": {
+            "bytes": 7119,
+            "sha256": "9ab2102134c9507ff078d3db8839777c59825f3be314dc19ec79afb87ba45c2a"
+          }
+        },
+        {
+          "path": "src/ir/program-prepare-ir.ts",
+          "functions": [
+            "prepareTypedIrProgram"
+          ],
+          "scope": "Forward complete captured descriptors into canonical ABI and current preparation joins. Missing B recipe remains exact located capability refusal, never caught/relabelled invariant.",
+          "preimage": {
+            "bytes": 10847,
+            "sha256": "461e522da3217232923d19ea60d8fbf205681bc6e1f9fe33808483aa1642c8d1"
+          }
+        },
+        {
+          "path": "src/ir/program-abi-contracts.ts",
+          "functions": [
+            "prepareIrProgramAbiEntries"
+          ],
+          "scope": "Append native definitions and canonical support type/global/callable entries in source order; one ABI only.",
+          "preimage": {
+            "bytes": 12186,
+            "sha256": "7fa83b0b3cdf6d3cd1d2d19a3909bd3cf40195efeb3fbd60d6afc5fe133e6e0b"
+          }
+        },
+        {
+          "path": "src/ir/program/prepared-contracts.ts",
+          "functions": [
+            "PreparedIrAbiContract"
+          ],
+          "scope": "Optional closed nativeJsClassDefinition attachment on existing support contract. No new ABI-kind or IrType arm, no top-level PreparedIR schema/codec algorithm change.",
+          "preimage": {
+            "bytes": 5353,
+            "sha256": "1b2c050b18d611d0b45316aaed268acb6705d64a4e3299d987bf58320752eae1"
+          }
+        },
+        {
+          "path": "src/ir/program/population.ts",
+          "functions": [
+            "assertPreparedIrProgramPopulation",
+            "assertLiftedSourceBody"
+          ],
+          "scope": "Dedicated genuine original class support-body provenance/signature check; never relabel initializer/member as lifted-closure or generated source. Check every descriptor callable target.",
+          "preimage": {
+            "bytes": 8469,
+            "sha256": "3bc8659848597dc2bc7fc5470d112728a27a38dd4e541b047161f4b43e3e1d00"
+          }
+        },
+        {
+          "path": "src/ir/program/validation.ts",
+          "functions": [
+            "validateEntry",
+            "validatePreparedIrProgram",
+            "assertPreparedIrProgram",
+            "sourceMapStartupOccurrences"
+          ],
+          "scope": "Complete native descriptor/role/census/body/startup/ABI checks before runtime/resource authority; malformed/foreign attachments refuse. Source-map strict startup plan allowed fields add only jsClassStartup, and original native class/binding spans join valid occurrences. Old binding/evaluation grammar/oracles unchanged.",
+          "preimage": {
+            "bytes": 48516,
+            "sha256": "9a104693409cc0bfa26dccc0e1e8b9d2a78bc6eaae6242205d2ce5ef02cc7205"
+          }
+        },
+        {
+          "path": "src/ir/analysis/backend-legality.ts",
+          "functions": [
+            "verifyIrBackendLegality",
+            "checkInstrEmbeddedTypes"
+          ],
+          "scope": "Recognize declared new kinds while retaining unsupported backend/resource outcomes until a genuine native recipe is issued. Arbitrary support-ref stays unsupported on Linear.",
+          "preimage": {
+            "bytes": 22782,
+            "sha256": "6ee2f763e8de4b06bf5d4adf6beb3ad211f891a7c4af843b61bc3147bfb65b8d"
+          }
+        },
+        {
+          "path": "src/ir/lower-generic.ts",
+          "functions": [
+            "lowerIrFunctionBody::emitInstrTree"
+          ],
+          "scope": "Explicit new-kind typed refusal without authentic class resources for A; C later receives actual issued resolver/materialization. No default fallthrough, NOP, legacy call or fake body.",
+          "preimage": {
+            "bytes": 193831,
+            "sha256": "aaa8f5286025465ea82fad0da9f70bd2b91d1da4586f0e5704fb9fe68c87f7ec"
+          }
+        },
+        {
+          "path": "src/ir/dialect/js.ts",
+          "functions": [
+            "type-only compatibility forwarder"
+          ],
+          "scope": "Append exact 14 new interface names to unchanged canonical type-only forwarder; no implementation or extra source edge.",
+          "preimage": {
+            "bytes": 2884,
+            "sha256": "e2fbc7bcec1c171b90ffcf125d7b7fdf7e34fc95450775f2488ccee9ac0e3178"
+          }
+        },
+        {
+          "path": "scripts/lib/check-canonical-ir-dialect.mjs",
+          "functions": [
+            "DIALECT_NAMES",
+            "checkCanonicalIrDialect"
+          ],
+          "scope": "Append exact 14 reviewed JS interfaces and matching truthful count diagnostics. Preserve exact whole declaration/name equality and sole core->canonical dialect/legacy type-forwarder rules; no broad permission for other dialect imports.",
+          "preimage": {
+            "bytes": 5922,
+            "sha256": "41c4fb6420092bcf7b8f29f8b80c5a1a28f00e5c2896ec19c0a324821f0a51d9"
+          }
+        },
+        {
+          "path": "scripts/check-ir-kind-neutrality.mjs",
+          "functions": [
+            "VERDICTS"
+          ],
+          "scope": "Append 14 js verdicts with real literal semantic evidence in canonical declarations. Preserve all old verdicts, R1-R4 population reconciliation/ratchets and evidence checks; no blanket exempt category.",
+          "preimage": {
+            "bytes": 67006,
+            "sha256": "ca0e5494d27d355baff062940042a553abcdc188bbb771c5e19b2a72de691352"
+          }
+        },
+        {
+          "path": "scripts/ir-kind-neutrality-baseline.json",
+          "functions": [
+            "reviewed per-kind baseline DATA"
+          ],
+          "scope": "Record exactly 14 new JS instruction identities/verdicts; all old stable keys/evidence/verdicts remain exact. No unresolved/js-in-core allowance.",
+          "preimage": {
+            "bytes": 32746,
+            "sha256": "1af5b45157866bba411374b830b964a6db4d0c0ae5591e44f4c2f62a50ea3c55"
+          }
+        }
+      ],
+      "newPaths": [
+        {
+          "path": "src/ir/source-js-class-definition.ts",
+          "scope": "Authentic complete original ClassId/source/scope/binding/capture/member/initializer plan and source currentness; no AST in sealed DATA.",
+          "phase": "A",
+          "mode": "new leaf"
+        },
+        {
+          "path": "src/ir/source-js-class-lowering.ts",
+          "scope": "Dispatch original member/implicit constructor/initializer/source-module builders with genuine frames; source-level capabilities and exact unsupported outcomes.",
+          "phase": "A",
+          "mode": "new leaf"
+        },
+        {
+          "path": "src/ir/js-class-contracts.ts",
+          "scope": "Pure JS semantic closed DATA/type interfaces outside neutral core and dialect import-restricted directory, importing only existing logical type/identity/reference contracts. Canonical js.ts imports this pure sibling type-only; no second edge into dialect. No source/checker/backend/physical imports.",
+          "phase": "A",
+          "mode": "new leaf"
+        },
+        {
+          "path": "src/ir/runtime/js-class-verify.ts",
+          "scope": "Instruction-local typed and symbolic semantic checks against complete declared class DATA.",
+          "phase": "A",
+          "mode": "new leaf"
+        },
+        {
+          "path": "src/ir/program/js-class-definition.ts",
+          "scope": "Independent complete original inventory/body/field-default/order/frame/capture/role/ABI/startup validator, including original support-body ownership.",
+          "phase": "A",
+          "mode": "new leaf"
+        },
+        {
+          "path": "src/ir/program/js-class-abi.ts",
+          "scope": "Canonical declaration factories via existing createIrBindingId/irSupportTypeRef/irSupportRef; descriptor support entry plus real role type/global/callable entries.",
+          "phase": "A",
+          "mode": "new leaf"
+        },
+        {
+          "path": "src/ir/program/js-class-startup.ts",
+          "scope": "Pure native instantiation/definition/TDZ ordering and cross-source live-binding replay; no fake legacy queue keys.",
+          "phase": "A",
+          "mode": "new leaf"
+        }
+      ],
+      "newTests": [
+        "tests/issue-6920-native-js-class-source.test.ts",
+        "tests/issue-6920-native-js-class-contracts.test.ts"
+      ],
+      "exclusions": [
+        "all legacy module population/synthetic builder/queue algorithms",
+        "all existing neutral class instructions/types/layouts and generic source optimizations",
+        "all old opcode cases/type rules/verdicts and generic codec DATA algorithm",
+        "all held super/accessor/native async/non-native backend algorithms",
+        "all historical receipts/callback authorities and source-policy pins"
+      ],
+      "dependencies": "B genuine allocation producer/replay and C BOTH materializers remain separately received work",
+      "constraints": [
+        "Publish exact finite receiving scope below, resolving held-owner collisions without releasing original algorithms; no tracked writes have occurred.",
+        "Typed new allocation emitters and source evidence must agree with B canonical allocation kind/site geometry; A alone must not seal a class PreparedIR with missing facts.",
+        "Native module construction must use original SourceFile statements, preserving all existing source evaluation order; no makeModuleInitSynthetic on this new class path.",
+        "Full class census and unknown semantic families produce exact located refusals before malformed IR/facts. No profile ID or caller flag authorizes admission."
+      ],
+      "runtimeCredit": "None until genuine canonical allocation evidence and both materializers qualify; unknown semantic families refuse before malformed IR.",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "parallelWork": "make sure b keeps going with parallel subagents"
+      }
+    }
   ],
   "exclusions": [
     "W1-C super/accessor and original A claims/queue",
@@ -43,7 +498,471 @@
       "addition": "src/ir/source-class-plans.ts native-only executable-class semantic capability preflight, with any required owned program-source.ts call placement: original complete class census must refuse before class body IR/PreparedIR because executable definition/binding/TDZ/prototype and undefined-field read/type proofs do not yet exist. Include unused original class bodies, preserve original source locations, ordinary/legacy algorithms, all generic verifier/effect/optimizer/codec behavior and direct typed missing-evidence invariants. No fixture/name/order whitelist, caught/relabelled invariants, fake constants, skipped class census or physical readiness. Reconcile only owned tests/issue-6920-native-class-source-preparation.test.ts to genuine source capability refusals plus independent scalar/public controls and original metadata/planner DATA tests without class execution/preparation credit; append6920 issue with exact measured TDZ and default-fold source negatives. Preserve all existing signed class checkpoint/source epochs as unfinished evidence; complete class semantic/physical implementation remains required, not retired or out of scope.",
       "authority": "Human active goal complete ir migration and authorized blocking shared-seam takeover. Original3522 parent released; disjoint whole-program semantic producer checkpoint only.",
       "reason": "Authentic56-row source audit found missing TDZ and incorrectly folded undefined field reads behind physical refusals. Typed source preparation must not claim semantic completeness; fail closed at the native class producer until the required class semantics exist."
+    },
+    {
+      "at": "2026-10-14T12:27:01.023845Z",
+      "addition": {
+        "kind": "received native JS class Phase A original-source and typed protocol hooks",
+        "sourceHead": "df466f30d4ee27ab332debad823912ee9155c80c",
+        "receivingBranch": "codex/6920-b-native-js-class-source-20261014-01a12827",
+        "manifestSha256": "069485ca53c022b54af1ac60f692b2fe1ff0f91986fc0113e0e275dee7d99f0f",
+        "proposalSha256": "cf6e02b48ce3274c95687c34538dcd8a2c9c7f821be2b4debe140318f7d905d7",
+        "existingPaths": [
+          {
+            "path": "src/ir/module-init.ts",
+            "functions": [
+              "new collectNativeClassModuleInitPopulation"
+            ],
+            "scope": "Add original-source native sibling population collector including executable class declarations in their source positions. Entire legacy collectModuleInitPopulation/sourceOwnsModuleInitUnit/makeModuleInitSynthetic algorithms unchanged. Do not manufacture a SourceFile, function, declaration, body or legacy queue entry.",
+            "preimage": {
+              "bytes": 4089,
+              "sha256": "4ff2453fcb3e792fea3f4e29e9a9fbadd84bb776a05b5495280bcbddc85b2f53"
+            }
+          },
+          {
+            "path": "src/ir/planning-identity.ts",
+            "functions": [
+              "buildIrPlanningIdentityContext"
+            ],
+            "scope": "Consume private exact scanner-owned native original module population and verify original parent/source identity/order; legacy inventories retain the old collector. This closes identity/planning population currentness without a caller option authorizing readiness.",
+            "preimage": {
+              "bytes": 29068,
+              "sha256": "781d9da5603d2d35e404f5626ec3a2190d039bc941d10cd39e33b7a7db701107"
+            }
+          },
+          {
+            "path": "src/ir/identity.ts",
+            "functions": [
+              "SourceInventoryBuilder.build",
+              "IrInventoryScannerMetadata",
+              "buildIrUnitInventory"
+            ],
+            "scope": "Native original runtime class declarations join the original SourceFile module population; do not process/scan each declaration twice. Capture that exact ordered original-node population in private scanner metadata alongside each original source, then mint one existing module-init terminal. Preserve original ClassId/member/constructor identities and all host/nonclass grammar. Explicit native population is producer grammar, never a readiness flag or runtime token.",
+            "preimage": {
+              "bytes": 61689,
+              "sha256": "2d0239c27b4f88bd69026d16b750f41cdf7bc08dd742bb0c87dc08a6625f2685"
+            }
+          },
+          {
+            "path": "src/ir/module-init-plan.ts",
+            "functions": [
+              "BuildIrModuleInitPlanInput",
+              "buildIrModuleInitPlan",
+              "verifyIrModuleInitPlan"
+            ],
+            "scope": "Native-only optional jsClassStartup closed DATA joins original module class declarations/outer module bindings to descriptor binding IDs, spans and source order. executable and invocation include genuine native definition work even when old evaluations/liveSeeds are empty. Existing evaluation kinds, legacyKey, reconciliation queue and old plan outcomes unchanged. New startup leaf independently validates canonical schedule; no fake legacy class-definition event.",
+            "preimage": {
+              "bytes": 22858,
+              "sha256": "718a0a88fda91d31ace69fb8b5b6fcebe78cf3984c2176081cf9b2366659f476"
+            }
+          },
+          {
+            "path": "src/ir/program/startup.ts",
+            "functions": [
+              "IrModuleInitPlan"
+            ],
+            "scope": "Optional closed native JS definition/binding schedule DATA, not a fake legacy queue key or new legacy event.",
+            "preimage": {
+              "bytes": 3102,
+              "sha256": "25cf8c2b6d039f8a1fd8f7daf74e1503b358c04eb28c8a7dc23e157ec8679912"
+            }
+          },
+          {
+            "path": "src/ir/from-ast.ts",
+            "functions": [
+              "AstToIrOptions",
+              "LowerCtx",
+              "lowerFunctionAstToIr",
+              "lowerStatementListPrefix",
+              "lowerExpr",
+              "lowerExprUnchecked",
+              "lowerCall",
+              "lowerNewExpression",
+              "lowerVariableDeclaration",
+              "lowerVarDecl",
+              "lowerIdentifierAssignment",
+              "lowerPropertyAccess",
+              "lowerPropertyAssignment",
+              "tryLowerUndefinedCompare",
+              "new lowerNativeJsClassModuleAstToIr",
+              "new lowerNativeJsClassInitializerAstToIr",
+              "lowerStmt",
+              "lowerTail",
+              "lowerDiscardedExpression",
+              "lowerBinary"
+            ],
+            "scope": "Finite native source siblings for genuine definition/binding/frame/construct/invoke/property protocols, before old nominal/source-type folds. Original SourceFile statement-language builder and original PropertyDeclaration expression builder reuse owned SSA/control primitives, not fabricated FunctionDeclaration or copied AST. Initializer hidden frame has zero user parameters; constructor parameters/defaults belong the separate original constructor body. Original neutral, ordinary, host, super/accessor algorithms remain byte-exact outside named hooks. Original implicit constructor intent gets a non-synthetic builder without a fake node. Native constructor return/normal completion hooks cover lowerTail/lowerStmt without changing generator/async/neutral return paths; fresh managed identity/instanceof precede old scalar/nominal binary paths.",
+            "preimage": {
+              "bytes": 790446,
+              "sha256": "b56850486d662ddcf19ba0de55a2c3f4987af6323dad551af7674f1e729a3cf1"
+            }
+          },
+          {
+            "path": "src/ir/program-source.ts",
+            "functions": [
+              "prepareIrProgramSources",
+              "prepareSourceFunctionSignatures",
+              "captureTypedIrProgramInput",
+              "sourceMapStartupOccurrences",
+              "createSourceMapProjector"
+            ],
+            "scope": "Dispatch authentic new JS source plans; carry closed jsClassDefinitions; original module/class member support bodies and hidden frame signatures. All original source bodies remain accounted; no callback or option creates readiness. Source-map catalog joins new class declaration/instantiation spans to exact original module owner; no fake generated-source lineage.",
+            "preimage": {
+              "bytes": 90135,
+              "sha256": "629ada44954b3d48affbeecc08cbdb3395b2883bed7e58c1de1e2a79fcd25316"
+            }
+          },
+          {
+            "path": "src/ir/core/dialect/js.ts",
+            "functions": [
+              "IrInstrJsClass interfaces"
+            ],
+            "scope": "Declare explicit JS operation interfaces importing pure sibling DATA contracts; no intrinsic disguise.",
+            "preimage": {
+              "bytes": 30849,
+              "sha256": "dbe4e49d49cbb8e2ffdc5552a75c5a3d2692b1764aa54df81d987861fa5e231d"
+            }
+          },
+          {
+            "path": "src/ir/core/nodes.ts",
+            "functions": [
+              "IrInstr",
+              "forEachNestedBuffer",
+              "mapNestedBuffers",
+              "directUses"
+            ],
+            "scope": "Assemble/reexport new JS kinds through existing sole core→dialect edge; all are leaf instructions. Exact complete new operands and no phantom nested buffers.",
+            "preimage": {
+              "bytes": 96440,
+              "sha256": "edbebcf99227dc64eaf1dd83cec02a2431b21c25992e20138c0917f09487dccd"
+            }
+          },
+          {
+            "path": "src/ir/builder.ts",
+            "functions": [
+              "IrFunctionBuilder"
+            ],
+            "scope": "Typed emitters for each operation, genuine builder-issued graph/cell/instance allocation sites under the agreed B recipe; no child-site fabrication.",
+            "preimage": {
+              "bytes": 79538,
+              "sha256": "c689c21b0a1eb19c8cc8f7b0d442447bf3707b5c380f9a831029d21bc9947a0d"
+            }
+          },
+          {
+            "path": "src/shared/contracts/ir-identity.ts",
+            "functions": [
+              "IrFunctionIdentity"
+            ],
+            "scope": "Truthful optional original class sourceBodyKind for inventoried support bodies, distinct from synthetic/lifted-closure role; parent/ordinal/source owner mandatory.",
+            "preimage": {
+              "bytes": 2741,
+              "sha256": "ef9427c37f81455e06b81cf4f2599601d50e80f0d83abcacda447c9048fa4d0f"
+            }
+          },
+          {
+            "path": "src/ir/runtime/verify.ts",
+            "functions": [
+              "verifySymbolicReferences",
+              "collectUses",
+              "checkSupportRefFlow",
+              "TYPE_RULE_STATUS",
+              "verifyInstrTypeRules::checkInstr"
+            ],
+            "scope": "New JS semantic verifier delegation plus explicit checked status, complete operands/SSA/symbol refs. Program-owned declaration DATA context; no verifier report callback or arbitrary support-ref allowance.",
+            "preimage": {
+              "bytes": 122476,
+              "sha256": "2d42cdd44b7a979ee0c960369c5ace9f75d2e7c47ccf3c17c8bc9f592f8dd74b"
+            }
+          },
+          {
+            "path": "src/ir/analysis/effects.ts",
+            "functions": [
+              "effectsOf",
+              "isSideEffecting"
+            ],
+            "scope": "New definition/binding/construct/property/invoke/completion effects kept/ordered; conservative heap/control barriers initially. Actual identity is pure; frame capture reads depend on live-binding mode. No old classification changes.",
+            "preimage": {
+              "bytes": 26395,
+              "sha256": "cdcd241b4bdd43958d27825ad74b16f0c86aef8e121ac4aa01e93a5db3e65a5c"
+            }
+          },
+          {
+            "path": "src/ir/backend/instruction-uses.ts",
+            "functions": [
+              "collectIrUses"
+            ],
+            "scope": "Exact new SSA use closure including constructor/newTarget/receiver/args/captures/cell/frame/value variants.",
+            "preimage": {
+              "bytes": 7524,
+              "sha256": "8aa3b550869f322049b83bc49153c6c60035fa1fd034f76bba24cd41becd42eb"
+            }
+          },
+          {
+            "path": "src/ir/passes/inline-small.ts",
+            "functions": [
+              "renameInstrOperands",
+              "forkInlineAllocation"
+            ],
+            "scope": "Rename every new operand; preserve descriptor IDs and real provenance. Do not splice frame-local IDs or manufacture source bodies.",
+            "preimage": {
+              "bytes": 49460,
+              "sha256": "c11c5317b2e0927de2ce3a79c13dd927b29cef8dd7bd445e5a40de4630cdde7d"
+            }
+          },
+          {
+            "path": "src/ir/passes/monomorphize.ts",
+            "functions": [
+              "collectUses",
+              "cloneWithParamTypes",
+              "forkSpecializationAllocations"
+            ],
+            "scope": "New use cases; any real clone must not falsely retain original sourceBodyKind; descriptor-target population and current source roles remain coherent.",
+            "preimage": {
+              "bytes": 37809,
+              "sha256": "925dce9140710073a8a1a21b570cc2bd16deb80ee79bdd432d2604315a2d59ec"
+            }
+          },
+          {
+            "path": "src/ir/prepared-component-dependencies.ts",
+            "functions": [
+              "implicitSupportRequirement",
+              "collectFunctionEvidence",
+              "recordSupportTypeReference",
+              "recordUnitReference",
+              "recordGlobalReference"
+            ],
+            "scope": "Explicit dependencies from new symbolic definition/binding references and descriptor constructor/method/initializer/capture/realm refs; preserve old nominal-class algorithms.",
+            "preimage": {
+              "bytes": 70294,
+              "sha256": "7954d8385517afb23689382abb066a8cec016a50b277ae37fd81e895c6fcf10f"
+            }
+          },
+          {
+            "path": "src/ir/program/input-contracts.ts",
+            "functions": [
+              "TypedIrProgramInput"
+            ],
+            "scope": "Optional complete jsClassDefinitions DATA census; no source/checker/function/caller capability stored.",
+            "preimage": {
+              "bytes": 2528,
+              "sha256": "8369ba73f4f79f145192b39acb85876c91f47f2ea55d922d658de3c3c66ee0bc"
+            }
+          },
+          {
+            "path": "src/ir/program/input.ts",
+            "functions": [
+              "ownTypedIrProgramInput"
+            ],
+            "scope": "Closed allowed field and dense-array capture; native descriptor/body/signature/startup validation. Keep old classes/global/source model assertions.",
+            "preimage": {
+              "bytes": 7119,
+              "sha256": "9ab2102134c9507ff078d3db8839777c59825f3be314dc19ec79afb87ba45c2a"
+            }
+          },
+          {
+            "path": "src/ir/program-prepare-ir.ts",
+            "functions": [
+              "prepareTypedIrProgram"
+            ],
+            "scope": "Forward complete captured descriptors into canonical ABI and current preparation joins. Missing B recipe remains exact located capability refusal, never caught/relabelled invariant.",
+            "preimage": {
+              "bytes": 10847,
+              "sha256": "461e522da3217232923d19ea60d8fbf205681bc6e1f9fe33808483aa1642c8d1"
+            }
+          },
+          {
+            "path": "src/ir/program-abi-contracts.ts",
+            "functions": [
+              "prepareIrProgramAbiEntries"
+            ],
+            "scope": "Append native definitions and canonical support type/global/callable entries in source order; one ABI only.",
+            "preimage": {
+              "bytes": 12186,
+              "sha256": "7fa83b0b3cdf6d3cd1d2d19a3909bd3cf40195efeb3fbd60d6afc5fe133e6e0b"
+            }
+          },
+          {
+            "path": "src/ir/program/prepared-contracts.ts",
+            "functions": [
+              "PreparedIrAbiContract"
+            ],
+            "scope": "Optional closed nativeJsClassDefinition attachment on existing support contract. No new ABI-kind or IrType arm, no top-level PreparedIR schema/codec algorithm change.",
+            "preimage": {
+              "bytes": 5353,
+              "sha256": "1b2c050b18d611d0b45316aaed268acb6705d64a4e3299d987bf58320752eae1"
+            }
+          },
+          {
+            "path": "src/ir/program/population.ts",
+            "functions": [
+              "assertPreparedIrProgramPopulation",
+              "assertLiftedSourceBody"
+            ],
+            "scope": "Dedicated genuine original class support-body provenance/signature check; never relabel initializer/member as lifted-closure or generated source. Check every descriptor callable target.",
+            "preimage": {
+              "bytes": 8469,
+              "sha256": "3bc8659848597dc2bc7fc5470d112728a27a38dd4e541b047161f4b43e3e1d00"
+            }
+          },
+          {
+            "path": "src/ir/program/validation.ts",
+            "functions": [
+              "validateEntry",
+              "validatePreparedIrProgram",
+              "assertPreparedIrProgram",
+              "sourceMapStartupOccurrences"
+            ],
+            "scope": "Complete native descriptor/role/census/body/startup/ABI checks before runtime/resource authority; malformed/foreign attachments refuse. Source-map strict startup plan allowed fields add only jsClassStartup, and original native class/binding spans join valid occurrences. Old binding/evaluation grammar/oracles unchanged.",
+            "preimage": {
+              "bytes": 48516,
+              "sha256": "9a104693409cc0bfa26dccc0e1e8b9d2a78bc6eaae6242205d2ce5ef02cc7205"
+            }
+          },
+          {
+            "path": "src/ir/analysis/backend-legality.ts",
+            "functions": [
+              "verifyIrBackendLegality",
+              "checkInstrEmbeddedTypes"
+            ],
+            "scope": "Recognize declared new kinds while retaining unsupported backend/resource outcomes until a genuine native recipe is issued. Arbitrary support-ref stays unsupported on Linear.",
+            "preimage": {
+              "bytes": 22782,
+              "sha256": "6ee2f763e8de4b06bf5d4adf6beb3ad211f891a7c4af843b61bc3147bfb65b8d"
+            }
+          },
+          {
+            "path": "src/ir/lower-generic.ts",
+            "functions": [
+              "lowerIrFunctionBody::emitInstrTree"
+            ],
+            "scope": "Explicit new-kind typed refusal without authentic class resources for A; C later receives actual issued resolver/materialization. No default fallthrough, NOP, legacy call or fake body.",
+            "preimage": {
+              "bytes": 193831,
+              "sha256": "aaa8f5286025465ea82fad0da9f70bd2b91d1da4586f0e5704fb9fe68c87f7ec"
+            }
+          },
+          {
+            "path": "src/ir/dialect/js.ts",
+            "functions": [
+              "type-only compatibility forwarder"
+            ],
+            "scope": "Append exact 14 new interface names to unchanged canonical type-only forwarder; no implementation or extra source edge.",
+            "preimage": {
+              "bytes": 2884,
+              "sha256": "e2fbc7bcec1c171b90ffcf125d7b7fdf7e34fc95450775f2488ccee9ac0e3178"
+            }
+          },
+          {
+            "path": "scripts/lib/check-canonical-ir-dialect.mjs",
+            "functions": [
+              "DIALECT_NAMES",
+              "checkCanonicalIrDialect"
+            ],
+            "scope": "Append exact 14 reviewed JS interfaces and matching truthful count diagnostics. Preserve exact whole declaration/name equality and sole core->canonical dialect/legacy type-forwarder rules; no broad permission for other dialect imports.",
+            "preimage": {
+              "bytes": 5922,
+              "sha256": "41c4fb6420092bcf7b8f29f8b80c5a1a28f00e5c2896ec19c0a324821f0a51d9"
+            }
+          },
+          {
+            "path": "scripts/check-ir-kind-neutrality.mjs",
+            "functions": [
+              "VERDICTS"
+            ],
+            "scope": "Append 14 js verdicts with real literal semantic evidence in canonical declarations. Preserve all old verdicts, R1-R4 population reconciliation/ratchets and evidence checks; no blanket exempt category.",
+            "preimage": {
+              "bytes": 67006,
+              "sha256": "ca0e5494d27d355baff062940042a553abcdc188bbb771c5e19b2a72de691352"
+            }
+          },
+          {
+            "path": "scripts/ir-kind-neutrality-baseline.json",
+            "functions": [
+              "reviewed per-kind baseline DATA"
+            ],
+            "scope": "Record exactly 14 new JS instruction identities/verdicts; all old stable keys/evidence/verdicts remain exact. No unresolved/js-in-core allowance.",
+            "preimage": {
+              "bytes": 32746,
+              "sha256": "1af5b45157866bba411374b830b964a6db4d0c0ae5591e44f4c2f62a50ea3c55"
+            }
+          }
+        ],
+        "newPaths": [
+          {
+            "path": "src/ir/source-js-class-definition.ts",
+            "scope": "Authentic complete original ClassId/source/scope/binding/capture/member/initializer plan and source currentness; no AST in sealed DATA.",
+            "phase": "A",
+            "mode": "new leaf"
+          },
+          {
+            "path": "src/ir/source-js-class-lowering.ts",
+            "scope": "Dispatch original member/implicit constructor/initializer/source-module builders with genuine frames; source-level capabilities and exact unsupported outcomes.",
+            "phase": "A",
+            "mode": "new leaf"
+          },
+          {
+            "path": "src/ir/js-class-contracts.ts",
+            "scope": "Pure JS semantic closed DATA/type interfaces outside neutral core and dialect import-restricted directory, importing only existing logical type/identity/reference contracts. Canonical js.ts imports this pure sibling type-only; no second edge into dialect. No source/checker/backend/physical imports.",
+            "phase": "A",
+            "mode": "new leaf"
+          },
+          {
+            "path": "src/ir/runtime/js-class-verify.ts",
+            "scope": "Instruction-local typed and symbolic semantic checks against complete declared class DATA.",
+            "phase": "A",
+            "mode": "new leaf"
+          },
+          {
+            "path": "src/ir/program/js-class-definition.ts",
+            "scope": "Independent complete original inventory/body/field-default/order/frame/capture/role/ABI/startup validator, including original support-body ownership.",
+            "phase": "A",
+            "mode": "new leaf"
+          },
+          {
+            "path": "src/ir/program/js-class-abi.ts",
+            "scope": "Canonical declaration factories via existing createIrBindingId/irSupportTypeRef/irSupportRef; descriptor support entry plus real role type/global/callable entries.",
+            "phase": "A",
+            "mode": "new leaf"
+          },
+          {
+            "path": "src/ir/program/js-class-startup.ts",
+            "scope": "Pure native instantiation/definition/TDZ ordering and cross-source live-binding replay; no fake legacy queue keys.",
+            "phase": "A",
+            "mode": "new leaf"
+          }
+        ],
+        "newTests": [
+          "tests/issue-6920-native-js-class-source.test.ts",
+          "tests/issue-6920-native-js-class-contracts.test.ts"
+        ],
+        "exclusions": [
+          "all legacy module population/synthetic builder/queue algorithms",
+          "all existing neutral class instructions/types/layouts and generic source optimizations",
+          "all old opcode cases/type rules/verdicts and generic codec DATA algorithm",
+          "all held super/accessor/native async/non-native backend algorithms",
+          "all historical receipts/callback authorities and source-policy pins"
+        ],
+        "dependencies": "B genuine allocation producer/replay and C BOTH materializers remain separately received work",
+        "constraints": [
+          "Publish exact finite receiving scope below, resolving held-owner collisions without releasing original algorithms; no tracked writes have occurred.",
+          "Typed new allocation emitters and source evidence must agree with B canonical allocation kind/site geometry; A alone must not seal a class PreparedIR with missing facts.",
+          "Native module construction must use original SourceFile statements, preserving all existing source evaluation order; no makeModuleInitSynthetic on this new class path.",
+          "Full class census and unknown semantic families produce exact located refusals before malformed IR/facts. No profile ID or caller flag authorizes admission."
+        ],
+        "runtimeCredit": "None until genuine canonical allocation evidence and both materializers qualify; unknown semantic families refuse before malformed IR.",
+        "authority": {
+          "humanAnswer": "Take over the blocking shared seams",
+          "priorHumanAnswer": "takeover all of session b",
+          "parallelWork": "make sure b keeps going with parallel subagents"
+        }
+      },
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "parallelWork": "make sure b keeps going with parallel subagents"
+      },
+      "predecessorRecordSha256": "6649bdb273bee92d3d4d15197307b3084f023a3202d59a0e9d085ec9ddba470c"
     }
   ],
-  "previous_write_id": "b-class-array-factory-dbc7111b-77db-48e1-b174-eb09393da0d5"
+  "previous_write_id": "b-class-closure-refusal-9b1459a4-fb04-4032-94ad-f9d16c6d1267"
 }

@@ -6,6 +6,36 @@
   "status": "in-progress",
   "branch": "codex/3518-js-tag-contract-20260930",
   "claimed_at": "2026-09-30T10:04:41Z",
-  "updated_at": "2026-09-30T10:04:41Z",
-  "write_id": "61025-wq1szi46"
+  "updated_at": "2026-10-14T12:27:01.023845Z",
+  "write_id": "b-class-hook-transfer-5f26dfae-2c78-46c3-9310-a39906136002",
+  "bounded_hook_transfers": [
+    {
+      "at": "2026-10-14T12:27:01.023845Z",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "parallelWork": "make sure b keeps going with parallel subagents"
+      },
+      "receivingRecord": "3522-b-native-class-semantic-producer-20261014.json",
+      "receivingOwner": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+      "receivingBranch": "codex/6920-b-native-js-class-source-20261014-01a12827",
+      "manifestSha256": "069485ca53c022b54af1ac60f692b2fe1ff0f91986fc0113e0e275dee7d99f0f",
+      "scope": "Only additive hooks for the exact fourteen new native js.class operations and closed original-class DATA described in the receiving record. No edits to existing opcode cases, neutral-class algorithms, JS tag/nullable/scoped ABI contracts or super/accessor algorithms. Those original algorithms remain with this original held owner.",
+      "exclusions": [
+        "all legacy module population/synthetic builder/queue algorithms",
+        "all existing neutral class instructions/types/layouts and generic source optimizations",
+        "all old opcode cases/type rules/verdicts and generic codec DATA algorithm",
+        "all held super/accessor/native async/non-native backend algorithms",
+        "all historical receipts/callback authorities and source-policy pins"
+      ],
+      "predecessor": {
+        "ledger": "02a30a8c926eb8ae8a191397a5a40b26ca0c4db0",
+        "blob": "102d6c5e6774b2c9239b07a1b919e5812b956440",
+        "sha256": "6d11ced92696cb231ec284de6e45d555e38909cc398dbf0a3323f6bef74881c3",
+        "write_id": "61025-wq1szi46"
+      },
+      "sourceHead": "df466f30d4ee27ab332debad823912ee9155c80c"
+    }
+  ],
+  "previous_write_id": "61025-wq1szi46"
 }

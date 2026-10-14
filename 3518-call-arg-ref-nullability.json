@@ -6,6 +6,36 @@
   "status": "in-progress",
   "branch": "codex/3518-call-arg-ref-nullability-20260906",
   "claimed_at": "2026-09-06T19:16:00Z",
-  "updated_at": "2026-09-06T19:16:00Z",
-  "write_id": "46919-0hz5e426"
+  "updated_at": "2026-10-14T12:27:01.023845Z",
+  "write_id": "b-class-hook-transfer-eb87fcda-f28a-4476-805b-3f4470ae84f4",
+  "bounded_hook_transfers": [
+    {
+      "at": "2026-10-14T12:27:01.023845Z",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "parallelWork": "make sure b keeps going with parallel subagents"
+      },
+      "receivingRecord": "3522-b-native-class-semantic-producer-20261014.json",
+      "receivingOwner": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+      "receivingBranch": "codex/6920-b-native-js-class-source-20261014-01a12827",
+      "manifestSha256": "069485ca53c022b54af1ac60f692b2fe1ff0f91986fc0113e0e275dee7d99f0f",
+      "scope": "Only additive hooks for the exact fourteen new native js.class operations and closed original-class DATA described in the receiving record. No edits to existing opcode cases, neutral-class algorithms, JS tag/nullable/scoped ABI contracts or super/accessor algorithms. Those original algorithms remain with this original held owner.",
+      "exclusions": [
+        "all legacy module population/synthetic builder/queue algorithms",
+        "all existing neutral class instructions/types/layouts and generic source optimizations",
+        "all old opcode cases/type rules/verdicts and generic codec DATA algorithm",
+        "all held super/accessor/native async/non-native backend algorithms",
+        "all historical receipts/callback authorities and source-policy pins"
+      ],
+      "predecessor": {
+        "ledger": "02a30a8c926eb8ae8a191397a5a40b26ca0c4db0",
+        "blob": "58df17c51fe7d0177e0ff17d70836b0e05da42c7",
+        "sha256": "24eeb2a01b1b33f1784e6709c17ed56b0a57b127e72757f34407ebde13754597",
+        "write_id": "46919-0hz5e426"
+      },
+      "sourceHead": "df466f30d4ee27ab332debad823912ee9155c80c"
+    }
+  ],
+  "previous_write_id": "46919-0hz5e426"
 }
