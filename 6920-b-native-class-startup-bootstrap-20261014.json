@@ -1,0 +1,57 @@
+{
+  "id": "6920",
+  "slice": "native-class-startup-bootstrap-successor-20261014",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-native-js-class-physical-20261014-01a12827",
+  "claimed_at": "2026-10-14T18:04:13.910708Z",
+  "updated_at": "2026-10-14T18:04:13.910708Z",
+  "write_id": "b-class-startup-bootstrap-1fc2335f-f116-4ea2-beba-98408be0c9a9",
+  "handoff_scope": [
+    {
+      "kind": "existing canonical foundation/core JS tag identities",
+      "at": "2026-10-14T18:04:13.910708Z",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-native-js-class-physical-20261014-01a12827",
+      "manifest": {
+        "receivingBranch": "codex/6920-b-native-js-class-physical-20261014-01a12827",
+        "integrationBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+        "componentPreimages": [
+          {
+            "path": "src/ir/program-body-resources.ts",
+            "bytes": 20842,
+            "sha256": "5bd12abf77672119d96c924f6df1df35db4fe24cb243ca5535ca906f3c229d26",
+            "functions": "fillStartupAdapter only; one optional actual issued native class pack parameter and fixed authenticated prelude before original startup units inside existing once guard"
+          }
+        ],
+        "donorPreimages": [
+          {
+            "path": "src/ir/program-body-resources.ts",
+            "bytes": 21346,
+            "sha256": "c65ddc3ba660365c6d021dcc9f75cb41e84a0988e77201759878915c8bc3cb25"
+          }
+        ],
+        "functionPreimage": {
+          "bytes": 1684,
+          "sha256": "b55ca13275c73d1337a605fd444c7735f35fecf06b1268e4f770ad0d6ff76671"
+        },
+        "canonicalNewPaths": [],
+        "proposalSha256": "c5057a8b08f0974a5ca5b1056940b5c4272458dc75c0677394c1e767adac9aba",
+        "scope": "Real cyclic immutable realm referents need a genuine completed compiler bootstrap call. Receive only the fixed issuer-checked class prelude through existing startup owner. Source/body/allocator constructors remain in their actual owners.",
+        "constraints": "No caller callback, SourceIR instructions in NativeResourceContext, public permission token, fabricated source unit/site, role/name identity waiver or values-only authorization. No-pack emitted body remains byte-exact; original module init order, vector onceguard predicate, publication and error ordering preserved. Private pack must authenticate current original/selected/support evidence, exact realm/global/callable ABI, complete actual bootstrap/body/resource reservation and real global-referent population. Prelude runs after guard enters and before first source init. Existing guards/layout/signatures unchanged. Exact root/donor function preimage same; preserve other donor changes during root composition. No branches/HOLD/main/queue changes."
+      },
+      "manifestSha256": "28e4a737935a24032f81b0de110542eac4d4d369a4936a559e21a6fe5b139b10",
+      "constraints": "No caller callback, SourceIR instructions in NativeResourceContext, public permission token, fabricated source unit/site, role/name identity waiver or values-only authorization. No-pack emitted body remains byte-exact; original module init order, vector onceguard predicate, publication and error ordering preserved. Private pack must authenticate current original/selected/support evidence, exact realm/global/callable ABI, complete actual bootstrap/body/resource reservation and real global-referent population. Prelude runs after guard enters and before first source init. Existing guards/layout/signatures unchanged. Exact root/donor function preimage same; preserve other donor changes during root composition. No branches/HOLD/main/queue changes."
+    }
+  ],
+  "predecessors": [
+    "3522-b-native-class-semantic-producer-20261014.json",
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}
