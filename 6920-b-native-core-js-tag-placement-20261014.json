@@ -1,0 +1,61 @@
+{
+  "id": "6920",
+  "slice": "native-core-js-tag-placement-successor-20261014",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+  "claimed_at": "2026-10-14T17:56:41.506261Z",
+  "updated_at": "2026-10-14T17:56:41.506261Z",
+  "write_id": "b-core-js-tag-placement-71055b81-8fce-4e13-9043-295b27ae7251",
+  "handoff_scope": [
+    {
+      "kind": "existing canonical foundation/core JS tag identities",
+      "at": "2026-10-14T17:56:41.506261Z",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+      "manifest": {
+        "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+        "integrationBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+        "componentPreimages": [
+          {
+            "path": "src/ir/core/dialect/js-tags.ts",
+            "bytes": 759,
+            "sha256": "8b90939d97822b21f289ee605b2b8d4c3b1ea03d469e62992f018da30139a3fc",
+            "functions": "Whole unchanged constant/type module relocation and relative import rewiring only"
+          },
+          {
+            "path": "src/ir/runtime/js-tag-domain.ts",
+            "bytes": 13368,
+            "sha256": "3e728adb6c54c8d02f1c06106d971c7090f6825357fa93962144d43d61a18859",
+            "functions": "Two tag-table import/reexport module specifiers only"
+          },
+          {
+            "path": "scripts/check-jstag-seam.mjs",
+            "bytes": 10782,
+            "sha256": "1398cb443fba4c6cfc396765fe2a4dff6ad71c483e59a34fccaf19a72d392a70",
+            "functions": "Relocated exact canonical table path in EXEMPT set only"
+          }
+        ],
+        "canonicalNewPaths": [
+          "src/ir/core/js-value-tag-identities.ts"
+        ],
+        "retiredPath": "src/ir/core/dialect/js-tags.ts",
+        "predecessor": "4e6a14b15dbf49cbbae2d547e70236f1c1fe0816",
+        "scope": "Relocate already-received pure constant table from instruction-dialect folder to core data module. The existing strict dialect assembly gate correctly rejects extra consumer edges into core/dialect; do not weaken it.",
+        "constraints": "Whole table/type/ABI enum and language functions unchanged. Only relative imports and existing forwarding/canonical gate path coordinates change; remove prior newconstantfile after byte/AST proof. Exact boundary row path replacement only. No new gate exclusion, consumer allowance, generic assembly edge or baseline reseeding. No peer dependency copy until immutable root qualification/safe point. Preserve all old source contexts/branches/HOLDs/queue ownership."
+      },
+      "manifestSha256": "ea4edad29890649c31d4377d8a87442496fbb419973eb686281c52f5edd60f1f",
+      "constraints": "Whole table/type/ABI enum and language functions unchanged. Only relative imports and existing forwarding/canonical gate path coordinates change; remove prior newconstantfile after byte/AST proof. Exact boundary row path replacement only. No new gate exclusion, consumer allowance, generic assembly edge or baseline reseeding. No peer dependency copy until immutable root qualification/safe point. Preserve all old source contexts/branches/HOLDs/queue ownership."
+    }
+  ],
+  "predecessors": [
+    "3522-b-native-class-semantic-producer-20261014.json",
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}
