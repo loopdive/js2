@@ -29,9 +29,6 @@ func-budget-allow:
   - src/ir/program-source.ts::prepareIrProgramSources
 import-cycles-allow:
   - ir->backend: 28 # 2026-10-14 (#6920): three measured native Number/Undefined physical reserve/fill/completion recipe joins remain honest mixed IR/backend debt
-  - sccCountOver1: 5 # 2026-10-14 (#6920): actual private compiler finalization custody introduces one observed cycle; constructor ownership split remains required migration work
-  - compiler->compiler.ts: 1 # 2026-10-14 (#6920): fixed read-only private finalized-artifact checker prevents copied or original-emission tuple issuance; no caller registration/callback authority
-  - compiler.ts->compiler: 15 # 2026-10-14 (#6920): reverse custody edge makes the existing compiler import direction a measured two-way pair; only one new optimizer dispatch import, not fifteen new source edges
 language_feature: arrays
 goal: correctness
 parent: 3518
@@ -5131,3 +5128,337 @@ or credited here. Its exact cohesive lifecycle scope is published at
 38ba24a355e36450790f6840c931b8cd9ce028d4, and parallel implementation/review
 continue in isolated worktrees. Complete migration and verified upstream-main
 integration remain open.
+
+## B received productive finalizer ownership for master3518 (2026-10-14)
+
+For3518 IR-only default and direct front-end retirement, actual signed ledger
+058c7ee9afa057ec5339190fabe7500f8fcc6c8e is normally pushed/remote verified.
+Both held compiler-result-finalizer and output-finalizer-context slices are
+received by B into this fresh isolated worktree; previous owner/write/branch
+records and branches are preserved. Native artifact projection relocation is
+explicitly received; object finalization and all other algorithms remain held.
+The eight-path contract moves real finalization, actual artifact construction
+and private tuple custody together. The productive factory derives output
+from genuine presentation and its real completion receipt; no registration
+helper, caller-result/module/callback or copied-artifact authority is permitted.
+Every unchanged moved algorithm and unrelated compiler function must retain
+its exact body, ordering and error precedence. Source/test implementation
+remains unqualified pending actual controls/typing/build/gates. New output
+contracts/finalizer are honestly mixed until their real dependency closure
+is separated; no full architecture or migration completion follows.
+
+
+## B productive finalization metadata2020 (2026-10-14)
+
+The finalizer extraction receives two honest unmigrated/mixed-needs-split
+compiler rows. All2,018 predecessor rows and every non-files value/byte remain
+unchanged; only the two received leaf entries are appended. Actual type-inclusive
+closure is1,934 source files with1,577 nonclean operands under the2018 profile;
+value-only closure is1,764 for productive owner and1 for output context. Two
+existing computed/nonliteral references remain explicit unknown/debt. The
+output contract remains mixed despite its type-only value closure; there is
+no clean compiler activation or complete boundary credit. The old optimizer
+row retains its frozen2018 boundary history; current closures are recorded
+here instead of silently interpreting its old numbers as current2020 counts.
+
+Seven first ordinary architecture gates exit0; inventory alone rejects the two
+missing rows before this addition. Measured cycles return to4 nontrivial SCCs
+and10 two-way pairs; largest SCC remains704. The three issue-owned2018 private
+compiler cycle allowances are removed here. Required physical ir/backend28
+allowance remains; baseline is unchanged. Explicit new untracked-file counts
+are474/16 raw file lines and moved finalizer267 function lines, below actual
+1,500 file/300 function caps; no new budget allowance is requested. Ordinary
+pre-stage budget results alone do not prove coverage of untracked files.
+
+The prior default-heap packagebuild actual134/OOM is retained; explicit8GiB
+build naturally exits0 before the membership hook. The first12 cases8pass/4fail
+and initial duplicate membership-hook script/typing transform failures remain
+separate epochs. Corrected private successful-constructor WeakSet/readonly
+identity assertion has actual24/24 natural0 and full typing0. The final
+old62+new24 combined command and full final build/types/gates remain unqualified
+until their own natural terminals and exact stable source/policy seals.
+
+
+## B finalizer inherited optional-field probe and correction (2026-10-14)
+
+The actual prior2020 qualification naturally exits0:3 files86/86 (unchanged
+f88610 plusold52 optimizer andnew24 productive-owner cases), all11 static
+checks0 and15-root full typing2,292 inputs/excludes[]. Final8GiB packagebuild
+then naturally exits0; an unchanged selected four-profile test plus realCLI
+journal proves all four actual accepted optimized outputs rather than inferring
+acceptance from a test that permits fallback. These complete prior-epoch
+observations remain preserved in .tmp/finalization/prior-qualified86.
+
+A subsequent genuine Linear presentation hostile probe contradicts full
+getter safety: requiresDetachedFinalization is absent on that frozen instance,
+and a getter installed on Object.prototype after preparation is invoked by
+both fixed productive entry and moved readonlychecker. Membership itself
+does not make an absent optional property safe. The wider option probe fails
+as an instrument because actual captured options have null prototype; no
+broader option defect is inferred. The owned new finalizer fixes exactly the
+two optionalflag reads via private own-descriptor checking after genuine
+identity/tuple checks. Own absence meansfalse; own canonicaltrue is accepted;
+inherited shadow/accessor/noncanonical form refuses before callbacks.
+
+Targeted two real after-preparation/after-finalization regressions naturally
+exit0 withgetter counters0 and realprototype descriptors restored in finally.
+The moved readonlychecker body is now explicitly different at its bounded
+own-field read; all other original generic finalizer/target/options/recgroup/
+projector and unrelated algorithms remain byte-exact. New full88-case/type/
+build/static/provenance qualification remains pending its actual terminals.
+No prior86 pass is substituted for this corrected epoch.
+
+
+The next bounded2020-to-2018 reader continuation is received in signed ledger
+e014a62af6727c54b6bc7b3da89406171bbf531b, normally pushed/remote verified.
+It owns only three new test transport files plus four finite caller initial
+joins; every predecessor helper/JSON, callback, literal and timer remains
+unchanged. Twelve fixed physical captures map the old nine; two genuine older
+Deno unknown anchors add once each, making fourteen physical default reads.
+The old supplied-reader eleven-count assertion remains literal and authentic.
+No new physical-save callback operand is needed. Implementation waits the
+qualified/published2018 checkpoint and corrected final2020 owner seal; this
+receiving record does not block2018 publication. The same ledger explicitly
+records the proven optionalflag own-field checker exception in the new owner.
+
+
+## B pre-first-issuance artifact custody probe (2026-10-14)
+
+The bounded ownflag correction completes its prior full88/88 natural0
+qualification. A subsequent real productive construction probe exposes a
+separate window before first input issuance: the caller changes importsHelper
+on the ACTUAL registered artifact object and the exported native issuer still
+returns a sync-pending receipt. Identity/binary matching is insufficient to
+prove semantic fields are the ones the real constructor produced. The private
+probe and prior88/static/build/provenance epochs are preserved separately; no
+readiness is inferred from those earlier green results.
+
+The owned productive finalizer records complete actual semantic field/shape/
+alias observations internally at construction before returning; readonly
+currentness validates those before first issuance. Only actually established
+trusted binary/diagnostic lifecycle changes may be exempted. No public
+registration, callback, caller-authored output or semantic mutation authority
+is introduced. Original generic finalizer/projector/target/options/recgroup
+algorithms remain exact; the moved checker has this additional explicit
+construction-custody guard. Full expanded tests/types/build/gates and actual
+four-profile accepted optimizer provenance remain required after the repair.
+
+## B cohesive finalizer and optimizer ownership (2026-10-14)
+
+The shared-seam takeover refinement is published on the assignment ledger at
+38ba24a355e36450790f6840c931b8cd9ce028d4, with normal push checks and exact
+remote readback. It includes the constructor-observation refinement at
+92d49519d412719b975e4c1dc8e49e43699f6d2a. The source index and previous
+owners' branches are preserved. Two independent reviews find the existing
+eight-path scope sufficient for the repair.
+
+Actual finalization and the native optimizer's private state move into one
+productive owner. The old optimization module retains compatibility exports;
+the owner imports the real optimizer and binary parser directly. Immutable
+constructor observations remain separate from expected state updated only by
+actual private optimization transitions. The checker must not recurse through
+currentness, and no public registration or state-update callback supplies
+authority. Generic finalization algorithms remain unchanged.
+
+Only the shared preparation block of two existing await-mutation tests observes
+the genuine completed factory instead of spying on a now-local checker. Their
+public compilation fixture, actual await mutation and assertions remain intact.
+The earlier 88-test qualification predates this repair and supplies no readiness
+credit. Fresh tests, typing, build, dependency measurements and four accepted
+real optimizer profiles remain required.
+
+The earlier append-only two-row policy transport proposal must be revised if
+the compatibility or finalizer policy rows change. Its implementation waits for
+the published current 2018 checkpoint and the final qualified 2020 policy seal.
+The separate 714-test current-inventory run remains frozen and pending; this
+ownership publication does not publish new source to the held pull request.
+
+The actual cohesive owner and compatibility exports are now implemented in
+the separate worktree. Initial full TS7 typing exits0, the preserved real
+pre-first-issuance importsHelper mutation refuses, and four selected real
+optimizer lifecycle cases pass naturally; the other48 cases were not run in
+that selection. Construction and extra-field controls remain under development,
+so these observations do not establish the final qualification.
+
+Root updates only policy rows2016 and2019: the old optimizer becomes an honest
+compatibility adapter with the same four function identities and observation
+type, while the productive-owner description records its private construction
+and optimization state. Policy remains2020 rows,639,290 bytes, SHA256
+d0d2fdb7591c875303a0197fb413076a1f316c0ecb38ed7bcbc35ce40448f985.
+All other rows and nonfiles fields remain unchanged; the exact raw inverse
+restores the prior639,110-byte policy. Import closure and final gates still
+require measurement. This is an ownership change, not clean-boundary credit.
+
+The exact existing-row successor refinement is also remotely received at
+02a30a8c926eb8ae8a191397a5a40b26ca0c4db0 with normal push checks and matching
+remote head. Its seven already-owned test paths must restore the complete
+original optimizer row and remove the two new rows, proving reciprocal whole
+raw and DATA equality. Implementation waits for the published qualified2018
+checkpoint and corrected final2020 seal; source pin or callback drift cannot
+be hidden by receipt replacement.
+
+## B qualified cohesive finalizer integration (2026-10-14)
+
+The exact eight-path finalizer handoff is frozen at SHA256
+a49c812b3dd69cc2d54e81312730363c9d9b46bd588346a87a30ef034d71b394.
+Actual115/115 tests exit naturally0 with no unhandled errors. Two later pure
+population assertions affect only five existing cases; those five pass naturally
+and final typing/style checks pass on unchanged production. All eleven static
+checks and the Node25/8GiB package build pass. Four actual Binaryen125 optimizer
+executions exit0 and all four backend/target receipts report accepted outputs.
+
+Private constructor observations bind descriptors, semantic values, aliases and
+original bytes before issuance. Only actual private optimizer transitions update
+expected output bytes and diagnostics. The direct checker always replays original
+bytes, including after optimization; witness registration requires the genuine
+completed Number/Undefined population. Ordinary scalar artifacts retain their
+behavior. Independent final review SHA256
+0076b39c2c1e2609f2fd1a23e837fdc951c874e5e50aeeed1f9f2795783e486b
+finds no remaining blocking implementation issue.
+
+The published predecessor is now df466f30d4ee27ab332debad823912ee9155c80c,
+with normal signed commit/push checks and exact fork/PR6662 title/body/head
+readback. HOLD remains. This receiving branch advances to that commit without
+changing any working source/test/policy/issue bytes, then composes the qualified
+2020 source/policy with all final2018 historical caller and anchor inputs.
+
+The received seven-path policy transport is under implementation. Its private
+preparation proves complete raw and DATA round trips, four current caller
+preimages, six historical anchors and all95 unchanged source pins. A separate
+ten-file public integration run reaches its natural terminal at12:20:40 UTC:
+264/264 tests pass, all original211 identities remain present, and the53 new
+finalizer cases pass. There are no unhandled errors, skips or todos; all frozen
+2020 production, policy and selected test/helper inputs remain unchanged.
+Remaining1934-file closure,1579 nonclean
+operands and two computed references remain explicit migration debt. This
+checkpoint does not establish full class semantics, retirement or main delivery.
+
+The bounded original-class Phase A receive is published and read back at
+93950c365716cc1403edc799de3df98cd297bc2e with normal push checks. Its manifest
+069485ca53c022b54af1ac60f692b2fe1ff0f91986fc0113e0e275dee7d99f0f
+names30 existing paths, seven new production leaves and two new suites.
+Five held records retain their owners, statuses, branches and original
+algorithms; only the exact additive native class hooks are transferred.
+Implementation proceeds in a fresh isolated branch from publisheddf466.
+Genuine allocation evidence and both materializers remain required before any
+class runtime credit. Per-activation frame geometry remains an explicit
+allocation producer/replay agreement, never an implicit fabricated child site.
+
+That concrete geometry agreement receives one additional same-path typed JS
+operation at8d203798d6fe3f00957a6899cffc7fdce582c247, with normal push and exact
+remote readback. The pinned frame refinement is
+cfd5a6c21523549bdceac446f6da53505ccf64ab8784ab3ef4eb4318f7011893.
+The original callee entry receives environment/this/homeObject/newTarget roots
+and explicitly allocates a fresh activation frame before source work. The
+initializer still receives zero user arguments. Frame referents retain their
+existing roots; instance, definition, capture cells and activation sites remain
+distinct. This is the fifteenth operation in the same received file set.
+Independent B replay and both C materializers remain required.
+
+Independent corrected seven-path review
+860498b8e8a3040235996d637d5f34712a09af52f9898c7551dc6ac357302430
+proves all359 historical function bodies and all complete reciprocal raw/DATA
+transforms. It catches and resolves a mapped-reader physical-save hazard before
+the714-case run starts: inventory actualDisk retains its original physical reader
+identity, while only the known default constructor path maps historical views.
+The original save callback stays byte-exact. Final current root typing passes
+on2020 source files,18 explicit test roots,29 resolved test/helper inputs and
+2298 total inputs, with exclude[] and unchanged source/policy/root tests.
+Corrected transport runtime qualification remains separately pending.
+
+The corrected72 controls pass naturally0. Two original physical-save controls
+also pass naturally0 with transparent write tracing: the361,029-byte current
+caller is saved, the361,030-byte mutant is written, then the exact original
+caller bytes and SHA256 are restored. All seven received files,2020 production
+files and the policy retain their pins. The714-case historical run starts only
+after independent review and root typing checksum clearance; its natural
+terminal is still pending and no result is inferred.
+
+The finite class allocation evidence receive is published and read back at
+23e0d50882101c27e888e8e025b07707b5b72e94 with normal push checks. Proposal
+522e63e6fe64c34cdfd8fdd9387db7e8751cfd0cda9104ac38c6a981f63afcf0
+and fresh collision audit
+a49f82416ad53aedd7b4f077ffed838ac7036f3d716db93b99655ec48fe288b1
+receive six existing preparation hooks, five new production leaves and one
+suite in a separate isolated worktree fromdf466. All six existing preimages
+match exactly. The eleven foreign exact mentions already have the bounded
+checked-preparation handoff; original algorithms remain held. The only source
+overlap is a distinct prepare-ir domain-argument insertion coordinated with
+the original-class descriptor forwarding. Pure analysis and runtime validation
+cannot import program owners or accept producer reports as authority.
+Actual class API seals, canonical independent replay and both materializers
+remain required before integrated class runtime credit.
+
+## B concrete class physical handoff preparation (2026-10-14)
+
+Root reads the actual composed2020 planner, memory-demand collector, physical
+consumer, signature converters and existing GC/Linear carrier recipes. The
+bounded physical proposal is13746 bytes, SHA256
+880a6ddab8a306eaa51a6e78b4e6cb7555b975479694bb6c0b4cee8d717596fa,
+with twelve existing hooks, seven new production leaves and two new suites.
+It is private preparation only; no tracked physical code or claim is changed.
+
+The actual frozen-facts layout dispatcher knows only older object/class/refcell/
+box/vector/string allocations. New class roots otherwise reach opaqueLayout,
+whose type key rejects support-ref. The memory-demand collector likewise refuses
+new allocating instructions. Both physical signature converters admit only the
+older narrow carriers, and the primitive-only native value proof requires no
+reference signatures or allocations. These are concrete required extensions;
+none can be bypassed by a nominal class shape, generic support-ref allowance,
+profile flag, copied verified report or selecting native-string to evade the
+absence proof.
+
+The source implementer confirms that uninitialized scalar fields have logical
+dynamic valueType with actual Undefined, regardless of a number annotation.
+Its original-source census now reports one genuine class and four original
+units including module-init for the preserved default-field example. This is
+source-census progress only, with no body, sealed program or runtime credit.
+The physical recipes must preserve real tagged property values, own presence,
+prototype lookup and fresh managed identity. Constructor, instance, definition,
+capture-cell and per-activation frame roots retain genuine disjoint provenance;
+constructor replacement and throw partial effects remain part of the proof.
+
+Exact aggregate bytes, alignments, pointer maps, call/helper/table resources,
+realm resources and both materializers remain uncomputed. Actual A/B API and
+evidence seals plus a fresh finite receiving refinement are required before
+physical writes. The proposed runtime matrix is all four GC/Linear by standalone/
+WASI profiles and their live codec counterparts, with observed JS values and
+actual emitted bytes. A located unsupported is retained for any uncovered
+semantic family; the full migration still requires those families, retirement,
+conformance and main delivery.
+
+The actual constructor source census currently gives a located pre-IR refusal
+for default, optional, rest, destructured and parameter-property semantics.
+Supported required scalar user parameters do not authorize missing/Undefined
+adaptation; marshalling those values as numeric0 remains prohibited. An actual
+original constructor-body default path and field-before-default ordering are
+still required future implementation and runtime controls, not credit from
+the current body.params DATA or source-census typing.
+
+## B final corrected policy transport qualification (2026-10-14)
+
+The original714-case owner process reaches natural exit0 after2486.77 seconds:
+714/714 tests pass in two files, with no failures, skips or unhandled errors.
+The corrected72 controls and two actual physical-save controls pass in separate
+natural epochs. Final eleven typing/style/architecture checks also exit0.
+The two save controls are a deliberate selection from152 registered cases;
+the other150 are skipped in that selection and subsequently included in the
+complete714-case natural pass. The selection is not a second full152 result.
+All2020 source files, the full policy, seven owned files, six historical anchors
+and95 source pins remain byte-exact after runtime and final checks.
+
+The final seven-path handoff is809989 bytes, SHA256
+bd7a73dcba8b7a0c203cf01868b237c89c0e78025b31fe39a4686cd7d8fc8d58.
+Independent final review is4081 bytes, SHA256
+21f1800811160baf0d02d989d8e00319de6b6284ddbcac330ef349fe872fdbe7.
+It rechecks exact seven hashes, all final reports and the pass-through physical
+restoration journal without duplicate runtime. The earlier source90 plus outer62
+152-case result remains explicitly a prior alias/receipt epoch with eligibility
+limits; it is not presented as a final-hash152 result.
+
+Root composes only the exact eight frozen finalizer paths, seven frozen transport
+paths, truthful policy and issue evidence: seventeen paths total. Full root
+typing,264 public integration cases and final helper controls are actual separate
+proofs. Normal signed commit/push and exact held PR6662 readback remain the final
+publication steps. This does not establish class runtime, compiler retirement,
+full conformance or main delivery.

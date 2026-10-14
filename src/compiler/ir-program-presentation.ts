@@ -17,11 +17,12 @@ import {
   type GlobalCapture,
 } from "./native-vector-global-presentation.js";
 import { IrUnsupportedError } from "../ir/outcomes.js";
-import type { PipelineOutputContext } from "../compiler.js";
+import type { PipelineOutputContext } from "./pipeline-output-context.js";
 import type { CompileResult } from "../index.js";
 import type { IrWholeProgramPreparationInput } from "../ir/program-preparation.js";
 import {
   freezePreparedIrValue,
+  PreparedIrProgramInvariantError,
   type PreparedIrBackendOptions,
   type PreparedIrProgram,
   type EmittedPreparedIrProgram,
@@ -215,6 +216,21 @@ function bodyNeedsWidening(
 const unsupported = (gaps: readonly IrProgramPresentationGap[]): IrProgramPresentationResult =>
   Object.freeze({ kind: "presentation-unsupported", gaps: Object.freeze([...gaps]) });
 
+const issuedPreparedPipelinePresentations = new WeakSet<object>();
+/** Read-only identity assertion; only the productive constructor registers presentations. */
+export function assertPreparedPipelinePresentation(
+  presentation: unknown,
+): asserts presentation is Extract<IrProgramPresentationResult, { kind: "prepared-presentation" }> {
+  if (
+    typeof presentation !== "object" ||
+    presentation === null ||
+    !issuedPreparedPipelinePresentations.has(presentation)
+  )
+    throw new PreparedIrProgramInvariantError(
+      "invalid-transaction-capability",
+      "prepared pipeline presentation requires actual constructor identity",
+    );
+}
 /** One synchronous source-capture/driver transaction, never an emitted-packet input. */
 type GapRecorder = (
   field: string,
@@ -953,6 +969,7 @@ export function prepareIrProgramPresentation(request: IrProgramPresentationReque
       view: Object.freeze({ entryFile: capture.input.entrySource.fileName, exports: Object.freeze(witExports) }),
       original: observeModuleData(mod),
     });
+  issuedPreparedPipelinePresentations.add(presentation);
   return presentation;
 }
 

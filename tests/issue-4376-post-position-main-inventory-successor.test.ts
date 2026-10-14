@@ -1,4 +1,5 @@
-import { createIrNativeNumberUndefinedOptimizationPolicyReader } from "./helpers/ir-native-number-undefined-optimization-policy-successor.js";
+import { createIrNativeNumberUndefinedFinalizationPolicyReader } from "./helpers/ir-native-number-undefined-finalization-policy-successor.js";
+import { createIrNativeNumberUndefinedOptimizationPolicyReader as originalOptimizationPolicyReader } from "./helpers/ir-native-number-undefined-optimization-policy-successor.js";
 import { createIrNativeNumberUndefinedInventoryReader } from "./helpers/ir-native-number-undefined-inventory-successor.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { createHash } from "node:crypto";
@@ -6786,6 +6787,8 @@ const currentDomainExpected = {
     },
   ],
 } as const;
+const createIrNativeNumberUndefinedOptimizationPolicyReader = (physical: (path: string) => string) =>
+  originalOptimizationPolicyReader(createIrNativeNumberUndefinedFinalizationPolicyReader(physical));
 const root = resolve(import.meta.dirname, "..");
 const read = (path: string): string =>
   createIrNativeNumberUndefinedInventoryReader(

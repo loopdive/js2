@@ -1,4 +1,5 @@
-import { createIrNativeNumberUndefinedOptimizationPolicyReader } from "./helpers/ir-native-number-undefined-optimization-policy-successor.js";
+import { createIrNativeNumberUndefinedFinalizationPolicyReader } from "./helpers/ir-native-number-undefined-finalization-policy-successor.js";
+import { createIrNativeNumberUndefinedOptimizationPolicyReader as originalOptimizationPolicyReader } from "./helpers/ir-native-number-undefined-optimization-policy-successor.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -24,7 +25,12 @@ import { ALLOC_NAMESPACES } from "../src/ir/analysis/alloc-registry.js";
 import { forEachInstrDeep, type IrInstr } from "../src/ir/core/nodes.js";
 import type { PreparedIrProgram } from "../src/ir/program/prepared-contracts.js";
 
-const actualDisk = (path: string): string => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
+const physicalDisk = (path: string): string => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
+const actualDisk = (path: string): string => createIrNativeNumberUndefinedFinalizationPolicyReader(physicalDisk)(path);
+const createIrNativeNumberUndefinedOptimizationPolicyReader = (supplied: (path: string) => string) =>
+  originalOptimizationPolicyReader(
+    supplied === actualDisk ? createIrNativeNumberUndefinedFinalizationPolicyReader(physicalDisk) : supplied,
+  );
 const disk = (path: string): string => createIrNativeNumberUndefinedOptimizationPolicyReader(actualDisk)(path);
 const sha = (text: string): string => createHash("sha256").update(text).digest("hex");
 const blob = (text: string): string =>

@@ -16693,16 +16693,32 @@
     },
     {
       "path": "src/compiler/ir-native-number-undefined-optimization.ts",
-      "state": "unmigrated",
+      "state": "compatibility-adapter",
       "layer": "mixed-needs-split",
       "destination": "compiler",
       "owner": "6920-session-b-native-takeover",
-      "nextBoundary": "Separate actual finalized-artifact production/custody and optimizer orchestration from compiler frontend and legacy transitive consumers, retaining private constructor-only provenance, exact currentness and atomic actual candidate acceptance. The compiler-private authority cycle and actual 1932-file closure/1564 debt remain explicit migration work; no clean compiler activation or general dynamic ABI follows."
+      "nextBoundary": "Identity-preserving direct reexports of the four native Number/Undefined optimization functions and observation type now owned by pipeline-result-finalizer.ts. Keep this one-way compatibility path until its callers migrate; all constructor snapshots, issued state, currentness and optimizer execution live in the productive owner. The owner retains mixed frontend/output/legacy dependencies; no clean compiler activation or general dynamic ABI follows."
     },
     {
       "path": "src/wasm/physical/native-number-undefined-binary.ts",
       "state": "clean",
       "layer": "wasm-physical"
+    },
+    {
+      "path": "src/compiler/pipeline-output-context.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "compiler",
+      "owner": "6920-session-b-native-takeover",
+      "nextBoundary": "Separate output-only source/checker presentation facts from source-free productive finalization contracts, preserving exact output fields and diagnostic/source-map custody. Type-only extraction does not establish clean transitive architecture."
+    },
+    {
+      "path": "src/compiler/pipeline-result-finalizer.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "compiler",
+      "owner": "6920-session-b-native-takeover",
+      "nextBoundary": "Separate productive finalization and private constructor/optimization state ownership from retained generic CABI/DTS/WIT/source-map, output and validation dependencies without changing completion ordering, rec-group checks, one-shot native optimization, atomic candidate acceptance or old generic algorithms. Direct optimization ownership and one-way compatibility exports remove the new lifecycle authority cycle; measured mixed transitive closure remains migration work, not full boundary closure."
     }
   ]
 }

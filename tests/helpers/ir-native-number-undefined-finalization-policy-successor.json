@@ -1,0 +1,299 @@
+{
+  "schema": 1,
+  "kind": "native-number-undefined-finalization-policy-successor",
+  "qualified2018Head": "df466f30d4ee27ab332debad823912ee9155c80c",
+  "qualified2018Seal": {
+    "path": ".tmp/optimization-policy-qualification/handoff-sealed.json",
+    "bytes": 29631,
+    "sha256": "52653ffa2ae433067f33c9bcabff8344a96133fa13eabc357e37fad6d2ee8ea7",
+    "gitBlob": "e6c9e803174dfc4a30badb840fd34ccb87de4131"
+  },
+  "before": {
+    "source": {
+      "bytes": 638010,
+      "sha256": "c147c9a37950d784905920d5a226584b1ed8e823246964f89791d4e8f2769f8f",
+      "gitBlob": "54507344864a2a5689cee487d939b2b1b744b981"
+    },
+    "count": 2018,
+    "data": "f0294d7feb674268aa21e35f2bd75303d4964ecd8b83d2b9c88cc7226193bcf0",
+    "files": "fb82fdc26872841c6770c63c649dd16a7d2c28913c0312b44bd5cc9f0f80ae20",
+    "nonFiles": "55a72bc549a5ebc2351631c574fe518c1457a48fd36f57550f13a3dc74917faf"
+  },
+  "current": {
+    "source": {
+      "bytes": 639290,
+      "sha256": "d0d2fdb7591c875303a0197fb413076a1f316c0ecb38ed7bcbc35ce40448f985",
+      "gitBlob": "8f367782333e8ef6c7f6d27d2afb52f0f35ff9ac"
+    },
+    "count": 2020,
+    "data": "1e863199ae1e7972e03782e636bc45dc193788a72b96bd6729881cca03bd49a5",
+    "files": "20a8ce7f02f84b626aa249bfa2342c0b607f85a187ec3b978f022efa787753a3",
+    "nonFiles": "55a72bc549a5ebc2351631c574fe518c1457a48fd36f57550f13a3dc74917faf"
+  },
+  "replaced": [
+    {
+      "index": 2016,
+      "before": {
+        "path": "src/compiler/ir-native-number-undefined-optimization.ts",
+        "state": "unmigrated",
+        "layer": "mixed-needs-split",
+        "destination": "compiler",
+        "owner": "6920-session-b-native-takeover",
+        "nextBoundary": "Separate actual finalized-artifact production/custody and optimizer orchestration from compiler frontend and legacy transitive consumers, retaining private constructor-only provenance, exact currentness and atomic actual candidate acceptance. The compiler-private authority cycle and actual 1932-file closure/1564 debt remain explicit migration work; no clean compiler activation or general dynamic ABI follows."
+      },
+      "current": {
+        "path": "src/compiler/ir-native-number-undefined-optimization.ts",
+        "state": "compatibility-adapter",
+        "layer": "mixed-needs-split",
+        "destination": "compiler",
+        "owner": "6920-session-b-native-takeover",
+        "nextBoundary": "Identity-preserving direct reexports of the four native Number/Undefined optimization functions and observation type now owned by pipeline-result-finalizer.ts. Keep this one-way compatibility path until its callers migrate; all constructor snapshots, issued state, currentness and optimizer execution live in the productive owner. The owner retains mixed frontend/output/legacy dependencies; no clean compiler activation or general dynamic ABI follows."
+      }
+    }
+  ],
+  "inserted": [
+    {
+      "index": 2018,
+      "row": {
+        "path": "src/compiler/pipeline-output-context.ts",
+        "state": "unmigrated",
+        "layer": "mixed-needs-split",
+        "destination": "compiler",
+        "owner": "6920-session-b-native-takeover",
+        "nextBoundary": "Separate output-only source/checker presentation facts from source-free productive finalization contracts, preserving exact output fields and diagnostic/source-map custody. Type-only extraction does not establish clean transitive architecture."
+      }
+    },
+    {
+      "index": 2019,
+      "row": {
+        "path": "src/compiler/pipeline-result-finalizer.ts",
+        "state": "unmigrated",
+        "layer": "mixed-needs-split",
+        "destination": "compiler",
+        "owner": "6920-session-b-native-takeover",
+        "nextBoundary": "Separate productive finalization and private constructor/optimization state ownership from retained generic CABI/DTS/WIT/source-map, output and validation dependencies without changing completion ordering, rec-group checks, one-shot native optimization, atomic candidate acceptance or old generic algorithms. Direct optimization ownership and one-way compatibility exports remove the new lifecycle authority cycle; measured mixed transitive closure remains migration work, not full boundary closure."
+      }
+    }
+  ],
+  "anchors": [
+    {
+      "path": "tests/helpers/ir-native-number-undefined-source-successor.ts",
+      "bytes": 6768,
+      "sha256": "f5ee7cf91cb521c643c1a2c41cfd801b547de0fa1440c85edf551ba388ae4122",
+      "gitBlob": "e48e4c20e3cad8c1ea3767792f154111edc3662e"
+    },
+    {
+      "path": "tests/helpers/ir-native-number-undefined-source-successor.json",
+      "bytes": 32537,
+      "sha256": "660b59f167026c48f33f8b34e9ef785d54874a4abdb2f3348b761458a228e750",
+      "gitBlob": "9f2fe0044fc5a5e0254ba77da8c2ff1f76acd9e9"
+    },
+    {
+      "path": "tests/helpers/ir-native-number-undefined-inventory-successor.ts",
+      "bytes": 30399,
+      "sha256": "52d31a9c7fd7ce39e0cc66c6c17ac0d52c62bdba5021eabb11878c621179233d",
+      "gitBlob": "94e07d85645514c7ae7d674aa86a44089c3370e8"
+    },
+    {
+      "path": "tests/helpers/ir-native-number-undefined-inventory-successor.json",
+      "bytes": 21476,
+      "sha256": "def88ffa87ea3fc238d83127d79eb540668f83bee12a424547a9d140720f1e5c",
+      "gitBlob": "d6f2750367b1b4f6a59c7627bd0f0859ee63c609"
+    },
+    {
+      "path": "tests/helpers/ir-native-number-undefined-optimization-policy-successor.ts",
+      "bytes": 9381,
+      "sha256": "162669f6670fbe663f9ded632952eb196694b4cb51ece4bad534aa8d79d96f64",
+      "gitBlob": "0b061c70b80b61c3e9d7a10921ccfc60d99ceaca"
+    },
+    {
+      "path": "tests/helpers/ir-native-number-undefined-optimization-policy-successor.json",
+      "bytes": 11533,
+      "sha256": "470dafcb58a1feed449cb1594702a085c9ca4d01656aa9cb85ded10751d5fcf5",
+      "gitBlob": "7df2aa64c6c58ea2fbbfcd137490ff870211c6b5"
+    }
+  ],
+  "callers": [
+    {
+      "path": "tests/issue-6920-native-number-undefined-source-successor.test.ts",
+      "bytes": 24936,
+      "sha256": "f1fbe3edd5e34cf75edaa756b6ff5d9db418fdcc30b71e29a71b1a7bcdbb03f5",
+      "gitBlob": "e026a2c93709e64764f352e34db185ffd924a81f"
+    },
+    {
+      "path": "tests/issue-3525-native-number-undefined-inventory-successor.test.ts",
+      "bytes": 28793,
+      "sha256": "ce890a4d3a03f2629d6da26dd62719bd3b8ba2bf9bee43d30100255e576f6718",
+      "gitBlob": "4411fb20a9160efed16c841d894bdadc56a0fdde"
+    },
+    {
+      "path": "tests/issue-4376-post-position-main-inventory-successor.test.ts",
+      "bytes": 361029,
+      "sha256": "a8a6a7028883262ab0250515357cc179b7a7892f37b9c5223945b4b5093b67d5",
+      "gitBlob": "de0dd0ca23c3b4067baff37e168cf27de75c9712"
+    },
+    {
+      "path": "tests/issue-6920-native-number-undefined-optimization-policy-successor.test.ts",
+      "bytes": 20000,
+      "sha256": "36cbaacbfd526018315d3597c5e6db2db0d8d81c5a21fe2d8b44b1df4b0044f3",
+      "gitBlob": "efe8fa606879d6181d56c2693071c8fcba6ef246"
+    }
+  ],
+  "transforms": [
+    {
+      "path": "scripts/compiler-boundaries.json",
+      "before": {
+        "bytes": 638010,
+        "sha256": "c147c9a37950d784905920d5a226584b1ed8e823246964f89791d4e8f2769f8f",
+        "gitBlob": "54507344864a2a5689cee487d939b2b1b744b981"
+      },
+      "current": {
+        "bytes": 639290,
+        "sha256": "d0d2fdb7591c875303a0197fb413076a1f316c0ecb38ed7bcbc35ce40448f985",
+        "gitBlob": "8f367782333e8ef6c7f6d27d2afb52f0f35ff9ac"
+      },
+      "edits": [
+        {
+          "beforeStart": 637199,
+          "beforeEnd": 637866,
+          "beforeText": "    {\n      \"path\": \"src/compiler/ir-native-number-undefined-optimization.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"compiler\",\n      \"owner\": \"6920-session-b-native-takeover\",\n      \"nextBoundary\": \"Separate actual finalized-artifact production/custody and optimizer orchestration from compiler frontend and legacy transitive consumers, retaining private constructor-only provenance, exact currentness and atomic actual candidate acceptance. The compiler-private authority cycle and actual 1932-file closure/1564 debt remain explicit migration work; no clean compiler activation or general dynamic ABI follows.\"\n    }",
+          "currentStart": 637199,
+          "currentEnd": 637918,
+          "currentText": "    {\n      \"path\": \"src/compiler/ir-native-number-undefined-optimization.ts\",\n      \"state\": \"compatibility-adapter\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"compiler\",\n      \"owner\": \"6920-session-b-native-takeover\",\n      \"nextBoundary\": \"Identity-preserving direct reexports of the four native Number/Undefined optimization functions and observation type now owned by pipeline-result-finalizer.ts. Keep this one-way compatibility path until its callers migrate; all constructor snapshots, issued state, currentness and optimizer execution live in the productive owner. The owner retains mixed frontend/output/legacy dependencies; no clean compiler activation or general dynamic ABI follows.\"\n    }"
+        },
+        {
+          "beforeStart": 638003,
+          "beforeEnd": 638003,
+          "beforeText": "",
+          "currentStart": 638055,
+          "currentEnd": 639283,
+          "currentText": ",\n    {\n      \"path\": \"src/compiler/pipeline-output-context.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"compiler\",\n      \"owner\": \"6920-session-b-native-takeover\",\n      \"nextBoundary\": \"Separate output-only source/checker presentation facts from source-free productive finalization contracts, preserving exact output fields and diagnostic/source-map custody. Type-only extraction does not establish clean transitive architecture.\"\n    },\n    {\n      \"path\": \"src/compiler/pipeline-result-finalizer.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"compiler\",\n      \"owner\": \"6920-session-b-native-takeover\",\n      \"nextBoundary\": \"Separate productive finalization and private constructor/optimization state ownership from retained generic CABI/DTS/WIT/source-map, output and validation dependencies without changing completion ordering, rec-group checks, one-shot native optimization, atomic candidate acceptance or old generic algorithms. Direct optimization ownership and one-way compatibility exports remove the new lifecycle authority cycle; measured mixed transitive closure remains migration work, not full boundary closure.\"\n    }"
+        }
+      ]
+    },
+    {
+      "path": "tests/issue-6920-native-number-undefined-source-successor.test.ts",
+      "before": {
+        "bytes": 24382,
+        "sha256": "9f96fe707dc956d4150e730cdab2407506326eaa02ee64cef6d40402849014d0",
+        "gitBlob": "7eb2261ef05c3a45f5c918d96fe049ab71aadfba"
+      },
+      "current": {
+        "bytes": 24936,
+        "sha256": "f1fbe3edd5e34cf75edaa756b6ff5d9db418fdcc30b71e29a71b1a7bcdbb03f5",
+        "gitBlob": "e026a2c93709e64764f352e34db185ffd924a81f"
+      },
+      "edits": [
+        {
+          "beforeStart": 38,
+          "beforeEnd": 38,
+          "beforeText": "",
+          "currentStart": 38,
+          "currentEnd": 217,
+          "currentText": "FinalizationPolicyReader } from \"./helpers/ir-native-number-undefined-finalization-policy-successor.js\";\nimport { createIrNativeNumberUndefinedOptimizationPolicyReader as original"
+        },
+        {
+          "beforeStart": 1870,
+          "beforeEnd": 1968,
+          "beforeText": "actualDisk = (path: string): string => readFileSync(new URL(`../${path}`, import.meta.url), \"utf8\"",
+          "currentStart": 2049,
+          "currentEnd": 2522,
+          "currentText": "physicalDisk = (path: string): string => readFileSync(new URL(`../${path}`, import.meta.url), \"utf8\");\nconst actualDisk = (path: string): string => createIrNativeNumberUndefinedFinalizationPolicyReader(physicalDisk)(path);\nconst createIrNativeNumberUndefinedOptimizationPolicyReader = (supplied: (path: string) => string) =>\n  originalOptimizationPolicyReader(\n    supplied === actualDisk ? createIrNativeNumberUndefinedFinalizationPolicyReader(physicalDisk) : supplied,\n  "
+        }
+      ]
+    },
+    {
+      "path": "tests/issue-3525-native-number-undefined-inventory-successor.test.ts",
+      "before": {
+        "bytes": 27959,
+        "sha256": "f9055ab6ea02f1b7a9723d13f2eca03b831e65dd794f135f5935eb6b2fb766a2",
+        "gitBlob": "3de673b3d0cadfeb2b8a7b829471e1ea67d1c212"
+      },
+      "current": {
+        "bytes": 28793,
+        "sha256": "ce890a4d3a03f2629d6da26dd62719bd3b8ba2bf9bee43d30100255e576f6718",
+        "gitBlob": "4411fb20a9160efed16c841d894bdadc56a0fdde"
+      },
+      "edits": [
+        {
+          "beforeStart": 40,
+          "beforeEnd": 101,
+          "beforeText": "OptimizationPolicyReader,\n  createLazyIrNativeNumberUndefined",
+          "currentStart": 40,
+          "currentEnd": 384,
+          "currentText": "FinalizationPolicyReader,\n  createLazyIrNativeNumberUndefinedFinalizationPolicyReader,\n} from \"./helpers/ir-native-number-undefined-finalization-policy-successor.js\";\nimport {\n  createIrNativeNumberUndefinedOptimizationPolicyReader as originalOptimizationPolicyReader,\n  createLazyIrNativeNumberUndefinedOptimizationPolicyReader as originalLazy"
+        },
+        {
+          "beforeStart": 15100,
+          "beforeEnd": 15100,
+          "beforeText": "",
+          "currentStart": 15383,
+          "currentEnd": 15934,
+          "currentText": "physicalDisk = actualDisk;\nconst createIrNativeNumberUndefinedOptimizationPolicyReader = (supplied: (path: string) => string) =>\n  originalOptimizationPolicyReader(\n    supplied === actualDisk ? createIrNativeNumberUndefinedFinalizationPolicyReader(physicalDisk) : supplied,\n  );\nconst createLazyIrNativeNumberUndefinedOptimizationPolicyReader = (supplied: (path: string) => string) =>\n  originalLazyOptimizationPolicyReader(\n    supplied === actualDisk ? createLazyIrNativeNumberUndefinedFinalizationPolicyReader(physicalDisk) : supplied,\n  );\nconst "
+        }
+      ]
+    },
+    {
+      "path": "tests/issue-4376-post-position-main-inventory-successor.test.ts",
+      "before": {
+        "bytes": 360647,
+        "sha256": "d776170cb1ba69e74aeab25d41d73095bf7dab5dd14a4fc530b9a0cc023bb924",
+        "gitBlob": "685d904d277fe196f349479a1b96b923f8b47fa8"
+      },
+      "current": {
+        "bytes": 361029,
+        "sha256": "a8a6a7028883262ab0250515357cc179b7a7892f37b9c5223945b4b5093b67d5",
+        "gitBlob": "de0dd0ca23c3b4067baff37e168cf27de75c9712"
+      },
+      "edits": [
+        {
+          "beforeStart": 38,
+          "beforeEnd": 38,
+          "beforeText": "",
+          "currentStart": 38,
+          "currentEnd": 217,
+          "currentText": "FinalizationPolicyReader } from \"./helpers/ir-native-number-undefined-finalization-policy-successor.js\";\nimport { createIrNativeNumberUndefinedOptimizationPolicyReader as original"
+        },
+        {
+          "beforeStart": 296114,
+          "beforeEnd": 296114,
+          "beforeText": "",
+          "currentStart": 296293,
+          "currentEnd": 296496,
+          "currentText": "createIrNativeNumberUndefinedOptimizationPolicyReader = (physical: (path: string) => string) =>\n  originalOptimizationPolicyReader(createIrNativeNumberUndefinedFinalizationPolicyReader(physical));\nconst "
+        }
+      ]
+    },
+    {
+      "path": "tests/issue-6920-native-number-undefined-optimization-policy-successor.test.ts",
+      "before": {
+        "bytes": 19277,
+        "sha256": "52ee8b6d87b2eaee9e487da545c90363c3dc4f843c32628bb6d0b7dfadf2ba54",
+        "gitBlob": "9f9cdb8b826d11c6c4ba177947842b73556e30e5"
+      },
+      "current": {
+        "bytes": 20000,
+        "sha256": "36cbaacbfd526018315d3597c5e6db2db0d8d81c5a21fe2d8b44b1df4b0044f3",
+        "gitBlob": "efe8fa606879d6181d56c2693071c8fcba6ef246"
+      },
+      "edits": [
+        {
+          "beforeStart": 0,
+          "beforeEnd": 454,
+          "beforeText": "// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.\nimport { createHash } from \"node:crypto\";\nimport { readFileSync, writeFileSync } from \"node:fs\";\nimport { setImmediate as yieldTurn } from \"node:timers/promises\";\nimport { expect, it } from \"vitest\";\nimport ts from \"typescript\";\nimport {\n  createIrNativeNumberUndefinedOptimizationPolicyReader as capture,\n  createLazyIrNativeNumberUndefinedOptimizationPolicyReader as l",
+          "currentStart": 0,
+          "currentEnd": 677,
+          "currentText": "import {\n  createIrNativeNumberUndefinedFinalizationPolicyReader,\n  createLazyIrNativeNumberUndefinedFinalizationPolicyReader,\n} from \"./helpers/ir-native-number-undefined-finalization-policy-successor.js\";\n// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.\nimport { createHash } from \"node:crypto\";\nimport { readFileSync, writeFileSync } from \"node:fs\";\nimport { setImmediate as yieldTurn } from \"node:timers/promises\";\nimport { expect, it } from \"vitest\";\nimport ts from \"typescript\";\nimport {\n  createIrNativeNumberUndefinedOptimizationPolicyReader as originalCapture,\n  createLazyIrNativeNumberUndefinedOptimizationPolicyReader as originalL"
+        },
+        {
+          "beforeStart": 1022,
+          "beforeEnd": 1120,
+          "beforeText": "actualDisk = (path: string): string => readFileSync(new URL(`../${path}`, import.meta.url), \"utf8\"",
+          "currentStart": 1245,
+          "currentEnd": 1843,
+          "currentText": "physicalDisk = (path: string): string => readFileSync(new URL(`../${path}`, import.meta.url), \"utf8\");\nconst actualDisk = (path: string): string => createIrNativeNumberUndefinedFinalizationPolicyReader(physicalDisk)(path);\nconst capture = (supplied: (path: string) => string) =>\n  originalCapture(\n    supplied === actualDisk ? createIrNativeNumberUndefinedFinalizationPolicyReader(physicalDisk) : supplied,\n  );\nconst lazy = (supplied: (path: string) => string) =>\n  originalLazy(\n    supplied === actualDisk ? createLazyIrNativeNumberUndefinedFinalizationPolicyReader(physicalDisk) : supplied,\n  "
+        }
+      ]
+    }
+  ]
+}

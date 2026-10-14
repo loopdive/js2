@@ -2,7 +2,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { setImmediate as yieldTurn } from "node:timers/promises";
 import { compileSource, compileSourceSync, compileMultiSource } from "../src/compiler.js";
-import * as compilerLifecycle from "../src/compiler.js";
+import * as compilerLifecycle from "../src/compiler/pipeline-result-finalizer.js";
 import * as optimizer from "../src/optimize.js";
 import * as legacyGc from "../src/codegen/index.js";
 import * as legacyLinear from "../src/codegen-linear/index.js";
@@ -499,11 +499,20 @@ it.each(["original", "detached"])(
   "refuses genuine %s physical module mutation during actual await",
   async (location) => {
     await yieldTurn();
-    const actual = compilerLifecycle.assertCompilerNativeNumberUndefinedFinalization;
-    let tuple: Parameters<typeof actual> | undefined;
-    vi.spyOn(compilerLifecycle, "assertCompilerNativeNumberUndefinedFinalization").mockImplementation((...args) => {
-      actual(...args);
-      tuple = args;
+    const actual = compilerLifecycle.finalizePreparedPipelinePresentation;
+    let tuple:
+      | [
+          Parameters<typeof actual>[0],
+          Parameters<typeof issueNativeNumberUndefinedOptimizationInput>[1],
+          Parameters<typeof issueNativeNumberUndefinedOptimizationInput>[2],
+          Uint8Array,
+        ]
+      | undefined;
+    vi.spyOn(compilerLifecycle, "finalizePreparedPipelinePresentation").mockImplementation((presentation) => {
+      const done = actual(presentation);
+      if (done.kind === "completed-finalization")
+        tuple = [presentation, done.module, done.artifacts, done.artifacts.binary];
+      return done;
     });
     const opts = { ...options, backend: "wasmgc" as const },
       result = compileSourceSync(source, opts);

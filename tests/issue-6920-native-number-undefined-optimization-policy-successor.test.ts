@@ -1,3 +1,7 @@
+import {
+  createIrNativeNumberUndefinedFinalizationPolicyReader,
+  createLazyIrNativeNumberUndefinedFinalizationPolicyReader,
+} from "./helpers/ir-native-number-undefined-finalization-policy-successor.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
@@ -5,8 +9,8 @@ import { setImmediate as yieldTurn } from "node:timers/promises";
 import { expect, it } from "vitest";
 import ts from "typescript";
 import {
-  createIrNativeNumberUndefinedOptimizationPolicyReader as capture,
-  createLazyIrNativeNumberUndefinedOptimizationPolicyReader as lazy,
+  createIrNativeNumberUndefinedOptimizationPolicyReader as originalCapture,
+  createLazyIrNativeNumberUndefinedOptimizationPolicyReader as originalLazy,
   assertNativeNumberUndefinedOptimizationPolicyReceipt as structure,
   nativeNumberUndefinedOptimizationPolicyReceiptPath as receiptPath,
   type OptimizationPolicyReceipt,
@@ -16,7 +20,16 @@ import {
   captureIrNativeNumberUndefinedInventoryPredecessorPolicy as inventoryData,
   captureIrNativeNumberUndefinedInventoryPredecessorPolicySource as inventoryRaw,
 } from "./helpers/ir-native-number-undefined-inventory-successor.js";
-const actualDisk = (path: string): string => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
+const physicalDisk = (path: string): string => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
+const actualDisk = (path: string): string => createIrNativeNumberUndefinedFinalizationPolicyReader(physicalDisk)(path);
+const capture = (supplied: (path: string) => string) =>
+  originalCapture(
+    supplied === actualDisk ? createIrNativeNumberUndefinedFinalizationPolicyReader(physicalDisk) : supplied,
+  );
+const lazy = (supplied: (path: string) => string) =>
+  originalLazy(
+    supplied === actualDisk ? createLazyIrNativeNumberUndefinedFinalizationPolicyReader(physicalDisk) : supplied,
+  );
 const hash = (text: string): string => createHash("sha256").update(text).digest("hex");
 const blob = (text: string): string =>
   createHash("sha1")

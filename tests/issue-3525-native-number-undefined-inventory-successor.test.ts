@@ -1,6 +1,10 @@
 import {
-  createIrNativeNumberUndefinedOptimizationPolicyReader,
-  createLazyIrNativeNumberUndefinedOptimizationPolicyReader,
+  createIrNativeNumberUndefinedFinalizationPolicyReader,
+  createLazyIrNativeNumberUndefinedFinalizationPolicyReader,
+} from "./helpers/ir-native-number-undefined-finalization-policy-successor.js";
+import {
+  createIrNativeNumberUndefinedOptimizationPolicyReader as originalOptimizationPolicyReader,
+  createLazyIrNativeNumberUndefinedOptimizationPolicyReader as originalLazyOptimizationPolicyReader,
 } from "./helpers/ir-native-number-undefined-optimization-policy-successor.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 // Independent final2016 source/DATA and current caller custody, without historical repins.
@@ -289,6 +293,15 @@ const policyInsertionOffset = 633115;
 type Policy = Record<string, unknown> & { files: Record<string, unknown>[] };
 const root = resolve(import.meta.dirname, "..");
 const actualDisk = (path: string): string => readFileSync(resolve(root, path), "utf8");
+const physicalDisk = actualDisk;
+const createIrNativeNumberUndefinedOptimizationPolicyReader = (supplied: (path: string) => string) =>
+  originalOptimizationPolicyReader(
+    supplied === actualDisk ? createIrNativeNumberUndefinedFinalizationPolicyReader(physicalDisk) : supplied,
+  );
+const createLazyIrNativeNumberUndefinedOptimizationPolicyReader = (supplied: (path: string) => string) =>
+  originalLazyOptimizationPolicyReader(
+    supplied === actualDisk ? createLazyIrNativeNumberUndefinedFinalizationPolicyReader(physicalDisk) : supplied,
+  );
 const disk = (path: string): string => createIrNativeNumberUndefinedOptimizationPolicyReader(actualDisk)(path);
 type Reader = (path: string) => string;
 const defaultInput = (supplied: Reader | undefined): Reader =>
