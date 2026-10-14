@@ -6,8 +6,8 @@
   "status": "in-progress",
   "branch": "codex/3522-b-native-class-producer-20261014-01a12827",
   "claimed_at": "2026-10-14T01:32:58.535944Z",
-  "updated_at": "2026-10-14T12:34:15.804100Z",
-  "write_id": "b-class-frame-41a9034a-44da-4f3f-a36a-3a3b6b977fee",
+  "updated_at": "2026-10-14T13:51:07.471283Z",
+  "write_id": "b-class-module-array-factory-9c588620-9dab-4fb3-85f5-fcf00744515a",
   "authority": "Human active goal complete ir migration and authorized blocking shared-seam takeover. Original3522 parent released; disjoint whole-program semantic producer checkpoint only.",
   "predecessor_released_record": "3522.json",
   "handoff_scope": [
@@ -535,6 +535,43 @@
       "predecessorRecordSha256": "22775fb67f9f4cc004882e6bf1626ba638ed94d8167b098094050b0fad15d1f5",
       "previousLedger": "93950c365716cc1403edc799de3df98cd297bc2e",
       "runtimeCredit": "None; genuine B producer/replay and both C materializers remain required."
+    },
+    {
+      "kind": "exact original SourceFile no-array analysis factory",
+      "at": "2026-10-14T13:51:07.471283Z",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b"
+      },
+      "receivingBranch": "codex/6920-b-native-js-class-source-20261014-01a12827",
+      "refinement": {
+        "receive": "additive genuine original SourceFile no-array analysis factory only",
+        "path": "src/ir/array-element-inference.ts",
+        "preimage": {
+          "bytes": 26809,
+          "sha256": "fbcdbc4d3ea178a9e7645ec65d928f966aa738b4e443d236650e2a26c0b8a6b2",
+          "gitBlob": "966c574031ac9947db72f17404ea64a8aa4dcd48"
+        },
+        "factory": "inferNativeModuleInitializerArrayTypes(source:ts.SourceFile,population:readonly ts.Statement[],checker:ts.TypeChecker):EmptyArrayElementInference",
+        "currentness": "assertNativeModuleInitializerArrayTypesCurrent(inference:EmptyArrayElementInference,source:ts.SourceFile,population:readonly ts.Statement[],checker:ts.TypeChecker):void; private WeakMap associates actual owner-produced analysis with exact source/statement order/checker; no caller callbacks or synthetic FunctionWithBody",
+        "producerProof": [
+          "Independently derive actual original collectNativeClassModuleInitPopulation(source); require exact statement identities/order/membership, source parent and sourcefile; reject foreign/omitted/reordered populations before constructing analysis.",
+          "Walk evaluation-bearing original statement/expression nodes, skip function/method bodies and class declaration bodies (their own separate class plans own those original execution units). For class expression visit any actual computed/heritage/static evaluation expressions; these currently have class-source located refusals anyway.",
+          "Reject actual array/tuple/type syntax, checker.isArrayType/isTupleType across resolved union branches, Any/Unknown or unresolved object/reference values which may denote arrays. Accept genuine scalar and actual class/function declaration identities only for non-array source values; no treating empty map/unknown inferred type as scalar proof.",
+          "Closed original source text/child identities/order/primitive snapshots captured; assertion validates same checker/source/population and every captured original node before module body lowering and completion.",
+          "Return new EmptyArrayElementInference(owner-local AliasGraph,new Map(),[]) ONLY after closed no-array proof; private brand/currentness needed, old public factory/class factory and all array algorithms unchanged."
+        ],
+        "newControls": [
+          "Foreign SourceFile/node/population/checker",
+          "Omitted/reordered/duplicated statement",
+          "Literal, inferred array-call result, tuple, array alias, Any/Unknown return, unresolved reference refusal",
+          "Warm original-source mutation restoration and scalar/class/function no-array positive with exact module census"
+        ],
+        "scopeLimitation": "No array/vector admission/profile widening; full module-array support still requires real general source owner. No changes until root received GO."
+      },
+      "refinementSha256": "a2cf5068f3d1f02e0ff3731c1a6f511d4c1b8b326d80a9fc14ab3dabed51012f",
+      "predecessorRecordSha256": "91103ca173d126b165299e302a9010fc22de353edb7cf85aac03bfe0e2febe56",
+      "constraints": "Add only the original-SourceFile no-array factory and private currentness assertion in array-element-inference.ts. Preserve every old analysis factory/body/array/vector/class algorithm; reject unknown/array-capable module contracts before returning closed empty analysis. New Session C vector representation ownership remains held. Generic full module array support is still required migration work."
     }
   ],
   "exclusions": [
@@ -1026,7 +1063,44 @@
         "parallelWork": "make sure b keeps going with parallel subagents"
       },
       "predecessorRecordSha256": "6649bdb273bee92d3d4d15197307b3084f023a3202d59a0e9d085ec9ddba470c"
+    },
+    {
+      "kind": "exact original SourceFile no-array analysis factory",
+      "at": "2026-10-14T13:51:07.471283Z",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b"
+      },
+      "receivingBranch": "codex/6920-b-native-js-class-source-20261014-01a12827",
+      "refinement": {
+        "receive": "additive genuine original SourceFile no-array analysis factory only",
+        "path": "src/ir/array-element-inference.ts",
+        "preimage": {
+          "bytes": 26809,
+          "sha256": "fbcdbc4d3ea178a9e7645ec65d928f966aa738b4e443d236650e2a26c0b8a6b2",
+          "gitBlob": "966c574031ac9947db72f17404ea64a8aa4dcd48"
+        },
+        "factory": "inferNativeModuleInitializerArrayTypes(source:ts.SourceFile,population:readonly ts.Statement[],checker:ts.TypeChecker):EmptyArrayElementInference",
+        "currentness": "assertNativeModuleInitializerArrayTypesCurrent(inference:EmptyArrayElementInference,source:ts.SourceFile,population:readonly ts.Statement[],checker:ts.TypeChecker):void; private WeakMap associates actual owner-produced analysis with exact source/statement order/checker; no caller callbacks or synthetic FunctionWithBody",
+        "producerProof": [
+          "Independently derive actual original collectNativeClassModuleInitPopulation(source); require exact statement identities/order/membership, source parent and sourcefile; reject foreign/omitted/reordered populations before constructing analysis.",
+          "Walk evaluation-bearing original statement/expression nodes, skip function/method bodies and class declaration bodies (their own separate class plans own those original execution units). For class expression visit any actual computed/heritage/static evaluation expressions; these currently have class-source located refusals anyway.",
+          "Reject actual array/tuple/type syntax, checker.isArrayType/isTupleType across resolved union branches, Any/Unknown or unresolved object/reference values which may denote arrays. Accept genuine scalar and actual class/function declaration identities only for non-array source values; no treating empty map/unknown inferred type as scalar proof.",
+          "Closed original source text/child identities/order/primitive snapshots captured; assertion validates same checker/source/population and every captured original node before module body lowering and completion.",
+          "Return new EmptyArrayElementInference(owner-local AliasGraph,new Map(),[]) ONLY after closed no-array proof; private brand/currentness needed, old public factory/class factory and all array algorithms unchanged."
+        ],
+        "newControls": [
+          "Foreign SourceFile/node/population/checker",
+          "Omitted/reordered/duplicated statement",
+          "Literal, inferred array-call result, tuple, array alias, Any/Unknown return, unresolved reference refusal",
+          "Warm original-source mutation restoration and scalar/class/function no-array positive with exact module census"
+        ],
+        "scopeLimitation": "No array/vector admission/profile widening; full module-array support still requires real general source owner. No changes until root received GO."
+      },
+      "refinementSha256": "a2cf5068f3d1f02e0ff3731c1a6f511d4c1b8b326d80a9fc14ab3dabed51012f",
+      "predecessorRecordSha256": "91103ca173d126b165299e302a9010fc22de353edb7cf85aac03bfe0e2febe56",
+      "constraints": "Add only the original-SourceFile no-array factory and private currentness assertion in array-element-inference.ts. Preserve every old analysis factory/body/array/vector/class algorithm; reject unknown/array-capable module contracts before returning closed empty analysis. New Session C vector representation ownership remains held. Generic full module array support is still required migration work."
     }
   ],
-  "previous_write_id": "b-class-phase-a-d879501f-f573-40ef-b209-80a1aff01924"
+  "previous_write_id": "b-class-frame-41a9034a-44da-4f3f-a36a-3a3b6b977fee"
 }
