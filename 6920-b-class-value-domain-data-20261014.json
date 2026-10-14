@@ -1,0 +1,47 @@
+{
+  "id": "6920",
+  "slice": "class-value-domain-data-successor-20261014",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-native-js-class-source-20261014-01a12827",
+  "claimed_at": "2026-10-14T19:57:51.553077+00:00",
+  "updated_at": "2026-10-14T19:57:51.553077+00:00",
+  "write_id": "b-class-value-domain-data-edaa3425-47c5-4971-88f5-e4d8377b2223",
+  "handoff_scope": [
+    {
+      "kind": "class-value-domain-data",
+      "at": "2026-10-14T19:57:51.553077+00:00",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-native-js-class-source-20261014-01a12827",
+      "manifest": {
+        "receivingBranch": "codex/6920-b-native-js-class-source-20261014-01a12827",
+        "componentPreimages": [
+          {
+            "path": "src/ir/analysis/native-js-class-value-domains.ts",
+            "bytes": 66949,
+            "sha256": "d3a68822401a04efc63b85063668391ed1f1ad4b9142d3949995a064fd4ccd60",
+            "functions": "Exact unchanged key/frozen/ownData3 bodies relocation into import-free helper with private name aliases; existing solver remains sole producer algorithm"
+          }
+        ],
+        "canonicalNewPaths": [
+          "src/ir/analysis/native-js-class-value-domain-data.ts"
+        ],
+        "scope": "ONE new pure helper and exact producer three-function/import relocation, unchanged bodies; existing solver already received",
+        "proposalSha256": "34c3485563ec5a8236af9e832b2c5dc4db54d433c0257d83407f3de0f932d9d0",
+        "constraints": "Whole3 bodies unchanged, no schema/callback/authority registration, minification or budget allowance. Independent checker must not share any producer runtime kernel or solver. Separate retention/returned-root source effects fixes follow as measured existing solver epochs. Preserve immutable53/source36 pair snapshots, all owners/branches/HOLDs and protected original B33915."
+      },
+      "manifestSha256": "39a7c400418ec31ddf9e41d052dff41d39042d33b7b3e0f3f0ef8cf90e62f390",
+      "constraints": "Whole3 bodies unchanged, no schema/callback/authority registration, minification or budget allowance. Independent checker must not share any producer runtime kernel or solver. Separate retention/returned-root source effects fixes follow as measured existing solver epochs. Preserve immutable53/source36 pair snapshots, all owners/branches/HOLDs and protected original B33915."
+    }
+  ],
+  "predecessors": [
+    "3522-b-native-class-semantic-producer-20261014.json",
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}

@@ -1,0 +1,46 @@
+{
+  "id": "6920",
+  "slice": "class-owned-helper-calls-successor-20261014",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+  "claimed_at": "2026-10-14T19:57:51.553077+00:00",
+  "updated_at": "2026-10-14T19:57:51.553077+00:00",
+  "write_id": "b-class-owned-helper-calls-8b2cb740-0178-4cb6-b5fe-37e5e0a1dfd5",
+  "handoff_scope": [
+    {
+      "kind": "class-owned-helper-calls",
+      "at": "2026-10-14T19:57:51.553077+00:00",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+      "manifest": {
+        "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+        "componentPreimages": [
+          {
+            "path": "src/ir/program-callable-bindings.ts",
+            "bytes": 37486,
+            "sha256": "dbd2fc449745f086df7f8128980f951257ad56d04da1ec35c780ab1f88134737",
+            "functions": "collectCallableGraphUses: genuine original terminal class constructor/method/field caller roots, exact checker fixed-target binding resolution; no change to target population or aliases"
+          }
+        ],
+        "canonicalNewPaths": [
+          "tests/issue-6920-native-js-class-helper-calls.test.ts"
+        ],
+        "scope": "Close exact AST-site call plans for original class body and initializer calls to ordinary function/alias targets across sources. All calls must carry their actual indexed owner and fixed binding target.",
+        "constraints": "No annotation projection, name fallback, fabricated unit/node/site/header, mutable target admission, duplicate root scanning or class method static call bypass. Preserve original source function/alias resolution, nested function ownership and all unit/ABI/accounting invariants. Source and codec proof only until native class execution qualifies; no public readiness/phase waiver. Preserve source capsules/agent snapshots, branches, HOLDs/queue."
+      },
+      "manifestSha256": "0a923ffe05b4d7ba82b258b1ed6215ce7906ae73f25f20ab525dfb948aaef75b",
+      "constraints": "No annotation projection, name fallback, fabricated unit/node/site/header, mutable target admission, duplicate root scanning or class method static call bypass. Preserve original source function/alias resolution, nested function ownership and all unit/ABI/accounting invariants. Source and codec proof only until native class execution qualifies; no public readiness/phase waiver. Preserve source capsules/agent snapshots, branches, HOLDs/queue."
+    }
+  ],
+  "predecessors": [
+    "3522-b-native-class-semantic-producer-20261014.json",
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}
