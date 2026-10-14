@@ -64,6 +64,7 @@ import { registerImportCollectorDelegates } from "../registry/import-collector-d
 import { expressionHasWidenedPropertyType } from "../strict-eq-stale-type.js";
 import { isConsoleValueIdentifier } from "../standalone-console-object.js";
 import { collectorReceiverType } from "../builtin-subclass-receiver.js"; // (#6651 C5) inherited builtin members
+import { hostDateParseLane } from "../helpers/host-date-parse.js";
 
 /** Accumulated state for the single-pass collector */
 export interface UnifiedCollectorState {
@@ -816,7 +817,8 @@ export function unifiedVisitNode(ctx: CodegenContext, state: UnifiedCollectorSta
   // HOST mode only — standalone/WASI use the native `__date_parse` emitted at
   // the call site. `Date.parse(...)` (member call) and `new Date(<string>)`
   // both delegate to the host JS `Date.parse` via `__date_parse_host`.
-  if (!ctx.standalone && !ctx.wasi) {
+  // (#6978) The native regime joins only with the `date` host accelerator.
+  if (hostDateParseLane(ctx)) {
     if (
       ts.isCallExpression(node) &&
       ts.isPropertyAccessExpression(node.expression) &&
@@ -1867,7 +1869,7 @@ export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedColl
   // call sites (Date.parse / new Date(<string>)) get a stable funcidx without a
   // mid-body late-import shift (#2043). Standalone/WASI never reach here (the
   // scan only sets the flag for host mode); they keep the native `__date_parse`.
-  if (state.dateParseHostNeeded && !ctx.standalone && !ctx.wasi && !ctx.funcMap.has("__date_parse_host")) {
+  if (state.dateParseHostNeeded && hostDateParseLane(ctx) && !ctx.funcMap.has("__date_parse_host")) {
     const typeIdx = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "f64" }]);
     addImport(ctx, "env", "__date_parse_host", { kind: "func", typeIdx });
   }

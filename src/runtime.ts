@@ -19,6 +19,7 @@ import type { CompileResult, ImportDescriptor, ImportIntent, ImportPolicy } from
 import { validateExportBoundaryPolicies } from "./boundary-policy.js";
 import type { BoundaryValuePolicy, ExportBoundaryPolicy } from "./boundary-policy.js";
 import { classifyHostImport } from "./host-import-policy.js";
+import type { HostAcceleratorFamily } from "./target-profile.js";
 import {
   createJavaScriptAdapterManifest,
   validateJavaScriptAdapterManifest,
@@ -4833,6 +4834,7 @@ export function buildCompiledAdapterImports(
     ...options,
     ...authority,
     ambientCompatibility: options.ambientCompatibility ?? targetProfile.semanticProviders !== "native-first",
+    hostAccelerators: options.hostAccelerators ?? targetProfile.accelerators,
   });
 }
 
@@ -19522,6 +19524,8 @@ export interface BuildImportsOptions extends CompiledCapabilityAuthorityOptions 
    * derives false for native-first modules from their frozen target profile.
    */
   ambientCompatibility?: boolean;
+  /** (#6978) Selected host accelerators (from the target profile); the native-first binder admits them. */
+  hostAccelerators?: readonly HostAcceleratorFamily[];
   /**
    * Runtime implementation for dynamic eval and new Function (#6779).
    *
@@ -19636,7 +19640,7 @@ export function buildImports(
   for (const imp of manifest) {
     if (imp.module !== "env") continue;
     if (options?.ambientCompatibility === false) {
-      const policy = classifyHostImport(imp);
+      const policy = classifyHostImport(imp, undefined, options?.hostAccelerators);
       if (policy.classification === "legacy-semantic" || policy.classification === "unknown") {
         throw new Error(
           `Native-first adapter cannot bind ${imp.module}::${imp.name}: ` +

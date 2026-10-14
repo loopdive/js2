@@ -20,6 +20,16 @@ export type SemanticProviderPolicy = "host-assisted" | "native-first" | "backend
 export type HostValueInteropPolicy = "required" | "enabled" | "off";
 export type AmbientPlatform = "node" | "deno";
 
+/**
+ * (#6978) Named host accelerators for the native semantic regime. Each family
+ * keeps its native provider as the default; selecting one swaps in the JS
+ * host's implementation for that family only. The 2026-09-07 stakeholder
+ * constraint names exactly these four (`wasm:js-string` strings, host RegExp,
+ * Date and Intl); everything else host-semantic retires in S7 (#5385).
+ */
+export const HOST_ACCELERATOR_FAMILIES = ["js-string", "regexp", "date", "intl"] as const;
+export type HostAcceleratorFamily = (typeof HOST_ACCELERATOR_FAMILIES)[number];
+
 export function ambientPlatformOf(input: {
   platform?: "web" | "node" | "deno";
   emulateNode?: boolean;
@@ -43,6 +53,8 @@ export interface TargetProfileInput {
   /** Used only to reject a contradictory explicit native-first request. */
   readonly nativeStrings?: boolean;
   readonly hostBridge?: "auto" | "always" | "off";
+  /** (#6978) Named host accelerators; validated by `resolveHostAccelerators`. */
+  readonly hostAccelerators?: readonly string[];
 }
 
 /**
@@ -73,6 +85,59 @@ export interface CompileTargetProfile {
    */
   readonly nativeRegime: boolean;
   readonly ambientPlatform?: AmbientPlatform;
+  /**
+   * (#6978) Selected host accelerators, sorted and de-duplicated. Absent when
+   * none is selected, so a default profile — and the JSON adapter manifest that
+   * embeds it — is unchanged. An array rather than a `Set` because the profile
+   * is serialized into the adapter manifest. Query with `hasHostAccelerator`.
+   */
+  readonly accelerators?: readonly HostAcceleratorFamily[];
+}
+
+/** (#6978) Whether `family` is a selected host accelerator of `profile`. */
+export function hasHostAccelerator(
+  profile: Pick<CompileTargetProfile, "accelerators">,
+  family: HostAcceleratorFamily,
+): boolean {
+  return profile.accelerators?.includes(family) === true;
+}
+
+/**
+ * (#6978) Validate a host-accelerator request against the resolved policy. An
+ * accelerator swaps a native provider for the JS host's, so it needs a JS
+ * environment that permits host imports and a native-first policy to swap out
+ * of; anything else is a compile error, never a silent no-op.
+ */
+function resolveHostAccelerators(
+  requested: readonly string[] | undefined,
+  facts: { target: CompileTarget; environment: CompileEnvironment; capabilityPolicy: CapabilityPolicy },
+  semanticProviders: SemanticProviderPolicy,
+): readonly HostAcceleratorFamily[] {
+  if (requested === undefined || requested.length === 0) return [];
+  const known: readonly string[] = HOST_ACCELERATOR_FAMILIES;
+  for (const name of requested) {
+    if (!known.includes(name)) {
+      throw new Error(`Unknown host accelerator '${name}'; expected one of: ${HOST_ACCELERATOR_FAMILIES.join(", ")}`);
+    }
+  }
+  const families = [...new Set(requested as readonly HostAcceleratorFamily[])].sort();
+  const list = families.join(", ");
+  if (facts.environment !== "javascript") {
+    throw new Error(
+      `Host accelerator(s) ${list} require a JavaScript environment; target '${facts.target}' has none. ` +
+        `Remove the accelerator or compile for the default JS target.`,
+    );
+  }
+  if (facts.capabilityPolicy !== "ambient-js") {
+    throw new Error(`Host accelerator(s) ${list} need host imports, which strictNoHostImports forbids.`);
+  }
+  if (semanticProviders !== "native-first") {
+    throw new Error(
+      `Host accelerator(s) ${list} only apply to the native-first semantic regime; the host-assisted ` +
+        `profile already uses every host provider. Select semanticProviders: "native-first".`,
+    );
+  }
+  return Object.freeze(families);
 }
 
 export function resolveCompileTargetProfile(input: TargetProfileInput = {}): CompileTargetProfile {
@@ -112,6 +177,12 @@ export function resolveCompileTargetProfile(input: TargetProfileInput = {}): Com
           : "native-first";
   }
 
+  const accelerators = resolveHostAccelerators(
+    input.hostAccelerators,
+    { target, environment, capabilityPolicy },
+    semanticProviders,
+  );
+
   const hostBridge = input.hostBridge ?? "auto";
   const hostValueInterop: HostValueInteropPolicy =
     hostBridge === "off"
@@ -150,5 +221,6 @@ export function resolveCompileTargetProfile(input: TargetProfileInput = {}): Com
     nativeStringsRequiredByPolicy:
       target === "standalone" || target === "wasi" || strictEnvImportGate || semanticProviders === "native-first",
     ambientPlatform: input.ambientPlatform ?? ambientPlatformOf(input),
+    ...(accelerators.length > 0 ? { accelerators } : {}),
   });
 }

@@ -107,7 +107,8 @@ import { tryCompileTemporalStaticCall } from "../temporal-native.js";
 import { pushDefaultValue } from "../type-coercion.js";
 import { ensureDateDaysFromCivilHelper } from "./builtins.js";
 import { emitStandaloneDateNowValue } from "../standalone-clock-capability.js";
-import { compileNewExpression, resolvesToNamedAmbientGlobal } from "./new-super.js";
+import { compileNewExpression, isStringTypedArg, resolvesToNamedAmbientGlobal } from "./new-super.js";
+import { emitAcceleratedDateParse } from "../helpers/host-date-parse.js";
 import {
   emitThrowTypeError,
   getFuncParamTypes,
@@ -4424,6 +4425,10 @@ export function compileNamespaceStaticCall(
           if (t) fctx.body.push({ op: "drop" });
         }
         fctx.body.push({ op: "f64.const", value: NaN });
+        return { kind: "f64" };
+      }
+      // (#6978) Native regime + `date` host accelerator: host-parse a string.
+      if (emitAcceleratedDateParse(ctx, fctx, expr.arguments, isStringTypedArg(ctx, expr.arguments[0]!))) {
         return { kind: "f64" };
       }
       // Standalone / WASI: pure-Wasm native parser (#2164).
