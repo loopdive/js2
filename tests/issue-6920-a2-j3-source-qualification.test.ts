@@ -134,7 +134,7 @@ function undefinedEncoding(program: PreparedIrProgram): PreparedIrProgram {
   });
 }
 
-function uncoveredMultiply(program: PreparedIrProgram): PreparedIrProgram {
+function uncoveredSubtraction(program: PreparedIrProgram): PreparedIrProgram {
   let edits = 0;
   const change = (functions: readonly IrFunction[]) =>
     functions.map((fn) => ({
@@ -144,7 +144,7 @@ function uncoveredMultiply(program: PreparedIrProgram): PreparedIrProgram {
         instrs: block.instrs.map((instr) => {
           if (instr.kind !== "binary" || instr.op !== "f64.add") return instr;
           edits++;
-          return { ...instr, op: "f64.mul" as const };
+          return { ...instr, op: "f64.sub" as const };
         }),
       })),
     }));
@@ -423,7 +423,7 @@ describe("A2 real source under current J3 allocation evidence", () => {
   });
 
   it("retains well-formed uncovered arithmetic as a located capability refusal", () => {
-    const bad = uncoveredMultiply(actual().program);
+    const bad = uncoveredSubtraction(actual().program);
     const result = expectLocatedUnsupported(bad);
     expect(result.detail).toContain("finite semantic profile");
   });

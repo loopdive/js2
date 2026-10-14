@@ -58,6 +58,73 @@ export function hasStructuredNumericVectors(module: IrModule): boolean {
   }
   return vectors && control;
 }
+/** Native-only length/multiply scheduling; complete evidence replay remains authoritative. */
+function hasPureNumericVectorMultiply(module: IrModule): boolean {
+  let selected = false;
+  for (const fn of module.functions) {
+    if (
+      (fn.funcKind !== undefined && fn.funcKind !== "regular") ||
+      fn.blocks.length !== 1 ||
+      fn.slots?.length ||
+      ["asyncPlan", "asyncRuntime", "generatorBufferSlot", "closureSubtype", "captures"].some((key) =>
+        Object.hasOwn(fn, key),
+      )
+    )
+      return false;
+    const block = fn.blocks[0]!;
+    if (block.blockArgs.length || block.blockArgTypes.length || block.terminator.kind !== "return") return false;
+    let allocated = false,
+      lengthRead = false,
+      multiply = false;
+    const seen = new Set<readonly IrInstr[]>();
+    const visit = (buffer: readonly IrInstr[], outer: boolean, depth: number): boolean => {
+      if (depth > 128 || seen.has(buffer)) return false;
+      seen.add(buffer);
+      for (const instr of buffer) {
+        switch (instr.kind) {
+          case "const":
+            if (!primitiveKind(instr.resultType) || instr.value.kind !== primitiveKind(instr.resultType)) return false;
+            break;
+          case "binary":
+            if (instr.op !== "i32.lt_u" && instr.op !== "f64.add" && instr.op !== "f64.mul") return false;
+            multiply ||= instr.op === "f64.mul";
+            break;
+          case "vec.new_fixed":
+            if (
+              !outer ||
+              !numericVector(instr.resultType) ||
+              instr.resultType?.kind !== "vec" ||
+              instr.resultType.nullable ||
+              instr.alloc === undefined
+            )
+              return false;
+            allocated = true;
+            break;
+          case "vec.get":
+            break;
+          case "vec.len":
+            lengthRead ||= primitiveKind(instr.resultType) === "f64" && instr.integer !== true;
+            break;
+          case "if":
+            if (
+              !primitiveKind(instr.resultType) ||
+              instr.result === null ||
+              !visit(instr.then, false, depth + 1) ||
+              !visit(instr.else, false, depth + 1)
+            )
+              return false;
+            break;
+          default:
+            return false;
+        }
+      }
+      return true;
+    };
+    if (!visit(block.instrs, true, 0)) return false;
+    selected ||= allocated && lengthRead && multiply;
+  }
+  return selected;
+}
 function successors(block: IrBlock): readonly IrBlockId[] {
   const term = block.terminator;
   return term.kind === "br"
@@ -202,7 +269,7 @@ export function verifyNativeAllocationEvidence(
   registry: AllocRegistrySnapshot,
   globals?: ReadonlyMap<string, NativeModuleGlobalEvidence>,
 ): AllocationEvidenceCheck {
-  return hasStructuredNumericVectors(module)
+  return hasStructuredNumericVectors(module) || hasPureNumericVectorMultiply(module)
     ? verifyStructuredNumericVectorEvidence(module, registry, globals)
     : verifyAllocationEvidence(module, registry);
 }

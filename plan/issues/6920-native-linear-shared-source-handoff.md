@@ -4330,3 +4330,126 @@ This comparison includes the composed DTS checkpoint and is not an isolated
 c2 A/B attribution or a full-green-suite claim. Existing shared hook/RPC/test
 policies remain unchanged. Final argv, report hashes, terminal status and
 comparison are in `.tmp/zero-push-root/`.
+
+
+## B native-only pure vector multiplication receiver (2026-10-14)
+
+The published f108c29f refinement receives a separate private native selector
+in the existing208-line structured-vector-profile owner, plus selection OR,
+a genuine new pure-multiply test and this issue append. Its source base is
+the signed365e89f62 zero-push checkpoint. The exact old structured selector,
+historical verifier, generic producers/effect rules, scalar J212 fallback and
+held joined-validation tests remain byte-preserved. No new policy leaf or
+inventory-domain change is needed.
+
+This selector only schedules the unchanged complete structured verifier for
+a finite one-block module with genuine nonnullable logical-f64 constructors,
+vector reads and exact f64.mul in the same vector-bearing function. Existing
+contextual/provenance/all-view and metadata guards remain authoritative. It
+does not declare scalar programs covered or supply fabricated evidence.
+
+An explicitly instrumented design control on the genuine length-math source
+passes1/1: original producers plus spy-selected unchanged structured replay
+prepare and execute24 live/codec calls on four profiles, with matching225/0/2
+values, matching per-profile binaries and no numeric append helper. Scalar-only
+multiplication prepares with zero selected dispatches. This is design evidence
+and provides no uninstrumented production admission or clean-base runtime
+credit. Actual new-source qualification remains required. Root separately owns
+reconciliation of the old zero-push math refusal only after this feature passes.
+The complete class/closure, runtime, conformance/performance/retirement and main
+goal remains open. Root controls commits/push, PR6662 HOLD and A's queue boundary.
+
+
+### Native pure length multiplication receiving checkpoint (2026-10-14, Session B)
+
+The remotely verified e633ac9b refinement adds one private finite selector in
+structured-vector-profile.ts and its native-only dispatch OR. The original
+208-line module is recovered byte-for-byte by removing those additions;
+the complete old hasStructuredNumericVectors function, historical verifier,
+effect rules, generic producers and held scalar/codec algorithms remain exact.
+The receiving module is275 lines, with no new compiler inventory leaf or domain.
+
+Selection requires a genuine nonnullable logical-f64 outer constructor, an
+actual F64 vec.len consumer and exact f64.mul in the same function. Every
+function remains regular and single-block, without slots, block arguments,
+calls, structured statements, loops or exotic function forms. Only old
+primitive constants, finite binary operations and primitive-result scalar if
+expressions with recursively finite read/math arms are admitted; allocations
+inside arms and foreign reference constants remain outside this profile.
+Selection schedules the unchanged independent structured replay after the
+existing canonical, provenance, facts, all-view and namespace guards. It
+supplies no metadata and grants no generic scalar coverage.
+
+Actual new-source qualification is23/23, exit0, on the requested original
+indexed225 fixture for both length and zero-push forms. There are48 live/codec
+runtime calls across all four profiles,24 public-compile calls with direct
+generators forbidden, and8 scalar calls with exact historical/current program
+and per-profile binary equality. The live/codec paths poison source
+reconstruction, execute independent JavaScript-derived225/0/2 values, retain
+real f64.mul and require zero append operations, helpers and demand uses.
+Operand/result/SSA and arm scope, site/type/state, namespaces, facts,
+runtime-view currentness and finite grammar exclusions have genuine hostile
+controls. Neighboring sub/div remain unsupported. No scalar-only or scalar
+sibling multiplication triggers this selector.
+
+The first strict no-nested epoch collected17 definitions but refused in setup
+before every body because authentic indexed reads lower to old scalar if arms.
+That failed epoch remains preserved. The first generic cohort is100/103;
+length discrimination restores the held joined suite to52/52. The subsequent
+combined epoch is124/125, with the new suite22/22 at that epoch and one old
+A2 source negative still asserting that deliberately rewritten multiply
+instructions are unsupported. Its actual xs[0]+xs[1]+xs.length fixture becomes
+multiply in every original/runtime root, genuinely entering this new profile.
+Root separately owns reconciliation to a still-unsupported opcode; this
+worker does not change that A2 file, its scalar-only f64.mul fallback controls,
+or the old zero-push frontier expectation. No combined green claim is made.
+
+The neighboring Math.min ownership invariant reproduces on clean365e89f62
+with the exact same program-allocations stale-ownership diagnostic. It remains
+a pre-existing genuine invariant, not sourceUnsupported or a covered feature;
+its observations and failed epochs remain private receipts rather than a
+production test freezing the unrelated defect.
+
+Full source plus every issue6920 root types cleanly with exclude:[]; the
+optional issue3518 cohort retains five separate pre-existing transport,
+WebAssembly and provider typing diagnostics. Seven structural, inventory and
+function-budget gates pass. Complete compiler-boundaries mode still reports
+inventory-valid architecture-incomplete; the complete migration, class and
+runtime seams, conformance, performance, retirement and verified-main goals
+remain open. No commit, staging, push or claim mutation was performed here.
+All exact cases, failures, argv, byte seals and terminal records are under
+.tmp/native-pure-multiply for root integration review.
+
+
+### Session B root arithmetic checkpoint qualification (2026-10-14)
+
+The verified shared-seam claim is 2194d8ae8b2ca481e4b5af68a98cbd232e2010c5.
+The private native selector admits genuine logical f64 vector length plus multiplication
+with the existing structured verifier authoritative; no generic verifier/effect rules
+or held J3 algorithms changed. Removing the private selector restores the original
+208-line module byte-for-byte. The worker's three-path frozen receipt was verified
+before root reconciliation.
+
+Root reconciled exactly two obsolete frontier controls. The A2 fixture still mutates
+all root/runtime f64.add instructions and asserts at least one edit, but now uses
+f64.sub (uncoveredSubtraction); all other bytes and all assertions remain unchanged.
+The eight-case zero-push suite's obsolete multiplication refusal now runs its exact
+source against JavaScript and executes 48 actual calls across live/codec and four
+profiles, with binary equality; its other seven cases remain byte-exact. The new
+23-case arithmetic suite remains worker-sealed unchanged.
+
+The five-file combined run executed 134/134 passing tests, actual exit 0, no unhandled
+errors, with default and JSON reporters and the existing 120-second deadlines. It
+includes the complete 52-case held joined-validation suite, 29-case A2 suite and
+22-case allocation-evidence suite. Full-source/native typing used 1997 source files
+and 67 explicit test roots with exclude [], actual exit 0. Eight scalar artifact
+rows compare all fields byte-exact with published predecessor 365e89f6. Scoped
+format, lint and whitespace checks passed. Worker structural/inventory gates also
+passed; historical failed qualification epochs remain preserved.
+
+Evidence: .tmp/native-pure-multiply/final-receipt.json and
+.tmp/native-pure-multiply-root/{combined.json,combined.exit,root-reconciliation.json,
+scalar-pair.json,typing.log,typing.exit,tsconfig.scope.json}.
+This remains a bounded arithmetic checkpoint. Math.min's authentic predecessor
+ownership invariant, class runtime support, complete source coverage, both-backend
+matrices, optimization retirement, Test262 and verified final main remain open.

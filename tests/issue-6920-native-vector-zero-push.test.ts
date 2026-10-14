@@ -226,22 +226,29 @@ it("keeps pure empty/nonempty/statement zero-push modules free of append calls, 
   }
   expect(executions).toBe(24);
 }, 120000);
-it("preserves the separate pure f64.mul finite-profile gap for actual zero push and its identical length counterpart", () => {
+it("executes pure f64 multiplication for actual zero push and its identical length counterpart", async () => {
+  let executions = 0;
+  const values = { plain: 225, empty: 0, statement: 2 };
   for (const read of ["a.push()", "a.length"]) {
     const text = `export function plain():number{const a=[2,5];const n=${read};return n*100+a[0]*10+a[1];}
 export function empty():number{const a:number[]=[];return ${read};}
 export function statement():number{const a=[2,5];${read};return a.length;}`;
-    const result = prepare(text);
-    expect(result.kind).toBe("unsupported");
-    if (result.kind !== "unsupported") throw Error("missing pure-profile frontier");
-    expect(result.code).toBe("array-representation-unsupported");
-    expect(result.stage).toBe("resolve");
-    expect(result.detail).toBe("native Linear allocation evidence is outside the finite semantic profile");
-    expect(result.cause).toMatchObject({
-      evidence: { kind: "not-covered", reason: "numeric-opcode", at: { block: 0, root: 5 } },
-    });
+    expect(nodeReference(text, Object.keys(values))).toEqual(values);
+    const program = requireProgram(prepare(text)),
+      sealed = encodePreparedIrProgram(program);
+    for (const policy of policies) {
+      const binaries: Uint8Array[] = [];
+      for (const value of [program, decodePreparedIrProgram(sealed)]) {
+        const binary = Uint8Array.from(emitBinary(emit(value, policy).module));
+        binaries.push(binary);
+        executions += execute(exportsOf(binary), values);
+        await yieldTurn();
+      }
+      expect(binaries[0]).toEqual(binaries[1]);
+    }
   }
-});
+  expect(executions).toBe(48);
+}, 120000);
 it("retains authentic deferred global TDZ and current length across repeated zero pushes on four profiles live/codec", async () => {
   const program = requireProgram(prepare(deferred, true)),
     sealed = encodePreparedIrProgram(program);
