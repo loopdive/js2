@@ -16563,6 +16563,14 @@
       "destination": "backend-wasmgc",
       "owner": "6920-session-b-native-takeover",
       "nextBoundary": "Injected common emission coordination retains original GC and Linear reservation owners; move with the consumer after separating portable origin lookup from target resource ports."
+    },
+    {
+      "path": "src/compiler/native-ir-dts.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "compiler",
+      "owner": "6920-session-b-native-takeover",
+      "nextBoundary": "Source-free native scalar declarations derive from immutable semantic ABI and authentic current emissions; Prepared program and consumer imports retain migration debt until their complete import closure is separated."
     }
   ]
 }

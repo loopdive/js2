@@ -39,6 +39,7 @@ import {
   beginPreparedPresentationFinalization,
   completePreparedPresentationFinalization,
   preparedPresentationWitView,
+  preparedPresentationNativeDts,
   type PreparedPresentationFinalization,
   type PreparedPresentationFinalizationReceipt,
   type IrProgramPresentationResult,
@@ -1258,6 +1259,7 @@ export function runPreparedIrPipelinePresentation(input: PipelineInput): Prepare
     { targetProfile, emitWatOutput: options.emitWat !== false, emitSourceMap: options.sourceMap === true },
     finalization,
     wit,
+    isNativeIrCompileProfile(targetProfile) ? prepared : undefined,
   );
   if (wit?.gaps) return { kind: "presentation-unsupported", gaps: wit.gaps };
   if (finalized.success && finalization && !finalization.receipt)
@@ -1302,6 +1304,7 @@ function finalizePipelineModule(
   },
   finalization?: PreparedMixedFinalization,
   wit?: PreparedWitFinalization,
+  nativeDts?: Extract<IrProgramPresentationResult, { kind: "prepared-presentation" }>,
 ): CompileResult {
   const { errors, options, entryAst, diagnosticAnchor } = input;
   const { targetProfile, emitWatOutput, emitSourceMap } = output;
@@ -1386,6 +1389,10 @@ function finalizePipelineModule(
     wit.text = rendered.text;
   }
 
+  // Native declarations are preflighted against the completed immutable handoff
+  // and authentic current physical output before any final artifact is emitted.
+  const preparedDts = nativeDts ? preparedPresentationNativeDts(nativeDts, mod) : undefined;
+
   // Step 3: Emit binary (with source map collection if enabled).
   let binary: Uint8Array;
   let sourceMapJson: string | undefined;
@@ -1468,7 +1475,7 @@ function finalizePipelineModule(
   }
 
   // Step 5: Generate .d.ts.
-  const dts = profilePhase("emit-dts", () => generateDts(entryAst, mod));
+  const dts = profilePhase("emit-dts", () => preparedDts ?? generateDts(entryAst, mod));
 
   const hostImportSummary = summarizeHostImportInventory(hostImportInventory);
   const capabilityRequirements =

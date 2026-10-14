@@ -1,3 +1,4 @@
+import { createNativePreparedDtsView, renderNativePreparedDts, type NativePreparedDtsView } from "./native-ir-dts.js";
 import { completedNumericAppendPresentation } from "./native-numeric-append-presentation.js";
 import { completedErrorPresentation, type CompletedErrorPresentation } from "./ir-program-error-presentation.js";
 import { completedLinearMemorySupportKeys } from "./ir-program-memory-presentation.js";
@@ -910,6 +911,12 @@ export function prepareIrProgramPresentation(request: IrProgramPresentationReque
     startup,
     ...(detached ? { requiresDetachedFinalization: true as const } : {}),
   });
+  if (capture.backend.target !== "host")
+    nativeDtsPresentations.set(presentation, {
+      view: createNativePreparedDtsView(program, emission),
+      module: mod,
+      original: observeModuleData(mod),
+    });
   if (detached)
     mixedPresentations.set(presentation, {
       plan: emittedPhysicalSetupPlan(emission),
@@ -1550,6 +1557,13 @@ export function completePreparedPresentationFinalization(
     verifyDataObservation(row, observation.widening.get(row.value), known, replacements);
   if (emittedPhysicalSetupPlan(observation.presentation.emission) !== observation.plan)
     finalizationFailure("original-changed");
+  const dts = nativeDtsPresentations.get(observation.presentation);
+  if (dts)
+    nativeDtsPresentations.set(observation.presentation, {
+      ...dts,
+      finalizedModule: token.outputModule,
+      finalized: observeModuleData(token.outputModule),
+    });
   const wit = witPresentations.get(observation.presentation);
   if (wit)
     witPresentations.set(observation.presentation, {
@@ -1594,4 +1608,30 @@ export function preparedPresentationWitView(
     throw error;
   }
   return observation.view;
+}
+
+interface NativeDtsPresentationObservation {
+  readonly view: NativePreparedDtsView;
+  readonly module: WasmModule;
+  readonly original: readonly DataObservation[];
+  readonly finalizedModule?: WasmModule;
+  readonly finalized?: readonly DataObservation[];
+}
+const nativeDtsPresentations = new WeakMap<object, NativeDtsPresentationObservation>();
+/** Exact native presentation and authorized detached post-state, including when WIT is absent. */
+export function preparedPresentationNativeDts(
+  presentation: Extract<IrProgramPresentationResult, { kind: "prepared-presentation" }>,
+  module: WasmModule,
+): string {
+  const observation = nativeDtsPresentations.get(presentation);
+  if (!observation) throw new Error("native prepared DTS: invalid presentation");
+  if (module !== observation.module && module !== observation.finalizedModule)
+    throw new Error("native prepared DTS: foreign module");
+  try {
+    for (const row of [...observation.original, ...(observation.finalized ?? [])]) verifyDataObservation(row);
+    return renderNativePreparedDts(observation.view);
+  } catch (error) {
+    nativeDtsPresentations.delete(presentation);
+    throw error;
+  }
 }

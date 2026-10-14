@@ -232,6 +232,7 @@ export interface EmittedSupportFunctionReceipt {
   readonly index: number;
 }
 interface EmissionObservation {
+  readonly program: PreparedIrProgram;
   readonly physical: PhysicalSetupPlan;
   readonly reservations: PhysicalModuleReservations;
   readonly functions: readonly FunctionReservation[];
@@ -527,6 +528,14 @@ export function emittedSupportFunctionReceipts(
   if (record.functions.length !== emitted.module.functions.length)
     emissionFailed("completed emission function census changed");
   return record.support;
+}
+
+/** Exact immutable semantic owner, never reconstructed from structurally equal IDs. */
+export function assertEmittedPreparedIrProgram(program: PreparedIrProgram, emitted: EmittedPreparedIrProgram): void {
+  const record = startupAdapters.get(emitted);
+  if (!record || record.program !== program)
+    programInvariant("invalid-transaction-capability", "emission does not belong to this prepared program");
+  emittedSupportFunctionReceipts(emitted);
 }
 
 /** The exact accepted plan used by this authenticated completed emission. */
@@ -916,6 +925,7 @@ function reconcileNativeEmission(
 /** Snapshot the completed ABI using the existing successful-emission record. */
 function recordEmissionObservation(
   result: EmittedPreparedIrProgram,
+  program: PreparedIrProgram,
   plan: PhysicalSetupPlan,
   abi: ProgramAbiMap,
   reservations: PhysicalModuleReservations,
@@ -947,6 +957,7 @@ function recordEmissionObservation(
       ...(startAdapter ? { startupAdapterIndex: reservations.physicalIndex(startAdapter) } : {}),
       ...(startupGuard ? { startupGuard } : {}),
       bindings: Object.freeze(bindings),
+      program,
       physical: plan,
       reservations,
       functions: Object.freeze(functions),
@@ -1510,6 +1521,7 @@ function materializePhysicalProgram(
   const result: EmittedPreparedIrProgram = Object.freeze({ module, emittedUnitIds: Object.freeze(emittedUnitIds) });
   recordEmissionObservation(
     result,
+    program,
     plan,
     abi,
     reservations,

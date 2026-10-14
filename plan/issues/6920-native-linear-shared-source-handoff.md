@@ -11,6 +11,10 @@ feasibility: hard
 reasoning_effort: high
 task_type: planning
 area: ir
+loc-budget-allow:
+  - src/compiler/ir-program-presentation.ts
+  - src/compiler.ts
+  - src/ir/program-consumer.ts
 language_feature: arrays
 goal: correctness
 parent: 3518
@@ -4069,3 +4073,74 @@ Fresh sole ownership and an exact native-f64 leaf partition must be registered
 before any writes. Genuine public/live/codec, aliases/global receivers, capacity
 crossing, later-argument throw, protocol mutation and preserved legacy/non-f64/spread
 controls remain required.
+
+
+## B native immutable declaration receiver (2026-10-14, qualified pending integration)
+
+The registered public-routing receiver now derives native Number, Boolean and
+void callable declarations from the actual immutable program ABI, canonical
+source unit/formals/results and the consumer's completed physical signatures.
+The consumer retains the exact accepted program pointer; structurally equal
+identities are not authority to pair another program with an emission. The
+native finalizer captures both the original module and the existing canonical
+detached/widened output even when WIT is absent, then rechecks those observations
+before emitting final artifacts. Legacy and host declaration generation retain
+their original source renderer.
+
+The complete physical export census distinguishes source callables, source
+globals, authenticated startup exports and planned Linear memory exports.
+Unknown runtime/support/callback exports refuse rather than disappear. Original
+consumer reservations authenticate emitted exception tags and other physical
+resources. Source globals remain an explicit callable-DTS omission: the current
+wrapper returns a WebAssembly.Global, so declaring a scalar value would be wrong.
+Public vector transport, async/reference declaration contracts and global
+declarations remain migration work; this checkpoint does not complete the goal.
+
+The intended behavior corrections are inferred numeric return declarations,
+canonical aliases/reexports, actual `default` export naming and valid Unicode
+identifiers. Reserved/arbitrary export names use deterministic collision-free
+local declarations and TypeScript aliases. No source annotation renderer is
+pre-called and no rendered declaration text enters PreparedIR or its codec.
+Qualification is running in the isolated native-DTS receiver; no source commit,
+push or PR comment has been produced by this writer. A's queue ownership and
+PR6662 HOLD remain unchanged.
+
+Qualification uses pinned Node 25.9.0. The new declaration test passes 7/7;
+vector presentation passes 12/12 and existing Error controls pass 14/14 across
+three files, giving 33/33 cases across five distinct files in separate commands.
+The declaration tests exercise four native profiles, eight live/codec renders,
+four public executions with the legacy declaration renderer and post-Prepared
+AST fields forbidden, genuine foreign-program/token refusals, eight actual
+physical mutations, five malformed semantic records, and both original/output
+snapshot mutations with WIT absent. TypeScript validates the generated
+declarations. All source files and the named declaration test typecheck with
+`exclude: []`.
+
+Eight ordinary scalar/Boolean artifact rows remain exactly equal to the prior
+control, including binary, WAT, declaration text, WIT, imports helper, signatures
+and capability data. A separate native WasmGC/standalone source matrix compares
+13 forms against clean commit `4b90c5a5d90d68f1e7604035a1bc8923c63b4662`: 12
+forms produce artifacts on both sides and eight change only declaration text
+(inferred numeric return, alias, reexport, named default, Unicode, reserved name,
+arbitrary export name and a generated-local collision). All remaining measured
+artifact fields agree. The inferred-Boolean form retains the identical located
+source/ABI signature refusal on both sides and remains a preparation gap.
+
+The first declaration-test epoch retained two instrument failures from implicit
+ambient Node types: a trivial declaration control reproduces five `undici-types`
+resolution diagnostics; setting the declaration instrument's `types: []` yields
+zero without changing generated declarations. The initial 13-form matrix stopped
+on the real inferred-Boolean preparation refusal; its retry records that refusal
+explicitly. Every failed epoch remains in the receiver's private evidence.
+
+This change intentionally permits only three measured existing owner hooks in
+this issue's LOC allowance: presentation grows 31 counted lines for its private
+original/finalized authority map, compiler grows seven for native dispatch and
+preflight, and consumer grows five for the exact immutable program pointer and
+association/currentness assertion. Declaration algorithms live in the new
+subsystem leaf. Moving those authority hooks would require an unrelated generic
+verifier relocation or weaken the owning capability boundary; neither occurred.
+There is no total or shared-baseline allowance, no generic source renderer change
+and no legacy emitter/allocator body change. The inventory remains explicitly
+`architectureComplete: false`, with the new leaf marked `mixed-needs-split` until
+its complete consumer/program import closure is separated.
