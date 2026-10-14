@@ -134,3 +134,15 @@ Residuals deliberately left out:
 - `e instanceof Error` is false for a host Error caught in-module; pre-existing.
 - `for (const v of new G())` where `G` has `*[Symbol.iterator]()` throws under
   nf/sa on main as well; not on this issue's list.
+
+## Host-import policy ceilings (2026-10-14, lead)
+
+The `quality` job's "Native-first host semantic debt gate (#4401)" rejected
+this branch: native-first imports 452 > 446, `runtime.ts` 20,237 > 20,222
+lines, owned adapter lines 992 > 962. All three are the JS-environment arms
+of this fix — the `__boundary_object_callable_kind` classifier registration,
+the boundary-import rethrow on the module's `__exn_tag`, and the null
+pass-through for `dynamic` export arguments — classified `value-adapter`
+(legacy-semantic stays 0, unknown 0). Ceilings in
+`plan/audit/host-import-policy-baseline.json` raised to the measured values;
+whichever of #6708/#6978/#6982 lands last re-measures the sum.
