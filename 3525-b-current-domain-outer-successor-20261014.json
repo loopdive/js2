@@ -6,8 +6,8 @@
   "status": "in-progress",
   "branch": "codex/3525-b-current-domain-20261014-01a12827",
   "claimed_at": "2026-10-14T00:44:16.253070Z",
-  "updated_at": "2026-10-14T10:10:51.153700Z",
-  "write_id": "b-number-undefined-successor-485c9ab5-0fa5-48a4-b40e-f3e972b016b6",
+  "updated_at": "2026-10-14T11:00:56.277083Z",
+  "write_id": "b-number-undefined-6fef5a5a-3d51-4c2b-af39-2f1caa3b9c68",
   "handoff_scope": [
     "tests/helpers/ir-deno-post-position-main-successor.ts and tests/helpers/ir-deno-post-position-main-successor.json: finite outer projection of independently frozen1997-row policy to the preserved1874-row endpoint; authenticate all123 insertions and nine layer-field deltas with raw/semantic reciprocal equality. Preserve every historical authority, inner algorithm, public API and hostile control.",
     "tests/issue-4376-post-position-main-inventory-successor.test.ts: productive actual four-API current input and complete hostile row/layer/span/custody/currentness qualification; preserve all original identities and counts.",
@@ -236,6 +236,127 @@
         "answer": "Take over the blocking shared seams",
         "priorAnswer": "takeover all of session b"
       }
+    },
+    {
+      "paths": [
+        "tests/helpers/ir-native-number-undefined-finalization-policy-successor.ts",
+        "tests/helpers/ir-native-number-undefined-finalization-policy-successor.json",
+        "tests/issue-6920-native-number-undefined-finalization-policy-successor.test.ts",
+        "tests/issue-6920-native-number-undefined-source-successor.test.ts",
+        "tests/issue-3525-native-number-undefined-inventory-successor.test.ts",
+        "tests/issue-4376-post-position-main-inventory-successor.test.ts",
+        "tests/issue-6920-native-number-undefined-optimization-policy-successor.test.ts"
+      ],
+      "purpose": "Refine only the already-received seven-path outer2020-to-qualified2018 transport: authenticate and undo one actual existing optimizer whole-row replacement as well as two actual appended rows. No policy/production/source writes, old algorithm/default/pin/callback changes or added receiving paths.",
+      "existingRowTransport": {
+        "index": 2016,
+        "path": "src/compiler/ir-native-number-undefined-optimization.ts",
+        "beforeWholeRow": {
+          "path": "src/compiler/ir-native-number-undefined-optimization.ts",
+          "state": "unmigrated",
+          "layer": "mixed-needs-split",
+          "destination": "compiler",
+          "owner": "6920-session-b-native-takeover",
+          "nextBoundary": "Separate actual finalized-artifact production/custody and optimizer orchestration from compiler frontend and legacy transitive consumers, retaining private constructor-only provenance, exact currentness and atomic actual candidate acceptance. The compiler-private authority cycle and actual 1932-file closure/1564 debt remain explicit migration work; no clean compiler activation or general dynamic ABI follows."
+        },
+        "proposedCurrentWholeRow": {
+          "path": "src/compiler/ir-native-number-undefined-optimization.ts",
+          "state": "compatibility-adapter",
+          "layer": "mixed-needs-split",
+          "destination": "compiler",
+          "owner": "6920-session-b-native-takeover",
+          "nextBoundary": "Identity-preserving direct reexports of the four native Number/Undefined optimization functions and observation type now owned by pipeline-result-finalizer.ts. Keep this one-way compatibility path until its callers migrate; all constructor snapshots, issued state, currentness and optimizer execution live in the productive owner. The owner retains mixed frontend/output/legacy dependencies; no clean compiler activation or general dynamic ABI follows."
+        },
+        "proposalOnly": true,
+        "finalRootAuthoredCurrentRowRequired": true,
+        "beforeRawBlock": {
+          "startByte": 637199,
+          "endByte": 637866,
+          "bytes": 667,
+          "sha256": "2c61fb92e5370e650c78d23a479d53015782871514753a84396fc5f3dc3e7c50"
+        },
+        "exactPurpose": "Restore complete qualified2018 row object, never just rewrite state or hide unknown fields. Current row object is pinned wholly at actual final2020 source seal; proposed metadata is not final authority."
+      },
+      "insertedRows": [
+        {
+          "index": 2018,
+          "path": "src/compiler/pipeline-output-context.ts",
+          "actualWholeRowPending": true
+        },
+        {
+          "index": 2019,
+          "path": "src/compiler/pipeline-result-finalizer.ts",
+          "actualWholeRowPending": true,
+          "proposedCurrentWholeRow": {
+            "path": "src/compiler/pipeline-result-finalizer.ts",
+            "state": "unmigrated",
+            "layer": "mixed-needs-split",
+            "destination": "compiler",
+            "owner": "6920-session-b-native-takeover",
+            "nextBoundary": "Separate productive finalization and private constructor/optimization state ownership from retained generic CABI/DTS/WIT/source-map, output and validation dependencies without changing completion ordering, rec-group checks, one-shot native optimization, atomic candidate acceptance or old generic algorithms. Direct optimization ownership and one-way compatibility exports remove the new lifecycle authority cycle; measured mixed transitive closure remains migration work, not full boundary closure."
+          }
+        }
+      ],
+      "unchangedQualifiedRow": {
+        "index": 2017,
+        "wholeRow": {
+          "path": "src/wasm/physical/native-number-undefined-binary.ts",
+          "state": "clean",
+          "layer": "wasm-physical"
+        }
+      },
+      "dataProtocol": [
+        "Authenticate closed descriptor-copied receipt and actual whole current2020 raw+canonical DATA/files/nonfiles before mapping; current count exactly2020.",
+        "Validate exact full current row2016 and full inserted rows2018/2019, unchanged parser2017, complete ordered populations and all nonfiles coordinates.",
+        "Inverse replaces only row2016 with qualified2018 whole object and removes exactly terminal rows2018/2019; compare complete inverse against fixed qualified2018 raw/DATA/files/nonfiles authorities.",
+        "Reciprocal forward restores exact pinned final current whole optimizer row and appends the exact current two full rows; compare complete current DATA including every field and order.",
+        "Any other existing row, nonfiles field, allowedEdge or activationHistory difference refuses; no inferred allowance."
+      ],
+      "rawProtocol": [
+        "Root-frozen actual2020 policy is the sole current input; final spans/hashes remain pending its corrected owner seal.",
+        "Compute independently bounded whole optimizer-row replacement and final two-row append, each with before/current byte offsets, exact texts and authenticated neighboring spans. The old whole optimizer block is637199..637866; parser row must remain byte-exact.",
+        "Complete inverse equals all638010 qualified2018 bytes/SHA/Gitblob; reciprocal full forward equals all final current2020 bytes/SHA/Gitblob. Zero-length append uses bounded nonoverlapping offsets, never ambiguous common suffix or unbounded text replacement.",
+        "No synthetic composition or proposed metadata projection supplies live currentness/qualification authority."
+      ],
+      "factory": {
+        "fixedPhysicalCount": 12,
+        "order": [
+          "own new fixed JSON",
+          "actual whole2020 policy",
+          "four whole current callers",
+          "six exact old helper/JSON anchors"
+        ],
+        "healthyInventoryPhysicalCount": 14,
+        "extraOlderDenoPassthroughs": 2,
+        "oldOuterO06SuppliedReaderCount": 11,
+        "strictPrimitiveNonemptyPathBeforeAnyIO": true,
+        "strictOmittedDefaultsOnly": true,
+        "lazyPayloadFirstZeroIO": true,
+        "freshPerExplicitOperation": true,
+        "mappedRereads": 0,
+        "successfulCrossOperationCache": false,
+        "unknownReads": "Primitive nonempty paths once after fixed authentication; source reads remain actual current source, never historical text."
+      },
+      "prerequisites": [
+        "Root publication/verified current2018 checkpoint and exact seal52653f.",
+        "Corrected finalizer2020 final source/test/policy seal, natural complete original optimizer/finalizer+new controls, build/typing/static gates and actual accepted optimizer provenance.",
+        "Root remotely receives this exact existing-row refinement against current two receipt records, preserving sourceIndex and all donor/default/C1 scopes.",
+        "Read actual composed2020 source; reconstruct all95 source import closure and byte pins versus final2018. If any source operand changed, report exact path/seam and obtain finite receive rather than mapping old source."
+      ],
+      "outOfScope": [
+        "Root policy row authoring/production finalizer semantics/lifecycle source/test algorithms",
+        "Historical helper/JSON/schema/default algorithm rewrites",
+        "Held C1/default classifier/isView/presentation scopes and preserved2066 failures",
+        "Whole IR architecture/class runtime/retirement/main completion credit"
+      ],
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b"
+      },
+      "final2020PinsPending": true,
+      "proposalSha256": "88a4820da5ec740c721d93b641f0c739486392830ec294eddbaf624213cb1a97",
+      "qualified2018Seal": "52653ffa2ae433067f33c9bcabff8344a96133fa13eabc357e37fad6d2ee8ea7",
+      "preserve": "All e014 fourcaller finite initial hooks, complete caller inverse/forward/preimages, six old helper/JSON anchors, historical identities/default algorithms/literals/callbacks and actual physical saves remain exact; no new receiving paths. Final2020 source95 closure re-audit before implementation."
     }
   ],
   "documentation_scope": "Root-only append to plan/issues/3525-ir-r5-whole-program-multi-source-ownership.md for this bounded released outer-successor task; no assignee/acceptance rewrite.",
@@ -508,7 +629,136 @@
         "priorHumanAnswer": "takeover all of session b"
       },
       "reason": "Receive exact2020-to-2018 continuation initial joins preserving all predecessor callbacks/defaults/pins plus explicit own-field optionalflag currentness fix. New policy transport waits qualified/published2018 and final2020 seals."
+    },
+    {
+      "at": "2026-10-14T11:00:56.277083Z",
+      "addition": {
+        "paths": [
+          "tests/helpers/ir-native-number-undefined-finalization-policy-successor.ts",
+          "tests/helpers/ir-native-number-undefined-finalization-policy-successor.json",
+          "tests/issue-6920-native-number-undefined-finalization-policy-successor.test.ts",
+          "tests/issue-6920-native-number-undefined-source-successor.test.ts",
+          "tests/issue-3525-native-number-undefined-inventory-successor.test.ts",
+          "tests/issue-4376-post-position-main-inventory-successor.test.ts",
+          "tests/issue-6920-native-number-undefined-optimization-policy-successor.test.ts"
+        ],
+        "purpose": "Refine only the already-received seven-path outer2020-to-qualified2018 transport: authenticate and undo one actual existing optimizer whole-row replacement as well as two actual appended rows. No policy/production/source writes, old algorithm/default/pin/callback changes or added receiving paths.",
+        "existingRowTransport": {
+          "index": 2016,
+          "path": "src/compiler/ir-native-number-undefined-optimization.ts",
+          "beforeWholeRow": {
+            "path": "src/compiler/ir-native-number-undefined-optimization.ts",
+            "state": "unmigrated",
+            "layer": "mixed-needs-split",
+            "destination": "compiler",
+            "owner": "6920-session-b-native-takeover",
+            "nextBoundary": "Separate actual finalized-artifact production/custody and optimizer orchestration from compiler frontend and legacy transitive consumers, retaining private constructor-only provenance, exact currentness and atomic actual candidate acceptance. The compiler-private authority cycle and actual 1932-file closure/1564 debt remain explicit migration work; no clean compiler activation or general dynamic ABI follows."
+          },
+          "proposedCurrentWholeRow": {
+            "path": "src/compiler/ir-native-number-undefined-optimization.ts",
+            "state": "compatibility-adapter",
+            "layer": "mixed-needs-split",
+            "destination": "compiler",
+            "owner": "6920-session-b-native-takeover",
+            "nextBoundary": "Identity-preserving direct reexports of the four native Number/Undefined optimization functions and observation type now owned by pipeline-result-finalizer.ts. Keep this one-way compatibility path until its callers migrate; all constructor snapshots, issued state, currentness and optimizer execution live in the productive owner. The owner retains mixed frontend/output/legacy dependencies; no clean compiler activation or general dynamic ABI follows."
+          },
+          "proposalOnly": true,
+          "finalRootAuthoredCurrentRowRequired": true,
+          "beforeRawBlock": {
+            "startByte": 637199,
+            "endByte": 637866,
+            "bytes": 667,
+            "sha256": "2c61fb92e5370e650c78d23a479d53015782871514753a84396fc5f3dc3e7c50"
+          },
+          "exactPurpose": "Restore complete qualified2018 row object, never just rewrite state or hide unknown fields. Current row object is pinned wholly at actual final2020 source seal; proposed metadata is not final authority."
+        },
+        "insertedRows": [
+          {
+            "index": 2018,
+            "path": "src/compiler/pipeline-output-context.ts",
+            "actualWholeRowPending": true
+          },
+          {
+            "index": 2019,
+            "path": "src/compiler/pipeline-result-finalizer.ts",
+            "actualWholeRowPending": true,
+            "proposedCurrentWholeRow": {
+              "path": "src/compiler/pipeline-result-finalizer.ts",
+              "state": "unmigrated",
+              "layer": "mixed-needs-split",
+              "destination": "compiler",
+              "owner": "6920-session-b-native-takeover",
+              "nextBoundary": "Separate productive finalization and private constructor/optimization state ownership from retained generic CABI/DTS/WIT/source-map, output and validation dependencies without changing completion ordering, rec-group checks, one-shot native optimization, atomic candidate acceptance or old generic algorithms. Direct optimization ownership and one-way compatibility exports remove the new lifecycle authority cycle; measured mixed transitive closure remains migration work, not full boundary closure."
+            }
+          }
+        ],
+        "unchangedQualifiedRow": {
+          "index": 2017,
+          "wholeRow": {
+            "path": "src/wasm/physical/native-number-undefined-binary.ts",
+            "state": "clean",
+            "layer": "wasm-physical"
+          }
+        },
+        "dataProtocol": [
+          "Authenticate closed descriptor-copied receipt and actual whole current2020 raw+canonical DATA/files/nonfiles before mapping; current count exactly2020.",
+          "Validate exact full current row2016 and full inserted rows2018/2019, unchanged parser2017, complete ordered populations and all nonfiles coordinates.",
+          "Inverse replaces only row2016 with qualified2018 whole object and removes exactly terminal rows2018/2019; compare complete inverse against fixed qualified2018 raw/DATA/files/nonfiles authorities.",
+          "Reciprocal forward restores exact pinned final current whole optimizer row and appends the exact current two full rows; compare complete current DATA including every field and order.",
+          "Any other existing row, nonfiles field, allowedEdge or activationHistory difference refuses; no inferred allowance."
+        ],
+        "rawProtocol": [
+          "Root-frozen actual2020 policy is the sole current input; final spans/hashes remain pending its corrected owner seal.",
+          "Compute independently bounded whole optimizer-row replacement and final two-row append, each with before/current byte offsets, exact texts and authenticated neighboring spans. The old whole optimizer block is637199..637866; parser row must remain byte-exact.",
+          "Complete inverse equals all638010 qualified2018 bytes/SHA/Gitblob; reciprocal full forward equals all final current2020 bytes/SHA/Gitblob. Zero-length append uses bounded nonoverlapping offsets, never ambiguous common suffix or unbounded text replacement.",
+          "No synthetic composition or proposed metadata projection supplies live currentness/qualification authority."
+        ],
+        "factory": {
+          "fixedPhysicalCount": 12,
+          "order": [
+            "own new fixed JSON",
+            "actual whole2020 policy",
+            "four whole current callers",
+            "six exact old helper/JSON anchors"
+          ],
+          "healthyInventoryPhysicalCount": 14,
+          "extraOlderDenoPassthroughs": 2,
+          "oldOuterO06SuppliedReaderCount": 11,
+          "strictPrimitiveNonemptyPathBeforeAnyIO": true,
+          "strictOmittedDefaultsOnly": true,
+          "lazyPayloadFirstZeroIO": true,
+          "freshPerExplicitOperation": true,
+          "mappedRereads": 0,
+          "successfulCrossOperationCache": false,
+          "unknownReads": "Primitive nonempty paths once after fixed authentication; source reads remain actual current source, never historical text."
+        },
+        "prerequisites": [
+          "Root publication/verified current2018 checkpoint and exact seal52653f.",
+          "Corrected finalizer2020 final source/test/policy seal, natural complete original optimizer/finalizer+new controls, build/typing/static gates and actual accepted optimizer provenance.",
+          "Root remotely receives this exact existing-row refinement against current two receipt records, preserving sourceIndex and all donor/default/C1 scopes.",
+          "Read actual composed2020 source; reconstruct all95 source import closure and byte pins versus final2018. If any source operand changed, report exact path/seam and obtain finite receive rather than mapping old source."
+        ],
+        "outOfScope": [
+          "Root policy row authoring/production finalizer semantics/lifecycle source/test algorithms",
+          "Historical helper/JSON/schema/default algorithm rewrites",
+          "Held C1/default classifier/isView/presentation scopes and preserved2066 failures",
+          "Whole IR architecture/class runtime/retirement/main completion credit"
+        ],
+        "authority": {
+          "humanAnswer": "Take over the blocking shared seams",
+          "priorHumanAnswer": "takeover all of session b"
+        },
+        "final2020PinsPending": true,
+        "proposalSha256": "88a4820da5ec740c721d93b641f0c739486392830ec294eddbaf624213cb1a97",
+        "qualified2018Seal": "52653ffa2ae433067f33c9bcabff8344a96133fa13eabc357e37fad6d2ee8ea7",
+        "preserve": "All e014 fourcaller finite initial hooks, complete caller inverse/forward/preimages, six old helper/JSON anchors, historical identities/default algorithms/literals/callbacks and actual physical saves remain exact; no new receiving paths. Final2020 source95 closure re-audit before implementation."
+      },
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b"
+      },
+      "reason": "Receive the exact existing optimizer whole-row inverse in the already received seven test paths. Preserve historical kernel/default/callback/pin authority; implementation waits published2018 and final2020 qualified seal."
     }
   ],
-  "previous_write_id": "b-number-undefined-successor-bb4a8410-eb9e-4ced-9f9f-3d66449e4996"
+  "previous_write_id": "b-number-undefined-successor-485c9ab5-0fa5-48a4-b40e-f3e972b016b6"
 }
