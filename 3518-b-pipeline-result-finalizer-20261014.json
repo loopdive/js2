@@ -32,6 +32,17 @@
         "A object-finalizer/queue/main/HOLDs",
         "false clean/zero-debt claim"
       ]
+    },
+    {
+      "path": "src/compiler/pipeline-result-finalizer.ts",
+      "purpose": "Fix proven genuine Linear presentation inherited optional-flag getter after preparation, in ONLY productive entry and moved read-only checker.",
+      "exactChange": "One private own-descriptor requiresDetachedFinalization helper after genuine presentation/tuple identity; own absence=false, own DATA true exact, inherited shadow/accessor/noncanonical own form refuses via descriptor checks before getter or finalization effects. Reuse at two existing optionalflag read sites.",
+      "preserve": "All old generic finalizer, recgroup, target/options, projector and unrelated algorithms remain byte-exact; exact moved-checker body exception is explicitly these own-field read deviations, not a byte-identical claim. Captured options actual null prototype; no speculative options/registry/namespace changes.",
+      "controls": "Actual AFTER-preparation Object.prototype optionalflag getter for both factory/checker must reject with0 getter effects, restore real descriptors in finally, actual genuine healthy control and copied/foreign/pre-final/currentness cases. Retain prior86/11/build/4accepted epoch before fix; qualify final expanded suite/type/build/gates/provenance against new immutable8 manifest.",
+      "authority": {
+        "answer": "Take over the blocking shared seams",
+        "priorAnswer": "takeover all of session b"
+      }
     }
   ],
   "exact_function_scope": [
@@ -112,8 +123,8 @@
   "receiving_from_B_record": "6920-b-native-public-routing-takeover-20261013.json",
   "publication_dependency": "Separate fresh branch; root current2018 checkpoint and running inventory remain unchanged. Full62+new tests/typing/build and actual inventory/cycle closure qualified before adoption.",
   "claimed_at": "2026-10-14T09:13:13.210178Z",
-  "updated_at": "2026-10-14T09:23:36.305057Z",
-  "write_id": "b-number-undefined-a444ed1f-8964-4edc-bf85-519e670c0081",
+  "updated_at": "2026-10-14T10:10:51.153700Z",
+  "write_id": "b-number-undefined-successor-fc14689b-9557-4b42-a53a-9899c089398d",
   "scope_refinements": [
     {
       "at": "2026-10-14T09:23:36.305057Z",
@@ -137,7 +148,26 @@
         "scope": "native Linear API/routing, checked allocation preparation, carrier/emission wiring, startup resources, existing allocator/constructor recipe; preserve existing branches and unrelated work; fresh isolated worktrees and normal checks"
       },
       "reason": "Productive finalizer must authenticate actual presentation identity before anyfieldread, includinggenericprepared host products; exact private successfulconstructor membership/read-onlyassertion prevents copied/hostile p without public registration."
+    },
+    {
+      "at": "2026-10-14T10:10:51.153700Z",
+      "addition": {
+        "path": "src/compiler/pipeline-result-finalizer.ts",
+        "purpose": "Fix proven genuine Linear presentation inherited optional-flag getter after preparation, in ONLY productive entry and moved read-only checker.",
+        "exactChange": "One private own-descriptor requiresDetachedFinalization helper after genuine presentation/tuple identity; own absence=false, own DATA true exact, inherited shadow/accessor/noncanonical own form refuses via descriptor checks before getter or finalization effects. Reuse at two existing optionalflag read sites.",
+        "preserve": "All old generic finalizer, recgroup, target/options, projector and unrelated algorithms remain byte-exact; exact moved-checker body exception is explicitly these own-field read deviations, not a byte-identical claim. Captured options actual null prototype; no speculative options/registry/namespace changes.",
+        "controls": "Actual AFTER-preparation Object.prototype optionalflag getter for both factory/checker must reject with0 getter effects, restore real descriptors in finally, actual genuine healthy control and copied/foreign/pre-final/currentness cases. Retain prior86/11/build/4accepted epoch before fix; qualify final expanded suite/type/build/gates/provenance against new immutable8 manifest.",
+        "authority": {
+          "answer": "Take over the blocking shared seams",
+          "priorAnswer": "takeover all of session b"
+        }
+      },
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b"
+      },
+      "reason": "Receive exact2020-to-2018 continuation initial joins preserving all predecessor callbacks/defaults/pins plus explicit own-field optionalflag currentness fix. New policy transport waits qualified/published2018 and final2020 seals."
     }
   ],
-  "previous_write_id": "b-finalization-owner-5e936cde-7f06-400b-9835-5cb720670d01"
+  "previous_write_id": "b-number-undefined-a444ed1f-8964-4edc-bf85-519e670c0081"
 }

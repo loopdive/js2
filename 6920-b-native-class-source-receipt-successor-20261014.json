@@ -131,6 +131,136 @@
       "path": "tests/issue-6920-native-number-undefined-source-successor.test.ts",
       "clarification": "The received initial-reader composition includes snapshot(): create one FRESH authenticated outer reader at each snapshot invocation, then unchanged required.map consumes that private per-operation reader. All callback bodies, assertions, literals and deadlines remain exact; no cross-operation/global cache or callback authority. Whole caller inverse and reciprocal replay include the exact initial snapshot binding.",
       "readCounts": "Outer capture nine fixed physical inputs. Composed default inventory call adds two genuine older Deno-anchor unknown passthroughs, each once; total11 physical. Old5 logical calls contain3mapped+2unknown. Do not claim all5mapped or9total physical."
+    },
+    {
+      "paths": [
+        "tests/issue-6920-native-number-undefined-source-successor.test.ts"
+      ],
+      "purpose": "Only new import plus initial disk/snapshot composition; all historical callbacks unchanged.",
+      "factory": {
+        "name": "createIrNativeNumberUndefinedFinalizationPolicyReader",
+        "lazyName": "createLazyIrNativeNumberUndefinedFinalizationPolicyReader",
+        "input": "An explicit genuine physical string reader. No caller-authored authority token, coercion, successful global cache, or overwrite of historical helper defaults.",
+        "capture": {
+          "fixedCount": 12,
+          "order": [
+            "own new fixed JSON receipt",
+            "whole actual2020 policy",
+            "four whole current caller files in receipt order",
+            "six unchanged helper/JSON anchors in receipt order"
+          ],
+          "unique": true,
+          "withinOperationMappedRereads": 0
+        },
+        "authenticity": [
+          "Primitive returned strings before hashing; descriptor-only copied closed receipt DATA, fixed whole receipt raw+canonical hash and exact ordered population.",
+          "Whole actual2020 policy raw SHA/bytes/Gitblob, complete DATA/files/nonfiles profiles and exact two appended row objects/order/neighbors.",
+          "Complete raw2020→2018 inverse and reciprocal forward equal both whole pinned byte streams. Complete semantic inverse/forward retain every old row and every nonfiles coordinate, including allowedEdges and activationHistory.",
+          "Authenticate all four whole current callers before finite import/input-binding/default/snapshot alias inverses. Each full inverse equals its final qualified2018 whole pin; forward reconstruction equals current caller exactly.",
+          "All six old helper/JSON anchors retain their final whole hashes; their algorithms/defaults/receipts are unchanged. New outer helper whole pin is external in independent new suite/root seal, never circular."
+        ],
+        "output": "Private one-operation captured view maps only policy and four current caller strings to exact2018 preimages. Six anchors remain exact. Genuine unknown paths are read once after authentication and then privately captured.",
+        "requestPath": "Reject nonprimitive or empty path with a fixed error before Map.has, formatting/coercion, physical passthrough, or lazy fixed capture. Boxed strings, getter Symbol.toPrimitive, objects, symbols, null, undefined, and numbers must produce0IO/0coercion.",
+        "diagnostics": "Preserve final2018 categories: authentic full DATA semantic mutation fails complete policy profile mismatch; formatting-only raw mutation fails complete raw source profile mismatch. Classification must retain complete independently validated profiles before raw admission; no catch-and-relabel of arbitrary failures."
+      },
+      "hooks": {
+        "source90": {
+          "path": "tests/issue-6920-native-number-undefined-source-successor.test.ts",
+          "changes": [
+            "New outer-factory import only.",
+            "Keep actualDisk as raw physical read. Change disk to existing2018Factory(new2020Factory(actualDisk))(path).",
+            "At existing snapshot orchestration outside callbacks, create the same composed2018(new2020(actualDisk)) reader once before required.map."
+          ],
+          "preserve": "All90 callbacks/literals/argument values/expected read counts/timers remain exact. Do not map actual production source text or change source95 claims."
+        },
+        "inventory152": {
+          "path": "tests/issue-3525-native-number-undefined-inventory-successor.test.ts",
+          "changes": [
+            "New outer and outer-lazy imports only.",
+            "Keep actualDisk as raw physical read; disk composes existing2018Factory(new2020Factory(actualDisk)).",
+            "Existing defaultInput's supplied===undefined branch becomes existing2018Lazy(new2020Lazy(actualDisk)). Both factories remain lazy; malformed DATA/raw refuse before any physical authentication.",
+            "Explicit supplied readers (including null/0/false/nonfunctions, custom Map readers, and mutation readers) pass through unchanged; no nullish/truthy normalization."
+          ],
+          "preserve": "All152 callbacks/literals/timers/assertions and the already-received original=actualDisk(path) physical-save preparation stay exact. This next continuation needs no additional callback preparation change."
+        },
+        "old562": {
+          "path": "tests/issue-4376-post-position-main-inventory-successor.test.ts",
+          "changes": [
+            "New outer factory import only.",
+            "Existing initial read binding becomes inventory2016Factory(optimization2018Factory(finalization2020Factory(raw physical reader)))(path)."
+          ],
+          "preserve": "Every562 callback/literal/default count and all existing raw readFileSync original-save/finally writes remain exact."
+        },
+        "new2018Suite": {
+          "path": "tests/issue-6920-native-number-undefined-optimization-policy-successor.test.ts",
+          "changes": [
+            "New outer and outer-lazy imports, plus aliases of only existing helper capture/lazy imports to originalCapture/originalLazy.",
+            "Rename the initial raw actualDisk binding to physicalDisk; create actualDisk as fresh new2020Factory(physicalDisk)(path), presenting exact2018 policy/callers but actual unchanged helper anchors and unknown source bytes.",
+            "Local capture wrapper replaces ONLY the exact locally bound actualDisk function with one new2020Factory(physicalDisk) captured reader before originalCapture. Any other supplied reader, including undefined and nonfunctions, passes unchanged; no callback-supplied function is normalized.",
+            "Local lazy wrapper similarly replaces ONLY exact actualDisk with new2020Lazy(physicalDisk), then delegates originalLazy. No physical reads before path guard or input refusal.",
+            "Group snapshot outside callbacks by one new2020Factory(physicalDisk) and read the existing required list through that private capture."
+          ],
+          "whyCaptureAliases": "Direct capture(actualDisk) must use one outer12 capture rather than nine separately authenticated outer captures. Exact function identity distinguishes the canonical locally bound disk input from explicit custom/mutant readers; historical O02/O06/O07/O08/O11/O14/O16 readers remain genuine supplied functions.",
+          "preserve": "Every final qualified2018 callback/literal/default/error category/counter/timer stays exact. O01 keeps old helper's final external whole hash. O03/O05 sees exact2018 caller bytes and the old receipt's authentic inverses. O12's original=readFileSync(url) and final restoration are already raw physical; keep both unchanged. O13 still reads all95 real source operands, not translated source.",
+          "requiredIndependentControls": "New outer suite must prove raw physical snapshot12, composed physical14, explicit custom-reader identity/no new IO, omitted/nonfunction preservation, payload-first0IO, zero getter/path coercion, no mapped reread, no cross-operation cache, old O06 remains11 and unchanged, plus exact raw file restoration of all four current callers."
+        }
+      },
+      "compositionCensus": {
+        "outer2020FixedPhysical": 12,
+        "inner2018FixedLogical": 9,
+        "inner2018PhysicalAdditional": 0,
+        "innerInventoryFixedLogical": 5,
+        "innerInventoryMappedWithinOuter": 3,
+        "olderUnknownPaths": [
+          "tests/helpers/ir-deno-post-position-main-successor.ts",
+          "tests/helpers/ir-deno-post-position-main-successor.json"
+        ],
+        "olderAdditionalPhysical": 2,
+        "healthyDefaultComposedInventoryPhysical": 14,
+        "historicalO06": "The old2018 suite's O06 supplied Map reader still sees its genuine old9+older2=11 calls. Preserve that literal and callback. Independently assert the new physical12+older2=14 composition; never substitute14 or hide outer calls in the historical counter.",
+        "scopeOfCount": "12 and14 describe one explicit canonical captured operation. Custom callbacks which intentionally invoke separately fresh mapped disk operations retain their original function identity and actual behavior; do not claim one total count across unrelated operations.",
+        "otherReaders": "The SOURCE95 and other unknown source readers remain genuine physical reads. Re-audit their complete actual source closure separately rather than declaring mapped2018 text current2020 source."
+      },
+      "unchangedAnchors": [
+        "tests/helpers/ir-native-number-undefined-source-successor.ts",
+        "tests/helpers/ir-native-number-undefined-source-successor.json",
+        "tests/helpers/ir-native-number-undefined-inventory-successor.ts",
+        "tests/helpers/ir-native-number-undefined-inventory-successor.json",
+        "tests/helpers/ir-native-number-undefined-optimization-policy-successor.ts",
+        "tests/helpers/ir-native-number-undefined-optimization-policy-successor.json"
+      ],
+      "callbackCustody": {
+        "newRequiredPhysicalSaveOperandChanges": [],
+        "alreadyCorrect152": "original=actualDisk(path) stays raw because actualDisk is explicitly retained raw; disk/view are separately composed.",
+        "alreadyCorrect2018Suite": "O12 saves original=readFileSync(url) and restores that exact Buffer. Do not change it to mapped actualDisk.",
+        "alreadyCorrect562": "Existing original=readFileSync(path) operands and finally writes remain untouched.",
+        "forbidden": "Do not wrap writeFileSync, translate restoration writes, monkey-patch filesystem/global/prototypes, rename assertions, rewrite callback bodies, replace old counters, suppress diagnostics, or shorten/extend old deadlines."
+      },
+      "prerequisites": [
+        "Root verifies final current2018 six-path natural148-or-finalcount plus whole714 exit0/noUHE, exact final helper/receipt/caller seal, full typing/static gates and final qualified/published checkpoint. Do not freeze candidate02 pins.",
+        "Root verifies final2020 owner86 natural exit0/noUHE, full actual build, actual accepted optimizer outputs/provenance controls, all final static gates and exact production/test/policy manifest.",
+        "Root composes exact sealed2020 source and independently repeats95/95 source closure and2018 policy inverse; any changed source operand requires explicit additional finite receiving proposal, never private historical substitution.",
+        "Root receives these exact three new paths plus four bounded caller hooks on current authentic ledger records before any tracked write."
+      ],
+      "qualification": [
+        "Independent new outer suite checks whole helper/receipt pins and raw/DATA two-row inverse+forward and all four wholecaller inverses/forward; complete fields/order/getter/prototype/symbol/hole/cycle, policy/row/order/raw/nonfiles/caller/anchor drift/missing/nonprimitive controls.",
+        "Actual fixed12 and composed14 physical read orders with zero mapped rereads and older Deno once-only warm drift refusal; authentic old supplied Map-reader11 count remains unchanged.",
+        "Fresh real disk mutations/restoration of own receipt and four callers, with original buffers from physical readers and exact current bytes checked after finally; authentic restored healthy control.",
+        "All historical source90, inventory714 and final2018 new-suite actual final count run without callback/literal/timer/counter rewrites, alongside new outer suite. Natural process exit0 and noUHE required, all epochs retained.",
+        "Full explicit typing all current2020 production and all actual test/helper roots with excludes[], scoped formatting/lint and root required ordinary architecture/build gates; unchanged source95/anchors/callers/manifests repeated after tests.",
+        "No duplicate old suites in planning; no integration/readiness inferred from 86/95/policy observation alone."
+      ],
+      "publicationOrder": "This proposal does not block2018 shipping. Implementation begins only after root records the final qualified/published2018 checkpoint and final2020 owner seals.",
+      "pendingPins": [
+        "Final qualified/published2018 checkpoint, actual final new-suite count, helper/receipt whole hashes and all four final2018 caller whole hashes.",
+        "Final qualified2020 exact eight-path source/test manifest, policy raw+canonical/files/nonfiles profiles, all two-row values/neighbors/spans and actual build/optimizer provenance.",
+        "New outer helper/receipt external pins and current2020 caller whole pins after only authorized initial hooks.",
+        "Final reciprocal raw caller edits and unchanged callback extraction seals, plus fixed12/physical14 measured census."
+      ],
+      "authority": {
+        "answer": "Take over the blocking shared seams",
+        "priorAnswer": "takeover all of session b"
+      }
     }
   ],
   "exclusions": [
@@ -142,8 +272,8 @@
   ],
   "donor_policy": "Original donor records and branches preserved; this record transfers only two named B current-reader hooks into fresh isolated receiving worktree.",
   "claimed_at": "2026-10-14T05:51:36.168310Z",
-  "updated_at": "2026-10-14T09:36:28.294108Z",
-  "write_id": "b-number-undefined-68b0ebef-a0a0-40ed-aabf-91b02865ea13",
+  "updated_at": "2026-10-14T10:10:51.153700Z",
+  "write_id": "b-number-undefined-successor-86e91a4f-2914-4a56-a1f2-e57ff8389a99",
   "scope_refinements": [
     {
       "at": "2026-10-14T07:14:58.880101Z",
@@ -264,7 +394,145 @@
         }
       },
       "reason": "Clarify already received initial-input orchestration: one fresh outer authentication per SOURCE35 snapshot, preserving all callbacks/timers and exact whole-caller inverse. Correct total composed inventory physical reads to9fixed plus2olderunknown anchors."
+    },
+    {
+      "at": "2026-10-14T10:10:51.153700Z",
+      "addition": {
+        "paths": [
+          "tests/issue-6920-native-number-undefined-source-successor.test.ts"
+        ],
+        "purpose": "Only new import plus initial disk/snapshot composition; all historical callbacks unchanged.",
+        "factory": {
+          "name": "createIrNativeNumberUndefinedFinalizationPolicyReader",
+          "lazyName": "createLazyIrNativeNumberUndefinedFinalizationPolicyReader",
+          "input": "An explicit genuine physical string reader. No caller-authored authority token, coercion, successful global cache, or overwrite of historical helper defaults.",
+          "capture": {
+            "fixedCount": 12,
+            "order": [
+              "own new fixed JSON receipt",
+              "whole actual2020 policy",
+              "four whole current caller files in receipt order",
+              "six unchanged helper/JSON anchors in receipt order"
+            ],
+            "unique": true,
+            "withinOperationMappedRereads": 0
+          },
+          "authenticity": [
+            "Primitive returned strings before hashing; descriptor-only copied closed receipt DATA, fixed whole receipt raw+canonical hash and exact ordered population.",
+            "Whole actual2020 policy raw SHA/bytes/Gitblob, complete DATA/files/nonfiles profiles and exact two appended row objects/order/neighbors.",
+            "Complete raw2020→2018 inverse and reciprocal forward equal both whole pinned byte streams. Complete semantic inverse/forward retain every old row and every nonfiles coordinate, including allowedEdges and activationHistory.",
+            "Authenticate all four whole current callers before finite import/input-binding/default/snapshot alias inverses. Each full inverse equals its final qualified2018 whole pin; forward reconstruction equals current caller exactly.",
+            "All six old helper/JSON anchors retain their final whole hashes; their algorithms/defaults/receipts are unchanged. New outer helper whole pin is external in independent new suite/root seal, never circular."
+          ],
+          "output": "Private one-operation captured view maps only policy and four current caller strings to exact2018 preimages. Six anchors remain exact. Genuine unknown paths are read once after authentication and then privately captured.",
+          "requestPath": "Reject nonprimitive or empty path with a fixed error before Map.has, formatting/coercion, physical passthrough, or lazy fixed capture. Boxed strings, getter Symbol.toPrimitive, objects, symbols, null, undefined, and numbers must produce0IO/0coercion.",
+          "diagnostics": "Preserve final2018 categories: authentic full DATA semantic mutation fails complete policy profile mismatch; formatting-only raw mutation fails complete raw source profile mismatch. Classification must retain complete independently validated profiles before raw admission; no catch-and-relabel of arbitrary failures."
+        },
+        "hooks": {
+          "source90": {
+            "path": "tests/issue-6920-native-number-undefined-source-successor.test.ts",
+            "changes": [
+              "New outer-factory import only.",
+              "Keep actualDisk as raw physical read. Change disk to existing2018Factory(new2020Factory(actualDisk))(path).",
+              "At existing snapshot orchestration outside callbacks, create the same composed2018(new2020(actualDisk)) reader once before required.map."
+            ],
+            "preserve": "All90 callbacks/literals/argument values/expected read counts/timers remain exact. Do not map actual production source text or change source95 claims."
+          },
+          "inventory152": {
+            "path": "tests/issue-3525-native-number-undefined-inventory-successor.test.ts",
+            "changes": [
+              "New outer and outer-lazy imports only.",
+              "Keep actualDisk as raw physical read; disk composes existing2018Factory(new2020Factory(actualDisk)).",
+              "Existing defaultInput's supplied===undefined branch becomes existing2018Lazy(new2020Lazy(actualDisk)). Both factories remain lazy; malformed DATA/raw refuse before any physical authentication.",
+              "Explicit supplied readers (including null/0/false/nonfunctions, custom Map readers, and mutation readers) pass through unchanged; no nullish/truthy normalization."
+            ],
+            "preserve": "All152 callbacks/literals/timers/assertions and the already-received original=actualDisk(path) physical-save preparation stay exact. This next continuation needs no additional callback preparation change."
+          },
+          "old562": {
+            "path": "tests/issue-4376-post-position-main-inventory-successor.test.ts",
+            "changes": [
+              "New outer factory import only.",
+              "Existing initial read binding becomes inventory2016Factory(optimization2018Factory(finalization2020Factory(raw physical reader)))(path)."
+            ],
+            "preserve": "Every562 callback/literal/default count and all existing raw readFileSync original-save/finally writes remain exact."
+          },
+          "new2018Suite": {
+            "path": "tests/issue-6920-native-number-undefined-optimization-policy-successor.test.ts",
+            "changes": [
+              "New outer and outer-lazy imports, plus aliases of only existing helper capture/lazy imports to originalCapture/originalLazy.",
+              "Rename the initial raw actualDisk binding to physicalDisk; create actualDisk as fresh new2020Factory(physicalDisk)(path), presenting exact2018 policy/callers but actual unchanged helper anchors and unknown source bytes.",
+              "Local capture wrapper replaces ONLY the exact locally bound actualDisk function with one new2020Factory(physicalDisk) captured reader before originalCapture. Any other supplied reader, including undefined and nonfunctions, passes unchanged; no callback-supplied function is normalized.",
+              "Local lazy wrapper similarly replaces ONLY exact actualDisk with new2020Lazy(physicalDisk), then delegates originalLazy. No physical reads before path guard or input refusal.",
+              "Group snapshot outside callbacks by one new2020Factory(physicalDisk) and read the existing required list through that private capture."
+            ],
+            "whyCaptureAliases": "Direct capture(actualDisk) must use one outer12 capture rather than nine separately authenticated outer captures. Exact function identity distinguishes the canonical locally bound disk input from explicit custom/mutant readers; historical O02/O06/O07/O08/O11/O14/O16 readers remain genuine supplied functions.",
+            "preserve": "Every final qualified2018 callback/literal/default/error category/counter/timer stays exact. O01 keeps old helper's final external whole hash. O03/O05 sees exact2018 caller bytes and the old receipt's authentic inverses. O12's original=readFileSync(url) and final restoration are already raw physical; keep both unchanged. O13 still reads all95 real source operands, not translated source.",
+            "requiredIndependentControls": "New outer suite must prove raw physical snapshot12, composed physical14, explicit custom-reader identity/no new IO, omitted/nonfunction preservation, payload-first0IO, zero getter/path coercion, no mapped reread, no cross-operation cache, old O06 remains11 and unchanged, plus exact raw file restoration of all four current callers."
+          }
+        },
+        "compositionCensus": {
+          "outer2020FixedPhysical": 12,
+          "inner2018FixedLogical": 9,
+          "inner2018PhysicalAdditional": 0,
+          "innerInventoryFixedLogical": 5,
+          "innerInventoryMappedWithinOuter": 3,
+          "olderUnknownPaths": [
+            "tests/helpers/ir-deno-post-position-main-successor.ts",
+            "tests/helpers/ir-deno-post-position-main-successor.json"
+          ],
+          "olderAdditionalPhysical": 2,
+          "healthyDefaultComposedInventoryPhysical": 14,
+          "historicalO06": "The old2018 suite's O06 supplied Map reader still sees its genuine old9+older2=11 calls. Preserve that literal and callback. Independently assert the new physical12+older2=14 composition; never substitute14 or hide outer calls in the historical counter.",
+          "scopeOfCount": "12 and14 describe one explicit canonical captured operation. Custom callbacks which intentionally invoke separately fresh mapped disk operations retain their original function identity and actual behavior; do not claim one total count across unrelated operations.",
+          "otherReaders": "The SOURCE95 and other unknown source readers remain genuine physical reads. Re-audit their complete actual source closure separately rather than declaring mapped2018 text current2020 source."
+        },
+        "unchangedAnchors": [
+          "tests/helpers/ir-native-number-undefined-source-successor.ts",
+          "tests/helpers/ir-native-number-undefined-source-successor.json",
+          "tests/helpers/ir-native-number-undefined-inventory-successor.ts",
+          "tests/helpers/ir-native-number-undefined-inventory-successor.json",
+          "tests/helpers/ir-native-number-undefined-optimization-policy-successor.ts",
+          "tests/helpers/ir-native-number-undefined-optimization-policy-successor.json"
+        ],
+        "callbackCustody": {
+          "newRequiredPhysicalSaveOperandChanges": [],
+          "alreadyCorrect152": "original=actualDisk(path) stays raw because actualDisk is explicitly retained raw; disk/view are separately composed.",
+          "alreadyCorrect2018Suite": "O12 saves original=readFileSync(url) and restores that exact Buffer. Do not change it to mapped actualDisk.",
+          "alreadyCorrect562": "Existing original=readFileSync(path) operands and finally writes remain untouched.",
+          "forbidden": "Do not wrap writeFileSync, translate restoration writes, monkey-patch filesystem/global/prototypes, rename assertions, rewrite callback bodies, replace old counters, suppress diagnostics, or shorten/extend old deadlines."
+        },
+        "prerequisites": [
+          "Root verifies final current2018 six-path natural148-or-finalcount plus whole714 exit0/noUHE, exact final helper/receipt/caller seal, full typing/static gates and final qualified/published checkpoint. Do not freeze candidate02 pins.",
+          "Root verifies final2020 owner86 natural exit0/noUHE, full actual build, actual accepted optimizer outputs/provenance controls, all final static gates and exact production/test/policy manifest.",
+          "Root composes exact sealed2020 source and independently repeats95/95 source closure and2018 policy inverse; any changed source operand requires explicit additional finite receiving proposal, never private historical substitution.",
+          "Root receives these exact three new paths plus four bounded caller hooks on current authentic ledger records before any tracked write."
+        ],
+        "qualification": [
+          "Independent new outer suite checks whole helper/receipt pins and raw/DATA two-row inverse+forward and all four wholecaller inverses/forward; complete fields/order/getter/prototype/symbol/hole/cycle, policy/row/order/raw/nonfiles/caller/anchor drift/missing/nonprimitive controls.",
+          "Actual fixed12 and composed14 physical read orders with zero mapped rereads and older Deno once-only warm drift refusal; authentic old supplied Map-reader11 count remains unchanged.",
+          "Fresh real disk mutations/restoration of own receipt and four callers, with original buffers from physical readers and exact current bytes checked after finally; authentic restored healthy control.",
+          "All historical source90, inventory714 and final2018 new-suite actual final count run without callback/literal/timer/counter rewrites, alongside new outer suite. Natural process exit0 and noUHE required, all epochs retained.",
+          "Full explicit typing all current2020 production and all actual test/helper roots with excludes[], scoped formatting/lint and root required ordinary architecture/build gates; unchanged source95/anchors/callers/manifests repeated after tests.",
+          "No duplicate old suites in planning; no integration/readiness inferred from 86/95/policy observation alone."
+        ],
+        "publicationOrder": "This proposal does not block2018 shipping. Implementation begins only after root records the final qualified/published2018 checkpoint and final2020 owner seals.",
+        "pendingPins": [
+          "Final qualified/published2018 checkpoint, actual final new-suite count, helper/receipt whole hashes and all four final2018 caller whole hashes.",
+          "Final qualified2020 exact eight-path source/test manifest, policy raw+canonical/files/nonfiles profiles, all two-row values/neighbors/spans and actual build/optimizer provenance.",
+          "New outer helper/receipt external pins and current2020 caller whole pins after only authorized initial hooks.",
+          "Final reciprocal raw caller edits and unchanged callback extraction seals, plus fixed12/physical14 measured census."
+        ],
+        "authority": {
+          "answer": "Take over the blocking shared seams",
+          "priorAnswer": "takeover all of session b"
+        }
+      },
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b"
+      },
+      "reason": "Receive exact2020-to-2018 continuation initial joins preserving all predecessor callbacks/defaults/pins plus explicit own-field optionalflag currentness fix. New policy transport waits qualified/published2018 and final2020 seals."
     }
   ],
-  "previous_write_id": "b-number-undefined-successor-0a29fab3-4a61-4015-98d8-ee37115c63f4"
+  "previous_write_id": "b-number-undefined-68b0ebef-a0a0-40ed-aabf-91b02865ea13"
 }
