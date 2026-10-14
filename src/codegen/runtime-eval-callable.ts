@@ -19,6 +19,7 @@
  */
 
 import ts from "typescript";
+import { fillRuntimeEvalLiveCallTrampolines } from "./runtime-eval-live-call.js";
 import type { Instr, ValType } from "../ir/types.js";
 import { buildTargetTaggedTry } from "../ir/try-table.js";
 import { allocLocal } from "./context/locals.js";
@@ -927,6 +928,7 @@ export function emitRuntimeEvalAotCallableAdapter(ctx: CodegenContext, fctx: Fun
  * module's nominal struct table.
  */
 export function fillRuntimeEvalCallablePropertyGetArm(ctx: CodegenContext): void {
+  fillRuntimeEvalLiveCallTrampolines(ctx); // (#6990) same finalize point, before any early return
   if (!ctx.standalone && !ctx.wasi) return;
   const carrier = ctx.runtimeEvalAotCallableCarrier;
   if (carrier === undefined) return;

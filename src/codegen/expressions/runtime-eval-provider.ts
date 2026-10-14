@@ -25,6 +25,7 @@ import { ensureObjVecBuilders } from "../object-runtime.js";
 import { emitWasiErrorConstructor, isWasiErrorName } from "../registry/error-types.js";
 import { addStringConstantGlobal, ensureExnTag, localGlobalIdx, nextModuleGlobalIdx } from "../registry/imports.js";
 import { addFuncType, getOrRegisterRefCellType } from "../registry/types.js";
+import { emitRuntimeEvalEverEntered } from "../runtime-eval-live-call.js";
 import {
   emitRuntimeEvalAotCallableAdapter,
   emitRuntimeEvalInterpretedCallableAdapterIfCallable,
@@ -642,6 +643,7 @@ export function emitRuntimeEvalGlobalBindingSeed(ctx: CodegenContext, fctx: Func
   ensureRuntimeEvalGlobalBindingSync(ctx);
   const pushIdx = ctx.funcMap.get(RUNTIME_EVAL_PUSH_GLOBALS);
   if (pushIdx !== undefined) fctx.body.push({ op: "call", funcIdx: pushIdx });
+  emitRuntimeEvalEverEntered(ctx, fctx); // (#6990) live-call trampolines leave their direct path
   if (activate) emitRuntimeEvalProviderActive(ctx, fctx, true);
 }
 
