@@ -168,6 +168,18 @@ compatibility; `native-first` selects the migrated Wasm-native provider
 families even under a JS host. It does not disable JS boundary wrappers or
 platform APIs.
 
+### `--host-accelerator <name>`
+
+Use the JS host's implementation for one semantic family under the
+native-first regime (#6978); repeatable (`--host-accelerator=<name>` also
+works). `regexp` runs RegExp matches on the host engine and `date` parses
+date strings with host `Date.parse`; every other family keeps its native
+provider. `js-string` and `intl` are recognized but not available yet and are
+rejected. The flag needs the default JS target with
+`--semantic-providers native-first`: combining it with `--target
+standalone`/`wasi`, `--no-host-imports`, or the host-assisted profile
+is a compile error, never a silent no-op.
+
 ### `--link <ns>`
 
 Leave the external namespace `<ns>` as link-time imports instead of

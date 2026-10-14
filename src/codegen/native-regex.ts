@@ -22,6 +22,7 @@ import { emitWasiErrorConstructor } from "./registry/error-types.js";
 import { addStringConstantGlobal, ensureExnTag } from "./registry/imports.js";
 import { addFuncType, getOrRegisterArrayType, getOrRegisterVecType } from "./registry/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3) stable-regime minting
+import { wrapRegexSearchForHost } from "./helpers/host-regexp-search.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { buildIndexedAnchoredLiteralAltSearch } from "./regex-anchored-alt-index.js";
 import { ReOp } from "./regex/bytecode.js";
@@ -2170,7 +2171,7 @@ export function ensureRegexSearch(ctx: CodegenContext): number {
     body,
     exported: false,
   });
-  return funcIdx;
+  return wrapRegexSearchForHost(ctx, funcIdx, typeIdx, i32Arr); // (#6978) host engine when accelerated
 }
 
 /**
