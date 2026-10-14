@@ -1,0 +1,59 @@
+{
+  "id": "6920",
+  "slice": "native-vector-typing-successor-20261014",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-vector-fixture-contract-20261014-01a12827",
+  "claimed_at": "2026-10-14T16:34:22.683830Z",
+  "updated_at": "2026-10-14T16:34:22.683830Z",
+  "write_id": "b-vector-typing-0850dd38-3e36-4341-8178-25374e21e49b",
+  "handoff_scope": [
+    {
+      "kind": "three bounded original vector fixture typing migrations",
+      "at": "2026-10-14T16:34:22.683830Z",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-vector-fixture-contract-20261014-01a12827",
+      "manifest": {
+        "receivingBranch": "codex/6920-b-vector-fixture-contract-20261014-01a12827",
+        "componentPreimages": [
+          {
+            "path": "tests/ir-vec-two-backend.test.ts",
+            "bytes": 18647,
+            "sha256": "0f84ffd2c9d689587497daf330a504774f69ba500fd77d98b7a6c74aed6dfaef"
+          }
+        ],
+        "canonicalNewPaths": [],
+        "base": "6ad26e48263fd73b484157c2d17501b2dadbf012",
+        "priorReceive": "ddb764d1b6992e95660a1d70f17afe7bcc011fef",
+        "scope": [
+          {
+            "block": "hand-laid-out array actual runtime test",
+            "change": "Remove obsolete wabt @ts-expect-error; its real types are nowinstalled. Instantiate an exact owned ArrayBuffer from the actual wabt bytes via Uint8Array.from(buffer).buffer, preservingWAT/source/results/timer."
+          },
+          {
+            "block": "representation-divergent families loud-refusal test",
+            "change": "Call genuine new LinearEmitter().emitVecNewFixed(linVec,0,0,0,[]) withthe five current arguments. Require real missingruntime-provider refusal; retain fouroriginal families andsameassertion. Updateonly explanatory fixedvector comment; no fakeundefinedlayout orcasts."
+          },
+          {
+            "block": "runLinear actualbinary instantiation",
+            "change": "Instantiate Uint8Array.from(binary).buffer (exactsameemittedbytes) to selectthe correct BufferSource overload; preserveallmodulebuilder/input/callee/assertion/runtimecases."
+          }
+        ],
+        "evidence": "Baseline fullsrc+2 explicitroots has6diagnostics; exacttwo carrierfields remove2, leaving4existingtyping errors. Actual44/44cases alreadypass aftertwofields; these migrations mustretainthe44casesandresults plusfreshfulltyping.",
+        "constraints": "Onlythree named fixtureblocks withinonealreadyBownedtestpath; no production/source options change, no erasedruntimeassertions/cases/timers/spy/reset, no any/unknown casts or suppression. Existingbytes/contracts/runtimecontrols mustpass. OwnreviewbaseCbranchHOLD andfiveconflict sourcecomposition remain separate."
+      },
+      "manifestSha256": "47e6057cf5a1084a68e886316494e0e80586197fcf6f4a4897519f0f7f545425",
+      "constraints": "Onlythree named fixtureblocks withinonealreadyBownedtestpath; no production/source options change, no erasedruntimeassertions/cases/timers/spy/reset, no any/unknown casts or suppression. Existingbytes/contracts/runtimecontrols mustpass. OwnreviewbaseCbranchHOLD andfiveconflict sourcecomposition remain separate."
+    }
+  ],
+  "predecessors": [
+    "3522-b-native-class-semantic-producer-20261014.json",
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}
