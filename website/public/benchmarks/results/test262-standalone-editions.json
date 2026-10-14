@@ -3571,21 +3571,21 @@
   },
   {
     "edition": "ES2026",
-    "pass": 4582,
-    "fail": 194,
-    "ce": 145,
+    "pass": 4524,
+    "fail": 193,
+    "ce": 204,
     "skip": 0,
     "total": 4921,
-    "pct": 93,
+    "pct": 92,
     "features": [
       {
         "name": "Temporal",
-        "pass": 4479,
-        "fail": 107,
-        "ce": 25,
+        "pass": 4421,
+        "fail": 106,
+        "ce": 84,
         "skip": 0,
         "total": 4611,
-        "pct": 97
+        "pct": 96
       },
       {
         "name": "Symbol",
@@ -3607,9 +3607,9 @@
       },
       {
         "name": "arrow-function",
-        "pass": 173,
+        "pass": 172,
         "fail": 5,
-        "ce": 0,
+        "ce": 1,
         "skip": 0,
         "total": 178,
         "pct": 97
