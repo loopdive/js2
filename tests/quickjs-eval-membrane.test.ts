@@ -1313,6 +1313,12 @@ export function inObjectLiteral() { return evalIt("var w = { d: new Mock() }; w.
 export function withArgs() { return evalIt("var k = new Pair(" + 40 + ", 2); k.a + k.b"); }
 export function objectResultWins() { return evalIt("var r = new Returns(); r.v + " + 0); }
 var bag = { v: 40, add: function (n) { return this.v + n; } };
+export function binaryGlobal() {
+  evalIt("var heap = new Int8Array(" + (1 << 22) + "); heap[5] = 42;");
+  // The global crossed out as an unmirrored box; back inside it is the same
+  // realm typed array, so its element reads from the realm.
+  return typeof heap === "object" ? evalIt("heap[" + 5 + "]") : -1;
+}
 export function bagMethod() { return evalIt("bag.add(" + 2 + ")"); }
 export function compiledSeesIt() { evalIt("var g" + "lobalMock = new Mock();"); return globalMock.v + 2; }
 `;
@@ -1362,6 +1368,13 @@ describe.skipIf(!enabled)("quickjs eval membrane — [[Construct]] of a compiled
   });
   it("a closure held by a plain compiled object is callable from evaluated code (#4307 residual 1)", () => {
     expect(exports_.bagMethod!()).toBe(42);
+  });
+  it("an eval-created typed-array global crosses unmirrored and keeps its identity", () => {
+    // A mirrored box copied (and re-synced) every element: a 4 MiB heap took
+    // ~100 s per crossing (Octane zlib's Emscripten heap).
+    const t0 = performance.now();
+    expect(exports_.binaryGlobal!()).toBe(42);
+    expect(performance.now() - t0).toBeLessThan(10_000);
   });
   it("the constructed object is a compiled object the compiled side can read", () => {
     expect(exports_.compiledSeesIt!()).toBe(42);

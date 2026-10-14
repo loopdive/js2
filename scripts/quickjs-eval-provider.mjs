@@ -1615,6 +1615,15 @@ function qjsPublish(c: number, h: number): any {
   }
   const generator: any = qjsPublishGenerator(c, h, retained);
   if (generator !== undefined) return generator;
+  if (qjsIsBinaryData(c, h)) {
+    // Identity-preserving but NOT mirrored (see __js2wasm_eval_isbinary__):
+    // the box crosses back in as the same realm object, which is all compiled
+    // code that only passes the buffer around needs. Residual: compiled code
+    // cannot read its elements.
+    const opaque: any = {};
+    qjsPushBoxRow(retained, opaque, opaque, 0);
+    return opaque;
+  }
   // Register BEFORE mirroring: a self-referential object (\`o.self = o\`) walks
   // straight back into qjsPublish for the same handle, and without the row in
   // place that recursion never terminates.
@@ -1622,6 +1631,17 @@ function qjsPublish(c: number, h: number): any {
   qjsPushBoxRow(retained, box, box, 1);
   qjsPullBox(c, qjsBoxHandles.length - 1);
   return box;
+}
+
+/** True when \`h\` is realm binary data (ArrayBuffer / typed array / DataView). */
+function qjsIsBinaryData(c: number, h: number): boolean {
+  if (!qjsEnsureBoxHelpers(c)) return false;
+  const r: number = qjsCallGlobalHelper(c, "__js2wasm_eval_isbinary__", 1, h);
+  if (r === 0) return false;
+  const tag: number = qjs_tag(r);
+  const yes: boolean = (tag === QJS_TAG_INT || tag === QJS_TAG_FLOAT64) && qjs_to_f64(c, r) === 1;
+  qjs_free_value(c, r);
+  return yes;
 }
 
 /**
@@ -1805,6 +1825,12 @@ function qjsEnsureBoxHelpers(c: number): boolean {
       " }" +
       " return out.join('\\\\u0001'); };" +
       "globalThis.__js2wasm_eval_boxdel__ = function (o, k) { try { delete o[k]; } catch (e) {} };" +
+      // Binary data (an ArrayBuffer, a typed array, a DataView) is published as
+      // an UNMIRRORED box: its own keys are its elements, so a mirror copies
+      // and re-syncs every byte on every crossing (an Emscripten heap global —
+      // Octane zlib — took minutes per crossing).
+      "globalThis.__js2wasm_eval_isbinary__ = function (o) {" +
+      " return o !== null && typeof o === 'object' && (o instanceof ArrayBuffer || ArrayBuffer.isView(o)) ? 1 : 0; };" +
       // (#4654) RegExp identification + state, in ONE realm call: '' for
       // anything that is not a realm RegExp, else flags ∥ U+0001 ∥ source.
       // \`Object.prototype.toString\` is the brand check rather than

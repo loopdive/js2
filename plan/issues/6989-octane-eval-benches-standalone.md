@@ -51,7 +51,7 @@ canvas/window stubs and are GPL-licensed.
 | bench | node | standalone | blocker |
 | --- | --- | --- | --- |
 | code-load | pass | **pass** (score 146 vs node 8033, run 2026-10-14) | fixed here (below) |
-| zlib | pass-unvalidated | timeout (>180 s for 1 rep) | performance of eval'd asm.js code |
+| zlib | pass-unvalidated | **pass-unvalidated** (score 517 vs node 73496, run 2026-10-14 at load avg 10) | fixed here (below) |
 | typescript | pass | compile-error | module-init chunk local leak + `process.*` host-import leaks (separate PR) |
 | mandreel | pass-unvalidated | compile-error | duplicate global function declarations rejected (separate PR) |
 
@@ -79,6 +79,23 @@ canvas/window stubs and are GPL-licensed.
    carriers. Before this change, a method stored on a compiled object crossed
    as a non-callable wrapper ("not a function"), and a compiled closure
    called with provider-boxed arguments read `NaN`.
+
+## zlib fix
+
+zlib's Emscripten module is one big `eval`. It leaves its heap
+(`ArrayBuffer` plus typed-array views) and ~400 functions as global bindings.
+Every global QuickJS object crossing out became a #4245 slice-2 **mirrored
+box** that copied all own string keys, and the box was re-synced at every
+crossing. For a typed array that means every element. Measured: a 4 MiB
+`Int8Array` global took **104 s** to cross. zlib's setup took 27 s against
+36 ms on native QuickJS, and one run took 39 s against ~14 s native.
+
+Binary data (`ArrayBuffer`, typed arrays, `DataView`) now crosses out as an
+identity-preserving **unmirrored** box. The new realm helper
+`__js2wasm_eval_isbinary__` identifies it. After the fix the 4 MiB case
+takes 88 ms, zlib setup 1 s, and one run ~16 s (2026-10-14, contended box).
+Residual: compiled code cannot read the elements of an eval-created typed
+array. The box only round-trips it.
 
 ## Residuals
 
