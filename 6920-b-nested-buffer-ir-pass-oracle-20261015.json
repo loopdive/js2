@@ -1,0 +1,66 @@
+{
+  "id": "6920",
+  "slice": "nested-buffer-ir-pass-oracle-successor-20261015",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+  "claimed_at": "2026-10-14T23:08:19.659615+00:00",
+  "updated_at": "2026-10-14T23:08:19.659615+00:00",
+  "write_id": "b-nested-buffer-ir-pass-oracle-f34ab2d8-5456-4e5e-9edf-e22a296cdeb2",
+  "handoff_scope": [
+    {
+      "kind": "nested-buffer-ir-pass-oracle",
+      "at": "2026-10-14T23:08:19.659615+00:00",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+      "manifest": {
+        "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+        "componentPreimages": [
+          {
+            "path": "tests/issue-2856-inline-small-buffer-caller.test.ts",
+            "bytes": 2156,
+            "sha256": "95938ab0edc5895d8b56297854728bc5664075733e75115583b8d2cf550009ec"
+          }
+        ],
+        "canonicalNewPaths": [],
+        "operations": [
+          "Replace only obsolete final-WAT numeric-call containment oracle with transparent spy over actual inlineSmall input/output. Require actual pass invocation, original leaf unit call, nested-buffer presence and unchanged run IrFunction object identity.",
+          "Preserve exact input source, compile options, existing compiler/verifier assertions, engine instantiation and all3 numeric execution expectations. Spy returns exact original pass result and restores normally."
+        ],
+        "actualEvidence": {
+          "originalOptimizerBaselineReproducesFailure": true,
+          "actualOriginalCalls": 1,
+          "currentOptimizerPopulation": {
+            "pass": 70,
+            "total": 71
+          },
+          "privateNewOracle": {
+            "pass": 1,
+            "total": 1
+          }
+        },
+        "constraints": [
+          "User authorized blocking shared seams takeover; oldtest only, no source/optimizer/backend or threshold changes.",
+          "Retain old failure and originalpass baseline; no test removal, weakened engine assertions, guessed callee identity or WAT-call requirement after physical inlining.",
+          "Do not mutate any final354 input while its qualifier is live; issue update at next terminal safe point; normal focused original optimizer validation afterward."
+        ]
+      },
+      "manifestSha256": "5387b8b0896260244939692fee4f08c1e6aa75b4f8c6da296e1e1592d0fc1bd8",
+      "constraints": [
+        "User authorized blocking shared seams takeover; oldtest only, no source/optimizer/backend or threshold changes.",
+        "Retain old failure and originalpass baseline; no test removal, weakened engine assertions, guessed callee identity or WAT-call requirement after physical inlining.",
+        "Do not mutate any final354 input while its qualifier is live; issue update at next terminal safe point; normal focused original optimizer validation afterward."
+      ]
+    }
+  ],
+  "predecessors": [
+    "3522-b-native-class-semantic-producer-20261014.json",
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}
