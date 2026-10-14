@@ -4677,3 +4677,124 @@ No scalar token, legacy materializer, metadata-only receipt or new opcode name
 supplies readiness. Full class arrays/closures/inheritance/public transport and
 held W1-C super/accessor remain tracked required work. This correction restores
 truthful admission; it does not retire or shrink the supported class goal.
+
+
+### Session B native numeric undefined observation receiver (2026-10-14)
+
+Verified shared-seam claim 0e1eff37ea00ccee0574aff075efc15632fa5d95 adds a source-only
+checker-symbol all-writes provenance guard before native unboxed numeric
+undefined comparison folding. Generic/non-native folds and dynamic tag tests
+remain unchanged. The new mixed boundary retains checker AST authority; it
+asserts no completed migration or generic runtime undefined carrier.
+
+The clean7107 private audits preserve genuine GC alias miscompilation and
+current Linear refusal. Numeric conversion creates a defined NaN; it must not
+be confused with preserving source undefined. Missing, cyclic, cross-function
+or unknown provenance refuses rather than relying on TypeScript number types.
+All-write analysis conservatively retains possible absence after overwrite and
+across branches/loops. Source provenance does not grant in-bounds proof at a
+later alias use. Actual receiving qualification remains pending.
+
+
+#### Actual native undefined-observation receiver qualification
+
+The finite guard additionally authenticates numeric ABI parameter definedness
+with canonical source/unit identity, actual checker module-export symbols,
+current lowered f64 parameter bindings and a complete source-population
+checker-symbol incoming-use census. Aliases resolve through checker symbols;
+called, captured, nonpublic, aliased, cyclic, missing or unknown provenance
+refuses. No interprocedural value admission, dynamic tag algorithm, typeof
+algorithm, old native profile grammar, source-origin or C1 algorithm changed.
+Removing only the import and numeric hook restores the original from-ast bytes.
+
+Actual Node25.9.0 command 59382 exits0 with all33 owned cases passed and no
+unhandled errors. Public/live/codec positives execute96 independently checked
+JavaScript value comparisons, with32 byte-equal live/codec pairs. Four healthy
+scalar prepared artifacts and four actual emitted binary pairs match the
+historical no-provenance fold; four scalar binaries execute correctly.
+Initialized NaN vector-cell aliases conservatively refuse: immutable constructor
+extent/read-site mutation and escape proof remains unfinished. Nonpublic and
+incoming-called numeric parameter comparisons now refuse, closing the separately
+retained genuine JS1/GC0 draft crossing. Existing arithmetic/zero suites contribute
+31 actual passed cases in the preceding64-case command, which exited1 because
+one newly added captured-alias expectation was wrong; no full64 green credit.
+
+All failed epochs remain private: first19/24, second52/57; JSON-only59/59 and
+independent30/30 both had Node1. The default-reporter diagnostic30/30 epoch
+records one actual worker RPC onTaskUpdate timeout. Genuine setImmediate yields
+between test policy iterations restore worker responsiveness without altering
+any test timeout, global policy or admission predicate. Later64=63/1 and
+33=32/1 failures were captured-alias diagnostic expectations, with no RPC error.
+The direct captured alias refuses type-resolution-unsupported/build (no exact
+module storage); public compilation separately refuses numeric source
+classification for that top-level global. Both exact payloads are retained.
+
+Project TS7 full typing has1998 source files and58 actual6920 root tests,
+excludes[]; source/type gates, ordinary scoped LOC allowance, inventory,
+formatting and lint pass. Separate TS5 instrument failure retains23 existing
+WebAssembly Tag/Exception ambient diagnostics. No source/test/claim/index/git
+writes occurred outside the five assigned paths and private receipts; no commit
+or push was performed by this receiver.
+
+This is a source-only failclosed observation boundary, not complete undefined
+semantics or full IR migration. Private genuine next-frontier probes preserve
+JS1/GC0 for two absent indexed reads compared with each other on both GC
+targets; current Linear profiles refuse. Those comparisons contain no undefined
+literal and are outside this hook. First-class absent-read semantics or a
+qualified source presence proof must precede wider equality/inequality coverage.
+The source typeof/string frontier and current ABI/call/read-site proof refusals
+also remain separate dependencies. No known wrong answer was frozen as a
+production green expectation.
+
+
+## B guarded class and numeric provenance composition (2026-10-14)
+
+The root composes signed guarded class checkpoint da36fcc and signed native
+numeric provenance correction61ae6 with exact original source bytes, all three
+class inventory rows and the single alias row. The actual policy has2001 rows,
+633127 bytes and SHA25660bfda84dda819fc45e60ebb370e06d6007001f5885f2a934f24c3c5c1757dc7.
+Both issue appends and class budget allowances remain; the foreign untracked
+public-error control is untouched. No generic/J3/C1 algorithm is rewritten.
+
+Actual independent qualification: seven files,176/176 passed, Node exit0 and no
+unhandled errors. TS7 checks all2001 source files,69 explicit native roots,
+88 resolved tests and2338 inputs, excludes[]. The full8GiB package build and
+all ten dialect/neutrality/layering/cycle/directory/inventory/budget/lint/format
+gates exit0. Inventory is valid but graphComplete remains false: graph closure
+and migration debt are not credited. Class semantic preparation/runtime still
+has zero credit; all52 audited original class sources refuse before body IR.
+The provenance guard retains initialized scalar NaN and public numeric ABI
+controls and refuses unknown/aliased/called parameter absence before folding.
+
+The broader83-file run executes1268 cases:1181 passed,77 failed,9 skipped and
+one todo, actual Node exit1 with no unhandled errors. All original70 failure
+identities and symmetrically normalized diagnostic payload/application frames
+remain identical to the published7107 arithmetic epoch. Seven additional
+failures are S02/S14/S16 in allocation-provenance-preservation and
+AP02/AP03/AP11/AP12 in allocation-rule-sharing-preservation. Every one stops
+at the authenticated complete SHA256/length pin for
+src/ir/program/class-layouts.ts in ir-validation-analysis-relocation. That
+first stop is preserved; it does not validate the rest of any callback or
+attribute its entire outcome to one defect. The class producer changed that
+actual module. The historical validation-relocation authority and all held
+C1/generic preservation controls remain untouched; a complete finite source
+receipt continuation and fresh downstream qualification remain required.
+No failure is waived, relabeled passed, removed or hidden by historical input.
+
+Exact row payloads, independent reports/terminals, source seals and symmetric
+comparison are in root .tmp/native-undefined-composition/. Earlier failed
+merge-resolution assertions are retained in merge-resolved.json; no source
+change was made to satisfy an expected hash. Normal signed commit/push checks
+and remote head/HOLD readback remain required for publication.
+
+The genuine Number/Undefined carrier is separate ongoing work, received in
+bounded source/checker, physical and singleton scopes38e6fc3f, demand/issued
+memory interfaces50c79e0a and the exact evidence profile unionae9efcbc. Three
+isolated workers continue source/evidence, physical resources and the actual
+2001-row inventory continuation. Their unfinished drafts supply no runtime or
+architecture completion credit. Double-OOB equality still needs real absence
+values; initialized vector NaN aliases, captures, mutable slots, broader calls,
+typeof/string/public dynamic transport, full JavaScript class semantics,
+conformance/optimization/retirement and verified main remain required work.
+PR6662 retains HOLD, no auto-merge; A retains original forwarding and queue
+ownership. This is a reviewable guarded checkpoint, not full-green migration.

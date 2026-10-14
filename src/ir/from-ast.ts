@@ -35,6 +35,7 @@
 //     call's return type comes from `callReturnTypes` (same TypeMap),
 //     with arg types validated against the propagated callee param types.
 
+import { nativeNumericUndefinedProof } from "./native-vector-undefined-provenance.js";
 import { conditionalBranchTypesAgree } from "./core/native-conditional-type.js";
 import { IR_STRING_COMPARE_FN } from "./runtime-symbols.js";
 import { IR_ASYNC_CONSOLE_LOG_STRING_FN, IR_ASYNC_NUMBER_TO_STRING_FN } from "./async-semantic-runtime.js";
@@ -15259,6 +15260,29 @@ function tryLowerUndefinedCompare(expr: ts.BinaryExpression, op: ts.SyntaxKind, 
     t.kind === "closure" ||
     t.kind === "string"; // native-strings mode only (host mode took the branch above)
   if (neverUndefinedRep && !staticTypeMayBeUndefined()) {
+    if (
+      cx.logicalVectorTypes !== undefined &&
+      tv !== null &&
+      (tv.kind === "f64" || (tv.kind === "i32" && tv.boolean !== true)) &&
+      nativeNumericUndefinedProof(other, {
+        checker: cx.checker,
+        logicalVectorTypes: cx.logicalVectorTypes,
+        identity: cx.identityContext,
+        ownerUnitId: cx.ownerUnitId,
+        numericParameter: (parameter) => {
+          if (!ts.isIdentifier(parameter.name)) return false;
+          const binding = cx.scope.get(parameter.name.text);
+          return !!binding && "type" in binding && binding.type.kind === "val" && binding.type.val.kind === "f64";
+        },
+        inBounds: (read) => isProvenInBoundsIr(read, cx),
+      }) !== "defined"
+    ) {
+      throw new IrUnsupportedError(
+        "nullish-value-unsupported",
+        "build",
+        `ir/from-ast: native numeric value has no defined-value provenance for undefined comparison (${cx.funcName})`,
+      );
+    }
     return cx.builder.emitConst({ kind: "bool", value: isStrictNeq }, IR_BOOL);
   }
   throw new IrUnsupportedError(
