@@ -12,6 +12,7 @@ reasoning_effort: high
 task_type: planning
 area: ir
 loc-budget-allow:
+  - src/ir/from-ast.ts
   - src/compiler/ir-program-presentation.ts
   - src/compiler.ts
   - src/ir/program-consumer.ts
@@ -4453,3 +4454,71 @@ scalar-pair.json,typing.log,typing.exit,tsconfig.scope.json}.
 This remains a bounded arithmetic checkpoint. Math.min's authentic predecessor
 ownership invariant, class runtime support, complete source coverage, both-backend
 matrices, optimization retirement, Test262 and verified final main remain open.
+
+
+### Session B native numeric undefined observation receiver (2026-10-14)
+
+Verified shared-seam claim 0e1eff37ea00ccee0574aff075efc15632fa5d95 adds a source-only
+checker-symbol all-writes provenance guard before native unboxed numeric
+undefined comparison folding. Generic/non-native folds and dynamic tag tests
+remain unchanged. The new mixed boundary retains checker AST authority; it
+asserts no completed migration or generic runtime undefined carrier.
+
+The clean7107 private audits preserve genuine GC alias miscompilation and
+current Linear refusal. Numeric conversion creates a defined NaN; it must not
+be confused with preserving source undefined. Missing, cyclic, cross-function
+or unknown provenance refuses rather than relying on TypeScript number types.
+All-write analysis conservatively retains possible absence after overwrite and
+across branches/loops. Source provenance does not grant in-bounds proof at a
+later alias use. Actual receiving qualification remains pending.
+
+
+#### Actual native undefined-observation receiver qualification
+
+The finite guard additionally authenticates numeric ABI parameter definedness
+with canonical source/unit identity, actual checker module-export symbols,
+current lowered f64 parameter bindings and a complete source-population
+checker-symbol incoming-use census. Aliases resolve through checker symbols;
+called, captured, nonpublic, aliased, cyclic, missing or unknown provenance
+refuses. No interprocedural value admission, dynamic tag algorithm, typeof
+algorithm, old native profile grammar, source-origin or C1 algorithm changed.
+Removing only the import and numeric hook restores the original from-ast bytes.
+
+Actual Node25.9.0 command 59382 exits0 with all33 owned cases passed and no
+unhandled errors. Public/live/codec positives execute96 independently checked
+JavaScript value comparisons, with32 byte-equal live/codec pairs. Four healthy
+scalar prepared artifacts and four actual emitted binary pairs match the
+historical no-provenance fold; four scalar binaries execute correctly.
+Initialized NaN vector-cell aliases conservatively refuse: immutable constructor
+extent/read-site mutation and escape proof remains unfinished. Nonpublic and
+incoming-called numeric parameter comparisons now refuse, closing the separately
+retained genuine JS1/GC0 draft crossing. Existing arithmetic/zero suites contribute
+31 actual passed cases in the preceding64-case command, which exited1 because
+one newly added captured-alias expectation was wrong; no full64 green credit.
+
+All failed epochs remain private: first19/24, second52/57; JSON-only59/59 and
+independent30/30 both had Node1. The default-reporter diagnostic30/30 epoch
+records one actual worker RPC onTaskUpdate timeout. Genuine setImmediate yields
+between test policy iterations restore worker responsiveness without altering
+any test timeout, global policy or admission predicate. Later64=63/1 and
+33=32/1 failures were captured-alias diagnostic expectations, with no RPC error.
+The direct captured alias refuses type-resolution-unsupported/build (no exact
+module storage); public compilation separately refuses numeric source
+classification for that top-level global. Both exact payloads are retained.
+
+Project TS7 full typing has1998 source files and58 actual6920 root tests,
+excludes[]; source/type gates, ordinary scoped LOC allowance, inventory,
+formatting and lint pass. Separate TS5 instrument failure retains23 existing
+WebAssembly Tag/Exception ambient diagnostics. No source/test/claim/index/git
+writes occurred outside the five assigned paths and private receipts; no commit
+or push was performed by this receiver.
+
+This is a source-only failclosed observation boundary, not complete undefined
+semantics or full IR migration. Private genuine next-frontier probes preserve
+JS1/GC0 for two absent indexed reads compared with each other on both GC
+targets; current Linear profiles refuse. Those comparisons contain no undefined
+literal and are outside this hook. First-class absent-read semantics or a
+qualified source presence proof must precede wider equality/inequality coverage.
+The source typeof/string frontier and current ABI/call/read-site proof refusals
+also remain separate dependencies. No known wrong answer was frozen as a
+production green expectation.

@@ -16571,6 +16571,14 @@
       "destination": "compiler",
       "owner": "6920-session-b-native-takeover",
       "nextBoundary": "Source-free native scalar declarations derive from immutable semantic ABI and authentic current emissions; Prepared program and consumer imports retain migration debt until their complete import closure is separated."
+    },
+    {
+      "path": "src/ir/native-vector-undefined-provenance.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "6920-session-b-native-takeover",
+      "nextBoundary": "Checker-symbol native numeric defined-value provenance retains TypeScript AST authority; migrate with source lowering, never infer runtime absence from unboxed carriers."
     }
   ]
 }
