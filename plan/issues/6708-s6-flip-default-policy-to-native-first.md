@@ -271,7 +271,7 @@ The original 50 rows (file :: test):
 
 - array-indexof-no-arg :: indexOf / lastIndexOf finds an element that IS undefined; finds the LAST element that is undefined
 - await-settled-operand-yields :: `await null` in an async arrow returns to the caller first; sibling async functions interleave like JS
-- binding-null-guard :: class method with destructured param should not null-deref
+- binding-null-guard :: class method with destructured param — a harness defect: `tests/equivalence/helpers.ts` `buildImports` stubbed env lacked the `__boundary_object_*` hooks and the string bridge (LinkError); it now fills missing imports from the runtime (fixed here, found by opus-6981-ir)
 - destructuring-require-object-coercible :: `let {} = 5` is coercible (compile failure)
 - element-assignment-externref :: numeric key assignment on any-typed parameter
 - generator-return-method :: return() propagates the supplied value

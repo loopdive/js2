@@ -30,7 +30,9 @@ const jsStringPolyfill = {
  * including env stubs, Math host imports, string constants,
  * and wasm:js-string polyfill.
  */
-export function buildImports(result: CompileResult): WebAssembly.Imports {
+export function buildImports(
+  result: CompileResult,
+): WebAssembly.Imports & { setInstance?: (instance: WebAssembly.Instance) => void } {
   const env: Record<string, Function> = {
     console_log_number: () => {},
     console_log_string: () => {},
@@ -326,11 +328,25 @@ export function buildImports(result: CompileResult): WebAssembly.Imports {
     Object.assign(env, buildRuntimeImports(classRegistryImports, undefined, result.stringPool).env);
   }
 
-  return {
+  // (#6708) Under native-first in a JS environment the module also imports the
+  // boundary-object hooks (#4399) and the native-string bridge
+  // (`__str_from_mem` / `__str_to_mem` / `__str_extern_len`), which this stub
+  // list does not carry. Fill every missing import from the real runtime; the
+  // caller wires the runtime instance with `imports.setInstance?.(instance)`.
+  const runtime =
+    result.imports.length > 0 ? buildRuntimeImports(result.imports, undefined, result.stringPool) : undefined;
+  if (runtime) {
+    for (const [name, value] of Object.entries(runtime.env as Record<string, Function>)) {
+      if (!(name in env)) env[name] = value;
+    }
+  }
+  const imports = {
     env,
     "wasm:js-string": jsStringPolyfill,
     string_constants: buildStringConstants(result.stringPool),
-  } as WebAssembly.Imports;
+  } as WebAssembly.Imports & { setInstance?: (instance: WebAssembly.Instance) => void };
+  if (runtime?.setInstance) Object.defineProperty(imports, "setInstance", { value: runtime.setInstance });
+  return imports;
 }
 
 /**
