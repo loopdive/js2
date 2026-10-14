@@ -1,0 +1,78 @@
+{
+  "id": "6920",
+  "slice": "native-core-contract-successor-20261014",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+  "claimed_at": "2026-10-14T14:57:22.856511Z",
+  "updated_at": "2026-10-14T14:57:22.856511Z",
+  "write_id": "b-core-contract-01b8d786-26b8-4ced-b7c7-54dd49eede06",
+  "handoff_scope": [
+    {
+      "kind": "complete portable core contract and binding-factory relocation",
+      "at": "2026-10-14T14:57:22.856511Z",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+      "manifest": {
+        "atUTC": "2026-10-14T14:53:57.260052+00:00",
+        "authority": "complete ir migration; Take over the blocking shared seams; all Session B",
+        "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+        "sourceBase": "a4d4c99ccc9cd4fe27bd6dba91180fc575616529",
+        "componentPreimages": [
+          {
+            "path": "src/ir/abi-bindings.ts",
+            "bytes": 11312,
+            "sha256": "e13e7e5b6fdfb9ed487c4e6cf9b8fcfbde95ef4d6472a3d274621a80b768aadb"
+          },
+          {
+            "path": "src/ir/js-class-contracts.ts",
+            "bytes": 4461,
+            "sha256": "cdc3f623a1986d573968cb1cd75ff6b78f73e691e870b63be1d506d84ced151c"
+          }
+        ],
+        "canonicalNewPaths": [
+          "src/ir/core/js-class-contracts.ts",
+          "src/ir/core/binding-references.ts"
+        ],
+        "classDataReaderImportsOnly": [
+          "src/ir/analysis/allocation-evidence/native-js-class-effects.ts",
+          "src/ir/core/dialect/js.ts",
+          "src/ir/passes/inline-small.ts",
+          "src/ir/program-abi-contracts.ts",
+          "src/ir/program/input-contracts.ts",
+          "src/ir/program/js-class-abi.ts",
+          "src/ir/program/js-class-definition.ts",
+          "src/ir/program/prepared-contracts.ts",
+          "src/ir/runtime/native-js-class-profile.ts"
+        ],
+        "classAbiFactoryReaderImportsOnly": [
+          "src/ir/program/js-class-abi.ts"
+        ],
+        "scope": "Move the complete remaining portable binding-reference factory component into core/binding-references.ts with exact original function bodies, canonical shared/core imports and a direct compatibility reexport at abi-bindings.ts. Move the complete portable native JS class DATA definitions into core/js-class-contracts.ts, preserve every interface/type/schema field and keep old path as a type-only compatibility forwarder. Update exact actual class readers in the receiving integration only; no donor writes or old algorithm/schema changes. Prove full body/exports/reference identity, actual typed source/dependency closure and existing semantic controls.",
+        "preserve": [
+          "All old source/class/vector/allocator/constructor algorithms",
+          "A/B/C donor hashes and branches; root replays exact import relocation after adopting their sealed components",
+          "Foreign sparse claims/owners/status; no blanket release inferred from lack of exact mentions",
+          "Normal hooks, HOLD, A queue/default routing, no main push"
+        ],
+        "actualGateFailures": [
+          "clean-outside-active-layer src/ir/js-class-contracts.ts",
+          "unclean-active-layer src/ir/program/js-class-abi.ts"
+        ],
+        "issue": "plan/issues/6920-native-linear-shared-source-handoff.md"
+      },
+      "manifestSha256": "c6fdf9447db04df060a545bc17a6c11e9f2aa73f29f3f0758329e327c86b6577",
+      "constraints": "Whole remaining portable binding-factory component, exact unchanged bodies, direct backward-compatible reexports; full native class DATA moved without schema change. Exact root-integration class imports rewired, no donor writes. Preserve every old algorithm, namespace, identity and foreign ownership. No activation-policy/allowance changes or clean waiver; prove full graph and qualified receipts before publication."
+    }
+  ],
+  "predecessors": [
+    "3522-b-native-class-semantic-producer-20261014.json",
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}
