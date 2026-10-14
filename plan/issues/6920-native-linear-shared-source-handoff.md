@@ -4798,3 +4798,41 @@ typeof/string/public dynamic transport, full JavaScript class semantics,
 conformance/optimization/retirement and verified main remain required work.
 PR6662 retains HOLD, no auto-merge; A retains original forwarding and queue
 ownership. This is a reviewable guarded checkpoint, not full-green migration.
+
+## B finite class-layout source receipt (2026-10-14)
+
+The user-authorized Session B receiving record
+6920-b-native-class-source-receipt-successor-20261014 at coordination commit
+00d965be29ab7341a1c186e07363e3d6e8d85625 receives only two current preservation
+driver reader hooks and three new helper/receipt/control files. Both former
+B records and all C1 H1/H2/H3/default-reader owners and historical bytes remain
+preserved. The actual source domain remains the published guarded 2001-file
+checkpoint; this receipt has no class body or semantic execution credit.
+
+The fixed outer DATA authenticates 34 actual source operands, eight old
+helper/receipt anchors and its own fixed receipt afresh on every operation.
+It independently reverses the genuine added class-layout checks to the exact
+prior complete source bytes and reciprocally reconstructs current bytes.
+Original algorithms, defaults, 16+12 callbacks and old-stage mutants stay
+byte-exact. A fresh factory captures once for each explicit reader operation;
+its private captured reader never authorizes a later operation or rereads mapped
+inputs. This avoids repeated captures inside the unchanged type-ownership
+operation without introducing a cross-operation success cache.
+
+Independent natural default-runner qualification passed 55/55 cases (original
+28 and 27 new), exit0/no unhandled errors; AP03 maximum11.184seconds remains
+below its unchanged35second deadline. Full test-inclusive TS7 excludes[]
+passed with2001src/2258totalinputs/eight test-helper inputs; all ten ordinary
+gates passed. Initial27/28/AP03timeout43.580seconds with two unhandled errors,
+new fixture typing/lint failures and standaloneAP03 measurement32.653seconds
+are retained in the sealed evidence, not waived.
+
+Sealed five-path handoff SHA256
+c2cc157399854f4b3ce700ef9a0a4999bef913b69d3a94cbd1c7aba6a13edd5c
+records complete unchanged source/anchor populations and independent driver
+preimage restoration. Only the seven historical class-layout first stops in
+these two drivers are cured. The wider70/77 failures, generic C1/default paths,
+primitive carrier execution, full class semantics, conformance, optimization,
+retirement and verified main remain required work. Normal root commit and
+publication checks must still pass. Existing PR6662 HOLD, A integration/queue
+ownership and unrelated branches remain unchanged.
