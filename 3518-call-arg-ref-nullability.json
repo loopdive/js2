@@ -6,8 +6,8 @@
   "status": "in-progress",
   "branch": "codex/3518-call-arg-ref-nullability-20260906",
   "claimed_at": "2026-09-06T19:16:00Z",
-  "updated_at": "2026-10-14T12:27:01.023845Z",
-  "write_id": "b-class-hook-transfer-eb87fcda-f28a-4476-805b-3f4470ae84f4",
+  "updated_at": "2026-10-14T12:34:15.804100Z",
+  "write_id": "b-class-frame-e4fd9618-c630-4b3a-90be-cb60428d38ac",
   "bounded_hook_transfers": [
     {
       "at": "2026-10-14T12:27:01.023845Z",
@@ -35,7 +35,71 @@
         "write_id": "46919-0hz5e426"
       },
       "sourceHead": "df466f30d4ee27ab332debad823912ee9155c80c"
+    },
+    {
+      "at": "2026-10-14T12:34:15.804100Z",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b"
+      },
+      "receivingRecord": "3522-b-native-class-semantic-producer-20261014.json",
+      "receivingOwner": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+      "receivingBranch": "codex/6920-b-native-js-class-source-20261014-01a12827",
+      "specSha256": "cfd5a6c21523549bdceac446f6da53505ccf64ab8784ab3ef4eb4318f7011893",
+      "operation": {
+        "kind": "Exact additive fifteenth native JS class opcode refinement; same received file set",
+        "previousReceive": "93950c365716cc1403edc799de3df98cd297bc2e",
+        "interface": "IrInstrJsClassFrameNew",
+        "opcode": "js.class.frame.new",
+        "extends": "IrInstrBase",
+        "fields": {
+          "definition": "IrBindingId: existing canonical support:none native-js-class-definition-v1 entry",
+          "environment": "IrValueId",
+          "thisValue": "IrValueId",
+          "homeObject": "IrValueId",
+          "newTarget": "IrValueId",
+          "result": "non-null fresh IrValueId",
+          "resultType": "non-null existing irSupportRef(descriptor.roles.frame,false)",
+          "alloc": "required genuine builder-issued object-kind AllocSiteId",
+          "site": "actual original source unit site"
+        },
+        "sourceClassIdRelation": "Descriptor sourceClassId joins original inventory ClassId; not a runtime value or token. Definition ID and actual containing original unit bind exact frame contract.",
+        "activationRecipe": "Original constructor/method/initializer unit has four genuine hidden root parameters in exact environment/this/homeObject/newTarget order plus original user parameters. Its entry emits real frame.new from those params before any frame.get/source expression. Initializer has zero USER parameters. Construct owns separate instance site and supplies actual self to ctor; invoke supplies actual receiver. No hidden physical helper/frame allocation or fabricated unit.",
+        "dataExtension": "IrJsClassBody frame contract declares exact hidden ABI order/types and binds actual original-unit frame.new site/result via independent body replay. SourceClassBody original provenance unchanged.",
+        "effects": {
+          "readsHeap": true,
+          "writesHeap": true,
+          "control": true,
+          "allSlots": false,
+          "note": "Fresh activation allocation may throw, cannot CSE/DCE or reorder across observable operations. Stored referents retain independent identities/roots."
+        },
+        "uses": [
+          "environment",
+          "thisValue",
+          "homeObject",
+          "newTarget"
+        ],
+        "symbols": [
+          "definition support descriptor binding ID",
+          "resultType exact canonical frame type binding"
+        ],
+        "geometry": "One real object-kind frame root, distinct definition graph/cells/self roots. Env/this/home/newTarget remain external aliases, not fresh child sites. Each activation/recursion executes a fresh runtime allocation at the same static source provenance site; same AllocSite never implies runtime equality.",
+        "requiredHooks": [
+          "canonical JS interface/IrInstr union/legacy type forwarder/exact14->15 name census/JS verdict+baseline",
+          "core directUses+leaf nesting; backend/runtime/monomorph uses; inline rename all4 operands and true allocation fork",
+          "builder genuine object alloc/result emitter; verifier complete frame role/hidden ABI/body dominance/symbol joins",
+          "analysis effects+isSideEffecting; component descriptor/type dependencies; typed absent-resource refusal",
+          "B actual callee body frame entry/site provenance, capture/alias/root lifetime/effect replay; C both real frame recipes/materializers"
+        ],
+        "replacement": "constructor.complete object replacement aliases existing returned root; genuine allocated self and possible partial throw escape remain accounted. No frame graph double mint.",
+        "allocationEmission": "Remain stopped until root published readback.",
+        "numericAgreement": "numeric_undefined_representation confirmed original callee-entry recipe is independently replayable; allocation B spec1139054b prerequisite."
+      },
+      "scope": "Exactly one additional typed JS operation js.class.frame.new in the same thirty existing paths, seven new production leaves and two new suites. Explicit genuine per-activation frame allocation, complete uses/effects/verifier/clone/dependency checks and exact truthful fifteenth-kind gate/baseline additions. No new path or modification to original neutral/JS-tag/scoped-ABI/nullability/super/accessor algorithms.",
+      "predecessorRecordSha256": "c2f92c977f6e8196bf1ef21846a85112c04778dbec463c3506b0bf1946fb7961",
+      "previousLedger": "93950c365716cc1403edc799de3df98cd297bc2e",
+      "runtimeCredit": "None; genuine B producer/replay and both C materializers remain required."
     }
   ],
-  "previous_write_id": "46919-0hz5e426"
+  "previous_write_id": "b-class-hook-transfer-eb87fcda-f28a-4476-805b-3f4470ae84f4"
 }
