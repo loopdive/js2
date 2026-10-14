@@ -1,0 +1,104 @@
+{
+  "id": "3518",
+  "slice": "b-pipeline-result-finalizer-20261014",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "status": "in-progress",
+  "branch": "codex/6920-b-pipeline-finalization-owner-20261014-01a12827",
+  "handoff_authority": {
+    "answer": "Take over the blocking shared seams",
+    "priorAnswer": "takeover all of session b",
+    "humanRequest": "unblock",
+    "scope": "native Linear API/routing, checked allocation preparation, carrier/emission wiring, startup resources, existing allocator/constructor recipe; preserve existing branches and unrelated work; fresh isolated worktrees and normal checks"
+  },
+  "handoff_scope": [
+    "src/compiler/pipeline-output-context.ts",
+    "src/compiler/pipeline-result-finalizer.ts",
+    "src/compiler.ts",
+    "src/compiler/ir-program-presentation.ts",
+    "src/compiler/ir-native-number-undefined-optimization.ts",
+    "src/compiler/native-linear-pipeline.ts",
+    "tests/issue-6920-native-number-undefined-optimization.test.ts",
+    "tests/issue-6920-pipeline-result-finalization.test.ts"
+  ],
+  "exact_function_scope": [
+    "pipeline-output-context.ts: move only existing explicit PipelineOutputContext contract; no PipelineInput or body generation state.",
+    "pipeline-result-finalizer.ts: unchanged finalizePipelineModule and recgroup fingerprint/drift/private holder helpers; actual preparedPipelineArtifacts construction and private witness map; fixed productive prepared-presentation entry creates actual finalized outputs/artifacts and registers exact tuple internally; only readonly checker export.",
+    "compiler.ts: exact imports/type compatibility; runPipeline and runPreparedIrPipelinePresentation finalization delegation; applyOptimize/compileSource moved runtimeRecGroupDrift import; remove moved definitions/map/checker; every other function and algorithm unchanged.",
+    "ir-program-presentation.ts: only type import PipelineOutputContext.",
+    "ir-native-number-undefined-optimization.ts: only fixed checker import to actual new finalizer owner.",
+    "native-linear-pipeline.ts: relocate actual preparedPipelineArtifacts projection with compatibility export if required; native preparation route unchanged.",
+    "existing optimization suite: only fixed-checker import/spy owner rebind; all identities/oracles preserved.",
+    "new finalization suite: genuine productive construction, private authority, forged/copied/pre-finalization/module/options/currentness/getter controls plus real sync/async and generic finalization behavior."
+  ],
+  "source_preimages": [
+    {
+      "path": "src/compiler/pipeline-output-context.ts",
+      "exists": false,
+      "sha256": null
+    },
+    {
+      "path": "src/compiler/pipeline-result-finalizer.ts",
+      "exists": false,
+      "sha256": null
+    },
+    {
+      "path": "src/compiler.ts",
+      "exists": true,
+      "sha256": "86b3275a01ad3aa1bb7362738604dc4b5716a3f70386e3d24047726f25734730"
+    },
+    {
+      "path": "src/compiler/ir-program-presentation.ts",
+      "exists": true,
+      "sha256": "ce3b9946c2e3c38e6ad6b9fce19fc1c54144dffb62ea53701cb4d9a7ee149b5d"
+    },
+    {
+      "path": "src/compiler/ir-native-number-undefined-optimization.ts",
+      "exists": true,
+      "sha256": "dee05759723b788552ebbad290c7444d69b28eb8968783910b319c1973729d98"
+    },
+    {
+      "path": "src/compiler/native-linear-pipeline.ts",
+      "exists": true,
+      "sha256": "84b05e3f563498b36bcd54e5df1ab8f6036050e88c19d4a522030a5424620af7"
+    },
+    {
+      "path": "tests/issue-6920-native-number-undefined-optimization.test.ts",
+      "exists": true,
+      "sha256": "bbc7c00c0e61eb780fc9fd1a361eab65c1574546c3e457c9913f0c6df7b38bc3"
+    },
+    {
+      "path": "tests/issue-6920-pipeline-result-finalization.test.ts",
+      "exists": false,
+      "sha256": null
+    }
+  ],
+  "spec_sha256": "48366798f78b1b8a449a7462bbc12677f199159233c6aa899096dce684d1acad",
+  "exclusions": [
+    "compileToObjectSource and separately held object-result-finalizer",
+    "caller-supplied registration, result, module, callback or fake completed authority",
+    "generic optimization/emission/preparation algorithms outside named unchanged moved bodies",
+    "A forwarding, integration/queue ownership, main and existing PR/HOLD changes",
+    "policy/issue/grants delegated to worker",
+    "completion or zero-debt inference; output consumer remains honestly mixed"
+  ],
+  "predecessors": [
+    {
+      "path": "3518-compiler-result-finalizer.json",
+      "blob": "75d7bfe92bd56a70a88272ceeda7e1bdc7919727",
+      "write_id": "12163-99dakfq7",
+      "assignee": "ttraenkler/astra-ir-program-a-20260905"
+    },
+    {
+      "path": "3518-output-finalizer-context-20261004.json",
+      "blob": "e582fdf21399292eb29a68ea9691086617c731d8",
+      "write_id": "72776-i6tx4s2n",
+      "assignee": "ttraenkler/codex-output-finalizer-context-20261004"
+    }
+  ],
+  "receiving_from_B_record": "6920-b-native-public-routing-takeover-20261013.json",
+  "publication_dependency": "Separate fresh branch; root current2018 checkpoint and running inventory remain unchanged. Full62+new tests/typing/build and actual inventory/cycle closure qualified before adoption.",
+  "claimed_at": "2026-10-14T09:13:13.210178Z",
+  "updated_at": "2026-10-14T09:13:13.210178Z",
+  "write_id": "b-finalization-owner-5e936cde-7f06-400b-9835-5cb720670d01"
+}
