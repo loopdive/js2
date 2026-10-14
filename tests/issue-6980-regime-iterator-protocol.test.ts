@@ -123,6 +123,27 @@ describe.each(MODES)("#6980 native regime (%s)", (mode) => {
     expect(await run(source, mode)).toBe(11111);
   });
 
+  it("a finally return whose value collides with v's numeric payload keeps its own value", async () => {
+    // Review finding on PR #6678: provenance must come from the completion,
+    // not from comparing the f64 result bits with `__gen_numeric_payload(v)`.
+    const source = `export function test(): number {
+      function* a() { try { yield 1; } finally { return NaN; } }
+      function* b() { try { yield 1; } finally { return 1; } }
+      function* c() { try { yield 1; } finally { return 0; } }
+      function* e() { try { yield 1; } finally { yield 9; } }
+      const ia = a(); ia.next(); const ra: any = (ia as any).return("done");
+      const ib = b(); ib.next(); const rb: any = (ib as any).return(true);
+      const ic = c(); ic.next(); const rc: any = (ic as any).return("0");
+      const ie = e(); ie.next(); const re1: any = (ie as any).return("late"); const re2: any = (ie as any).next();
+      return (typeof ra.value === "number" && ra.value !== ra.value && ra.done ? 1 : 0) +
+        (typeof rb.value === "number" && rb.value === 1 ? 10 : 0) +
+        (typeof rc.value === "number" && rc.value === 0 ? 100 : 0) +
+        (re1.value === 9 && !re1.done ? 1000 : 0) +
+        (re2.value === "late" && re2.done ? 10000 : 0);
+    }`;
+    expect(await run(source, mode)).toBe(11111);
+  });
+
   it("a detached static async generator method iterates host-free", async () => {
     const source = `
       class C { static async *gen() { yield 1; yield 2; yield 3; } }

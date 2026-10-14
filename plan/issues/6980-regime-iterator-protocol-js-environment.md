@@ -30,12 +30,17 @@ loc-budget-allow:
   - src/codegen/expressions/call-tail-dispatch.ts
   - src/codegen/generators-native.ts
   - src/codegen/generators-native-consumer.ts
+  - src/codegen/frame-core.ts
+  # 2026-10-15: review fix — `.return(v)` provenance field on NativeGeneratorInfo.
+  - src/codegen/context/types.ts
 func-budget-allow:
   - src/codegen/iterator-native.ts::buildIteratorBody
   - src/codegen/iterator-native.ts::fillNativeIteratorLateArms
   - src/runtime.ts::resolveImport
   - src/codegen/generators-native.ts::buildNativeGeneratorPlan
   - src/codegen/expressions/call-tail-dispatch.ts::compileTailDispatch
+  # 2026-10-15: review fix — registers the ret_origin/ret_value frame fields.
+  - src/codegen/generators-native.ts::registerNativeGenerator
 ---
 
 # #6980 — regime iterator / generator protocol in a JS environment
@@ -109,10 +114,19 @@ JS-environment-only arms are keyed on the boundary imports existing
    its frame (§27.5.1: `return this`). USER/OBJ records are deliberately
    left alone.
 8. **`gen.return(v)` value (generator-return-method).** The numeric-carrier result
-   struct stores `value` as f64, so `"done"` → NaN. The opaque `.return`
-   dispatcher re-issues a DONE result whose value is bit-identical to
-   `__gen_numeric_payload(v)` of a non-number `v` as an externref
-   `{ value: v, done: true }`. A `finally { return 7 }` keeps 7.
+   struct stores `value` as f64, so `"done"` came back as NaN. The first cut inferred
+   provenance from result bits; review on PR #6678 showed that a
+   `finally { return NaN }` / `{ return 1 }` produces the same bits as
+   `__gen_numeric_payload("done")` / `(true)`. Provenance is now carried in the
+   frame (frame-core.ts `RETURN_ORIGIN_*`). Numeric-carrier frames get
+   `ret_origin` (i32) + `ret_value` (externref), regime only. The opaque
+   `.return(v)` dispatcher stores `v` and ARMS the marker. Every other write of
+   `abrupt` DISARMS it (`setStateFieldFromLocal`, delegate return, close
+   forwarding). The abrupt-return completion tails turn ARMED into CONSUMED. Only
+   a CONSUMED frame lets the `.return`/`.next` dispatcher re-issue
+   `{ value: ret_value, done: true }`; the `.next` path covers a `finally` that
+   yields first. Collision controls (NaN, boolean, `"0"`, finally-yield) are in
+   the regression test; they fail on the bit-comparison code.
 9. **Async generator `IteratorResult` reads (issue-1388).**
    `sourceNeedsGeneratorHostImports` counted every async generator as needing
    the legacy `__gen_*` imports, even in modules whose async gens all drive

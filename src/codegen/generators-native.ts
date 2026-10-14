@@ -94,6 +94,9 @@ import {
   setStateInstrs,
   setModeInstrs,
   storeSpills,
+  consumeReturnOriginInstrs,
+  setReturnOriginInstrs,
+  RETURN_ORIGIN_NONE,
 } from "./frame-core.js";
 // (#3271) Pure AST-scan predicate primitives now live in
 // generators-native-ast-scan.ts; imported back for the planner + candidacy gates.
@@ -4801,6 +4804,15 @@ export function registerNativeGenerator(
     );
   const executingFieldIdx = noJsHostTarget(ctx) ? stateFields.length : undefined;
   if (executingFieldIdx !== undefined) stateFields.push({ name: "executing", type: { kind: "i32" }, mutable: true });
+  // (#6980) `.return(v)` provenance for numeric-carrier frames (frame-core.ts).
+  const returnOriginFieldIdx =
+    noJsHostTarget(ctx) && genCarrierFieldType(elemValType).kind === "f64" ? stateFields.length : undefined;
+  if (returnOriginFieldIdx !== undefined) {
+    stateFields.push(
+      { name: "ret_origin", type: { kind: "i32" }, mutable: true },
+      { name: "ret_value", type: { kind: "externref" }, mutable: true },
+    );
+  }
 
   // (#3032 W6) NOMINAL BRAND for the state struct. Two generators with the
   // same shape (e.g. `function* g1() { yield; }` and `function* g2() {
@@ -4886,6 +4898,7 @@ export function registerNativeGenerator(
     elemValType,
     nativeDelegates,
     executingFieldIdx,
+    returnOriginFieldIdx,
     delegationSlots: delegationSlots.length > 0 ? delegationSlots : undefined,
     vecDelegationSlots: vecDelegationSlots.length > 0 ? vecDelegationSlots : undefined,
     iterableDelegationSlots: iterableDelegationSlots.length > 0 ? iterableDelegationSlots : undefined,
@@ -5437,6 +5450,7 @@ function emitDelegateCloseForward(
             { op: "local.get", index: closeDelegLocal },
             ...closeAbruptPayload,
             { op: "struct.set", typeIdx: closeInner.stateTypeIdx, fieldIdx: closeInner.abruptFieldIdx },
+            ...setReturnOriginInstrs(closeInner, [{ op: "local.get", index: closeDelegLocal }], RETURN_ORIGIN_NONE),
             { op: "local.get", index: closeDelegLocal },
             { op: "local.get", index: selfLocal },
             { op: "struct.get", typeIdx: info.stateTypeIdx, fieldIdx: ERROR_FIELD },
@@ -5570,7 +5584,7 @@ function compileState(
     // field stays f64, so complete with the elem default (string `.return(v)` is
     // a documented follow-up). br depth is exitDepth + 2 — inside the outer
     // `if (mode != 0)` AND the inner `if (mode == 2) … else …`.
-    const returnBody: Instr[] = [];
+    const returnBody: Instr[] = [...consumeReturnOriginInstrs(info, selfLocal)];
     if (valTypesMatch(genCarrierFieldType(info.elemValType), info.elemValType)) {
       returnBody.push({ op: "local.get", index: selfLocal });
       returnBody.push({ op: "struct.get", typeIdx: info.stateTypeIdx, fieldIdx: info.abruptFieldIdx });
@@ -6380,6 +6394,7 @@ function emitGenericDelegationState(
           info.abruptFieldIdx,
           convert([{ op: "local.get", index: value }], { kind: "externref" }, carrier),
         ),
+        ...setReturnOriginInstrs(info, [{ op: "local.get", index: selfLocal }], RETURN_ORIGIN_NONE),
         ...setModeInstrs(info, selfLocal, 1),
         ...unwind(1),
       ],
@@ -6652,7 +6667,7 @@ function emitUnwindWalk(
     { op: "struct.get", typeIdx: info.stateTypeIdx, fieldIdx: ERROR_FIELD },
     { op: "throw", tagIdx: ensureExnTag(ctx) },
   ];
-  const returnBody: Instr[] = [];
+  const returnBody: Instr[] = [...consumeReturnOriginInstrs(info, o.selfLocal)];
   if (valTypesMatch(genCarrierFieldType(info.elemValType), info.elemValType)) {
     returnBody.push({ op: "local.get", index: o.selfLocal });
     returnBody.push({ op: "struct.get", typeIdx: info.stateTypeIdx, fieldIdx: info.abruptFieldIdx });
@@ -7190,6 +7205,9 @@ export function compileNativeGeneratorFunction(
     fctx.body.push({ op: "i32.const", value: 0 });
   }
   if (info.executingFieldIdx !== undefined) fctx.body.push({ op: "i32.const", value: 0 });
+  if (info.returnOriginFieldIdx !== undefined) {
+    fctx.body.push({ op: "i32.const", value: RETURN_ORIGIN_NONE }, { op: "ref.null.extern" });
+  }
   fctx.body.push({ op: "struct.new", typeIdx: info.stateTypeIdx });
   // The factory-prototype bridge can only recover a factory identity for the
   // declaration/expression closures cached in `ctx.funcMap`. A method factory
