@@ -114,7 +114,12 @@ import {
   isCloseTransparentGenerator,
 } from "./generators-native-ast-scan.js";
 
-import { ensureNativeDelegatedResultHelpers, nativeGeneratorExecutingCheck } from "./generators-delegation-runtime.js";
+import {
+  delegateSentForwardInstrs,
+  delegationUndefinedInstrs,
+  ensureNativeDelegatedResultHelpers,
+  nativeGeneratorExecutingCheck,
+} from "./generators-delegation-runtime.js";
 import {
   bodyHasPatternYield,
   emitLinearOpStatement,
@@ -5788,11 +5793,12 @@ function compileState(
           const bindLocal = fctx.localMap.get(term.bindResultTo);
           const bindSpillIdx = info.spillNames.indexOf(term.bindResultTo);
           if (bindLocal !== undefined && bindSpillIdx >= 0) {
+            const undef = delegationUndefinedInstrs(ctx, getLocalType(fctx, bindLocal)); // (#6984)
             bindInstrs.push(
-              { op: "f64.const", value: NaN },
+              ...undef,
               { op: "local.set", index: bindLocal },
               { op: "local.get", index: selfLocal },
-              { op: "f64.const", value: NaN },
+              ...undef,
               {
                 op: "struct.set",
                 typeIdx: info.stateTypeIdx,
@@ -6037,6 +6043,8 @@ function compileState(
       body.push({ op: "struct.get", typeIdx: info.stateTypeIdx, fieldIdx: slot.fieldIdx });
       body.push(delegationSlotToInner(ctx, info, slot.fieldIdx, innerInfo));
       body.push({ op: "local.set", index: delegLocal });
+      // (#6984) Forward `.next(v)`'s argument to the delegate (§27.5.3.7 step 7.a.i).
+      body.push(...delegateSentForwardInstrs(ctx, fctx, info, innerInfo, selfLocal, delegLocal));
       body.push({ op: "local.get", index: delegLocal });
       body.push({ op: "call", funcIdx: innerResumeIdx });
       body.push({ op: "local.set", index: innerResLocal });

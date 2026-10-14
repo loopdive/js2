@@ -1447,15 +1447,11 @@ describe("#680 native generator expression continuations", () => {
         export function test(): number { return g().next().done ? 1 : 0; }
       `,
     ],
-    [
-      "yield-star operand",
-      `
-        function* g(): Generator<number, void, unknown> {
-          [yield* [1]];
-        }
-        export function test(): number { return g().next().done ? 1 : 0; }
-      `,
-    ],
+    // (#6984) "yield-star operand" — `[yield* [1]];` — used to be listed here.
+    // A `yield*` whose completion value an enclosing expression consumes is now
+    // one suspension event of the nested-yield planner (`generator-yield-nested.ts`
+    // delegates into a spill the deferred statement reads), so it no longer fails
+    // closed; the positive pin is `tests/issue-6984-regime-yield-star-return.test.ts`.
     [
       "async generator",
       `
