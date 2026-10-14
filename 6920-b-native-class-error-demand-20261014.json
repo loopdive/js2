@@ -1,0 +1,183 @@
+{
+  "id": "6920",
+  "slice": "native-class-error-demand-successor-20261014",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-native-js-class-allocation-20261014-01a12827",
+  "claimed_at": "2026-10-14T15:45:34.585502Z",
+  "updated_at": "2026-10-14T15:45:34.585502Z",
+  "write_id": "b-class-error-demand-4f16027c-5abb-4ab2-9608-3829d2ac907a",
+  "handoff_scope": [
+    {
+      "kind": "canonical native class implicit-error logical catalogue",
+      "at": "2026-10-14T15:45:34.585502Z",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-native-js-class-allocation-20261014-01a12827",
+      "manifest": {
+        "receivingBranch": "codex/6920-b-native-js-class-allocation-20261014-01a12827",
+        "integrationBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+        "componentPreimages": [
+          {
+            "path": "src/ir/runtime/contracts/manifest.ts",
+            "bytes": 29050,
+            "sha256": "4cc6b04db45530e4df01901cf90977ce31642c29c1c255d2e858d08a9c75e804"
+          },
+          {
+            "path": "src/ir/runtime/callable-declarations.ts",
+            "bytes": 3784,
+            "sha256": "f28e1501287d24f66bfd66d1119ea509bdfe9eb41d5178c4c3d0ed716ea4943c"
+          },
+          {
+            "path": "src/ir/runtime/manifest.ts",
+            "bytes": 104454,
+            "sha256": "1c10a56e7255e1db7897d184c7460ad07454252dd0a80176b211dc96918e54e9"
+          },
+          {
+            "path": "src/ir/runtime/intrinsic-preparation.ts",
+            "bytes": 49704,
+            "sha256": "171aa93513aacb9bebf80897f2c67a827b71f082647ced04a689ca17d116ba82"
+          },
+          {
+            "path": "src/ir/program/runtime-abi.ts",
+            "bytes": 4522,
+            "sha256": "65fcb7d226b260f30f517ae0f0a55117f5f5f99dcaef2c83219a466ee79cad4e"
+          }
+        ],
+        "canonicalNewPaths": [
+          "src/ir/runtime/native-js-class-error-callables.ts"
+        ],
+        "proposal": {
+          "status": "read-only proposed receive; not implemented",
+          "existingPaths": [
+            {
+              "path": "src/ir/runtime/contracts/manifest.ts",
+              "bytes": 29050,
+              "sha256": "4cc6b04db45530e4df01901cf90977ce31642c29c1c255d2e858d08a9c75e804",
+              "functionOrContract": "RuntimeFeature/RuntimeProviderId closed literal unions: add native-only TypeError construct family"
+            },
+            {
+              "path": "src/ir/runtime/callable-declarations.ts",
+              "bytes": 3784,
+              "sha256": "f28e1501287d24f66bfd66d1119ea509bdfe9eb41d5178c4c3d0ed716ea4943c",
+              "functionOrContract": "irRuntimeCallableDeclaration + semanticCallableProviderMismatch: exact separate TypeError declaration/provider"
+            },
+            {
+              "path": "src/ir/runtime/manifest.ts",
+              "bytes": 104454,
+              "sha256": "1c10a56e7255e1db7897d184c7460ad07454252dd0a80176b211dc96918e54e9",
+              "functionOrContract": "RUNTIME_FEATURE_SIGNATURES/RUNTIME_PROVIDERS/feature and provider literal inventories"
+            },
+            {
+              "path": "src/ir/runtime/intrinsic-preparation.ts",
+              "bytes": 49704,
+              "sha256": "171aa93513aacb9bebf80897f2c67a827b71f082647ced04a689ca17d116ba82",
+              "functionOrContract": "prepareIrRuntimeManifest: exact canonical implicit class error demand, without fabricated call instructions"
+            },
+            {
+              "path": "src/ir/program/runtime-abi.ts",
+              "bytes": 4522,
+              "sha256": "65fcb7d226b260f30f517ae0f0a55117f5f5f99dcaef2c83219a466ee79cad4e",
+              "functionOrContract": "prepareIrProgramRuntimeCallables: canonical implicit class error declarations over actual source operations"
+            },
+            {
+              "path": "src/ir/program-reference-error.ts",
+              "bytes": 14137,
+              "sha256": "5dc203010f24e1a45b6674958fcd48762cf1637179d3098270bff479256a1690",
+              "functionOrContract": "planPhysicalReferenceError: retain unchanged canonical existing provider path; no new modification required unless explicit class support projection cannot reuse its exact ABI"
+            },
+            {
+              "path": "src/backend/wasmgc/resources/native-errors.ts",
+              "bytes": 5488,
+              "sha256": "db0d7cedbabb2d11d7ac8158e1344e04c237af105a9a11af878e37c0a33ccdef",
+              "functionOrContract": "reserveNativeErrorResources/fillNativeErrorResources/requireCompletedNativeErrors: existing distinct TypeError producer, read-only reuse"
+            },
+            {
+              "path": "src/backend/linear/program/reference-error.ts",
+              "bytes": 8034,
+              "sha256": "1e2af0194b6762ba0e357ef145d745c2a2b6944224f5b9669ae1a25b53ebb0a6",
+              "functionOrContract": "reserveLinearReferenceErrorResources/fillLinearReferenceErrorResources: existing distinct ReferenceError producer, read-only reuse"
+            },
+            {
+              "path": "src/ir/program-abi-contracts.ts",
+              "bytes": 12459,
+              "sha256": "83b5350abfda093f7435a1eb81564fdb028cb3eaf136eab56934333eb22dd80c",
+              "functionOrContract": "prepareIrProgramAbiEntries: existing runtimeDeclarations support, expected no algorithm edit"
+            },
+            {
+              "path": "src/ir/program/validation.ts",
+              "bytes": 49198,
+              "sha256": "80a3a8e24089da41ede777b89ed403e66e96f9bfd9999c77dc414950cc18d042",
+              "functionOrContract": "runtime ABI canonical re-collection uses same bounded collector, expected no algorithm edit"
+            }
+          ],
+          "newRequiredLeaf": {
+            "path": "src/ir/runtime/native-js-class-error-callables.ts",
+            "scope": "canonical native-only TypeError declaration and provider descriptor; exact implicit-operation constructor demand catalogue interface; reuse ReferenceError declaration unchanged"
+          },
+          "canonicalActualProducers": {
+            "TypeError": {
+              "tag": -11,
+              "name": "TypeError",
+              "signature": "externref -> externref",
+              "recipe": "createErrorStructType + buildErrorConstructorBody with real registered name string"
+            },
+            "ReferenceError": {
+              "tag": -16,
+              "name": "ReferenceError",
+              "signature": "externref -> externref",
+              "recipe": "existing separate canonical reference-error producer"
+            }
+          },
+          "implicitCatalogueObligation": "B owner must independently derive original/all-selected source instruction occurrence error partitions, actual constructor callable refs/signatures, fresh provider allocation or fully declared aggregate recipe, effects/lifetime and exception transport. No fake AllocSite or borrowed definition/class operation site. Additional ABI row alone is not readiness.",
+          "partitions": {
+            "binding.read": "uninitialized -> ReferenceError",
+            "binding.init/write": "illegal initialization/read-only assignment -> TypeError; write TDZ distinction must follow exact canonical semantics",
+            "construct": "nonconstructible target / invalid primitive completion -> TypeError",
+            "property operations": "invalid receiver or failed strict mutation/accessor constraints -> TypeError",
+            "invoke": "noncallable after all arguments -> TypeError; current A source refusal retained",
+            "instanceof": "invalid RHS/prototype -> TypeError"
+          },
+          "ownedCExistingIntegration": [
+            "program/native-js-class-requirements.ts current census/error declaration association",
+            "program-native-js-class-resources.ts private current canonical error reservations/completion",
+            "program-physical-plan.ts class exceptionRequired + exact real helper inventory",
+            "program-body-resources.ts canonical exception tag/helper binding",
+            "backend GC/Linear class recipes and actual realm global bootstrap"
+          ],
+          "additionalPhysicalLeaf": "If the distinct canonical provider requires a persistent plan/reservation/receipt parallel to ReferenceError, receive src/ir/program-native-type-error.ts; prefer bounded use from owned C mixed leaf where no duplicate generic authority is needed. Decision awaits canonical B catalogue contract.",
+          "preserved": [
+            "all old ReferenceError provider/descriptors/host records/signatures",
+            "no host TypeError capability invented",
+            "no source rewrites/synthetic calls/invented source sites",
+            "no trap substitution or error name alias",
+            "realm constructor globals require actual callable managed wrappers/prototypes and startup population independently"
+          ],
+          "requiredTests": [
+            "actual TypeError and ReferenceError names/tags/distinct fresh identity",
+            "TDZ before class init including captured inner cell",
+            "read-only binding/property failure with original effect order",
+            "original+selected provider/ABI/census drift and absent namespace refusal",
+            "real exception tag transport on four profiles; Linear actual recipe unchanged GC error payload only if canonical physical contract explicitly supports it",
+            "realm root identity/prototype and initialized own message presence; no catalogue-only success"
+          ]
+        },
+        "proposalSha256": "09329a5501266a185e56a15b94be517e3fe6ed4a6acf71b6beca2bfe4da916e5",
+        "owner": "Session B allocation logical owner; C backend remains separate",
+        "newTests": [],
+        "constraints": "Exactly5logicalmanifest/declaration/implicitcollector hooks plus1newpureerrorcatalogue leaf; existing owned12 allocation paths may implement independent error allocation/effect/lifetime joins. Original/allselected actual occurrence demand, distinct native-only TypeError namespace, unchanged ReferenceError. No synthetic calls/sites, hostcapability/geometry, source rewrites, trap substitutes or modified provider algorithms. No metadatawaiver/allowedEdges change. Require meaningful actual positive and hostile replay, currentfulltyping and rootgraph before classadmission."
+      },
+      "manifestSha256": "d4bf4e0bbe09cf56e84d668511623d5d13636b2a9de92984b68e93df8e909b25",
+      "constraints": "Exactly5logicalmanifest/declaration/implicitcollector hooks plus1newpureerrorcatalogue leaf; existing owned12 allocation paths may implement independent error allocation/effect/lifetime joins. Original/allselected actual occurrence demand, distinct native-only TypeError namespace, unchanged ReferenceError. No synthetic calls/sites, hostcapability/geometry, source rewrites, trap substitutes or modified provider algorithms. No metadatawaiver/allowedEdges change. Require meaningful actual positive and hostile replay, currentfulltyping and rootgraph before classadmission."
+    }
+  ],
+  "predecessors": [
+    "3522-b-native-class-semantic-producer-20261014.json",
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}
