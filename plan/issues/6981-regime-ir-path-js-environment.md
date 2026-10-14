@@ -4,7 +4,7 @@ title: "Native regime in a JS environment: IR-path Error.message / Map-Set / typ
 status: done
 sprint: current
 created: 2026-10-14
-updated: 2026-10-14
+updated: 2026-10-15
 completed: 2026-10-14
 priority: high
 horizon: m
@@ -75,7 +75,16 @@ reproduced under `target: "standalone"`, so standalone results improve):
    `$Error_struct` arm in `__extern_get` (`fillExternGetErrorProps`) correctly
    lets a null `$message` field fall through, but for a builtin instance the
    walk then missed instead of reaching %Error.prototype%.message (`""`,
-   §20.5.3.3). The arm now answers `""` after the subclass prototype consult.
+   §20.5.3.3). The arm now answers `""` after the subclass prototype consult,
+   but ONLY while every error-family `$NativeProto` global is still null
+   (`intrinsicErrorMessageDefaultArm`, `error-subclass-proto-chain.ts`). Review
+   fix 2026-10-15: the first cut answered `""` unconditionally and so shadowed
+   `Error.prototype.message = "x"`, `delete Error.prototype.message` and an
+   accessor redefinition (reproduced native-first and standalone). An
+   unmaterialized prototype cannot have been touched; a materialized one is
+   read by the ordinary `__extern_get` companion walk, which already carries
+   the seeded `""` data property (#5156). Controls for write / delete / getter
+   / materialized-but-untouched sit next to the default case in the test.
 2. **Map/Set "IR capability violation"** (`ir-slice10-map-set` (d)/(e)). The
    selector claimed `new Set()` in a host-free lane and from-ast lowered it to
    a `Set_new` host import; the first member use then hit the deferred

@@ -52,6 +52,40 @@ describe("#6981 native regime: IR path and direct-path defects", () => {
         }
       });
 
+      // The intrinsic "" default must not shadow the real prototype: writes,
+      // deletes and accessor redefinitions on Error.prototype stay observable.
+      it("Error.prototype message write / delete / getter stay observable", async () => {
+        const written = `
+          export function run(): number {
+            Error.prototype.message = "changed";
+            return new Error().message === "changed" ? 1 : 0;
+          }`;
+        const deleted = `
+          export function run(): number {
+            var d = delete (Error.prototype as any).message;
+            var e: any = new Error();
+            return (d ? 1 : 0) + (e.message === undefined ? 2 : 0);
+          }`;
+        const getter = `
+          export function run(): number {
+            Object.defineProperty(Error.prototype, "message", { get() { return "got"; }, configurable: true });
+            const e: any = new TypeError();
+            return e.message === "got" ? 1 : 0;
+          }`;
+        const materialized = `
+          export function run(): number {
+            const p: any = Error.prototype;
+            const e: any = new Error();
+            return (e.message === "" ? 1 : 0) + (p.message === "" ? 10 : 0);
+          }`;
+        for (const experimentalIR of [true, false]) {
+          expect(await run(written, lane, "run", [], { experimentalIR })).toBe(1);
+          expect(await run(deleted, lane, "run", [], { experimentalIR })).toBe(3);
+          expect(await run(getter, lane, "run", [], { experimentalIR })).toBe(1);
+          expect(await run(materialized, lane, "run", [], { experimentalIR })).toBe(11);
+        }
+      });
+
       it("Set construction stays off the IR in a host-free lane (no capability violation)", async () => {
         const src = `
           export function empty(): number {
