@@ -7142,3 +7142,162 @@ Proof records: root review scratch `pr6554-main-refresh/2ac-impact-plan.json` SH
 ## 2026-10-07 renewed cross-machine coordination
 
 A fresh canonical shared-register read at 03:14 UTC verified all eleven current finite claims at `24705037f322a3ec348da2f23f893a6e08d09f2c`. This session retains integration and publication ownership for ready PR6554, published head `7c3ce0007c4ee828f9b80847fb21201f7934c629`; the isolated e24 refresh remains uncommitted and unqualified. The other machine's claim owner or branch has been requested. Available chats did not identify that session, so no unknown session was messaged, no foreign claim was changed and no competing package was dispatched. The handoff requires distinct machine assignees, disjoint file ownership, exact dependency commits and canonical claim verification before editing. Existing prepared source-map/allocation packages and the public legacy compiler remain preserved.
+
+## Session B finite current-domain outer successor — 2026-10-14
+
+The original `remainder-main-inventory-20261007` outer inventory claim is done
+and released. Live ledger `71f3fcd8fdc7d7c27eb71c5954e6c7047354f1a5` assigns
+Session B only `b-current-domain-outer-successor-20261014`; all other rows are
+preserved apart from a separately authorized native preparation refinement.
+Receiver `codex/3525-b-current-domain-20261014-01a12827` starts from published
+`c2ae3e76daeb3a7a304b1d31466980298ab3e8d4`. The writer owns only the existing
+Deno post-position main successor helper/receipt and its existing successor
+regression test. Root owns this issue append. Held classification/evolution,
+C1/isView proof/readers, all compiler policy/source, and A's integration/queue
+operations are excluded.
+
+The current genuine policy is independently frozen at 631,801 UTF-8 bytes,
+1,997 file rows, SHA256
+`8f88968d6821cf2ced8ebac1cde913de0dd81e34122a45e5d07295ab5e197a53`, Git blob
+`f0426fdd6abfa00fd3351f96e1a8d0ced77a9055`. The exact measured delta from the
+preserved 1,874-row endpoint has 123 inserted rows, nine complete layer-field
+changes and 39 raw spans, with zero changed/removed historical file rows.
+Private `.tmp/current-domain-spec/` preserves the proposal and full delta packet.
+Construction inverse/forward equality is design evidence, not test completion.
+
+Implementation must preserve every historical literal, endpoint, receipt, inner
+algorithm, public API and existing test identity. A separately authenticated
+finite outer projection must validate all current raw/semantic inputs, invert
+the exact rows and layer fields, pin the complete historical endpoint, and
+replay forward to the exact current input. Unknown changes, caller-derived
+authority, unsafe descriptors, missing/mutated authority and post-success edits
+must reject with productive IO/custody/currentness counterwitnesses.
+
+Qualification must execute the existing successor population and actual
+45-case presentation-classification population with the genuine current-source
+positive prerequisite reaching the inner/hostile bodies. Requalify actual API
+callers and preserve exact remaining failures. A held downstream refusal may
+not be resolved by widening this three-file partition or replacing its frozen
+authority. This task does not establish full migration, runtime/conformance,
+performance or verified main delivery. Commit/push/HOLD remain root-controlled.
+
+### Current full-goal routing audit — published c2ae3e76 (2026-10-14)
+
+The official non-updating IR-only command on Node25.9.0 exits zero: each of
+two WasmGC lanes has five entries, 41 terminal units, 38 emitted/IR bodies,
+three non-executable units and zero Unsupported/Invariant/legacy bodies. Its
+unit census is 26 functions, five module-init and ten class-member units per
+lane. This is bounded playground evidence; the command has no Linear or WASI
+lane and its policy flag applies to the evaluator rather than compiler options.
+
+Fifteen actual standalone entry/option compilations preserve the same five
+source texts. All five backend-omitted calls succeed with 41 total outcomes.
+All five explicit WasmGC and all five explicit Linear calls fail with zero
+returned terminal outcomes. Each omitted/explicit WasmGC pair has an exactly
+equal effective target profile. The current dispatcher nevertheless gates the
+shared whole-program native path on raw `options.backend === "wasmgc"`, while
+the omitted default takes the earlier generateModule path. The route difference
+therefore remains after target-profile normalization. No dispatcher edit or
+feature removal is authorized by this audit.
+
+Complete captured diagnostics identify numeric-global/source admission gaps
+in Calendar/Algorithms/Builtins, source-capture and function admission gaps
+in Async, and `type-resolution-unsupported: whole-program source producer has
+no body producer for class-constructor` in Classes. These are measured next
+requirements for whole-program producer/runtime closure and native telemetry;
+the bounded green gate cannot establish identical Prepared programs or full
+coverage. The frozen two-lane report and all 15 full records are retained in
+the integration receiver's `.tmp/full-goal-gate-audit/`, including exact source
+hashes, options/effective profiles, errors/outcomes and terminal process exits.
+Historical receipt/current-domain ownership and all held source claims remain
+separate. Full retirement, conformance, optimization/performance and verified
+main delivery remain open.
+
+
+### Current-domain successor runtime results (2026-10-14)
+
+The first real two-file command completes with exit 1: 597 cases, 591 passes
+and six failures. The owned successor has 550/552 passes, including all 136
+new outer controls. Two historical productive cases accidentally used current
+1,997-row input for three historical-epoch assertions; their bounded test-only
+correction projects through the already independently checked historicalRaw
+helper and preserves the original byte-delta 383, row-751 and e24 predicates.
+Both selected corrected cases pass (2/2, exit zero); this is separate-epoch
+evidence and is not a new unfiltered 552-case result. No historical inner
+kernel, source policy or held reader is changed.
+
+The presentation-classification caller reaches its healthy current-domain
+prerequisites and 41/45 cases pass. Four fault cases stop before their fault
+callbacks at the held reader's independent source pin: the committed runtime
+policy-evolution helper is 409,599 bytes, SHA256
+`e3bd76cbcee13e469f8c5c6ec6bafb08e6fc786efa410bd8572b56f9d5193170`,
+while the reader expects 402,646 bytes, SHA256
+`0ddf7556360e8937b25ba58b23629533c8042e026a4b6e6fc05df3d1263c97b8`.
+The intended missing/mutated authority callbacks do not execute; no hostile
+control success is claimed for them. Complete full names, messages and stacks
+remain in the private held-reader diagnostic.
+
+The remaining 21 direct API caller files execute serially to avoid concurrent
+authority faults. Their actual terminal command exits 1: 2,547 cases, 481
+passes, 2,066 failures, no skips or todos. Six outer-chain files pass completely
+(main inventory source 21, class-fields main 32, Deno callback 32, class fields
+31, finally 39 and source-map position 23). isView passes 52/56 and retains the
+same four held source-pin guards. Thirteen further caller files stop at deeper
+independent source authorities; examples include changed complete
+backend-legality and program-validation pins. These are exact stopping points,
+not causal failure buckets or authorized predicate changes. Every raw result
+and full case record is retained in `.tmp/current-domain-spec/`.
+
+Scoped typing after the two owned test corrections exits zero. The 26-minute
+first successor execution and its original source bytes remain preserved; no
+cost, RPC, deadline, classifier or authority edit is made. This finite outer
+successor closes the formerly failing current-domain prerequisite, but full
+integration remains unqualified until held reader/source authorities receive
+independent coherent successors and their actual hostile controls execute.
+Full migration, conformance, performance, retirement and main delivery remain
+open. Root retains publication, HOLD and integration ownership.
+
+A scoped Biome correction changes only the new hostile control's real-hole
+operation from delete syntax to Reflect.deleteProperty; it still creates an
+actual hole and retains the explicit rejection of undefined-as-hole. The
+selected hostile control passes 1/1 in its final epoch. Original test names and
+counts remain preserved. The unchanged normal root-test hook uses the receiver
+configuration's actual 35-second test timeout; the first-run maximum 9.59-second
+case is below that deadline. No hook, timeout or RPC-policy edit is made.
+
+
+### Session B root whole successor verification — 2026-10-14
+
+The sealed current-domain successor completed its full owned test file:552/552
+passed, zero failures/skips/unhandled errors, process exit0. This is a fresh
+whole-file run, not credit inferred from the earlier selected2/2 and1/1 repairs.
+All three source/receipt/test SHA256 values remain exactly the frozen final
+worker seals. Evidence: `.tmp/current-domain-root/owned-final.json`, `.exit`,
+`.log` and `source-seals.json` in the isolated current-domain worktree.
+
+This validates the explicit1997-source policy epoch only. The held classifier
+pins and21-caller2547-case epoch retain481 passes and2066 failures; their raw
+rows and source-pin preconditions remain recorded. Newly staged class modules
+are a later2000-source epoch requiring a separate coherent receipt; they are
+not silently included in this1997-source inventory or counted as retirement.
+
+
+## Session B next inventory domain — private continuation, 2026-10-14
+
+The signed checkpoint `09823937ccc82a00c32dbb506b015ef870027a27` retains its actual 1,997-row policy qualification: independent 552/552 and normal 552/552, hooks 0. This private continuation prepares a finite new outer stage for the prospective 2,001-row class/alias composition, with four appended rows, zero layer changes and exact inverse/replay to the preserved 1,997 endpoint, followed by the unchanged 1,874 historical kernel. Claim refinement `fb900dc50ee6fe91eb9b84b6ea931474149165aa` was published and remote verified by root.
+
+The proposed target is 633127 bytes/SHA256`60bfda84dda819fc45e60ebb370e06d6007001f5885f2a934f24c3c5c1757dc7`/blob`9e3ef20082947f200844fb79f4f5476c83653e5c`. It is not a live policy or qualified current domain until the actual root merge is observed and matches those exact bytes. The old complete 278016-byte combined receipt, historical kernel/literals, original 552 identities and substantive callbacks remain fixed; only the enumerated new-input inverse/healthy profile/end sentinel/receipt-strip assumptions are reconciled. New cases are separately counted after genuine registration and execution.
+
+All held 21 caller/C1/classification/isView authorities remain outside this receipt. Their retained epoch is 2547 executed / 481 passed / 2066 failed, with zero waivers; four classifier hostile authority callbacks remain unexecuted behind their independent old helper-source guard. No whole-suite, native runtime or migration-completion claim follows from private patch construction. Fresh actual-domain whole tests, ordinary gates and normal hooks are still required. Root owns integration and publication.
+
+## Session B next inventory domain — actual composed qualification, 2026-10-14
+
+Root provisioned the genuine 2,001-source tree and immutable 17-file class dependency composition on base `61ae6beec6cb7904854f5fd3b81b749da86e7454`. All 2,001 source hashes and every dependency hash matched before and after qualification. The actual policy is 633127 bytes, SHA256 `60bfda84dda819fc45e60ebb370e06d6007001f5885f2a934f24c3c5c1757dc7`, matching the separately retained proposal; root subsequently reported the same source bytes in published checkpoint `4a573ce`.
+
+The complete owned default/JSON run now executed **562/562 passing**, zero failures, skipped cases or unhandled-error banners, terminal exit 0. All original **552 full identities remain in exact order**, with no duplicates or missing cases; the ten new cases are separately named and passing. Maximum observed case duration: 15.970 seconds under the unchanged 35-second test deadline. The old helper kernel/functions/literals, original combined 278016-byte receipt and original substantive callback bodies remain exact except the explicitly received four public entry hooks and receipt-strip correction. No historical input is admitted as current and each public route still authenticates one fresh physical receipt read.
+
+TypeScript 7 with `exclude: []` checked all **2,001 source files plus 13 actual test/helper closure files**, 2263 total inputs, terminal exit 0. All ten ordinary gates passed: inventory, dead exports, oracle, coercion, owned lint/format/whitespace, LOC/function budgets against the actual base, and import cycles. A private first gate receipt naming collision preserved every raw gate log and aggregate exit 0; the second epoch retained complete per-gate process receipts and all ten exits 0. Inventory validity is true while complete import-graph closure remains false.
+
+Receipts are retained in `.tmp/current-domain-next-live/`, including default output, every actual assertion row, ordered identity comparison, Node 25.9.0 absolute argv/process exits, typed input census, gate epochs, and before/after source custody. Root alone integrates the four owned inventory paths; the 17 class dependency files remain unstaged and untouched by this worker. Root normal hooks/publication for this new inventory stage remain separate and pending. The signed 1,997 checkpoint retains its own 552/552 normal-hook evidence.
+
+This finite outer receipt does not repair held C1/classifier/isView/presentation/source authorities. Their retained 21-caller epoch remains 2547 executed / 481 passed / **2066 failed**, with zero waivers. Root's separate broader epoch reported 1181 passed / 77 failed / 9 skipped / 1 todo across 1268 cases, including seven class-layout source-pin stops; those results are outside this owned qualification. No native class runtime, whole-suite, completed architecture or full migration credit is claimed.
