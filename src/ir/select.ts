@@ -6269,6 +6269,9 @@ const NATIVE_TYPED_ARRAY_CLASSES = new Set<string>([
 // by the legacy exception runtime and have no IrClass/extern producer.
 const LEGACY_ERROR_CONSTRUCTOR_CLASSES = new Set<string>(["Error", "TypeError", "RangeError"]);
 
+// (#6981) Known extern classes whose construction has a host-free IR arm.
+const HOST_FREE_EXTERN_CONSTRUCTORS = new Set<string>(["Map", "RegExp", "Date"]);
+
 function isKnownExternClass(name: string): boolean {
   return KNOWN_EXTERN_CLASSES.has(name);
 }
@@ -9165,6 +9168,20 @@ function phase1NewExpression(
   }
   if (LEGACY_ERROR_CONSTRUCTOR_CLASSES.has(ctorName) && isAmbientConstructor) {
     return capabilityNo("error-constructor-unsupported", "expr-new-error-constructor", expr);
+  }
+  // (#6981) A host-free lane (standalone, the native regime in a JS
+  // environment) has no `<Class>_new` import to lower an extern class to, and
+  // every member use on the result is capability-deferred at build. Only the
+  // classes with their own host-free arm (native `$Map`, the gated RegExp/Date
+  // arms) may stay claimed.
+  if (
+    isAmbientConstructor &&
+    !isLocalClass &&
+    isKnownExternClass(ctorName) &&
+    !HOST_FREE_EXTERN_CONSTRUCTORS.has(ctorName) &&
+    hostExternCapability(jsHostExternsEnabled(currentSelectionOptions)) === "defer"
+  ) {
+    return capabilityNo("host-surface-unavailable", "expr-new-extern-host-free", expr);
   }
   if (isLocalClass) {
     if (localClassHasKnownProjectionGap(ctorName)) {

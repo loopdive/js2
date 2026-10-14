@@ -930,6 +930,14 @@ export function fillExternGetErrorProps(ctx: CodegenContext): void {
               ],
             },
             ...subclassProtoArms,
+            // (#6981) No own `message` and no subclass prototype answered: the
+            // walk ends at %Error.prototype%.message, which is "" (§20.5.3.3).
+            ...keyEquals("message"),
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [...nativeStringLiteralInstrs(ctx, ""), { op: "extern.convert_any" }, { op: "return" }],
+            },
           ],
         },
         // No match → fall through to the original body → standard miss.
