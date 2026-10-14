@@ -1,0 +1,54 @@
+{
+  "id": "6920",
+  "slice": "native-class-logical-role-abi-successor-20261014",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+  "claimed_at": "2026-10-14T18:22:00.991128Z",
+  "updated_at": "2026-10-14T18:22:00.991128Z",
+  "write_id": "b-class-logical-role-abi-6274b5c4-6bea-4aee-9c6d-298e736f8496",
+  "handoff_scope": [
+    {
+      "kind": "canonical slotless logical class role declarations",
+      "at": "2026-10-14T18:22:00.991128Z",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+      "manifest": {
+        "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+        "componentPreimages": [
+          {
+            "path": "src/ir/program/js-class-abi.ts",
+            "bytes": 5917,
+            "sha256": "069084cca1df4872a487d613c0b47adb52f10f00dcf3325ae157be88cd4fe388"
+          },
+          {
+            "path": "src/ir/program/native-js-class-allocation-validation.ts",
+            "bytes": 16930,
+            "sha256": "715eaab2cfaf8a146a15caa5bccb3f83baba41d958755444a75cc17566dfe583"
+          }
+        ],
+        "canonicalNewPaths": [
+          "tests/issue-6920-native-js-class-logical-role-abi.test.ts"
+        ],
+        "functions": [
+          "prepareIrJsClassAbiEntries: seven canonical LOCAL native class role type declarations only",
+          "nativeJsClassEvidenceDomainFromProgram: exact canonical logical role type plan replay only"
+        ],
+        "scope": "Declare seven logical role type contracts slotless under existing ABI vocabulary, retaining exact canonical ref/type/key/shape. These roles are not seven independent Wasm type definitions; physical C issues real GC managed carrier or Linear record projection separately. New source-backed positive and forged-plan refusal controls.",
+        "constraints": "No backend-conditioned prepared ABI, new schema, unrelated role/type change, fabricated physical slot, alias/name allowance, readiness capability or public transport expansion. Slotless final ABI index remains absent; actual source/selected/support evidence and C owner-issued physical carrier/resource conjunction mandatory. Existing scalar ABI bindings, realm/global entries, body/source contracts and physical unresolved refusals unchanged. B live test input files remain unchanged in B worktree; root patch later safe adoption only. Preserve branches, HOLDs, queue and main."
+      },
+      "manifestSha256": "116e4b165652b9fd075357fe04371b3c618e4cd3ffbe27728fc9bff47bc887c3",
+      "constraints": "No backend-conditioned prepared ABI, new schema, unrelated role/type change, fabricated physical slot, alias/name allowance, readiness capability or public transport expansion. Slotless final ABI index remains absent; actual source/selected/support evidence and C owner-issued physical carrier/resource conjunction mandatory. Existing scalar ABI bindings, realm/global entries, body/source contracts and physical unresolved refusals unchanged. B live test input files remain unchanged in B worktree; root patch later safe adoption only. Preserve branches, HOLDs, queue and main."
+    }
+  ],
+  "predecessors": [
+    "3522-b-native-class-semantic-producer-20261014.json",
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}
