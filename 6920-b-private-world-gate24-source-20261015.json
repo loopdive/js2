@@ -1,0 +1,115 @@
+{
+  "id": "6920",
+  "slice": "private-world-gate24-source-successor-20261015",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+  "claimed_at": "2026-10-15T09:37:49.298129+00:00",
+  "updated_at": "2026-10-15T09:37:49.298129+00:00",
+  "write_id": "b-private-world-gate24-source-dbb443f6-ca9e-46c0-b6b6-90246b2b93e4",
+  "handoff_scope": [
+    {
+      "kind": "private-world-gate24-source",
+      "at": "2026-10-15T09:37:49.298129+00:00",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+      "manifest": {
+        "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+        "bootstrapSourceWorkspace": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-allocation-composition23/workspace",
+        "status": "RECEIVING_PREPARATION_ONLY_NO_CODE_GO_UNTIL_PUBLISHED",
+        "canonicalNewPaths": [],
+        "newTestPaths": [],
+        "sourceCountBefore": 2063,
+        "sourceCountConditionalAfter": 2063,
+        "basis": {
+          "authority": "takeover all of session b; Take over the blocking shared seams; parallel subagents",
+          "sourceSpec": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/private-world-join-gate-proposal/proposal.json",
+            "bytes": 12666,
+            "sha256": "f359c1e77b8528cb61396c7a66a56397afe5187149cfcbc8b02771e04710ecc7"
+          },
+          "oracleSpec": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/private-world-idempotence-oracle-placement/proposal.json",
+            "bytes": 6112,
+            "sha256": "cef62a0169785b112c6043e0f5aaefbfe9ad706e6781fba7ead28f86d0986dda"
+          },
+          "qualifiedFunctional": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-allocation-composition23/workspace/.tmp/join23/handoff/sealed.json",
+            "bytes": 20679,
+            "sha256": "f4d0eb19a5dd41b6df65e49a130d245ff5552df397f6c76bbccd1900cc6f83c5"
+          },
+          "failedSingle": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-allocation-composition23/workspace/.tmp/join23/single/sealed-failure.json",
+            "bytes": 10310,
+            "sha256": "bbccb7f6fc70db06f03f6cca5e2d499188bc7c74eddf5dc3d328421f253bd1c8"
+          },
+          "matchedProfile": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-allocation-composition23/workspace/.tmp/join23/profile/sealed.json",
+            "bytes": 8699,
+            "sha256": "e328ab106af4275a69b072f5e21fc35671ce06b5e435c01ca2d511a7fb029d2b"
+          },
+          "independentProfile": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/parallel-allocation23-join-receive/profile-independent-review/sealed.json",
+            "bytes": 1529,
+            "sha256": "bfcdaab6239a9db9ef5423926b0a29fafb729897be430f9180da150b4e785f53"
+          }
+        },
+        "proposalOnly": true,
+        "receivingWorkspace": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-private-world-gate24/workspace",
+        "componentPreimages": [
+          {
+            "path": "src/ir/analysis/allocation-evidence/js-class-value-domains/independent-kernel.ts",
+            "bytes": 28129,
+            "sha256": "37377ad76bb1574b2e9908c8ea27ab15c4ea282cf79deaaba4fb1d8dac86f7d5"
+          },
+          {
+            "path": "src/ir/analysis/allocation-evidence/js-class-value-domains/independent.ts",
+            "bytes": 58727,
+            "sha256": "3241c6949f0bd046302bf3abe685d8b520bcd68437ed92d62e8964714b004843"
+          }
+        ],
+        "productionPaths": [
+          "src/ir/analysis/allocation-evidence/js-class-value-domains/independent-kernel.ts",
+          "src/ir/analysis/allocation-evidence/js-class-value-domains/independent.ts"
+        ],
+        "constraints": [
+          "ONLYone newpurecomputational canOmitNormalizedWorldJoin(before,incoming) export plus smallprivatenormalformhelpers inexistingkernel, and aliasoldcommitFlowimport+onePRIVATE4linewrapper inindependent. Actualtwoexecute/functionReplaycallsunchanged, no other algorithm/import/body/codecboundarychange.",
+          "AlloldkerneljoinUnitWorld/commitFlow/updatePublicHistory/joinWorld/mergeCell/global/samePrivateWorld bodiesbyteexact; allseed/propagate/terminalnormal+abruptcapture/history pathsunchanged. WrapperbeforeWorldfreshlyusesactualmodel.globals/model.heap/model.observedRoots, NEVERfictionalobservedWorldfield or cachedsnapshot.",
+          "TrueONLYfullsamePrivateWorld+freshself-join-normal-form ofbefore: nonemptyknownfamilies/strictUTF16sorteduniques, everyknownrootlist/everycellprototypeRoot stablekeyuniques+nondecreasinglocaleCompare allowingties. ExhaustiveADTstatus; unknown/uncertain/unequalfalse→unchangedfullcommitFlow, no swallowedexceptionsassuccess. Freshcomparisonseverycall, no proof/brand/ownerflag/callback/registration/cache/rawDATAguardskip.",
+          "HelperiscomputationalNOTDATAvalidation/capability/Modelauthority; onlynewcallsiteprivatewrapperwithownedModelingressproof. Ontrue oldpostjoincomparisontrue→zeroModelwrites, preservingallaliases/Maporder/observedRoots/model.changed/Flowalive-values-slots; completefieldcoverageexistingtypedcomparisonretained.",
+          "Wholeoutsidehelper/importalias/privatewrapper inverseexact. Kernel<=75addednormallyformattedlinestarget; independent<=1495target1500hardcap. No newhelperleaf/source/policy/grant/minification/movedoldbodies. Actualofficial1500/300/unchangedgiantclassificationsgovern.",
+          "CownsONLYtwo sourcefiles, NOtest/issue/policy/script/configcanonicalchanges. Componentmetadata/fullfocused79+protectedrecord4functional onfrozenbytes thenAcode review; Btestsoverlaytheseexactfrozencandidateendpointsreadonly beforequalifying. NoenginebeforefreshcompositionparentGO.",
+          "FreshisolatedbootstrapJOIN23 all16526regular+2genuineignoredtypingdeps=16528/source2063; allcopied+donorafterexact, readonlydependency symlink/noinstall/Git/index. Preserveallimmutablefailure/component/profilecapsules.",
+          "Full2063source+54ACTUALmatchedroots/excludes[]/genuinecompilerall-extension/harness/helper/supportbeforeafterpins; normal12checks+actualofficialownedASTclassifier/currentstyle/architecture closure. No nestedGit0changeownedgrowthcredit/grants/waivers/compression.",
+          "Freezeinputsduringlivequalifiers; C/B separateworkspaces/scopes; Aexactsource/inverse/securityreview+independentmeaningfuloracle/runtime acceptance. No sourceeditswhilepinnerslive; naturalterminalbeforefix/newsnapshot.",
+          "ParentstrictoriginalWASIprepare+live afterjoinedactualfunctional/type/static/pinsreview+quietGO: Node25.9/8192/onefork/default35/defaultRPC/noCPU/explicitqualifiedyield. Actualelapsed<=35000/natural0/noUHE mandatorybeforeunchanged52. No skip/cancel/deadlinechange/cache/fallback.",
+          "ROOT2061unadopted. No publiccompiler-sourcepush/HOLD/queueownershipchange. All27mastercriteriaunproven; newcheckpointdoesnotcompleteIRmigration."
+        ]
+      },
+      "manifestSha256": "bb21e3bf09294560c65428781c8eb6ea195d789150747fef29107dac8f67f8f1",
+      "constraints": [
+        "ONLYone newpurecomputational canOmitNormalizedWorldJoin(before,incoming) export plus smallprivatenormalformhelpers inexistingkernel, and aliasoldcommitFlowimport+onePRIVATE4linewrapper inindependent. Actualtwoexecute/functionReplaycallsunchanged, no other algorithm/import/body/codecboundarychange.",
+        "AlloldkerneljoinUnitWorld/commitFlow/updatePublicHistory/joinWorld/mergeCell/global/samePrivateWorld bodiesbyteexact; allseed/propagate/terminalnormal+abruptcapture/history pathsunchanged. WrapperbeforeWorldfreshlyusesactualmodel.globals/model.heap/model.observedRoots, NEVERfictionalobservedWorldfield or cachedsnapshot.",
+        "TrueONLYfullsamePrivateWorld+freshself-join-normal-form ofbefore: nonemptyknownfamilies/strictUTF16sorteduniques, everyknownrootlist/everycellprototypeRoot stablekeyuniques+nondecreasinglocaleCompare allowingties. ExhaustiveADTstatus; unknown/uncertain/unequalfalse→unchangedfullcommitFlow, no swallowedexceptionsassuccess. Freshcomparisonseverycall, no proof/brand/ownerflag/callback/registration/cache/rawDATAguardskip.",
+        "HelperiscomputationalNOTDATAvalidation/capability/Modelauthority; onlynewcallsiteprivatewrapperwithownedModelingressproof. Ontrue oldpostjoincomparisontrue→zeroModelwrites, preservingallaliases/Maporder/observedRoots/model.changed/Flowalive-values-slots; completefieldcoverageexistingtypedcomparisonretained.",
+        "Wholeoutsidehelper/importalias/privatewrapper inverseexact. Kernel<=75addednormallyformattedlinestarget; independent<=1495target1500hardcap. No newhelperleaf/source/policy/grant/minification/movedoldbodies. Actualofficial1500/300/unchangedgiantclassificationsgovern.",
+        "CownsONLYtwo sourcefiles, NOtest/issue/policy/script/configcanonicalchanges. Componentmetadata/fullfocused79+protectedrecord4functional onfrozenbytes thenAcode review; Btestsoverlaytheseexactfrozencandidateendpointsreadonly beforequalifying. NoenginebeforefreshcompositionparentGO.",
+        "FreshisolatedbootstrapJOIN23 all16526regular+2genuineignoredtypingdeps=16528/source2063; allcopied+donorafterexact, readonlydependency symlink/noinstall/Git/index. Preserveallimmutablefailure/component/profilecapsules.",
+        "Full2063source+54ACTUALmatchedroots/excludes[]/genuinecompilerall-extension/harness/helper/supportbeforeafterpins; normal12checks+actualofficialownedASTclassifier/currentstyle/architecture closure. No nestedGit0changeownedgrowthcredit/grants/waivers/compression.",
+        "Freezeinputsduringlivequalifiers; C/B separateworkspaces/scopes; Aexactsource/inverse/securityreview+independentmeaningfuloracle/runtime acceptance. No sourceeditswhilepinnerslive; naturalterminalbeforefix/newsnapshot.",
+        "ParentstrictoriginalWASIprepare+live afterjoinedactualfunctional/type/static/pinsreview+quietGO: Node25.9/8192/onefork/default35/defaultRPC/noCPU/explicitqualifiedyield. Actualelapsed<=35000/natural0/noUHE mandatorybeforeunchanged52. No skip/cancel/deadlinechange/cache/fallback.",
+        "ROOT2061unadopted. No publiccompiler-sourcepush/HOLD/queueownershipchange. All27mastercriteriaunproven; newcheckpointdoesnotcompleteIRmigration."
+      ]
+    }
+  ],
+  "predecessors": [
+    "3522-b-native-class-semantic-producer-20261014.json",
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}

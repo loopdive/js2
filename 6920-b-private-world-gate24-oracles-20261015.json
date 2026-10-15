@@ -1,0 +1,111 @@
+{
+  "id": "6920",
+  "slice": "private-world-gate24-oracles-successor-20261015",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+  "claimed_at": "2026-10-15T09:37:49.298129+00:00",
+  "updated_at": "2026-10-15T09:37:49.298129+00:00",
+  "write_id": "b-private-world-gate24-oracles-7a8bdcbb-24ae-4d9a-ba88-800f7a5c7867",
+  "handoff_scope": [
+    {
+      "kind": "private-world-gate24-oracles",
+      "at": "2026-10-15T09:37:49.298129+00:00",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+      "manifest": {
+        "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+        "bootstrapSourceWorkspace": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-allocation-composition23/workspace",
+        "status": "RECEIVING_PREPARATION_ONLY_NO_CODE_GO_UNTIL_PUBLISHED",
+        "canonicalNewPaths": [],
+        "newTestPaths": [],
+        "sourceCountBefore": 2063,
+        "sourceCountConditionalAfter": 2063,
+        "basis": {
+          "authority": "takeover all of session b; Take over the blocking shared seams; parallel subagents",
+          "sourceSpec": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/private-world-join-gate-proposal/proposal.json",
+            "bytes": 12666,
+            "sha256": "f359c1e77b8528cb61396c7a66a56397afe5187149cfcbc8b02771e04710ecc7"
+          },
+          "oracleSpec": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/private-world-idempotence-oracle-placement/proposal.json",
+            "bytes": 6112,
+            "sha256": "cef62a0169785b112c6043e0f5aaefbfe9ad706e6781fba7ead28f86d0986dda"
+          },
+          "qualifiedFunctional": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-allocation-composition23/workspace/.tmp/join23/handoff/sealed.json",
+            "bytes": 20679,
+            "sha256": "f4d0eb19a5dd41b6df65e49a130d245ff5552df397f6c76bbccd1900cc6f83c5"
+          },
+          "failedSingle": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-allocation-composition23/workspace/.tmp/join23/single/sealed-failure.json",
+            "bytes": 10310,
+            "sha256": "bbccb7f6fc70db06f03f6cca5e2d499188bc7c74eddf5dc3d328421f253bd1c8"
+          },
+          "matchedProfile": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-allocation-composition23/workspace/.tmp/join23/profile/sealed.json",
+            "bytes": 8699,
+            "sha256": "e328ab106af4275a69b072f5e21fc35671ce06b5e435c01ca2d511a7fb029d2b"
+          },
+          "independentProfile": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/parallel-allocation23-join-receive/profile-independent-review/sealed.json",
+            "bytes": 1529,
+            "sha256": "bfcdaab6239a9db9ef5423926b0a29fafb729897be430f9180da150b4e785f53"
+          }
+        },
+        "proposalOnly": true,
+        "receivingWorkspace": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-value-replay-successor-20261014-01a12827/.tmp/class-private-world-oracles24/workspace",
+        "componentPreimages": [
+          {
+            "path": "tests/issue-6920-native-class-independent-record-allocation.test.ts",
+            "bytes": 5889,
+            "sha256": "541940d5636dd061c34d97f4a25e5fab4b0176ca094b3680f04f811291d853bb"
+          }
+        ],
+        "productionPaths": [],
+        "readonlyPrerequisiteSourceEndpoints": [
+          "src/ir/analysis/allocation-evidence/js-class-value-domains/independent-kernel.ts",
+          "src/ir/analysis/allocation-evidence/js-class-value-domains/independent.ts"
+        ],
+        "constraints": [
+          "BownsONLYexistingrecordtestappend; old5889bytes/4callbacksassertions exact; <=450totalnormallyformattedlinestarget/no newtestroot/API/sharedfixturesource. ReusegenuineanalyzeMultiSource→prepareWholeIrProgram→normalize→producer→independentreplay fixture.",
+          "PurecomputationalWorldcontrols useactualreport-derivedCell/Global/Rootrows, neverfakeReplayModel/AllocSite/sourceauthority. Canonicalequaltrue; knownempty/duplicate/reorderedfamilies/roots/prototypeRoots/Mapkeyorrootsetmissing/absent/population/null/view/member/site/signedzerocounterexamplesfalse; unchangedoldselfjoin provesnormalizationnegativecounterfactual. LocaleCompareties/exactduplicatekeys nonadjacent mustnotgetlost.",
+          "Appendgenuinehealthy/callablereplacement/abruptpublichistorycases acrossactualprofileswithnonemptycalls/heap/globals/throw/relationsfloors and realproducer+independentreplay[]. Publicreportmatchingalone notclaimedprivatebranchhit/gain. Allrawexportgetter/spread/prototype/Date/copy controlsretained.",
+          "BootstrapJOIN23 first. AFTERCsourcefrozen+Aaccepted, CASoverlayONLYtwoqualifiedCsource snapshotsasREADONLYtestdependencies (no Bsourceedits). TheyaredependenciesnotBauthorship; exactendpoints+allother16525regular preservedthroughBqualifiers. Stoponmismatch; keepallpreimages.",
+          "OptionalboundedignoredDIAGNOSTIC-onlyVite/ASTinstrumentation mayobserveactualprivatewrapperpredicateboolean counts onrealgenuinepublicfixtures: no forcedreturn/methodhook/Model/capability and no sourcefilemutation. Exacttransformedsite+outsideinverse+harness/input/outputpins, true+falsepositivefloors; qualifiers onUNINSTRUMENTEDsource separatelymandatory. Ifunavailable discloseindirectlimit, no fabricatedhit-rate. No gainsforecast.",
+          "AfterCoverlay frozen+Aaccepted, actualunfilteredold4+newLIST/runtime/full54typing/staticactualtestclassifier beforecomposition. No engine/sourceediting.",
+          "FreshisolatedbootstrapJOIN23 all16526regular+2genuineignoredtypingdeps=16528/source2063; allcopied+donorafterexact, readonlydependency symlink/noinstall/Git/index. Preserveallimmutablefailure/component/profilecapsules.",
+          "Full2063source+54ACTUALmatchedroots/excludes[]/genuinecompilerall-extension/harness/helper/supportbeforeafterpins; normal12checks+actualofficialownedASTclassifier/currentstyle/architecture closure. No nestedGit0changeownedgrowthcredit/grants/waivers/compression.",
+          "Freezeinputsduringlivequalifiers; C/B separateworkspaces/scopes; Aexactsource/inverse/securityreview+independentmeaningfuloracle/runtime acceptance. No sourceeditswhilepinnerslive; naturalterminalbeforefix/newsnapshot.",
+          "ParentstrictoriginalWASIprepare+live afterjoinedactualfunctional/type/static/pinsreview+quietGO: Node25.9/8192/onefork/default35/defaultRPC/noCPU/explicitqualifiedyield. Actualelapsed<=35000/natural0/noUHE mandatorybeforeunchanged52. No skip/cancel/deadlinechange/cache/fallback.",
+          "ROOT2061unadopted. No publiccompiler-sourcepush/HOLD/queueownershipchange. All27mastercriteriaunproven; newcheckpointdoesnotcompleteIRmigration."
+        ]
+      },
+      "manifestSha256": "58701a2f406ef24d8d6c44042a8a566035f4de935a02e978f01fbc2744bde744",
+      "constraints": [
+        "BownsONLYexistingrecordtestappend; old5889bytes/4callbacksassertions exact; <=450totalnormallyformattedlinestarget/no newtestroot/API/sharedfixturesource. ReusegenuineanalyzeMultiSource→prepareWholeIrProgram→normalize→producer→independentreplay fixture.",
+        "PurecomputationalWorldcontrols useactualreport-derivedCell/Global/Rootrows, neverfakeReplayModel/AllocSite/sourceauthority. Canonicalequaltrue; knownempty/duplicate/reorderedfamilies/roots/prototypeRoots/Mapkeyorrootsetmissing/absent/population/null/view/member/site/signedzerocounterexamplesfalse; unchangedoldselfjoin provesnormalizationnegativecounterfactual. LocaleCompareties/exactduplicatekeys nonadjacent mustnotgetlost.",
+        "Appendgenuinehealthy/callablereplacement/abruptpublichistorycases acrossactualprofileswithnonemptycalls/heap/globals/throw/relationsfloors and realproducer+independentreplay[]. Publicreportmatchingalone notclaimedprivatebranchhit/gain. Allrawexportgetter/spread/prototype/Date/copy controlsretained.",
+        "BootstrapJOIN23 first. AFTERCsourcefrozen+Aaccepted, CASoverlayONLYtwoqualifiedCsource snapshotsasREADONLYtestdependencies (no Bsourceedits). TheyaredependenciesnotBauthorship; exactendpoints+allother16525regular preservedthroughBqualifiers. Stoponmismatch; keepallpreimages.",
+        "OptionalboundedignoredDIAGNOSTIC-onlyVite/ASTinstrumentation mayobserveactualprivatewrapperpredicateboolean counts onrealgenuinepublicfixtures: no forcedreturn/methodhook/Model/capability and no sourcefilemutation. Exacttransformedsite+outsideinverse+harness/input/outputpins, true+falsepositivefloors; qualifiers onUNINSTRUMENTEDsource separatelymandatory. Ifunavailable discloseindirectlimit, no fabricatedhit-rate. No gainsforecast.",
+        "AfterCoverlay frozen+Aaccepted, actualunfilteredold4+newLIST/runtime/full54typing/staticactualtestclassifier beforecomposition. No engine/sourceediting.",
+        "FreshisolatedbootstrapJOIN23 all16526regular+2genuineignoredtypingdeps=16528/source2063; allcopied+donorafterexact, readonlydependency symlink/noinstall/Git/index. Preserveallimmutablefailure/component/profilecapsules.",
+        "Full2063source+54ACTUALmatchedroots/excludes[]/genuinecompilerall-extension/harness/helper/supportbeforeafterpins; normal12checks+actualofficialownedASTclassifier/currentstyle/architecture closure. No nestedGit0changeownedgrowthcredit/grants/waivers/compression.",
+        "Freezeinputsduringlivequalifiers; C/B separateworkspaces/scopes; Aexactsource/inverse/securityreview+independentmeaningfuloracle/runtime acceptance. No sourceeditswhilepinnerslive; naturalterminalbeforefix/newsnapshot.",
+        "ParentstrictoriginalWASIprepare+live afterjoinedactualfunctional/type/static/pinsreview+quietGO: Node25.9/8192/onefork/default35/defaultRPC/noCPU/explicitqualifiedyield. Actualelapsed<=35000/natural0/noUHE mandatorybeforeunchanged52. No skip/cancel/deadlinechange/cache/fallback.",
+        "ROOT2061unadopted. No publiccompiler-sourcepush/HOLD/queueownershipchange. All27mastercriteriaunproven; newcheckpointdoesnotcompleteIRmigration."
+      ]
+    }
+  ],
+  "predecessors": [
+    "3522-b-native-class-semantic-producer-20261014.json",
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}
