@@ -1,10 +1,10 @@
 {
   "id": "6979",
-  "assignee": "ttraenkler/opus-6979-s7a",
-  "requested_by": "ttraenkler/opus-6979-s7a",
+  "assignee": "ttraenkler/opus-6979-s7b",
+  "requested_by": "ttraenkler/opus-6979-s7b",
   "status": "in-progress",
-  "branch": "issue-6979-s7a-remove-host-assisted",
-  "claimed_at": "2026-10-15T05:56:58Z",
-  "updated_at": "2026-10-15T05:56:58Z",
-  "write_id": "16851-6927yqz6"
+  "branch": "issue-6979-s7b-legacy-semantic-removal",
+  "claimed_at": "2026-10-15T12:51:46Z",
+  "updated_at": "2026-10-15T12:51:46Z",
+  "write_id": "65740-5odg2o9w"
 }
