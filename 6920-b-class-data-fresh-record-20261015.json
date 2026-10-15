@@ -1,0 +1,104 @@
+{
+  "id": "6920",
+  "slice": "class-data-fresh-record-successor-20261015",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+  "claimed_at": "2026-10-15T02:27:12.448199+00:00",
+  "updated_at": "2026-10-15T02:27:12.448199+00:00",
+  "write_id": "b-class-data-fresh-record-d370c691-056a-45cb-aa46-18c43de12766",
+  "handoff_scope": [
+    {
+      "kind": "class-data-fresh-record",
+      "at": "2026-10-15T02:27:12.448199+00:00",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+      "manifest": {
+        "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+        "componentPreimages": [
+          {
+            "path": "src/shared/contracts/prepared-ir-data.ts",
+            "bytes": 13137,
+            "sha256": "6f54b5d650e4723e5d7f45e9dcc09d1a6123f730054e29c0c68ff623b3ceb318",
+            "scope": {
+              "change": "Add fixed exported createPreparedIrDataRecord(): Record<string, unknown> immediately after private nativeCollectionBrand initialization. Allocate ONLY via captured apply(create,undefined,[null]), seed ONLY that fresh object false via captured apply(set,cache,[record,false]), return the new mutable null-prototype record. Accept no object/allocator/callback/verdict parameters. No caller registration API.",
+              "preserve": "Every historical function/constant body byte-exact; do not refactor immutableCopy or any collection probe/guard. Cache remains ONLY permanent internal-slot brand; descriptor/value/prototype/currentness walks remain fully live.",
+              "projectedDeltaLines": 8
+            }
+          },
+          {
+            "path": "src/ir/analysis/allocation-evidence/js-class-value-domains/data.ts",
+            "bytes": 2834,
+            "sha256": "f5cde7f13c9504171cce7694849a712c3d9f1111d96eeed22468ead28a5a70b3",
+            "scope": {
+              "change": "Direct canonical import createPreparedIrDataRecord from ../../../../shared/contracts/prepared-ir-data.js. Replace ONLY ownData visit result allocation Object.create(null) with createPreparedIrDataRecord(). Keep array allocation [], every prototype/descriptor/cycle/sparse validation, copy traversal, freezing/key/identity semantics byte-exact modulo that allocation expression and necessary formatter span.",
+              "wholeByteInverse": "Remove the new import and replace the single new allocation/formatter span with saved original. Reconstruct old complete module SHA. No copying original input/result identities or changing domain algorithms.",
+              "projectedDeltaLines": 1
+            }
+          }
+        ],
+        "canonicalNewPaths": [
+          "tests/issue-6920-prepared-data-record-allocation.test.ts"
+        ],
+        "reviewedProposal": {
+          "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-construction-prototype/workspace/.tmp/construction/fresh-record-receiving-proposal.json",
+          "bytes": 4638,
+          "sha256": "74ae068f21b5e2f8205c093a62722ba5c0764578b4724ba827c9cc53541000ec"
+        },
+        "productionOwner": "C private constructor workspace only; parent ROOT writes separately after final review",
+        "parentComponent": "C exact8 constructor receipt27c7f9bd66b5505b30a043d2a34fb1f5bb469731",
+        "boundedTransfer": "Parent B class DATA helper allocation expression only transferred to C under human shared-seam takeover; current B16 excludes both production paths. No domain algorithm ownership expansion.",
+        "measuredBasis": {
+          "workerProfile": ".tmp/construction/profile-arguments/aggregated.json",
+          "mappedTransform": ".tmp/construction/profile-arguments/transformed/proof.json",
+          "mappedLines": ".tmp/construction/profile-arguments/transformed/mapped-lines.json",
+          "coldProbeGenerated213Ticks": 66624,
+          "allBrandPositionTicks": 73682,
+          "source251": "apply(probes[index]!, value, [value])",
+          "runtime": "actualargument4 failed2engine35s+1RPC; no readiness credit"
+        },
+        "qualificationPlan": [
+          "explicit official function/LOC and direct closure inventories for both production paths/new test",
+          "old foundation hostile suites readonly plus new focused controls, full TS7 src+owned roots excludes[]/ordinary style+architecture gates",
+          "same actual argument4 source/codec/live phases, 35s/defaultRPC/worker8192; preserve every prior fail and exact program/input pins",
+          "same argument4 worker-only CPU A/B if normal terminal justifies; actual default unique artifacts+worker PID/thread0+mapped source positions; no source fixture or canonical entry/posteffect edits"
+        ],
+        "controls": [
+          "fresh distinct authentic null-prototype records and healthy current DATA mutations",
+          "later own getter and nested getter reject with counter0 after prior healthy check",
+          "later exotic prototype, cyclic/function/symbol DATA reject; valid ordinary descriptor/value observations remain current",
+          "Map/Set/WeakMap/WeakSet prototype-masked native slots stay rejected even nested in factory records; caller native objects never receive false seed",
+          "captured Object.create/Reflect.apply/WeakMap.set custody: patch live builtins after module load, create genuine record, restore before test framework assertions; spoof callback counts0",
+          "pure ownData output DATA/shape/alias/key behavior differential and immutable snapshots preserved; no semantic verdict cache"
+        ],
+        "constraints": [
+          "Human all Session B and blocking shared-seam takeover. PRIVATE extra2production/newtest only; no ROOT/source/publicPR/main/HOLD/queue push.",
+          "Add fixed zero-parameter allocator after captured nativeCollectionBrand initialization. Only its own actual capturedObject.create(null) record receives permanent false internal-slot brand. No caller registration, callback, setter or inferred prototype authority.",
+          "Every historical foundation function/constant body exact. Pure B DATA copy only import/allocation expression changes; whole-byte inverse and actual closure checks required. No generic data verifier, prototype/descriptor/value/effect/namespace guard changes.",
+          "No positive semantic/validation/currentness cache. Current fields, getter rejection, mutable physical resources, complete original/selected programs and hostile erased-slot objects remain checked.",
+          "Keep current16 B semantic component and A3 source dependency untouched, C3 old preimages preserved outside existing received C8 changes. No extra source or policy edits.",
+          "All failed default/profile epochs remain retained. Natural terminal only; same35s/defaultRPC/actual8192. Official budgets/style/fulltyping/old25 foundation controls and actualsameargument4 qualifier required before ROOT adoption."
+        ]
+      },
+      "manifestSha256": "3251990ab0977d4bc360982ea72fba71667e5ac19336a4654dd259b174a5de80",
+      "constraints": [
+        "Human all Session B and blocking shared-seam takeover. PRIVATE extra2production/newtest only; no ROOT/source/publicPR/main/HOLD/queue push.",
+        "Add fixed zero-parameter allocator after captured nativeCollectionBrand initialization. Only its own actual capturedObject.create(null) record receives permanent false internal-slot brand. No caller registration, callback, setter or inferred prototype authority.",
+        "Every historical foundation function/constant body exact. Pure B DATA copy only import/allocation expression changes; whole-byte inverse and actual closure checks required. No generic data verifier, prototype/descriptor/value/effect/namespace guard changes.",
+        "No positive semantic/validation/currentness cache. Current fields, getter rejection, mutable physical resources, complete original/selected programs and hostile erased-slot objects remain checked.",
+        "Keep current16 B semantic component and A3 source dependency untouched, C3 old preimages preserved outside existing received C8 changes. No extra source or policy edits.",
+        "All failed default/profile epochs remain retained. Natural terminal only; same35s/defaultRPC/actual8192. Official budgets/style/fulltyping/old25 foundation controls and actualsameargument4 qualifier required before ROOT adoption."
+      ]
+    }
+  ],
+  "predecessors": [
+    "3522-b-native-class-semantic-producer-20261014.json",
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}
