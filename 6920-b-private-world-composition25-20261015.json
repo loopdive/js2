@@ -1,0 +1,147 @@
+{
+  "id": "6920",
+  "slice": "private-world-composition25-successor-20261015",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+  "claimed_at": "2026-10-15T09:50:53.458067+00:00",
+  "updated_at": "2026-10-15T09:50:53.458067+00:00",
+  "write_id": "b-private-world-composition25-b394a99f-21ee-4aab-89ff-d5f2e84aa372",
+  "handoff_scope": [
+    {
+      "kind": "private-world-composition25",
+      "at": "2026-10-15T09:50:53.458067+00:00",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+      "manifest": {
+        "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+        "receivingWorkspace": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-private-world-composition25/workspace",
+        "bootstrapSourceWorkspace": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-allocation-composition23/workspace",
+        "status": "FINITE_RECEIVING_SCOPE_AWAITING_PUBLISHED_GO",
+        "componentPreimages": [
+          {
+            "path": "src/ir/analysis/allocation-evidence/js-class-value-domains/independent-kernel.ts",
+            "bytes": 28129,
+            "sha256": "37377ad76bb1574b2e9908c8ea27ab15c4ea282cf79deaaba4fb1d8dac86f7d5"
+          },
+          {
+            "path": "src/ir/analysis/allocation-evidence/js-class-value-domains/independent.ts",
+            "bytes": 58727,
+            "sha256": "3241c6949f0bd046302bf3abe685d8b520bcd68437ed92d62e8964714b004843"
+          },
+          {
+            "path": "tests/issue-6920-native-class-independent-record-allocation.test.ts",
+            "bytes": 5889,
+            "sha256": "541940d5636dd061c34d97f4a25e5fab4b0176ca094b3680f04f811291d853bb"
+          }
+        ],
+        "canonicalNewPaths": [],
+        "productionPaths": [
+          "src/ir/analysis/allocation-evidence/js-class-value-domains/independent-kernel.ts",
+          "src/ir/analysis/allocation-evidence/js-class-value-domains/independent.ts"
+        ],
+        "newTestPaths": [],
+        "sourceCountBefore": 2063,
+        "sourceCountConditionalAfter": 2063,
+        "basis": {
+          "authority": "takeover all of session b; Take over the blocking shared seams; keep B going with parallel subagents",
+          "CQualified": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-private-world-gate24/workspace/.tmp/gate24/handoff/sealed.json",
+            "bytes": 19940,
+            "sha256": "8a3cd48ab039209300c4396410cdf4f1c27a41df789a66068876921d1584e71c"
+          },
+          "CParentAuth": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/private-world-composition25-receive/parent-C-component-authentication.json",
+            "bytes": 557,
+            "sha256": "57eb100bcfa595c14317383e7c586fdac339efc998aa5aa52074310d8055df8f"
+          },
+          "BQualified": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-value-replay-successor-20261014-01a12827/.tmp/class-private-world-oracles24/workspace/.tmp/gate24/handoff/sealed.json",
+            "bytes": 16610,
+            "sha256": "238ed56d4d3e7583121a867036a435da12ca89bdccf985ade1747a89e20fb225"
+          },
+          "AReviews": [
+            {
+              "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/private-world-gate24-code-review/candidate01/review.json",
+              "bytes": 6854,
+              "sha256": "68009ad5f855d153392fd14d6661855fe878f0816ebcdb336f3e759410bdd748"
+            },
+            {
+              "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/private-world-gate24-code-review/oracles02/review.json",
+              "bytes": 6654,
+              "sha256": "dab72d2a499e8326e5e7399cd21db297e43ad83d3002659d140478a96b11b36a"
+            }
+          ],
+          "endpoints": [
+            {
+              "path": "src/ir/analysis/allocation-evidence/js-class-value-domains/independent-kernel.ts",
+              "snapshot": {
+                "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-private-world-gate24/workspace/.tmp/gate24/candidate01/independent-kernel.ts",
+                "bytes": 29589,
+                "sha256": "c7258f4f6dab271981dbe078d3e2785148f71408e805e5bd5e5f7e0c242b1e7a"
+              }
+            },
+            {
+              "path": "src/ir/analysis/allocation-evidence/js-class-value-domains/independent.ts",
+              "snapshot": {
+                "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-private-world-gate24/workspace/.tmp/gate24/candidate01/independent.ts",
+                "bytes": 59009,
+                "sha256": "3bb91a6373a2ac76c55190498074346b42b02fdc8126e3cdfc860b8304ec6160"
+              }
+            },
+            {
+              "path": "tests/issue-6920-native-class-independent-record-allocation.test.ts",
+              "snapshot": {
+                "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-value-replay-successor-20261014-01a12827/.tmp/class-private-world-oracles24/candidate02/issue-6920-native-class-independent-record-allocation.test.ts",
+                "bytes": 18899,
+                "sha256": "ef902176f3c582a7eae61ca7bd6cdbddf56028e0f5e727d6b0d6628567fb0961"
+              }
+            }
+          ],
+          "BParentAuth": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/private-world-composition25-receive/parent-B-component-artifact-authentication.json",
+            "bytes": 513,
+            "sha256": "201a60f283f4396241f7e4d05befec8eaf4089a4603b6343b1b3b52fc455ba8b"
+          },
+          "parentCrossContextPreflight": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/private-world-composition25-receive/parent-cross-context-preflight.json",
+            "bytes": 557,
+            "sha256": "cee488bfd3e7da142cd06ed2d6d8f713842cd5b2ec91a9a9039330b1052f2817"
+          },
+          "CCompositionPlan": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-private-world-composition25-plan/plan.json",
+            "bytes": 3272,
+            "sha256": "8633e5408b946a1177a2a97d06ba6c8308db052e20a6d359eb146b8cc38a6667"
+          }
+        },
+        "constraints": [
+          "Fresh isolated JOIN25 bootstrap exact JOIN23 16526 regular+2 genuine ignored typing dependencies; readonly node_modules symlink/no installs or Git/index. All predecessors preserved. Sole writer/qualifier C; A/B readonly. No source adaptation.",
+          "CAS copy exactly frozen C2 production endpoints and B candidate02 record allocation test. Exactly3 regular deltas, old record5889 prefix exact, all other16523regular+2typing dependencies exact. No new paths/policy/raw guard/authority/callback changes.",
+          "Fresh full2063 actual production+54ACTUAL typing roots/excludes[] and all resolved extensions/dependencies/harness beforeafter exact. All12 normal static checks plus official fulltree/changed-owner AST budgets (kernel709 independent1493 record388), no grants or empty nested Git ownership credit.",
+          "Fresh actual LIST9 roots and all selected unfiltered runtime. Expected456=old440 unchanged perfile identities plus16newrecordcontrols, actual LIST governs. Fresh actual config/baseconfig/runner/provenance workers/setup/support/helper pins beforeafter; real Node25.9/8192/fork1/default35000/defaultRPC/noCPU. No source or input mutation during jobs.",
+          "After parent combined metadata/source/runtime acceptance genuine quiet original WASI prepare+live single, standard afterEach setImmediate yield. Strict actual case<=35000ms natural0/noUHE required. Only then unchanged52 constructorlive+codec. No deadline changes/skips/cancel/fallback; natural failures sealed.",
+          "ROOT2061 remains unadopted until genuine unchanged52 pass. Future ROOT19CAS=13production+5tests+independentlygenerated2policyrows artifact, then full2063+55ACTUALtyping/static/style67/currentmembership/focusedrelatedactualN/vector/constructor checks. All27mastercriteria unproven. No public source push/comment or engine timing claim from component results."
+        ]
+      },
+      "manifestSha256": "1e6b428426d17258f392b083520509fb20cb55f9e05eec464286f69b1d3af785",
+      "constraints": [
+        "Fresh isolated JOIN25 bootstrap exact JOIN23 16526 regular+2 genuine ignored typing dependencies; readonly node_modules symlink/no installs or Git/index. All predecessors preserved. Sole writer/qualifier C; A/B readonly. No source adaptation.",
+        "CAS copy exactly frozen C2 production endpoints and B candidate02 record allocation test. Exactly3 regular deltas, old record5889 prefix exact, all other16523regular+2typing dependencies exact. No new paths/policy/raw guard/authority/callback changes.",
+        "Fresh full2063 actual production+54ACTUAL typing roots/excludes[] and all resolved extensions/dependencies/harness beforeafter exact. All12 normal static checks plus official fulltree/changed-owner AST budgets (kernel709 independent1493 record388), no grants or empty nested Git ownership credit.",
+        "Fresh actual LIST9 roots and all selected unfiltered runtime. Expected456=old440 unchanged perfile identities plus16newrecordcontrols, actual LIST governs. Fresh actual config/baseconfig/runner/provenance workers/setup/support/helper pins beforeafter; real Node25.9/8192/fork1/default35000/defaultRPC/noCPU. No source or input mutation during jobs.",
+        "After parent combined metadata/source/runtime acceptance genuine quiet original WASI prepare+live single, standard afterEach setImmediate yield. Strict actual case<=35000ms natural0/noUHE required. Only then unchanged52 constructorlive+codec. No deadline changes/skips/cancel/fallback; natural failures sealed.",
+        "ROOT2061 remains unadopted until genuine unchanged52 pass. Future ROOT19CAS=13production+5tests+independentlygenerated2policyrows artifact, then full2063+55ACTUALtyping/static/style67/currentmembership/focusedrelatedactualN/vector/constructor checks. All27mastercriteria unproven. No public source push/comment or engine timing claim from component results."
+      ]
+    }
+  ],
+  "predecessors": [
+    "3522-b-native-class-semantic-producer-20261014.json",
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}
