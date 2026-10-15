@@ -1542,30 +1542,19 @@ export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedColl
   }
 
   // ── collectURIImports finalize ──
-  // #2500 — the four URI globals are JS-host `env.*` imports in host mode. Under
-  // `--target wasi`/`--target standalone` there is no host, so the call site
-  // previously fell through to a `ref.test`/`ref.cast` of the argument and
-  // returned `null`. Emit the pure-Wasm `__uri_encode` / `__uri_decode` helpers
-  // instead (registered as DEFINED funcs; the batched late-import shift keeps
-  // their funcMap index + sibling-call targets correct as later imports
-  // register). The four NAMES remain mapped to the host import in host mode; in
-  // standalone mode the call site (calls.ts) routes each name through the native
-  // helper with its per-function preserved/reserved mask.
+  // #2500, #6979 — the four URI globals are the pure-Wasm `__uri_encode` /
+  // `__uri_decode` helpers on every profile (registered as DEFINED funcs; the
+  // batched late-import shift keeps their funcMap index + sibling-call targets
+  // correct as later imports register). The call site (calls.ts) routes each
+  // name through the native helper with its per-function preserved/reserved
+  // mask; the host `env.*URI*` imports are retired.
   {
     let needsNativeEncode = false;
     let needsNativeDecode = false;
     for (const name of state.uriNeeded) {
       if (ctx.funcMap.has(name)) continue;
-      if (name === "encodeURI" || name === "encodeURIComponent") {
-        needsNativeEncode = true;
-        continue;
-      }
-      if (name === "decodeURI" || name === "decodeURIComponent") {
-        needsNativeDecode = true;
-        continue;
-      }
-      const typeIdx = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "externref" }]);
-      addImport(ctx, "env", name, { kind: "func", typeIdx });
+      if (name === "encodeURI" || name === "encodeURIComponent") needsNativeEncode = true;
+      else needsNativeDecode = true;
     }
     if (needsNativeEncode) {
       emitNativeUriEncode(ctx);
