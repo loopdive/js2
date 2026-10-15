@@ -93,6 +93,41 @@ export function admitsObjectRelational(ctx: CodegenContext, left: ts.Type, right
   return isObjectOperandType(left) || isObjectOperandType(right);
 }
 
+const ANYISH = ts.TypeFlags.Any | ts.TypeFlags.Unknown;
+
+/**
+ * (#6999) A `string | number`-style union: a String constituent alongside a
+ * non-String primitive one. Its runtime value may be a string, so §7.2.13's
+ * both-strings lexicographic arm is reachable and the numeric lowering is wrong.
+ */
+function isStringMixedPrimitiveUnion(t: ts.Type): boolean {
+  if (!t.isUnion()) return false;
+  const parts = t.types;
+  const hasString = parts.some((p) => (p.flags & ts.TypeFlags.StringLike) !== 0);
+  const hasOther = parts.some((p) => (p.flags & (ts.TypeFlags.NumberLike | ts.TypeFlags.BooleanLike)) !== 0);
+  return hasString && hasOther && parts.every((p) => (p.flags & EXCLUDED) === 0);
+}
+
+/**
+ * Should a relational with these operand types take the runtime-dispatched
+ * `emitAnyRelational` (§7.2.13: both strings → lexicographic, else numeric)?
+ *
+ * - js-host lane: an `any`/`unknown` operand, and only while `$AnyValue` is not
+ *   registered (#2059; the #1374 host-comparator hazard) — unchanged bytes.
+ * - no JS host (#6999): that `anyValueTypeIdx < 0` exclusion shut the arm for
+ *   good, because standalone always registers `$AnyValue`, so `"b" > "a"` on
+ *   `any` compared NaN to NaN. The in-module cascade has no host comparator, so
+ *   the arm opens for `any`/`unknown` and for string-mixed unions
+ *   (`string | number`) as well.
+ */
+export function admitsAnyRelational(ctx: CodegenContext, left: ts.Type, right: ts.Type): boolean {
+  const anyish = (left.flags & ANYISH) !== 0 || (right.flags & ANYISH) !== 0;
+  if (ctx.anyValueTypeIdx < 0 && anyish) return true;
+  if (ctx.targetProfile.semanticProviders !== "native-first") return false;
+  if (!ctx.nativeStrings || ctx.anyStrTypeIdx < 0) return false;
+  return anyish || isStringMixedPrimitiveUnion(left) || isStringMixedPrimitiveUnion(right);
+}
+
 /**
  * Reduce the two externref operand temps in place. A no-op when the native
  * `__to_primitive` is unavailable (older minimal standalone builds), so the
