@@ -1,0 +1,137 @@
+{
+  "id": "6920",
+  "slice": "ordinary-numeric-backend-boundary-successor-20261015",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-class-value-replay-successor-20261014-01a12827",
+  "claimed_at": "2026-10-15T03:43:33.960728+00:00",
+  "updated_at": "2026-10-15T03:43:33.960728+00:00",
+  "write_id": "b-ordinary-numeric-backend-boundary-9e817779-14b3-4bf8-b7da-bbe53b1d6d5c",
+  "handoff_scope": [
+    {
+      "kind": "ordinary-numeric-backend-boundary",
+      "at": "2026-10-15T03:43:33.960728+00:00",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-class-value-replay-successor-20261014-01a12827",
+      "manifest": {
+        "receivingBranch": "codex/6920-b-class-value-replay-successor-20261014-01a12827",
+        "componentPreimages": [
+          {
+            "path": "src/backend/linear/program/native-number-undefined.ts",
+            "bytes": 7341,
+            "sha256": "ab2026ab2329571f3a09126fa518711853cba81c5a92fa14172412f2729ad94d",
+            "scope": "Whole move exactly two fixed geometry functions and binding interface to received leaf; preserve emitter instruction body and private fail; direct identity re-export fixed memory authentication only."
+          }
+        ],
+        "canonicalNewPaths": [
+          "src/backend/linear/program/native-number-undefined-layout.ts"
+        ],
+        "productionOwner": "B fresh private physical transport workspace only; ROOT and qualified semantic donor remain unchanged",
+        "reviewedProposal": {
+          "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/ordinary-numeric-transport-receive/zero-edge-proposal/proposal.json",
+          "bytes": 7150,
+          "sha256": "27b83b09f51fee39db74806ef4a01368e32894b1b77cab48220cd8319122743e"
+        },
+        "exactWholeDeclarationsToMove": [
+          {
+            "name": "requireNativeNumberUndefinedBoxLayout",
+            "kind": "FunctionDeclaration",
+            "start": 987,
+            "end": 2167,
+            "lines": 30,
+            "sha256": "ba4f83489607bcd1beed1786b86c193c82cf682fa9af61c732b83240c1b99beb"
+          },
+          {
+            "name": "describeNativeNumberUndefinedMemory",
+            "kind": "FunctionDeclaration",
+            "start": 2169,
+            "end": 3262,
+            "lines": 27,
+            "sha256": "5db0936e33f31555d3e7253b7d155d6fa799f93af6bba25414ba06d255697d64"
+          },
+          {
+            "name": "NativeNumberUndefinedLinearBindings",
+            "kind": "InterfaceDeclaration",
+            "start": 3354,
+            "end": 3696,
+            "lines": 8,
+            "sha256": "beee0bc71b9a2ce503c9385fb0c8aaf55f5bc3c516c764ce29380c942bb6b4e7"
+          }
+        ],
+        "newLeaf": {
+          "exports": [
+            "requireNativeNumberUndefinedBoxLayout",
+            "describeNativeNumberUndefinedMemory",
+            "type NativeNumberUndefinedLinearBindings",
+            "JS_TAG_IDS (actual canonical imported binding re-export, never a copied table)"
+          ],
+          "runtimeDependencies": [
+            "../../../ir/core/js-value-tag-identities.js:JS_TAG_IDS",
+            "../../../shared/contracts/prepared-ir-invariant-error.js:PreparedIrProgramInvariantError"
+          ],
+          "typeOnlyDependencies": [
+            "../../../ir/program/prepared-linear-memory-contracts.js:NativeNumberUndefinedMemoryDescription",
+            "../../../ir/analysis/linear-memory-from-facts.js:LinearAllocationSitePlan,LinearMemoryPlan",
+            "../../../wasm/physical/module-reservations.js:GlobalReservation"
+          ],
+          "failureHelper": "Private local fail exact same body, error constructor and message as old emitter; retain emitter private fail unchanged. No exported failure/callback API.",
+          "canonicalIdentityProof": "runtime/js-tag-domain.ts re-exports the exact core JS_TAG_IDS object; program/errors.ts re-exports the exact shared PreparedIrProgramInvariantError constructor. Import those actual canonical definitions directly in new leaf.",
+          "estimatedRawLines": 78,
+          "estimatedBytes": 3361,
+          "maxMovedFunctionLines": 30
+        },
+        "rewiresWithinAlreadyReceivedPaths": {
+          "memory": "Change existing describe/require/type Bindings import from native-number-undefined.js to native-number-undefined-layout.js. No body or proof change.",
+          "emitter": [
+            "Remove three moved declarations; local import type NativeNumberUndefinedLinearBindings from layout for existing unchanged emitter function.",
+            "Re-export the same two layout functions and binding type from layout, preserving original callers and one canonical implementation.",
+            "Re-export requirePreparedLinearNumberUndefinedSignatureCarrier, requirePreparedLinearNumberUndefinedBindings and type PreparedLinearMemoryReservations from memory. No reservePreparedLinearMemory export.",
+            "Import the same JS_TAG_IDS binding from layout instead of the old ir/runtime/js-tag-domain facade; re-export the canonical imported binding from layout. Existing core object identity and emitter body remain exact."
+          ],
+          "numericOrchestrator": "Consolidate the two fixed memory auth imports and reservation token type into its existing native-number-undefined emitter import; delete new direct value memory import."
+        },
+        "constraints": [
+          "Human all Session B and blocking shared seams takeover. Add only these two paths to prior received8; memory/orchestrator rewires remain within prior scope. No ROOT, C, semantic BW donor, public source/main/PR/HOLD/queue changes.",
+          "New cohesive backend layout leaf owns only two fixed functions, binding interface and exact private failure body. Preserve function/parameter/return type bodies and canonical tag object/error constructor identities. No copied tag tables, geometry change, callback, registry, caller registration or new generic allocator API.",
+          "Existing emitter keeps five-op instruction function byte-exact and old facade API via actual direct re-exports. Re-export only real requirePreparedLinearNumberUndefinedSignatureCarrier/requirePreparedLinearNumberUndefinedBindings and typePreparedLinearMemoryReservations from memory; no generic reserve re-export or wrapper permission.",
+          "Memory consumes layout leaf, never emitter; orchestrator uses already-existing numeric emitter boundary instead of direct new memory import. Private issued/packs/bindings remain solely memory-owned. Complete phase/layout/currentness/public/original proof and full result-token/actual slot checks stay strict.",
+          "Append one truthful new backend-linear layout inventory row only after actual value-closure/semantic inspection. Preserve old mixed memory/emitter/orchestrator rows, all prior rows/rules. Measure source2061 actual; no clean claim solely because imports are erased types.",
+          "Official refreshed graph must show no new cyclic SCC and no net new IR-to-backend edges against exact C6/B14 preimages; record count28 baseline and actual final. No new grants, hidden selector changes, type-only masquerade or ancestor-selected no-growth substitution.",
+          "Official LOC/function classifiers against refreshed exact preimages: no file/function giant regrowth/newgiants/new grants. Whole moved declarations/body inverses, fixed failure/error identity, old emitter code and physical geometry exact.",
+          "Preserve previous114 ff6ea4 epoch with explicit3-edge debt and every failure. New fullsource+all owned-root typing excludes[], style/architecture/budgets and actual114-or-expanded cohort including old77, hostile controls, genuine selected-call engine floors/all4profiles. Standard35s/default RPC/actualNode25/8192, natural terminal/no cancellation. No runtime credit from stale source or unissued larger-argument C6.",
+          "Tag-binding refinement: layout re-exports its actual canonical imported JS_TAG_IDS binding and emitter imports it there. No table copy, alias object, tag-digit change or new permission. Actual refreshed backend-to-IR edge count must also remain111, along with IR-to-backend28 and unchanged cyclic SCCs. Original27b83 proposal is extended only by this named binding re-export/import swap."
+        ],
+        "qualificationPlan": [
+          "Exact AST and byte inverse for both moved layout functions and binding interface; private fail body/error identity exact.",
+          "Existing emitter five-op instruction body unchanged; generated bytes/layout geometry/tag digits remain identical.",
+          "Auth reexports must be actual functions from memory, not wrappers, callbacks, registration or structural binding acceptance.",
+          "Private issued/packs/numericBindings remain solely memory-owned; original plan/currentness/lifetime/reserving/filling completion checks unchanged.",
+          "Preserve qualified114 before-architecture capsule and all failed budget/graph epochs.",
+          "Existing caller imports and facade function identity remain live+codec compatible; no new source or backend capability."
+        ]
+      },
+      "manifestSha256": "379e149be89e1023adb41a94f15a77f2ea8653d3fd462333f3ca77f3ca6e6f34",
+      "constraints": [
+        "Human all Session B and blocking shared seams takeover. Add only these two paths to prior received8; memory/orchestrator rewires remain within prior scope. No ROOT, C, semantic BW donor, public source/main/PR/HOLD/queue changes.",
+        "New cohesive backend layout leaf owns only two fixed functions, binding interface and exact private failure body. Preserve function/parameter/return type bodies and canonical tag object/error constructor identities. No copied tag tables, geometry change, callback, registry, caller registration or new generic allocator API.",
+        "Existing emitter keeps five-op instruction function byte-exact and old facade API via actual direct re-exports. Re-export only real requirePreparedLinearNumberUndefinedSignatureCarrier/requirePreparedLinearNumberUndefinedBindings and typePreparedLinearMemoryReservations from memory; no generic reserve re-export or wrapper permission.",
+        "Memory consumes layout leaf, never emitter; orchestrator uses already-existing numeric emitter boundary instead of direct new memory import. Private issued/packs/bindings remain solely memory-owned. Complete phase/layout/currentness/public/original proof and full result-token/actual slot checks stay strict.",
+        "Append one truthful new backend-linear layout inventory row only after actual value-closure/semantic inspection. Preserve old mixed memory/emitter/orchestrator rows, all prior rows/rules. Measure source2061 actual; no clean claim solely because imports are erased types.",
+        "Official refreshed graph must show no new cyclic SCC and no net new IR-to-backend edges against exact C6/B14 preimages; record count28 baseline and actual final. No new grants, hidden selector changes, type-only masquerade or ancestor-selected no-growth substitution.",
+        "Official LOC/function classifiers against refreshed exact preimages: no file/function giant regrowth/newgiants/new grants. Whole moved declarations/body inverses, fixed failure/error identity, old emitter code and physical geometry exact.",
+        "Preserve previous114 ff6ea4 epoch with explicit3-edge debt and every failure. New fullsource+all owned-root typing excludes[], style/architecture/budgets and actual114-or-expanded cohort including old77, hostile controls, genuine selected-call engine floors/all4profiles. Standard35s/default RPC/actualNode25/8192, natural terminal/no cancellation. No runtime credit from stale source or unissued larger-argument C6.",
+        "Tag-binding refinement: layout re-exports its actual canonical imported JS_TAG_IDS binding and emitter imports it there. No table copy, alias object, tag-digit change or new permission. Actual refreshed backend-to-IR edge count must also remain111, along with IR-to-backend28 and unchanged cyclic SCCs. Original27b83 proposal is extended only by this named binding re-export/import swap."
+      ]
+    }
+  ],
+  "predecessors": [
+    "3522-b-native-class-semantic-producer-20261014.json",
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}
