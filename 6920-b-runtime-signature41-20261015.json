@@ -1,0 +1,125 @@
+{
+  "id": "6920",
+  "slice": "runtime-signature41-successor-20261015",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+  "claimed_at": "2026-10-15T20:20:44.629972+00:00",
+  "updated_at": "2026-10-15T20:20:44.629972+00:00",
+  "write_id": "b-runtime-signature41-e14db506-afd8-4b49-b6a6-8eb991322049",
+  "handoff_scope": [
+    {
+      "kind": "runtime-signature41",
+      "at": "2026-10-15T20:20:44.629972+00:00",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+      "manifest": {
+        "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+        "receivingWorkspace": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-error-signature41/workspace",
+        "bootstrapSourceWorkspace": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-namespace-facts40/workspace",
+        "canonicalROOTWorkspace": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827",
+        "status": "FINITE_ONE_EXISTING_RUNTIME_PROFILE_RECEIVE_NO_SOURCE_GO_UNTIL_PUBLISHED",
+        "issueTitle": "Native Linear numeric-vector shared source handoff and integration plan",
+        "componentPreimages": [
+          {
+            "path": "src/ir/runtime/native-js-class-profile.ts",
+            "bytes": 41649,
+            "sha256": "1cd6cfbebe7121524d0c391fc8a7f46f934da53edc579a529b66e2deca1652ce"
+          }
+        ],
+        "incomingComponent": {
+          "path": "src/ir/runtime/native-js-class-profile.ts",
+          "bytes": 41728,
+          "sha256": "920052591e5fe215feb9f98cfdcd8f017e0368ac98408906ea24a083f4701528",
+          "previewPath": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/source41-family503-preview02/formatted-preview.ts.txt"
+        },
+        "canonicalNewPaths": [],
+        "productionPaths": [
+          "src/ir/runtime/native-js-class-profile.ts"
+        ],
+        "existingTestPaths": [],
+        "newTestPaths": [],
+        "sourceCountBefore": 2065,
+        "sourceCountConditionalAfter": 2065,
+        "basis": {
+          "CPreview": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/source41-family503-preview02/sealed.json",
+            "bytes": 2792,
+            "sha256": "496e621c5fd5b88595970c0acec3c08d10e9c8d407a80a401b84ed14160b2be4"
+          },
+          "ACopyProof": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/runtime-signature-provenance-rhs-option/source41-family503-only-proof.json",
+            "bytes": 4562,
+            "sha256": "832e4971ba70cbf1522192bea13700449e8b26cdbb9c34d34060b7c4a663fa56"
+          },
+          "AExactPreview": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/runtime-signature-provenance-rhs-option/source41-family503-preview02-review.json",
+            "bytes": 2839,
+            "sha256": "a2a1d04dc5dc8377c543b56037f55567fdf1227fd9776778a2115851b341b425"
+          },
+          "BCurrentCounts": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-value-replay-successor-20261014-01a12827/.tmp/source40-runtime-rhs-discriminator-interpretation02/sealed.json",
+            "bytes": 829,
+            "sha256": "c67c2693de34f0a643e562706d567aeb6ecba7ff400c8ddfc97cc0e62f9ca0d3"
+          },
+          "BN0Coverage": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-value-replay-successor-20261014-01a12827/.tmp/source41-family503-coverage-adequacy/sealed.json",
+            "bytes": 755,
+            "sha256": "80eb25106002d8bbabfcdfbd82d0d3094a739c484c458a4b45d45e4a7db28112"
+          },
+          "expectedUnchanged818": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-value-replay-successor-20261014-01a12827/.tmp/source41-family503-coverage-adequacy/expected-cohort.json",
+            "bytes": 15324,
+            "sha256": "5c0c5010bf97cb6192b7bf30d269da43ae8cc964732336e2695a36b468a22005"
+          },
+          "parentRHSAuthentication": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/private-namespace-facts40-receive/parent-runtime-rhs02-terminal-authentication.json",
+            "bytes": 1475,
+            "sha256": "34a6e493fd213b409644fe77e42d2359b5e47b84c640365da83683c2d50827f5"
+          }
+        },
+        "constraints": [
+          "C solewriter NEWprivateSOURCE41 fromFULLCURRENT SOURCE40 context16532ordinary+2genuineignoredhelpers. Saveold41649/1cd6 BEFOREonewrite; wholebeforeaftermaps+donorafter+alloffscope exact. Preservevalidinherited.git129/e2f150fa ROOTpointer(actualLF), readonlynode_modules/noinstall/Gitinit/Gitmutations. RealROOTindex/HEAD+resolvedbranch unchanged; no donor/ROOT/foreignwrites.",
+          "ExactlyexistingfoundationnamedcopyPreparedIrDataObject import+ONEcompletefamily503signature RHS wrapper incoming41728/92005259. PreserveLEFTread,paramsarray,resultsarray evaluationorder; separatearrayidentities/sharedprimitiveexternalKey, ordinaryproto/ownDATAflags/order/extensibility. NegativebrandONLYnewresult; rawLEFT/ALLchildren/guards remainunchanged. No casts/newhelper/API/export/module/policy/test/rootmembership; 502/504held.",
+          "InitialGO bootstrap+onefile/normalformat/wholeinverse/officialcaps ONLY. No compiler/LIST/engine untilphysicalendpointreview+nextparentGO. Preview877to881lines/maxfunction261unchanged/no regrown/newGiants/grants; actualmeasuresgovern.",
+          "N0newtests acceptedexactmechanicalscope usingfactory27/brand26/genuineimpliciterrorABIhealthy/refusal+all-selectedprovider drift/getter0. Descriptor/aliasdetailsstatic, notisolated503runtimecredit. Freshunfiltered818/25 structuredperfileorderedidentities/currenttestbytes exact, no old818passreuse.",
+          "Afterendpointacceptance freshfull2065source+59ACTUALroots/excludes[]/allresolvedcompilerextensions/compiler+bothlists0;normal12/style75TS+policy76args/28ownedbudgets(includingruntime)+immediate877to881/max261; inventoryvaliderrors[]/architectureCompleteFALSE. WholebeforeafterCURRENT source/test/config/helper/dependency+Gitmaps/truechildstatuses.",
+          "Node25.9/8192/fork1/noCPU/default35000/defaultRPC/originalyield/current6429bothawaitworkload; GIT_OPTIONAL_LOCKS0 allphases. Parentaccept818+metadata BEFOREseparateoriginalstrict35 thenoriginal52 quietGOs. No retries/signals/waivers/automaticextraCPU.",
+          "ActualCURRENT40family503 ENTRYandRIGHTROOTscreen/O2312,DESCotherCold4624 countsonly/notprice/netgain. Addedcopy/reflection/descriptors/resultallocationexplicit. Otherfamilies/borrowedchildrenheld; no rawseedingbasedoncallerlabel/ancestry.",
+          "PreserveSOURCE40officialstrict35066.9215FAIL/CPU35136.48375/RHS35077.068542 andallolderfailures. No ROOTadoption/local166checkpoint/publicsourcepush/PR/comment/HOLD/Aqueue/mastercriterionpromotion. Onlysignedcoordinationrecordpublishwithnormalhooks here."
+        ],
+        "inheritsSource40": "FullCURRENT SOURCE40 context16534=16532ordinaryfiles+2requiredignoredhelpers/source2065. RelativeROOT differences are foundation15981/aa08,brand9059/9011,neutral26001/6bcd; SOURCE41 adds ONE runtime delta. No ROOT4pathadoption here.",
+        "bootstrapCensus": {
+          "ordinary": 16532,
+          "explicitIgnoredHelpers": [
+            ".tmp/class-public-history-successor/paired-root.test.ts",
+            ".tmp/class-public-history-successor/source56.bin"
+          ],
+          "totalContext": 16534,
+          "allCurrentExactToSource40Composition": true
+        }
+      },
+      "manifestSha256": "9cec5ec2ba481ae73727272fae9d48e73775436043f9d6fedb94ee0c7e1f2e9d",
+      "constraints": [
+        "C solewriter NEWprivateSOURCE41 fromFULLCURRENT SOURCE40 context16532ordinary+2genuineignoredhelpers. Saveold41649/1cd6 BEFOREonewrite; wholebeforeaftermaps+donorafter+alloffscope exact. Preservevalidinherited.git129/e2f150fa ROOTpointer(actualLF), readonlynode_modules/noinstall/Gitinit/Gitmutations. RealROOTindex/HEAD+resolvedbranch unchanged; no donor/ROOT/foreignwrites.",
+        "ExactlyexistingfoundationnamedcopyPreparedIrDataObject import+ONEcompletefamily503signature RHS wrapper incoming41728/92005259. PreserveLEFTread,paramsarray,resultsarray evaluationorder; separatearrayidentities/sharedprimitiveexternalKey, ordinaryproto/ownDATAflags/order/extensibility. NegativebrandONLYnewresult; rawLEFT/ALLchildren/guards remainunchanged. No casts/newhelper/API/export/module/policy/test/rootmembership; 502/504held.",
+        "InitialGO bootstrap+onefile/normalformat/wholeinverse/officialcaps ONLY. No compiler/LIST/engine untilphysicalendpointreview+nextparentGO. Preview877to881lines/maxfunction261unchanged/no regrown/newGiants/grants; actualmeasuresgovern.",
+        "N0newtests acceptedexactmechanicalscope usingfactory27/brand26/genuineimpliciterrorABIhealthy/refusal+all-selectedprovider drift/getter0. Descriptor/aliasdetailsstatic, notisolated503runtimecredit. Freshunfiltered818/25 structuredperfileorderedidentities/currenttestbytes exact, no old818passreuse.",
+        "Afterendpointacceptance freshfull2065source+59ACTUALroots/excludes[]/allresolvedcompilerextensions/compiler+bothlists0;normal12/style75TS+policy76args/28ownedbudgets(includingruntime)+immediate877to881/max261; inventoryvaliderrors[]/architectureCompleteFALSE. WholebeforeafterCURRENT source/test/config/helper/dependency+Gitmaps/truechildstatuses.",
+        "Node25.9/8192/fork1/noCPU/default35000/defaultRPC/originalyield/current6429bothawaitworkload; GIT_OPTIONAL_LOCKS0 allphases. Parentaccept818+metadata BEFOREseparateoriginalstrict35 thenoriginal52 quietGOs. No retries/signals/waivers/automaticextraCPU.",
+        "ActualCURRENT40family503 ENTRYandRIGHTROOTscreen/O2312,DESCotherCold4624 countsonly/notprice/netgain. Addedcopy/reflection/descriptors/resultallocationexplicit. Otherfamilies/borrowedchildrenheld; no rawseedingbasedoncallerlabel/ancestry.",
+        "PreserveSOURCE40officialstrict35066.9215FAIL/CPU35136.48375/RHS35077.068542 andallolderfailures. No ROOTadoption/local166checkpoint/publicsourcepush/PR/comment/HOLD/Aqueue/mastercriterionpromotion. Onlysignedcoordinationrecordpublishwithnormalhooks here."
+      ]
+    }
+  ],
+  "predecessors": [
+    "3522-b-native-class-semantic-producer-20261014.json",
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}
