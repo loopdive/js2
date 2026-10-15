@@ -1,0 +1,134 @@
+{
+  "id": "6920",
+  "slice": "world-absorption28-composition-successor-20261015",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+  "claimed_at": "2026-10-15T10:37:45.509525+00:00",
+  "updated_at": "2026-10-15T10:37:45.509525+00:00",
+  "write_id": "b-world-absorption28-composition-bb7b8279-68da-4beb-818a-f9e66a0ec651",
+  "handoff_scope": [
+    {
+      "kind": "world-absorption28-composition",
+      "at": "2026-10-15T10:37:45.509525+00:00",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+      "manifest": {
+        "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+        "receivingWorkspace": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-world-absorption-composition28/workspace",
+        "bootstrapSourceWorkspace": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-world-absorption27/workspace",
+        "status": "FINITE_COMPOSITION_RECEIVE_NO_GO_UNTILPUBLISHED",
+        "componentPreimages": [
+          {
+            "path": "tests/issue-6920-native-class-independent-record-allocation.test.ts",
+            "bytes": 19930,
+            "sha256": "976cda496fbfab1dd47724f891c2fb1ec5085b00454f05017c78371c0230b9b5"
+          }
+        ],
+        "canonicalNewPaths": [
+          "tests/issue-6920-native-class-private-world-absorption.test.ts"
+        ],
+        "productionPaths": [],
+        "newTestPaths": [
+          "tests/issue-6920-native-class-private-world-absorption.test.ts"
+        ],
+        "sourceCountBefore": 2063,
+        "sourceCountConditionalAfter": 2063,
+        "basis": {
+          "authority": "takeoverallB; takeoverblockingseams; parallelwork",
+          "priorOwnership": "f7e23d57d48e8b969eb2ad0a1a3f7323c747d832",
+          "CSourceMetadata": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-world-absorption27/workspace/.tmp/absorption27/handoff/sealed-source-metadata.json",
+            "bytes": 13672,
+            "sha256": "4b27ec082827a2ec4c206f9728930394f7c93e6d368fc930b0c313ec4046ad0e"
+          },
+          "ASourceReview": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/private-world-absorption-code-review/candidate01/review.json",
+            "bytes": 7491,
+            "sha256": "ebc72d9f10922fbc42b9b322db18c807c447132c8422bf2c16cd8303f88bb140"
+          },
+          "ParentCActualAllCurrent": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/private-world-absorption27-source-receive/parent-full-source-currentness.json",
+            "bytes": 528,
+            "sha256": "44913c002336b6cb866643c47e016f8b32e8273914ae16690f68d59127ddf830"
+          },
+          "CCompositionPlan": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-world-absorption-composition28-plan/plan.json",
+            "bytes": 2934,
+            "sha256": "0ae3b1009d54558010b47036addf81c543bdba675bb9c89fa80185e4b1628160"
+          },
+          "BQualified": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-value-replay-successor-20261014-01a12827/.tmp/class-world-absorption-oracles27/workspace/.tmp/absorption27/handoff/sealed.json",
+            "bytes": 40373,
+            "sha256": "77da32d2e1f3a8f259135feb09ee3c15a2a3816cfcfe8c84acb7fbeb2b7340f0"
+          },
+          "endpoints": [
+            {
+              "path": "tests/issue-6920-native-class-independent-record-allocation.test.ts",
+              "snapshot": {
+                "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-value-replay-successor-20261014-01a12827/.tmp/class-world-absorption-oracles27/workspace/.tmp/absorption27/handoff/snapshot/tests/issue-6920-native-class-independent-record-allocation.test.ts",
+                "bytes": 20704,
+                "sha256": "d68a3827532f2ba4f275c71d2af4f25b574d5b42bc784c96bfc2da1453c11182"
+              }
+            },
+            {
+              "path": "tests/issue-6920-native-class-private-world-absorption.test.ts",
+              "snapshot": {
+                "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-value-replay-successor-20261014-01a12827/.tmp/class-world-absorption-oracles27/workspace/.tmp/absorption27/handoff/snapshot/tests/issue-6920-native-class-private-world-absorption.test.ts",
+                "bytes": 14902,
+                "sha256": "457e827ad66ce5a96b0befb90ae55ff775f93ff9e099fcfca6fb3a1dd35d57ce"
+              }
+            }
+          ],
+          "prospectiveN": 10,
+          "conditionalActual10Count": 466,
+          "AOracleReview": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/private-world-absorption-code-review/oracles01/review.json",
+            "bytes": 8388,
+            "sha256": "f6f7b47acd0509d8621d35826a599083401dad658def20e117715e31e345a4e7"
+          },
+          "BActualLIST": "30cases2files verified byowner; parentexpectedunion/currentrecordauthentication followsseal",
+          "BMetadata": "55ACTUAL/2063/2379/type0/16781beforeafter; normal12/ownedrecord415max78,new266max37/no grants/regrowth",
+          "parentBAuth": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/private-world-absorption28-composition-receive/parent-B27-component-authentication.json",
+            "bytes": 960,
+            "sha256": "4bf648f2493e63af4746f601da2904144ddb017c3d970a258fe8e1656d427ddd"
+          },
+          "actualBCaseCounts": {
+            "record": 20,
+            "dedicated": 10,
+            "total": 30,
+            "final10Expected": 466
+          }
+        },
+        "constraints": [
+          "C solefreshcompositionwriter; notalone/no revertingothers. FreshexactC27bootstrap16526regular+2typingdeps/source2063, readonlydeps/noinstall/Git/index. OnlyCASBcalibratedexistingrecord+newdedicatedtest→16527regular+2deps=16529. Allother16525regular+2deps exact, kernel32155/2238e03d andindependent59009/3bb91a63 inheritedbyteexact.",
+          "Componentscurrentallnaturalterminal/frozen/Aaccepted beforebootstrap. Wholeall16529finalcontext equalsqualifiedBexactsource+2tests withnewpath, no adaptation/formatting. Preserveallpredecessorfailedstrict/profile/functionalseals.",
+          "Fresh55ACTUALtyping/excludes[]/all2063src/allresolvedcompilerfiles+allactualhelper/support/dependencies/harnessbeforeafter; normal12/static, officialfulltree+kernel709→773/record406→new/newtestclassifiers/no regrown/newGiants/grants. No nestedGit0changedownedcredit; styleactualall3endpoints.",
+          "Freshactual10rootLIST andallselectedruntime/unfiltered/noUHE/default35000/defaultRPC/Node25.9/8192/onefork/noCPU. Preserveactualold456structuredperfileidentities/order andappendactualnewdedicatedN; no guessN orsum-as-one-runcredit. No redundantseparateC99componentrun; actualfresh10covers79focused+20calibratedrecord+newN. Actualconfig/base/runner/setup/provenanceworker+everyactualcompiler/helper/supportinput pinnedbeforeafter.",
+          "Onlyafteractualall10/type55/static/source/oracleparentacceptance quietoriginalWASIprepare+live exactcallback6431/a6a276e11/exactoldyield153/b769ca98/default35/defaultRPC/noCPU/25.9/8192/fork1. Actual<=35000/natural0/noUHE mandatory; onlythenunchanged52live+codec. Naturalfailurespreserved, no cancel/retry/waiver/timeoutchanges/fallback.",
+          "ROOT2061unadopted untilactual52pass; future20CAS13source+6tests+independent2policyrows artifact, full56ACTUALtype/static/style68actualmembership/freshfocusedrelatedN/newroot/vector/constructor. All27mastercriteriaunproven. No publicsourcepush/comments/HOLD/queuechanges."
+        ]
+      },
+      "manifestSha256": "eb8233bb0a95e68c4baa5c72b61d027df9cd0fc82903d5bd5c21361d074a0ece",
+      "constraints": [
+        "C solefreshcompositionwriter; notalone/no revertingothers. FreshexactC27bootstrap16526regular+2typingdeps/source2063, readonlydeps/noinstall/Git/index. OnlyCASBcalibratedexistingrecord+newdedicatedtest→16527regular+2deps=16529. Allother16525regular+2deps exact, kernel32155/2238e03d andindependent59009/3bb91a63 inheritedbyteexact.",
+        "Componentscurrentallnaturalterminal/frozen/Aaccepted beforebootstrap. Wholeall16529finalcontext equalsqualifiedBexactsource+2tests withnewpath, no adaptation/formatting. Preserveallpredecessorfailedstrict/profile/functionalseals.",
+        "Fresh55ACTUALtyping/excludes[]/all2063src/allresolvedcompilerfiles+allactualhelper/support/dependencies/harnessbeforeafter; normal12/static, officialfulltree+kernel709→773/record406→new/newtestclassifiers/no regrown/newGiants/grants. No nestedGit0changedownedcredit; styleactualall3endpoints.",
+        "Freshactual10rootLIST andallselectedruntime/unfiltered/noUHE/default35000/defaultRPC/Node25.9/8192/onefork/noCPU. Preserveactualold456structuredperfileidentities/order andappendactualnewdedicatedN; no guessN orsum-as-one-runcredit. No redundantseparateC99componentrun; actualfresh10covers79focused+20calibratedrecord+newN. Actualconfig/base/runner/setup/provenanceworker+everyactualcompiler/helper/supportinput pinnedbeforeafter.",
+        "Onlyafteractualall10/type55/static/source/oracleparentacceptance quietoriginalWASIprepare+live exactcallback6431/a6a276e11/exactoldyield153/b769ca98/default35/defaultRPC/noCPU/25.9/8192/fork1. Actual<=35000/natural0/noUHE mandatory; onlythenunchanged52live+codec. Naturalfailurespreserved, no cancel/retry/waiver/timeoutchanges/fallback.",
+        "ROOT2061unadopted untilactual52pass; future20CAS13source+6tests+independent2policyrows artifact, full56ACTUALtype/static/style68actualmembership/freshfocusedrelatedN/newroot/vector/constructor. All27mastercriteriaunproven. No publicsourcepush/comments/HOLD/queuechanges."
+      ]
+    }
+  ],
+  "predecessors": [
+    "3522-b-native-class-semantic-producer-20261014.json",
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}
