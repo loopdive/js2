@@ -1,0 +1,247 @@
+{
+  "id": "6920",
+  "slice": "class-kernel-record-successor-20261015",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+  "claimed_at": "2026-10-15T03:04:36.616483+00:00",
+  "updated_at": "2026-10-15T03:04:36.616483+00:00",
+  "write_id": "b-class-kernel-record-18ee2f38-0ac9-45a3-9524-ccca8e191464",
+  "handoff_scope": [
+    {
+      "kind": "class-kernel-record",
+      "at": "2026-10-15T03:04:36.616483+00:00",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+      "manifest": {
+        "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+        "componentPreimages": [
+          {
+            "path": "src/shared/contracts/prepared-ir-data.ts",
+            "bytes": 13494,
+            "sha256": "ddef9e60ee6d36d05d76e4dc117415d4c33958a663ff0667029e0567b292cb89",
+            "scope": "Add only createPreparedIrDataObject/copyPreparedIrDataObject and separate captured-intrinsics constant according to audited contract; every historical function/constant and received null factory remain exact."
+          },
+          {
+            "path": "src/ir/analysis/allocation-evidence/js-class-value-domains/independent-kernel.ts",
+            "bytes": 51567,
+            "sha256": "5593c6b97b119f141d893506cfc972d6d41dd22e9365a51b5eae3d71f3515e3a",
+            "scope": "One canonical import; exactly eight recorded literal allocation spans with checked original contextual types preserved; no comparator/algorithm/fixpoint/Map/Set/effect changes."
+          }
+        ],
+        "canonicalNewPaths": [
+          "tests/issue-6920-prepared-data-object-allocation.test.ts",
+          "tests/issue-6920-native-class-independent-record-allocation.test.ts"
+        ],
+        "productionOwner": "C private constructor workspace only; parent ROOT composition separate",
+        "dependencies": [
+          "C fresh-record predecessor6b3c827d6f1ecbea6af44b32f0d122ce6dc9e391, component3403/d507f666; not yet ROOT-adopted",
+          "Frozen constructor six remains unchanged; separate private B planner/consumer receiver does not write these two paths"
+        ],
+        "reviewedAPI": {
+          "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/prepared-data-object-api-audit/copy-allocator-addendum.json",
+          "bytes": 9545,
+          "sha256": "3f7835f88d221332cf49cd8259cb35d2e0c5ad61b8c89005c4b5317e0db6450d",
+          "contract": [
+            "Capture actual Object.prototype, Reflect.getPrototypeOf/ownKeys/getOwnPropertyDescriptor/defineProperty and Object.hasOwn at module initialization in a separate private constant; historical nativeCollectionBrand body and every validator remain exact. Later live global mutations must not affect those operations. Existing cache apply/set remain captured.",
+            "Require actual object/non-null input and captured ordinary prototype identity. This is a narrow same-realm ordinary-record construction precondition, not proof that initializer has no native slots or valid DATA. Foreign realm/prototype, arrays and primitives are not silently normalized.",
+            "Allocate the result itself with an actual fresh {} literal; never use caller allocator, Object.assign, live Object.create or supplied target. Do not expose a partially populated result.",
+            "Capture ownKeys once, iterate the returned genuine dense array by integer index, not a live Symbol.iterator. Use captured own descriptor operation for each key. Fail on a disappeared key; skip nonenumerable keys by declared contract. Reject enumerable accessor descriptors without invoking the getter.",
+            "Use captured Object.hasOwn(descriptor,\"value\"), never \"value\" in descriptor: inherited Object.prototype.value can otherwise spoof DATA and execute a getter. Native returned descriptor own attribute fields are read only after this guard.",
+            "Define each selected own key via captured defineProperty and a freshly built null-prototype descriptor object. Preserve value identity, writable/enumerable/configurable flags and native own-key order. A separate local descriptor variable avoids excess-property typing of __proto__ without unsafe any casts. Check definition success.",
+            "Seed false ONLY for the actually allocated result through existing captured apply(set,cache,[result,false]) after copying. Never seed or register initializer, its prototype, values or child records. No input/report/prototype/result semantic cache, registration function or callback argument.",
+            "Return the fresh result; do not recursively bless, freeze, inspect or coerce field values. Functions/native collections nested as values remain references and are rejected by unchanged current DATA validation as applicable."
+          ],
+          "limits": {
+            "initializerUnbranded": "A caller Map/Set/WeakMap/WeakSet masked with ordinary prototype may have enumerable own DATA copied into a valid new ordinary result. That never makes the original valid DATA: later native-slot probes must still reject original. It receives no false cache seed. Nested original native values likewise remain rejected.",
+            "prototypeAndDescriptors": "Result uses actual intrinsic Object.prototype, matching the admitted same-realm original literal sites. No null-prototype substitution, no schema fields, no on-object hidden brand; negative brand is weak-keyed internal-slot fact only.",
+            "getters": "For genuine ordinary initializer objects, own enumerable getters are inspected only as descriptors and refused with execution counter0. Inherited setters are bypassed by own definition; safe null-prototype descriptor objects avoid inherited get/set traps.",
+            "proxy": "Reflect.getPrototypeOf/ownKeys/getOwnPropertyDescriptor on an arbitrary Proxy can execute its traps. No pure JS reflective copy API can promise Proxy-trap0 or authenticate absence of Proxy without another authority. Do not advertise that guarantee. The seven actual fresh literal arguments are not Proxies; the API still never brands/caches a caller object or supplies semantic permission. If unconditional zero caller-code execution is required for every possible initializer, reject copy API and choose fixed positional-field literal constructors instead.",
+            "sameModuleCaptureAssumption": "As with the existing received factory, intrinsic custody assumes actual intrinsics at module initialization; after-import patches are covered. No new before-import intrinsic authenticity claim.",
+            "identityAndTyping": "C must prove temporary initializer identity is not exposed or depended upon (including home-object/super or self-escape); values/aliases are retained unchanged. Preserve old contextual literal checks using exact existing context or satisfies/typed initializer; no broad cast that hides missing fields, no arbitrary generic T claim.",
+            "spread": "The original literal/spread remains unchanged inside call, so its getters/evaluation/overwrites execute exactly once before copy. Copy observes final own DATA descriptors without a second property Get. Methods/accessors/prototype-setting literals are not silently treated as supported fixed DATA sites."
+          },
+          "controls": {
+            "oldReadonly": {
+              "nullFactory": 16,
+              "nativeCollectionBrand": 25,
+              "bodiesIdentitiesUntouched": true,
+              "notRerunInAudit": true
+            },
+            "additiveRequirements": [
+              "Every old factory control still passes with no identity/body change. Ordinary fresh outputs are distinct, mutable, ordinary prototype, no extra own keys; zero API ignores receiver/extra arguments.",
+              "Differential against original literal: exact own key order, flags, undefined presence, NaN/-0 and shared value identity; preserve existing freeze point.",
+              "Masked Map/Set/WeakMap/WeakSet initializers before and after copy: fresh ordinary copy of own n:7 may be valid, original always rejects; no false seed even if original previously unobserved.",
+              "Enumerable getter initializer refuses with getter0; inherited Object.prototype.value/get/set poison cannot fool DATA guard or safe descriptor conversion; no mutation of original.",
+              "Patch each newly captured reflective intrinsic and old create/assign/apply/set after import, restore before assertions; fake caller-return counters0 and original erased collection still rejects.",
+              "Live mutation/getters/exotic prototype/functions/symbol/cycle of the fresh result after a healthy check remain rejected by unchanged walks. Nested original native values remain rejected.",
+              "Explicit nonenumerable omission and primitive/exotic/array refusal contract, preserving narrow consumer preconditions; no T type/semantic readiness from accepted construction.",
+              "Document Proxy-trap behavior explicitly; no zero-trap proof or original-validation credit. Source-site genuine literals and no initializer identity escape must be independently demonstrated by C."
+            ],
+            "actualListGoverns": true
+          }
+        },
+        "reviewedKernel": {
+          "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-construction-prototype/workspace/.tmp/construction/profile-arguments/kernel-allocation-receiving-proposal.json",
+          "bytes": 8690,
+          "sha256": "66d5245ba24731511ec3cb0ecad7a27c68cadf54b9132c7678c8f9fd72bfdb2d",
+          "sites": [
+            {
+              "owner": "known",
+              "start": 11505,
+              "end": 11589,
+              "line": 276,
+              "text": "{ kind: \"known\", families: [...new Set(families)].sort(), roots: roots(candidates) }",
+              "sha256": "dfa0f5bbcb3add9f97f97ec77d0483c0dd6120147ac15d5423dde1cd1b38247f",
+              "prototype": "Object.prototype",
+              "descriptors": "ordinary object literal own writable/enumerable/configurable data properties; spread uses CopyDataProperties",
+              "priority": "nested records retained in compared worlds/domains"
+            },
+            {
+              "owner": "mergeCell",
+              "start": 35510,
+              "end": 35748,
+              "line": 853,
+              "text": "{\n    ...after,\n    presence: before.presence === after.presence ? after.presence : \"maybe\",\n    valueDomain: join(before.valueDomain, after.valueDomain),\n    prototypeRoots: roots([...before.prototypeRoots, ...after.prototypeRoots]),\n  }",
+              "sha256": "0998e84991ef9532c19824143ba2f0294d08f5234850a8d260147fac6300fa12",
+              "prototype": "Object.prototype",
+              "descriptors": "ordinary object literal own writable/enumerable/configurable data properties; spread uses CopyDataProperties",
+              "priority": "nested records retained in compared worlds/domains"
+            },
+            {
+              "owner": "storeCell",
+              "start": 35983,
+              "end": 36055,
+              "line": 869,
+              "text": "{ root, key, presence, valueDomain: domain, prototypeRoots: prototypes }",
+              "sha256": "0d76e4982bfe345f6a95fa6b8767f50e05f14ca67dda6d9ffe619e05fed76b4d",
+              "prototype": "Object.prototype",
+              "descriptors": "ordinary object literal own writable/enumerable/configurable data properties; spread uses CopyDataProperties",
+              "priority": "nested records retained in compared worlds/domains"
+            },
+            {
+              "owner": "mergeGlobal",
+              "start": 36250,
+              "end": 36435,
+              "line": 874,
+              "text": "{\n    bindingId: after.bindingId,\n    initialization: before.initialization === after.initialization ? after.initialization : \"maybe\",\n    domain: join(before.domain, after.domain),\n  }",
+              "sha256": "9b3254812db27f786ea29ca1c7d33464e1d92ea41f5e29ba8b46ebed54a5243d",
+              "prototype": "Object.prototype",
+              "descriptors": "ordinary object literal own writable/enumerable/configurable data properties; spread uses CopyDataProperties",
+              "priority": "nested records retained in compared worlds/domains"
+            },
+            {
+              "owner": "absentCell",
+              "start": 36801,
+              "end": 36853,
+              "line": 887,
+              "text": "{ ...cell, presence: \"absent\", valueDomain: BOTTOM }",
+              "sha256": "cef3e975c994931facaea24e186dce13f150ecbd274e0eaa41b04859f973b105",
+              "prototype": "Object.prototype",
+              "descriptors": "ordinary object literal own writable/enumerable/configurable data properties; spread uses CopyDataProperties",
+              "priority": "nested records retained in compared worlds/domains"
+            },
+            {
+              "owner": "worldData",
+              "start": 37677,
+              "end": 37856,
+              "line": 904,
+              "text": "{\n    globals: [...world.globals].sort(([a], [b]) => a.localeCompare(b)),\n    heap: [...world.heap].sort(([a], [b]) => a.localeCompare(b)),\n    roots: [...world.roots].sort(),\n  }",
+              "sha256": "a3fb62e904ef458686ec832fa675b6f4bdbfec9b17ee1470d3cdbfd0e3f9fe2f",
+              "prototype": "Object.prototype",
+              "descriptors": "ordinary object literal own writable/enumerable/configurable data properties; spread uses CopyDataProperties",
+              "priority": "direct comparison wrapper/canonical copy"
+            },
+            {
+              "owner": "flowData",
+              "start": 38333,
+              "end": 38499,
+              "line": 920,
+              "text": "{\n    alive: flow.alive,\n    values: [...flow.values].sort(([a], [b]) => a - b),\n    slots: [...flow.slots].sort(([a], [b]) => a - b),\n    world: worldData(flow),\n  }",
+              "sha256": "a2ca4e0e598172aa703dd756fa839d01aec8f71881e639350b79f7402516592f",
+              "prototype": "Object.prototype",
+              "descriptors": "ordinary object literal own writable/enumerable/configurable data properties; spread uses CopyDataProperties",
+              "priority": "direct comparison wrapper/canonical copy"
+            },
+            {
+              "owner": "equationData",
+              "start": 50564,
+              "end": 50566,
+              "line": 1186,
+              "text": "{}",
+              "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "prototype": "Object.prototype",
+              "descriptors": "ordinary object literal own writable/enumerable/configurable data properties; spread uses CopyDataProperties",
+              "priority": "direct comparison wrapper/canonical copy"
+            }
+          ],
+          "prospective": {
+            "status": "Read-only prospective form only; factory API not received. No source edit, typing or semantic equivalence credit.",
+            "form": "Seven ORIGINAL literal expressions wrapped unchanged in conditional fixed fresh ordinary own-descriptor copy allocator; empty equationData replaced by zero-arg fresh ordinary allocator. Parent/A must settle API before receive.",
+            "before": {
+              "bytes": 51567,
+              "sha256": "5593c6b97b119f141d893506cfc972d6d41dd22e9365a51b5eae3d71f3515e3a",
+              "lines": 1212,
+              "maxFunction": 204
+            },
+            "prospective": {
+              "bytes": 51899,
+              "sha256": "c7a0ec4eb87ab53c3ca286d07c139e66cc91a2b42b06b00323761c3684869668",
+              "lines": 1217,
+              "maxFunction": 204
+            },
+            "officialClassifier": {
+              "regrown": [],
+              "newGiants": [],
+              "granted": [],
+              "shrunk": []
+            },
+            "siteCount": 8,
+            "changedFunctions": [
+              {
+                "name": "src/ir/analysis/allocation-evidence/js-class-value-domains/independent-kernel.ts::known",
+                "prior": 4,
+                "size": 8
+              }
+            ],
+            "constraint": "No semantic change accepted until A allocator descriptor/evaluation/ordinary-prototype contract and hostile tests are independently closed.",
+            "wholeExactInverseUsingRecordedOriginalLiteralSpans": true
+          }
+        },
+        "qualificationPlan": [
+          "New API controls plus unchanged old25/native-null16 controls, genuine kernel source/replay comparison floors, all prior failures preserved. No fake records or direct-only test credit.",
+          "Full source+owned test typing excludes[], normal architecture/style/budget checks, old complete function/constant/body inverses and exact eight-span reconstruction. No broad generic type assertions hiding missing initializer fields.",
+          "Same actual argument four-phase cohort, standard35s/defaultRPC/actualNode25/8192; record actual final counts and errors. Preserve all failed default/profile epochs and no profiling-only success claims.",
+          "Optional profiler only for remaining unresolved performance attribution; actual worker identity/source-map matching required. No per-allocation frequency inferred from CPU ancestry."
+        ],
+        "constraints": [
+          "Human all Session B/shared-seam takeover; PRIVATE two production/two new test paths only, no ROOT/source/main/PR/HOLD/queue push.",
+          "Fresh ordinary object allocated only by actual {} literal. Seed only its permanent negative collection-slot brand; never initializer/prototype/children/caller. No caller registration, allocator callback or semantic validation cache.",
+          "Capture ownKeys/getPrototypeOf/getOwnPropertyDescriptor/defineProperty/hasOwn separately; index loop and safe null-prototype descriptors. Preserve literal evaluation once, same Object.prototype, exact own descriptor flags/order/aliases. Refuse enumerable accessor initializers with getter0; avoid inherited setter/get/set/value traps.",
+          "Initializer precondition is narrow construction only, not DATA/native-slot proof. Original masked native collections remain rejected after copy. Proxy reflection traps are not promised zero; genuine literal call sites must be shown, without initializer identity/home-object/self escape.",
+          "No comparison, independent fixedpoint, world/effect/namespace/currentness, validation, prototype or Map/Set algorithm changes. Existing six constructor files and previous null factory remain byte-exact.",
+          "No giant regrowth, new grant, minification, timeout/RPC/heap-policy change or test cancellation. ROOT controller may adopt qualified components separately only after independent review."
+        ]
+      },
+      "manifestSha256": "f73f31e8518c5917e64e76e8973e801f82a5d0c63478ad83a91d60ac207ab48f",
+      "constraints": [
+        "Human all Session B/shared-seam takeover; PRIVATE two production/two new test paths only, no ROOT/source/main/PR/HOLD/queue push.",
+        "Fresh ordinary object allocated only by actual {} literal. Seed only its permanent negative collection-slot brand; never initializer/prototype/children/caller. No caller registration, allocator callback or semantic validation cache.",
+        "Capture ownKeys/getPrototypeOf/getOwnPropertyDescriptor/defineProperty/hasOwn separately; index loop and safe null-prototype descriptors. Preserve literal evaluation once, same Object.prototype, exact own descriptor flags/order/aliases. Refuse enumerable accessor initializers with getter0; avoid inherited setter/get/set/value traps.",
+        "Initializer precondition is narrow construction only, not DATA/native-slot proof. Original masked native collections remain rejected after copy. Proxy reflection traps are not promised zero; genuine literal call sites must be shown, without initializer identity/home-object/self escape.",
+        "No comparison, independent fixedpoint, world/effect/namespace/currentness, validation, prototype or Map/Set algorithm changes. Existing six constructor files and previous null factory remain byte-exact.",
+        "No giant regrowth, new grant, minification, timeout/RPC/heap-policy change or test cancellation. ROOT controller may adopt qualified components separately only after independent review."
+      ]
+    }
+  ],
+  "predecessors": [
+    "3522-b-native-class-semantic-producer-20261014.json",
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}

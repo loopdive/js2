@@ -1,0 +1,172 @@
+{
+  "id": "6920",
+  "slice": "ordinary-numeric-transport-successor-20261015",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-class-value-replay-successor-20261014-01a12827",
+  "claimed_at": "2026-10-15T03:04:36.616483+00:00",
+  "updated_at": "2026-10-15T03:04:36.616483+00:00",
+  "write_id": "b-ordinary-numeric-transport-78397c41-2d74-46e1-acfd-d2ec0aee3522",
+  "handoff_scope": [
+    {
+      "kind": "ordinary-numeric-transport",
+      "at": "2026-10-15T03:04:36.616483+00:00",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-class-value-replay-successor-20261014-01a12827",
+      "manifest": {
+        "receivingBranch": "codex/6920-b-class-value-replay-successor-20261014-01a12827",
+        "componentPreimages": [
+          {
+            "path": "src/ir/program-physical-plan.ts",
+            "bytes": 67926,
+            "sha256": "3f5f3d3daa4838646b97731200135083c85e23ef2d40413fcbd29cf37e19e642",
+            "source": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-construction-prototype/workspace/src/ir/program-physical-plan.ts"
+          },
+          {
+            "path": "src/ir/program-body-resources.ts",
+            "bytes": 19982,
+            "sha256": "5b78d48f35d54a443aebe85d83cd21ad9d96fd7b0ccb1b4c736415a90846b814",
+            "source": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-value-replay-successor-20261014-01a12827/.tmp/ordinary-numeric-core-implementation/workspace/src/ir/program-body-resources.ts"
+          },
+          {
+            "path": "src/ir/program-consumer.ts",
+            "bytes": 76324,
+            "sha256": "2b594dabd3a657c289ecaec962b31bd6e5e331e0fd43b288c1e92cb5f29a1534",
+            "source": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-construction-prototype/workspace/src/ir/program-consumer.ts"
+          },
+          {
+            "path": "src/backend/wasmgc/resources/native-number-undefined.ts",
+            "bytes": 5852,
+            "sha256": "5636a9844eddd1f5e9645bc405f733936a1698c52a24d2ca4da2ac610774a2f6",
+            "source": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-value-replay-successor-20261014-01a12827/.tmp/ordinary-numeric-core-implementation/workspace/src/backend/wasmgc/resources/native-number-undefined.ts"
+          },
+          {
+            "path": "src/backend/linear/program/memory.ts",
+            "bytes": 27755,
+            "sha256": "7f6aea9c939ab75cef464c5501486c1ed6fa131095b14c2d83bba3342c2ada07",
+            "source": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-value-replay-successor-20261014-01a12827/.tmp/ordinary-numeric-core-implementation/workspace/src/backend/linear/program/memory.ts"
+          },
+          {
+            "path": "src/ir/program-number-undefined-resources.ts",
+            "bytes": 12490,
+            "sha256": "1244867e690e45e8c805e8b6c89e60d34799c2beeb40f1ce8c9ace1266d81fc8",
+            "source": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-value-replay-successor-20261014-01a12827/.tmp/ordinary-numeric-core-implementation/workspace/src/ir/program-number-undefined-resources.ts"
+          },
+          {
+            "path": "tests/issue-6920-native-ordinary-number-undefined.test.ts",
+            "bytes": 14447,
+            "sha256": "38ba6159d133342b520f51372a4fd2e47c1fcc7e917a6b17038ffe8f50e625d6",
+            "source": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-value-replay-successor-20261014-01a12827/.tmp/ordinary-numeric-core-implementation/workspace/tests/issue-6920-native-ordinary-number-undefined.test.ts"
+          },
+          {
+            "path": "tests/issue-6920-native-ordinary-number-undefined-execution.test.ts",
+            "bytes": 5452,
+            "sha256": "9d77777ac31f83f832047e200d5098d16d4e5f61ade1c3c7d2b7dfadd60fc6ed",
+            "source": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-value-replay-successor-20261014-01a12827/.tmp/ordinary-numeric-core-implementation/workspace/tests/issue-6920-native-ordinary-number-undefined-execution.test.ts"
+          }
+        ],
+        "canonicalNewPaths": [],
+        "productionOwner": "B fresh isolated private physical-transport successor only; final semantic donor and ROOT remain immutable",
+        "dependencies": [
+          {
+            "path": "src/backend/wasmgc/program/native-realm.ts",
+            "bytes": 20243,
+            "sha256": "88dc7929f1a1a80fed769cbb9fbcfe570ad7a19f192925cfe792da88570ae60c",
+            "source": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-construction-prototype/workspace/src/backend/wasmgc/program/native-realm.ts",
+            "readOnly": true
+          },
+          {
+            "path": "src/backend/wasmgc/resources/native-js-class.ts",
+            "bytes": 34234,
+            "sha256": "fd8558ddf60e856af77ba57b6256e9c760076dc1011774f785afb01601d988cd",
+            "source": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-construction-prototype/workspace/src/backend/wasmgc/resources/native-js-class.ts",
+            "readOnly": true
+          },
+          {
+            "path": "src/ir/program-physical-plan.ts",
+            "bytes": 67926,
+            "sha256": "3f5f3d3daa4838646b97731200135083c85e23ef2d40413fcbd29cf37e19e642",
+            "source": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-construction-prototype/workspace/src/ir/program-physical-plan.ts",
+            "readOnly": false
+          },
+          {
+            "path": "src/ir/program-consumer.ts",
+            "bytes": 76324,
+            "sha256": "2b594dabd3a657c289ecaec962b31bd6e5e331e0fd43b288c1e92cb5f29a1534",
+            "source": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-construction-prototype/workspace/src/ir/program-consumer.ts",
+            "readOnly": false
+          },
+          {
+            "path": "src/ir/program/native-program-resource-requirements.ts",
+            "bytes": 28945,
+            "sha256": "200c7154e7d78e72c0d2086c104ad6b38c30dc1139ce9994f76839cb716ee773",
+            "source": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-construction-prototype/workspace/src/ir/program/native-program-resource-requirements.ts",
+            "readOnly": true
+          },
+          {
+            "path": "src/backend/wasmgc/program/native-js-class-session.ts",
+            "bytes": 55326,
+            "sha256": "d65f41d6a58368a4c73053eb136a1773f7d68d1076f5d06647aab7b05e787a84",
+            "source": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-construction-prototype/workspace/src/backend/wasmgc/program/native-js-class-session.ts",
+            "readOnly": true
+          }
+        ],
+        "qualifiedSemanticSeal": {
+          "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-value-replay-successor-20261014-01a12827/.tmp/ordinary-numeric-core-implementation/workspace/.tmp/ordinary-semantic-final12/handoff/sealed.json",
+          "bytes": 25495,
+          "sha256": "80703b1bf09a781a01bb22c39a44eedbc036f3895d5e664b867f9223cb232547"
+        },
+        "frozenExperimentalConstructorSeal": {
+          "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-construction-prototype/workspace/.tmp/construction/six-production-candidate/sealed.json",
+          "bytes": 2289,
+          "sha256": "73048224df694e7fba0324d56a339b04a1fb50d0da1c68e7b0b40e7579358235"
+        },
+        "reviewedProposal": {
+          "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-value-replay-successor-20261014-01a12827/.tmp/ordinary-numeric-transport-proposal/phase2/spec.md",
+          "bytes": 14589,
+          "sha256": "043d804cd70ddc1b13c982421e3a00a32a5c561d8b5939a0f727c37b0efb8027"
+        },
+        "proposalAdjustment": "Earlier seal/adopt prerequisite replaced by explicitly isolated experimental frozen six-file composition, released by C. Known argument failures remain failures; no ROOT adoption or readiness implied.",
+        "qualificationPlan": [
+          "Controls must include genuine live and decoded source execution in all four profiles, and forged/copied/stale/missing/wrong-slot/dynamic-param/public-dynamic/overridden-method/getter-zero/fake-no-op-transaction/nonempty-initializer negatives. No direct-only success or preparation credit substitutes for actual engine outcomes.",
+          "Normal Node25.9/8192 worker, standard35s/default RPC. Preserve all failing epochs; never cancel tests. Full source plus owned test typing excludes[], official architecture/inventory/style/budgets. No new/regrown giant or grants; coherent helpers preferably below100 lines, official250 threshold governs. No generic core allocator, opcode recipe, proof algorithm, comparison/fixpoint, memory geometry or timeout policy change."
+        ],
+        "constraints": [
+          "Human all Session B and blocking shared seams takeover. Implement only eight listed paths in a FRESH isolated private successor; preserve final qualified semantic workspace, ROOT, C donor and every unrelated edit. No public source/main/PR/HOLD/queue changes.",
+          "Experimental composition: copy all final qualified B semantic source/test inputs and final read-only A3, then frozen C six production candidate. C planner/consumer are released to this successor only. Current C candidate has known two argument engine timeouts and RPC error; no ROOT/public readiness or passing argument claim transfers.",
+          "Actual source census expected 2060 (2059 final B plus one C session); measure actual files. Add exactly one truthful clean/backend-wasmgc session inventory row, preserving all existing rows/rules. Reuse dependencies; no installation. Freeze full inputs during actual qualifiers.",
+          "Planner may retain logical dynamic only for exact independently proved ordinary NumberF64/Undefined function RESULT, with full original/all selected/support/inventory/startup/private restrictions. No dynamic parameters/imports/globals/public values, presence flag, type pointer equality across deep copy, caller permission callback or fallback.",
+          "Fixed private signature-use token binds full ABI/body/result proof and exact accepted slot. Body resource converter consumes fixed owner API/token. Existing vector/class/nonordinary paths and complete validators stay strict.",
+          "GC reservation issuer uses captured canonical PhysicalModuleReservations prototype operations and private WeakMap pack binding actual transaction/tokens/type indices/original empty initializer. Canonical assertReservationKeysAvailable.call(transaction,[]) audits real reserving phase/layout without allocation or index reads. During filling use unchanged strict completed checker and exact canonical Undefined initializer; never fake completion in reserving or weaken completed contract.",
+          "For genuine ordinary result only, reserve SAME real Linear memory pack once after imports before primary slots; reuse at old late point. Authenticate private issuer, arena/alignment/nonoverlap/layout/full original request. No synthetic/default i32, fake bindings, changed geometry, double consumption, changed vector/class/nonordinary order or index before freeze.",
+          "Calls/early returns continue generic emission and actual callee reserved slot. Caller SSA/local/block/early/final result scratch all use same authenticated carrier. Existing five native emitter operations unchanged.",
+          "Controls must include genuine live and decoded source execution in all four profiles, and forged/copied/stale/missing/wrong-slot/dynamic-param/public-dynamic/overridden-method/getter-zero/fake-no-op-transaction/nonempty-initializer negatives. No direct-only success or preparation credit substitutes for actual engine outcomes.",
+          "Normal Node25.9/8192 worker, standard35s/default RPC. Preserve all failing epochs; never cancel tests. Full source plus owned test typing excludes[], official architecture/inventory/style/budgets. No new/regrown giant or grants; coherent helpers preferably below100 lines, official250 threshold governs. No generic core allocator, opcode recipe, proof algorithm, comparison/fixpoint, memory geometry or timeout policy change."
+        ]
+      },
+      "manifestSha256": "23e008310a265d51aed0d23de93a45000a173577010a1003ee8ec16efe09c380",
+      "constraints": [
+        "Human all Session B and blocking shared seams takeover. Implement only eight listed paths in a FRESH isolated private successor; preserve final qualified semantic workspace, ROOT, C donor and every unrelated edit. No public source/main/PR/HOLD/queue changes.",
+        "Experimental composition: copy all final qualified B semantic source/test inputs and final read-only A3, then frozen C six production candidate. C planner/consumer are released to this successor only. Current C candidate has known two argument engine timeouts and RPC error; no ROOT/public readiness or passing argument claim transfers.",
+        "Actual source census expected 2060 (2059 final B plus one C session); measure actual files. Add exactly one truthful clean/backend-wasmgc session inventory row, preserving all existing rows/rules. Reuse dependencies; no installation. Freeze full inputs during actual qualifiers.",
+        "Planner may retain logical dynamic only for exact independently proved ordinary NumberF64/Undefined function RESULT, with full original/all selected/support/inventory/startup/private restrictions. No dynamic parameters/imports/globals/public values, presence flag, type pointer equality across deep copy, caller permission callback or fallback.",
+        "Fixed private signature-use token binds full ABI/body/result proof and exact accepted slot. Body resource converter consumes fixed owner API/token. Existing vector/class/nonordinary paths and complete validators stay strict.",
+        "GC reservation issuer uses captured canonical PhysicalModuleReservations prototype operations and private WeakMap pack binding actual transaction/tokens/type indices/original empty initializer. Canonical assertReservationKeysAvailable.call(transaction,[]) audits real reserving phase/layout without allocation or index reads. During filling use unchanged strict completed checker and exact canonical Undefined initializer; never fake completion in reserving or weaken completed contract.",
+        "For genuine ordinary result only, reserve SAME real Linear memory pack once after imports before primary slots; reuse at old late point. Authenticate private issuer, arena/alignment/nonoverlap/layout/full original request. No synthetic/default i32, fake bindings, changed geometry, double consumption, changed vector/class/nonordinary order or index before freeze.",
+        "Calls/early returns continue generic emission and actual callee reserved slot. Caller SSA/local/block/early/final result scratch all use same authenticated carrier. Existing five native emitter operations unchanged.",
+        "Controls must include genuine live and decoded source execution in all four profiles, and forged/copied/stale/missing/wrong-slot/dynamic-param/public-dynamic/overridden-method/getter-zero/fake-no-op-transaction/nonempty-initializer negatives. No direct-only success or preparation credit substitutes for actual engine outcomes.",
+        "Normal Node25.9/8192 worker, standard35s/default RPC. Preserve all failing epochs; never cancel tests. Full source plus owned test typing excludes[], official architecture/inventory/style/budgets. No new/regrown giant or grants; coherent helpers preferably below100 lines, official250 threshold governs. No generic core allocator, opcode recipe, proof algorithm, comparison/fixpoint, memory geometry or timeout policy change."
+      ]
+    }
+  ],
+  "predecessors": [
+    "3522-b-native-class-semantic-producer-20261014.json",
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}
