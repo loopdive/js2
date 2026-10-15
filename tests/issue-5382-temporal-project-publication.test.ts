@@ -13,8 +13,8 @@ const source = "export const Temporal = { marker: 'π' };\n";
 const entry = "__js2wasm_temporal_entry.js";
 const pkg = "node_modules/@js-temporal/polyfill";
 // (#6748/#6708) A provider compiled under the native regime — the default
-// policy since S6, and standalone/WASI — gets the module-scoped Intl shim
-// prepended; only the explicit host-assisted profile publishes the bare source.
+// policy since S6 and the only one since #6979, and standalone/WASI — gets the
+// module-scoped Intl shim prepended; only a linear build publishes the bare source.
 const expectedFiles = (shimmed: boolean) => ({
   [`${pkg}/package.json`]: Buffer.from(
     JSON.stringify({ name: "@js-temporal/polyfill", version: "0.0.0-linked", main: "index.js" }),
@@ -479,23 +479,20 @@ describe("#5382 complete immutable source publication (stubbed compiler, real fi
       { fast: true },
       { nativeStrings: true },
       { utf8Storage: true },
-      { semanticProviders: "host-assisted" },
       { hostBridge: "off" },
       { platform: "node" },
     ];
     const roots = new Set<string>();
     for (const compileOptions of cases) {
       const result = await child(dir, { compileOptions }).done;
-      const hostAssisted = (compileOptions as { semanticProviders?: string }).semanticProviders === "host-assisted";
-      const shimmed = !hostAssisted || "target" in compileOptions;
+      // (#6979) Every WasmGC provider is a regime build and carries the shim.
+      const shimmed = true;
       complete(result, expectedFiles(shimmed));
       const options = {
         target: "gc",
         fast: false,
         nativeStrings: false,
         utf8Storage: false,
-        // (#6708) the cache key spells the normalized policy.
-        semanticProviders: hostAssisted ? "host-assisted" : "native-first",
         hostBridge: "auto",
         platform: "web",
         ...compileOptions,

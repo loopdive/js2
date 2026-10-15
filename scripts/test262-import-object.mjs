@@ -221,7 +221,7 @@ let inProcessLinkedRuntime;
  *
  * @param {BufferSource} binary
  * @param {Record<string, unknown>} importObj
- * @param {{ target?: string, semanticProviders?: string, providerLabel?: string, linkedModules?: readonly unknown[],
+ * @param {{ target?: string, providerLabel?: string, linkedModules?: readonly unknown[],
  *          linkedRuntime?: { instantiateLinkedProviders: Function, wireCompiledInstance: Function },
  *          linkedHost?: { deps?: Record<string, unknown>, options?: Record<string, unknown> },
  *          runDeferredInit?: boolean }} [options]
@@ -329,11 +329,9 @@ export async function instantiateTest262Module(binary, importObj, options = {}) 
   // (#5385) native-first in the JS environment compiles with the same native
   // semantic regime as standalone, so it carries the same conditional
   // `js2wasm:runtime-eval` namespace — inspect the import list for it too.
-  // (#6708) native-first is the default policy since S6; only the explicit
-  // `host-assisted` control lane (and non-JS, non-standalone targets) keep the
-  // binary-form instantiate.
-  const jsHostRegime =
-    (options.target === undefined || options.target === "gc") && options.semanticProviders !== "host-assisted";
+  // (#6708, #6979) That is the only policy; non-JS, non-standalone targets keep
+  // the binary-form instantiate.
+  const jsHostRegime = options.target === undefined || options.target === "gc";
   if (options.target !== "standalone" && !jsHostRegime) {
     const { instance } = await WebAssembly.instantiate(binary, importObj);
     return instance;
