@@ -1,0 +1,87 @@
+{
+  "id": "6920",
+  "slice": "physical-join-fixture-repair-successor-20261015",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+  "claimed_at": "2026-10-15T04:57:33.369374+00:00",
+  "updated_at": "2026-10-15T04:57:33.369374+00:00",
+  "write_id": "b-physical-join-fixture-repair-1170687d-7b21-44c4-a59f-944f9db2bd4c",
+  "handoff_scope": [
+    {
+      "kind": "physical-join-fixture-repair",
+      "at": "2026-10-15T04:57:33.369374+00:00",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+      "manifest": {
+        "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+        "receivingWorkspace": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827",
+        "componentPreimages": [
+          {
+            "path": "tests/issue-2856-inline-small-buffer-caller.test.ts",
+            "bytes": 3341,
+            "sha256": "17e1dbc9422ae10dd77005f7c87bad7c267559b205a66913effa3ba568d17996"
+          },
+          {
+            "path": "tests/issue-6920-native-js-class-construction.test.ts",
+            "bytes": 13268,
+            "sha256": "ccdf194af356ae76e0a444d0a6b22a897c95cc23d3acfa98b12ee5962d387d79"
+          }
+        ],
+        "canonicalNewPaths": [],
+        "candidates": [
+          {
+            "path": "tests/issue-2856-inline-small-buffer-caller.test.ts",
+            "snapshot": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/ordinary-class-physical-join-receive/fixture-repair-proposal/snapshot/tests/issue-2856-inline-small-buffer-caller.test.ts",
+            "bytes": 3527,
+            "sha256": "8fd4bfc50cc252559ce10276d04b2cc0924ccb6a443d1ecfc949af9afdb122a4"
+          },
+          {
+            "path": "tests/issue-6920-native-js-class-construction.test.ts",
+            "snapshot": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/ordinary-class-physical-join-receive/fixture-repair-proposal/snapshot/tests/issue-6920-native-js-class-construction.test.ts",
+            "bytes": 13266,
+            "sha256": "73fb23dbf82010b82d85692abdfae3d8eb405b4141f04d166a1c1579b72c8edb"
+          }
+        ],
+        "review": {
+          "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/ordinary-class-physical-join-receive/fixture-repair-proposal/review/review.json",
+          "bytes": 2834,
+          "sha256": "7b78adfb4dac700b9686ae050e44c21fb1661306c6f8199a9bbec92f86147410"
+        },
+        "constraints": [
+          "Only these two existing tests; no production/test-policy/issue/scripts/runtime-scaffold or assertions/oracles altered. Apply after all currently input-pinning runtime processes naturally terminate and parent confirms source freeze release.",
+          "Issue2856: remove exactly obsolete CompileOptions.trackFallbacks field; copy produced result.binary once through Uint8Array.from for actual owned ArrayBuffer carrier; use same owned bytes for validate/instantiate; forward exact four required buildImports namespace objects, not lifecycle methods. Preserve separate original setExports call, function casts and all original output/input assertions.",
+          "All eleven issue2856 expect expressions retained except validate argument now references identical copied bytes; exact bounded inverse reconstructs whole old file. Runtime expectation4*(n+1), input[0,2,5], original source text, pass spy/IR containment checks and test identity unchanged. Do not silently correct any resulting runtime failure.",
+          "Constructor test is one indentation correction only: full recursive TS syntax tree4173 nodes identical, including every literal/control/operator/statement token. No assertion or callback body semantics changed.",
+          "Patch files authenticated by exact difflib reconstruction from sealed preimages/candidates. Current ROOT preimages also match. No as any, ambient declaration, API cast weakening or runtime implementation change.",
+          "No engine or type-check execution done for proposal. Future actual normal type/style and relevant LIST/runtime qualification remains parent-owned; no inherited pre-existing failure removed or waived."
+        ],
+        "followupQualification": [
+          "Full actual ROOT explicit typing roots include both tests, no excludes or type suppression.",
+          "OwnedPrettier/Biome/whitespace and affected normal checks after adoption.",
+          "Existing issue2856 actual test and constructor actual registered set retain all old identities; count actual LIST/run, preserve failures and current35s/RPC settings."
+        ],
+        "proposalOnly": true
+      },
+      "manifestSha256": "90107204fa5314a74aefac95a83e7266d0ea03903b6966e33ff70cf6b0337144",
+      "constraints": [
+        "Only these two existing tests; no production/test-policy/issue/scripts/runtime-scaffold or assertions/oracles altered. Apply after all currently input-pinning runtime processes naturally terminate and parent confirms source freeze release.",
+        "Issue2856: remove exactly obsolete CompileOptions.trackFallbacks field; copy produced result.binary once through Uint8Array.from for actual owned ArrayBuffer carrier; use same owned bytes for validate/instantiate; forward exact four required buildImports namespace objects, not lifecycle methods. Preserve separate original setExports call, function casts and all original output/input assertions.",
+        "All eleven issue2856 expect expressions retained except validate argument now references identical copied bytes; exact bounded inverse reconstructs whole old file. Runtime expectation4*(n+1), input[0,2,5], original source text, pass spy/IR containment checks and test identity unchanged. Do not silently correct any resulting runtime failure.",
+        "Constructor test is one indentation correction only: full recursive TS syntax tree4173 nodes identical, including every literal/control/operator/statement token. No assertion or callback body semantics changed.",
+        "Patch files authenticated by exact difflib reconstruction from sealed preimages/candidates. Current ROOT preimages also match. No as any, ambient declaration, API cast weakening or runtime implementation change.",
+        "No engine or type-check execution done for proposal. Future actual normal type/style and relevant LIST/runtime qualification remains parent-owned; no inherited pre-existing failure removed or waived."
+      ]
+    }
+  ],
+  "predecessors": [
+    "3522-b-native-class-semantic-producer-20261014.json",
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}

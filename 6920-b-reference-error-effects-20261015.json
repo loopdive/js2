@@ -1,0 +1,207 @@
+{
+  "id": "6920",
+  "slice": "reference-error-effects-successor-20261015",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+  "claimed_at": "2026-10-15T04:57:33.369374+00:00",
+  "updated_at": "2026-10-15T04:57:33.369374+00:00",
+  "write_id": "b-reference-error-effects-abf5e8fb-5997-4e90-a15d-ebd489ac7177",
+  "handoff_scope": [
+    {
+      "kind": "reference-error-effects",
+      "at": "2026-10-15T04:57:33.369374+00:00",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+      "manifest": {
+        "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+        "receivingWorkspace": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-reference-error-effects-successor/workspace",
+        "bootstrapSourceWorkspace": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827",
+        "status": "RECEIVING_PREPARATION_ONLY_NO_CODE_GO_NO_SUCCESSOR_CREATED",
+        "componentPreimages": [
+          {
+            "path": "src/ir/program/native-js-class-values.ts",
+            "bytes": 17418,
+            "sha256": "7e5af45ca54de9844c84ff6d343b29b476669c2b47e3c3d0d77f7e03008f03e8",
+            "functions": [
+              "Context optional actual ir/runtime fields",
+              "normalizeNativeClassValues whole actual raw context capture",
+              "private DATA projection helper only if needed; no verdict/registration/cache"
+            ],
+            "scope": "Only the exact canonical ReferenceError DATA relocation, raw-fact input joins and fixed null-message native factory transfer below; preserve all unrelated algorithms."
+          },
+          {
+            "path": "src/ir/analysis/allocation-evidence/js-class-value-domains/contracts.ts",
+            "bytes": 7471,
+            "sha256": "3f8c20f8cc642ccc56bfada580f47c0ab9d86e59d1c1ba17faf566ef783ad646",
+            "functions": [
+              "new neutral NativeJsClassRuntimeContext/DATA record interfaces",
+              "NativeJsClassValueDomainInput optional runtimeContext field"
+            ],
+            "scope": "Only the exact canonical ReferenceError DATA relocation, raw-fact input joins and fixed null-message native factory transfer below; preserve all unrelated algorithms."
+          },
+          {
+            "path": "src/ir/analysis/allocation-evidence/js-class-value-domains/input.ts",
+            "bytes": 18345,
+            "sha256": "c0d5019daa426736d0e6c344867970acf94851360face4c7c18b6420e2c85196",
+            "functions": [
+              "indexNativeJsClassValueDomainInput independent raw-context validation and lexical actual occurrence derivation",
+              "new private own-DATA/closed native ReferenceError matcher helpers"
+            ],
+            "scope": "Only the exact canonical ReferenceError DATA relocation, raw-fact input joins and fixed null-message native factory transfer below; preserve all unrelated algorithms."
+          },
+          {
+            "path": "src/ir/analysis/allocation-evidence/js-class-value-domains/producer.ts",
+            "bytes": 60598,
+            "sha256": "86e91855cc05bf9a1194bca7281efcb2a6c63ec246b92bab062a63ee922e3f64",
+            "functions": [
+              "ValueDomainSolver.call fixed actual canonical null-message Error factory transfer only",
+              "constructor fresh input index acquisition if index carries private invocation-local occurrence DATA"
+            ],
+            "scope": "Only the exact canonical ReferenceError DATA relocation, raw-fact input joins and fixed null-message native factory transfer below; preserve all unrelated algorithms."
+          },
+          {
+            "path": "src/ir/analysis/allocation-evidence/js-class-value-domains/independent.ts",
+            "bytes": 59259,
+            "sha256": "bae42664e730b67ae2e9a336fa97fe4e2f89f2b1c2a13d62b35457d8bf75f1f2",
+            "functions": [
+              "call independently derived fixed actual factory transfer only",
+              "move whole existing constant() into current independent-kernel; import only"
+            ],
+            "scope": "Only the exact canonical ReferenceError DATA relocation, raw-fact input joins and fixed null-message native factory transfer below; preserve all unrelated algorithms."
+          },
+          {
+            "path": "src/ir/analysis/allocation-evidence/js-class-value-domains/independent-kernel.ts",
+            "bytes": 52127,
+            "sha256": "76a859805ddaa80d4d04cfb4f44a6625ddea4f1a33d359c35ba6771d655ad597",
+            "functions": [
+              "inputPopulation own field census + independently validated raw context/actual occurrence reconstruction",
+              "new independent private own-key/currentness/native Error helpers",
+              "whole existing constant() moved byte-exact body (export/own imports only)"
+            ],
+            "scope": "Only the exact canonical ReferenceError DATA relocation, raw-fact input joins and fixed null-message native factory transfer below; preserve all unrelated algorithms."
+          },
+          {
+            "path": "src/ir/runtime/reference-error-callable.ts",
+            "bytes": 4040,
+            "sha256": "e2326a4af1fdcc31a49f24d5d84f780b76b445e38fb35c48c12b20c94c04138e",
+            "functions": [
+              "remove relocated semanticTypes/record-derived declaration/signature/two-provider producer declarations",
+              "compatibility direct reexports/imports of same new core objects",
+              "referenceErrorProviderMismatch ENTIRE raw declaration/body unchanged"
+            ],
+            "scope": "Only the exact canonical ReferenceError DATA relocation, raw-fact input joins and fixed null-message native factory transfer below; preserve all unrelated algorithms."
+          },
+          {
+            "path": "src/ir/runtime/host-capabilities.ts",
+            "bytes": 46206,
+            "sha256": "68b4cb798181bfefccf63a3ac301d5e008157414ef740f41339ba873e85d7b14",
+            "functions": [
+              "exact one error.reference.construct record-expression replaced at SAME table position by imported SAME core host-record object",
+              "generic record/funcRecord/helpers/all other rows whole-byte exact"
+            ],
+            "scope": "Only the exact canonical ReferenceError DATA relocation, raw-fact input joins and fixed null-message native factory transfer below; preserve all unrelated algorithms."
+          }
+        ],
+        "canonicalNewPaths": [
+          "src/ir/core/reference-error-contract.ts",
+          "tests/issue-6920-native-class-reference-error-value-effects.test.ts"
+        ],
+        "sourceCountBefore": 2061,
+        "sourceCountConditionalAfter": 2062,
+        "productionPaths": 9,
+        "newTestPaths": 1,
+        "ancillaryPolicyScope": {
+          "path": "scripts/compiler-boundaries.json",
+          "bytes": 647364,
+          "sha256": "937049f28abf2a524ca660f15bba28ee768a6a939b185181a3aa34868323529a",
+          "existingRows": 2061,
+          "permittedChange": "Append exactly one new src/ir/core/reference-error-contract.ts classification row ONLY after measured actual transitive import closure establishes its truthful existing core layer. Preserve EVERY old file row, row order, non-file field, allowed edge, activated root, limit, baseline and issue grant. No other policy changes.",
+          "proposedRow": {
+            "path": "src/ir/core/reference-error-contract.ts",
+            "state": "clean",
+            "layer": "ir-core"
+          },
+          "qualification": "Actual import-closure/layer/inventory/cycle checks before clean classification; stop if placement is not clean, no waiver or nominal classification. Whole raw/DATA append inverse and standard formatter idempotence required."
+        },
+        "basis": {
+          "CProposal": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-construction-tdz-successor/workspace/.tmp/tdz/reference-error-effects10/receiving-proposal.json",
+            "bytes": 28740,
+            "sha256": "e0978eaaf662599fb941e6333c14e01b404fb173ec9bb0dd1bd50ecaa4e0d77a"
+          },
+          "AReview": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/proposal-review/review.json",
+            "bytes": 22127,
+            "sha256": "c87a4ec4cdb6c4bc0916faa4b526cda7c487d09cd2c6ba9b92c2c1637f4ecf5b"
+          },
+          "rawSchema": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/proposal-review/raw-context-shape.ts.txt",
+            "bytes": 1437,
+            "sha256": "8a2b6156f2fffc0b86964ea0fd5b4561a00dad5ba641e4e971f48534231667ff"
+          },
+          "snapshotCopies": [
+            {
+              "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/prepared/C-receiving-proposal.json",
+              "bytes": 28740,
+              "sha256": "e0978eaaf662599fb941e6333c14e01b404fb173ec9bb0dd1bd50ecaa4e0d77a"
+            },
+            {
+              "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/prepared/A-reviewed-contract-and-schema.json",
+              "bytes": 22127,
+              "sha256": "c87a4ec4cdb6c4bc0916faa4b526cda7c487d09cd2c6ba9b92c2c1637f4ecf5b"
+            },
+            {
+              "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/prepared/raw-context-shape.ts.txt",
+              "bytes": 1437,
+              "sha256": "8a2b6156f2fffc0b86964ea0fd5b4561a00dad5ba641e4e971f48534231667ff"
+            },
+            {
+              "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/prepared/constant-original.txt",
+              "bytes": 769,
+              "sha256": "6556591bd963e6524ef6839ff9eac1c5decac97f4e430fbc8d1cbcecc42a4265"
+            }
+          ]
+        },
+        "constraints": [
+          "PRIVATE SUCCESSOR ONLY after parent confirms ownership receipt normal push/remote equality and implementation GO. Do not create/bootstrap successor yet. No ROOT/source/donor/B/A/test/policy/index/Git edits during receiving preparation; only this ignored manifest/supporting plan artifacts are currently owned.",
+          "Exactly eight existing production preimages plus one new pure core contract and one new focused test. Ancillary policy permission is only the single measured core row append above; no issue/budget/grant/baseline/gate/root/edge edits or public source/main/PR/HOLD/queue changes.",
+          "Use latest A review and exact 1437-byte rawContext schema. One OPTIONAL runtimeContext field carries raw inventory/derived units/full ABI/startup/original/support/current projections/whole manifests/actual intrinsic-provider rows. No noWrites/verified/canonical boolean, occurrence list, callback verdict, supplied proof, new persisted PreparedIrProgram schema or semantic/topology cache.",
+          "Keep early prepareNativeClassValueEquations on frozen semantic conservative and byte-exact: runtime is not yet built and no report is persisted. Existing final original validation and EVERY selected validation remain unconditional fresh complete-context solves. Do not forge early provider facts, rewrite sealed facts, reorder generic preparation or recurse into assertPreparedIrProgram from its normalizer.",
+          "Both producer input.ts and independent-kernel inputPopulation independently DATA-screen closed raw context/current module/source ownership and derive actual lexical null-call membership. Independent must NOT consume producer accepted Set/list/index/native verdict; share only immutable canonical DATA/types. Original actual body and all selected/support views rejoin exact current functions; no convenient namespace/policy or borrowed-world matching.",
+          "Canonical core leaf moves the ONE existing error.reference.construct host-record value, declaration, version1 signature and COMPLETE two-provider array. Core value imports ONLY existing irRuntimeFuncRef plus erased core types. Central host table uses SAME imported object in SAME position; all other rows/generic record helpers unchanged. Runtime facade exports SAME canonical objects; referenceErrorProviderMismatch raw function is byte-exact. Preserve literal/property order/freeze and descriptor equality; exact whole-source relocation inverse required, type-annotation differences disclosed.",
+          "Only exact native canonical ReferenceError(null) factory occurrence may preserve unrelated class/global graph. Require complete canonical native provider/ABI/policy/demand/source/currentness joins and both null.value.ty/resultType rawexternref, exact args/result lexical definitions. Host/mixed/unknown/shadowed/non-null/malformed/duplicate/missing/foreign context stays invalid or existing UNKNOWN+opaque behavior. Error result remains UNKNOWN; no fake Error root/site/body/unit/target or source allocation.",
+          "Retain mayThrow=true, actual subsequent throw/escaped value, fresh provider allocation/lifetime/tag obligations and normal/abrupt/public terminal histories. Never discard abrupt worlds, assume WASI exports post-start, bypass UNKNOWN candidates or weaken prototype/environment/write effects. All actual canonical logical/physical currentness and real provider/Error/tag/body resources remain load-bearing before acquisition/every use.",
+          "Cap-safe productive move ONLY complete independent.ts constant() classifier into existing independent-kernel.ts, actual 769-byte body SHA6556591bd963e6524ef6839ff9eac1c5decac97f4e430fbc8d1cbcecc42a4265 (20-line classifier convention,19 raw newline lines). Preserve body/algorithm exactly with export/import only. Independent starts1500; kernel1227 with273 line headroom; producer1368/largest274. New files<=1500/functions<=300. Actual formatting/classifier measurements govern: STOP if coherent implementation exceeds caps; no compression/waiver/unreceived helper moves or extra leaf.",
+          "Preserve all generic comparisons, fixpoints, lexical verification, unknown taint, default rules and all old test assertions/oracles. Qualify actual canonical object identity/record-descriptor/catalog order, hostile raw-context getters0/mutations/shadows/provider/signature/policy/source/SSA drift, independent forged-success rejection, original+all-selected currentness, repeated normal/abrupt effects, full source+explicit roots TS7 excludes[], ordinary style/architecture/inventory/budgets.",
+          "Only after meaningful component qualification run actual unchanged constructor/prestart source/live/codec and required target phases at standard35s/default RPC/Node25.9.0/8192; positive LIST census and natural terminals/no cancellation. Preserve every failed predecessor; current two required WASI argument acceptance failures remain until authentic proof+engine outcomes close them. No whole-class/Linear/public readiness inference."
+        ],
+        "bootstrapPlanArtifact": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/prepared/bootstrap-plan.json"
+      },
+      "manifestSha256": "d76d4a926ba3d3ce925289befddcc2f9406c98a74ef239a1d47cf950d310255a",
+      "constraints": [
+        "PRIVATE SUCCESSOR ONLY after parent confirms ownership receipt normal push/remote equality and implementation GO. Do not create/bootstrap successor yet. No ROOT/source/donor/B/A/test/policy/index/Git edits during receiving preparation; only this ignored manifest/supporting plan artifacts are currently owned.",
+        "Exactly eight existing production preimages plus one new pure core contract and one new focused test. Ancillary policy permission is only the single measured core row append above; no issue/budget/grant/baseline/gate/root/edge edits or public source/main/PR/HOLD/queue changes.",
+        "Use latest A review and exact 1437-byte rawContext schema. One OPTIONAL runtimeContext field carries raw inventory/derived units/full ABI/startup/original/support/current projections/whole manifests/actual intrinsic-provider rows. No noWrites/verified/canonical boolean, occurrence list, callback verdict, supplied proof, new persisted PreparedIrProgram schema or semantic/topology cache.",
+        "Keep early prepareNativeClassValueEquations on frozen semantic conservative and byte-exact: runtime is not yet built and no report is persisted. Existing final original validation and EVERY selected validation remain unconditional fresh complete-context solves. Do not forge early provider facts, rewrite sealed facts, reorder generic preparation or recurse into assertPreparedIrProgram from its normalizer.",
+        "Both producer input.ts and independent-kernel inputPopulation independently DATA-screen closed raw context/current module/source ownership and derive actual lexical null-call membership. Independent must NOT consume producer accepted Set/list/index/native verdict; share only immutable canonical DATA/types. Original actual body and all selected/support views rejoin exact current functions; no convenient namespace/policy or borrowed-world matching.",
+        "Canonical core leaf moves the ONE existing error.reference.construct host-record value, declaration, version1 signature and COMPLETE two-provider array. Core value imports ONLY existing irRuntimeFuncRef plus erased core types. Central host table uses SAME imported object in SAME position; all other rows/generic record helpers unchanged. Runtime facade exports SAME canonical objects; referenceErrorProviderMismatch raw function is byte-exact. Preserve literal/property order/freeze and descriptor equality; exact whole-source relocation inverse required, type-annotation differences disclosed.",
+        "Only exact native canonical ReferenceError(null) factory occurrence may preserve unrelated class/global graph. Require complete canonical native provider/ABI/policy/demand/source/currentness joins and both null.value.ty/resultType rawexternref, exact args/result lexical definitions. Host/mixed/unknown/shadowed/non-null/malformed/duplicate/missing/foreign context stays invalid or existing UNKNOWN+opaque behavior. Error result remains UNKNOWN; no fake Error root/site/body/unit/target or source allocation.",
+        "Retain mayThrow=true, actual subsequent throw/escaped value, fresh provider allocation/lifetime/tag obligations and normal/abrupt/public terminal histories. Never discard abrupt worlds, assume WASI exports post-start, bypass UNKNOWN candidates or weaken prototype/environment/write effects. All actual canonical logical/physical currentness and real provider/Error/tag/body resources remain load-bearing before acquisition/every use.",
+        "Cap-safe productive move ONLY complete independent.ts constant() classifier into existing independent-kernel.ts, actual 769-byte body SHA6556591bd963e6524ef6839ff9eac1c5decac97f4e430fbc8d1cbcecc42a4265 (20-line classifier convention,19 raw newline lines). Preserve body/algorithm exactly with export/import only. Independent starts1500; kernel1227 with273 line headroom; producer1368/largest274. New files<=1500/functions<=300. Actual formatting/classifier measurements govern: STOP if coherent implementation exceeds caps; no compression/waiver/unreceived helper moves or extra leaf.",
+        "Preserve all generic comparisons, fixpoints, lexical verification, unknown taint, default rules and all old test assertions/oracles. Qualify actual canonical object identity/record-descriptor/catalog order, hostile raw-context getters0/mutations/shadows/provider/signature/policy/source/SSA drift, independent forged-success rejection, original+all-selected currentness, repeated normal/abrupt effects, full source+explicit roots TS7 excludes[], ordinary style/architecture/inventory/budgets.",
+        "Only after meaningful component qualification run actual unchanged constructor/prestart source/live/codec and required target phases at standard35s/default RPC/Node25.9.0/8192; positive LIST census and natural terminals/no cancellation. Preserve every failed predecessor; current two required WASI argument acceptance failures remain until authentic proof+engine outcomes close them. No whole-class/Linear/public readiness inference."
+      ]
+    }
+  ],
+  "predecessors": [
+    "3522-b-native-class-semantic-producer-20261014.json",
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}
