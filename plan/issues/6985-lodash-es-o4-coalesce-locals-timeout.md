@@ -1,9 +1,10 @@
 ---
 id: 6985
 title: "lodash-es: wasm-opt -O4 times out in coalesce-locals on `__runtime_eval_pull_globals` (regime and host lanes)"
-status: ready
+status: in-progress
+assignee: ttraenkler/opus-6985-lodash
 created: 2026-10-14
-updated: 2026-10-14
+updated: 2026-10-15
 priority: medium
 horizon: m
 feasibility: medium
