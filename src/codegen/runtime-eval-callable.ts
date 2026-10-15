@@ -334,7 +334,14 @@ function syncedPropertyGetTrampolineBody(
     ];
   };
   const readTarget: Instr[] = [...readMarkerMetadata(), { op: "local.set", index: resultLocal }];
-  const readBody: Instr[] =
+  const typeofFunctionIdx = ctx.funcMap.get("__typeof_function");
+  const readTargetAsAny: Instr[] = [
+    ...readTarget,
+    { op: "local.get", index: resultLocal },
+    { op: "any.convert_extern" },
+    { op: "local.set", index: anyLocal },
+  ];
+  const bagFirstRead: Instr[] | undefined =
     closurePropGetIdx !== undefined && isUndefinedIdx !== undefined
       ? [
           // Runtime-eval global seeding replaces an AOT closure with this
@@ -360,12 +367,22 @@ function syncedPropertyGetTrampolineBody(
           { op: "any.convert_extern" },
           { op: "local.set", index: anyLocal },
         ]
-      : [
-          ...readTarget,
-          { op: "local.get", index: resultLocal },
-          { op: "any.convert_extern" },
-          { op: "local.set", index: anyLocal },
-        ];
+      : undefined;
+  // (#6989) A carrier rebound onto a NON-callable compiled object (the membrane
+  // hook's owner-routed read) has no closure-own bag, and the bag read falls
+  // back to %Function.prototype% (`toString` answered Function.prototype.toString,
+  // test262 built-ins/Function/S15.3.2.1_A2_T6). Read such a target directly.
+  const readBody: Instr[] =
+    bagFirstRead === undefined
+      ? readTargetAsAny
+      : typeofFunctionIdx === undefined
+        ? bagFirstRead
+        : [
+            { op: "local.get", index: 0 },
+            { op: "struct.get", typeIdx: carrier.structTypeIdx, fieldIdx: 2 },
+            { op: "call", funcIdx: typeofFunctionIdx },
+            { op: "if", blockType: { kind: "empty" }, then: bagFirstRead, else: readTargetAsAny },
+          ];
   // (#6894) Wrapping a callable property in a fresh carrier exists for the
   // provider crossing only. An in-module read (provider inactive) must return
   // the raw closure: a per-read carrier breaks identity (`assert.d === assert.d`
