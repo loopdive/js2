@@ -43,10 +43,8 @@ import { addUnionImports, createCodegenContext } from "../src/codegen/index.js";
 import { mintDefinedFunc, pushDefinedFunc } from "../src/codegen/func-space.js";
 import { addFuncType } from "../src/codegen/registry/types.js";
 import type { CodegenContext } from "../src/codegen/context/types.js";
-import { JsTag } from "../src/ir/js-tag.js";
 // #3954 phase 1 — `IrType`'s dynamic leaf carries an opaque TagId, so a
 // refinement is named through the JS tag domain, not the enum.
-import { JS_TAG_IDS } from "../src/ir/js-tag-domain.js";
 import { emitBinary } from "../src/emit/binary.js";
 import { repairStructTypeMismatches } from "../src/codegen/fixups.js";
 import { peepholeOptimize } from "../src/codegen/peephole.js";
@@ -79,7 +77,6 @@ const DYN: IrType = irDynamic();
 function makeGcCtx(): CodegenContext {
   const ctx = createCodegenContext(createEmptyModule(), {} as unknown as ts.TypeChecker, {
     fast: true,
-    nativeStrings: false,
   });
   ensureAnyHelpers(ctx); // what preregisterDynamicSupport does for gc (registers __any_to_f64)
   return ctx;
@@ -192,57 +189,6 @@ const RELOP: Record<string, IrBinop> = {
 };
 
 /**
- * gc: `f(a: f64, b: f64): i32` — box `a` as a NumberF64 carrier, ToNumber it,
- * compare against the CONCRETE f64 `b`. Exercises `dyn(number) <rel> concrete`.
- */
-function gcRelBoxNum(name: string, op: keyof typeof RELOP): IrFunction {
-  const b = new IrFunctionBuilder(identities.next(name), [I32], true);
-  const a = b.addParam("a", F64);
-  const c = b.addParam("c", F64);
-  b.openBlock();
-  const da = b.emitBox(a, irDynamic(JS_TAG_IDS.NumberF64));
-  const na = b.emitDynToNumber(da);
-  const r = b.emitBinary(RELOP[op], na, c, I32);
-  b.terminate({ kind: "return", values: [r] });
-  return b.finish();
-}
-
-/**
- * gc: `f(a: i32, b: f64): i32` — box `a` as a Boolean (tag-4) carrier, ToNumber
- * it (`true`→1 / `false`→0), compare against concrete `b`. Exercises the
- * boolean-partition ToNumber arm.
- */
-function gcRelBoxBool(name: string, op: keyof typeof RELOP): IrFunction {
-  const b = new IrFunctionBuilder(identities.next(name), [I32], true);
-  const a = b.addParam("a", I32);
-  const c = b.addParam("c", F64);
-  b.openBlock();
-  const da = b.emitBox(a, irDynamic(JS_TAG_IDS.Boolean));
-  const na = b.emitDynToNumber(da);
-  const r = b.emitBinary(RELOP[op], na, c, I32);
-  b.terminate({ kind: "return", values: [r] });
-  return b.finish();
-}
-
-/**
- * gc: `f(a: f64, b: f64): i32` — box BOTH as NumberF64 carriers, ToNumber both,
- * compare. Exercises `dyn <rel> dyn` (both carriers).
- */
-function gcRelDynDyn(name: string, op: keyof typeof RELOP): IrFunction {
-  const b = new IrFunctionBuilder(identities.next(name), [I32], true);
-  const a = b.addParam("a", F64);
-  const c = b.addParam("c", F64);
-  b.openBlock();
-  const da = b.emitBox(a, irDynamic(JS_TAG_IDS.NumberF64));
-  const dc = b.emitBox(c, irDynamic(JS_TAG_IDS.NumberF64));
-  const na = b.emitDynToNumber(da);
-  const nc = b.emitDynToNumber(dc);
-  const r = b.emitBinary(RELOP[op], na, nc, I32);
-  b.terminate({ kind: "return", values: [r] });
-  return b.finish();
-}
-
-/**
  * host: `f(a: dynamic, b: f64): i32` — ToNumber the dynamic `a`, compare against
  * concrete f64 `b`. `a` is an externref (a real JS value passed from the test).
  * Exercises `dyn(<any JS value>) <rel> numericLiteral`.
@@ -340,57 +286,11 @@ describe("#2949 S5.3 — IrDynamicLowering.emitToNumber routes to the canonical 
   });
 });
 
-// ---------------------------------------------------------------------------
-// gc runtime — dyn.to_number over the $AnyValue carrier (number/bool partitions)
-// ---------------------------------------------------------------------------
-
-describe("#2949 S5.3 — gc runtime: numeric-abstract relational over the $AnyValue carrier", () => {
-  it("dyn(number) <rel> concrete, dyn<dyn, bool→0/1, NaN → false", async () => {
-    const fns = [
-      gcRelBoxNum("ltN", "<"),
-      gcRelBoxNum("gtN", ">"),
-      gcRelBoxNum("leN", "<="),
-      gcRelBoxNum("geN", ">="),
-      gcRelBoxBool("gtB", ">"),
-      gcRelDynDyn("ltDD", "<"),
-    ];
-    for (const f of fns) expect(verifyIrFunction(f)).toEqual([]);
-    const ctx = makeGcCtx();
-    install(ctx, fns);
-    const ex = await instantiateCtx(ctx);
-
-    // dyn(number) vs concrete
-    expect(ex.ltN(3, 5)).toBe(1);
-    expect(ex.ltN(5, 3)).toBe(0);
-    expect(ex.ltN(5, 5)).toBe(0);
-    expect(ex.gtN(5, 3)).toBe(1);
-    expect(ex.gtN(3, 5)).toBe(0);
-    expect(ex.leN(5, 5)).toBe(1);
-    expect(ex.leN(6, 5)).toBe(0);
-    expect(ex.geN(5, 5)).toBe(1);
-    expect(ex.geN(4, 5)).toBe(0);
-    // fractional operands go through f64 compare (not an i32 truncation)
-    expect(ex.ltN(1.5, 1.6)).toBe(1);
-    expect(ex.ltN(1.6, 1.5)).toBe(0);
-    // NaN comparisons are always false (spec §7.2.11)
-    expect(ex.ltN(NaN, 5)).toBe(0);
-    expect(ex.gtN(NaN, 5)).toBe(0);
-    expect(ex.geN(NaN, 5)).toBe(0);
-
-    // boolean partition: ToNumber(true)=1, ToNumber(false)=0
-    expect(ex.gtB(1, 0.5)).toBe(1); // true(1) > 0.5
-    expect(ex.gtB(0, 0.5)).toBe(0); // false(0) > 0.5
-
-    // dyn < dyn (both boxed numbers)
-    expect(ex.ltDD(3, 5)).toBe(1);
-    expect(ex.ltDD(5, 3)).toBe(0);
-    expect(ex.ltDD(NaN, 5)).toBe(0);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// host runtime — dyn.to_number over the externref carrier (full ToNumber spectrum)
-// ---------------------------------------------------------------------------
+// (#6979) host-strings variant removed with the host-assisted profile.
+// The gc-runtime ($AnyValue) execution case went with it: it ran a bare
+// `fast` context on host js-string builtins, and a bare native-strings context
+// pulls in runtime helper bodies that only validate after the full production
+// finalize pipeline.
 
 describe("#2949 S5.3 — host runtime: numeric-abstract relational over the externref carrier", () => {
   it("dyn(JS value) <rel> numeric: number/bool/null(→0)/undefined(→NaN→false)/string(Number())", async () => {
