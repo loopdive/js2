@@ -11504,6 +11504,19 @@ export function markCoherentBuiltinRealm(sandbox: object): void {
   coherentBuiltinRealms.add(sandbox);
 }
 
+/**
+ * (#3325, #6979) An ambient `declare function f(...)` binds to the embedder's
+ * dependency of the same name. Without one it keeps the historical no-op: the
+ * test262 harness declares host print/log stubs it does not always supply, and
+ * throwing regressed the merged-state test262 gate.
+ */
+function resolveDeclaredFunctionImport(name: string, deps: Record<string, any> | undefined): Function {
+  const userDep = deps?.[name];
+  if (typeof userDep === "function") return (...args: any[]) => userDep(...args);
+  if (userDep !== undefined) return () => userDep;
+  return () => undefined;
+}
+
 function resolveImport(
   intent: ImportIntent,
   deps?: Record<string, any>,
@@ -11544,6 +11557,7 @@ function resolveImport(
     createProxy: (target, handler) => _hostProxyConstruct(target, handler, callbackState, "Proxy"),
   });
   if (compatibilitySemantic) return compatibilitySemantic;
+  if (intent.type === "declared_function") return resolveDeclaredFunctionImport(intent.name, deps);
   switch (intent.type) {
     case "caught_exception":
       return createCaughtExceptionImport(getCaughtException);
@@ -18942,22 +18956,7 @@ assert._isSameValue = isSameValue;
           }
         };
       }
-      // (#3325) A user-level ambient `declare function f(...)` is a `builtin`
-      // intent but NOT an internal helper special-cased above (every recognised
-      // builtin returns before here). The call site emits `call $f_import`
-      // correctly; the miss was that this fallback no-op'd and ignored `deps`.
-      // Wire it to the supplied dependency — the natural FFI for embedders.
-      const userDep = deps?.[name];
-      if (typeof userDep === "function") return (...args: any[]) => userDep(...args);
-      if (userDep !== undefined) return () => userDep;
-      // No matching dep → keep the historical no-op. (An earlier revision threw
-      // a clear error for a called-but-undepped user-facing ambient name, but
-      // the test262 harness legitimately declares ambient functions it does not
-      // always supply — e.g. host print/log stubs — and relies on the no-op, so
-      // throwing regressed the merged-state test262 gate. The dep-wiring above
-      // is the actual #3325 fix; a targeted "missing dep" diagnostic gated to
-      // non-harness contexts is a possible follow-up.)
-      return () => {};
+      return resolveDeclaredFunctionImport(name, deps); // a hand-built manifest's ambient name
     }
     // (#4394) `intent.constructible` is set only by `__make_callback_ctor`, the
     // maker the compiler picks for an ordinary function definition — the one
@@ -19632,11 +19631,10 @@ export function buildImports(
     if (imp.module !== "env") continue;
     if (options?.ambientCompatibility === false) {
       const policy = classifyHostImport(imp, undefined, options?.hostAccelerators);
-      if (policy.classification === "legacy-semantic" || policy.classification === "unknown") {
+      if (policy.classification === "unknown") {
         throw new Error(
-          `Native-first adapter cannot bind ${imp.module}::${imp.name}: ` +
-            `${policy.classification} import owned by #${policy.ownerIssue}. ` +
-            `Use the explicit compatibility profile until this semantic provider is native.`,
+          `Native-first adapter cannot bind ${imp.module}::${imp.name}: ${policy.reason} ` +
+            `(the host-semantic implementation was removed, #${policy.ownerIssue}).`,
         );
       }
     }

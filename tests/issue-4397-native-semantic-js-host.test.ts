@@ -120,7 +120,7 @@ describe("#4397 native semantics in a JavaScript environment", () => {
 
     const inventory = result.hostImportInventory ?? [];
     expect(inventory.filter((entry) => entry.classification === "unknown")).toEqual([]);
-    expect(inventory.filter((entry) => entry.classification === "legacy-semantic")).toEqual([]);
+    expect(inventory.filter((entry) => entry.classification === "unknown")).toEqual([]);
     expect(inventory).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ name: "console_log_string", classification: "platform-capability" }),
@@ -190,7 +190,7 @@ describe("#4397 native semantics in a JavaScript environment", () => {
         result: { kind: "dynamic", policy: "live-view" },
       },
     });
-    expect(result.hostImportInventory?.filter((entry) => entry.classification === "legacy-semantic")).toEqual([]);
+    expect(result.hostImportInventory?.filter((entry) => entry.classification === "unknown")).toEqual([]);
   });
 
   it("keeps native arrays canonical and exposes a live array facade only at the boundary", async () => {
@@ -223,9 +223,7 @@ describe("#4397 native semantics in a JavaScript environment", () => {
     expect(native.result.exportBoundaryPolicies).toMatchObject({
       getValues: { result: { kind: "aggregate", policy: "live-view" } },
     });
-    expect(native.result.hostImportInventory?.filter((entry) => entry.classification === "legacy-semantic")).toEqual(
-      [],
-    );
+    expect(native.result.hostImportInventory?.filter((entry) => entry.classification === "unknown")).toEqual([]);
     expect(native.result.hostImportInventory?.filter((entry) => entry.classification === "unknown")).toEqual([]);
   });
 
@@ -289,9 +287,7 @@ describe("#4397 native semantics in a JavaScript environment", () => {
         expect.objectContaining({ name: "__boundary_object_get", classification: "value-adapter" }),
       ]),
     );
-    expect(native.result.hostImportInventory?.filter((entry) => entry.classification === "legacy-semantic")).toEqual(
-      [],
-    );
+    expect(native.result.hostImportInventory?.filter((entry) => entry.classification === "unknown")).toEqual([]);
     expect(native.result.hostImportInventory?.filter((entry) => entry.classification === "unknown")).toEqual([]);
   });
 
@@ -325,9 +321,7 @@ describe("#4397 native semantics in a JavaScript environment", () => {
         expect.objectContaining({ name: "__boundary_object_call", classification: "value-adapter" }),
       ]),
     );
-    expect(native.result.hostImportInventory?.filter((entry) => entry.classification === "legacy-semantic")).toEqual(
-      [],
-    );
+    expect(native.result.hostImportInventory?.filter((entry) => entry.classification === "unknown")).toEqual([]);
     expect(native.result.hostImportInventory?.filter((entry) => entry.classification === "unknown")).toEqual([]);
   });
 
@@ -386,9 +380,7 @@ describe("#4397 native semantics in a JavaScript environment", () => {
         expect.objectContaining({ name: "__boundary_callback_call_1", classification: "value-adapter" }),
       ]),
     );
-    expect(boundary.result.hostImportInventory?.filter((entry) => entry.classification === "legacy-semantic")).toEqual(
-      [],
-    );
+    expect(boundary.result.hostImportInventory?.filter((entry) => entry.classification === "unknown")).toEqual([]);
     expect(boundary.result.hostImportInventory?.filter((entry) => entry.classification === "unknown")).toEqual([]);
   });
 
@@ -478,9 +470,7 @@ describe("#4397 native semantics in a JavaScript environment", () => {
     expect(native.exports.echo("  beta  ")).toBe(host.exports.echo("  beta  "));
     expect(() => host.exports.invalidRepeat()).toThrow();
     expect(() => native.exports.invalidRepeat()).toThrow();
-    expect(native.result.hostImportInventory?.filter((entry) => entry.classification === "legacy-semantic")).toEqual(
-      [],
-    );
+    expect(native.result.hostImportInventory?.filter((entry) => entry.classification === "unknown")).toEqual([]);
   });
 
   it("runs the native JSON provider in a JS environment", async () => {
@@ -504,9 +494,7 @@ describe("#4397 native semantics in a JavaScript environment", () => {
     expect(wasmImports(native.result.binary).filter((entry) => /^JSON_(parse|stringify)$/.test(entry.name))).toEqual(
       [],
     );
-    expect(native.result.hostImportInventory?.filter((entry) => entry.classification === "legacy-semantic")).toEqual(
-      [],
-    );
+    expect(native.result.hostImportInventory?.filter((entry) => entry.classification === "unknown")).toEqual([]);
   });
 
   it("translates Wasm-owned errors only at the JS boundary", async () => {
@@ -534,9 +522,7 @@ describe("#4397 native semantics in a JavaScript environment", () => {
     expect(thrown).toBeInstanceOf(TypeError);
     expect((thrown as Error).message).toBe("bad");
     expect(wasmImports(native.result.binary).some((entry) => entry.name === "__new_TypeError")).toBe(false);
-    expect(native.result.hostImportInventory?.filter((entry) => entry.classification === "legacy-semantic")).toEqual(
-      [],
-    );
+    expect(native.result.hostImportInventory?.filter((entry) => entry.classification === "unknown")).toEqual([]);
   });
 
   it("runs the native RegExp provider in a JS environment", async () => {
@@ -556,9 +542,7 @@ describe("#4397 native semantics in a JavaScript environment", () => {
         (entry) => entry.name === "RegExp_new" || entry.name.startsWith("RegExp_"),
       ),
     ).toEqual([]);
-    expect(native.result.hostImportInventory?.filter((entry) => entry.classification === "legacy-semantic")).toEqual(
-      [],
-    );
+    expect(native.result.hostImportInventory?.filter((entry) => entry.classification === "unknown")).toEqual([]);
   });
 
   it("runs collection, Date, Number, and BigInt providers without semantic host imports", async () => {
@@ -595,9 +579,7 @@ describe("#4397 native semantics in a JavaScript environment", () => {
     expect(
       wasmImports(native.result.binary).filter((entry) => /^(Map|Set|WeakMap|Date|number|bigint)_/.test(entry.name)),
     ).toEqual([]);
-    expect(native.result.hostImportInventory?.filter((entry) => entry.classification === "legacy-semantic")).toEqual(
-      [],
-    );
+    expect(native.result.hostImportInventory?.filter((entry) => entry.classification === "unknown")).toEqual([]);
     expect(native.result.hostImportInventory?.filter((entry) => entry.classification === "unknown")).toEqual([]);
   });
 
@@ -649,9 +631,7 @@ describe("#4397 native semantics in a JavaScript environment", () => {
         "__to_boolean",
       ]),
     );
-    expect(native.result.hostImportInventory?.filter((entry) => entry.classification === "legacy-semantic")).toEqual(
-      [],
-    );
+    expect(native.result.hostImportInventory?.filter((entry) => entry.classification === "unknown")).toEqual([]);
     expect(native.result.hostImportInventory?.filter((entry) => entry.classification === "unknown")).toEqual([]);
   });
 
@@ -675,9 +655,7 @@ describe("#4397 native semantics in a JavaScript environment", () => {
     expect(wasmImports(native.result.binary).map(({ name }) => name)).not.toEqual(
       expect.arrayContaining(["bigint_toString", "bigint_toString_radix"]),
     );
-    expect(native.result.hostImportInventory?.filter((entry) => entry.classification === "legacy-semantic")).toEqual(
-      [],
-    );
+    expect(native.result.hostImportInventory?.filter((entry) => entry.classification === "unknown")).toEqual([]);
   });
 
   it("selects native String.raw and extern-array join providers in a JavaScript environment", async () => {
@@ -698,9 +676,7 @@ describe("#4397 native semantics in a JavaScript environment", () => {
     expect(wasmImports(native.result.binary).map(({ name }) => name)).not.toEqual(
       expect.arrayContaining(["__array_join_any", "__get_builtin"]),
     );
-    expect(native.result.hostImportInventory?.filter((entry) => entry.classification === "legacy-semantic")).toEqual(
-      [],
-    );
+    expect(native.result.hostImportInventory?.filter((entry) => entry.classification === "unknown")).toEqual([]);
     expect(native.result.hostImportInventory?.filter((entry) => entry.classification === "unknown")).toEqual([]);
   });
 
@@ -730,9 +706,7 @@ describe("#4397 native semantics in a JavaScript environment", () => {
     expect(native.exports.inspect()).toBe(1);
     expect(native.exports.run()).toBe(42);
     expect(wasmImports(native.result.binary).map(({ name }) => name)).not.toContain("__proxy_revocable");
-    expect(native.result.hostImportInventory?.filter((entry) => entry.classification === "legacy-semantic")).toEqual(
-      [],
-    );
+    expect(native.result.hostImportInventory?.filter((entry) => entry.classification === "unknown")).toEqual([]);
     expect(native.result.hostImportInventory?.filter((entry) => entry.classification === "unknown")).toEqual([]);
   });
 
@@ -819,9 +793,7 @@ describe("#4397 native semantics in a JavaScript environment", () => {
     const imports = wasmImports(native.result.binary).map(({ name }) => name);
     expect(imports).not.toContain("__proxy_create");
     expect(imports).not.toContain("__construct_closure");
-    expect(native.result.hostImportInventory?.filter((entry) => entry.classification === "legacy-semantic")).toEqual(
-      [],
-    );
+    expect(native.result.hostImportInventory?.filter((entry) => entry.classification === "unknown")).toEqual([]);
   });
 
   it("rejects primitive ProxyCreate inputs and retains admitted JS function targets", async () => {
@@ -856,9 +828,7 @@ describe("#4397 native semantics in a JavaScript environment", () => {
     const result = native.exports.constructTarget(Box, 9);
     expect(result).toBeInstanceOf(Box);
     expect(result.value).toBe(9);
-    expect(native.result.hostImportInventory?.filter((entry) => entry.classification === "legacy-semantic")).toEqual(
-      [],
-    );
+    expect(native.result.hostImportInventory?.filter((entry) => entry.classification === "unknown")).toEqual([]);
   });
 
   it("keeps array and object result builders native instead of materializing JS intermediates", async () => {
@@ -882,9 +852,7 @@ describe("#4397 native semantics in a JavaScript environment", () => {
     expect(imports).not.toContain("__array_from_iter");
     expect(imports).not.toContain("__js_array_new");
     expect(imports).not.toContain("__js_array_push");
-    expect(native.result.hostImportInventory?.filter((entry) => entry.classification === "legacy-semantic")).toEqual(
-      [],
-    );
+    expect(native.result.hostImportInventory?.filter((entry) => entry.classification === "unknown")).toEqual([]);
     expect(native.result.hostImportInventory?.filter((entry) => entry.classification === "unknown")).toEqual([]);
   });
 
@@ -918,9 +886,7 @@ describe("#4397 native semantics in a JavaScript environment", () => {
     ]) {
       expect(imports).not.toContain(name);
     }
-    expect(native.result.hostImportInventory?.filter((entry) => entry.classification === "legacy-semantic")).toEqual(
-      [],
-    );
+    expect(native.result.hostImportInventory?.filter((entry) => entry.classification === "unknown")).toEqual([]);
     expect(native.result.hostImportInventory?.filter((entry) => entry.classification === "unknown")).toEqual([]);
   });
 
@@ -967,9 +933,7 @@ describe("#4397 native semantics in a JavaScript environment", () => {
         expect.objectContaining({ name: "__boundary_promise_reject", classification: "value-adapter" }),
       ]),
     );
-    expect(native.result.hostImportInventory?.filter((entry) => entry.classification === "legacy-semantic")).toEqual(
-      [],
-    );
+    expect(native.result.hostImportInventory?.filter((entry) => entry.classification === "unknown")).toEqual([]);
     expect(native.result.hostImportInventory?.filter((entry) => entry.classification === "unknown")).toEqual([]);
   });
 
@@ -1011,9 +975,7 @@ describe("#4397 native semantics in a JavaScript environment", () => {
         ["__symbol_register_desc", "__symbol_description", "__box_symbol"].includes(entry.name),
       ),
     ).toEqual([]);
-    expect(native.result.hostImportInventory?.filter((entry) => entry.classification === "legacy-semantic")).toEqual(
-      [],
-    );
+    expect(native.result.hostImportInventory?.filter((entry) => entry.classification === "unknown")).toEqual([]);
     expect(native.result.hostImportInventory?.filter((entry) => entry.classification === "unknown")).toEqual([]);
   });
 
@@ -1376,12 +1338,10 @@ describe("#4397 native semantics in a JavaScript environment", () => {
         expect.objectContaining({ name: "__boundary_callback_call_1", classification: "value-adapter" }),
       ]),
     );
-    expect(native.result.hostImportInventory?.filter((entry) => entry.classification === "legacy-semantic")).toEqual(
-      [],
-    );
+    expect(native.result.hostImportInventory?.filter((entry) => entry.classification === "unknown")).toEqual([]);
     expect(native.result.hostImportInventory?.filter((entry) => entry.classification === "unknown")).toEqual([]);
     expect(native.result.hostImportSummary?.byClassification).toMatchObject({
-      "legacy-semantic": 0,
+      "regime-gap": 0,
       unknown: 0,
     });
     const crossingCounts = native.imports.takeImportCounts?.() ?? {};

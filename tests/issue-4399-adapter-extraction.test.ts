@@ -128,7 +128,7 @@ describe("#4399 extracted JavaScript adapters", () => {
   it("refuses compatibility semantics through a native-first low-level adapter", () => {
     const manifest = [descriptor("__host_compare", { type: "host_compare" }, 2)];
     expect(() => buildImports(manifest, undefined, [], { ambientCompatibility: false })).toThrow(
-      /Native-first adapter cannot bind env::__host_compare: legacy-semantic import/,
+      /Native-first adapter cannot bind env::__host_compare: host language operation .*#6979/,
     );
 
     const compatibility = buildImports(manifest, undefined, [], { ambientCompatibility: true });

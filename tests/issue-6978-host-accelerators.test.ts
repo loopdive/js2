@@ -114,8 +114,11 @@ describe("#6978 host accelerator selection", () => {
 describe("#6978 profile-aware host-import classification", () => {
   it("classifies a selected family as host-accelerator and leaves unselected families alone", () => {
     const regexp = descriptor("RegExp_new", { type: "extern_class", className: "RegExp", action: "new" });
-    expect(classifyHostImport(regexp, "javascript")).toMatchObject({ classification: "legacy-semantic" });
-    expect(classifyHostImport(regexp, "javascript", ["date"])).toMatchObject({ classification: "legacy-semantic" });
+    expect(classifyHostImport(regexp, "javascript")).toMatchObject({ classification: "unknown", ownerIssue: 6979 });
+    expect(classifyHostImport(regexp, "javascript", ["date"])).toMatchObject({
+      classification: "unknown",
+      ownerIssue: 6979,
+    });
     expect(classifyHostImport(regexp, "javascript", ["regexp"])).toMatchObject({
       classification: "host-accelerator",
       family: "regexp",
@@ -148,7 +151,7 @@ describe("#6978 profile-aware host-import classification", () => {
     // Families outside the four accelerators never re-classify.
     const map = descriptor("Map_new", { type: "extern_class", className: "Map", action: "new" });
     expect(classifyHostImport(map, "javascript", ["regexp", "date", "intl", "js-string"])).toMatchObject({
-      classification: "legacy-semantic",
+      classification: "unknown",
     });
   });
 });

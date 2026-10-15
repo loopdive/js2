@@ -51,6 +51,7 @@ export type ImportIntent =
     }
   | { type: "string_method"; method: string }
   | { type: "builtin"; name: string }
+  | { type: "declared_function"; name: string } // (#6979) an ambient `declare function` the embedder supplies
   // `constructible` marks the #4394 sibling bridge (`__make_callback_ctor`),
   // built for compiled ordinary function definitions so the host object it
   // hands out has [[Construct]] like the source callable does.
@@ -122,11 +123,10 @@ export type ImportIntent =
   | { type: "node_filename" }
   | { type: "node_import_meta_url" }
   | {
-      // (#1540) JSX runtime binding — `_jsx`/`_jsxs`/`_Fragment`/`_jsxDEV`
-      // emitted by TypeScript when `jsx: react-jsx` is set. The host binding
-      // is either a user-supplied runtime (`deps.jsxRuntime`) or a built-in
-      // React-shaped fallback that constructs `{ $$typeof, type, props, key,
-      // ref }` objects suitable for `React.isValidElement` consumers.
+      // (#1540) JSX runtime binding — `_jsx`/`_jsxs`/`_Fragment`/`_jsxDEV` emitted
+      // by TypeScript when `jsx: react-jsx` is set. The host binding is a user
+      // runtime (`deps.jsxRuntime`) or a built-in React-shaped fallback building
+      // `{ $$typeof, type, props, key, ref }` for `React.isValidElement` consumers.
       type: "jsx_runtime";
       method: "jsx" | "jsxs" | "Fragment" | "jsxDEV";
       specifier: string;

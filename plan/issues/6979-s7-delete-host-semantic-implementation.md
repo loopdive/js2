@@ -2,7 +2,7 @@
 id: 6979
 title: "S7: delete the host-semantic implementation — one native semantic core, host imports only as capabilities, adapters and named accelerators"
 status: in-progress
-assignee: ttraenkler/opus-6979-s7a
+assignee: ttraenkler/opus-6979-s7b
 created: 2026-10-14
 updated: 2026-10-15
 priority: high

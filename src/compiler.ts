@@ -1345,20 +1345,14 @@ function finalizePipelineModule(
   widenNonDefaultableTypes(mod);
   if (finalization) finalization.receipt = completePreparedPresentationFinalization(finalization.token);
 
-  // #4401 — An explicitly selected native-first profile is a
-  // semantic-provider contract, not a best-effort hint. Never publish a module
-  // that silently recovered an implicit JS semantic fallback (or an
-  // unclassified import) after a native lowering declined. Value adapters,
-  // lifecycle hooks, explicit platform capabilities, and named accelerators
-  // remain valid imports; only the two policy classes that cannot justify
-  // publication are rejected here.
-  //
-  // Run this before binary/WAT/helper emission so an unsupported construct
-  // fails as a compile diagnostic rather than becoming a valid-looking module
-  // that depends on the compatibility runtime. Target-derived standalone/WASI
-  // profiles keep their established fallback/refusal behavior: standalone's
-  // warning-first compatibility lanes (#2961/#2980/#3164) are not an explicit
-  // native-first opt-in, while WASI's strict import gate remains authoritative.
+  // #4401/#6979 — The native semantic regime is the only ECMAScript
+  // implementation, so no WasmGC profile publishes a module that recovered a
+  // retired host-semantic import (or an unclassified one) after a native
+  // lowering declined. Value adapters, lifecycle hooks, explicit platform
+  // capabilities, selected accelerators and the named #5385 regime gaps remain
+  // valid imports; everything else classifies `unknown` and is rejected here,
+  // before binary/WAT/helper emission, so an unsupported construct is a compile
+  // diagnostic rather than a module that depends on a retired runtime path.
   const imports = buildImportManifest(mod);
   // (#6978) Selected host-accelerator families classify as `host-accelerator`.
   const hostImportInventory = buildHostImportInventory(
@@ -1368,19 +1362,15 @@ function finalizePipelineModule(
     targetEnvironment,
     targetProfile.accelerators,
   );
-  if (options.semanticProviders === "native-first") {
-    const forbidden = hostImportInventory.filter(
-      (entry) => entry.classification === "legacy-semantic" || entry.classification === "unknown",
-    );
+  if (targetProfile.backend === "wasmgc") {
+    const forbidden = hostImportInventory.filter((entry) => entry.classification === "unknown");
     if (forbidden.length > 0) {
-      const details = forbidden
-        .map((entry) => `${entry.module}::${entry.name} (${entry.classification}, owner #${entry.ownerIssue})`)
-        .join(", ");
+      const details = forbidden.map((entry) => `${entry.module}::${entry.name} (${entry.reason})`).join(", ");
       pushSourceAnchoredDiagnostic(
         errors,
         diagnosticAnchor,
-        `Native-first semantic-provider policy rejected implicit or unclassified host imports: ${details}. ` +
-          `Omit the explicit semanticProviders option to publish it anyway; a native provider gap belongs to #5385.`,
+        `The host-semantic implementation was removed (#6979); this module would need retired host imports: ` +
+          `${details}. The construct has no native lowering yet — a native regime gap belongs to #5385.`,
         "error",
       );
       return failResult(errors, telemetry);

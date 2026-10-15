@@ -319,8 +319,8 @@ function classifyImport(name: string, mod: WasmModule): ImportIntent {
     return { type: "extern_class", className: name.slice(6), action: "new" };
   }
 
-  // Fallback
-  return { type: "builtin", name };
+  // Fallback: an ambient `declare function` the embedder supplies (#6979), else a builtin helper.
+  return mod.declaredFunctionImports?.has(name) ? { type: "declared_function", name } : { type: "builtin", name };
 }
 
 function buildImportManifest(mod: WasmModule): ImportDescriptor[] {
