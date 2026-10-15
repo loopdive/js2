@@ -16,7 +16,7 @@ language_feature: eval, function-calls
 goal: standalone-gap
 related: [6988, 6989, 2928, 4307]
 import-cycles-allow:
-  - largestSccSize: 707 # 2026-10-14 (#6990): runtime-eval-live-call.ts joins the codegen SCC — it is called from call-identifier/runtime-eval-provider/runtime-eval-callable and itself uses global-environment, object-runtime and shared coercion, exactly like its runtime-eval siblings already in the SCC
+  - largestSccSize: 710 # 2026-10-15 (#6990): main reached 709 meanwhile; still one file — runtime-eval-live-call.ts joins the codegen SCC — it is called from call-identifier/runtime-eval-provider/runtime-eval-callable and itself uses global-environment, object-runtime and shared coercion, exactly like its runtime-eval siblings already in the SCC
 loc-budget-allow:
   # 2026-10-14: +20 — the eligibility hand-off at the live-binding site, the
   # inline-gate exclusion and the post-compile site recorder around
