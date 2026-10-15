@@ -20,16 +20,19 @@ export interface NativeAwaitClassificationOptions {
   readonly markRejectionHandledFuncIdx: number;
   readonly setThrowMode: readonly Instr[];
   /**
-   * (#6995) Thenable adoption for a non-`$Promise` operand (§27.7.5.3 Await
-   * step 2, PromiseResolve): when the operand has a callable `then`, mint a
-   * pending `$Promise`, resolve it with the operand (which enqueues the
-   * PromiseResolveThenableJob) and suspend on it. Absent → the operand is
-   * delivered as a plain value (pre-#6995 behaviour).
+   * (#6995) PromiseResolve for a non-`$Promise` operand (§27.7.5.3 Await step
+   * 2): mint a pending `$Promise` and resolve it with the operand through the
+   * assimilating resolve, which performs the ONE observable `Get(then)`
+   * (§27.2.1.3.2 step 9) and threads the fetched function into the
+   * PromiseResolveThenableJob. The fresh promise is then classified exactly
+   * like an awaited `$Promise`: fulfilled (a non-thenable) delivers its value,
+   * rejected (a throwing `then` getter) throws the reason into the frame,
+   * pending (a callable `then`; the job is queued) suspends. Absent → the
+   * operand is delivered as a plain value (pre-#6995 behaviour).
    */
   readonly thenableAdoption?: {
-    readonly hasCallableThenFuncIdx: number;
     readonly resolveValueFuncIdx: number;
-    /** Pushes a fresh PENDING `(ref $Promise)`. */
+    /** Pushes a fresh PENDING `(ref $Promise)`, already marked handled. */
     readonly newPendingPromise: readonly Instr[];
   };
 }
@@ -87,28 +90,6 @@ export function buildNativeAwaitClassification(options: NativeAwaitClassificatio
         { op: "local.get", index: awaitedLocal },
         { op: "struct.set", typeIdx: stateTypeIdx, fieldIdx: options.sentField },
       ];
-  const adopt = options.thenableAdoption;
-  const deliverNonPromise: Instr[] =
-    adopt === undefined
-      ? deliverPlain
-      : [
-          { op: "local.get", index: awaitedLocal },
-          { op: "call", funcIdx: adopt.hasCallableThenFuncIdx },
-          {
-            op: "if",
-            blockType: { kind: "empty" },
-            then: [
-              ...adopt.newPendingPromise,
-              { op: "local.set", index: promiseLocal },
-              { op: "local.get", index: promiseLocal },
-              { op: "local.get", index: awaitedLocal },
-              { op: "call", funcIdx: adopt.resolveValueFuncIdx },
-              { op: "drop" },
-              ...markPending,
-            ],
-            else: deliverPlain,
-          },
-        ];
   const pendingOrRejected: Instr[] = [
     { op: "local.get", index: promiseLocal },
     { op: "struct.get", typeIdx: promiseTypeIdx, fieldIdx: 0 },
@@ -116,6 +97,26 @@ export function buildNativeAwaitClassification(options: NativeAwaitClassificatio
     { op: "i32.eq" },
     { op: "if", blockType: { kind: "empty" }, then: rejectFromPromise, else: markPending },
   ];
+  const classifyPromiseState: Instr[] = [
+    { op: "local.get", index: promiseLocal },
+    { op: "struct.get", typeIdx: promiseTypeIdx, fieldIdx: 0 },
+    { op: "i32.const", value: 1 },
+    { op: "i32.eq" },
+    { op: "if", blockType: { kind: "empty" }, then: deliverFromPromise, else: pendingOrRejected },
+  ];
+  const adopt = options.thenableAdoption;
+  const deliverNonPromise: Instr[] =
+    adopt === undefined
+      ? deliverPlain
+      : [
+          ...adopt.newPendingPromise,
+          { op: "local.set", index: promiseLocal },
+          { op: "local.get", index: promiseLocal },
+          { op: "local.get", index: awaitedLocal },
+          { op: "call", funcIdx: adopt.resolveValueFuncIdx },
+          { op: "drop" },
+          ...structuredClone(classifyPromiseState),
+        ];
   return [
     { op: "i32.const", value: 0 },
     { op: "local.set", index: suspendedLocal },
@@ -131,11 +132,7 @@ export function buildNativeAwaitClassification(options: NativeAwaitClassificatio
         { op: "ref.cast", typeIdx: promiseTypeIdx },
         { op: "local.set", index: promiseLocal },
         ...buildPromiseReactionHandled(options.rejectionDispatchFuncIdx, promiseTypeIdx, promiseLocal),
-        { op: "local.get", index: promiseLocal },
-        { op: "struct.get", typeIdx: promiseTypeIdx, fieldIdx: 0 },
-        { op: "i32.const", value: 1 },
-        { op: "i32.eq" },
-        { op: "if", blockType: { kind: "empty" }, then: deliverFromPromise, else: pendingOrRejected },
+        ...classifyPromiseState,
       ],
       else: deliverNonPromise,
     },

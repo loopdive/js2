@@ -988,27 +988,27 @@ export function awaitOperandProvablySettled(
 }
 
 /**
- * (#6995) The native drive lane's `await <thenable>` adoption resources
- * (`buildNativeAwaitClassification` `thenableAdoption`): the #3125 thenable
- * substrate's callable-`then` probe + the assimilating resolve. `undefined`
- * when the substrate is unavailable (the operand is then delivered as-is).
+ * (#6995) The native drive lane's PromiseResolve resources for a non-`$Promise`
+ * await operand (`buildNativeAwaitClassification` `thenableAdoption`): the
+ * assimilating `__promise_resolve_value` (one `Get(then)`, the fetched function
+ * carried into the #3125 thenable job) and a fresh pending promise, minted
+ * HANDLED so a throwing `then` getter rejects it without an unhandled-rejection
+ * report (the await consumes that rejection). `undefined` when unavailable.
  */
 function nativeThenableAdoption(
   ctx: CodegenContext,
   promiseTypeIdx: number,
-): { hasCallableThenFuncIdx: number; resolveValueFuncIdx: number; newPendingPromise: Instr[] } | undefined {
-  const hasCallableThenFuncIdx = ctx.funcMap.get("__promise_has_callable_then");
+): { resolveValueFuncIdx: number; newPendingPromise: Instr[] } | undefined {
   const resolveValueFuncIdx = ctx.funcMap.get("__promise_resolve_value");
-  if (hasCallableThenFuncIdx === undefined || resolveValueFuncIdx === undefined) return undefined;
+  if (resolveValueFuncIdx === undefined) return undefined;
   return {
-    hasCallableThenFuncIdx,
     resolveValueFuncIdx,
     newPendingPromise: [
       { op: "i32.const", value: PROMISE_STATE_PENDING },
       { op: "ref.null.extern" },
       { op: "ref.null.extern" },
       closureBagInitInstr(),
-      { op: "i32.const", value: 0 },
+      { op: "i32.const", value: 1 },
       { op: "struct.new", typeIdx: promiseTypeIdx },
     ],
   };

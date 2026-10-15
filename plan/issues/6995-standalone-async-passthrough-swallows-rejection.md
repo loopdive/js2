@@ -123,11 +123,20 @@ repro prints `1`.
    the pass-through the plan assumed); `buildNativeAwaitClassification`
    delivered any non-`$Promise` operand as a plain value. It now takes an
    optional `thenableAdoption` (`src/runtime/wasmgc/async/native-await.ts`):
-   when `__promise_has_callable_then(v)`, mint a pending `$Promise`, resolve it
-   with `v` through `__promise_resolve_value` (which enqueues the #3125
-   PromiseResolveThenableJob) and suspend on it. Wired from
-   `async-frame.ts` (`nativeThenableAdoption`); the prepared IR engine caller
-   is unchanged.
+   a non-`$Promise` operand goes through PromiseResolve — a fresh pending
+   `$Promise` (minted handled) resolved with the operand by
+   `__promise_resolve_value`, which performs the ONE observable `Get(then)`
+   and carries the fetched function into the #3125 PromiseResolveThenableJob.
+   The fresh promise is then classified like any awaited `$Promise`:
+   fulfilled (non-thenable) delivers, rejected (throwing getter) throws into
+   the frame, pending (callable `then`) suspends. Wired from `async-frame.ts`
+   (`nativeThenableAdoption`); the prepared IR engine caller is unchanged.
+   (Review on PR #6700: the first cut probed `__promise_has_callable_then`
+   and then resolved, i.e. two `Get(then)` — a getter saw 2 reads and the
+   second-fetched function ran. Controls pinned in the #6995 test: read count
+   `1 1`, first-fetched function used, throwing getter rejects with the thrown
+   value, plain value / non-callable `then` delivered as-is. Re-measured: the
+   two test262 populations and the 69 related files are unchanged by it.)
 4. **Struct operand (`illegal cast`).** Root cause was not the await operand
    (plan step 4) but the call site: `calleeIsDriveLowered` (expressions.ts)
    keyed on `asyncFnNeedsCps`, which admits `await <non-thenable struct>`

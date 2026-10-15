@@ -158,6 +158,46 @@ describe("#6995 standalone async: declined shapes never swallow a rejection", ()
     expect(node).toEqual(["c7"]);
   });
 
+  // Await → PromiseResolve performs ONE observable Get(then) and runs the
+  // function it fetched (§27.2.1.3.2 steps 9-14) — review on PR #6700.
+  it("`await <thenable>` reads `then` exactly once", async () => {
+    const node = await expectSameAsNode(
+      `let reads = 0;
+       const operand = { get then() { reads++; return (resolve) => resolve(reads); } };
+       async function a() { return await operand; }
+       a().then((v) => log(v + " " + reads));`,
+    );
+    expect(node).toEqual(["1 1"]);
+  });
+
+  it("`await <thenable>` calls the FIRST fetched `then`, not a re-read one", async () => {
+    const node = await expectSameAsNode(
+      `let reads = 0;
+       const operand = { get then() { reads++; return reads === 1 ? (resolve) => resolve("first") : (resolve) => resolve("second"); } };
+       async function a() { return await operand; }
+       a().then((v) => log(v + " " + reads));`,
+    );
+    expect(node).toEqual(["first 1"]);
+  });
+
+  it("a throwing `then` getter rejects the await with the thrown value", async () => {
+    const node = await expectSameAsNode(
+      `const boom = { tag: "boom" };
+       const operand = { get then() { throw boom; } };
+       async function a() { try { await operand; return "no"; } catch (e) { return (e === boom) + " " + e.tag; } }
+       a().then((v) => log(v));`,
+    );
+    expect(node).toEqual(["true boom"]);
+  });
+
+  it("`await <plain value>` and a non-callable `then` deliver the operand", async () => {
+    const node = await expectSameAsNode(
+      `async function a() { const v = await 5; const o = await { then: 3 }; return v + o.then; }
+       a().then((v) => log(v));`,
+    );
+    expect(node).toEqual(["8"]);
+  });
+
   it("`await <plain object>` yields the object, no illegal cast", async () => {
     const node = await expectSameAsNode(
       `async function a() { const o = { k: 1 }; const r = await o; return r.k; }\n${THEN}`,
