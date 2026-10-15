@@ -109,9 +109,3 @@ export function initializerMayProduceHostCallable(ctx: CodegenContext, expressio
   }
   return false;
 }
-
-/** Resolve a variable (including a named import) and classify its initializer. */
-export function variableMayProduceHostCallable(ctx: CodegenContext, identifier: ts.Identifier): boolean {
-  const declaration = resolvedVariableDeclaration(ctx, identifier);
-  return declaration?.initializer !== undefined && initializerMayProduceHostCallable(ctx, declaration.initializer);
-}

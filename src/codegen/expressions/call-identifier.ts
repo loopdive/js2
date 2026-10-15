@@ -134,9 +134,6 @@ import { tryCompileNodeBuiltinMemberCall } from "../host-method-args.js"; // (#6
 import { isModuleInitChunkFunctionContext } from "../module-init-chunks.js";
 import { paramUndefinedTypeIsDefaultArtifact } from "../destructuring-params.js";
 import {
-  calleeIsPromiseExecutorParam,
-  calleeIsLinkedProviderParam,
-  calleeMayBeHostCallable,
   appendForwardedOptionalArgcOverride,
   compileCallExpression,
   emitBareCallReceiverReset,
@@ -2943,10 +2940,10 @@ function compileBoundIdentifierCall(
           // variable (acorn's `var hasOwn = Object.hasOwn || function(…){…}`),
           // a bound function, a closure with a foreign struct layout, or the
           // standalone runtime-eval callback marker (`var alias = eval`). The
-          // struct.get below would trap "dereferencing a null pointer". Host
-          // mode routes through `__call_function`; standalone/WASI routes
+          // struct.get below would trap "dereferencing a null pointer". It routes
           // through the native `__apply_closure` classifier, which owns the
-          // structurally canonical runtime-eval callback arm.
+          // structurally canonical runtime-eval callback arm (the host
+          // `__call_function` arm is retired, #6979).
           // Eligibility excludes i64/v128-typed params/returns (no boxing rule).
           const boxableKind = (t: ValType | null): boolean =>
             t === null ||
@@ -2955,38 +2952,6 @@ function compileBoundIdentifierCall(
             t.kind === "i32" ||
             t.kind === "ref" ||
             t.kind === "ref_null";
-          const hostCallFallback =
-            rawCalleeLocal !== undefined &&
-            !ctx.standalone &&
-            !ctx.wasi &&
-            boxableKind(expectedReturn) &&
-            matchedClosureInfo.paramTypes.every((t) => boxableKind(t)) &&
-            // (#1941) Only emit the host-call arm for callees that can actually
-            // be a foreign (non-wasm-closure) callable — a JS variable holding a
-            // host builtin (`Object.hasOwn || fn`). Pure local closures /
-            // function params are always wrapped into the closure struct, so the
-            // arm would be dead code and only serve to pull host imports
-            // (__js_array_new/…) into otherwise self-contained modules.
-            // (#2028) ALSO emit it for a Promise-executor `resolve`/`reject`
-            // parameter — those arrive as host JS functions and must dispatch
-            // through __call_function, not the closure-struct call_ref path
-            // (which traps on the null cast). Narrowly gated to Promise-executor
-            // params so the #1941 dual-mode guarantee for ordinary callable
-            // params is preserved.
-            (calleeMayBeHostCallable(ctx, expr.expression) ||
-              calleeIsPromiseExecutorParam(ctx, expr.expression) ||
-              // (#6490) A callable param of a separately-linked PROVIDER can
-              // hold a consumer-module closure, whose struct belongs to the
-              // consumer's type group; the guarded cast here nulls and the
-              // dispatch traps un-catchably. Linker-only flag, so ordinary
-              // single-module compiles are byte-identical.
-              calleeIsLinkedProviderParam(ctx, expr.expression) ||
-              // Captures explicitly marked as host-bound callback values stay
-              // externref by design. They may be real JS functions after a
-              // compiled method crosses the host boundary (Jest's Prompt
-              // callbacks are this shape), so retain the raw value and use
-              // the callable host arm when the Wasm-closure cast misses.
-              fctx.captureExternrefNames?.has(funcName) === true);
           const runtimeApplyFallback =
             rawCalleeLocal !== undefined &&
             (ctx.standalone || ctx.wasi) &&
@@ -2996,36 +2961,16 @@ function compileBoundIdentifierCall(
 
           let fallbackInstrs: Instr[] | null = null;
           let dispatchOuterBody: Instr[] | null = null;
-          if (hostCallFallback || runtimeApplyFallback) {
+          if (runtimeApplyFallback) {
             // Ensure all fallback imports BEFORE detaching buffers so the index
             // shifts land while every buffer is reachable by the shifters.
             let arrNew: number | undefined;
             let arrPush: number | undefined;
             let callFn: number | undefined;
-            if (hostCallFallback) {
-              const arrNewIdx = ensureLateImport(ctx, "__js_array_new", [], [{ kind: "externref" }]);
-              const arrPushIdx = ensureLateImport(
-                ctx,
-                "__js_array_push",
-                [{ kind: "externref" }, { kind: "externref" }],
-                [],
-              );
-              const callFnIdx = ensureLateImport(
-                ctx,
-                "__call_function",
-                [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
-                [{ kind: "externref" }],
-              );
-              flushLateImportShifts(ctx, fctx);
-              arrNew = ctx.funcMap.get("__js_array_new") ?? arrNewIdx;
-              arrPush = ctx.funcMap.get("__js_array_push") ?? arrPushIdx;
-              callFn = ctx.funcMap.get("__call_function") ?? callFnIdx;
-            } else {
-              const builders = ensureObjVecBuilders(ctx);
-              arrNew = builders.newIdx;
-              arrPush = builders.pushIdx;
-              callFn = reserveApplyClosure(ctx);
-            }
+            const builders = ensureObjVecBuilders(ctx);
+            arrNew = builders.newIdx;
+            arrPush = builders.pushIdx;
+            callFn = reserveApplyClosure(ctx);
             if (arrNew !== undefined && arrPush !== undefined && callFn !== undefined) {
               // Build the fallback arm in a detached buffer parked in savedBodies
               // (late-import/global shifters walk savedBodies — #1712 blocker 1).
@@ -3461,7 +3406,7 @@ function compileBoundIdentifierCall(
           // (#1712/#2928) Assemble the foreign-callable fallback split: the funcref
           // dispatch emitted above went into a detached buffer; wrap both arms
           // in an `if` on "cast failed but raw callee non-null".
-          if ((hostCallFallback || runtimeApplyFallback) && fallbackInstrs && dispatchOuterBody) {
+          if (runtimeApplyFallback && fallbackInstrs && dispatchOuterBody) {
             const dispatchInstrs = fctx.body;
             fctx.body = dispatchOuterBody;
             fctx.savedBodies.pop(); // fallbackInstrs

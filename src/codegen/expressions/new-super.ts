@@ -192,7 +192,6 @@ import {
   getFuncParamTypes,
   getWasmFuncReturnType,
   isEffectivelyVoidReturn,
-  maybeStampCompiledFunctionArgName,
   noJsHost,
   wasmFuncReturnsVoid,
 } from "./helpers.js";
@@ -207,10 +206,7 @@ import { SUPER_HOME_OBJECT_CAPTURE_NAME } from "../closures.js";
 import { emitClosedLiteralSuperBase } from "../object-literal-super-base.js"; // (#6651 A13)
 import { NEW_GLOBAL_FALLTHROUGH, tryCompileBuiltinGlobalNew } from "./new-builtin-globals.js"; // (#3281 slice 1) built-in global ctor dispatch
 import { tryCompileBuiltinPrototypeConstructorNew } from "./builtin-prototype-constructor.js";
-import {
-  emitHostTypedArrayCarrierRegistration,
-  typedArrayCtorArgIsArithmeticPrimitive,
-} from "./typed-array-host-carrier.js";
+import { emitHostTypedArrayCarrierRegistration } from "./typed-array-host-carrier.js";
 import { NEW_INDEXED_FALLTHROUGH, tryCompileIndexedBuiltinNew } from "./new-indexed.js"; // (#3281 slice 2) indexed builtin ctor dispatch
 import { tryCompileIntlHostOnlyNew } from "./new-intl-host-bridge.js"; // (#5355) standalone Intl refusal
 import { emitFnctorProtoGet, resolveUserFnctorName } from "./fnctor-prototype.js"; // (#2660 S3a) reconstruct `new F()` as $Object; (#3981) proto for a value-bound ctor
@@ -883,21 +879,6 @@ function resolvesToMemberHeldUserFunction(
   return true;
 }
 
-/** (#6943) The member callee itself, or an identifier initialized from one (`var N = T.Node`). */
-function isMemberHeldUserFunctionNewCallee(ctx: CodegenContext, callee: ts.Expression): boolean {
-  if (ts.isPropertyAccessExpression(callee) || ts.isElementAccessExpression(callee))
-    return resolvesToMemberHeldUserFunction(ctx, callee);
-  if (!ts.isIdentifier(callee) || ctx.classSet.has(callee.text) || ctx.funcConstructorMap.has(callee.text))
-    return false;
-  let init = ctx.oracle.variableInitializerOf(callee);
-  while (init !== undefined && ts.isParenthesizedExpression(init)) init = init.expression;
-  return (
-    init !== undefined &&
-    (ts.isPropertyAccessExpression(init) || ts.isElementAccessExpression(init)) &&
-    resolvesToMemberHeldUserFunction(ctx, init)
-  );
-}
-
 function resolvesToDynamicAnyCtorValue(ctx: CodegenContext, calleeExpr: ts.Expression): boolean {
   // (#4616) Inline member-access ctor values: `new (Object.getPrototypeOf(arr)
   // .constructor)(n)` (jest-util deepCyclicCopyArray's keepPrototype lane) keeps
@@ -1019,231 +1000,12 @@ const NAMESPACE_NON_CONSTRUCTORS = new Set(["Math", "JSON", "Reflect", "Atomics"
  * ambient builtin's symbol has all of its declarations in declaration files.
  * Unresolved symbols (no declaration anywhere) are treated as the global.
  */
-/**
- * (#3097) JS-host lane: `new <TA>(buffer[, byteOffset[, length]])` with a
- * statically-known ArrayBuffer/SharedArrayBuffer buffer arg.
- *
- * The native vec path treats the buffer arg as a numeric LENGTH
- * (`ToNumber(vecStruct)` → NaN → `i32.trunc_sat` → 0), so
- * `new Int8Array(new ArrayBuffer(8))` produced a length-0 compiled vec. Route
- * through the host construct bridge instead: resolve the REAL host constructor
- * (`__extern_get(globalThis, "<TA>")` — the #3087 ctor-as-value pattern),
- * materialize the args into a JS argv, and `__construct_closure(ctor, argv)`.
- * The bridge's runtime side (#3097) marshals a compiled-ArrayBuffer i32_byte
- * vec struct to its canonical host ArrayBuffer (identity-cached), so the host
- * constructor builds a REAL windowed TypedArray view with byte-sharing across
- * sibling views.
- *
- * Returns a host TypedArray externref. `inferTaViewType` (variables.ts) types
- * the binding externref in LOCK-STEP with this gate so reads route through the
- * extern paths — a `ref.cast` to the native vec type would trap.
- *
- * DataView-typed buffer args are deliberately EXCLUDED (host lane): per
- * §23.2.5.1 a DataView is not a buffer — `new TA(dataView)` takes the
- * array-like path (length 0), which the existing numeric fallback already
- * approximates.
- *
- * One terminal `flushLateImportShifts` before any body emission (the
- * #608/#794 late-import index-shift hazard). Returns null when the bridge
- * imports are unavailable (caller falls through to the legacy path).
- */
-export function emitHostTaBufferConstruct(
-  ctx: CodegenContext,
-  fctx: FunctionContext,
-  className: string,
-  args: readonly ts.Expression[],
-): ValType | null {
-  const gtIdx = ensureLateImport(ctx, "__get_globalThis", [], [{ kind: "externref" }]);
-  const getIdx = ensureLateImport(
-    ctx,
-    "__extern_get",
-    [{ kind: "externref" }, { kind: "externref" }],
-    [{ kind: "externref" }],
-  );
-  const arrNewIdx = ensureLateImport(ctx, "__js_array_new", [], [{ kind: "externref" }]);
-  const arrPushIdx = ensureLateImport(ctx, "__js_array_push", [{ kind: "externref" }, { kind: "externref" }], []);
-  const ccIdx = ensureLateImport(
-    ctx,
-    "__construct_closure",
-    [{ kind: "externref" }, { kind: "externref" }],
-    [{ kind: "externref" }],
-  );
-  addStringConstantGlobal(ctx, className);
-  // (#5193) This bridge hands a compiled ArrayBuffer/array-like to a HOST
-  // constructor, and the runtime can only decode it through the module's
-  // exported vec/byte helpers. At module top level those exports do not exist
-  // yet (the `start` section runs inside `WebAssembly.instantiate`), so ask for
-  // the funcref self-registration prologue on `__module_init`.
-  ctx.needsInitMarshalHelpers = true;
-  flushLateImportShifts(ctx, fctx);
-  const finalGt = ctx.funcMap.get("__get_globalThis") ?? gtIdx;
-  const finalGet = ctx.funcMap.get("__extern_get") ?? getIdx;
-  const finalArrNew = ctx.funcMap.get("__js_array_new") ?? arrNewIdx;
-  const finalArrPush = ctx.funcMap.get("__js_array_push") ?? arrPushIdx;
-  const finalCc = ctx.funcMap.get("__construct_closure") ?? ccIdx;
-  if (
-    finalGt === undefined ||
-    finalGet === undefined ||
-    finalArrNew === undefined ||
-    finalArrPush === undefined ||
-    finalCc === undefined
-  ) {
-    return null;
-  }
-  // ctor = globalThis["<TA>"] — the genuine host constructor.
-  fctx.body.push({ op: "call", funcIdx: finalGt });
-  fctx.body.push(...stringConstantExternrefInstrs(ctx, className));
-  fctx.body.push({ op: "call", funcIdx: finalGet });
-  const ctorLocal = allocLocal(fctx, `__hta_ctor_${fctx.locals.length}`, { kind: "externref" });
-  fctx.body.push({ op: "local.set", index: ctorLocal });
-  // argv = [buffer, byteOffset?, length?] — each boxed externref, source order.
-  fctx.body.push({ op: "call", funcIdx: finalArrNew });
-  const argvLocal = allocLocal(fctx, `__hta_argv_${fctx.locals.length}`, { kind: "externref" });
-  fctx.body.push({ op: "local.set", index: argvLocal });
-  for (const arg of args) {
-    fctx.body.push({ op: "local.get", index: argvLocal });
-    const aTy = compileExpression(ctx, fctx, arg, { kind: "externref" });
-    if (aTy && aTy.kind !== "externref") {
-      coerceType(ctx, fctx, aTy, { kind: "externref" });
-    } else if (aTy === null) {
-      fctx.body.push({ op: "ref.null.extern" });
-    }
-    fctx.body.push({ op: "call", funcIdx: finalArrPush });
-  }
-  fctx.body.push({ op: "local.get", index: ctorLocal });
-  fctx.body.push({ op: "local.get", index: argvLocal });
-  fctx.body.push({ op: "call", funcIdx: finalCc });
-  return { kind: "externref" };
-}
-
-/**
- * (#3097) Gate for `emitHostTaBufferConstruct` — MUST stay in lock-step with
- * `inferTaViewType`'s host-lane arm (variables.ts) so the binding's local type
- * (externref) agrees with the constructed value.
- */
-export function hostTaBufferArgSymName(ctx: CodegenContext, args: readonly ts.Expression[]): string | undefined {
-  if (noJsHost(ctx)) return undefined;
-  if (args.length < 1 || args.length > 3 || ts.isNumericLiteral(args[0]!)) return undefined;
-  // (#4383) An arithmetic expression may inherit `any` from an operand, but
-  // evaluation has already reduced it to a primitive. It cannot be the dynamic
-  // ArrayBuffer/array-like carrier this host-constructor escape is for.
-  if (typedArrayCtorArgIsArithmeticPrimitive(args[0]!)) return undefined;
-  const argSymName = nativeBufferBuiltinOf(ctx, args[0]!);
-  if (argSymName === "ArrayBuffer" || argSymName === "SharedArrayBuffer") return argSymName;
-  // An unannotated JavaScript parameter can carry either a numeric element
-  // count, an ArrayBuffer, or an array-like value at runtime.  The native host
-  // TypedArray constructor already implements that full overload set; forcing
-  // the value through the compiled numeric-count path instead applies
-  // ToNumber to an ArrayBuffer (`NaN -> 0`) and silently creates an empty view.
-  // Route only the genuinely dynamic carrier through the same host construct
-  // bridge as a statically-known ArrayBuffer.  `inferTaViewType` mirrors this
-  // gate so the receiving local remains externref-backed.
-  const argFact = ctx.oracle.typeFactOf(args[0]!);
-  if (argFact.kind === "any" || argFact.kind === "unknown") return "dynamic";
-  return undefined;
-}
-
 // (#4017) Moved to ./non-constructable.ts together with the rest of the
 // "does this callee have [[Construct]]?" analysis; re-exported here because
 // json-standalone.ts and new-builtin-globals.ts import it from this module.
 export { resolvesToAmbientGlobal, resolvesToNamedAmbientGlobal } from "./non-constructable.js";
 
 /** Compile super.method(args) — resolve to ParentClass_method and call with this */
-/**
- * (#1614) Dispatch `super.method(args)` where the parent is a builtin extern
- * class (Set/Map/Array/...) whose methods are host-backed and therefore not
- * present in `funcMap`. Emits __extern_method_call(this, methodName, argsArray)
- * and returns externref. Returns null when the parent is not a known extern
- * class or the required host imports cannot be registered (caller then reports
- * the original "Cannot find method" error).
- */
-function emitSuperExternMethodCall(
-  ctx: CodegenContext,
-  fctx: FunctionContext,
-  expr: ts.CallExpression,
-  methodName: string,
-  parentClassName: string,
-): ValType | null {
-  // Only applies when the parent (or an ancestor) is a registered extern class.
-  let externAncestor: string | undefined = parentClassName;
-  while (externAncestor && !ctx.externClasses.has(externAncestor)) {
-    externAncestor = ctx.classParentMap.get(externAncestor);
-  }
-  if (!externAncestor) return null;
-
-  // (#2029 family B) Standalone/WASI: this whole path is a JS-host bridge
-  // (`__extern_method_call` + `__js_array_*` — a dynamic `recv[name](args)`
-  // performed in JS land). With no host, the imports both leak (the module
-  // could never instantiate with an empty import object) AND the method-name
-  // string push below baked the `-1` string-global sentinel → the raw
-  // "global index out of range — -1" emit crash (e.g. `super[Symbol.replace]`
-  // in a `class RE extends RegExp`). Refuse here so the caller reports the
-  // clean, located "Cannot find method 'X' on parent class 'Y'" error —
-  // the #1888 dual-mode invariant (loud refusal, never a poisoned index).
-  if (ctx.standalone || ctx.wasi) return null;
-
-  const selfIdx = fctx.localMap.get("this");
-  if (selfIdx === undefined) return null;
-
-  const arrNewIdx = ensureLateImport(ctx, "__js_array_new", [], [{ kind: "externref" }]);
-  const arrPushIdx = ensureLateImport(ctx, "__js_array_push", [{ kind: "externref" }, { kind: "externref" }], []);
-  const methodCallIdx = ensureLateImport(
-    ctx,
-    "__extern_method_call",
-    [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
-    [{ kind: "externref" }],
-  );
-  flushLateImportShifts(ctx, fctx);
-  if (arrNewIdx === undefined || arrPushIdx === undefined || methodCallIdx === undefined) return null;
-
-  // Receiver = `this`, coerced to externref.
-  fctx.body.push({ op: "local.get", index: selfIdx });
-  fctx.body.push({ op: "extern.convert_any" });
-  const recvLocal = allocLocal(fctx, `__super_emc_recv_${fctx.locals.length}`, {
-    kind: "externref",
-  });
-  fctx.body.push({ op: "local.set", index: recvLocal });
-
-  // Build args array.
-  fctx.body.push({ op: "call", funcIdx: arrNewIdx });
-  const argsLocal = allocLocal(fctx, `__super_emc_args_${fctx.locals.length}`, {
-    kind: "externref",
-  });
-  fctx.body.push({ op: "local.set", index: argsLocal });
-
-  for (const arg of expr.arguments) {
-    const valueExpr = ts.isSpreadElement(arg) ? arg.expression : arg;
-    fctx.body.push({ op: "local.get", index: argsLocal });
-    const argType = compileExpression(ctx, fctx, valueExpr, {
-      kind: "externref",
-    });
-    if (argType && argType.kind !== "externref") {
-      fctx.body.push({ op: "extern.convert_any" });
-    } else if (argType === null) {
-      fctx.body.push({ op: "ref.null.extern" });
-    }
-    // (#3429) See maybeStampCompiledFunctionArgName — no-ops outside JS-host
-    // (this whole function already refuses standalone/wasi above).
-    maybeStampCompiledFunctionArgName(ctx, fctx, valueExpr);
-    const finalPushIdx = ctx.funcMap.get("__js_array_push") ?? arrPushIdx;
-    fctx.body.push({ op: "call", funcIdx: finalPushIdx });
-  }
-
-  // __extern_method_call(receiver, methodName, args)
-  fctx.body.push({ op: "local.get", index: recvLocal });
-  // (#2029 family B) Route the name push through the dual-mode helper: a raw
-  // `global.get stringGlobalMap.get(name)` guarded only on `!== undefined`
-  // bakes the -1 sentinel under nativeStrings (gc + --nativeStrings; the
-  // standalone/wasi combination is refused above). Host mode is
-  // byte-identical (the helper emits the same `global.get`).
-  addStringConstantGlobal(ctx, methodName);
-  fctx.body.push(...stringConstantExternrefInstrs(ctx, methodName));
-  fctx.body.push({ op: "local.get", index: argsLocal });
-  const finalMcIdx = ctx.funcMap.get("__extern_method_call") ?? methodCallIdx;
-  fctx.body.push({ op: "call", funcIdx: finalMcIdx });
-  return { kind: "externref" };
-}
-
 /**
  * (#3194) Shared super-method-dispatch core for `super.method(args)` and
  * `super['method'](args)`. The two call forms differ ONLY in how `methodName`
@@ -1494,11 +1256,6 @@ function compileSuperMethodCallCore(
     // (#6754) Standalone Map/Set/WeakMap/WeakSet parent: the native helper on `this`.
     const collectionResult = compileCollectionSuperMethodCall(ctx, fctx, expr, currentClassName, COLLECTION_CALLS);
     if (collectionResult !== undefined) return collectionResult;
-    // (#1614) The parent may be a builtin extern class (Set/Map/Array/...)
-    // whose methods are host-backed, not compiled into funcMap. Dispatch
-    // `super.method(args)` dynamically via __extern_method_call(this, name, args).
-    const externResult = emitSuperExternMethodCall(ctx, fctx, expr, methodName, parentClassName);
-    if (externResult !== null) return externResult;
     reportError(ctx, expr, `Cannot find method '${methodName}' on parent class '${parentClassName}'`);
     return null;
   }
@@ -4693,8 +4450,7 @@ function emitDynamicNewFallback(
   // (#3087 / #4616) The `__construct_closure` no-match base makes this fallback
   // meaningful even with ZERO candidate classes. A typed #1058 driver owns the
   // same no-candidate shape when the declared construct result is a Wasm struct.
-  const useConstructClosureBase = typedConstructDriver === undefined && usesHostConstructClosureBase(ctx, calleeExpr);
-  if (candidates.length === 0 && !useConstructClosureBase && typedConstructDriver === undefined) return false;
+  if (candidates.length === 0 && typedConstructDriver === undefined) return false;
 
   // (#53) The runtime-argv path needs the `$ObjVecArr` `(array (mut externref))`
   // type. It is RESERVED up-front for class-bearing sources (`reserveObjVecArrType`
@@ -4728,42 +4484,10 @@ function emitDynamicNewFallback(
     ensureLateImport(ctx, "__extern_get", [{ kind: "externref" }, { kind: "externref" }], [{ kind: "externref" }]);
     ensureLateImport(ctx, "__unbox_number", [{ kind: "externref" }], [{ kind: "f64" }]);
     ensureLateImport(ctx, "__box_number", [{ kind: "f64" }], [{ kind: "externref" }]);
-    if (noJsHost(ctx)) {
-      ensureLateImport(ctx, "__extern_get_idx", [{ kind: "externref" }, { kind: "f64" }], [{ kind: "externref" }]);
-    } else {
-      ensureLateImport(ctx, "__array_from_iter", [{ kind: "externref" }], [{ kind: "externref" }]);
-    }
+    ensureLateImport(ctx, "__extern_get_idx", [{ kind: "externref" }, { kind: "f64" }], [{ kind: "externref" }]);
     flushLateImportShifts(ctx, fctx);
   }
 
-  // (#3087) When the value-bound ctor is an `any`/`unknown`-typed dynamic value
-  // (most importantly a callback PARAMETER receiving a real constructor — the
-  // TypedArray harness `function (TA) { new TA(buffer, 0, 4) }`), a genuine host
-  // constructor value matches NONE of the compiled-class tags and hits the
-  // no-match base below. On the JS-host lane, route that base through the
-  // `__construct_closure` bridge (its runtime side runs the spec IsConstructor
-  // probe + `Reflect.construct`) instead of the non-existent `__new_${ctorName}`
-  // extern-class import — the dominant #3074 downstream honest-fail
-  // ("No dependency provided for extern class 'TA'"). Ensure the bridge imports
-  // up-front and flush ONCE here so the funcIdx is stable before any body
-  // emission (the #608/#794 late-import index-shift hazard). Scoped to the
-  // Runtime argv is supported too: its no-match arm copies the materialized
-  // argv into the bridge's JS array without re-evaluating any source expression.
-  // (`useConstructClosureBase` is computed above, before the candidate check.)
-  let ccArrNewIdx: number | undefined = -1;
-  let ccArrPushIdx: number | undefined = -1;
-  let ccBridgeIdx: number | undefined = -1;
-  if (useConstructClosureBase) {
-    ccArrNewIdx = ensureLateImport(ctx, "__js_array_new", [], [{ kind: "externref" }]);
-    ccArrPushIdx = ensureLateImport(ctx, "__js_array_push", [{ kind: "externref" }, { kind: "externref" }], []);
-    ccBridgeIdx = ensureLateImport(
-      ctx,
-      "__construct_closure",
-      [{ kind: "externref" }, { kind: "externref" }],
-      [{ kind: "externref" }],
-    );
-    flushLateImportShifts(ctx, fctx);
-  }
   // (#6954) The standalone no-match base's last arm; registered here, on the
   // live body, because the base itself is built detached.
   const uccDriver =
@@ -5159,61 +4883,6 @@ function emitDynamicNewFallback(
         funcIdx: ctx.funcMap.get(typedConstructDriver.name) ?? typedConstructDriver.funcIdx,
       },
     ];
-    noMatchBase = base;
-  } else if (useConstructClosureBase) {
-    // (#3087) The runtime value isn't a compiled class (tag == -1) but is an
-    // `any`-typed dynamic ctor — construct it via the host `__construct_closure`
-    // bridge: build a JS argv from the pre-evaluated externref args, then call
-    // `__construct_closure(calleeExternref, argv)`. The bridge throws the spec
-    // `TypeError` if the runtime value is not a constructor, so this is correct
-    // for ANY runtime value.
-    const finalArrNew = ctx.funcMap.get("__js_array_new") ?? ccArrNewIdx!;
-    const finalArrPush = ctx.funcMap.get("__js_array_push") ?? ccArrPushIdx!;
-    const finalCc = ctx.funcMap.get("__construct_closure") ?? ccBridgeIdx!;
-    const base: Instr[] = [];
-    const savedBodyCc = fctx.body;
-    fctx.body = base;
-    fctx.body.push({ op: "call", funcIdx: finalArrNew });
-    const ccArgvLocal = allocLocal(fctx, `__dynnew_ccargv_${fctx.locals.length}`, { kind: "externref" });
-    fctx.body.push({ op: "local.set", index: ccArgvLocal });
-    if (useRuntimeArgv) {
-      const ccIdxLocal = allocLocal(fctx, `__dynnew_ccidx_${fctx.locals.length}`, { kind: "i32" });
-      fctx.body.push({ op: "i32.const", value: 0 });
-      fctx.body.push({ op: "local.set", index: ccIdxLocal });
-      const copyLoop: Instr[] = [
-        { op: "local.get", index: ccIdxLocal },
-        { op: "local.get", index: argcLocal },
-        { op: "i32.ge_s" },
-        { op: "br_if", depth: 1 },
-        { op: "local.get", index: ccArgvLocal },
-        { op: "local.get", index: argvLocal },
-        { op: "local.get", index: ccIdxLocal },
-        { op: "array.get", typeIdx: objVecArrTypeIdx },
-        { op: "call", funcIdx: finalArrPush },
-        { op: "local.get", index: ccIdxLocal },
-        { op: "i32.const", value: 1 },
-        { op: "i32.add" },
-        { op: "local.set", index: ccIdxLocal },
-        { op: "br", depth: 0 },
-      ];
-      fctx.body.push({
-        op: "block",
-        blockType: { kind: "empty" },
-        body: [{ op: "loop", blockType: { kind: "empty" }, body: copyLoop }],
-      });
-    } else {
-      for (const aLocal of argLocals) {
-        fctx.body.push({ op: "local.get", index: ccArgvLocal });
-        fctx.body.push({ op: "local.get", index: aLocal });
-        fctx.body.push({ op: "call", funcIdx: finalArrPush });
-      }
-    }
-    // The callee descriptor (anyref) → externref for the bridge's first param.
-    fctx.body.push({ op: "local.get", index: descLocal });
-    fctx.body.push({ op: "extern.convert_any" });
-    fctx.body.push({ op: "local.get", index: ccArgvLocal });
-    fctx.body.push({ op: "call", funcIdx: finalCc });
-    fctx.body = savedBodyCc;
     noMatchBase = base;
   } else if (hostFuncIdx !== undefined) {
     const base: Instr[] = [];
@@ -6126,182 +5795,6 @@ function emitArrayGetForElem(arrTypeIdx: number, elemType: ValType): Instr {
   return { op, typeIdx: arrTypeIdx };
 }
 
-function soleTopLevelCollectionInitializer(arg: ts.Expression): ts.VariableDeclaration | undefined {
-  const newExpression = arg.parent;
-  if (
-    !ts.isNewExpression(newExpression) ||
-    newExpression.arguments?.length !== 1 ||
-    newExpression.arguments[0] !== arg
-  ) {
-    return undefined;
-  }
-
-  let initializer: ts.Expression = newExpression;
-  while (
-    (ts.isParenthesizedExpression(initializer.parent) ||
-      ts.isAsExpression(initializer.parent) ||
-      ts.isNonNullExpression(initializer.parent) ||
-      ts.isTypeAssertionExpression(initializer.parent) ||
-      ts.isSatisfiesExpression(initializer.parent)) &&
-    initializer.parent.expression === initializer
-  ) {
-    initializer = initializer.parent;
-  }
-  const declaration = initializer.parent;
-  if (
-    !ts.isVariableDeclaration(declaration) ||
-    declaration.initializer !== initializer ||
-    !ts.isVariableDeclarationList(declaration.parent) ||
-    declaration.parent.declarations.length !== 1 ||
-    !ts.isVariableStatement(declaration.parent.parent) ||
-    !ts.isSourceFile(declaration.parent.parent.parent)
-  ) {
-    return undefined;
-  }
-  return declaration;
-}
-
-/**
- * Prove the narrow non-literal Set seed used by TypeScript's module tables:
- *
- *   const values = ["a", "b"];
- *   const set = new Set(values);
- *
- * Requiring a primitive-only const literal in the immediately preceding
- * top-level statement means the vec cannot have been aliased, mutated, or made
- * sparse before the constructor snapshots it. This is intentionally much
- * narrower than accepting every array-typed identifier: a raw backing-store
- * walk must not bypass observable iterator/prototype/overlay behavior.
- */
-function isImmediatelySeededPrimitiveArray(ctx: CodegenContext, arg: ts.Expression): boolean {
-  if (!ts.isIdentifier(arg)) return false;
-  const consumerDeclaration = soleTopLevelCollectionInitializer(arg);
-  if (!consumerDeclaration) return false;
-  const symbol = ctx.checker.getSymbolAtLocation(arg);
-  const declaration = symbol?.valueDeclaration;
-  if (
-    !declaration ||
-    !ts.isVariableDeclaration(declaration) ||
-    !declaration.initializer ||
-    !ts.isArrayLiteralExpression(declaration.initializer) ||
-    !ts.isVariableDeclarationList(declaration.parent) ||
-    (declaration.parent.flags & ts.NodeFlags.Const) === 0 ||
-    declaration.parent.declarations.length !== 1 ||
-    !ts.isVariableStatement(declaration.parent.parent)
-  ) {
-    return false;
-  }
-
-  const elements = declaration.initializer.elements;
-  if (!elements.every((element) => ts.isStringLiteralLike(element) || ts.isNumericLiteral(element))) {
-    return false;
-  }
-
-  const sourceFile = arg.getSourceFile();
-  if (declaration.getSourceFile() !== sourceFile || declaration.parent.parent.parent !== sourceFile) return false;
-
-  const declarationIndex = sourceFile.statements.indexOf(declaration.parent.parent);
-  const consumerIndex = sourceFile.statements.indexOf(consumerDeclaration.parent.parent);
-  return declarationIndex >= 0 && consumerIndex === declarationIndex + 1;
-}
-
-/**
- * Prove the pair-table form used by TypeScript's `libEntries` module data. The
- * const array may be read through an inline `.map(...)` projection before the
- * Map snapshots it, but every other intervening reference is rejected. Because
- * the current vec (rather than the initializer syntax) is materialized, ordinary
- * value-preserving reads do not duplicate initializer evaluation.
- */
-function isReadOnlyProjectedPrimitivePairArray(ctx: CodegenContext, arg: ts.Expression): boolean {
-  if (!ts.isIdentifier(arg) || ctx.protoNamedDirty || ctx.protoIndexDirty) return false;
-  const consumerDeclaration = soleTopLevelCollectionInitializer(arg);
-  if (!consumerDeclaration) return false;
-  const symbol = ctx.checker.getSymbolAtLocation(arg);
-  const declaration = symbol?.valueDeclaration;
-  if (
-    !symbol ||
-    !declaration ||
-    !ts.isVariableDeclaration(declaration) ||
-    !declaration.initializer ||
-    !ts.isArrayLiteralExpression(declaration.initializer) ||
-    !ts.isVariableDeclarationList(declaration.parent) ||
-    (declaration.parent.flags & ts.NodeFlags.Const) === 0 ||
-    declaration.parent.declarations.length !== 1 ||
-    !ts.isVariableStatement(declaration.parent.parent)
-  ) {
-    return false;
-  }
-
-  const primitivePair = (element: ts.Expression): boolean =>
-    ts.isArrayLiteralExpression(element) &&
-    element.elements.length === 2 &&
-    element.elements.every((field) => ts.isStringLiteralLike(field) || ts.isNumericLiteral(field));
-  if (!declaration.initializer.elements.every(primitivePair)) return false;
-
-  const sourceFile = arg.getSourceFile();
-  if (declaration.getSourceFile() !== sourceFile || declaration.parent.parent.parent !== sourceFile) return false;
-
-  const declarationIndex = sourceFile.statements.indexOf(declaration.parent.parent);
-  const consumerIndex = sourceFile.statements.indexOf(consumerDeclaration.parent.parent);
-  if (declarationIndex < 0 || consumerIndex <= declarationIndex) return false;
-
-  const safeProjectionReceiver = (identifier: ts.Identifier): boolean => {
-    const access = identifier.parent;
-    if (
-      !ts.isPropertyAccessExpression(access) ||
-      access.expression !== identifier ||
-      access.name.text !== "map" ||
-      !ts.isCallExpression(access.parent) ||
-      access.parent.expression !== access ||
-      access.parent.arguments.length !== 1
-    ) {
-      return false;
-    }
-    const callback = access.parent.arguments[0]!;
-    if (
-      !ts.isArrowFunction(callback) ||
-      callback.parameters.length !== 1 ||
-      !ts.isIdentifier(callback.parameters[0]!.name) ||
-      ts.isBlock(callback.body)
-    ) {
-      return false;
-    }
-    let body: ts.Expression = callback.body;
-    while (
-      ts.isParenthesizedExpression(body) ||
-      ts.isAsExpression(body) ||
-      ts.isNonNullExpression(body) ||
-      ts.isTypeAssertionExpression(body) ||
-      ts.isSatisfiesExpression(body)
-    ) {
-      body = body.expression;
-    }
-    const parameterName = callback.parameters[0]!.name;
-    return (
-      ts.isElementAccessExpression(body) &&
-      ts.isIdentifier(body.expression) &&
-      ctx.checker.getSymbolAtLocation(body.expression) === ctx.checker.getSymbolAtLocation(parameterName) &&
-      body.argumentExpression !== undefined &&
-      ts.isNumericLiteral(body.argumentExpression) &&
-      body.argumentExpression.text === "0"
-    );
-  };
-
-  let safe = true;
-  const inspect = (node: ts.Node): void => {
-    if (!safe) return;
-    if (ts.isIdentifier(node) && ctx.checker.getSymbolAtLocation(node) === symbol && !safeProjectionReceiver(node)) {
-      safe = false;
-      return;
-    }
-    forEachChild(node, inspect);
-  };
-  for (let index = declarationIndex + 1; index < consumerIndex && safe; index++) {
-    inspect(sourceFile.statements[index]!);
-  }
-  return safe;
-}
-
 /**
  * Coerce a vec element (already on the stack, type `elemType`) to anyref for a
  * collection key/value, appending into `out`. Mirrors `coerceMapKeyToAnyref` but
@@ -6321,370 +5814,8 @@ function emitCoerceElemToAnyrefInto(ctx: CodegenContext, fctx: FunctionContext, 
   for (const instr of scratch) out.push(instr);
 }
 
-/**
- * Resolve a direct call whose runtime result is the JS-host legacy generator
- * carrier and whose instantiated yield type is a two-element tuple. This is a
- * deliberately narrow start-time bridge for `new Map(exportedGen(...))`:
- * native generator state structs must stay on the Wasm side, while an eager
- * generator is a real JS iterator that the host iterator imports can drive
- * before `WebAssembly.instantiate` has returned the instance.
- */
-function legacyPairGeneratorYield(
-  ctx: CodegenContext,
-  arg: ts.Expression,
-): { tupleTypeIdx: number; fields: FieldDef[] } | undefined {
-  if (!ts.isCallExpression(arg) || !ts.isIdentifier(arg.expression)) return undefined;
-
-  let symbol = ctx.checker.getSymbolAtLocation(arg.expression);
-  if (symbol && (symbol.flags & ts.SymbolFlags.Alias) !== 0) {
-    symbol = ctx.checker.getAliasedSymbol(symbol);
-  }
-  const declaration = symbol?.declarations?.find(
-    (candidate): candidate is ts.FunctionDeclaration =>
-      ts.isFunctionDeclaration(candidate) &&
-      candidate.body !== undefined &&
-      candidate.asteriskToken !== undefined &&
-      !ts.getModifiers(candidate)?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword),
-  );
-  if (!declaration) return undefined;
-
-  // An exact declaration entry means this call returns a Wasm-native generator
-  // state, not the JS Generator object this helper is allowed to drive. The
-  // absence of one after declaration collection proves the legacy/eager lane.
-  for (const info of ctx.nativeGenerators.values()) {
-    if (info.decl === declaration) return undefined;
-  }
-
-  const signature = ctx.checker.getResolvedSignature(arg);
-  if (!signature) return undefined;
-  const returnType = ctx.checker.getReturnTypeOfSignature(signature);
-  const returnSymbol = returnType.getSymbol();
-  if (
-    !returnSymbol ||
-    (returnSymbol.name !== "Generator" && returnSymbol.name !== "Iterator" && returnSymbol.name !== "IterableIterator")
-  ) {
-    return undefined;
-  }
-  const yieldType = ctx.checker.getTypeArguments(returnType as ts.TypeReference)[0];
-  if (!yieldType) return undefined;
-  const checker = ctx.checker as unknown as { isTupleType?: (type: ts.Type) => boolean };
-  if (checker.isTupleType?.(yieldType) !== true) return undefined;
-
-  const tupleType = resolveWasmType(ctx, yieldType);
-  if (tupleType.kind !== "ref" && tupleType.kind !== "ref_null") return undefined;
-  const tupleDef = ctx.mod.types[tupleType.typeIdx];
-  const tupleStruct =
-    tupleDef?.kind === "struct"
-      ? tupleDef
-      : tupleDef?.kind === "sub" && tupleDef.type.kind === "struct"
-        ? tupleDef.type
-        : undefined;
-  if (
-    !tupleStruct ||
-    tupleStruct.fields.length < 2 ||
-    tupleStruct.fields[0]?.name !== "_0" ||
-    tupleStruct.fields[1]?.name !== "_1"
-  ) {
-    return undefined;
-  }
-  return { tupleTypeIdx: tupleType.typeIdx, fields: tupleStruct.fields };
-}
-
-/**
- * Compile and drain a checker-proven eager pair generator into a real host
- * `[[key, value], ...]` array. The runtime's general iterable conversion uses
- * instance exports to reflect Wasm tuples, which are unavailable during the
- * start function. Here the tuple type is known statically, so fields can be
- * read and boxed directly before invoking the native Map constructor.
- */
-function compileHostLegacyPairGeneratorArgument(
-  ctx: CodegenContext,
-  fctx: FunctionContext,
-  arg: ts.Expression,
-): { materialized: boolean; actual: ValType | null } | undefined {
-  const pair = legacyPairGeneratorYield(ctx, arg);
-  if (!pair) return undefined;
-
-  const actual = compileExpression(ctx, fctx, arg);
-  if (actual === null) return { materialized: false, actual };
-  if (actual.kind !== "externref") coerceType(ctx, fctx, actual, { kind: "externref" });
-
-  // Reserve every import before emitting the drain. Boxing field primitives is
-  // then index-stable while the detached loop body is assembled.
-  addUnionImports(ctx);
-  const iteratorIdx = ensureLateImport(ctx, "__iterator", [{ kind: "externref" }], [{ kind: "externref" }]);
-  const nextIdx = ensureLateImport(
-    ctx,
-    "__iterator_next",
-    [{ kind: "externref" }],
-    [{ kind: "i32" }, { kind: "externref" }],
-  );
-  const arrayNewIdx = ensureLateImport(ctx, "__js_array_new", [], [{ kind: "externref" }]);
-  const arrayPushIdx = ensureLateImport(ctx, "__js_array_push", [{ kind: "externref" }, { kind: "externref" }], []);
-  flushLateImportShifts(ctx, fctx);
-  if (iteratorIdx === undefined || nextIdx === undefined || arrayNewIdx === undefined || arrayPushIdx === undefined) {
-    return { materialized: false, actual: { kind: "externref" } };
-  }
-
-  const finalIteratorIdx = ctx.funcMap.get("__iterator") ?? iteratorIdx;
-  const finalNextIdx = ctx.funcMap.get("__iterator_next") ?? nextIdx;
-  const finalArrayNewIdx = ctx.funcMap.get("__js_array_new") ?? arrayNewIdx;
-  const finalArrayPushIdx = ctx.funcMap.get("__js_array_push") ?? arrayPushIdx;
-  const generatorLocal = allocLocal(fctx, `__host_ctor_gen_${fctx.locals.length}`, { kind: "externref" });
-  const iteratorLocal = allocLocal(fctx, `__host_ctor_gen_iter_${fctx.locals.length}`, { kind: "externref" });
-  const doneLocal = allocLocal(fctx, `__host_ctor_gen_done_${fctx.locals.length}`, { kind: "i32" });
-  const valueLocal = allocLocal(fctx, `__host_ctor_gen_value_${fctx.locals.length}`, { kind: "externref" });
-  const tupleLocal = allocLocal(fctx, `__host_ctor_gen_tuple_${fctx.locals.length}`, {
-    kind: "ref",
-    typeIdx: pair.tupleTypeIdx,
-  });
-  const outerLocal = allocLocal(fctx, `__host_ctor_gen_outer_${fctx.locals.length}`, { kind: "externref" });
-  const entryLocal = allocLocal(fctx, `__host_ctor_gen_entry_${fctx.locals.length}`, { kind: "externref" });
-
-  // The compiled call result is already on the stack.
-  fctx.body.push({ op: "local.set", index: generatorLocal });
-  fctx.body.push({ op: "local.get", index: generatorLocal });
-  fctx.body.push({ op: "call", funcIdx: finalIteratorIdx });
-  fctx.body.push({ op: "local.set", index: iteratorLocal });
-  fctx.body.push({ op: "call", funcIdx: finalArrayNewIdx });
-  fctx.body.push({ op: "local.set", index: outerLocal });
-
-  const loopBody: Instr[] = [
-    { op: "local.get", index: iteratorLocal },
-    { op: "call", funcIdx: finalNextIdx },
-    { op: "local.set", index: valueLocal },
-    { op: "local.set", index: doneLocal },
-    { op: "local.get", index: doneLocal },
-    { op: "br_if", depth: 1 },
-    { op: "local.get", index: valueLocal },
-    { op: "any.convert_extern" },
-    { op: "ref.cast", typeIdx: pair.tupleTypeIdx },
-    { op: "local.set", index: tupleLocal },
-    { op: "call", funcIdx: finalArrayNewIdx },
-    { op: "local.set", index: entryLocal },
-  ];
-  for (let fieldIdx = 0; fieldIdx < 2; fieldIdx++) {
-    loopBody.push({ op: "local.get", index: entryLocal });
-    loopBody.push({ op: "local.get", index: tupleLocal });
-    loopBody.push({ op: "struct.get", typeIdx: pair.tupleTypeIdx, fieldIdx });
-    emitCoerceElemToAnyrefInto(ctx, fctx, loopBody, pair.fields[fieldIdx]!.type);
-    loopBody.push({ op: "extern.convert_any" });
-    loopBody.push({ op: "call", funcIdx: finalArrayPushIdx });
-  }
-  loopBody.push({ op: "local.get", index: outerLocal });
-  loopBody.push({ op: "local.get", index: entryLocal });
-  loopBody.push({ op: "call", funcIdx: finalArrayPushIdx });
-  loopBody.push({ op: "br", depth: 0 });
-  fctx.body.push({
-    op: "block",
-    blockType: { kind: "empty" },
-    body: [{ op: "loop", blockType: { kind: "empty" }, body: loopBody }],
-  });
-  fctx.body.push({ op: "local.get", index: outerLocal });
-  return { materialized: true, actual: { kind: "externref" } };
-}
-
-/**
- * Materialize a WasmGC vec as a real host iterable before invoking a native
- * Map/Set-family constructor. During WebAssembly start the runtime cannot use
- * exported `__vec_*` accessors yet because instantiation has not returned the
- * instance, so handing the opaque vec to JS would make the native constructor
- * reject it as non-iterable.
- *
- * The argument is compiled exactly once. A checker-resolved vec of tuple
- * structs becomes a host `[[k, v], ...]` array for Map/WeakMap; a flat vec
- * becomes a host `[value, ...]` array for Set/WeakSet. Returns the compiled
- * value type when the value was not a supported vec so the caller can continue
- * through the ordinary externref coercion path.
- */
-function compileHostVecIterableArgument(
-  ctx: CodegenContext,
-  fctx: FunctionContext,
-  arg: ts.Expression,
-  pairIterable: boolean,
-): { materialized: boolean; actual: ValType | null } {
-  const actual = compileExpression(ctx, fctx, arg);
-  if (actual === null || (actual.kind !== "ref" && actual.kind !== "ref_null")) {
-    return { materialized: false, actual };
-  }
-
-  const vecTypeIdx = actual.typeIdx;
-  const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
-  const arrDef = arrTypeIdx >= 0 ? ctx.mod.types[arrTypeIdx] : undefined;
-  if (!arrDef || arrDef.kind !== "array") return { materialized: false, actual };
-
-  const elemType = arrDef.element;
-  if (!pairIterable && ctx.usesArrayHoles && elemType.kind === "f64") {
-    // A sparse f64 vec uses a NaN payload as its private hole marker. Until the
-    // materializer can consult the per-index presence carrier, fail closed to
-    // the ordinary iterable path instead of boxing that marker as a real NaN.
-    return { materialized: false, actual };
-  }
-  let pairTypeIdx = -1;
-  let pairFields: FieldDef[] | undefined;
-  if (pairIterable) {
-    if (elemType.kind !== "ref" && elemType.kind !== "ref_null") {
-      return { materialized: false, actual };
-    }
-    pairTypeIdx = elemType.typeIdx;
-    const pairDef = ctx.mod.types[pairTypeIdx];
-    const pairStruct =
-      pairDef?.kind === "struct"
-        ? pairDef
-        : pairDef?.kind === "sub" && pairDef.type.kind === "struct"
-          ? pairDef.type
-          : undefined;
-    const isTuplePair =
-      pairStruct !== undefined &&
-      pairStruct.fields.length >= 2 &&
-      pairStruct.fields[0]?.name === "_0" &&
-      pairStruct.fields[1]?.name === "_1";
-    if (!isTuplePair) return { materialized: false, actual };
-    pairFields = pairStruct.fields;
-  }
-
-  let flatHoleMap: Instr[] = [];
-  if (!pairIterable && ctx.usesArrayHoles && elemType.kind === "externref") {
-    // A spread can carry sparse-array holes into an otherwise dense temporary.
-    // Set iteration observes those positions as `undefined`, never as the
-    // compiler's private `$Hole` sentinel. Reserve the undefined provider while
-    // `fctx.body` is still the real body so any late-import shift is patched in
-    // the right instruction buffer before the detached loop is assembled.
-    ensureGetUndefined(ctx);
-    flushLateImportShifts(ctx, fctx);
-    flatHoleMap = holeToUndefinedInstrs(ctx, fctx);
-  }
-
-  // Boxing primitive elements/fields must be reserved before the two array
-  // imports are finalized. This also keeps their indices stable while the loop
-  // body is assembled below.
-  addUnionImports(ctx);
-  ensureLateImport(ctx, "__js_array_new", [], [{ kind: "externref" }]);
-  ensureLateImport(ctx, "__js_array_push", [{ kind: "externref" }, { kind: "externref" }], []);
-  flushLateImportShifts(ctx, fctx);
-
-  const vecLocal = allocLocal(fctx, `__host_ctor_vec_${fctx.locals.length}`, actual);
-  const dataLocal = allocLocal(fctx, `__host_ctor_data_${fctx.locals.length}`, {
-    kind: "ref",
-    typeIdx: arrTypeIdx,
-  });
-  const idxLocal = allocLocal(fctx, `__host_ctor_i_${fctx.locals.length}`, { kind: "i32" });
-  const lenLocal = allocLocal(fctx, `__host_ctor_len_${fctx.locals.length}`, { kind: "i32" });
-  const outerLocal = allocLocal(fctx, `__host_ctor_outer_${fctx.locals.length}`, { kind: "externref" });
-  const elemLocal = pairIterable
-    ? allocLocal(fctx, `__host_ctor_pair_value_${fctx.locals.length}`, elemType)
-    : undefined;
-  const pairLocal = pairIterable
-    ? allocLocal(fctx, `__host_ctor_pair_${fctx.locals.length}`, { kind: "externref" })
-    : undefined;
-
-  // Remove the compiled vec from the operand stack while retaining it for the
-  // counted walk. Nullable vecs preserve native constructor behavior: null is
-  // passed through as null rather than being dereferenced or changed to [].
-  fctx.body.push({ op: "local.set", index: vecLocal });
-
-  const emitMaterializedArray = (): Instr[] => {
-    const savedBody = fctx.body;
-    const body: Instr[] = [];
-    fctx.body = body;
-    try {
-      fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__js_array_new")! });
-      fctx.body.push({ op: "local.set", index: outerLocal });
-
-      fctx.body.push({ op: "local.get", index: vecLocal });
-      fctx.body.push({ op: "ref.as_non_null" });
-      fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 });
-      fctx.body.push({ op: "local.set", index: dataLocal });
-      fctx.body.push({ op: "local.get", index: vecLocal });
-      fctx.body.push({ op: "ref.as_non_null" });
-      fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 });
-      fctx.body.push({ op: "local.set", index: lenLocal });
-      fctx.body.push({ op: "i32.const", value: 0 });
-      fctx.body.push({ op: "local.set", index: idxLocal });
-
-      const loopBody: Instr[] = [
-        { op: "local.get", index: idxLocal },
-        { op: "local.get", index: lenLocal },
-        { op: "i32.ge_s" },
-        { op: "br_if", depth: 1 },
-      ];
-
-      if (pairIterable && elemLocal !== undefined && pairLocal !== undefined && pairFields !== undefined) {
-        loopBody.push({ op: "local.get", index: dataLocal });
-        loopBody.push({ op: "local.get", index: idxLocal });
-        loopBody.push(emitArrayGetForElem(arrTypeIdx, elemType));
-        loopBody.push({ op: "local.set", index: elemLocal });
-        loopBody.push({ op: "call", funcIdx: ctx.funcMap.get("__js_array_new")! });
-        loopBody.push({ op: "local.set", index: pairLocal });
-
-        for (let fieldIdx = 0; fieldIdx < 2; fieldIdx++) {
-          loopBody.push({ op: "local.get", index: pairLocal });
-          loopBody.push({ op: "local.get", index: elemLocal });
-          loopBody.push({ op: "ref.as_non_null" });
-          loopBody.push({ op: "struct.get", typeIdx: pairTypeIdx, fieldIdx });
-          emitCoerceElemToAnyrefInto(ctx, fctx, loopBody, pairFields[fieldIdx]!.type);
-          loopBody.push({ op: "extern.convert_any" });
-          loopBody.push({ op: "call", funcIdx: ctx.funcMap.get("__js_array_push")! });
-        }
-
-        loopBody.push({ op: "local.get", index: outerLocal });
-        loopBody.push({ op: "local.get", index: pairLocal });
-        loopBody.push({ op: "call", funcIdx: ctx.funcMap.get("__js_array_push")! });
-      } else {
-        loopBody.push({ op: "local.get", index: outerLocal });
-        loopBody.push({ op: "local.get", index: dataLocal });
-        loopBody.push({ op: "local.get", index: idxLocal });
-        loopBody.push(emitArrayGetForElem(arrTypeIdx, elemType));
-        loopBody.push(...flatHoleMap);
-        emitCoerceElemToAnyrefInto(ctx, fctx, loopBody, elemType);
-        loopBody.push({ op: "extern.convert_any" });
-        loopBody.push({ op: "call", funcIdx: ctx.funcMap.get("__js_array_push")! });
-      }
-
-      loopBody.push({ op: "local.get", index: idxLocal });
-      loopBody.push({ op: "i32.const", value: 1 });
-      loopBody.push({ op: "i32.add" });
-      loopBody.push({ op: "local.set", index: idxLocal });
-      loopBody.push({ op: "br", depth: 0 });
-      fctx.body.push({
-        op: "block",
-        blockType: { kind: "empty" },
-        body: [{ op: "loop", blockType: { kind: "empty" }, body: loopBody }],
-      });
-      fctx.body.push({ op: "local.get", index: outerLocal });
-    } finally {
-      fctx.body = savedBody;
-    }
-    return body;
-  };
-
-  const materializedBody = emitMaterializedArray();
-  if (actual.kind === "ref_null") {
-    fctx.body.push({ op: "local.get", index: vecLocal });
-    fctx.body.push({ op: "ref.is_null" });
-    fctx.body.push({
-      op: "if",
-      blockType: { kind: "val", type: { kind: "externref" } },
-      then: [{ op: "ref.null.extern" }],
-      else: materializedBody,
-    });
-  } else {
-    fctx.body.push(...materializedBody);
-  }
-  return { materialized: true, actual: { kind: "externref" } };
-}
-
 function isDefaultExpressionImport(ctx: CodegenContext, expression: ts.Expression): expression is ts.Identifier {
   return ts.isIdentifier(expression) && resolveDefaultExpressionImportGlobal(ctx, expression) !== undefined;
-}
-
-function usesHostConstructClosureBase(ctx: CodegenContext, expression: ts.Expression): boolean {
-  return (
-    !noJsHost(ctx) &&
-    (isDefaultExpressionImport(ctx, expression) ||
-      resolvesToDynamicAnyCtorValue(ctx, expression) ||
-      isMemberHeldUserFunctionNewCallee(ctx, expression)) // (#6943) `var N = T.Node`
-  );
 }
 
 function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: ts.NewExpression): ValType | null {
@@ -7273,7 +6404,6 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
       return emitStaticNotAConstructorThrow(ctx, fctx, []);
     }
   }
-  if (newConstructors.tryEmitHostConstructExpression(ctx, fctx, expr)) return { kind: "externref" };
   // (#1519 sub-issue B) Built-in non-constructor namespaces — `Math`, `JSON`,
   // `Reflect`, `Atomics` — have neither call nor construct signatures. Per
   // ECMA-262 §7.2.10 IsConstructor, `new`-on a value lacking `[[Construct]]`
@@ -7742,62 +6872,6 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
     if (nativeCtor) return nativeCtor;
   }
 
-  if (tryEmitMemberHeldUserFunctionHostNew(ctx, fctx, expr, unwrappedNonId)) return { kind: "externref" }; // (#6943)
-
-  // (#2608) Host-only `new this(...)` in a static fnctor method can lack a
-  // checker className; route its wrapped callable through the closure bridge.
-  // Standalone retains the existing dynamic Construct path and its semantics.
-  if (
-    expr.expression.kind === ts.SyntaxKind.ThisKeyword &&
-    !noJsHost(ctx) &&
-    (!className || (!ctx.classSet.has(className) && !ctx.funcConstructorMap.has(className)))
-  ) {
-    // Evaluate `this` to an externref value (the bound constructor function-value).
-    const calleeTy = compileExpression(ctx, fctx, expr.expression, { kind: "externref" });
-    if (calleeTy && calleeTy.kind !== "externref") {
-      coerceType(ctx, fctx, calleeTy, { kind: "externref" });
-    } else if (calleeTy === null) {
-      fctx.body.push({ op: "ref.null.extern" });
-    }
-    const calleeLocal = allocLocal(fctx, `__nt_callee_${fctx.locals.length}`, { kind: "externref" });
-    fctx.body.push({ op: "local.set", index: calleeLocal });
-    // Build a JS array of the args (boxed externref each), in source order.
-    const args = expr.arguments ?? [];
-    const arrNewIdx = ensureLateImport(ctx, "__js_array_new", [], [{ kind: "externref" }]);
-    const arrPushIdx = ensureLateImport(ctx, "__js_array_push", [{ kind: "externref" }, { kind: "externref" }], []);
-    const ccIdx = ensureLateImport(
-      ctx,
-      "__construct_closure",
-      [{ kind: "externref" }, { kind: "externref" }],
-      [{ kind: "externref" }],
-    );
-    flushLateImportShifts(ctx, fctx);
-    const finalArrNew = ctx.funcMap.get("__js_array_new") ?? arrNewIdx;
-    const finalArrPush = ctx.funcMap.get("__js_array_push") ?? arrPushIdx;
-    const finalCc = ctx.funcMap.get("__construct_closure") ?? ccIdx;
-    if (finalArrNew !== undefined && finalArrPush !== undefined && finalCc !== undefined) {
-      fctx.body.push({ op: "call", funcIdx: finalArrNew });
-      const argvLocal = allocLocal(fctx, `__nt_argv_${fctx.locals.length}`, { kind: "externref" });
-      fctx.body.push({ op: "local.set", index: argvLocal });
-      for (const arg of args) {
-        fctx.body.push({ op: "local.get", index: argvLocal });
-        const aTy = compileExpression(ctx, fctx, arg, { kind: "externref" });
-        if (aTy && aTy.kind !== "externref") {
-          coerceType(ctx, fctx, aTy, { kind: "externref" });
-        } else if (aTy === null) {
-          fctx.body.push({ op: "ref.null.extern" });
-        }
-        fctx.body.push({ op: "call", funcIdx: finalArrPush });
-      }
-      fctx.body.push({ op: "local.get", index: calleeLocal });
-      fctx.body.push({ op: "local.get", index: argvLocal });
-      fctx.body.push({ op: "call", funcIdx: finalCc });
-      return { kind: "externref" };
-    }
-    // Imports unavailable (shouldn't happen in JS-host): fall through to the
-    // existing unknown-ctor path below.
-  }
-
   if (!className) {
     // Unknown constructor (e.g. Test262Error) — call an imported constructor
     // registered upfront by collectUnknownConstructorImports.
@@ -7839,117 +6913,6 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
     // (#4017) Standalone parity — see `emitStaticNotAConstructorThrow`.
     if (ts.isIdentifier(s1Callee) && noJsHost(ctx) && provablyNonConstructableStatically(ctx, s1Callee)) {
       return emitStaticNotAConstructorThrow(ctx, fctx, args);
-    }
-
-    if (ts.isIdentifier(s1Callee) && !noJsHost(ctx) && resolvesToNonConstructableValue(ctx, s1Callee)) {
-      // Evaluate `f` to an externref value (the held callee), stash in a local.
-      const calleeTy = compileExpression(ctx, fctx, s1Callee, { kind: "externref" });
-      if (calleeTy && calleeTy.kind !== "externref") {
-        coerceType(ctx, fctx, calleeTy, { kind: "externref" });
-      } else if (calleeTy === null) {
-        fctx.body.push({ op: "ref.null.extern" });
-      }
-      const calleeLocal = allocLocal(fctx, `__ctor_callee_${fctx.locals.length}`, { kind: "externref" });
-      fctx.body.push({ op: "local.set", index: calleeLocal });
-
-      // (#2745 b) Build a JS array of the call-site args. A `.bind()` result is
-      // a constructable bound function when its target is a constructor, and
-      // `new boundFn(...)` must apply the bound + call args (and forward
-      // newTarget). The non-constructable A7 cases (arrow / prototype-method /
-      // `.call`/`.apply` value) still throw at the `__construct` IsConstructor
-      // check — before the args are used — so passing real args is harmless for
-      // them and is the spec-correct evaluation order (args evaluated, then
-      // Construct). The previous null-args path silently constructed bound
-      // functions with ZERO args (test262 `15.3.4.5.2-4-*`).
-      const arrNewIdx = ensureLateImport(ctx, "__js_array_new", [], [{ kind: "externref" }]);
-      const arrPushIdx = ensureLateImport(ctx, "__js_array_push", [{ kind: "externref" }, { kind: "externref" }], []);
-      const funcIdx = ensureLateImport(
-        ctx,
-        "__construct",
-        [{ kind: "externref" }, { kind: "externref" }],
-        [{ kind: "externref" }],
-      );
-      flushLateImportShifts(ctx, fctx);
-      const finalArrNew = ctx.funcMap.get("__js_array_new") ?? arrNewIdx;
-      const finalArrPush = ctx.funcMap.get("__js_array_push") ?? arrPushIdx;
-      const finalConstruct = ctx.funcMap.get("__construct") ?? funcIdx;
-      if (finalArrNew !== undefined && finalArrPush !== undefined && finalConstruct !== undefined) {
-        fctx.body.push({ op: "call", funcIdx: finalArrNew });
-        const argvLocal = allocLocal(fctx, `__ctor_argv_${fctx.locals.length}`, { kind: "externref" });
-        fctx.body.push({ op: "local.set", index: argvLocal });
-        for (const arg of args) {
-          fctx.body.push({ op: "local.get", index: argvLocal });
-          const aTy = compileExpression(ctx, fctx, ts.isSpreadElement(arg) ? arg.expression : arg, {
-            kind: "externref",
-          });
-          if (aTy && aTy.kind !== "externref") {
-            coerceType(ctx, fctx, aTy, { kind: "externref" });
-          } else if (aTy === null) {
-            fctx.body.push({ op: "ref.null.extern" });
-          }
-          fctx.body.push({ op: "call", funcIdx: finalArrPush });
-        }
-        fctx.body.push({ op: "local.get", index: calleeLocal });
-        fctx.body.push({ op: "local.get", index: argvLocal });
-        fctx.body.push({ op: "call", funcIdx: finalConstruct });
-        return { kind: "externref" };
-      }
-    }
-
-    // (#1632b-2 / #1528a residual) `new C(args)` where `C` is a runtime FUNCTION
-    // VALUE bound in a local (`const C = makeCtor(); new C(42)`) — provably
-    // constructable (ordinary function, not arrow/bound/method). Route through
-    // the `__construct_closure` host bridge: materialize args into a JS array,
-    // then `__construct_closure(callee, argv)` wraps the compiled closure with
-    // `_wrapCallableForHost` (constructible) and `Reflect.construct`s it. Without
-    // this the value is mis-routed to the unknown-ctor extern-class import and
-    // fails at instantiation with "No dependency provided for extern class C".
-    // ONE terminal `flushLateImportShifts` (after the call) — never mid-emission
-    // (the PR #608/#794 index-corruption hazard). JS-host only; standalone keeps
-    // the existing path (a Wasm-native dynamic Construct is a separate effort).
-    if (ts.isIdentifier(s1Callee) && !noJsHost(ctx) && resolvesToConstructableFunctionValue(ctx, s1Callee)) {
-      // Evaluate the callee value to externref.
-      const calleeTy = compileExpression(ctx, fctx, s1Callee, { kind: "externref" });
-      if (calleeTy && calleeTy.kind !== "externref") {
-        coerceType(ctx, fctx, calleeTy, { kind: "externref" });
-      } else if (calleeTy === null) {
-        fctx.body.push({ op: "ref.null.extern" });
-      }
-      const calleeLocal = allocLocal(fctx, `__cc_callee_${fctx.locals.length}`, { kind: "externref" });
-      fctx.body.push({ op: "local.set", index: calleeLocal });
-      // Build a JS array of the args (boxed externref each), in source order.
-      const arrNewIdx = ensureLateImport(ctx, "__js_array_new", [], [{ kind: "externref" }]);
-      const arrPushIdx = ensureLateImport(ctx, "__js_array_push", [{ kind: "externref" }, { kind: "externref" }], []);
-      const ccIdx = ensureLateImport(
-        ctx,
-        "__construct_closure",
-        [{ kind: "externref" }, { kind: "externref" }],
-        [{ kind: "externref" }],
-      );
-      flushLateImportShifts(ctx, fctx);
-      const finalArrNew = ctx.funcMap.get("__js_array_new") ?? arrNewIdx;
-      const finalArrPush = ctx.funcMap.get("__js_array_push") ?? arrPushIdx;
-      const finalCc = ctx.funcMap.get("__construct_closure") ?? ccIdx;
-      if (finalArrNew !== undefined && finalArrPush !== undefined && finalCc !== undefined) {
-        fctx.body.push({ op: "call", funcIdx: finalArrNew });
-        const argvLocal = allocLocal(fctx, `__cc_argv_${fctx.locals.length}`, { kind: "externref" });
-        fctx.body.push({ op: "local.set", index: argvLocal });
-        for (const arg of args) {
-          fctx.body.push({ op: "local.get", index: argvLocal });
-          const aTy = compileExpression(ctx, fctx, arg, { kind: "externref" });
-          if (aTy && aTy.kind !== "externref") {
-            coerceType(ctx, fctx, aTy, { kind: "externref" });
-          } else if (aTy === null) {
-            fctx.body.push({ op: "ref.null.extern" });
-          }
-          fctx.body.push({ op: "call", funcIdx: finalArrPush });
-        }
-        fctx.body.push({ op: "local.get", index: calleeLocal });
-        fctx.body.push({ op: "local.get", index: argvLocal });
-        fctx.body.push({ op: "call", funcIdx: finalCc });
-        return { kind: "externref" };
-      }
-      // Imports unavailable (shouldn't happen in JS-host): fall through.
     }
 
     // new ArrayBuffer(byteLength) — validate non-negative integer length
@@ -8127,14 +7090,6 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
             ? dynCallee.expression
             : (dynCallee as ts.NonNullExpression).expression;
       }
-      // (#4616) Beyond the bare-identifier form, admit an inline member-access
-      // callee (`new (Object.getPrototypeOf(arr).constructor)(n)`) when the JS
-      // host is present and the member's static type marks it a genuinely
-      // dynamic ctor value — the fallback's `__construct_closure` no-match base
-      // constructs it correctly (and its zero-candidate refusal is lifted for
-      // exactly this case). Standalone keeps the pre-existing member handling.
-      const dynMemberCallee =
-        !ts.isIdentifier(dynCallee) && !noJsHost(ctx) && resolvesToDynamicAnyCtorValue(ctx, dynCallee);
       // (#6607) …and, in the HOST-FREE lane only, a CALL-expression callee —
       // `new (ce("%Temporal.Duration%"))(…)`. It matched no arm before and fell
       // through to `__new___unknown` → `ref.null.extern` (a silent null, with
@@ -8144,7 +7099,7 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
       // `noJsHost` so the JS-host lane's byte output is untouched — there the
       // legacy `__new_` path still reaches a real host global.
       const dynCallCallee = noJsHost(ctx) && resolvesToDynamicCallCtorValue(ctx, dynCallee);
-      if ((ts.isIdentifier(dynCallee) && !ctx.classSet.has(dynCallee.text)) || dynMemberCallee || dynCallCallee) {
+      if ((ts.isIdentifier(dynCallee) && !ctx.classSet.has(dynCallee.text)) || dynCallCallee) {
         // (#3054 D) Dynamic `new <ctorVal>(buffer[, off[, len]])` where `ctorVal`
         // is a first-class `$__ta_ctor` value (a TA constructor held in a var /
         // array element — test262 `CreateRabForTest`, `for (ctor of ctors) new
@@ -8230,64 +7185,6 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
           return { kind: "externref" };
         }
       }
-    }
-
-    // (#3087) Dynamic `new <ctorVal>(...)` where `ctorVal` is an `any`/`unknown`-typed
-    // runtime binding — most importantly a callback PARAMETER that receives a real
-    // constructor at runtime, e.g. the TypedArray harness wrapper
-    // `testWithTypedArrayConstructors(function (TA) { new TA(3); … })` where `TA` is the
-    // concrete `Int8Array`/… ctor passed positionally into the `any`-typed callback param.
-    // The compiled-class dynamic fallback above excludes externref-backed builtin ctors
-    // (#2026), and the `__new_${ctorName}` host-import fallthrough below resolves to a
-    // non-existent extern class → "No dependency provided for extern class 'TA'" (the
-    // dominant #3074 downstream honest-fail). Route through the SAME `__construct_closure`
-    // host bridge as the value-bound-function-ctor arm above: its runtime side runs the
-    // spec IsConstructor probe (`Reflect.construct(function(){}, [], value)`) and either
-    // `Reflect.construct`s the value or throws the spec `TypeError` for a non-constructor —
-    // correct for ANY runtime value. JS-host only; standalone keeps its native TA-view
-    // path (#3054) / the extern-class fallthrough. ONE terminal `flushLateImportShifts`
-    // (after the call) — never mid-emission (the #608/#794 index-corruption hazard).
-    if (ts.isIdentifier(s1Callee) && !noJsHost(ctx) && resolvesToDynamicAnyCtorValue(ctx, s1Callee)) {
-      const calleeTy = compileExpression(ctx, fctx, s1Callee, { kind: "externref" });
-      if (calleeTy && calleeTy.kind !== "externref") {
-        coerceType(ctx, fctx, calleeTy, { kind: "externref" });
-      } else if (calleeTy === null) {
-        fctx.body.push({ op: "ref.null.extern" });
-      }
-      const calleeLocal = allocLocal(fctx, `__dynanyctor_callee_${fctx.locals.length}`, { kind: "externref" });
-      fctx.body.push({ op: "local.set", index: calleeLocal });
-      const arrNewIdx = ensureLateImport(ctx, "__js_array_new", [], [{ kind: "externref" }]);
-      const arrPushIdx = ensureLateImport(ctx, "__js_array_push", [{ kind: "externref" }, { kind: "externref" }], []);
-      const ccIdx = ensureLateImport(
-        ctx,
-        "__construct_closure",
-        [{ kind: "externref" }, { kind: "externref" }],
-        [{ kind: "externref" }],
-      );
-      flushLateImportShifts(ctx, fctx);
-      const finalArrNew = ctx.funcMap.get("__js_array_new") ?? arrNewIdx;
-      const finalArrPush = ctx.funcMap.get("__js_array_push") ?? arrPushIdx;
-      const finalCc = ctx.funcMap.get("__construct_closure") ?? ccIdx;
-      if (finalArrNew !== undefined && finalArrPush !== undefined && finalCc !== undefined) {
-        fctx.body.push({ op: "call", funcIdx: finalArrNew });
-        const argvLocal = allocLocal(fctx, `__dynanyctor_argv_${fctx.locals.length}`, { kind: "externref" });
-        fctx.body.push({ op: "local.set", index: argvLocal });
-        for (const arg of args) {
-          fctx.body.push({ op: "local.get", index: argvLocal });
-          const aTy = compileExpression(ctx, fctx, arg, { kind: "externref" });
-          if (aTy && aTy.kind !== "externref") {
-            coerceType(ctx, fctx, aTy, { kind: "externref" });
-          } else if (aTy === null) {
-            fctx.body.push({ op: "ref.null.extern" });
-          }
-          fctx.body.push({ op: "call", funcIdx: finalArrPush });
-        }
-        fctx.body.push({ op: "local.get", index: calleeLocal });
-        fctx.body.push({ op: "local.get", index: argvLocal });
-        fctx.body.push({ op: "call", funcIdx: finalCc });
-        return { kind: "externref" };
-      }
-      // Imports unavailable (shouldn't happen in JS-host): fall through.
     }
 
     const importName = `__new_${ctorName}`;
@@ -8470,153 +7367,61 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
   if (externInfo) {
     // Compile constructor arguments with type hints
     const args = expr.arguments ?? [];
-    const literalIterable = args.length === 1 && ts.isArrayLiteralExpression(args[0]!) ? args[0]! : undefined;
-    const pairIterableCtor = className === "Map" || className === "WeakMap";
-    const flatIterableCtor = className === "Set" || className === "WeakSet";
-    const canMaterializeLiteralIterable =
-      literalIterable !== undefined &&
-      ((flatIterableCtor &&
-        !literalIterable.elements.some((entry) => ts.isOmittedExpression(entry) || ts.isSpreadElement(entry))) ||
-        (pairIterableCtor &&
-          literalIterable.elements.every(
-            (entry) =>
-              ts.isArrayLiteralExpression(entry) &&
-              entry.elements.length === 2 &&
-              !entry.elements.some(ts.isSpreadElement),
-          )));
-
-    if (canMaterializeLiteralIterable && literalIterable) {
-      // During module initialization the host cannot call back through exported
-      // `__vec_get` helpers yet: WebAssembly.instantiate has not returned the
-      // instance. Build a real host array (and real [k,v] entry arrays for Map)
-      // directly through the array imports instead of handing an opaque WasmGC
-      // vec to the native iterable constructor.
-      ensureLateImport(ctx, "__js_array_new", [], [{ kind: "externref" }]);
-      ensureLateImport(ctx, "__js_array_push", [{ kind: "externref" }, { kind: "externref" }], []);
-      flushLateImportShifts(ctx, fctx);
-      const newHostArray = (): number => {
-        fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__js_array_new")! });
-        const local = allocLocal(fctx, `__ctor_iter_${fctx.locals.length}`, { kind: "externref" });
-        fctx.body.push({ op: "local.set", index: local });
-        return local;
-      };
-      const pushHostValue = (arrayLocal: number, value: ts.Expression): void => {
-        fctx.body.push({ op: "local.get", index: arrayLocal });
-        const valueType = compileExpression(ctx, fctx, value, { kind: "externref" });
-        if (valueType && valueType.kind !== "externref") coerceType(ctx, fctx, valueType, { kind: "externref" });
-        if (!valueType) fctx.body.push({ op: "ref.null.extern" });
-        fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__js_array_push")! });
-      };
-
-      const outer = newHostArray();
-      for (const entry of literalIterable.elements) {
-        if (pairIterableCtor) {
-          const pair = entry as ts.ArrayLiteralExpression;
-          const pairLocal = newHostArray();
-          pushHostValue(pairLocal, pair.elements[0]!);
-          pushHostValue(pairLocal, pair.elements[1]!);
-          fctx.body.push({ op: "local.get", index: outer });
-          fctx.body.push({ op: "local.get", index: pairLocal });
-          fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__js_array_push")! });
-        } else if (!ts.isOmittedExpression(entry) && !ts.isSpreadElement(entry)) {
-          pushHostValue(outer, entry);
-        }
+    for (let i = 0; i < args.length; i++) {
+      const arg = args[i]!;
+      const expected = externInfo.constructorParams[i];
+      const actual = compileExpression(ctx, fctx, arg);
+      if (actual === null) {
+        if (expected) pushDefaultValue(fctx, expected, ctx);
+        continue;
       }
-      fctx.body.push({ op: "local.get", index: outer });
-    } else {
-      for (let i = 0; i < args.length; i++) {
-        const arg = args[i]!;
-        const expected = externInfo.constructorParams[i];
-        const legacyPairGenerator =
-          args.length === 1 && i === 0 && pairIterableCtor
-            ? compileHostLegacyPairGeneratorArgument(ctx, fctx, arg)
-            : undefined;
-        // This start-time bridge covers the dense pair vec produced by the
-        // compiler's direct Object.entries lowering, plus the deliberately
-        // narrow immediately-seeded primitive array form above. Walking an
-        // arbitrary vec backing store would bypass observable iterator,
-        // prototype, sparse-hole, and overlay behavior.
-        const directObjectEntries =
-          pairIterableCtor &&
-          !ctx.arrayIteratorMaybeOverridden &&
-          ts.isCallExpression(arg) &&
-          ts.isPropertyAccessExpression(arg.expression) &&
-          ts.isIdentifier(arg.expression.expression) &&
-          arg.expression.expression.text === "Object" &&
-          arg.expression.name.text === "entries";
-        const declaredPairIterable =
-          pairIterableCtor && !ctx.arrayIteratorMaybeOverridden && isReadOnlyProjectedPrimitivePairArray(ctx, arg);
-        const denseFlatIterable =
-          flatIterableCtor &&
-          !ctx.arrayIteratorMaybeOverridden &&
-          (isImmediatelySeededPrimitiveArray(ctx, arg) ||
-            (ts.isArrayLiteralExpression(arg) && !arg.elements.some(ts.isOmittedExpression)));
-        const vecIterable =
-          legacyPairGenerator === undefined &&
-          args.length === 1 &&
-          i === 0 &&
-          (directObjectEntries || declaredPairIterable || denseFlatIterable)
-            ? compileHostVecIterableArgument(ctx, fctx, arg, pairIterableCtor)
-            : undefined;
-        const actual = legacyPairGenerator
-          ? legacyPairGenerator.actual
-          : vecIterable
-            ? vecIterable.actual
-            : compileExpression(ctx, fctx, arg);
-        if (legacyPairGenerator?.materialized) continue;
-        if (vecIterable?.materialized) continue;
-        if (actual === null) {
-          if (expected) pushDefaultValue(fctx, expected, ctx);
-          continue;
-        }
 
-        // Request/Response consume their second argument as a Web IDL
-        // dictionary. A closed WasmGC data struct coerced to externref is opaque
-        // to the host, so reify that exact init bag as an ordinary JS object.
-        // Do not apply this to arbitrary extern constructors: identity consumers
-        // such as WeakRef must receive the original WasmGC reference so a value
-        // returned by the host can still be cast to its original struct type.
-        const consumesWebInitDictionary = (className === "Request" || className === "Response") && i === 1;
-        if (
-          consumesWebInitDictionary &&
-          expected?.kind === "externref" &&
-          (actual.kind === "ref" || actual.kind === "ref_null")
-        ) {
-          const structName = ctx.typeIdxToStructName.get(actual.typeIdx);
-          const isPlainDataStruct =
-            structName !== undefined && !ctx.classSet.has(structName) && !!ctx.structFields.get(structName)?.length;
-          if (isPlainDataStruct) {
-            if (actual.kind === "ref") {
-              if (materializeStructAsDynamicObject(ctx, fctx, actual.typeIdx, { skipInternalFields: true })) {
-                continue;
-              }
-            } else {
-              const valueLocal = allocLocal(fctx, `__extern_ctor_obj_${fctx.locals.length}`, actual);
-              fctx.body.push({ op: "local.set", index: valueLocal });
-              const materializedStart = fctx.body.length;
-              fctx.body.push({ op: "local.get", index: valueLocal });
-              if (materializeStructAsDynamicObject(ctx, fctx, actual.typeIdx, { skipInternalFields: true })) {
-                const materializedBody = fctx.body.splice(materializedStart);
-                fctx.body.push(
-                  { op: "local.get", index: valueLocal },
-                  { op: "ref.is_null" },
-                  {
-                    op: "if",
-                    blockType: { kind: "val", type: { kind: "externref" } },
-                    then: [{ op: "ref.null.extern" }],
-                    else: materializedBody,
-                  },
-                );
-                continue;
-              }
-              fctx.body.splice(materializedStart);
-              fctx.body.push({ op: "local.get", index: valueLocal });
+      // Request/Response consume their second argument as a Web IDL
+      // dictionary. A closed WasmGC data struct coerced to externref is opaque
+      // to the host, so reify that exact init bag as an ordinary JS object.
+      // Do not apply this to arbitrary extern constructors: identity consumers
+      // such as WeakRef must receive the original WasmGC reference so a value
+      // returned by the host can still be cast to its original struct type.
+      const consumesWebInitDictionary = (className === "Request" || className === "Response") && i === 1;
+      if (
+        consumesWebInitDictionary &&
+        expected?.kind === "externref" &&
+        (actual.kind === "ref" || actual.kind === "ref_null")
+      ) {
+        const structName = ctx.typeIdxToStructName.get(actual.typeIdx);
+        const isPlainDataStruct =
+          structName !== undefined && !ctx.classSet.has(structName) && !!ctx.structFields.get(structName)?.length;
+        if (isPlainDataStruct) {
+          if (actual.kind === "ref") {
+            if (materializeStructAsDynamicObject(ctx, fctx, actual.typeIdx, { skipInternalFields: true })) {
+              continue;
             }
+          } else {
+            const valueLocal = allocLocal(fctx, `__extern_ctor_obj_${fctx.locals.length}`, actual);
+            fctx.body.push({ op: "local.set", index: valueLocal });
+            const materializedStart = fctx.body.length;
+            fctx.body.push({ op: "local.get", index: valueLocal });
+            if (materializeStructAsDynamicObject(ctx, fctx, actual.typeIdx, { skipInternalFields: true })) {
+              const materializedBody = fctx.body.splice(materializedStart);
+              fctx.body.push(
+                { op: "local.get", index: valueLocal },
+                { op: "ref.is_null" },
+                {
+                  op: "if",
+                  blockType: { kind: "val", type: { kind: "externref" } },
+                  then: [{ op: "ref.null.extern" }],
+                  else: materializedBody,
+                },
+              );
+              continue;
+            }
+            fctx.body.splice(materializedStart);
+            fctx.body.push({ op: "local.get", index: valueLocal });
           }
         }
-        if (expected && !valTypeMatches(actual, expected)) {
-          coerceType(ctx, fctx, actual, expected);
-        }
+      }
+      if (expected && !valTypeMatches(actual, expected)) {
+        coerceType(ctx, fctx, actual, expected);
       }
     }
     // Pad missing optional args with default values
@@ -8666,13 +7471,6 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
       const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
       const args = expr.arguments ?? [];
       const resultType: ValType = { kind: "ref_null", typeIdx: vecTypeIdx };
-
-      // (#3097) JS-host lane buffer-arg construction — see the matching gate
-      // in the identifier-keyed TypedArray branch above.
-      if (hostTaBufferArgSymName(ctx, args) !== undefined) {
-        const hostTa = emitHostTaBufferConstruct(ctx, fctx, className, args);
-        if (hostTa) return hostTa;
-      }
 
       if (args.length === 0) {
         // new Uint8Array() → empty array
@@ -8769,24 +7567,6 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
  */
 function reportNewExpressionRefusal(ctx: CodegenContext, expr: ts.NewExpression, className: string | undefined): void {
   reportError(ctx, expr, `Unsupported new expression for class: ${className}`, "degrade", { sticky: true });
-}
-
-/**
- * (#6943) Host twin of the standalone member-callee admission: a member-held
- * user function (`new T.Node(k)`) or a binding aliasing one (`var N = T.Node;
- * new N(k)`) carries the function's own symbol name (`__function`), so the
- * `!className` dynamic block in `compileNewExpression` never sees it. The
- * dispatcher's `__construct_closure` no-match base performs IsConstructor +
- * [[Construct]] on the runtime closure, after the callee and the arguments.
- */
-function tryEmitMemberHeldUserFunctionHostNew(
-  ctx: CodegenContext,
-  fctx: FunctionContext,
-  expr: ts.NewExpression,
-  callee: ts.Expression,
-): boolean {
-  if (noJsHost(ctx) || !isMemberHeldUserFunctionNewCallee(ctx, callee)) return false;
-  return emitDynamicNewFallback(ctx, fctx, expr, callee, ts.isIdentifier(callee) ? callee.text : "__unknown");
 }
 
 export { compileClassExpression, compileNewExpression, compileSuperElementMethodCall, compileSuperMethodCall };

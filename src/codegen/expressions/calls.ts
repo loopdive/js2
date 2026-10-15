@@ -579,7 +579,6 @@ import {
   planClosureReceiverInstall,
 } from "../closure-receiver-install.js";
 import { directEvalRunsAtScriptGlobal } from "../direct-eval-environment.js";
-import { variableMayProduceHostCallable } from "../analysis/host-callable-initializer.js";
 import { bindingMayReceiveHostCallable } from "../analysis/mixed-assignment-carrier.js";
 
 // Registry extracted to its own leaf module (#1793; LOC ratchet #3102) —
@@ -2533,194 +2532,6 @@ export function compileFunctionBind(
 }
 
 /**
- * (#4616 / #5322) Is `fn` a function stored as a MEMBER of an object or class —
- * something the host can reach and invoke as `receiver.m(...)`? The host
- * marshals a callback argument through `createNativeFunctionCallbackBridge`, so
- * such a function's callable parameters routinely arrive as plain JS functions,
- * not wasm closure structs. These four spellings are ONE construct to a caller:
- *
- *   { forEach(cb) {…} }                // #4616 matched only this one
- *   { forEach: function (cb) {…} }     // PropertyAssignment initializer
- *   { forEach: (cb) => {…} }           //   "
- *   class C { forEach = (cb) => {…} }  // PropertyDeclaration initializer
- *
- * The other three trapped on `struct.get` of the nulled wrapper cast — an
- * UNCATCHABLE wasm trap that kills the module, not a catchable TypeError.
- * Witness: hono `utils/body.test.ts` stubs `formData` with
- * `({ forEach: (cb) => … }) as FormData` for package code whose receiver is
- * `any` (0/37, whole-file abort). Free functions keep the #1941 gate.
- */
-function isHostReachableMemberFunction(fn: ts.Node): boolean {
-  if (ts.isMethodDeclaration(fn)) return true;
-  if (!ts.isArrowFunction(fn) && !ts.isFunctionExpression(fn)) return false;
-  const holder = fn.parent;
-  if (holder === undefined) return false;
-  if (ts.isPropertyAssignment(holder)) return holder.initializer === fn;
-  return ts.isPropertyDeclaration(holder) && holder.initializer === fn;
-}
-
-/**
- * (#1712 / #1941) Static gate for the host-callable dispatch fallback.
- *
- * The callable-param dispatch below emits an extra `__call_function` arm so a
- * callee that arrives as a non-closure externref (a host builtin held in a JS
- * variable — acorn's `var hasOwn = Object.hasOwn || function(…){…}`) dispatches
- * through the host instead of trapping on `struct.get` of a null cast. That arm
- * is only ever *taken* when the runtime value is NOT a wasm closure struct, but
- * it was emitted for EVERY callable-param dispatch, which unconditionally pulls
- * `__js_array_new` / `__js_array_push` / `__call_function` host imports into the
- * module — even for pure local-closure programs (`applyTwice((x)=>x+1, 10)`,
- * `const add5 = makeAdder(5)`) that need no JS host at all. That regressed the
- * #1941 optimize-differential gate (LinkError: `__js_array_new` not provided)
- * and violated the dual-mode "JS host optional" principle for these programs.
- *
- * Gate the fallback to callees whose runtime value can plausibly be a foreign
- * (non-wasm-closure) callable: a variable whose initializer references a host
- * builtin member directly (`var f = Object.hasOwn`) or as the left operand of a
- * `||` / `??` short-circuit (`Object.hasOwn || function(){}`). Function
- * parameters and locals/globals initialized from wasm expressions (closures,
- * local function results) are always wrapped into the closure struct by the
- * call-site coercion, so the fallback can never fire for them — and we must not
- * burden them with host imports.
- */
-export function calleeMayBeHostCallable(ctx: CodegenContext, expr: ts.Expression): boolean {
-  if (!ts.isIdentifier(expr)) return false;
-  // A default-export expression cell can carry either a compiled closure or a
-  // host function selected at runtime (`Function.prototype.bind || fallback`).
-  // The exact import-cell lookup keeps this decision independent of unrelated
-  // same-named graph entries; the ordinary closure arm still handles compiled
-  // values and this only admits the non-closure host fallback.
-  if (resolveDefaultExpressionImportGlobal(ctx, expr) !== undefined) {
-    return !ctx.standalone && !ctx.wasi;
-  }
-  const sym = ctx.checker.getSymbolAtLocation(expr);
-  const decl = sym?.valueDeclaration;
-  const unparen = (node: ts.Expression): ts.Expression => (ts.isParenthesizedExpression(node) ? node.expression : node);
-  // (#4616) A callable PARAM of a CLASS METHOD routinely receives a host
-  // function at runtime: an any-receiver dynamic method call marshals its
-  // arrow argument through the host bridge, and test harnesses hand methods
-  // host spies (jest.fn()). Replaceable.forEach's `cb(...)` nulled the
-  // wrapper cast and trapped call_ref un-catchably. Method params get the
-  // #1712 host arm; plain function params keep the #1941 gate so pure
-  // local-closure programs stay host-import-free.
-  if (decl && ts.isParameter(decl) && decl.parent !== undefined && isHostReachableMemberFunction(decl.parent)) {
-    return !ctx.standalone && !ctx.wasi;
-  }
-
-  // A callable extracted from a host builtin through object destructuring is
-  // still a real JS function, not a Wasm closure. For example Axios starts
-  // with `const { getPrototypeOf } = Object` and later calls
-  // `getPrototypeOf(Uint8Array)` during module initialization. The binding's
-  // checker type is callable, so the ordinary closure dispatch guard-casts the
-  // externref to a closure struct; that cast yields null and the following
-  // struct.get traps. Keep the raw externref fallback for this exact,
-  // statically-proven host source. User-object destructuring is deliberately
-  // excluded so pure compiled callback graphs retain the #1941 no-host-import
-  // property.
-  if (decl && ts.isBindingElement(decl) && ts.isObjectBindingPattern(decl.parent)) {
-    const variableDecl = decl.parent.parent;
-    if (ts.isVariableDeclaration(variableDecl) && variableDecl.initializer) {
-      const source = unparen(variableDecl.initializer);
-      if (ts.isIdentifier(source) && (BUILTIN_CLASS_NAMES.has(source.text) || ctx.declaredGlobals.has(source.text))) {
-        return !ctx.standalone && !ctx.wasi;
-      }
-    }
-  }
-  if (variableMayProduceHostCallable(ctx, expr)) return true;
-  if (decl && ts.isVariableDeclaration(decl) && bindingMayReceiveHostCallable(ctx, decl)) return true;
-  if (!decl || !ts.isVariableDeclaration(decl) || !decl.initializer) return false;
-
-  // (#3432 follow-up) A declaration that SKIPPED the closure match-and-recast
-  // (callable-typed var whose slot stayed externref, see
-  // `skippedClosureRecastDecls` in context/types.ts) holds a raw externref
-  // that can be a foreign callable — a bridge-wrapped wasm closure read back
-  // off a property/array element (`var format = compareArray.format;`), a
-  // bound function, or a host builtin. The #1941 "always normalized to
-  // struct-or-null" assumption does not hold for these, so the #1712
-  // `__call_function` fallback arm MUST be emitted or the closure-struct
-  // dispatch traps `struct.get` on the nulled cast. Precise (per-decl, only
-  // when the skip actually happened at compile time), so the #1941 dual-mode
-  // guarantee for pure local-closure programs is preserved.
-  if (ctx.skippedClosureRecastDecls?.has(decl)) return true;
-
-  return false;
-}
-
-/**
- * (#6490) Is `expr` an identifier resolving to a **callable parameter of a
- * separately-linked provider module**?
- *
- * In a linked graph (`src/package-linker.ts`, #2527 — the Temporal provider and
- * the #3451 test262 harness provider) the provider is compiled as its own Wasm
- * module and its callers live in a DIFFERENT module. A callback the consumer
- * passes in therefore arrives as an `externref` whose wasm closure struct
- * belongs to the consumer's type group, so the provider's guarded
- * `ref.test`/`ref.cast` to ITS wrapper root misses and yields `ref.null` — and
- * the callable-param dispatch then `struct.get`s a null and TRAPS with
- * "dereferencing a null pointer". A wasm trap is not catchable, so it takes the
- * whole program down.
- *
- * This is exactly the #1941 invariant — "pure local closures / function params
- * are always wrapped into the closure struct, so the host arm would be dead
- * code" — and it is FALSE by construction for a provider: the value did not
- * come from this module. Measured on the test262 linked lane, where every call
- * of `testTypedArray.js`'s `testWithTypedArrayConstructors(f)` trapped inside
- * the provider (~1,340 corpus rows). The same reasoning #4616 applied to
- * host-reachable METHOD params applies here to every param, because a
- * provider's exports are its whole reason to exist.
- *
- * Gated on `ctx.exportsConsumedByWasm` (set only by the linker, #5247), so a
- * single-module compile — every ordinary and honest-lane build — is
- * byte-identical.
- */
-export function calleeIsLinkedProviderParam(ctx: CodegenContext, expr: ts.Expression): boolean {
-  if (ctx.exportsConsumedByWasm !== true) return false;
-  if (ctx.standalone || ctx.wasi) return false;
-  if (!ts.isIdentifier(expr)) return false;
-  const decl = ctx.oracle.valueDeclarationOf(expr);
-  return decl !== undefined && ts.isParameter(decl);
-}
-
-/**
- * (#2028) Is `expr` an identifier resolving to a parameter of a **Promise
- * executor** — the `(resolve, reject) => {…}` arrow/function-expression passed
- * directly to `new Promise(...)`?
- *
- * Those params are bound by the host (native `new Promise` calls the executor
- * with real JS `resolve`/`reject` functions), so they arrive as plain externref
- * JS callables, NOT wasm closure structs. Calling them through the closure-struct
- * `ref.test`/`ref.cast`/`struct.get`/`call_ref` dispatch path nulls the cast and
- * traps on the null deref — they must take the `__call_function` arm instead.
- *
- * This is intentionally narrow. An ordinary callable parameter (`cb` in
- * `function apply(cb, v) { return cb(v); }`) is ALSO lowered with an `externref`
- * wasm type — the closure struct is recovered dynamically at the call site via
- * `ref.test (ref $closure)`. So "externref-typed callable param" alone is NOT a
- * safe discriminator: gating on it would re-emit the `__call_function` arm for
- * pure local-closure programs and regress the #1941 dual-mode guarantee. The
- * precise signal is that the param's *declaring function is a Promise executor*
- * (an arrow/function-expression that is the direct argument of `new Promise`),
- * whose param values are genuinely host-supplied.
- */
-export function calleeIsPromiseExecutorParam(ctx: CodegenContext, expr: ts.Expression): boolean {
-  if (!ts.isIdentifier(expr)) return false;
-  const sym = ctx.checker.getSymbolAtLocation(expr);
-  const decl = sym?.valueDeclaration;
-  if (!decl || !ts.isParameter(decl)) return false;
-  // The parameter's declaring function must be the executor of `new Promise(...)`:
-  // an arrow / function expression that is a direct argument of a `new Promise`.
-  const fn = decl.parent;
-  if (!fn || (!ts.isArrowFunction(fn) && !ts.isFunctionExpression(fn))) return false;
-  const argParent = fn.parent;
-  if (!argParent || !ts.isNewExpression(argParent)) return false;
-  const ctor = argParent.expression;
-  if (!ts.isIdentifier(ctor) || ctor.text !== "Promise") return false;
-  // Confirm the executor is actually in the argument list (not, e.g., a type arg).
-  const fnNode: ts.Node = fn;
-  return (argParent.arguments ?? []).some((a) => a === fnNode);
-}
-
-/**
  * (#1397) Conservative scope-level reassignment scan: returns true if the
  * source file contains any assignment expression of the form `X.<method> = ...`
  * (any LHS expression, member name === `methodName`).
@@ -2801,19 +2612,10 @@ export function emitWrapperDynamicMethodCall(
   // all narrower retain the historical five-argument cap and truncate extras.
   if (callExpr) observeHostDynamicMethodCallArity(ctx, callExpr.arguments);
 
-  // (#1888 Slice 2) Standalone routes __extern_method_call native, which reads
-  // its args over a $ObjVec — build the (empty) args list with the native
-  // $ObjVec builder, not the host __js_array_new. JS-host keeps the host import.
-  const arrNewIdx = ctx.standalone
-    ? ensureObjVecBuilders(ctx).newIdx
-    : ensureLateImport(ctx, "__js_array_new", [], [{ kind: "externref" }]);
-  // (#1712) Args support: when a call expression with arguments is supplied,
-  // pack them into the args array via __js_array_push. JS-host only — the
-  // standalone $ObjVec path stays empty-args until it grows a native push.
-  const wantArgs = callExpr !== undefined && callExpr.arguments.length > 0 && !ctx.standalone && !ctx.wasi;
-  const arrPushIdx = wantArgs
-    ? ensureLateImport(ctx, "__js_array_push", [{ kind: "externref" }, { kind: "externref" }], [])
-    : undefined;
+  // (#1888 Slice 2, #6979) `__extern_method_call` is native and reads its args
+  // over a $ObjVec, so the (empty) args list is built with the native $ObjVec
+  // builder; the host `__js_array_*` packers are retired.
+  const arrNewIdx = ensureObjVecBuilders(ctx).newIdx;
   const methodCallIdx = ensureLateImport(
     ctx,
     "__extern_method_call",
@@ -2822,7 +2624,6 @@ export function emitWrapperDynamicMethodCall(
   );
   flushLateImportShifts(ctx, fctx);
   if (arrNewIdx === undefined || methodCallIdx === undefined) return null;
-  if (wantArgs && arrPushIdx === undefined) return null;
 
   // Compile receiver as externref.
   const recvType = compileExpression(ctx, fctx, recvExpr, { kind: "externref" });
@@ -2837,23 +2638,8 @@ export function emitWrapperDynamicMethodCall(
   addStringConstantGlobal(ctx, methodName);
   fctx.body.push(...stringConstantExternrefInstrs(ctx, methodName));
 
-  // Args array: __js_array_new() → externref (+ per-arg __js_array_push).
-  fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__js_array_new") ?? arrNewIdx });
-  if (wantArgs) {
-    const argsArrLocal = allocLocal(fctx, `__dynm_args_${fctx.locals.length}`, { kind: "externref" });
-    fctx.body.push({ op: "local.set", index: argsArrLocal });
-    for (const argExpr of callExpr!.arguments) {
-      fctx.body.push({ op: "local.get", index: argsArrLocal });
-      const t = compileExpression(ctx, fctx, argExpr, { kind: "externref" });
-      if (t === null) {
-        fctx.body.push({ op: "ref.null.extern" });
-      } else if (t.kind !== "externref") {
-        coerceType(ctx, fctx, t, { kind: "externref" });
-      }
-      fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__js_array_push") ?? arrPushIdx! });
-    }
-    fctx.body.push({ op: "local.get", index: argsArrLocal });
-  }
+  // Args array: an empty native $ObjVec.
+  fctx.body.push({ op: "call", funcIdx: arrNewIdx });
 
   // Re-lookup methodCallIdx in case args compilation triggered shifts.
   const finalMcIdx = ctx.funcMap.get("__extern_method_call") ?? methodCallIdx;
@@ -8975,99 +8761,8 @@ function compileCallExpression(
             );
             return null;
           }
-          if (
-            (typeName === "String" ||
-              typeName === "Number" ||
-              typeName === "Array" ||
-              typeName === "Boolean" ||
-              typeName === "Object" ||
-              typeName === "Function" ||
-              isBuiltinRegExpPrototype) &&
-            expr.arguments.length >= 1
-          ) {
-            const protoCallIdx = ensureLateImport(
-              ctx,
-              "__proto_method_call",
-              [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
-              [{ kind: "externref" }],
-            );
-            const arrNewIdx = ensureLateImport(ctx, "__js_array_new", [], [{ kind: "externref" }]);
-            const arrPushIdx = ensureLateImport(
-              ctx,
-              "__js_array_push",
-              [{ kind: "externref" }, { kind: "externref" }],
-              [],
-            );
-            flushLateImportShifts(ctx, fctx);
-
-            if (protoCallIdx !== undefined && arrNewIdx !== undefined && arrPushIdx !== undefined) {
-              // Push typeName string
-              addStringConstantGlobal(ctx, typeName);
-              fctx.body.push(...stringConstantExternrefInstrs(ctx, typeName));
-
-              // Push methodName string
-              addStringConstantGlobal(ctx, methodName);
-              fctx.body.push(...stringConstantExternrefInstrs(ctx, methodName));
-
-              // Compile receiver (first argument to .call).
-              // (#1442) When the receiver's static TS type is `boolean`, the
-              // i32 → externref auto-coercion uses `__box_number` and arrives
-              // host-side as `Number(0)` / `Number(1)`. That makes
-              // `String.prototype.trim.call(true)` return `"1"` instead of
-              // `"true"`. Box booleans through `__box_boolean` so the host
-              // gets a real `Boolean` wrapper, then String() / ToString
-              // produces the spec-correct `"true"` / `"false"`.
-              const receiverArg = expr.arguments[0]!;
-              const receiverTsType = ctx.checker.getTypeAtLocation(receiverArg);
-              if (isBooleanType(receiverTsType)) {
-                const recvWasm = compileExpression(ctx, fctx, receiverArg);
-                if (recvWasm && recvWasm.kind === "i32") {
-                  addUnionImports(ctx);
-                  flushLateImportShifts(ctx, fctx);
-                  const boxBoolIdx = ctx.funcMap.get("__box_boolean");
-                  if (boxBoolIdx !== undefined) {
-                    fctx.body.push({ op: "call", funcIdx: boxBoolIdx });
-                  } else {
-                    fctx.body.push({ op: "extern.convert_any" });
-                  }
-                } else if (recvWasm && recvWasm.kind !== "externref") {
-                  fctx.body.push({ op: "extern.convert_any" });
-                } else if (recvWasm === null) {
-                  fctx.body.push({ op: "ref.null.extern" });
-                }
-              } else {
-                const recvType = compileExpression(ctx, fctx, receiverArg, { kind: "externref" });
-                if (recvType && recvType.kind !== "externref") {
-                  fctx.body.push({ op: "extern.convert_any" });
-                }
-                if (recvType === null) {
-                  fctx.body.push({ op: "ref.null.extern" });
-                }
-              }
-
-              // Build args array from remaining arguments
-              const remainingArgs = Array.from(expr.arguments).slice(1);
-              const argsLocal = allocLocal(fctx, `__pmc_args_${fctx.locals.length}`, { kind: "externref" });
-              fctx.body.push({ op: "call", funcIdx: arrNewIdx });
-              fctx.body.push({ op: "local.set", index: argsLocal });
-              for (const arg of remainingArgs) {
-                fctx.body.push({ op: "local.get", index: argsLocal });
-                const argType = compileExpression(ctx, fctx, arg, { kind: "externref" });
-                if (argType && argType.kind !== "externref") {
-                  fctx.body.push({ op: "extern.convert_any" });
-                }
-                if (argType === null) {
-                  fctx.body.push({ op: "ref.null.extern" });
-                }
-                fctx.body.push({ op: "call", funcIdx: arrPushIdx });
-              }
-              fctx.body.push({ op: "local.get", index: argsLocal });
-
-              // Call __proto_method_call(typeName, methodName, receiver, args)
-              fctx.body.push({ op: "call", funcIdx: protoCallIdx });
-              return { kind: "externref" };
-            }
-          }
+          // (#6979) The host `__proto_method_call` borrowed-method bridge is
+          // retired; shapes the native arms above decline fall through.
         }
 
         const className = resolveReceiverClassName(ctx, objType);
@@ -9418,19 +9113,13 @@ export function emitFnctorSubclassDynamicMethodCall(
   // fnctor-subclass call sites keep their existing bytes.
   rawStructReceiver = false,
 ): InnerResult | undefined {
-  if (!ctx.standalone && !ctx.wasi) ctx.hostDynamicClassMethodNames.add(methodName);
-  let arrNewIdx: number | undefined;
-  let arrPushIdx: number | undefined;
-  const arrNewName = ctx.standalone ? "__objvec_new" : "__js_array_new";
-  const arrPushName = ctx.standalone ? "__objvec_push" : "__js_array_push";
-  if (ctx.standalone) {
-    const b = ensureObjVecBuilders(ctx);
-    arrNewIdx = b.newIdx;
-    arrPushIdx = b.pushIdx;
-  } else {
-    arrNewIdx = ensureLateImport(ctx, "__js_array_new", [], [{ kind: "externref" }]);
-    arrPushIdx = ensureLateImport(ctx, "__js_array_push", [{ kind: "externref" }, { kind: "externref" }], []);
-  }
+  // (#6979) The args list is a native $ObjVec on every profile; the host
+  // `__js_array_*` packers are retired.
+  const arrNewName = "__objvec_new";
+  const arrPushName = "__objvec_push";
+  const builders = ensureObjVecBuilders(ctx);
+  const arrNewIdx: number | undefined = builders.newIdx;
+  const arrPushIdx: number | undefined = builders.pushIdx;
   const methodCallIdx = ensureLateImport(
     ctx,
     "__extern_method_call",

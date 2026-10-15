@@ -79,7 +79,6 @@ import { defaultValueInstrs } from "./type-coercion.js";
 // (#5383 S2g) The externref-argument marshalling this file used to own inline;
 // `standalone-class-construct.ts` is the second caller.
 import { buildCoerceIdxs, type CoerceIdxs, externArgCoercionInstrs, resultBoxingInstrs } from "./extern-arg-marshal.js";
-import { closedDispatchGuardsOwnSlot } from "./expressions/own-property-method-shadow.js";
 import { classArmClaimInstrs } from "./class-arm-tag-guard.js"; // (#6608) nominal `__tag` arm guard
 import { arraySubclassOwnMethodShadowTest } from "./array-subclass-receiver.js"; // (#2917)
 import { standaloneDispatchArityPads } from "./zero-arg-method-pad.js"; // (#6693) JS call arity
@@ -319,8 +318,6 @@ export function buildCallSiteNullishReceiverGuard(ctx: CodegenContext, recvLocal
  * -> externref`; the call site coerces each argument to externref before the
  * call, and the fill side coerces each back to the method's declared param type.
  *
- * The JS-host lane also uses this for ambiguous user methods on an `any`
- * receiver; its fallback builds a real host argument array.
  */
 export function reserveClosedMethodDispatch(ctx: CodegenContext, methodName: string, arity = 0): number {
   const name = dispatcherName(methodName, arity);
@@ -335,24 +332,7 @@ export function reserveClosedMethodDispatch(ctx: CodegenContext, methodName: str
   // `__objvec_new`/`__objvec_push`/`__extern_method_call`; the method-name
   // string constant is materialized for the fallback
   // `__extern_method_call(recv, "<name>", [args…])`.
-  if (ctx.standalone || ctx.wasi) {
-    ensureObjVecBuilders(ctx);
-  } else {
-    ensureLateImport(ctx, "__js_array_new", [], [{ kind: "externref" }]);
-    ensureLateImport(ctx, "__js_array_push", [{ kind: "externref" }, { kind: "externref" }], []);
-    ensureLateImport(
-      ctx,
-      "__extern_method_call",
-      [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
-      [{ kind: "externref" }],
-    );
-    // A dynamic JS call may omit a formal parameter even when the source was
-    // allowJs and TypeScript did not preserve an `?` marker.  The closed
-    // dispatcher must pass the host's real `undefined`, not a null externref,
-    // so the callee's defaulting and null checks see the same value as Node.
-    ensureLateImport(ctx, "__get_undefined", [], [{ kind: "externref" }]);
-    addUnionImportsViaRegistry(ctx);
-  }
+  ensureObjVecBuilders(ctx);
   addStringConstantGlobal(ctx, methodName);
   reserveNullishReceiverThrow(ctx, methodName);
 
@@ -525,18 +505,7 @@ export function reserveClosedMethodDispatchVararg(ctx: CodegenContext, methodNam
   // Pulls in the object runtime (`__objvec_new`/`__objvec_push`/
   // `__extern_method_call` AND `__extern_get_idx`/`__extern_length`) so the fill
   // is read-only. The method-name string constant backs the fallback call.
-  if (ctx.standalone || ctx.wasi) {
-    ensureObjVecBuilders(ctx);
-  } else {
-    ensureLateImport(
-      ctx,
-      "__extern_method_call",
-      [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
-      [{ kind: "externref" }],
-    );
-    ensureLateImport(ctx, "__extern_get_idx", [{ kind: "externref" }, { kind: "f64" }], [{ kind: "externref" }]);
-    addUnionImportsViaRegistry(ctx);
-  }
+  ensureObjVecBuilders(ctx);
   addStringConstantGlobal(ctx, methodName);
   reserveNullishReceiverThrow(ctx, methodName);
   // (#3117) Field-stored-closure arms invoke via `__apply_closure` — see the
@@ -812,8 +781,8 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
   const mod = ctx.mod;
   const ci: CoerceIdxs = buildCoerceIdxs(ctx);
   const methodCallIdx = ctx.funcMap.get("__extern_method_call");
-  const objVecNewIdx = ctx.funcMap.get(ctx.standalone || ctx.wasi ? "__objvec_new" : "__js_array_new");
-  const objVecPushIdx = ctx.funcMap.get(ctx.standalone || ctx.wasi ? "__objvec_push" : "__js_array_push");
+  const objVecNewIdx = ctx.funcMap.get("__objvec_new");
+  const objVecPushIdx = ctx.funcMap.get("__objvec_push");
   const hasOwnIdx = ctx.funcMap.get("__hasOwnProperty");
 
   // ── Fixed-arity dispatchers (#2151 Slices 1–3) ──────────────────────────
@@ -1911,41 +1880,12 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
         arity,
         mixedClassAndLiteralEntries,
       );
-      // An own property installed at runtime beats this class's prototype
-      // method for THIS receiver (marked's `use()` hooks). Only user classes,
-      // only names the reserve saw a callable member write for; object-literal
-      // carriers keep their arm untouched (their own slot IS the struct field
-      // the arm already reads).
-      const armBodyForEntry =
-        hasOwnIdx !== undefined &&
-        methodCallIdx !== undefined &&
-        objVecNewIdx !== undefined &&
-        (arity === 0 || objVecPushIdx !== undefined) &&
-        ctx.classSet.has(entry.structName) &&
-        closedDispatchGuardsOwnSlot(ctx, methodName)
-          ? ([
-              { op: "local.get", index: 0 },
-              ...stringConstantExternrefInstrs(ctx, methodName),
-              { op: "call", funcIdx: hasOwnIdx },
-              {
-                op: "if",
-                blockType: { kind: "val", type: { kind: "externref" } },
-                then: [
-                  { op: "local.get", index: 0 },
-                  ...stringConstantExternrefInstrs(ctx, methodName),
-                  ...buildFixedArgVec(arity, anyLocalIdx + 1, objVecNewIdx, objVecPushIdx),
-                  { op: "call", funcIdx: methodCallIdx },
-                ],
-                else: callAndCoerce,
-              },
-            ] satisfies Instr[])
-          : callAndCoerce;
       current = [
         // (#6608) NOMINAL claim: `ref.test` alone is structural, and every
         // same-shaped class in the ladder passes it — so the outermost arm ran
         // for every receiver. Byte-identical when no layout collides.
         ...classArmClaimInstrs(ctx, entry.structName, entry.typeIdx, anyLocalIdx),
-        { op: "if", blockType: { kind: "val", type: { kind: "externref" } }, then: armBodyForEntry, else: current },
+        { op: "if", blockType: { kind: "val", type: { kind: "externref" } }, then: callAndCoerce, else: current },
       ];
     }
 

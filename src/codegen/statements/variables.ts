@@ -59,7 +59,6 @@ import {
   inferNativeTaViewConstructType,
   nativeBufferBuiltinOf,
 } from "../dataview-native.js";
-import { typedArrayCtorArgIsArithmeticPrimitive } from "../expressions/typed-array-host-carrier.js";
 import { compileArrayDestructuring, compileObjectDestructuring } from "./destructuring.js";
 import { compileNestedClassDeclaration, emitUnresolvedComputedAccessorNameEffects } from "./nested-declarations.js";
 import { emitStandaloneHeritageCheck } from "../class-heritage-check.js"; // (#5195 r3-5)
@@ -1168,29 +1167,6 @@ export function inferTaViewType(ctx: CodegenContext, initializer: ts.Expression 
   if (!args || args.length < 1 || args.length > 3 || ts.isNumericLiteral(args[0]!)) return null;
   // (#1930) Query the type-oracle boundary, not the raw checker.
   const argSymName = ctx.oracle.builtinReceiverOf(args[0]!);
-  // (#3097) JS-host lane: a buffer-arg TA construction routes through the host
-  // construct bridge (`emitHostTaBufferConstruct`, new-super.ts) and yields a
-  // REAL host TypedArray externref. The local must be externref so reads route
-  // through the extern paths — coercing to the native vec type would ref.cast
-  // trap. MUST stay in lock-step with `hostTaBufferArgSymName` (new-super.ts):
-  // DataView buffer args are excluded there (array-like per §23.2.5.1) and
-  // stay on the legacy path here too.
-  if (!noJsHost(ctx)) {
-    if (argSymName === "ArrayBuffer" || argSymName === "SharedArrayBuffer") return { kind: "externref" };
-    // (#4383) Keep this in lock-step with hostTaBufferArgSymName: arithmetic
-    // results are primitives even when an `any` operand makes the checker lose
-    // their type, so the constructor remains on the native count/vec path.
-    if (typedArrayCtorArgIsArithmeticPrimitive(args[0]!)) return null;
-    // Keep the local representation aligned with hostTaBufferArgSymName: a
-    // genuinely dynamic first argument is constructed by the real host
-    // TypedArray constructor, whose result is an externref rather than a
-    // compiled vec.  This covers unannotated JavaScript helpers such as
-    // `function encode(buf) { new Uint8Array(buf) }` when `buf` is a host
-    // ArrayBuffer returned by TextEncoder/TypedArray.prototype.buffer.
-    const argFact = ctx.oracle.typeFactOf(args[0]!);
-    if (argFact.kind === "any" || argFact.kind === "unknown") return { kind: "externref" };
-    return null;
-  }
   if (argSymName !== "ArrayBuffer" && argSymName !== "SharedArrayBuffer" && argSymName !== "DataView") return null;
   return { kind: "ref_null", typeIdx: getOrRegisterTaViewType(ctx, viewName) };
 }

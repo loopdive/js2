@@ -33,7 +33,6 @@ import {
   MATH_HOST_METHODS_1ARG,
   MATH_HOST_METHODS_2ARG,
   STRING_METHODS,
-  addArrayIteratorImports,
   addGeneratorImports,
   addIteratorImports,
   addStringImports,
@@ -1826,19 +1825,9 @@ export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedColl
     reportEagerGeneratorAbruptResumptions(ctx, state.sourceFile); // (#6781) traced .throw()/.return() on eager
   }
 
-  // ── collectIteratorImports finalize ──
-  if (state.iteratorFound && !ctx.standalone && !ctx.wasi) {
-    addIteratorImports(ctx);
-  }
-
-  // ── collectArrayIteratorImports finalize ──
-  if (state.arrayIteratorFound && !ctx.standalone && !ctx.wasi) {
-    addArrayIteratorImports(ctx);
-    // Array iterator results are externref iterators consumed via for-of generic path
-    if (!state.iteratorFound) {
-      addIteratorImports(ctx);
-    }
-  }
+  // (#6979) The host iterator / array-iterator import bundles are gone: the
+  // regime and WASI route `__iterator*` to the native iterator runtime on
+  // demand, and array iterators are native (`compileNativeArrayIterator`).
 
   // ── collectForInStringLiterals finalize ──
   // (#2572) Only register the `__for_in_*` host imports in JS-host mode. A
