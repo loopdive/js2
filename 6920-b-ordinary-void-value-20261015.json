@@ -1,0 +1,75 @@
+{
+  "id": "6920",
+  "slice": "ordinary-void-value-successor-20261015",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+  "claimed_at": "2026-10-15T02:18:16.680812+00:00",
+  "updated_at": "2026-10-15T02:18:16.680812+00:00",
+  "write_id": "b-ordinary-void-value-09c0b90d-a6d7-40b6-b3af-bd9a66241dba",
+  "handoff_scope": [
+    {
+      "kind": "ordinary-void-value",
+      "at": "2026-10-15T02:18:16.680812+00:00",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+      "manifest": {
+        "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+        "componentPreimages": [
+          {
+            "path": "src/ir/from-ast.ts",
+            "bytes": 808837,
+            "sha256": "427c67ed940ba7443a587245921b36967f2a2b545649be63bd829374dd6c1dd0",
+            "scope": "Only lowerExprUnchecked existing void partition one return expression replaced with new sourceCompletions helper call; same actual discarded expression once, all other function text exact"
+          },
+          {
+            "path": "src/ir/source-function-completions.ts",
+            "bytes": 9691,
+            "sha256": "d06e13e15daef3060dda06fc890b5fb14cbb93e6e957a113c783ce9dfc2c64c6",
+            "scope": "Append exact8line voidExpressionValue actual-builder identity helper and irVal import. Guardfalse exact old emitConst f64NaN expression. Existing helper functions exact."
+          }
+        ],
+        "canonicalNewPaths": [],
+        "reviewedProposal": {
+          "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-helper-completions-20261015-01a12827/.tmp/ordinary-completion-implementation/workspace/.tmp/ordinary01/void-value-proposal/helper-partition-final.json",
+          "bytes": 2280,
+          "sha256": "710d2450b2d225bd3dd1b48c7c1de1155375ae338f134238134d1eb4958206e0"
+        },
+        "parentReceipts": [
+          "2bd9653dc51147ebcd754a6640da39f2bce194d3"
+        ],
+        "observedDefect": "Genuine decoded return void bump() has effectonce but wrong NumberF64NaN completion; ECMAScript requires Undefined. Parenthesized/nested expressions must preserve actual value.",
+        "qualificationPlan": [
+          "Three genuine void forms across4actual source policies must return actual taggedUndefinedconst and preserve exactlyone increment through actual source/callgraph, not retainedcallcount.",
+          "Two genuineGC typed/codec policies pernewform retain exactreturnedUndefined andeffectonce; no engine or publicreadiness credit. Linear finite refusals remain separate diagnostics.",
+          "Final full registered source/helper/generic cohort, fullsource+testroot typing, original10 bytecontrols, functionbodyinverse and officialbudget/style checks. Preserve all failed244 andoracle-only epochs."
+        ],
+        "constraints": [
+          "Human allSessionB/sharedseam takeover; PRIVATE source extension only in already-owned2paths/test. NoROOTcopy untilindependentfinalreview. No source/main/PR/HOLD/queue push.",
+          "Guard uses actual builder identity, never a new callerflag or publicadmission. Same lowerDiscardedExpression operandonce. Ordinarysource source/checker/unit authentication stillrequired.",
+          "Old host/class/scalar guardfalse exact original NaN expression and originalthrow/class/constructor algorithms unchanged.",
+          "No giantgrowth ornewallowance: lowerExprUnchecked307→307, helper235/max100/newfn8. No schema/runtime/verifier/budget or timeout weakening.",
+          "FinalA3notreceived byB beforequalifiedseal. Preserve bootstrap/foreign sources and all failed evidence; naturalterminal only."
+        ]
+      },
+      "manifestSha256": "42fc11d87ffd1adf272fcad1d686dcf1e37d0be0d507b6fbcc3452a9892c6dae",
+      "constraints": [
+        "Human allSessionB/sharedseam takeover; PRIVATE source extension only in already-owned2paths/test. NoROOTcopy untilindependentfinalreview. No source/main/PR/HOLD/queue push.",
+        "Guard uses actual builder identity, never a new callerflag or publicadmission. Same lowerDiscardedExpression operandonce. Ordinarysource source/checker/unit authentication stillrequired.",
+        "Old host/class/scalar guardfalse exact original NaN expression and originalthrow/class/constructor algorithms unchanged.",
+        "No giantgrowth ornewallowance: lowerExprUnchecked307→307, helper235/max100/newfn8. No schema/runtime/verifier/budget or timeout weakening.",
+        "FinalA3notreceived byB beforequalifiedseal. Preserve bootstrap/foreign sources and all failed evidence; naturalterminal only."
+      ]
+    }
+  ],
+  "predecessors": [
+    "3522-b-native-class-semantic-producer-20261014.json",
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}
