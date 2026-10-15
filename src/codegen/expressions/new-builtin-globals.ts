@@ -49,6 +49,7 @@ import { errorCtorNameIsUserFunctionShadowed, errorCtorNameIsUserShadowed } from
 import { coerceType, compileArrowAsClosure, compileExpression } from "../shared.js";
 import type { InnerResult } from "../shared.js";
 import { compileStringLiteral } from "../string-ops.js";
+import { emitAcceleratedDateParse } from "../helpers/host-date-parse.js";
 import { coerceType as coerceTypeImpl } from "../type-coercion.js";
 import { ensureHostStrictSpreadDispatch, ensureNativeStrictSpreadRuntime } from "../iterator-native.js";
 import { ensureDateDaysFromCivilHelper, ensureDateFormatStringHelper, ensureDateStruct } from "./builtins.js";
@@ -1723,7 +1724,9 @@ export function tryCompileBuiltinGlobalNew(
       // through the same TimeClip path below. Gated to standalone / WASI for the
       // same reason as Date.parse (host strings + lazy helper wiring trip the
       // late-import shift class #2043); host keeps the prior ToNumber(str)→NaN.
-      if ((ctx.standalone || ctx.wasi) && isStringTypedArg(ctx, args[0]!)) {
+      if (ctx.standalone && emitAcceleratedDateParse(ctx, fctx, [args[0]!], isStringTypedArg(ctx, args[0]!))) {
+        // (#6978) Native regime + `date` host accelerator: parsed by host Date.parse.
+      } else if ((ctx.standalone || ctx.wasi) && isStringTypedArg(ctx, args[0]!)) {
         emitNativeDateParse(ctx);
         const argType = compileExpression(ctx, fctx, args[0]!, { kind: "externref" });
         if (argType && argType.kind !== "externref") coerceType(ctx, fctx, argType, { kind: "externref" });

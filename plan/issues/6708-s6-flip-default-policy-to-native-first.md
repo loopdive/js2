@@ -239,7 +239,7 @@ by test262, which has no DOM and no wall clock:
    the bridge, i.e. every host-assisted module).
    `runtime.ts` grows by exactly two lines (one import, one call; the marshal
    body lives in its own module), so `plan/audit/host-import-policy-baseline.json`
-   `maximumRuntimeTsLines` moves 20222 → 20223 (granted here, 2026-10-14).
+   `maximumRuntimeTsLines` moves 20222 → 20223 (granted here, 2026-10-14); after merging main with #6978 (20225) the measured ceiling is 20227 (2026-10-15).
 2. `Date.now()` / `new Date()` returned the epoch (0) under the regime in a JS
    environment. Fix: the epoch fallback now applies only host-free; a JS
    environment uses the `__date_now` clock capability (classified

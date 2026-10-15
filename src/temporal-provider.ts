@@ -194,6 +194,7 @@ function providerOptionFingerprint(options: CompileOptions | undefined): string 
     semanticProviders: semanticProviderCacheKey(options ?? {}),
     hostBridge: options?.hostBridge ?? "auto",
     platform: options?.platform ?? "web",
+    ...(options?.hostAccelerators?.length ? { hostAccelerators: [...options.hostAccelerators].sort() } : {}),
   });
 }
 

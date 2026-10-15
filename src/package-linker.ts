@@ -161,6 +161,7 @@ function compilerOptionFingerprint(options: CompileOptions): string {
     utf8Storage: options.utf8Storage === true,
     semanticProviders: semanticProviderCacheKey(options),
     hostBridge: options.hostBridge ?? "auto",
+    ...(options.hostAccelerators?.length ? { hostAccelerators: [...options.hostAccelerators].sort() } : {}),
     honestAnyBoxing: options.honestAnyBoxing === true,
     unionAnyRep: options.unionAnyRep === true,
     undefinedSingleton: options.undefinedSingleton === true,

@@ -1,10 +1,11 @@
 ---
 id: 6931
 title: "Standalone: loose == on a host value passed into an `any` parameter traps `illegal cast` (IR path) or answers wrong (legacy path)"
-status: ready
+status: done
 sprint: Backlog
 created: 2026-10-09
-updated: 2026-10-09
+updated: 2026-10-14
+completed: 2026-10-14
 priority: medium
 horizon: s
 feasibility: medium
@@ -15,6 +16,14 @@ language_feature: equality
 goal: standalone-gap
 related: [6921, 6920, 2081, 2175, 3673]
 assignee: "ttraenkler/claude-session-c"
+# 2026-10-14 (#6931): any-helpers.ts passes buildThrowJsErrorInstrs into
+# registerAnyEqHelpers so any-eq-helpers.ts keeps type-only imports; a direct
+# value import pulled it into the largest import cycle (704 -> 705, quality).
+# The +11 LOC / +10 lines are that one wiring call, no new logic.
+loc-budget-allow:
+  - src/codegen/any-helpers.ts
+func-budget-allow:
+  - src/codegen/any-helpers.ts::ensureAnyHelpers
 ---
 
 # #6931 — Standalone loose `==` on a host value in an `any` parameter
@@ -109,3 +118,45 @@ open questions are in its `6931-proposal.md`.
 - **Verified unchanged:** gc output is byte-identical.
 
 A owns the lowering and decides whether it lands.
+
+## Delivered (2026-10-14)
+
+Shipped only the shared-runtime part of the proposal, on current main.
+The human authorized the handover in
+[PR 6583 comment 6168686353](https://github.com/loopdive/js2/pull/6583#issuecomment-6168686353).
+
+- **Shipped:** `src/codegen/any-eq-helpers.ts::ensureStandaloneHostEqGuard`
+  emits `__standalone_host_eq_guard(externref) -> externref`. It returns
+  null or an `eq` value unchanged and throws the in-module TypeError
+  `"Cannot compare a host JavaScript value with == in a standalone module"`
+  for anything else. `__any_eq` runs it on both operands (field 4) before
+  any other arm. It is gated on `ctx.standalone` and adds no host import.
+  On every other target `__any_eq` is unchanged, so gc output is
+  byte-identical.
+- **Effect:** the IR path (`__extern_loose_eq` -> `__any_eq`) no longer traps
+  `illegal cast` and no longer silently answers `0`. Loose `==`/`!=` with a
+  host string, object, `undefined`, `true` or `1.5` throws the TypeError.
+  Numbers in i31 range and `null` still match Node.
+- **Deliberately not fixed: the legacy path.** The old direct AST->Wasm
+  lowering (the externref cascade in
+  `binary-ops-typed-dispatch.ts::compileTypedBinaryDispatch`) was frozen on
+  2026-10-11, so the proposal's `coercion-engine.ts::guardHostEqOperand` hunk
+  was dropped. That path never reaches `__any_eq`. It still answers wrongly
+  for host values, for example `exported("1")` -> `0` where Node gives `1`. It
+  does not trap. The test pins only "no trap" there and labels it pre-existing.
+- **In-module catch of the IR path is not exercised.** A `try`/`catch` caller
+  demotes its callees to the legacy path through the call-graph selector, so
+  the test checks catchability from JS instead: a `WebAssembly.Exception`
+  whose in-module rendered payload is the TypeError, not a `RuntimeError`.
+- Test: `tests/issue-6931-standalone-host-loose-eq.test.ts`.
+
+### Follow-up needed
+
+- **(b) admission:** decide whether host values should be rejected where
+  they enter standalone `any` (export parameters / `__any_from_extern`)
+  rather than where they are used. That would also cover the legacy path,
+  `o == null` with a raw `undefined`, and strict `===` on heap numbers. It
+  would break today's opaque round-trip (`ident("x")`).
+- **WASI:** the guard is gated on `ctx.standalone`, so `--target wasi` is not
+  guarded. A JS embedder that calls WASI exports with raw values is
+  expected to hit the same defect (not measured in this change).

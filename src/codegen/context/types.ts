@@ -194,6 +194,7 @@ export interface CodegenOptions extends BodyRouteAudit.Options {
   hostBridge?: "auto" | "always" | "off";
   /** Select migrated Wasm-native semantic providers independently of JS interop. */
   semanticProviders?: import("../../target-profile.js").SemanticProviderSelection;
+  hostAccelerators?: readonly string[]; // (#6978) see CompileOptions.hostAccelerators
   /**
    * (#2141 S1) Honest generic `any` boxing — the Stage-B regime flag. When ON,
    * `boxToAny`'s externref arm routes through `__any_box_extern` (runtime

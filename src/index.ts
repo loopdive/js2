@@ -647,6 +647,8 @@ export interface CompileOptions {
    * `nativeStrings: false` keeps the pre-S6 host-assisted profile (deprecated).
    */
   semanticProviders?: import("./target-profile.js").SemanticProviderSelection;
+  /** (#6978) Families that use the JS host's provider under native-first (JS target only). */
+  hostAccelerators?: readonly import("./target-profile.js").HostAcceleratorFamily[];
   /**
    * (#86) NOT a real option — declared `never` so `compile(src, { standalone:
    * true })` is a TypeScript excess-property error. The standalone codegen
