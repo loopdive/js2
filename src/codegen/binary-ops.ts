@@ -60,7 +60,6 @@ import { admitsObjectRelational, reduceRelationalOperandsToPrimitive } from "./r
 import { compileToPrimitiveCascadeOperand } from "./classes/class-symbol-to-primitive-operand.js"; // (#6982)
 // (#4491 T4) §13.15.3 `+` over object operands.
 import { admitsObjectAdd } from "./add-to-primitive.js";
-import { emitHostArrayCarrierBinary, hostArrayCarrierBinaryArm } from "./host-carrier-to-primitive.js"; // (#6788)
 import { addStringImports, addUnionImports, resolveWasmType } from "./index.js";
 import { isI32CompatibleOperand, nativeTypeOfExpression } from "./native-type-annotations.js";
 import type { InnerResult } from "./shared.js";
@@ -69,12 +68,7 @@ import { isLogicalAssignNamedEvalNameRead } from "./property-access.js";
 import { compileNullishObservedExpression } from "./property-nullish-read.js";
 import { foldVoidOperandEquality } from "./equality-void-operand.js";
 import { emitHoistedCharCodeAtRead, matchHoistedCharRead } from "./string-ops.js";
-import {
-  emitAnyEqFromExternTemps,
-  emitLooseEq,
-  emitStrictEq,
-  ensureExternrefToNumberProvider,
-} from "./coercion-engine.js";
+import { emitLooseEq, emitStrictEq, ensureExternrefToNumberProvider } from "./coercion-engine.js";
 import { compileInstanceOf, compileTypeofComparison } from "./typeof-delete.js";
 import { compileTypedBinaryDispatch } from "./binary-ops-typed-dispatch.js";
 import { foldTypeDisjointThenPromote } from "./strict-eq-type-disjoint.js";
@@ -86,9 +80,8 @@ import {
 import { compileInOperator } from "./binary-ops-in.js";
 import { moduleGlobalIsDynamicButStaticallyPrimitive } from "./declarations/heterogeneous-scalar-var-widening.js";
 import { emitIsUndefF64 } from "./value-tags.js";
-import { hasStaticBigIntOperand, usesHostBigIntCarrier } from "./host-bigint-carrier.js";
+import { hasStaticBigIntOperand } from "./host-bigint-carrier.js";
 import { emitStandaloneAnyBigIntBinary } from "./bigint-any-operand.js"; // (#5383) host-free any op bigint
-import { objectCoercionBigIntArgumentOf } from "./object-ctor-primitive-receiver.js";
 import { emitUninitialisedFieldStrictNullish, readsUninitialisedFieldSlot } from "./uninitialised-field-undefined.js"; // (#5312)
 import { readsUndefinedHoldingVariable } from "./undefined-holding-variable.js"; // (#1058)
 
@@ -581,46 +574,6 @@ export function bigIntHostBinopOpcode(op: ts.SyntaxKind): number | undefined {
   }
 }
 
-/** Evaluate both operands left-to-right and delegate a BigInt operation to JS. */
-function emitHostBigIntOperation(
-  ctx: CodegenContext,
-  fctx: FunctionContext,
-  expr: ts.BinaryExpression,
-  opcode?: number,
-  negateEquality = false,
-): ValType | null {
-  const externref: ValType = { kind: "externref" };
-  const leftType = compileExpression(ctx, fctx, expr.left, externref);
-  if (!leftType) return null;
-  if (leftType.kind !== "externref") coerceType(ctx, fctx, leftType, externref);
-  const leftTmp = allocTempLocal(fctx, externref);
-  fctx.body.push({ op: "local.set", index: leftTmp });
-
-  const rightType = compileExpression(ctx, fctx, expr.right, externref);
-  if (!rightType) {
-    releaseTempLocal(fctx, leftTmp);
-    return null;
-  }
-  if (rightType.kind !== "externref") coerceType(ctx, fctx, rightType, externref);
-  const rightTmp = allocTempLocal(fctx, externref);
-  fctx.body.push({ op: "local.set", index: rightTmp });
-
-  const importName = opcode === undefined ? "__host_eq" : "__host_bigint_binop";
-  const params: ValType[] = opcode === undefined ? [externref, externref] : [{ kind: "i32" }, externref, externref];
-  const imported = ensureLateImport(ctx, importName, params, [opcode === undefined ? { kind: "i32" } : externref]);
-  flushLateImportShifts(ctx, fctx);
-  const finalIdx = ctx.funcMap.get(importName) ?? imported;
-  if (finalIdx === undefined) throw new Error(`Missing import after ensureLateImport: ${importName}`);
-
-  if (opcode !== undefined) fctx.body.push({ op: "i32.const", value: opcode });
-  fctx.body.push({ op: "local.get", index: leftTmp }, { op: "local.get", index: rightTmp });
-  releaseTempLocal(fctx, rightTmp);
-  releaseTempLocal(fctx, leftTmp);
-  fctx.body.push({ op: "call", funcIdx: finalIdx });
-  if (negateEquality) fctx.body.push({ op: "i32.eqz" });
-  return opcode === undefined ? { kind: "i32", boolean: true } : externref;
-}
-
 /**
  * (#3688) An identifier whose value physically cannot be `undefined`: the
  * global `NaN`/`Infinity`, or a binding held in an f64/i32/i64 local slot
@@ -921,17 +874,14 @@ export function compileBinaryExpression(
     // there would move bytes for an answer that is already right. Standalone
     // has no such fallback: it compares the carriers structurally and reports
     // `void 0 !== undefined` as TRUE, which is the defect this fixes.
-    const voidUndefinedIsLiteral = ctx.targetProfile.semanticProviders === "native-first";
-    const rightIsUndefinedId =
-      voidUndefinedIsLiteral && isInertUndefinedLiteral(expr.right)
-        ? true
-        : ts.isIdentifier(expr.right) && expr.right.text === "undefined";
+    const rightIsUndefinedId = isInertUndefinedLiteral(expr.right)
+      ? true
+      : ts.isIdentifier(expr.right) && expr.right.text === "undefined";
     const rightIsNullish = rightIsNullKeyword || rightIsUndefinedId;
     const leftIsNullKeyword = expr.left.kind === ts.SyntaxKind.NullKeyword;
-    const leftIsUndefinedId =
-      voidUndefinedIsLiteral && isInertUndefinedLiteral(expr.left)
-        ? true
-        : ts.isIdentifier(expr.left) && expr.left.text === "undefined";
+    const leftIsUndefinedId = isInertUndefinedLiteral(expr.left)
+      ? true
+      : ts.isIdentifier(expr.left) && expr.left.text === "undefined";
     const leftIsNullish = leftIsNullKeyword || leftIsUndefinedId;
     // A declaration binding whose element type is a heterogeneous primitive
     // union is physically a nullable `$AnyValue`.  Do not consume its
@@ -1179,21 +1129,6 @@ export function compileBinaryExpression(
     }
   }
 
-  // `Object(2n)` is typed as `any`, so an operation whose other operand is an
-  // object has no checker-visible BigInt side. Keep it out of the f64 deferred
-  // ToNumeric path: the JS host must unwrap both objects before deciding
-  // whether this is valid BigInt arithmetic or a mixed-type TypeError.
-  const boxedBigIntOpcode = bigIntHostBinopOpcode(op);
-  if (
-    usesHostBigIntCarrier(ctx) &&
-    ctx.anyValueTypeIdx < 0 &&
-    boxedBigIntOpcode !== undefined &&
-    (objectCoercionBigIntArgumentOf(ctx, expr.left) !== undefined ||
-      objectCoercionBigIntArgumentOf(ctx, expr.right) !== undefined)
-  ) {
-    return emitHostBigIntOperation(ctx, fctx, expr, boxedBigIntOpcode);
-  }
-
   // §13.15.2 evaluates both ExponentiationExpression operands before either
   // operand is reduced by ToNumeric. The ordinary numeric hint below asks an
   // object operand to coerce while that operand is compiled, which observes
@@ -1322,8 +1257,7 @@ export function compileBinaryExpression(
       // native `__str_to_number` scanner is §7.1.4.1 StringToNumber (NaN for a
       // non-numeric string, 0 for empty), and `f64.eq` reproduces +0===-0 and
       // NaN≠NaN — so `"1"==1`, `0==""`, `false==""`, `"x"==1` all match Node.
-      const nativeSemantics = ctx.targetProfile.semanticProviders === "native-first";
-      if (nativeSemantics && ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
+      if (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
         // Ensure the native StringToNumber scanner exists. Its signature is
         // `(externref) -> f64`; it converts the externref back to ref $AnyString
         // internally (any.convert_extern + ref.cast).
@@ -1734,8 +1668,6 @@ export function compileBinaryExpression(
     return emitObjectAdd(ctx, fctx, expr);
   }
   // (#6788) JS-host twin for an ARRAY operand — see host-carrier-to-primitive.ts.
-  const hostCarrierArm = hostArrayCarrierBinaryArm(ctx, expr, leftTsType, rightTsType);
-  if (hostCarrierArm !== undefined) return emitHostArrayCarrierBinary(ctx, fctx, expr, hostCarrierArm);
   if (
     !wrapperEquality &&
     isStringType(leftTsType) &&
@@ -1778,31 +1710,6 @@ export function compileBinaryExpression(
     // the standalone i64 lowering. This is also necessary for accumulators:
     // computing a wide host result and then storing it in an i64 local would
     // otherwise lose the high bits before the next iteration.
-    if (leftIsBigInt && rightIsBigInt && usesHostBigIntCarrier(ctx)) {
-      const isEq =
-        op === ts.SyntaxKind.EqualsEqualsToken ||
-        op === ts.SyntaxKind.EqualsEqualsEqualsToken ||
-        op === ts.SyntaxKind.ExclamationEqualsToken ||
-        op === ts.SyntaxKind.ExclamationEqualsEqualsToken;
-      const isNeq = op === ts.SyntaxKind.ExclamationEqualsToken || op === ts.SyntaxKind.ExclamationEqualsEqualsToken;
-      const isRelational =
-        op === ts.SyntaxKind.LessThanToken ||
-        op === ts.SyntaxKind.LessThanEqualsToken ||
-        op === ts.SyntaxKind.GreaterThanToken ||
-        op === ts.SyntaxKind.GreaterThanEqualsToken;
-
-      if (isRelational) {
-        return emitAnyRelational(ctx, fctx, expr, op);
-      }
-
-      // Keep the historical i64 extension for BigInt `>>>`. JavaScript itself
-      // rejects that operator for BigInt, but the compiler's existing contract
-      // (and standalone lane) defines it as an unsigned i64 shift.
-      const hostOpcode =
-        op === ts.SyntaxKind.GreaterThanGreaterThanGreaterThanToken ? undefined : bigIntHostBinopOpcode(op);
-      if (isEq) return emitHostBigIntOperation(ctx, fctx, expr, undefined, isNeq);
-      if (hostOpcode !== undefined) return emitHostBigIntOperation(ctx, fctx, expr, hostOpcode);
-    }
 
     // Mixed BigInt + Number/String: comparison and equality operators (#227, #228, #295)
     if (leftIsBigInt !== rightIsBigInt) {
@@ -1871,36 +1778,6 @@ export function compileBinaryExpression(
       // and its f64 conversion also loses integer precision. Let JavaScript
       // perform the exact abstract equality / relational algorithm whenever a
       // host is available.
-      if (usesHostBigIntCarrier(ctx) && (isLooseEq || isLooseNeq || isComparison)) {
-        if (isComparison) {
-          return emitAnyRelational(ctx, fctx, expr, op);
-        }
-        const externref: ValType = { kind: "externref" };
-        const leftType = compileExpression(ctx, fctx, expr.left, externref);
-        if (!leftType) return null;
-        if (leftType.kind !== "externref") coerceType(ctx, fctx, leftType, externref);
-        const leftTmp = allocTempLocal(fctx, externref);
-        fctx.body.push({ op: "local.set", index: leftTmp });
-        const rightType = compileExpression(ctx, fctx, expr.right, externref);
-        if (!rightType) {
-          releaseTempLocal(fctx, leftTmp);
-          return null;
-        }
-        if (rightType.kind !== "externref") coerceType(ctx, fctx, rightType, externref);
-        const rightTmp = allocTempLocal(fctx, externref);
-        fctx.body.push({ op: "local.set", index: rightTmp });
-        const imported = ensureLateImport(ctx, "__host_loose_eq", [externref, externref], [{ kind: "i32" }]);
-        flushLateImportShifts(ctx, fctx);
-        const finalIdx = ctx.funcMap.get("__host_loose_eq") ?? imported;
-        if (finalIdx === undefined) throw new Error("Missing import after ensureLateImport: __host_loose_eq");
-        fctx.body.push({ op: "local.get", index: leftTmp });
-        fctx.body.push({ op: "local.get", index: rightTmp });
-        releaseTempLocal(fctx, rightTmp);
-        releaseTempLocal(fctx, leftTmp);
-        fctx.body.push({ op: "call", funcIdx: finalIdx });
-        if (isLooseNeq) fctx.body.push({ op: "i32.eqz" });
-        return { kind: "i32", boolean: true };
-      }
 
       // #1827 — BigInt × Number loose (in)equality must use EXACT
       // mathematical-value equality, not an f64 collapse. `f64.convert_i64_s`
@@ -2056,20 +1933,13 @@ export function compileBinaryExpression(
       // (`anyValueTypeIdx < 0`), mirroring emitAnyAdd's host-import ABI rule.
       // Standalone/WASI has no JS host, so it keeps the throw (existing
       // limitation — a native ToNumeric reduction is the follow-up slice).
-      const noJsHost3481 = !usesHostBigIntCarrier(ctx);
       const nonBigIntTsType = leftIsBigInt ? rightTsType : leftTsType;
-      const nonBigIntIsObjectish =
-        (nonBigIntTsType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.Object)) !== 0;
       const hostBinopCode = bigIntHostBinopOpcode(op);
-      if (!noJsHost3481 && ctx.anyValueTypeIdx < 0 && nonBigIntIsObjectish && hostBinopCode !== undefined) {
-        return emitHostBigIntOperation(ctx, fctx, expr, hostBinopCode);
-      }
+
       // (#5383) …and its host-free twin for an `any`/`unknown` operand.
-      const native = noJsHost3481
-        ? emitStandaloneAnyBigIntBinary(ctx, fctx, expr, leftIsBigInt, nonBigIntTsType, hostBinopCode, () =>
-            compileI64BinaryOp(ctx, fctx, op, expr),
-          )
-        : undefined;
+      const native = emitStandaloneAnyBigIntBinary(ctx, fctx, expr, leftIsBigInt, nonBigIntTsType, hostBinopCode, () =>
+        compileI64BinaryOp(ctx, fctx, op, expr),
+      );
       if (native !== undefined) return native;
       // Compile both sides for side effects, drop their values, then throw.
       const lt = compileExpression(ctx, fctx, expr.left);
@@ -2743,9 +2613,8 @@ export function emitAnyRelational(
   expr: ts.BinaryExpression,
   op: ts.SyntaxKind,
 ): ValType {
-  const noJsHost = ctx.targetProfile.semanticProviders === "native-first";
   // Registered before the operands compile, so its setup cannot desync funcIdxs.
-  if (noJsHost && ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) ensureObjectRuntime(ctx);
+  if (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) ensureObjectRuntime(ctx);
 
   // Compile both operands to externref temps (keep runtime strings boxed).
   // (#6982) A class instance with `[Symbol.toPrimitive]` stays raw until step 1.
@@ -2794,27 +2663,6 @@ export function emitAnyRelational(
   };
 
   // ── JS-host: __host_compare → -1/0/1/2 ──
-  if (!noJsHost) {
-    fctx.body.push({ op: "local.get", index: lTmp });
-    fctx.body.push({ op: "local.get", index: rTmp });
-    const hostIdx = ensureLateImport(
-      ctx,
-      "__host_compare",
-      [{ kind: "externref" }, { kind: "externref" }],
-      [{ kind: "i32" }],
-    );
-    flushLateImportShifts(ctx, fctx);
-    const finalIdx = ctx.funcMap.get("__host_compare") ?? hostIdx;
-    if (finalIdx === undefined) throw new Error("Missing import after ensureLateImport: __host_compare");
-    fctx.body.push({ op: "call", funcIdx: finalIdx });
-    const cmpTmp = allocTempLocal(fctx, { kind: "i32" });
-    fctx.body.push({ op: "local.set", index: cmpTmp });
-    mapCmpToOp(cmpTmp);
-    releaseTempLocal(fctx, cmpTmp);
-    releaseTempLocal(fctx, rTmp);
-    releaseTempLocal(fctx, lTmp);
-    return { kind: "i32" };
-  }
 
   // ── Standalone / WASI: §7.2.13 in-module ──
   // both strings → lexicographic __str_compare; else ToNumber both + f64 compare.

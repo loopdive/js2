@@ -3,22 +3,27 @@
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
 import { projectIrBackendTargetProfile } from "../src/ir/backend/legality.js";
-import { resolveCompileTargetProfile, type TargetProfileInput } from "../src/target-profile.js";
+import {
+  REMOVED_SEMANTIC_PROVIDER_RELEASE,
+  resolveCompileTargetProfile,
+  type TargetProfileInput,
+} from "../src/target-profile.js";
 
 const cases: ReadonlyArray<readonly [string, TargetProfileInput, ReturnType<typeof resolveCompileTargetProfile>]> = [
   [
-    "default gc host",
+    // (#6708 S6) native-first is the default in every environment.
+    "default gc (native-first since S6)",
     {},
     {
       target: "gc",
       backend: "wasmgc",
       environment: "javascript",
       capabilityPolicy: "ambient-js",
-      semanticProviders: "host-assisted",
+      semanticProviders: "native-first",
       hostValueInterop: "required",
       strictEnvImportGate: false,
-      nativeRegime: false,
-      nativeStringsRequiredByPolicy: false,
+      nativeRegime: true,
+      nativeStringsRequiredByPolicy: true,
     },
   ],
   [
@@ -32,7 +37,8 @@ const cases: ReadonlyArray<readonly [string, TargetProfileInput, ReturnType<type
       semanticProviders: "native-first",
       hostValueInterop: "required",
       strictEnvImportGate: true,
-      nativeRegime: false,
+      // (#6979 S7-b) the strict gc build runs on the native regime too
+      nativeRegime: true,
       nativeStringsRequiredByPolicy: true,
     },
   ],
@@ -67,14 +73,14 @@ const cases: ReadonlyArray<readonly [string, TargetProfileInput, ReturnType<type
     },
   ],
   [
-    "wasi compatibility escape hatch",
+    "wasi compatibility escape hatch (native-first by default since S6)",
     { target: "wasi", strictNoHostImports: false },
     {
       target: "wasi",
       backend: "wasmgc",
       environment: "wasi",
       capabilityPolicy: "ambient-js",
-      semanticProviders: "host-assisted",
+      semanticProviders: "native-first",
       hostValueInterop: "off",
       strictEnvImportGate: false,
       nativeRegime: false,
@@ -142,6 +148,53 @@ describe("#4396 target policy normalization", () => {
     );
   });
 
+  // (#6979 S7) The host-assisted profile and the "auto" alias are gone: every
+  // spelling that selected them is a compile error naming the issue and the
+  // last release that accepted it.
+  it.each([
+    ["host-assisted", { semanticProviders: "host-assisted" }],
+    ["auto", { semanticProviders: "auto" }],
+    ["implicit nativeStrings: false", { nativeStrings: false }],
+    ["fast + nativeStrings: false", { fast: true, nativeStrings: false } as TargetProfileInput],
+    ["standalone + host-assisted", { target: "standalone", semanticProviders: "host-assisted" }],
+  ])("rejects the removed %s spelling with the S7 message", (_name, input) => {
+    expect(() => resolveCompileTargetProfile(input as TargetProfileInput)).toThrow(
+      `#6979 removed (last accepted by js2wasm ${REMOVED_SEMANTIC_PROVIDER_RELEASE})`,
+    );
+  });
+
+  it("keeps nativeStrings: false a no-op where the JS host semantics never applied", () => {
+    for (const input of [
+      { target: "standalone" },
+      { target: "wasi" },
+      { strictNoHostImports: true },
+      { target: "linear" },
+    ] as const) {
+      expect(resolveCompileTargetProfile({ ...input, nativeStrings: false })).toEqual(
+        resolveCompileTargetProfile(input),
+      );
+    }
+  });
+
+  it("the compiler surfaces the S7 rejection", async () => {
+    const source = "export function add(a: number, b: number): number { return a + b; }";
+    await expect(compile(source, { semanticProviders: "host-assisted" as unknown as "native-first" })).rejects.toThrow(
+      "#6979",
+    );
+  });
+
+  it("publishes a user-declared host function under the universal #4401/#6979 gate", async () => {
+    // A user-declared host function is an explicit embedder capability
+    // (`declared_function`, #6979), so the gate — which now applies to every
+    // WasmGC profile — publishes it whether or not native-first is spelled out.
+    const source =
+      "declare function hostTick(n: number): number;\nexport function run(): number { return hostTick(1); }";
+    for (const options of [{}, { semanticProviders: "native-first" as const }]) {
+      const result = await compile(source, options);
+      expect(result.success, result.errors.map((error) => error.message).join("; ")).toBe(true);
+    }
+  });
+
   it("normalizes the internal codegen boolean projection through the same resolver", () => {
     expect(resolveCompileTargetProfile({ wasi: true })).toEqual(resolveCompileTargetProfile({ target: "wasi" }));
     expect(resolveCompileTargetProfile({ standalone: true })).toEqual(
@@ -153,19 +206,13 @@ describe("#4396 target policy normalization", () => {
   });
 
   it("projects IR capability policy without conflating it with JS value interop", () => {
-    const host = resolveCompileTargetProfile();
-    expect(projectIrBackendTargetProfile(host)).toEqual({
-      backend: "wasmgc",
-      target: "gc",
-      allowHostImports: true,
-      fast: undefined,
-    });
-
     const strictJs = resolveCompileTargetProfile({ strictNoHostImports: true });
     expect(strictJs.hostValueInterop).toBe("required");
+    // (#6979 S7-b) the strict gc build lowers on the native regime, so the IR
+    // sees standalone provider facts, as for the ambient JS environment.
     expect(projectIrBackendTargetProfile(strictJs, { fast: true })).toEqual({
       backend: "wasmgc",
-      target: "gc",
+      target: "standalone",
       allowHostImports: false,
       fast: true,
     });
@@ -176,7 +223,9 @@ describe("#4396 target policy normalization", () => {
     // (#5385) native-first in a JS environment lowers with the standalone
     // semantic regime: the IR sees the same provider facts as a standalone
     // build, while the profile itself keeps its JS environment and value bridge.
-    // (#5385 S5) The regime is the default for native-first in a JS environment.
+    // (#5385 S5) The regime is the default for native-first in a JS environment,
+    // and (#6708 S6) native-first is the default policy.
+    expect(resolveCompileTargetProfile()).toEqual(resolveCompileTargetProfile({ semanticProviders: "native-first" }));
     const nativeFirstJs = resolveCompileTargetProfile({ semanticProviders: "native-first" });
     expect(nativeFirstJs.environment).toBe("javascript");
     expect(nativeFirstJs.hostValueInterop).toBe("required");
@@ -188,13 +237,11 @@ describe("#4396 target policy normalization", () => {
       fast: undefined,
     });
 
-    // The one-release kill switch restores the pre-S5 per-family reroute.
+    // (#6979) The S6 kill switch is gone: the environment no longer matters.
     const previous = process.env.JS2WASM_NATIVE_REGIME_JS;
     process.env.JS2WASM_NATIVE_REGIME_JS = "0";
     try {
-      const killed = resolveCompileTargetProfile({ semanticProviders: "native-first" });
-      expect(killed.nativeRegime).toBe(false);
-      expect(projectIrBackendTargetProfile(killed).target).toBe("gc");
+      expect(resolveCompileTargetProfile().nativeRegime).toBe(true);
     } finally {
       if (previous === undefined) Reflect.deleteProperty(process.env, "JS2WASM_NATIVE_REGIME_JS");
       else process.env.JS2WASM_NATIVE_REGIME_JS = previous;
@@ -215,6 +262,27 @@ describe("#4396 target policy normalization", () => {
       expect(left.success, left.errors.map((error) => error.message).join("; ")).toBe(true);
       expect(right.success, right.errors.map((error) => error.message).join("; ")).toBe(true);
       expect(left.binary).toEqual(right.binary);
+    }
+  });
+
+  it("(#6708) {} is byte-identical to native-first and emits no legacy or unknown import", async () => {
+    const sources = [
+      "export function add(a: number, b: number): number { return a + b; }",
+      `export function greet(name: string, csv: string): string {
+  const parts = csv.split(",");
+  const msg = \`Hello, \${name}! You have \${parts.length} items: \${parts.join(" | ")}\`;
+  return msg.replace("Hello", "Hi");
+}`,
+    ];
+    for (const source of sources) {
+      const implicit = await compile(source, {});
+      const nativeFirst = await compile(source, { semanticProviders: "native-first" });
+      for (const result of [implicit, nativeFirst]) {
+        expect(result.success, result.errors.map((error) => error.message).join("; ")).toBe(true);
+      }
+      expect(implicit.binary).toEqual(nativeFirst.binary);
+      expect(implicit.hostImportSummary?.byClassification.unknown).toBe(0);
+      expect(implicit.hostImportSummary?.byClassification.unknown).toBe(0);
     }
   });
 });

@@ -268,28 +268,6 @@ export function compileOptionalCallExpression(
     }
   }
 
-  // (#4435) A non-repeatable dynamic element receiver still needs ordinary
-  // method dispatch in the live arm. `match[3]?.trim()` is the real Marked
-  // shape: the element access has already been evaluated into `tmp` for the
-  // nullish test, but the repeatable-receiver delegation above deliberately
-  // refuses to evaluate it again. In the JS-host lane, invoke any no-spread
-  // method call with that captured receiver instead. This preserves both
-  // single evaluation and the receiver as `this`; standalone and spread calls
-  // remain on their existing paths.
-  if (
-    !methodResolved &&
-    (tsReceiverType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0 &&
-    ts.isElementAccessExpression(propAccess.expression) &&
-    !expr.arguments.some((argument) => ts.isSpreadElement(argument)) &&
-    ctx.targetProfile.semanticProviders !== "native-first"
-  ) {
-    const delegated = compileCapturedDynamicOptionalReceiverMethodCall(ctx, fctx, expr, methodName, tmp, objType);
-    if (delegated !== null) {
-      resultType = delegated;
-      methodResolved = true;
-    }
-  }
-
   // Closure-field / function-typed-property callee (e.g. `o?.f(x)` where `f`
   // holds a closure on an object/struct, not a named method). None of the
   // method-resolution branches above match these, so without this fallback the
@@ -350,40 +328,24 @@ function compileOptionalPropertyValueCall(
   fctx.body.push({ op: "local.set", index: receiverLocal });
 
   const methodName = ts.isPrivateIdentifier(propAccess.name) ? propAccess.name.text.slice(1) : propAccess.name.text;
-  // (#5383 / #2961) `recv.m?.(args)` used to build its argument list and invoke
-  // the callee through the JS-host trio `__js_array_new` / `__js_array_push` /
-  // `__call_function` (plus `__get_undefined` for the short-circuit result)
-  // unconditionally. Under `--target standalone` those four have no provider,
-  // so the shape leaked FOUR unsatisfiable `env::*` imports — the entire `env`
-  // import set of the compiled `@js-temporal/polyfill` (one call site, the
-  // polyfill's `hr`). The native lane owns exact equivalents already:
-  // `__objvec_new` / `__objvec_push` (object-runtime vec builders) and
-  // `__apply_closure`, which has the SAME `(callee, thisArg, args) -> result`
-  // signature as `__call_function`; `canonicalUndefinedExternInstrs` supplies
-  // the lane's real `undefined` (the #2106 tag-1 singleton standalone, the host
-  // `__get_undefined` otherwise). Split exactly the way
-  // `tryCompileCallableStaticField` already does. The HOST lane keeps its four
-  // `ensureLateImport` registrations in the same order and emits the same
-  // instructions, so its bytes are unchanged.
-  const hostLane = !ctx.standalone && !ctx.wasi;
+  // (#5383 / #2961, #6979) `recv.m?.(args)` builds its argument list with the
+  // object-runtime vec builders (`__objvec_new` / `__objvec_push`) and invokes
+  // the callee through `__apply_closure`, which has the `(callee, thisArg,
+  // args) -> result` signature of the retired host `__call_function`;
+  // `canonicalUndefinedExternInstrs` supplies the lane's real `undefined`.
   const getIdx = ensureLateImport(ctx, "__extern_get", [externref, externref], [externref]);
   const isUndefinedIdx = ensureExternIsUndefinedImport(ctx);
-  const applyIdx = hostLane ? undefined : reserveApplyClosure(ctx);
-  const vecBuilders = hostLane ? undefined : ensureObjVecBuilders(ctx);
-  const arrayNewIdx = hostLane ? ensureLateImport(ctx, "__js_array_new", [], [externref]) : vecBuilders?.newIdx;
-  const arrayPushIdx = hostLane
-    ? ensureLateImport(ctx, "__js_array_push", [externref, externref], [])
-    : vecBuilders?.pushIdx;
-  const callIdx = hostLane
-    ? ensureLateImport(ctx, "__call_function", [externref, externref, externref], [externref])
-    : applyIdx;
-  if (hostLane) ensureLateImport(ctx, "__get_undefined", [], [externref]);
+  const applyIdx = reserveApplyClosure(ctx);
+  const vecBuilders = ensureObjVecBuilders(ctx);
+  const arrayNewIdx = vecBuilders?.newIdx;
+  const arrayPushIdx = vecBuilders?.pushIdx;
+  const callIdx = applyIdx;
   addStringConstantGlobal(ctx, methodName);
   flushLateImportShifts(ctx, fctx);
   const resolvedGetIdx = ctx.funcMap.get("__extern_get") ?? getIdx;
-  const resolvedNewIdx = ctx.funcMap.get(hostLane ? "__js_array_new" : "__objvec_new") ?? arrayNewIdx;
-  const resolvedPushIdx = ctx.funcMap.get(hostLane ? "__js_array_push" : "__objvec_push") ?? arrayPushIdx;
-  const resolvedCallIdx = ctx.funcMap.get(hostLane ? "__call_function" : "__apply_closure") ?? callIdx;
+  const resolvedNewIdx = ctx.funcMap.get("__objvec_new") ?? arrayNewIdx;
+  const resolvedPushIdx = ctx.funcMap.get("__objvec_push") ?? arrayPushIdx;
+  const resolvedCallIdx = ctx.funcMap.get("__apply_closure") ?? callIdx;
   if (
     resolvedGetIdx === undefined ||
     resolvedNewIdx === undefined ||
@@ -438,45 +400,6 @@ function isRepeatableDynamicOptionalReceiver(expr: ts.Expression): boolean {
   let cur = expr;
   while (ts.isParenthesizedExpression(cur) || ts.isNonNullExpression(cur)) cur = cur.expression;
   return ts.isIdentifier(cur) || cur.kind === ts.SyntaxKind.ThisKeyword;
-}
-
-/** JS-host dynamic method call using an already-evaluated optional receiver. */
-function compileCapturedDynamicOptionalReceiverMethodCall(
-  ctx: CodegenContext,
-  fctx: FunctionContext,
-  expr: ts.CallExpression,
-  methodName: string,
-  receiverLocal: number,
-  receiverType: ValType,
-): ValType | null {
-  const externref: ValType = { kind: "externref" };
-  const arrayNewIdx = ensureLateImport(ctx, "__js_array_new", [], [externref]);
-  const arrayPushIdx = ensureLateImport(ctx, "__js_array_push", [externref, externref], []);
-  const methodCallIdx = ensureLateImport(ctx, "__extern_method_call", [externref, externref, externref], [externref]);
-  addStringConstantGlobal(ctx, methodName);
-  flushLateImportShifts(ctx, fctx);
-  const resolvedNewIdx = ctx.funcMap.get("__js_array_new") ?? arrayNewIdx;
-  const resolvedPushIdx = ctx.funcMap.get("__js_array_push") ?? arrayPushIdx;
-  const resolvedMethodCallIdx = ctx.funcMap.get("__extern_method_call") ?? methodCallIdx;
-  if (resolvedNewIdx === undefined || resolvedPushIdx === undefined || resolvedMethodCallIdx === undefined) return null;
-
-  fctx.body.push({ op: "call", funcIdx: resolvedNewIdx });
-  const argsLocal = allocLocal(fctx, `__optrecv_args_${fctx.locals.length}`, externref);
-  fctx.body.push({ op: "local.set", index: argsLocal });
-  for (const argument of expr.arguments) {
-    fctx.body.push({ op: "local.get", index: argsLocal });
-    const argType = compileExpression(ctx, fctx, ts.isSpreadElement(argument) ? argument.expression : argument);
-    if (argType === null) fctx.body.push({ op: "ref.null.extern" });
-    else if (argType.kind !== "externref") coerceType(ctx, fctx, argType, externref);
-    fctx.body.push({ op: "call", funcIdx: resolvedPushIdx });
-  }
-
-  fctx.body.push({ op: "local.get", index: receiverLocal });
-  if (receiverType.kind !== "externref") coerceType(ctx, fctx, receiverType, externref);
-  fctx.body.push(...stringConstantExternrefInstrs(ctx, methodName));
-  fctx.body.push({ op: "local.get", index: argsLocal });
-  fctx.body.push({ op: "call", funcIdx: resolvedMethodCallIdx });
-  return externref;
 }
 
 /**

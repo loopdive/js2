@@ -93,11 +93,7 @@ import {
   isBuiltinConstructorIdentityName,
   isSupportedBuiltinNamespace,
 } from "../builtin-static-globals.js";
-import {
-  emitPromiseSubclassValueRead,
-  resolvePromiseSubclassIdentifier,
-  tryEmitPromiseSubclassValue,
-} from "./promise-subclass.js";
+import { emitPromiseSubclassValueRead, resolvePromiseSubclassIdentifier } from "./promise-subclass.js";
 import {
   emitLiveIdentifierGlobalRead,
   moduleTdzGlobalIndexForIdentifier,
@@ -119,7 +115,6 @@ import { emitHostEvalGlobalBindingSeed } from "./runtime-eval-provider.js";
 import { emitStandaloneFunctionIntrinsicValue } from "../function-intrinsic-carrier.js"; // (#4442) THE `%Function%` emitter
 import { definedFuncAt } from "../func-space.js";
 import { emitHostOrNativeBuiltinInstanceOf } from "../host-native-instanceof.js";
-import { usesHostBigIntCarrier } from "../host-bigint-carrier.js";
 import {
   ensureStandaloneWrapperInstanceOfHelper,
   type StandaloneWrapperConstructorName,
@@ -697,7 +692,7 @@ function emitNullablePrimitiveUnbox(
     // JS-host BigInts stay as arbitrary-width externrefs. Narrowing this value
     // through __to_bigint would collapse it to the compiler's host-free i64
     // carrier and discard every bit above 63.
-    if (usesHostBigIntCarrier(ctx)) return null;
+
     const funcIdx = ctx.funcMap.get("__to_bigint");
     if (funcIdx !== undefined) {
       fctx.body.push({ op: "call", funcIdx });
@@ -1962,9 +1957,6 @@ function compileIdentifierCore(
     !fctx.localMap.has(name) &&
     !(fctx.boxedCaptures?.has(name) ?? false)
   ) {
-    if (tryEmitPromiseSubclassValue(ctx, fctx, name)) {
-      return { kind: "externref" };
-    }
   }
 
   // (#3006) Standalone bare builtin-CONSTRUCTOR identifier read as a VALUE
@@ -2267,7 +2259,6 @@ function compileIdentifierCore(
   ) {
     const valueDecl = identifierValueSymbol(ctx, id)?.valueDeclaration;
     const isOrdinaryFunctionDecl =
-      (noJsHost(ctx) || ctx.targetProfile.semanticProviders === "native-first") &&
       valueDecl !== undefined &&
       ts.isFunctionDeclaration(valueDecl) &&
       valueDecl.asteriskToken === undefined &&
@@ -2462,7 +2453,7 @@ function narrowTypeToUnbox(ctx: CodegenContext, fctx: FunctionContext, narrowedT
     // In JS-host mode resolveWasmType deliberately keeps BigInt values as real
     // host BigInts. A checker narrowing changes the logical type, not that
     // physical representation, so leave the externref on the stack.
-    if (usesHostBigIntCarrier(ctx)) return null;
+
     addUnionImports(ctx);
     const funcIdx = ctx.funcMap.get("__to_bigint");
     if (funcIdx !== undefined) {
@@ -3185,7 +3176,7 @@ function compileHostInstanceOf(ctx: CodegenContext, fctx: FunctionContext, expr:
   // single subclass; distinguishing sibling subclasses needs a per-user-class
   // brand (broader $ClassMeta work, #2101). Captured in #1536c's resolution.
   let userErrorParent: string | undefined;
-  if (ctx.targetProfile.semanticProviders === "native-first" && !isBuiltinTypeName(ctorName)) {
+  if (!isBuiltinTypeName(ctorName)) {
     const bp = ctx.classBuiltinParentMap.get(ctorName);
     if (bp && (bp === "Error" || isWasiErrorName(bp))) userErrorParent = bp;
   }
@@ -3222,14 +3213,13 @@ function compileHostInstanceOf(ctx: CodegenContext, fctx: FunctionContext, expr:
   // (#1536c) `userErrorParent` extends this to externref-backed user Error
   // subclasses.
   if (
-    ctx.targetProfile.semanticProviders === "native-first" &&
-    (ctorName === "Error" ||
-      isWasiErrorName(ctorName) ||
-      // (#3234) SuppressedError is not in WASI_ERROR_NAMES (its ctor arity/args
-      // differ), but its native `$Error_struct` carries the SuppressedError tag,
-      // so the field-0 tag check answers `instanceof SuppressedError` host-free.
-      ctorName === "SuppressedError" ||
-      userErrorParent !== undefined)
+    ctorName === "Error" ||
+    isWasiErrorName(ctorName) ||
+    // (#3234) SuppressedError is not in WASI_ERROR_NAMES (its ctor arity/args
+    // differ), but its native `$Error_struct` carries the SuppressedError tag,
+    // so the field-0 tag check answers `instanceof SuppressedError` host-free.
+    ctorName === "SuppressedError" ||
+    userErrorParent !== undefined
   ) {
     const structIdx = getOrRegisterErrorStructType(ctx);
     // (#2188) When the RHS is a *user* Error subclass, sibling subclasses share

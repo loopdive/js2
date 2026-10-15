@@ -16,9 +16,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { analyzeMultiSource } from "../src/checker/index.js";
-import { buildImportManifest } from "../src/compiler/import-manifest.js";
 import { emitBinary } from "../src/emit/binary.js";
-import { buildImports } from "../src/runtime.js";
 import { createIrClassId, createIrSourceId } from "../src/ir/identity.js";
 import { IR_CLASS_SHAPE_CELL, irVal, type IrClassShape, type IrInstr, type IrType } from "../src/ir/nodes.js";
 import {
@@ -682,7 +680,7 @@ describe("#3518 C — A-produced programs from source", () => {
     }
   });
 
-  it("original mixed application: exact pinned sources, codec-identical, async values and phases match native", async () => {
+  it("original mixed application: exact pinned sources, codec-identical, emission identity", async () => {
     expect(createHash("sha256").update(JSON.stringify(ORIGINAL_MIXED)).digest("hex")).toBe(ORIGINAL_MIXED_DIGEST);
     const withLinear = prepare(ORIGINAL_MIXED);
     expect(withLinear.kind).toBe("unsupported");
@@ -703,70 +701,11 @@ describe("#3518 C — A-produced programs from source", () => {
     // Seven source terminal owners, seven prepared runtime bodies, and additional
     // physical continuation helpers are separate populations.
     expect(emitted.module.functions.length).toBeGreaterThan(emitted.emittedUnitIds.length);
-    const imports = buildImports(buildImportManifest(emitted.module));
-    const binary = emitBinary(emitted.module);
-    expect(binary.byteLength).toBeGreaterThan(8);
-    const { instance } = await WebAssembly.instantiate(binary, imports as unknown as WebAssembly.Imports);
-    imports.setInstance?.(instance);
-    const initial = instance.exports.initial;
-    const readPhase = instance.exports.readPhase;
-    const run = instance.exports.run;
-    expect(initial).toBeTypeOf("function");
-    expect(readPhase).toBeTypeOf("function");
-    expect(run).toBeTypeOf("function");
-    if (typeof initial !== "function" || typeof readPhase !== "function" || typeof run !== "function")
-      throw new Error("mixed application source exports missing");
-
-    // Independent native execution of the pinned source's state transitions and loop.
-    // No compiled output, expected-value repair, or fixture substitution feeds this oracle.
-    let nativePhase = 0;
-    let left = 1;
-    left = left + 1;
-    let right = 10;
-    right = right + 2;
-    const nativeInitial = () => left * 100 + right;
-    const compute = (seed: number) => {
-      let total = 0;
-      for (let i = 0; i < 4; i++) {
-        if (i % 2 === 0) total = total + Math.imul(seed, i + 1);
-        else total = total - i;
-      }
-      return total;
-    };
-    const nativeRun = async (seed: number) => {
-      nativePhase = 1;
-      const first = await (seed + 1);
-      nativePhase = 2;
-      const second = await compute(first);
-      nativePhase = 3;
-      return second + nativeInitial();
-    };
-    expect(initial()).toBe(nativeInitial());
-    expect(initial()).toBe(212);
-    expect(readPhase()).toBe(0);
-    for (const seed of [0, 7, -3]) {
-      const expected = nativeRun(seed);
-      const actual = run(seed);
-      expect(actual).toBeInstanceOf(Promise);
-      const actualPhases = [readPhase()];
-      const expectedPhases = [nativePhase];
-      await Promise.resolve();
-      actualPhases.push(readPhase());
-      expectedPhases.push(nativePhase);
-      await Promise.resolve();
-      actualPhases.push(readPhase());
-      expectedPhases.push(nativePhase);
-      const expectedValue = await expected;
-      expect(await actual).toBe(expectedValue);
-      expect(expectedValue).toBe(4 * seed + 212);
-      actualPhases.push(readPhase());
-      expectedPhases.push(nativePhase);
-      expect(expectedPhases).toEqual([1, 2, 3, 3]);
-      expect(actualPhases).toEqual(expectedPhases);
-    }
-    const linear = acceptPreparedIrProgram(decoded, replayOptions("linear"));
-    expect(linear.kind).toBe("unsupported");
-    if (linear.kind === "unsupported") expect(linear.detail).toMatch(/no linear:host runtime projection/);
+    // (#6979) Executing this program needs the IR "host" target's host
+    // `Promise_*` providers, which the runtime no longer binds (the
+    // host-semantic lane is retired); the codec and emission identity above is
+    // what this lane still guarantees.
+    expect(emitBinary(emitted.module).byteLength).toBeGreaterThan(8);
   });
 });
 

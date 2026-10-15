@@ -603,41 +603,16 @@ describe("#3521 prepare-before-emit free-function routing", () => {
     );
   });
 
-  it("prepares a fast JS-host string pass-through before direct emission", async () => {
-    const source = "export function echo(value: string): string { return value; }";
-    const result = await compileWithPoisonedDirectFunctionBodies(source, "echo", {
-      fileName: "prepared-fast-host-string.ts",
-      experimentalIR: true,
-      fast: true,
-      nativeStrings: false,
-      trackIrOutcomes: true,
-    });
-
-    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
-    expect(result.irFirstSkipped).toContain("echo");
-    const echoOutcome = outcome(result, "echo");
-    expect(echoOutcome.unitId).toBeDefined();
-    expect(echoOutcome).toMatchObject({
-      kind: "emitted",
-      prepareAttempts: 1,
-      directBodyEmissions: 0,
-      irBodyEmissions: 1,
-      legacyBodyEmitted: false,
-      irBodyEmitted: true,
-      preparedComponentId: expect.stringMatching(/^prepared-component:/),
-    });
-    expect((await instantiate(result)).echo!("prepared host string")).toBe("prepared host string");
-  });
-
+  // (#6979) host-strings variant removed with the host-assisted profile.
   it("keeps fast string pass-through signatures direct in every excluded lane", async () => {
     const source = "export function echo(value: string): string { return value; }";
     // (#3521 R2-F1) The `nativeStrings: true` entry moved out: an all-string
     // pass-through IS the mixed-carrier predicate's shape once the lane fixes
     // the native `$anyStr` carrier, so it now prepares. The three lanes left
-    // are the `nativeStrings: false` ones with no string carrier to mirror.
+    // are the `nativeStrings: false` ones with no string carrier to mirror
+    // (the wasi + strictNoHostImports: false lane went with #6979).
     const excludedLanes = [
       ["standalone", { target: "standalone", nativeStrings: false }],
-      ["wasi", { target: "wasi", nativeStrings: false, strictNoHostImports: false }],
       ["strictNoHostImports", { strictNoHostImports: true, nativeStrings: false }],
     ] as const;
 
@@ -689,13 +664,12 @@ describe("#3521 prepare-before-emit free-function routing", () => {
     });
   });
 
-  it("keeps a defaulted fast JS-host string parameter on the direct route", async () => {
+  it("keeps a defaulted fast string parameter on the direct route", async () => {
     const source = 'export function defaultEcho(value: string = "fallback"): string { return value; }';
     const result = await compile(source, {
       fileName: "prepared-fast-host-string-default.ts",
       experimentalIR: true,
       fast: true,
-      nativeStrings: false,
       trackIrOutcomes: true,
     });
 
@@ -717,7 +691,6 @@ describe("#3521 prepare-before-emit free-function routing", () => {
       fileName: "prepared-fast-host-string-default-poisoned.ts",
       experimentalIR: true,
       fast: true,
-      nativeStrings: false,
       trackIrOutcomes: true,
     });
     expect(poisoned.success).toBe(false);

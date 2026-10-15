@@ -157,7 +157,7 @@ export function temporalProviderCacheKey(options: {
  * (#6748) The native-first measurement lane's provider gets the shim too. It
  * is compiled under the native semantic REGIME (`ctx.standalone`), which reads
  * the bare `Intl` identifier as null exactly like standalone does (the host
- * `Intl` arm in `expressions/identifiers.ts` is a host-assisted-lane arm), so
+ * `Intl` arm in `expressions/identifiers.ts` is the `intl` accelerator's), so
  * without it the provider's `__module_init` threw `TypeError: Cannot access
  * property on null or undefined` at `ct = Intl.DateTimeFormat` and every
  * regime Temporal row reported "wasm exception during module init". Provider
@@ -175,11 +175,11 @@ function providerSource(options: { polyfillSource: string; compileOptions?: Comp
 
 /** (#6748) Does this JavaScript-target provider lower with the native regime? */
 function nativeRegimeProvider(options: CompileOptions | undefined): boolean {
-  if (options?.semanticProviders !== "native-first") return false;
+  // (#6708, #6979) The regime is the only policy; key on the resolved profile.
   return resolveCompileTargetProfile({
-    target: options.target,
-    semanticProviders: options.semanticProviders,
-    hostBridge: options.hostBridge,
+    target: options?.target,
+    nativeStrings: options?.nativeStrings,
+    hostBridge: options?.hostBridge,
   }).nativeRegime;
 }
 
@@ -189,7 +189,6 @@ function providerOptionFingerprint(options: CompileOptions | undefined): string 
     fast: options?.fast === true,
     nativeStrings: options?.nativeStrings === true,
     utf8Storage: options?.utf8Storage === true,
-    semanticProviders: options?.semanticProviders ?? "auto",
     hostBridge: options?.hostBridge ?? "auto",
     platform: options?.platform ?? "web",
     ...(options?.hostAccelerators?.length ? { hostAccelerators: [...options.hostAccelerators].sort() } : {}),

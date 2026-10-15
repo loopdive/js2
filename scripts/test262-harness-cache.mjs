@@ -65,70 +65,40 @@ export function test262HarnessProviderCacheDir({ root, env = process.env, script
  *
  * It must match the body's option set (`compileHarnessLinkedBody`), or the pair
  * disagrees about the ABI it shares. (#6723 D4) Both sides carry the harness's
- * `hostBridge: "always"`. (#6930) Both sides carry the semantic-provider
- * policy: a native-first body is in the native regime and imports the #6723 D4
- * Error-family carrier cells, which only a regime provider exports, so a
- * host-assisted prefix linked to a regime body fails every row at instantiate.
- * `semanticProviders` is set only when it is not `auto`, so the host lane's
- * options (and therefore its provider key and bytes) are unchanged.
+ * `hostBridge: "always"`. (#6979) Both compile under the native regime, the
+ * only semantic implementation, so no policy option is spelled.
  *
  * @param {string | undefined} target
- * @param {string} [semanticProviders]
  */
-export function harnessProviderCompileOptions(target, semanticProviders = "auto") {
+export function harnessProviderCompileOptions(target) {
   return {
     hostBridge: "always",
     allowJs: true,
     emitWat: false,
     skipSemanticDiagnostics: true,
     ...(target ? { target } : {}),
-    ...(semanticProviders && semanticProviders !== "auto" ? { semanticProviders } : {}),
   };
 }
 
 /**
- * (#6930) The provider identity part that the compile options cannot carry.
- * `JS2WASM_NATIVE_REGIME_JS=0` turns the native regime OFF for a native-first
- * compile (`src/target-profile.ts`), but it is an environment read, so it is not
- * in `harnessProviderCacheKey`'s option fingerprint. A regime-off native-first
- * provider gets its own memo key and cache subdirectory so it is never served
- * to a regime body (or the reverse). Empty for every other lane, so the host
- * and standalone cache paths are unchanged.
+ * (#6930) The provider cache directory. The worker and the pre-warm step both
+ * call this, so a pre-warmed provider lands where the worker reads it.
  *
- * @param {string} [semanticProviders]
- * @param {Record<string, string | undefined>} [env]
+ * @param {{ root?: string, env?: Record<string, string | undefined> }} [opts]
  */
-export function harnessProviderRegimeTag(semanticProviders = "auto", env = process.env) {
-  return semanticProviders === "native-first" && env.JS2WASM_NATIVE_REGIME_JS === "0" ? "native-first-regime-off" : "";
+export function test262HarnessProviderLaneCacheDir({ root, env = process.env } = {}) {
+  return test262HarnessProviderCacheDir({ root, env });
 }
 
 /**
- * (#6930) The provider cache directory for one lane: the shared root, plus the
- * regime tag when there is one. The worker and the pre-warm step both call
- * this, so a pre-warmed regime-off provider lands where the worker reads it.
- *
- * @param {{ root?: string, semanticProviders?: string, env?: Record<string, string | undefined> }} [opts]
- */
-export function test262HarnessProviderLaneCacheDir({ root, semanticProviders = "auto", env = process.env } = {}) {
-  const base = test262HarnessProviderCacheDir({ root, env });
-  const tag = harnessProviderRegimeTag(semanticProviders, env);
-  return tag ? join(base, tag) : base;
-}
-
-/**
- * (#6930) The worker's in-process memo key for one provider: target, policy,
- * regime tag, and the prefix text.
+ * (#6930) The worker's in-process memo key for one provider: target and the
+ * prefix text.
  *
  * @param {string} harnessPrefix
  * @param {string | undefined} target
- * @param {string} [semanticProviders]
- * @param {Record<string, string | undefined>} [env]
  */
-export function harnessProviderMemoKey(harnessPrefix, target, semanticProviders = "auto", env = process.env) {
-  const policy = semanticProviders ?? "auto";
-  return [target ?? "host", policy, harnessProviderRegimeTag(policy, env), harnessPrefix.length, harnessPrefix].join(
-    "\u0000",
-  );
+export function harnessProviderMemoKey(harnessPrefix, target) {
+  return [target ?? "host", harnessPrefix.length, harnessPrefix].join("\u0000");
 }
 
 /**
@@ -152,9 +122,8 @@ export function test262OracleLane({ oracleMode, target, standaloneLinked }) {
   return "honest";
 }
 
-function stampName(target, semanticProviders = "auto") {
-  const policy = semanticProviders && semanticProviders !== "auto" ? `-${semanticProviders}` : "";
-  return `harness-prewarm${target ? `-${target}` : ""}${policy}.json`;
+function stampName(target) {
+  return `harness-prewarm${target ? `-${target}` : ""}.json`;
 }
 
 /**
@@ -163,12 +132,11 @@ function stampName(target, semanticProviders = "auto") {
  * @param {string} cacheDir
  * @param {{ providers: {key: string, namespace: string, bytes: number, buildMs: number, cacheHit: boolean, parts: string}[] }} info
  * @param {string | undefined} [target]
- * @param {string} [semanticProviders] (#6930) a native-first pre-warm gets its own stamp
  */
-export function writeHarnessPrewarmStamp(cacheDir, info, target, semanticProviders = "auto") {
+export function writeHarnessPrewarmStamp(cacheDir, info, target) {
   mkdirSync(cacheDir, { recursive: true });
-  const stamp = { ...info, target: target ?? null, semanticProviders, generatedAt: new Date().toISOString() };
-  writeFileSync(join(cacheDir, stampName(target, semanticProviders)), `${JSON.stringify(stamp, null, 2)}\n`);
+  const stamp = { ...info, target: target ?? null, generatedAt: new Date().toISOString() };
+  writeFileSync(join(cacheDir, stampName(target)), `${JSON.stringify(stamp, null, 2)}\n`);
   return stamp;
 }
 
@@ -181,8 +149,8 @@ export function writeHarnessPrewarmStamp(cacheDir, info, target, semanticProvide
  * it lets a slow shard be attributed to a missing pre-warm rather than guessed
  * at.
  */
-export function readHarnessPrewarmStamp(cacheDir, target, semanticProviders = "auto") {
-  const path = join(cacheDir, stampName(target, semanticProviders));
+export function readHarnessPrewarmStamp(cacheDir, target) {
+  const path = join(cacheDir, stampName(target));
   if (!existsSync(path)) return null;
   try {
     const stamp = JSON.parse(readFileSync(path, "utf-8"));

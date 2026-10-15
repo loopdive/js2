@@ -93,16 +93,11 @@ Options:
                     __exn_render_*, __stdout_*, ...) are the calling convention
                     a JS host uses to read WasmGC values — and they are GC
                     roots, so wasm-opt cannot strip what they pin.
-  --semantic-providers <m>
-                    Semantic implementation policy (#4397): "auto" (default)
-                    preserves compatibility; "native-first" selects migrated
-                    Wasm-native provider families even under a JS host. This
-                    does not disable JS boundary wrappers or platform APIs.
   --host-accelerator <name>
                     Use the JS host's implementation for one semantic family
-                    under the native-first regime (#6978, repeatable): js-string,
-                    regexp, date or intl. Needs a JS target and native-first;
-                    standalone/wasi or host-assisted builds reject it.
+                    instead of the Wasm-native one (#6978, repeatable): js-string,
+                    regexp, date or intl. Needs a JS target; standalone/wasi
+                    builds reject it.
   --explain         Print the compiler-owned provider/capability report and do
                     not write artifacts. Equivalent to the explain subcommand.
   --explain-json    Print that report as stable schema-versioned JSON.
@@ -200,7 +195,6 @@ let watOnly = false;
 let verbose = false;
 // (#4035) Host-bridge export policy; "auto" resolves per target in codegen.
 let hostBridge: "auto" | "always" | "off" = "auto";
-let semanticProviders: "auto" | "native-first" = "auto";
 // (#6978) Named host accelerators for the native-first regime (repeatable).
 const hostAccelerators = new Set<"js-string" | "regexp" | "date" | "intl">();
 // #1950 — default-on optimization for the CLI. Binaryen wasm-opt does
@@ -376,13 +370,6 @@ for (let i = 0; i < args.length; i++) {
       process.exit(1);
     }
     hostBridge = value;
-  } else if (arg === "--semantic-providers" || arg.startsWith("--semantic-providers=")) {
-    const value = arg.includes("=") ? arg.slice(arg.indexOf("=") + 1) : args[++i];
-    if (value !== "auto" && value !== "native-first") {
-      console.error(`Error: --semantic-providers expects auto | native-first (got ${value ?? "nothing"})`);
-      process.exit(1);
-    }
-    semanticProviders = value;
   } else if (arg === "--host-accelerator" || arg.startsWith("--host-accelerator=")) {
     const value = arg.includes("=") ? arg.slice(arg.indexOf("=") + 1) : args[++i];
     if (value !== "js-string" && value !== "regexp" && value !== "date" && value !== "intl") {
@@ -508,7 +495,7 @@ const compileOptions = {
   // (#4035) Only forward a non-default policy so `--host-bridge auto` stays
   // byte-identical to not passing the flag at all.
   ...(hostBridge !== "auto" ? { hostBridge } : {}),
-  ...(semanticProviders !== "auto" ? { semanticProviders } : {}),
+  // (#6708) Forward any spelling; the compiler owns the "auto" deprecation warning.
   ...(hostAccelerators.size ? { hostAccelerators: [...hostAccelerators] } : {}),
   ...(linkedNamespaces.size ? { link: [...linkedNamespaces] } : {}),
   ...(packageLinking !== undefined ? { packageLinking } : {}),

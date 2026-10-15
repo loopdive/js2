@@ -16,23 +16,14 @@ import { ORDINARY_NEW_TARGET } from "./closures/ordinary-new-target.js";
 import { buildPromiseRejectionEvent } from "../runtime/wasmgc/promise/rejection-event-bodies.js";
 import { promiseRejectionDispatcher } from "./registry/promise-rejection-dispatch.js";
 import { isBooleanType, isPromiseType, mapTsTypeToWasm } from "../checker/type-mapper.js";
-import {
-  classifyAsyncConsumer,
-  analyzeAsyncBody,
-  asyncFnNeedsCps,
-  staticPromiseResolveSettledExpr,
-} from "./async-cps.js";
-import { asyncGenConsumerNeedsDrive } from "./async-frame.js";
+import { classifyAsyncConsumer, analyzeAsyncBody, asyncFnNeedsCps } from "./async-cps.js";
 import { emitAsyncValueSinkUnwrap, emitStandaloneAwaitUnwrap } from "./async-value-sink-unwrap.js";
 import type { AsyncConsumerKind } from "./async-cps.js";
 import type { Instr, ValType } from "../ir/types.js";
 import {
   emitStandalonePromiseReject,
   emitStandalonePromiseResolve,
-  getDrainFuncIdxForWasiStart,
   getOrRegisterPromiseType,
-  isStandalonePromiseActive,
-  isStandaloneThenChainNativeActive,
   emitDrainMicrotasks,
   PROMISE_STATE_FULFILLED,
   PROMISE_STATE_REJECTED,
@@ -54,9 +45,7 @@ import {
   valTypesMatch,
   VOID_RESULT,
 } from "./shared.js";
-import { compileStringLiteral, emitNativeStringToHostExternref } from "./string-ops.js";
-import { compileHostBigIntLiteralText } from "./bigint-host-literal.js";
-import { usesHostBigIntCarrier } from "./host-bigint-carrier.js";
+import { compileStringLiteral } from "./string-ops.js";
 import { tryCompileWideBigIntExpression } from "./bigint-wide.js";
 import { ensureImportMetaObject } from "./import-meta.js";
 import {
@@ -280,10 +269,7 @@ function isAsyncCallExpression(ctx: CodegenContext, expr: ts.CallExpression): bo
     }
     // (#5197 r3) A Promise-subclass receiver on the native lane is §27.2.5.4 too: a throwing
     // species constructor must propagate synchronously, not become a rejection.
-    if (
-      isStandaloneThenChainNativeActive(ctx) &&
-      promiseSubclassNameOfType(ctx, receiverType, apparentType) !== undefined
-    ) {
+    if (promiseSubclassNameOfType(ctx, receiverType, apparentType) !== undefined) {
       return false;
     }
   }
@@ -492,20 +478,7 @@ function calleeIsDriveLowered(ctx: CodegenContext, expr: ts.CallExpression): boo
   if (!isAsyncDecl) return false;
   // Carrier lane (wasi): a genuinely-suspending async fn is frame-driven and
   // already returns a real `$Promise`.
-  if (isStandalonePromiseActive(ctx)) return asyncFnNeedsCps(decl, analyzeAsyncBody(ctx, decl));
-  // (#3132) `--target standalone` with the native-`$Promise` CARRIER still OFF
-  // (#2980): the async-gen-CONSUMER drive lane (`for await (x of asyncGen)`) is
-  // carrier-independent — every suspension awaits a promise MINTED by the
-  // producer's own `__async_gen_next_<name>` driver (a native `$Promise` on
-  // every lane), and the driven consumer settles its result via native
-  // `__promise_fulfill`. So its CALL result is already a native `$Promise` and
-  // must pass through UN-wrapped: the HOST try/catch wrap
-  // (`Promise_reject`/`__get_caught_exception`) was the last host dependency for
-  // the for-await-over-async-gen files whose consumer drives natively but whose
-  // call site still pulled in the host Promise machinery. Plain awaits / Promise
-  // statics stay on the legacy path pending the #2980 carrier widen.
-  if (ctx.standalone === true) return asyncGenConsumerNeedsDrive(ctx, decl, analyzeAsyncBody(ctx, decl));
-  return false;
+  return asyncFnNeedsCps(decl, analyzeAsyncBody(ctx, decl));
 }
 
 /**
@@ -543,51 +516,43 @@ function wrapAsyncReturn(ctx: CodegenContext, fctx: FunctionContext, resultType:
   // Wasm `struct.new` pops fields in declaration order (state | value |
   // callbacks | $bag); the value is already on the stack but state must come
   // BEFORE it. Stash via a temp local, then emit in the correct order.
-  if (isStandalonePromiseActive(ctx)) {
-    const valueLocal = allocTempLocal(fctx, { kind: "externref" });
-    const promiseTypeIdx = getOrRegisterPromiseType(ctx);
-    fctx.body.push({ op: "local.set", index: valueLocal });
-    // (#3220) PromiseResolve idempotence (§25.6.4.5.1 / §27.2.4.7): a value that
-    // is ALREADY a native `$Promise` must pass through UNCHANGED, not be
-    // re-wrapped in a SECOND `$Promise`. The unconditional fulfilled-mint below
-    // double-wrapped a callee that already returns a native `$Promise` on the
-    // carrier lane — e.g. a plain `function mk(): Promise<number>` whose result
-    // is consumed as a thenable (`yield mk()`, `const pv = mk(); yield pv`,
-    // `mk().then(...)`). `isAsyncCallExpression` classifies such a call as an
-    // "async call" via its `Promise<T>` return type (#1151), so it reaches this
-    // wrap even though the raw `$Promise` is already on the stack; the second
-    // `$Promise{FULFILLED, <innerPromise>, null}` made a later `ref.test
-    // $Promise` (the await/yield suspend arm) adopt the OUTER wrapper and
-    // deliver the inner promise OBJECT raw → NaN (`calleeIsDriveLowered` only
-    // skips the wrap for drive-lowered async *declarations*, not a plain
-    // `$Promise`-returning fn). A runtime `ref.test $Promise` guard makes the
-    // wrap idempotent: an existing `$Promise` passes through; a raw value takes
-    // the unchanged fulfilled-mint (byte-identical to pre-#3220 in that arm).
-    fctx.body.push({ op: "local.get", index: valueLocal });
-    fctx.body.push({ op: "any.convert_extern" });
-    fctx.body.push({ op: "ref.test", typeIdx: promiseTypeIdx });
-    fctx.body.push({
-      op: "if",
-      blockType: { kind: "val", type: { kind: "externref" } },
-      then: [{ op: "local.get", index: valueLocal }],
-      else: [
-        { op: "i32.const", value: PROMISE_STATE_FULFILLED },
-        { op: "local.get", index: valueLocal },
-        { op: "ref.null.extern" },
-        closureBagInitInstr(),
-        { op: "i32.const", value: 0 },
-        { op: "struct.new", typeIdx: promiseTypeIdx },
-        { op: "extern.convert_any" },
-      ],
-    });
-    releaseTempLocal(fctx, valueLocal);
-    return { kind: "externref" };
-  }
-  const resolveIdx = ensureLateImport(ctx, "Promise_resolve", [{ kind: "externref" }], [{ kind: "externref" }]);
-  flushLateImportShifts(ctx, fctx);
-  if (resolveIdx !== undefined) {
-    fctx.body.push({ op: "call", funcIdx: resolveIdx });
-  }
+  const valueLocal = allocTempLocal(fctx, { kind: "externref" });
+  const promiseTypeIdx = getOrRegisterPromiseType(ctx);
+  fctx.body.push({ op: "local.set", index: valueLocal });
+  // (#3220) PromiseResolve idempotence (§25.6.4.5.1 / §27.2.4.7): a value that
+  // is ALREADY a native `$Promise` must pass through UNCHANGED, not be
+  // re-wrapped in a SECOND `$Promise`. The unconditional fulfilled-mint below
+  // double-wrapped a callee that already returns a native `$Promise` on the
+  // carrier lane — e.g. a plain `function mk(): Promise<number>` whose result
+  // is consumed as a thenable (`yield mk()`, `const pv = mk(); yield pv`,
+  // `mk().then(...)`). `isAsyncCallExpression` classifies such a call as an
+  // "async call" via its `Promise<T>` return type (#1151), so it reaches this
+  // wrap even though the raw `$Promise` is already on the stack; the second
+  // `$Promise{FULFILLED, <innerPromise>, null}` made a later `ref.test
+  // $Promise` (the await/yield suspend arm) adopt the OUTER wrapper and
+  // deliver the inner promise OBJECT raw → NaN (`calleeIsDriveLowered` only
+  // skips the wrap for drive-lowered async *declarations*, not a plain
+  // `$Promise`-returning fn). A runtime `ref.test $Promise` guard makes the
+  // wrap idempotent: an existing `$Promise` passes through; a raw value takes
+  // the unchanged fulfilled-mint (byte-identical to pre-#3220 in that arm).
+  fctx.body.push({ op: "local.get", index: valueLocal });
+  fctx.body.push({ op: "any.convert_extern" });
+  fctx.body.push({ op: "ref.test", typeIdx: promiseTypeIdx });
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "val", type: { kind: "externref" } },
+    then: [{ op: "local.get", index: valueLocal }],
+    else: [
+      { op: "i32.const", value: PROMISE_STATE_FULFILLED },
+      { op: "local.get", index: valueLocal },
+      { op: "ref.null.extern" },
+      closureBagInitInstr(),
+      { op: "i32.const", value: 0 },
+      { op: "struct.new", typeIdx: promiseTypeIdx },
+      { op: "extern.convert_any" },
+    ],
+  });
+  releaseTempLocal(fctx, valueLocal);
   return { kind: "externref" };
 }
 
@@ -603,93 +568,62 @@ function wrapAsyncCallInTryCatch(ctx: CodegenContext, fctx: FunctionContext, sta
   // `Promise_reject` import + `__get_caught_exception` are
   // unsatisfiable in WASI; emit a Wasm-native rejected `$Promise`
   // construction in the catch_all instead.
-  if (isStandalonePromiseActive(ctx)) {
-    const promiseTypeIdx = getOrRegisterPromiseType(ctx);
-    // (#3178) Complete the #1326 Phase-1C payload wiring this arm deferred:
-    // catch the native `__exn` tag and use its externref payload — the thrown
-    // JS value (e.g. the TypeError instance a sync-unwound async body threw) —
-    // as the rejection reason ($Promise.value). Before this, the reason was
-    // ALWAYS `ref.null.extern`, so every synchronously-unwinding async-fn
-    // throw rejected with NULL: handlers destructuring the reason
-    // (`({ constructor }) => …`, the for-await-dstr test262 template tail)
-    // then threw their OWN "Cannot destructure 'null' or 'undefined'" — the
-    // ~81-test cluster in the F2 harvest (#3417). catch_all stays as the
-    // reason-less fallback for foreign (non-`__exn`) exceptions only.
-    const tagIdx = ensureExnTag(ctx);
-    const reasonLocal = allocTempLocal(fctx, { kind: "externref" });
-    const inner = fctx.body.splice(start);
-    const catchExn: Instr[] = [
-      { op: "local.set", index: reasonLocal },
-      { op: "i32.const", value: PROMISE_STATE_REJECTED },
-      { op: "local.get", index: reasonLocal },
-      { op: "ref.null.extern" },
-      closureBagInitInstr(),
-      { op: "i32.const", value: 0 },
-      { op: "struct.new", typeIdx: promiseTypeIdx },
-      { op: "extern.convert_any" },
-    ];
-    const catchAll: Instr[] = [
-      { op: "i32.const", value: PROMISE_STATE_REJECTED },
-      { op: "ref.null.extern" },
-      { op: "ref.null.extern" },
-      closureBagInitInstr(),
-      { op: "i32.const", value: 0 },
-      { op: "struct.new", typeIdx: promiseTypeIdx },
-      { op: "extern.convert_any" },
-    ];
-    const rejectionDispatch = promiseRejectionDispatcher(ctx);
-    const rejectedLocal =
-      rejectionDispatch === undefined ? undefined : allocTempLocal(fctx, { kind: "ref", typeIdx: promiseTypeIdx });
-    if (rejectedLocal !== undefined) {
-      for (const arm of [catchExn, catchAll]) {
-        arm.splice(
-          arm.length - 1,
-          1,
-          { op: "local.set", index: rejectedLocal },
-          ...buildPromiseRejectionEvent(
-            rejectionDispatch,
-            0,
-            [{ op: "local.get", index: rejectedLocal }],
-            [
-              { op: "local.get", index: rejectedLocal },
-              { op: "struct.get", typeIdx: promiseTypeIdx, fieldIdx: 1 },
-            ],
-          ),
-          { op: "local.get", index: rejectedLocal },
-          { op: "extern.convert_any" },
-        );
-      }
-    }
-    fctx.body.push(
-      buildTargetTaggedTry(
-        ctx,
-        { kind: "val", type: { kind: "externref" } },
-        inner,
-        [{ tagIdx, body: catchExn }],
-        catchAll,
-      ),
-    );
-    releaseTempLocal(fctx, reasonLocal);
-    if (rejectedLocal !== undefined) releaseTempLocal(fctx, rejectedLocal);
-    return;
-  }
-  const rejectIdx = ensureLateImport(ctx, "Promise_reject", [{ kind: "externref" }], [{ kind: "externref" }]);
-  const getCaughtIdx = ensureLateImport(ctx, "__get_caught_exception", [], [{ kind: "externref" }]);
-  flushLateImportShifts(ctx, fctx);
-  if (rejectIdx === undefined || getCaughtIdx === undefined) return;
+  const promiseTypeIdx = getOrRegisterPromiseType(ctx);
+  // (#3178) Complete the #1326 Phase-1C payload wiring this arm deferred:
+  // catch the native `__exn` tag and use its externref payload — the thrown
+  // JS value (e.g. the TypeError instance a sync-unwound async body threw) —
+  // as the rejection reason ($Promise.value). Before this, the reason was
+  // ALWAYS `ref.null.extern`, so every synchronously-unwinding async-fn
+  // throw rejected with NULL: handlers destructuring the reason
+  // (`({ constructor }) => …`, the for-await-dstr test262 template tail)
+  // then threw their OWN "Cannot destructure 'null' or 'undefined'" — the
+  // ~81-test cluster in the F2 harvest (#3417). catch_all stays as the
+  // reason-less fallback for foreign (non-`__exn`) exceptions only.
   const tagIdx = ensureExnTag(ctx);
+  const reasonLocal = allocTempLocal(fctx, { kind: "externref" });
   const inner = fctx.body.splice(start);
-  // A compiler-native JS throw uses the module's `$exn` tag and carries the
-  // original JS value as its externref payload. Feed that payload directly to
-  // Promise.reject. `__get_caught_exception` is only populated by a throwing
-  // host import, so using catch_all for both forms leaked a stale/undefined
-  // value (or the raw WebAssembly.Exception) after direct eval began emitting
-  // native SyntaxErrors.
-  const catchExn: Instr[] = [{ op: "call", funcIdx: rejectIdx }];
-  const catchAll: Instr[] = [
-    { op: "call", funcIdx: getCaughtIdx },
-    { op: "call", funcIdx: rejectIdx },
+  const catchExn: Instr[] = [
+    { op: "local.set", index: reasonLocal },
+    { op: "i32.const", value: PROMISE_STATE_REJECTED },
+    { op: "local.get", index: reasonLocal },
+    { op: "ref.null.extern" },
+    closureBagInitInstr(),
+    { op: "i32.const", value: 0 },
+    { op: "struct.new", typeIdx: promiseTypeIdx },
+    { op: "extern.convert_any" },
   ];
+  const catchAll: Instr[] = [
+    { op: "i32.const", value: PROMISE_STATE_REJECTED },
+    { op: "ref.null.extern" },
+    { op: "ref.null.extern" },
+    closureBagInitInstr(),
+    { op: "i32.const", value: 0 },
+    { op: "struct.new", typeIdx: promiseTypeIdx },
+    { op: "extern.convert_any" },
+  ];
+  const rejectionDispatch = promiseRejectionDispatcher(ctx);
+  const rejectedLocal =
+    rejectionDispatch === undefined ? undefined : allocTempLocal(fctx, { kind: "ref", typeIdx: promiseTypeIdx });
+  if (rejectedLocal !== undefined) {
+    for (const arm of [catchExn, catchAll]) {
+      arm.splice(
+        arm.length - 1,
+        1,
+        { op: "local.set", index: rejectedLocal },
+        ...buildPromiseRejectionEvent(
+          rejectionDispatch,
+          0,
+          [{ op: "local.get", index: rejectedLocal }],
+          [
+            { op: "local.get", index: rejectedLocal },
+            { op: "struct.get", typeIdx: promiseTypeIdx, fieldIdx: 1 },
+          ],
+        ),
+        { op: "local.get", index: rejectedLocal },
+        { op: "extern.convert_any" },
+      );
+    }
+  }
   fctx.body.push(
     buildTargetTaggedTry(
       ctx,
@@ -699,6 +633,9 @@ function wrapAsyncCallInTryCatch(ctx: CodegenContext, fctx: FunctionContext, sta
       catchAll,
     ),
   );
+  releaseTempLocal(fctx, reasonLocal);
+  if (rejectedLocal !== undefined) releaseTempLocal(fctx, rejectedLocal);
+  return;
 }
 
 // ── Recursion depth guard ──────────────────────────────────────────────
@@ -1117,28 +1054,7 @@ function compileBigIntLiteral(
   expectedType: ValType | undefined,
 ): ValType | null {
   const text = expr.text.replace(/_/g, "").replace(/n$/i, "");
-  const hostBigIntRef =
-    usesHostBigIntCarrier(ctx) &&
-    (expectedType?.kind === "externref" || (expectedType !== undefined && isAnyValue(expectedType, ctx)));
-  if (hostBigIntRef) {
-    const stringType = compileHostBigIntLiteralText(ctx, fctx, text);
-    if (!stringType) return null;
-    if (stringType.kind !== "externref") {
-      // `fast`/native-strings still targets the JS host. Convert the native
-      // `$AnyString` value to a real host string before calling BigInt; a bare
-      // `extern.convert_any` would expose an opaque WasmGC object and the host
-      // constructor would throw `Cannot convert [object Object] to a BigInt`.
-      if (!emitNativeStringToHostExternref(ctx, fctx)) {
-        coerceType(ctx, fctx, stringType, { kind: "externref" });
-      }
-    }
-    const ctorIdx = ensureLateImport(ctx, "__bigint_ctor_ref", [{ kind: "externref" }], [{ kind: "externref" }]);
-    flushLateImportShifts(ctx, fctx);
-    const finalIdx = ctx.funcMap.get("__bigint_ctor_ref") ?? ctorIdx;
-    if (finalIdx === undefined) throw new Error("Missing import after ensureLateImport: __bigint_ctor_ref");
-    fctx.body.push({ op: "call", funcIdx: finalIdx });
-    return { kind: "externref" };
-  }
+
   const value = BigInt(text);
   fctx.body.push({ op: "i64.const", value });
   return { kind: "i64", bigint: true };
@@ -1389,9 +1305,7 @@ function compileExpressionInner(
       // is null when the queue was never registered). Function bodies compile in
       // source order, so a harness-appended `__drain_microtasks()` call compiles
       // after every producer/consumer registration.
-      if (isStandalonePromiseActive(ctx) || getDrainFuncIdxForWasiStart(ctx) !== null) {
-        emitDrainMicrotasks(ctx, fctx);
-      }
+      emitDrainMicrotasks(ctx, fctx);
       return VOID_RESULT;
     }
     const callStart = fctx.body.length;
@@ -1621,38 +1535,12 @@ function compileExpressionInner(
     // operands (f64/i32 — e.g. `await someSyncAsyncCall()` already returning the
     // unwrapped number) are passed through. Genuinely-pending awaits still need
     // true frame suspension (#2865 AG1 / PATH B).
-    if (isStandalonePromiseActive(ctx)) {
-      const operandType = compileExpressionInner(ctx, fctx, expr.expression);
-      if (operandType !== null && operandType !== VOID_RESULT && operandType.kind === "externref") {
-        emitStandaloneAwaitUnwrap(ctx, fctx);
-        return { kind: "externref" };
-      }
-      return operandType;
+    const operandType = compileExpressionInner(ctx, fctx, expr.expression);
+    if (operandType !== null && operandType !== VOID_RESULT && operandType.kind === "externref") {
+      emitStandaloneAwaitUnwrap(ctx, fctx);
+      return { kind: "externref" };
     }
-    // (#2613) JS-host path: `await <thenable>` / `await <non-Promise>`
-    // assimilation is owned by the async-CPS state machine (`async-cps.ts`); a
-    // genuinely-suspending body is driven by `emitAsyncStateMachine`
-    // (`Promise_resolve` → `Promise_then2` → continuation), so it never reaches
-    // this legacy passthrough. Keep the identity passthrough for the await
-    // shapes CPS does not claim (statically-resolved operands, bodies
-    // `splitBodyAtAwait` rejects).
-    // (#3227 S2) BUT "already the resolved value on the stack" was false for
-    // `await Promise.resolve(x)`: the operand compiles to a HOST call returning
-    // the Promise OBJECT (externref), not x — a numeric consumer's
-    // externref→f64 coercion then read NaN, synchronously (the await-NaN
-    // cluster: ~875 honest fails in the S1 census). Substitute the settled
-    // value: the resolve argument (or undefined for the zero-arg form).
-    {
-      const settled = staticPromiseResolveSettledExpr(expr.expression);
-      if (settled === "undefined") {
-        emitUndefined(ctx, fctx);
-        return { kind: "externref" };
-      }
-      if (settled !== null) {
-        return compileExpressionInner(ctx, fctx, settled, expectedType);
-      }
-    }
-    return compileExpressionInner(ctx, fctx, expr.expression, expectedType);
+    return operandType;
   }
 
   if (ts.isYieldExpression(expr)) {

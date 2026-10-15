@@ -85,9 +85,6 @@ function classifyImport(name: string, mod: WasmModule): ImportIntent {
   if (name === "__make_callback_ctor") return { type: "callback_maker", constructible: true };
   if (name === "__make_getter_callback") return { type: "getter_callback_maker" };
 
-  // Async/await
-  if (name === "__await") return { type: "await" };
-
   // Dynamic import()
   if (name === "__dynamic_import") return { type: "dynamic_import" };
 
@@ -319,8 +316,8 @@ function classifyImport(name: string, mod: WasmModule): ImportIntent {
     return { type: "extern_class", className: name.slice(6), action: "new" };
   }
 
-  // Fallback
-  return { type: "builtin", name };
+  // Fallback: an ambient `declare function` the embedder supplies (#6979), else a builtin helper.
+  return mod.declaredFunctionImports?.has(name) ? { type: "declared_function", name } : { type: "builtin", name };
 }
 
 function buildImportManifest(mod: WasmModule): ImportDescriptor[] {

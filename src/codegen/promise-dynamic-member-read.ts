@@ -57,7 +57,6 @@ import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { ensurePromiseNativeProtoGlue } from "./array-object-proto.js";
 import { builtinBrandOffsetOf } from "./builtin-brands.js";
-import { isStandalonePromiseActive } from "./async-scheduler.js";
 import { pushBuiltinFnSingletonValueInstrs } from "./builtin-fn-meta.js";
 import { ensureStandaloneNativeMethodClosure, seededNativeProtoOwnMembersByBrand } from "./native-proto.js";
 import { nativeStringLiteralInstrs } from "./native-strings.js";
@@ -96,7 +95,7 @@ const mentionsPromise = new WeakMap<ts.SourceFile, boolean>();
  */
 export function demandPromiseDynamicMember(ctx: CodegenContext, member: string, fctx: FunctionContext | null): void {
   if (!ctx.standalone || ctx.wasi || !PROMISE_PROTO_MEMBERS.has(member)) return;
-  if (!isStandalonePromiseActive(ctx)) return;
+
   let demanded = demandedByCtx.get(ctx);
   if (demanded?.has(member)) return;
   const brand = ensurePromiseNativeProtoGlue(ctx);

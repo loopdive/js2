@@ -18,12 +18,15 @@
 // original binary with a warning), so the equality assertions still hold by
 // construction and the test stays green.
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { compile } from "../../src/index.js";
-import { buildImports } from "./helpers.js";
+import { buildCompiledImports } from "../../src/runtime.js";
 
 /** Compile + instantiate, capturing console output, with or without optimize. */
 async function runProgram(source: string, optimize: boolean): Promise<{ output: string[]; validated: boolean }> {
+  // (#6979) Compiled under the native regime (the only profile); console output
+  // is captured from the runtime's own console bindings, which marshal native
+  // strings to JS before they reach `console.log`.
   const result = await compile(source, optimize ? { optimize: true } : {});
   expect(result.success, `compile failed: ${result.errors.map((e) => e.message).join("; ")}`).toBe(true);
 
@@ -33,19 +36,22 @@ async function runProgram(source: string, optimize: boolean): Promise<{ output: 
   const validated = WebAssembly.validate(result.binary);
 
   const output: string[] = [];
-  const imports = buildImports(result);
-  // Capture console.log_* host calls into `output` so we compare side effects.
-  const env = imports.env as Record<string, (...a: unknown[]) => unknown>;
-  env.console_log_number = (v: unknown) => void output.push(String(v));
-  env.console_log_string = (v: unknown) => void output.push(String(v));
-  env.console_log_bool = (v: unknown) => void output.push(String(!!v));
-  env.console_log_externref = (v: unknown) => void output.push(String(v));
-
-  const { instance } = await WebAssembly.instantiate(result.binary, imports);
-  // Invoke an exported `main` if present (top-level side effects already ran
-  // during instantiation via the start section).
-  const main = (instance.exports as Record<string, unknown>).main;
-  if (typeof main === "function") (main as () => void)();
+  // The real runtime import object (the equivalence helper stubs console out).
+  const imports = buildCompiledImports(result);
+  // Capture console output so we compare side effects.
+  const spy = vi
+    .spyOn(console, "log")
+    .mockImplementation((...args: unknown[]) => void output.push(args.map(String).join(" ")));
+  try {
+    const { instance } = await WebAssembly.instantiate(result.binary, imports);
+    (imports as { setInstance?: (i: WebAssembly.Instance) => void }).setInstance?.(instance);
+    // Invoke an exported `main` if present (top-level side effects already ran
+    // during instantiation via the start section).
+    const main = (instance.exports as Record<string, unknown>).main;
+    if (typeof main === "function") (main as () => void)();
+  } finally {
+    spy.mockRestore();
+  }
 
   return { output, validated };
 }
@@ -121,6 +127,8 @@ describe("--optimize differential (#1941)", () => {
 
       // Property 2: optimized observable output is identical to unoptimized.
       expect(opt.output).toEqual(unopt.output);
+      // Non-vacuity: every program logs, so an empty capture is a harness defect.
+      expect(unopt.output.length).toBeGreaterThan(0);
     });
   }
 });

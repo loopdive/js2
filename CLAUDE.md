@@ -19,8 +19,8 @@ Consequences:
 - **Existing JS-host code stays until it is retired.** Do not delete it
   opportunistically: removing it needs its own reviewed change. Until then,
   keep gc output byte-identical when you change shared code.
-- **This overrides the older "Dual-mode: JS host optional" principle below**
-  wherever the two conflict.
+- **The "One native semantic core" principle below replaces the older
+  "Dual-mode: JS host optional" one** (#6708).
 
 ## Answering style
 
@@ -136,7 +136,7 @@ node scripts/check-loc-budget.mjs && node scripts/check-func-budget.mjs \
 
 ## Architecture Principles
 
-- **Dual-mode: JS host optional** — *(superseded 2026-10-10: standalone only, JS-host lane being sunset; see the top of this file)* the compiler supports two modes: JS host mode (uses host imports for performance/completeness) and standalone mode (pure Wasm, no JS runtime). New features should have Wasm-native implementations for standalone mode; JS host imports are acceptable as a fast path when a JS runtime is available. Don't add new host imports without a standalone fallback.
+- **One native semantic core (#6708)** — every environment compiles with the same Wasm-native semantic core (`semanticProviders: "native-first"`, the default since S6). A JS environment adds only the value adapter (boundary wrappers), explicit platform capabilities, and named opt-in accelerators (`wasm:js-string`, host RegExp/Date/Intl — #6978). No new feature may depend on a host semantic import. The S6 `host-assisted` rollback is gone (#6979 S7-a): `semanticProviders: "host-assisted"`/`"auto"` and `nativeStrings: false` on the JS target are compile errors.
 - This follows the pattern of #679 (dual string backend) and #682 (dual RegExp backend).
 - **Two orthogonal axes in codegen** (see #1527):
   - **Backend lowering**: `src/codegen/` (WasmGC) vs `src/codegen-linear/` (linear memory). These are **alternatives, not one superseding the other** — the choice depends on target (browser/WasmGC vs WASI/linear) and tradeoffs. Both stay.
@@ -508,7 +508,8 @@ rejection breakdown.
 
 `nativeStrings` (WasmGC i16 arrays instead of `wasm:js-string`) is a compile
 option, not a CLI flag: `--standalone` and `--target standalone`/`wasi` turn it
-on, and `--utf8-storage` implies it. `src/cli.ts` (`--help`) is the authority for
+on, and `--utf8-storage` implies it; on the JS target it is always on (`nativeStrings:
+false` there is a compile error since #6979). `src/cli.ts` (`--help`) is the authority for
 the flag list; `scripts/check-claude-md-paths.mjs` fails when a flag named here
 is not parsed there.
 

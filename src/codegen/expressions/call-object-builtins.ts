@@ -8,10 +8,8 @@
 import type { ValType } from "../../ir/types.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { compileArrayMethodCall } from "../array-methods.js";
-import { allocLocal } from "../context/locals.js";
 import { resolveStoredObjectStaticMethod, resolveUncurriedBuiltinPrototypeMethod } from "../object-builtin-effects.js";
 import { compileObjectDefineProperties, compileObjectDefineProperty } from "../object-ops.js";
-import { ensureObjVecBuilders } from "../object-runtime.js";
 import type { InnerResult } from "../shared.js";
 import { coerceType, compileExpression } from "../shared.js";
 import { pushDefaultValue } from "../type-coercion.js";
@@ -159,49 +157,12 @@ function emitStoredObjectIntrospectionCall(
   return externRef;
 }
 
-function emitStoredObjectAssignCall(ctx: CodegenContext, fctx: FunctionContext, expr: ts.CallExpression): ValType {
-  const externRef: ValType = { kind: "externref" };
-  emitExternrefArgument(ctx, fctx, expr, 0, externRef);
-  const targetLocal = allocLocal(fctx, `__stored_assign_tgt_${fctx.locals.length}`, externRef);
-  fctx.body.push({ op: "local.set", index: targetLocal });
-
-  const nativeSemanticProviders = ctx.targetProfile.semanticProviders === "native-first";
-  const nativeBuilders = nativeSemanticProviders ? ensureObjVecBuilders(ctx) : undefined;
-  const arrNewIdx = nativeBuilders?.newIdx ?? ensureLateImport(ctx, "__js_array_new", [], [externRef]);
-  const arrPushIdx = nativeBuilders?.pushIdx ?? ensureLateImport(ctx, "__js_array_push", [externRef, externRef], []);
-  const assignIdx = ensureLateImport(ctx, "__object_assign", [externRef, externRef], [externRef]);
-  flushLateImportShifts(ctx, fctx);
-  const finalArrNewIdx = nativeBuilders?.newIdx ?? ctx.funcMap.get("__js_array_new") ?? arrNewIdx;
-  const finalArrPushIdx = nativeBuilders?.pushIdx ?? ctx.funcMap.get("__js_array_push") ?? arrPushIdx;
-  const finalAssignIdx = ctx.funcMap.get("__object_assign") ?? assignIdx;
-  if (finalArrNewIdx === undefined || finalArrPushIdx === undefined || finalAssignIdx === undefined) {
-    fctx.body.push({ op: "ref.null.extern" });
-    return externRef;
-  }
-
-  fctx.body.push({ op: "call", funcIdx: finalArrNewIdx });
-  const sourcesLocal = allocLocal(fctx, `__stored_assign_src_${fctx.locals.length}`, externRef);
-  fctx.body.push({ op: "local.set", index: sourcesLocal });
-  for (let index = 1; index < expr.arguments.length; index++) {
-    fctx.body.push({ op: "local.get", index: sourcesLocal });
-    emitExternrefArgument(ctx, fctx, expr, index, externRef);
-    fctx.body.push({ op: "call", funcIdx: finalArrPushIdx });
-  }
-  fctx.body.push({ op: "local.get", index: targetLocal });
-  fctx.body.push({ op: "local.get", index: sourcesLocal });
-  fctx.body.push({ op: "call", funcIdx: finalAssignIdx });
-  return externRef;
-}
-
 export function tryCompileStoredObjectBuiltinCall(
   ctx: CodegenContext,
   fctx: FunctionContext,
   expr: ts.CallExpression,
 ): InnerResult | undefined {
   const storedObjectStatic = resolveStoredObjectStaticMethod(ctx.oracle, expr.expression);
-  if (storedObjectStatic === "assign" && expr.arguments.length >= 1 && !noJsHost(ctx)) {
-    return emitStoredObjectAssignCall(ctx, fctx, expr);
-  }
   if (storedObjectStatic === "defineProperty" && expr.arguments.length >= 3) {
     return compileObjectDefineProperty(ctx, fctx, expr);
   }

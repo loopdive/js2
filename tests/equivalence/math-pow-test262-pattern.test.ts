@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { compile } from "../../src/index.js";
-import { buildImports } from "./helpers.js";
+import { instantiateWithRuntime } from "./helpers.js";
 
 async function compileAndRun(source: string): Promise<number> {
   const result = await compile(source, { fileName: "test.ts" });
@@ -9,9 +9,9 @@ async function compileAndRun(source: string): Promise<number> {
     throw new Error("Compile errors: " + errors.map((e) => e.message).join("; "));
   }
   expect(result.success).toBe(true);
-  const imports = buildImports(result);
-  const instance = await WebAssembly.instantiate(result.binary, imports);
-  return (instance.instance.exports as any).test();
+  // (#6708) full runtime imports + the JS-facing export view (native-first default)
+  const instance = await instantiateWithRuntime(result);
+  return (instance.exports as any).test();
 }
 
 describe("Math.pow/min/max with array element args (test262 pattern)", () => {

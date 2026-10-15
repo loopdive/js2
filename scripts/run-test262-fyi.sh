@@ -25,9 +25,6 @@ case "$COMPILER_PATH" in
   ir)
     prefix="test262"
     if [ "$TARGET" != "gc" ]; then prefix="test262-$TARGET"; fi
-    if [ "${TEST262_SEMANTIC_PROVIDERS:-auto}" != "auto" ]; then
-      prefix="${prefix}-${TEST262_SEMANTIC_PROVIDERS}"
-    fi
     node "$SCRIPT_DIR/check-test262-compiler-path.mjs" --compiler-path ir \
       --status "$ROOT/benchmarks/results/${prefix}-ir-status.json"
     exit 2

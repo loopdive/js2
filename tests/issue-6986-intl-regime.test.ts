@@ -123,7 +123,10 @@ describe("#6986 `intl` host accelerator on the native regime", () => {
         classification: "host-accelerator",
         family: "intl",
       });
-      expect(classifyHostImport(entry, "javascript").classification).not.toBe("legacy-semantic");
+      // Unselected, an Intl import is never a host accelerator: the extern
+      // classes stay declared capabilities and the `__intl_*` builtins are
+      // retired imports (the compile refuses Intl without the accelerator).
+      expect(["platform-capability", "unknown"]).toContain(classifyHostImport(entry, "javascript").classification);
     }
   });
 });
@@ -172,17 +175,5 @@ describe("#6986 no host Intl: a compile error, never a silent run-time failure",
     const { result, value } = await run(`export function run(): string { return (1234.5).toLocaleString(); }`, REGIME);
     expect(value).toBe("1234.5");
     expect(result.imports.some((entry) => /Intl|__intl_/.test(entry.name))).toBe(false);
-  });
-
-  it("leaves the host-assisted lane's Intl untouched", async () => {
-    const source = `export function run(): string { return new Intl.NumberFormat("en-US").format(1234.5); }`;
-    const { result, value } = await run(source, {});
-    expect(value).toBe("1,234.5");
-    expect(
-      result.imports
-        .map((entry) => entry.name)
-        .filter((name) => name.startsWith("Intl_"))
-        .sort(),
-    ).toEqual(["Intl_NumberFormat_format", "Intl_NumberFormat_new"]);
   });
 });

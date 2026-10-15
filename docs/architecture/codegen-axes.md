@@ -40,6 +40,14 @@ single linear progression of "old → new". A change to codegen lives on
 - **Backend axis (lowering)** — WasmGC vs linear memory. **Alternatives**, not
   rivals. The target dictates the choice (browser/JS host → WasmGC; WASI /
   Component Model → linear). Both stay.
+- **Not an axis: JS host vs standalone semantics (#6708).** There is one
+  native semantic core. The `gc` target in a JS environment and
+  `--target standalone` lower ECMAScript through the same provider arms
+  (`targetProfile.nativeRegime`, today spelled `ctx.standalone`); the JS
+  environment adds only the value adapter, explicit platform capabilities and
+  named opt-in *accelerators* (#6978). The host-assisted profile was deleted
+  in #6979 (S7-a); its remaining host emitters retire family by family in
+  S7-b.
 - **Front-end axis (representation)** — direct AST→Wasm vs IR. IR
   **replaces** the accumulated direct-codegen hacks (155+ workarounds tracked
   in #1098). IR adopts AST node kinds step by step; on each adopted kind it
@@ -368,8 +376,8 @@ prelude), so a global `Intl` reference is a compile error naming the
 accelerator. `js-string` is classified but refuses selection until its host
 path exists. A selected
 family's imports classify as `host-accelerator` in
-`src/host-import-policy.ts`; selecting one for standalone/WASI, a strict
-no-host build, or the host-assisted profile is a compile error. New host
+`src/host-import-policy.ts`; selecting one for standalone/WASI or a strict
+no-host build is a compile error. New host
 imports belong to one of these families or to a platform capability, never to
 a new semantic fallback.
 

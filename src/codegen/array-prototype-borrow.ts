@@ -492,8 +492,6 @@ export function compileArrayLikePrototypeCall(
   // the arm's own late imports invalidating an already-baked loadElem funcIdx
   // (the addUnionImports late-shift hazard → `call[0] expected extern`/invalid
   // Wasm). Idempotent; the arms re-fetch these by name too.
-  ensureLateImport(ctx, "__js_array_new", [], [{ kind: "externref" }]);
-  ensureLateImport(ctx, "__js_array_push", [{ kind: "externref" }, { kind: "externref" }], []);
   ensureLateImport(ctx, "__extern_set", [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }], []);
   ensureLateImport(ctx, "__box_number", [{ kind: "f64" }], [{ kind: "externref" }]);
   // (#2773 S8) A boolean-returning callback (`return prev === null` — the
