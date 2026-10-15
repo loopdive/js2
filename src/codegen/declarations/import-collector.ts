@@ -29,7 +29,6 @@ import { emitNativeEscape, emitNativeUnescape } from "../escape-native.js";
 import { isNativeGeneratorCandidate, sourceNeedsGeneratorHostImports } from "../generators-native.js";
 import { reportEagerGeneratorAbruptResumptions } from "../generator-eager-refusal.js";
 import {
-  FUNCTIONAL_ARRAY_METHODS,
   KNOWN_CONSTRUCTORS,
   MATH_HOST_METHODS_1ARG,
   MATH_HOST_METHODS_2ARG,
@@ -121,11 +120,6 @@ export interface UnifiedCollectorState {
   // settle-backend imports registered UPFRONT — same #1384 stable-index
   // rationale as asyncCpsFound.
   asyncHostDriveFound: boolean;
-  // -- collectFunctionalArrayImports --
-  funcArrayNeed1: boolean;
-  funcArrayNeed2: boolean;
-  /** Reference-valued Array.map callback needs the externref-preserving bridge. */
-  funcArrayNeedDyn1: boolean;
   // -- collectUnionImports --
   unionFound: boolean;
   // -- collectGeneratorImports --
@@ -211,9 +205,6 @@ export function createUnifiedCollectorState(sourceFile: ts.SourceFile): UnifiedC
     getterCallbackFound: false,
     asyncCpsFound: false,
     asyncHostDriveFound: false,
-    funcArrayNeed1: false,
-    funcArrayNeed2: false,
-    funcArrayNeedDyn1: false,
     unionFound: false,
     generatorFound: false,
     asyncGenDrivableStems: new Set(),
@@ -295,77 +286,6 @@ function needsHostIndirectEvalImport(ctx: CodegenContext, node: ts.Node): boolea
   return (
     !!shape && collectorSeesAmbientEval(ctx, shape.evalIdentifier) && collectorProvesHostEvalString(ctx, shape.source)
   );
-}
-
-/**
- * Whether an array-like receiver's TypeScript element arguments lower to a
- * reference carrier. This is deliberately a pre-scan predicate: the dynamic
- * callback import must exist before callback closures are emitted, otherwise a
- * late import can shift the closure's embedded function index (#4527).
- */
-function arrayReceiverMayCarryReferenceElements(ctx: CodegenContext, receiver: ts.Expression): boolean {
-  const refLike = (fact: import("../../checker/oracle.js").TypeFact): boolean => {
-    if (fact.kind === "union") return fact.parts.some(refLike);
-    return !(
-      fact.kind === "number" ||
-      fact.kind === "boolean" ||
-      fact.kind === "bigint" ||
-      fact.kind === "undefined" ||
-      fact.kind === "null" ||
-      fact.kind === "void" ||
-      fact.kind === "unresolvable"
-    );
-  };
-
-  const elementFact = ctx.oracle.elementFactOf(receiver);
-  if (elementFact.kind !== "unresolvable") return refLike(elementFact);
-
-  // Context-free array literals may not expose a TypeReference yet. Their
-  // element expressions still provide the same generic carrier proof.
-  if (ts.isArrayLiteralExpression(receiver)) {
-    return receiver.elements.some(
-      (element) => !ts.isOmittedExpression(element) && refLike(ctx.oracle.typeFactOf(element)),
-    );
-  }
-  return false;
-}
-
-/**
- * (#5319, generalising #4527) The single-callback array HOFs whose unresolved
- * callback must reach the element through the reference-preserving
- * `__call_dyn_1` bridge rather than the numeric `__call_1_f64` one. #4527 armed
- * `map` alone; every other member of this family lowered the SAME
- * `setupArrayCallback` fallback and therefore applied ToNumber to a reference
- * element — `["x","y"].filter(Boolean)` dropped every entry.
- *
- * `reduce`/`reduceRight` are deliberately absent: they take a 2-arg callback and
- * there is no `__call_dyn_2` bridge yet.
- */
-const DYNAMIC_ELEMENT_BRIDGE_METHODS = new Set(["map", "filter", "forEach", "find", "findIndex", "some", "every"]);
-
-function collectFunctionalArrayImports(ctx: CodegenContext, state: UnifiedCollectorState, node: ts.Node): void {
-  if (!ts.isCallExpression(node) || !ts.isPropertyAccessExpression(node.expression)) return;
-  const method = node.expression.name.text;
-  if (FUNCTIONAL_ARRAY_METHODS.has(method)) {
-    if (method === "reduce" || method === "reduceRight") state.funcArrayNeed2 = true;
-    else state.funcArrayNeed1 = true;
-    if (
-      DYNAMIC_ELEMENT_BRIDGE_METHODS.has(method) &&
-      !ctx.standalone &&
-      !ctx.wasi &&
-      node.arguments.length > 0 &&
-      !ts.isArrowFunction(node.arguments[0]!) &&
-      !ts.isFunctionExpression(node.arguments[0]!) &&
-      arrayReceiverMayCarryReferenceElements(ctx, node.expression.expression)
-    ) {
-      state.funcArrayNeedDyn1 = true;
-    }
-  }
-  if (method !== "call" || !ts.isPropertyAccessExpression(node.expression.expression)) return;
-  const innerMethod = node.expression.expression.name.text;
-  if (!FUNCTIONAL_ARRAY_METHODS.has(innerMethod)) return;
-  if (innerMethod === "reduce" || innerMethod === "reduceRight") state.funcArrayNeed2 = true;
-  else state.funcArrayNeed1 = true;
 }
 
 /** Single-pass visitor called on every AST node */
@@ -1125,9 +1045,6 @@ export function unifiedVisitNode(ctx: CodegenContext, state: UnifiedCollectorSta
       }
     }
   }
-
-  // ── collectFunctionalArrayImports ──
-  collectFunctionalArrayImports(ctx, state, node);
 
   // ── collectUnionImports ──
   if (!state.unionFound) {
@@ -1889,31 +1806,6 @@ export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedColl
   // the resolve/reject capabilities on the promise as `__r`/`__j`). The settle
   // imports declare an externref result (the JS fns return undefined) so the
   // shared `call <fulfill>; drop` settle shape stays uniform across backends.
-
-  // ── collectFunctionalArrayImports finalize ──
-  if (state.funcArrayNeed1) {
-    if (ctx.fast) {
-      const typeIdx = addFuncType(ctx, [{ kind: "externref" }, { kind: "i32" }], [{ kind: "i32" }]);
-      addImport(ctx, "env", "__call_1_i32", { kind: "func", typeIdx });
-    } else {
-      const typeIdx = addFuncType(ctx, [{ kind: "externref" }, { kind: "f64" }], [{ kind: "f64" }]);
-      addImport(ctx, "env", "__call_1_f64", { kind: "func", typeIdx });
-    }
-  }
-  if (state.funcArrayNeedDyn1 && !ctx.funcMap.has("__call_dyn_1")) {
-    const externref: ValType = { kind: "externref" };
-    const typeIdx = addFuncType(ctx, [externref, externref], [externref]);
-    addImport(ctx, "env", "__call_dyn_1", { kind: "func", typeIdx });
-  }
-  if (state.funcArrayNeed2) {
-    if (ctx.fast) {
-      const typeIdx = addFuncType(ctx, [{ kind: "externref" }, { kind: "i32" }, { kind: "i32" }], [{ kind: "i32" }]);
-      addImport(ctx, "env", "__call_2_i32", { kind: "func", typeIdx });
-    } else {
-      const typeIdx = addFuncType(ctx, [{ kind: "externref" }, { kind: "f64" }, { kind: "f64" }], [{ kind: "f64" }]);
-      addImport(ctx, "env", "__call_2_f64", { kind: "func", typeIdx });
-    }
-  }
 
   // ── collectUnionImports finalize ──
   if (state.unionFound) {

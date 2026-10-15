@@ -77,7 +77,6 @@ import {
   getFuncParamTypes,
   getWasmFuncReturnType,
   isEffectivelyVoidReturn,
-  noJsHost,
   wasmFuncReturnsVoid,
 } from "./helpers.js";
 import { parkOuterReturnProtocol, patchInlinedIifeReturns, restoreOuterReturnProtocol } from "./iife-return-patch.js"; // (#5339, #6651 C3b)
@@ -101,12 +100,10 @@ import {
   coerceNumberMethodArgToF64,
   compileCallExpression,
   compileConditionalCallee,
-  compileFunctionBind,
   compileIIFE,
   elemAccessReceiverClassName,
   elemAccessReceiverIsPlainObject,
   elemAccessReceiverIsUserClass,
-  emitBoundFunctionCall,
   emitClosureCallArgcExtras,
   emitResetArgcExtras,
   emitSetArgc,
@@ -1882,20 +1879,6 @@ export function compileTailDispatch(
             }
             return VOID_RESULT;
           }
-        }
-      }
-
-      // A callable stored in an object field (for example `f.af`) has no
-      // statically registered `Class_method` body for the direct optimization
-      // above. In JS-host mode `.bind()` therefore produces a real host bound
-      // function, not a Wasm closure struct. Invoke that externref through the
-      // host callable seam instead of letting the generic call-of-call path
-      // ref.test it as a closure and dereference the resulting null.
-      if (!ctx.standalone && !noJsHost(ctx) && ts.isPropertyAccessExpression(bindCall.expression)) {
-        const boundType = compileFunctionBind(ctx, fctx, bindCall, bindCall.expression);
-        if (boundType !== undefined) {
-          const called = emitBoundFunctionCall(ctx, fctx, expr, true);
-          if (called !== null) return called;
         }
       }
 

@@ -121,7 +121,6 @@ import { resolveDefaultExpressionImportGlobal } from "../default-expression-impo
 import { emitTdzCheckAtGlobal } from "../statements/tdz.js";
 import { buildThrowJsErrorInstrs } from "../js-errors.js";
 import { tryEmitUndeclaredCalleeReferenceError } from "./undeclared-callee.js"; // undeclared-identifier call → ReferenceError
-import { tryEmitLinkedProviderFreeGlobalCall } from "./linked-free-global-call.js"; // (#6492 r9) provider free callee → live realm lookup
 import { compileInternalCallArgument } from "./internal-call-argument.js";
 import { isSloppyImplicitGlobalBinding } from "./implicit-global-binding.js"; // (#3966) callee stored on the realm global
 import { tryEmitNullishIdentifierCalleeTypeError } from "./stored-member-closure-call.js"; // (#4640 D1)
@@ -135,7 +134,6 @@ import { tryCompileNodeBuiltinMemberCall } from "../host-method-args.js"; // (#6
 import { isModuleInitChunkFunctionContext } from "../module-init-chunks.js";
 import { paramUndefinedTypeIsDefaultArtifact } from "../destructuring-params.js";
 import {
-  calleeIsCapabilityCtorParam,
   calleeIsPromiseExecutorParam,
   calleeIsLinkedProviderParam,
   calleeMayBeHostCallable,
@@ -143,8 +141,6 @@ import {
   compileCallExpression,
   emitBareCallReceiverReset,
   ensureFuncValueWrappersRegistered,
-  emitBoundFunctionCall,
-  emitDynamicSpreadCall,
   PATH_BASED_FS_FNS,
   resolveClosureInfoFromLocal,
   tryEmitArrayToStringNative,
@@ -1930,24 +1926,6 @@ function compileBoundIdentifierCall(
           return emitRuntimeEvalInterpretedCallableAdapter(ctx, fctx);
         }
       }
-      // (#1528/#56) Promise-combinator executor params are host functions, so
-      // their narrow capability-constructor lane also routes via Reflect.apply.
-      if (isKnownVariable && !ctx.standalone && !noJsHost(ctx) && calleeIsCapabilityCtorParam(ctx, expr.expression)) {
-        const hostCall = emitBoundFunctionCall(ctx, fctx, expr);
-        if (hostCall !== null) return hostCall;
-      }
-
-      // A dynamically stored callable invoked with `fn(...args)` must expand
-      // the Wasm rest vector before crossing into the JS host.  The typed
-      // closure-dispatch ladder has no runtime-arity representation and would
-      // otherwise pass the vector itself as argument zero (Stylelint's
-      // ruleMessages produced `"baz,2,hoohah"` this way).  The helper retains
-      // the callee identity and invokes either a Wasm closure or a host
-      // function through the shared __call_function adapter.
-      if (isKnownVariable && hasSpreadArg && !noJsHost(ctx)) {
-        const spreadCall = emitDynamicSpreadCall(ctx, fctx, expr, expectedType);
-        if (spreadCall !== null) return spreadCall;
-      }
       // (#6646, #5383 S68) The HOST-FREE twin of the arm immediately above.
       // Its header claimed the standalone lane "retains its native ObjVec /
       // call_ref lowering, where the vector … can be expanded without a host
@@ -3015,11 +2993,6 @@ function compileBoundIdentifierCall(
             ctx.runtimeEvalCallableBoundaryEnabled === true &&
             boxableKind(expectedReturn) &&
             matchedClosureInfo.paramTypes.every((t) => boxableKind(t));
-          // NB: capability-ctor `executor` params (#1528/#56 class-ctor arm) are
-          // UNTYPED (`any`, no call signatures) so they never reach this
-          // callable-param dispatch — they are routed earlier through the
-          // `__call_function` host helper (see the calleeIsCapabilityCtorParam
-          // early-return alongside the bound-function path above).
 
           let fallbackInstrs: Instr[] | null = null;
           let dispatchOuterBody: Instr[] | null = null;
@@ -3619,18 +3592,6 @@ function compileBoundIdentifierCall(
           fctx.body.push({ op: "call", funcIdx: resolvedBridgeIdx });
           return { kind: "externref" };
         }
-      }
-
-      // (#6492 round 9) A linked PROVIDER resolves a free callee through the
-      // realm's global object FIRST, and only throws when the property is
-      // genuinely absent — §9.1.1.4, and the shape the test262 harness needs
-      // for `$DONE(err)`. Declines for every non-provider unit, so the
-      // ReferenceError arm below is unchanged everywhere else. Must come
-      // before that arm, which is unconditional once it decides the name is
-      // undeclared.
-      if (declaration === undefined && !implicitCallee && !isRuntimeEvalGlobal) {
-        const freeGlobal = tryEmitLinkedProviderFreeGlobalCall(ctx, fctx, expr, funcName);
-        if (freeGlobal !== undefined) return freeGlobal;
       }
 
       // §6.2.5.5 GetValue on an unresolvable Reference — both lanes. See
