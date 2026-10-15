@@ -1,9 +1,10 @@
 ---
 id: 6986
 title: "Intl on the native regime: host `Intl_*` imports are emitted and fail at run time — needs a native stand-in or an explicit `intl` accelerator route before S7-b"
-status: ready
+status: in-progress
 created: 2026-10-14
-updated: 2026-10-14
+updated: 2026-10-15
+assignee: "ttraenkler/opus-6986-intl"
 priority: high
 horizon: m
 feasibility: hard
