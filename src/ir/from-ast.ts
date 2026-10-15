@@ -70,6 +70,7 @@ import {
 import { remainderFastPathPlan } from "./analysis/remainder-fast-path.js";
 import { evaluateConstantCondition } from "../codegen/statements/control-flow.js";
 import type { IrClassInstanceInitializer } from "./class-instance-initializers.js";
+import { staticMemberBindingIsUnsound } from "./class-overrides.js";
 // #2766 — reuse the legacy counted-loop proof predicates (pure AST analysis, no
 // codegen state) to port the `safeIndexedArrays` in-bounds proof into the IR.
 import { isIncreasingStep, loopBodyMutatesIndexOrArray } from "./analysis/loop-shape.js";
@@ -6244,6 +6245,7 @@ function lowerPropertyAccess(expr: ts.PropertyAccessExpression, cx: LowerCtx): I
       // right prefix).
       const getter = findClassMember(recvType.shape, propName, "getter");
       if (getter && getter.returnType !== null) {
+        demoteIfVirtualMember(expr.expression, recvType.shape.className, propName, cx);
         const r = cx.builder.emitClassCall(recv, propName, "getter", [], getter.returnType, getter.target);
         if (r === null) {
           // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
@@ -9648,6 +9650,12 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
       `ir/from-ast: void method ${recvType.shape.className}.${methodName} used in expression position (${cx.funcName})`,
     );
   }
+  demoteIfVirtualMember(
+    (expr.expression as ts.PropertyAccessExpression).expression,
+    recvType.shape.className,
+    methodName,
+    cx,
+  );
   const r = cx.builder.emitClassCall(recv, methodName, "method", args, method.returnType, method.target);
   if (method.returnType !== null && r === null) {
     // Defensive — emitClassCall returns null only when resultType is null.
@@ -10133,6 +10141,7 @@ function lowerPropertyAssignment(expr: ts.BinaryExpression, cx: LowerCtx): void 
             demoteToLegacy("property-write-unsupported", "unboxable dynamic setter value");
         if (!irTypeAssignable(cx.builder.typeOf(newValue), setter.params[0]!))
           demoteToLegacy("property-write-unsupported", "setter value is not assignable");
+        demoteIfVirtualMember(lhs.expression, recvType.shape.className, fieldName, cx);
         cx.builder.emitClassCall(recv, fieldName, "setter", [newValue], null, setter.target);
         return;
       }
@@ -10786,6 +10795,23 @@ function coerceReturnValue(value: IrValueId, cx: LowerCtx, sourceExpression?: ts
       "build",
       `ir/from-ast: concrete return needs a dynamic box in ${cx.funcName}`,
     );
+  }
+  // (#7001) dynamic/externref value into a STRING declared result. Only the
+  // host lane has string ≡ externref; on a native-string lane the string
+  // result is `(ref null $AnyString)` and the unconverted externref would fail
+  // Wasm validation. Demote to legacy (which coerces) — same clean
+  // "not in slice" fallback as the dynamic arm above.
+  if (declared?.kind === "string") {
+    const actualT = cx.builder.typeOf(value);
+    const isExternShaped = actualT.kind === "dynamic" || asVal(actualT)?.kind === "externref";
+    if (isExternShaped && cx.resolver?.stringIsExternref?.() !== true) {
+      throw new IrUnsupportedError(
+        "return-type-legacy-coupling",
+        "build",
+        `ir/from-ast: dynamic/externref returned into a native 'string' result needs a checked conversion in ${cx.funcName}`,
+      );
+    }
+    return value;
   }
   // (#2856 C3) externref value into a NUMBER (f64) declared result —
   // `return hit;` where `hit = cache.get(n)` is the externref Map_get
@@ -14068,6 +14094,25 @@ function proveUnboxedNumberLocal(decl: ts.VariableDeclaration, boundType: IrType
   // unboxed and boxed via `__box_boolean` (#2785) at the escape edge. Anything
   // else i32 (`any` / mixed union — no determinable brand) → demote.
   return isProvablyBoolean(tsType);
+}
+
+/**
+ * (#7000) `class.call` binds statically to the member resolved on the
+ * receiver's DECLARED class; with an override below that class the bound body
+ * is wrong for subclass instances. The selector refuses the shapes it can
+ * attribute (`class-method-virtual`); this is the builder-side backstop for a
+ * class-typed receiver the selector could not.
+ */
+function demoteIfVirtualMember(receiver: ts.Expression, className: string, memberName: string, cx: LowerCtx): void {
+  const resolveVariable = (node: ts.Identifier): ts.VariableDeclaration | undefined => {
+    const declaration = cx.checker?.getSymbolAtLocation(node)?.valueDeclaration;
+    return declaration && ts.isVariableDeclaration(declaration) ? declaration : undefined;
+  };
+  if (!staticMemberBindingIsUnsound(receiver, [className], memberName, resolveVariable)) return;
+  demoteToLegacy(
+    "class-method-virtual",
+    `ir/from-ast: ${className}.${memberName} is overridden by a subclass — needs virtual dispatch in ${cx.funcName}`,
+  );
 }
 
 /**
