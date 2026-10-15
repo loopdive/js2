@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import { forEachChild, ts } from "../ts-api.js";
+import { isLexicalBindingWrite, varDeclaratorWrittenNames } from "./analysis/binding-writes.js";
+import { collectPatternBindingNames } from "./analysis/ast-scope.js";
 
 /** Conservatively collect writes in the function-like enclosing a lifted closure. */
 export function collectOuterWrites(
@@ -28,23 +30,19 @@ export function collectOuterWrites(
   }
   if (!outer || !("body" in outer) || !outer.body) return writes;
   const body = outer.body as ts.Node;
+  // (#6992) Names declared so far, in source order: a later `var` declarator
+  // with an initializer for one of them is a re-declaration, i.e. a write.
+  const declared = new Set<string>();
+  if ("parameters" in outer) {
+    for (const p of (outer as ts.SignatureDeclaration).parameters) {
+      for (const n of collectPatternBindingNames(p.name)) declared.add(n);
+    }
+  }
   const visit = (node: ts.Node): void => {
     if (node === fn) return;
-    if (ts.isBinaryExpression(node)) {
-      const op = node.operatorToken.kind;
-      if (
-        op === ts.SyntaxKind.EqualsToken ||
-        (op >= ts.SyntaxKind.PlusEqualsToken && op <= ts.SyntaxKind.CaretEqualsToken)
-      ) {
-        if (ts.isIdentifier(node.left)) writes.add(node.left.text);
-      }
-    }
-    if (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) {
-      const op = node.operator;
-      if (op === ts.SyntaxKind.PlusPlusToken || op === ts.SyntaxKind.MinusMinusToken) {
-        if (ts.isIdentifier(node.operand)) writes.add(node.operand.text);
-      }
-    }
+    if (ts.isIdentifier(node) && isLexicalBindingWrite(node)) writes.add(node.text);
+    for (const id of varDeclaratorWrittenNames(node)) if (declared.has(id.text)) writes.add(id.text);
+    if (ts.isVariableDeclaration(node)) for (const n of collectPatternBindingNames(node.name)) declared.add(n);
     forEachChild(node, visit);
   };
   forEachChild(body, visit);
@@ -114,38 +112,4 @@ export function collectTransitiveClosureCaptures(
   };
   visit(descendant);
   return { referenced, written };
-}
-
-/** Follow assignment-pattern containers, never a member receiver or computed key. */
-function isLexicalBindingWrite(identifier: ts.Identifier): boolean {
-  let target: ts.Node = identifier;
-  for (;;) {
-    const parent = target.parent;
-    if (!parent) return false;
-    if (ts.isBinaryExpression(parent))
-      return (
-        parent.left === target &&
-        parent.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
-        parent.operatorToken.kind <= ts.SyntaxKind.LastAssignment
-      );
-    if (ts.isPrefixUnaryExpression(parent) || ts.isPostfixUnaryExpression(parent))
-      return (
-        parent.operand === target &&
-        (parent.operator === ts.SyntaxKind.PlusPlusToken || parent.operator === ts.SyntaxKind.MinusMinusToken)
-      );
-    if (ts.isForOfStatement(parent) || ts.isForInStatement(parent)) return parent.initializer === target;
-    if (
-      (ts.isParenthesizedExpression(parent) && parent.expression === target) ||
-      (ts.isSpreadElement(parent) && parent.expression === target) ||
-      (ts.isSpreadAssignment(parent) && parent.expression === target) ||
-      (ts.isPropertyAssignment(parent) && parent.initializer === target) ||
-      (ts.isShorthandPropertyAssignment(parent) && parent.name === target) ||
-      ts.isArrayLiteralExpression(parent) ||
-      ts.isObjectLiteralExpression(parent)
-    ) {
-      target = parent;
-      continue;
-    }
-    return false;
-  }
 }

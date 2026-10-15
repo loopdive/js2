@@ -20,6 +20,7 @@ import type { Instr, ValType } from "../../ir/types.js";
 import { addFuncType, destructureParamArray, destructureParamObject, getOrRegisterRefCellType } from "../index.js";
 import { addFunctionOwnLocals } from "../../ir/analysis/binding-info.js";
 import { isFunctionScopeBoundary } from "../../ir/analysis/ast-scope.js";
+import { isLexicalBindingWrite, varDeclaratorWrittenNames } from "../../ir/analysis/binding-writes.js";
 import {
   closureArityField,
   closureBagField,
@@ -755,33 +756,21 @@ export function planClosureCaptures(
         if (outerBody) {
           // Collect writes in the outer body, excluding the closure body itself
           const outerWrites = new Set<string>();
-          const writesCapturedBinding = capturedBindingWriteTest(
-            ctx,
-            name,
-            referencedBindingDeclaration(ctx, arrow, name, true),
-          );
+          const capturedDeclaration = referencedBindingDeclaration(ctx, arrow, name, true);
+          const writesCapturedBinding = capturedBindingWriteTest(ctx, name, capturedDeclaration);
           const collectOuterWrites = (node: ts.Node): void => {
             // Skip the closure body itself
             if (node === arrow) return;
-            // Check for assignments
-            if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
-              if (ts.isIdentifier(node.left) && writesCapturedBinding(node.left)) {
-                outerWrites.add(name);
-              }
+            // (#6992) Every write form — assignment of any operator, `++`/`--`,
+            // a destructuring target, a for-in/for-of head — not just `x = …`.
+            if (ts.isIdentifier(node) && isLexicalBindingWrite(node) && writesCapturedBinding(node)) {
+              outerWrites.add(name);
             }
-            if (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) {
-              if (ts.isIdentifier(node.operand) && writesCapturedBinding(node.operand)) {
-                outerWrites.add(name);
-              }
-            }
-            // Compound assignments (+=, -=, etc.)
-            if (
-              ts.isBinaryExpression(node) &&
-              node.operatorToken.kind >= ts.SyntaxKind.PlusEqualsToken &&
-              node.operatorToken.kind <= ts.SyntaxKind.CaretEqualsToken
-            ) {
-              if (ts.isIdentifier(node.left) && writesCapturedBinding(node.left)) {
-                outerWrites.add(name);
+            // (#6992) A `var` re-declaration with an initializer writes the
+            // captured binding; the binding's own declaration does not.
+            if (node !== capturedDeclaration) {
+              for (const id of varDeclaratorWrittenNames(node)) {
+                if (writesCapturedBinding(id)) outerWrites.add(name);
               }
             }
             forEachChild(node, collectOuterWrites);

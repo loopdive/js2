@@ -20,7 +20,12 @@ import {
 import { emitAssignToTarget } from "../expressions/assignment.js";
 import { emitConditionalCaptureBoxRepair } from "../closures/conditional-capture-box.js"; // (#6939)
 import { emitForOfArrayIteratorDeletedGuard } from "../expressions/proto-override.js";
-import { emitConstIdentifierUpdateGuard, tryEmitForOfIdentifierWrite } from "../expressions/identifier-assignment.js";
+import {
+  boxedCaptureCellOf,
+  emitConstIdentifierUpdateGuard,
+  emitResolvedIdentifierWriteFromStack,
+  tryEmitForOfIdentifierWrite,
+} from "../expressions/identifier-assignment.js";
 import { ensureLateImport, flushLateImportShifts, shiftLateImportIndices } from "../expressions/late-imports.js";
 import { nativeGeneratorInfoForForOfSubject, tryCompileNativeGeneratorForOf } from "../generators-native.js";
 import {
@@ -135,6 +140,18 @@ function emitForOfAssignmentTarget(
   }
   if (ts.isIdentifier(unwrapped) && tryEmitForOfIdentifierWrite(ctx, fctx, unwrapped, valueLocal, valueType)) return;
   emitWebCompatCallAssignmentTarget(ctx, fctx, target);
+}
+
+/**
+ * (#6992) The local a plain `for (x of …)` head assigns each iteration. A
+ * closure-boxed `x` lives in a ref cell, so the head gets a scratch value local
+ * and `emitForOfAssignmentTarget` then stores it through the cell.
+ */
+function forOfIdentifierHeadLocal(fctx: FunctionContext, varName: string, type: ValType): number {
+  const existing = fctx.localMap.get(varName);
+  if (existing === undefined) return allocLocal(fctx, varName, type);
+  if (!boxedCaptureCellOf(fctx, varName, existing)) return existing;
+  return allocLocal(fctx, `__forof_head_${fctx.locals.length}`, type);
 }
 
 /** Build the canonical TypeError for synchronous for-of's ToObject(nullish) guard. */
@@ -1824,7 +1841,7 @@ function compileForOfString(ctx: CodegenContext, fctx: FunctionContext, stmt: ts
   } else if (assignmentTarget && ts.isIdentifier(assignmentTarget)) {
     // Expression form: for (x of str) — x is already declared
     const varName = assignmentTarget.text;
-    elemLocal = fctx.localMap.get(varName) ?? allocLocal(fctx, varName, elemType);
+    elemLocal = forOfIdentifierHeadLocal(fctx, varName, elemType);
   } else {
     elemLocal = allocLocal(fctx, `__forof_elem_${fctx.locals.length}`, elemType);
   }
@@ -2227,7 +2244,7 @@ function compileForOfArray(
   } else if (assignmentTarget && ts.isIdentifier(assignmentTarget)) {
     // Expression form: for (x of arr) — x is already declared
     const varName = assignmentTarget.text;
-    elemLocal = fctx.localMap.get(varName) ?? allocLocal(fctx, varName, readElemType);
+    elemLocal = forOfIdentifierHeadLocal(fctx, varName, readElemType);
   } else {
     elemLocal = allocLocal(fctx, `__forof_elem_${fctx.locals.length}`, readElemType);
   }
@@ -2449,7 +2466,7 @@ function compileForOfArrayKeys(
     }
   } else if (ts.isIdentifier(stmt.initializer)) {
     const varName = stmt.initializer.text;
-    keyLocal = fctx.localMap.get(varName) ?? allocLocal(fctx, varName, { kind: "f64" });
+    keyLocal = forOfIdentifierHeadLocal(fctx, varName, { kind: "f64" });
   } else {
     if (!compileForOfArrayTentative(ctx, fctx, stmt)) compileForOfIterator(ctx, fctx, stmt);
     return;
@@ -2460,6 +2477,10 @@ function compileForOfArrayKeys(
     fctx.body.push({ op: "local.get", index: iLocal });
     fctx.body.push({ op: "f64.convert_i32_s" });
     fctx.body.push({ op: "local.set", index: keyLocal });
+    // (#6992) A boxed head wrote a scratch local; store it through the cell.
+    if (ts.isIdentifier(stmt.initializer) && fctx.localMap.get(stmt.initializer.text) !== keyLocal) {
+      emitForOfAssignmentTarget(ctx, fctx, stmt.initializer, keyLocal, { kind: "f64" });
+    }
     void lenLocal;
   });
 }
@@ -2868,7 +2889,7 @@ function compileForOfDirectIterator(
     elemLocal = allocLocal(fctx, `__forit_elem_${fctx.locals.length}`, elemType);
   } else if (assignmentTarget && ts.isIdentifier(assignmentTarget)) {
     const varName = assignmentTarget.text;
-    elemLocal = fctx.localMap.get(varName) ?? allocLocal(fctx, varName, elemType);
+    elemLocal = forOfIdentifierHeadLocal(fctx, varName, elemType);
   } else {
     elemLocal = allocLocal(fctx, `__forit_elem_${fctx.locals.length}`, elemType);
   }
@@ -3329,7 +3350,7 @@ function compileForOfIterator(ctx: CodegenContext, fctx: FunctionContext, stmt: 
   } else if (assignmentTarget && ts.isIdentifier(assignmentTarget)) {
     // Expression form: for (x of arr) — x is already declared
     const varName = assignmentTarget.text;
-    elemLocal = fctx.localMap.get(varName) ?? allocLocal(fctx, varName, elemType);
+    elemLocal = forOfIdentifierHeadLocal(fctx, varName, elemType);
   } else {
     elemLocal = allocLocal(fctx, `__forof_elem_${fctx.locals.length}`, elemType);
   }
@@ -3705,6 +3726,32 @@ function forInHeadBindingKind(init: ts.ForInitializer): BindingKind {
  * member head over a closed-shape receiver — `for (var [a, b] in { ab: null })`
  * — silently bound nothing (#5271 step 4).
  */
+/**
+ * The local a bare `for (x in …)` head assigns: the existing slot, or a fresh
+ * local for a global / not-yet-declared name. (#6992) A closure-boxed `x` gets
+ * a scratch local instead; `emitForInHeadWrite` stores it through the cell.
+ */
+function forInIdentifierHeadLocal(fctx: FunctionContext, varName: string): number {
+  const existingLocal = fctx.localMap.get(varName);
+  if (existingLocal === undefined) return allocLocal(fctx, varName, { kind: "externref" });
+  if (!boxedCaptureCellOf(fctx, varName, existingLocal)) return existingLocal;
+  return allocLocal(fctx, `__forin_key_${fctx.locals.length}`, { kind: "externref" });
+}
+
+/** (#6992) The bare `for (x in …)` head whose key goes through a closure cell (keyLocal is a scratch). */
+function forInBoxedIdentifierHead(
+  fctx: FunctionContext,
+  stmt: ts.ForInStatement,
+  keyLocal: number,
+): ts.Identifier | undefined {
+  let head: ts.Node = stmt.initializer;
+  while (ts.isParenthesizedExpression(head)) head = head.expression;
+  if (!ts.isIdentifier(head)) return undefined;
+  const cellLocal = fctx.localMap.get(head.text);
+  if (cellLocal === undefined || cellLocal === keyLocal) return undefined;
+  return boxedCaptureCellOf(fctx, head.text, cellLocal) ? head : undefined;
+}
+
 function emitForInHeadWrite(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -3716,6 +3763,19 @@ function emitForInHeadWrite(
 ): void {
   if (memberTarget) {
     emitForInMemberTargetWrite(ctx, fctx, memberTarget, keyLocal);
+    return;
+  }
+  const boxedHead = forInBoxedIdentifierHead(fctx, stmt, keyLocal);
+  if (boxedHead) {
+    fctx.body.push({ op: "local.get", index: keyLocal });
+    emitResolvedIdentifierWriteFromStack(
+      ctx,
+      fctx,
+      boxedHead,
+      { kind: "externref" },
+      fctx.localMap.get(boxedHead.text),
+      undefined,
+    );
     return;
   }
   if (bindingPattern) {
@@ -4160,13 +4220,7 @@ function compileForInStatementInner(ctx: CodegenContext, fctx: FunctionContext, 
   } else if (ts.isIdentifier(head)) {
     // Bare identifier: `for (x in obj)` — look up existing local
     varName = head.text;
-    const existingLocal = fctx.localMap.get(varName);
-    if (existingLocal !== undefined) {
-      keyLocal = existingLocal;
-    } else {
-      // Variable might be a global or not yet declared — allocate as local
-      keyLocal = allocLocal(fctx, varName, { kind: "externref" });
-    }
+    keyLocal = forInIdentifierHeadLocal(fctx, varName);
   } else if (ts.isCallExpression(head)) {
     callTarget = head;
     varName = `__forin_key_${fctx.locals.length}`;
@@ -4348,7 +4402,7 @@ function compileForInStatementInner(ctx: CodegenContext, fctx: FunctionContext, 
       // (#5271 step 4) The unroll path used to write ONLY the Annex B call
       // target, so a binding-pattern or member head over a closed-shape
       // receiver (`for (var [a, b] in { ab: null })`) bound nothing at all.
-      memberTarget || bindingPattern || callTarget
+      memberTarget || bindingPattern || callTarget || forInBoxedIdentifierHead(fctx, stmt, keyLocal)
         ? () => emitForInHeadWrite(ctx, fctx, stmt, keyLocal, memberTarget, bindingPattern, callTarget)
         : undefined,
       () => compileStatement(ctx, fctx, stmt.statement),

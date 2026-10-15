@@ -75,6 +75,7 @@ import {
   emitOpenAnyArgValue,
   emitExpressionAsF64,
 } from "./generators-native.js";
+import { boxedCaptureCellOf } from "./expressions/identifier-assignment.js"; // (#6992)
 
 function nativeInfoForStateType(ctx: CodegenContext, typeIdx: number): NativeGeneratorInfo | undefined {
   for (const info of ctx.nativeGenerators.values()) {
@@ -1505,6 +1506,9 @@ export function tryCompileNativeGeneratorForOf(
     isConst = !!(stmt.initializer.flags & ts.NodeFlags.Const);
   } else if (ts.isIdentifier(stmt.initializer)) {
     loopVarName = stmt.initializer.text;
+    // (#6992) A closure-boxed head is written through its cell by the generic path.
+    const headLocal = fctx.localMap.get(loopVarName);
+    if (headLocal !== undefined && boxedCaptureCellOf(fctx, loopVarName, headLocal)) return false;
   } else {
     return false;
   }
