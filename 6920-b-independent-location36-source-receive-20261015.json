@@ -1,0 +1,165 @@
+{
+  "id": "6920",
+  "slice": "independent-location36-source-receive-successor-20261015",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+  "claimed_at": "2026-10-15T14:28:25.417141+00:00",
+  "updated_at": "2026-10-15T14:28:25.417141+00:00",
+  "write_id": "b-independent-location36-source-receive-d88f51a0-2aa2-452f-b738-103d68aadd65",
+  "handoff_scope": [
+    {
+      "kind": "independent-location36-source-receive",
+      "at": "2026-10-15T14:28:25.417141+00:00",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+      "manifest": {
+        "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+        "receivingWorkspace": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-independent-location36/workspace",
+        "bootstrapSourceWorkspace": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-independent-envelope35/workspace",
+        "status": "FINITE_THREE_EXISTING_PATH_RECEIVE_NO_GO_UNTIL_PUBLISHED",
+        "componentPreimages": [
+          {
+            "path": "src/ir/analysis/allocation-evidence/js-class-value-domains/independent.ts",
+            "bytes": 59260,
+            "sha256": "72742606a1506b05e571e8ea1c3ca6e298119fb4e1d0f5fe6b4cbd5eb2559eaa"
+          },
+          {
+            "path": "src/ir/analysis/allocation-evidence/js-class-value-domains/independent-kernel.ts",
+            "bytes": 33334,
+            "sha256": "efeaf404742a0400641d7ee8ff319ccf0f59aab4d7cf4a70424b7c8aa25bae09"
+          },
+          {
+            "path": "tests/issue-6920-prepared-data-object-allocation.test.ts",
+            "bytes": 6511,
+            "sha256": "ae748928517c259203dd5063441554a8d171bfb404239555b6b930100e267a04"
+          }
+        ],
+        "canonicalNewPaths": [],
+        "productionPaths": [
+          "src/ir/analysis/allocation-evidence/js-class-value-domains/independent.ts",
+          "src/ir/analysis/allocation-evidence/js-class-value-domains/independent-kernel.ts"
+        ],
+        "existingTestPaths": [
+          "tests/issue-6920-prepared-data-object-allocation.test.ts"
+        ],
+        "newTestPaths": [],
+        "sourceCountBefore": 2064,
+        "sourceCountConditionalAfter": 2064,
+        "basis": {
+          "authority": "takeover all Session B; Take over the blocking shared seams; parallel subagents",
+          "priorOwnership": "90930437ebabaf746293d0627168d353ccb5dd7d",
+          "functional312": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-independent-envelope35/workspace/.tmp/envelope35/handoff/sealed.json",
+            "bytes": 31244,
+            "sha256": "7070b4ba755b8f8fde006a39b1d6be39922c020981f48daf70fb3f96586c615c"
+          },
+          "strictSinglePass": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-independent-envelope35/workspace/.tmp/envelope35/single/sealed.json",
+            "bytes": 7600,
+            "sha256": "0daa67d944620078dd30a5b14b989b8c64ea87e6fa1eb62728ad96ae35c80300"
+          },
+          "full52Failure": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-independent-envelope35/workspace/.tmp/envelope35/constructor52/sealed-failure.json",
+            "bytes": 32363,
+            "sha256": "bb782d4f8f2b4c3f76661fc8ed1d3335b82940dd01610e2ba6e1ec722a90d04e"
+          },
+          "current35Diagnostic": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-independent-envelope35/workspace/.tmp/envelope35/profile/sealed.json",
+            "bytes": 14148,
+            "sha256": "0cd2e249a218ea0adbee9f384eeda69435bb1e5b4ff041e128d8dd5e67dee422"
+          },
+          "BSoleCPUAnalysis": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/wasi-profile35-independent-review/sealed.json",
+            "bytes": 5970,
+            "sha256": "f3e23ca92841adefb77937495f8e17639d40fb6a0476833965c2814434df53a8"
+          },
+          "ALocationProposal": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/location36-construction-proposal/specification.json",
+            "bytes": 10525,
+            "sha256": "33bf76658abbe1abf16faf39c20b96360b62d5d3e52479270743115a53eb01b8"
+          },
+          "ALocationCode": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/location36-construction-proposal/code-review/indexed03-review.json",
+            "bytes": 4331,
+            "sha256": "61843b9b8190fdca790c96c00d564dc5740a769500edf70b958647ae0e204154"
+          },
+          "AOneCaseOracle": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/location36-construction-proposal/code-review/oracle01-review.json",
+            "bytes": 3231,
+            "sha256": "60dd3785ea4ea9346727d6e81d48da2d767b19592c94687a488334e3d5302b07"
+          },
+          "BTestAdequacy": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/location-specialization-test-adequacy/sealed.json",
+            "bytes": 2456,
+            "sha256": "d55b0a6d00e09a4dfcea63888b20f00659ff1483fe631450aa0be0083e2b0a5f"
+          },
+          "CCodePreview": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/location36plan-indexed/receipt03.json",
+            "bytes": 5920,
+            "sha256": "3210b5befd0eea8ce887cdeffe929a497cadbfad8739ed3b3201fae6bd88a825"
+          },
+          "CFormattedTest": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/location36-test-format/receipt.json",
+            "bytes": 4172,
+            "sha256": "052ae08bb79dc8b8abd49f919be7aee8fe294226291997bd2c843da59a9d1c55"
+          },
+          "budget": "Normally formatted independent1494/max163; kernel822/max49/newhelper22; existingtest253/max56; official no regrown/newGiants/grants. Static preview only until fresh actual gates.",
+          "conditionalFunctionalCount": 313,
+          "CPUlimits": "Current35 location genericcopy SELF .485303; no removed-time/gain/deadline prediction. Full52 two failures retained."
+        },
+        "constraints": [
+          "C sole physical receiver/writer in fresh exact SOURCE35 successor; preserve donor, peers, ROOT2061, source/index, prior failures and all sealed artifacts. No install or Git changes to source workspaces.",
+          "Only two existing production paths: new pure computational fixed four-field Location constructor in existing kernel, one existing-edge import plus thin location issuer call. Use existing actual ordinary-object allocator and captured defineKnownProperty; four required Location-derived arguments, all four ordered enumerable/writable/configurable DATA fields, nestedPath same identity, fn.unitId-first old read. No new Array iterator/destructuring hooks.",
+          "Selected privateGateRootKey simplification limited exactly eight field-name literals to live JSON.stringify. All eight field-VALUE stable calls and generic kernel.stable, rawroots, same, native/prototype/descriptor/ownkey/extra/currentness/unitTarget/equation/Model/propagation/abrupt/history guards remain exact. No Target changes, no new module/policy/root/brand/registration/cache/transport authority.",
+          "Tuple mapped union checks key/value types only; exact current four unique ordered fields verified by explicit source-generation proof, no compiler future-exhaustiveness claim. Normal formatting and official full-tree file/function caps apply; no compression/grants/unrelated moves.",
+          "One meaningful computational oracle in EXISTING allocation test, all old25 case bodies exact; direct actual fixed-helper output prototype/order/all4 descriptors/extensibility/path identity/post-birth mutation/native and accessor boundaries. No Model or engine claims from fabricated DATA. Prospective313/7 roots actual genuine LIST and structured case identities/order govern.",
+          "Fresh single qualification stage: actual2064 source/full57 typing roots/all compiler extensions/deps/helpers/config/excludes empty, normal12+official budgets, fresh unfiltered313 expected cases/7files including old312 exact once; source/test/harness/deps before=after=current, natural0/noUHE/no pending. No redundant component/composition stages.",
+          "Only parent functional/type/static/code acceptance permits separately preflighted original unprofiled strict35; original callback6431/a6a276 and yield153/b769ca/default35000/defaultRPC/Node25.9/8192/fork1 unchanged. Genuine strict natural0 pass then separately authorized unchanged full52; no retry/profile/cancel/waiver/deadline increases.",
+          "ROOT remains2061 unadopted. Conditional future24 CAS14production+9tests+policy, actual58 typing/style71 and ROOT requalification required after private52 pass. All27 migration criteria remain unproven, HOLD and A queue unchanged; no public compiler-source push/comment authorized here. No speedup or deadline guarantee inferred from SELF samples."
+        ],
+        "selectedEndpoints": [
+          {
+            "target": "src/ir/analysis/allocation-evidence/js-class-value-domains/independent.ts",
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/location36plan-indexed/independent.ts.preview.txt",
+            "bytes": 59207,
+            "sha256": "9714130437a04e7251a3471c03b990577b6762a038c2bea0f017dfae1dced6dd"
+          },
+          {
+            "target": "src/ir/analysis/allocation-evidence/js-class-value-domains/independent-kernel.ts",
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/location36plan-indexed/independent-kernel.with-8-literal-names.preview.txt",
+            "bytes": 34337,
+            "sha256": "e0a6da1b0cb0f04d6e1a5a5026decfacbe7feea99c5f8f7ee2f03101929b7c2a"
+          },
+          {
+            "target": "tests/issue-6920-prepared-data-object-allocation.test.ts",
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/location36-test-format/candidate.formatted.test.ts.txt",
+            "bytes": 8933,
+            "sha256": "71d7a81668b0ba76d8714e1bd479aa74880da4957de081b4a928e657b2c2794f"
+          }
+        ]
+      },
+      "manifestSha256": "bbbd42efda8a35cd6e104a4f37f87d548f0c13259d91064357a5981d5baaa1f3",
+      "constraints": [
+        "C sole physical receiver/writer in fresh exact SOURCE35 successor; preserve donor, peers, ROOT2061, source/index, prior failures and all sealed artifacts. No install or Git changes to source workspaces.",
+        "Only two existing production paths: new pure computational fixed four-field Location constructor in existing kernel, one existing-edge import plus thin location issuer call. Use existing actual ordinary-object allocator and captured defineKnownProperty; four required Location-derived arguments, all four ordered enumerable/writable/configurable DATA fields, nestedPath same identity, fn.unitId-first old read. No new Array iterator/destructuring hooks.",
+        "Selected privateGateRootKey simplification limited exactly eight field-name literals to live JSON.stringify. All eight field-VALUE stable calls and generic kernel.stable, rawroots, same, native/prototype/descriptor/ownkey/extra/currentness/unitTarget/equation/Model/propagation/abrupt/history guards remain exact. No Target changes, no new module/policy/root/brand/registration/cache/transport authority.",
+        "Tuple mapped union checks key/value types only; exact current four unique ordered fields verified by explicit source-generation proof, no compiler future-exhaustiveness claim. Normal formatting and official full-tree file/function caps apply; no compression/grants/unrelated moves.",
+        "One meaningful computational oracle in EXISTING allocation test, all old25 case bodies exact; direct actual fixed-helper output prototype/order/all4 descriptors/extensibility/path identity/post-birth mutation/native and accessor boundaries. No Model or engine claims from fabricated DATA. Prospective313/7 roots actual genuine LIST and structured case identities/order govern.",
+        "Fresh single qualification stage: actual2064 source/full57 typing roots/all compiler extensions/deps/helpers/config/excludes empty, normal12+official budgets, fresh unfiltered313 expected cases/7files including old312 exact once; source/test/harness/deps before=after=current, natural0/noUHE/no pending. No redundant component/composition stages.",
+        "Only parent functional/type/static/code acceptance permits separately preflighted original unprofiled strict35; original callback6431/a6a276 and yield153/b769ca/default35000/defaultRPC/Node25.9/8192/fork1 unchanged. Genuine strict natural0 pass then separately authorized unchanged full52; no retry/profile/cancel/waiver/deadline increases.",
+        "ROOT remains2061 unadopted. Conditional future24 CAS14production+9tests+policy, actual58 typing/style71 and ROOT requalification required after private52 pass. All27 migration criteria remain unproven, HOLD and A queue unchanged; no public compiler-source push/comment authorized here. No speedup or deadline guarantee inferred from SELF samples."
+      ]
+    }
+  ],
+  "predecessors": [
+    "3522-b-native-class-semantic-producer-20261014.json",
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}
