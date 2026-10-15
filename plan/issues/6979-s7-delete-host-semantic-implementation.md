@@ -1,9 +1,10 @@
 ---
 id: 6979
 title: "S7: delete the host-semantic implementation — one native semantic core, host imports only as capabilities, adapters and named accelerators"
-status: ready
+status: in-progress
+assignee: ttraenkler/opus-6979-s7a
 created: 2026-10-14
-updated: 2026-10-14
+updated: 2026-10-15
 priority: high
 horizon: xl
 feasibility: hard
@@ -246,3 +247,87 @@ dashboard. `plan/issues/5385-…` gets its program-acceptance checklist closed.
   `check-import-cycles`, flat-dir budget, compiler-boundaries inventory) run
   before every commit; deletions should make them easier, so any growth
   allowance in this program is a smell to explain in the PR.
+
+### S7-a checkpoint (2026-10-15, opus-6979-s7a)
+
+Branch `issue-6979-s7a-remove-host-assisted`, stacked on the S6 flip
+(`issue-6708-a-default-native-first` @ `731cfae193`) plus a merge of
+`upstream/main` (#6982, #6984, #6986). The one conflict was in
+`src/runtime.ts` import binding: an Intl-accelerated import takes the #6986
+marshal, every other `extern_class` the #6708 platform marshal. S7 stays
+`in-progress` until every slice lands.
+
+Re-measured state-table rows. "Before" is the merged base `728bdced5b`,
+measured by this slice:
+
+| Fact | Before | After S7-a |
+| --- | --- | --- |
+| `grep -rF semanticProviders src` | 231 hits / 93 files | 39 / 19 (types, the linear `backend-defined` arm, the S7 rejection, the explicit-native-first #4401 publication gate, adapter-manifest validation) |
+| `grep -rF '"host-assisted"' src` | 17 hits / 5 files | 5 / 2 (the rejection branch and its doc comments) |
+| host-import-policy ratchet | 33 probes, ≤ 446 imports, 0 legacy/unknown; compatibility control 1-23 legacy | 33 probes, 446 imports, hard zero legacy/unknown in code; compatibility probe deleted; `maximumRuntimeTsLines` 20227 → 20224, `maximumResolveImportLines` 7909 → 7862 |
+
+What changed:
+- **Spellings:** `semanticProviders: "host-assisted"`, `"auto"`, and
+  `nativeStrings: false` on the JS target are compile errors naming #6979
+  and js2wasm 0.71.0 (`REMOVED_SEMANTIC_PROVIDER_RELEASE`).
+- **Removed:** `--semantic-providers`, `JS2WASM_NATIVE_REGIME_JS`, the
+  `TEST262_SEMANTIC_PROVIDERS` axis, and the npm-compat `js-host-native` and
+  `js-host-assisted` lanes.
+- **Codegen/IR:** every `=== "native-first"` is folded away and every
+  `!== "native-first"` arm is deleted. This also removed the predicates that
+  collapsed to constants, for example `isStandalonePromiseActive`,
+  `usesNativeJsErrors`, `usesNativeSymbolProvider`, `usesHostBigIntCarrier`,
+  `tryEmitFixedHostMethodCall`, and the host Reflect/JSON/BigInt/array-carrier
+  providers. Net about -5,700 src LOC.
+- **Byte-neutral:** 1,694 programs (equivalence-suite sources, playground
+  examples, a test262 sample) produce identical binaries before and after on
+  gc, strict gc, wasi and standalone (6,776 hashes, 0 differences).
+- **Equivalence gate:** `47 failing, 1714 passing, 22 known-failures`, with
+  the same 27 NEW rows as the merged base (`47 failing, 1723 passing`; all 27
+  belong to the open #6980/#6981 PRs). The -9 passing is the nine deleted
+  `issue-1197` host-assisted structure rows.
+
+**Deliberately NOT done: `nativeRegime = backend === "wasmgc"`.** The spec
+asked for it, but it is not a dead-arm removal. It flips `ctx.standalone` on
+for WASI and strict gc. Measured on the same corpus, it changes 1,044 of
+1,694 WASI binaries and 1,663 strict-gc binaries, turns 14 WASI compiles into
+errors (and 36 strict-gc errors into successes), and moved 10 gc/standalone
+hashes. `nativeRegime` keeps its S6 domain (standalone + JS environment with
+ambient imports). The flip belongs to S7-c, where the `ctx.standalone` arms
+are classified site by site. Until then, compounds like
+`ctx.standalone || ctx.wasi || native-first` were folded to `true` (their
+value under native-first), not to `ctx.standalone`.
+
+GAPs found (kept, not deleted):
+- Construct: a generator over `Map.entries()` feeding `new Map(...)` throws
+  during module init on the regime.
+  Exposing test: `tests/issue-1058-exported-generic-generator-callback.test.ts`
+  "maps entries into a host Map during module initialization" (`it.fails`).
+- Construct: `new Set([...a, ...a.map(f), ...b]).size` reads 0 on the regime.
+  Exposing test: `tests/issue-1058-host-map-object-entries.test.ts`
+  "constructs a top-level Set from an unaliased spread-array temporary"
+  (`it.fails`).
+- Both passed only through the host-strings profile (`nativeStrings: false`
+  on gc). No codegen `!== "native-first"` arm was the only implementation of
+  a construct: the flip had already made the regime the default, so every
+  deleted arm was unreachable by default.
+
+Left for later slices:
+- `tests/issue-6685`, `issue-6913`, and the 6687/6689 probe fixtures still
+  set `JS2WASM_NATIVE_REGIME_JS` as lane labels (no-ops).
+- The retired `test262-native-first` workflow job (`if: false`) still spells
+  `--semantic-providers native-first` / `TEST262_SEMANTIC_PROVIDERS`. These
+  are untouched CI files.
+- The `issue-5807` replay scripts pin the env var for historical commits, by
+  design.
+- The #4401 publication gate still keys on an explicit `"native-first"`
+  spelling. Making it universal is S7-b.
+- `tests/issue-3518-*` exact-source provenance suite: already 3,751 red on
+  the base, and +71 with this slice. The failures are span/hash pins of the
+  codegen files edited here (bigint-carrier-port, resume-main-composition,
+  delivery-main-refresh-port, c1-current-source, descriptor-adapter-relocation,
+  …). They need new provenance receipts, not code changes.
+- Six `issue-2949` "gc runtime ($AnyValue)" execution describes are deleted.
+  They only validated with host strings outside the production finalize
+  pipeline; the round-trip is covered structurally.
+
