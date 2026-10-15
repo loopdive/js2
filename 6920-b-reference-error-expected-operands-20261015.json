@@ -1,0 +1,108 @@
+{
+  "id": "6920",
+  "slice": "reference-error-expected-operands-successor-20261015",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+  "claimed_at": "2026-10-15T07:22:12.100912+00:00",
+  "updated_at": "2026-10-15T07:22:12.100912+00:00",
+  "write_id": "b-reference-error-expected-operands-06068b04-e8b6-4520-8715-f2559be0d3de",
+  "handoff_scope": [
+    {
+      "kind": "reference-error-expected-operands",
+      "at": "2026-10-15T07:22:12.100912+00:00",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+      "manifest": {
+        "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+        "receivingWorkspace": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-reference-error-effects-successor/workspace",
+        "bootstrapSourceWorkspace": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-reference-error-effects-successor/workspace",
+        "status": "RECEIVING_PREPARATION_ONLY_NO_CODE_GO_UNTIL_PUBLISHED",
+        "componentPreimages": [
+          {
+            "path": "src/ir/analysis/allocation-evidence/native-js-class-profile.ts",
+            "bytes": 25233,
+            "sha256": "965bbf2e416929f9564bd5f28944bae64ea4b2bd348ee912281adb5191ad0242"
+          },
+          {
+            "path": "src/ir/runtime/native-js-class-profile.ts",
+            "bytes": 41069,
+            "sha256": "db09c48e161752c1c5cd534451c222dd007c99f8621957b6f3caa205ec1588ac"
+          }
+        ],
+        "canonicalNewPaths": [],
+        "productionPaths": [
+          "src/ir/analysis/allocation-evidence/native-js-class-profile.ts",
+          "src/ir/runtime/native-js-class-profile.ts"
+        ],
+        "newTestPaths": [],
+        "sourceCountBefore": 2063,
+        "sourceCountConditionalAfter": 2063,
+        "basis": {
+          "authority": "takeover all of session b; Take over the blocking shared seams; continue parallel subagents",
+          "failed52": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-reference-error-effects-successor/workspace/.tmp/effects-qualification/constructor52-world16/sealed-failure.json",
+            "bytes": 2912,
+            "sha256": "9a521dc3e4ccfcbc4ad3f87c8b1444b7f36774036b9c02330017b14ddc0b9780"
+          },
+          "profileReview": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/wasi-profile16-independent-review/review.json",
+            "bytes": 64485,
+            "sha256": "9a0cfbce86ec7e5ed5acad641cf0c86b9971f5a6f8f246d7bb1a554aaf51d406"
+          },
+          "oracleMap": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-reference-error-effects-successor/workspace/.tmp/effects-proposal/operation-validation-oracles/map.json",
+            "bytes": 10565,
+            "sha256": "061ab3d2e0e53d0420a0d54788ed5f262f68a4a44ab34b2a90334551efb33064"
+          },
+          "sourceSemantics": "Private fixed expectedconstants only; exact inspectNativeJsClassNamespaces -> nativeJsClassLexicalGraph -> checkGlobalAndErrorOperation recursion, and verifyNativeJsClassInstructions -> two walks -> verifyGlobalAndTdzOperation recursion per sealedA specification. No actualinput/proof/ABI memoization.",
+          "spec": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/measured-operation-validation-proposal/spec.json",
+            "bytes": 14720,
+            "sha256": "5ec62326921dfe171b1c7a5a1c40fe2da45cfccee016e7571113f82a7618c3b3"
+          }
+        },
+        "constraints": [
+          "Only two existing named production files. No test/source/helper/policy/script/config/issue additions or other source changes. All previous16 inputs and failed epochs preserved.",
+          "Private per-complete-inspect/runtime-validation-invocation immutable expected DATA bundle contains canonical ReferenceError target, externref IrType, parameter/result arrays and version1 signature key expected record. Construct only fixed local constants; freeze with existing freezePreparedIrValue. Never freeze/brand caller ABI/module/source or claim actual input custody.",
+          "Create once per complete existing validation invocation after required DATA/selected guards, thread through internal operation helpers and recursive throw checks. No caller-supplied validation flag or public proof, cross-invocation/global/identity cache, actual-ABI index, new issuer or shared producer/replay authority.",
+          "Replace ONLY repeated fresh expected operand construction with bundle fields. Every actual preparedIrDataMismatch call, operand order, ABI filtering/cardinality/mutability/SSA/null/throw/source/currentness guard and error order remain exact. Expected graph DATA must equal old constructor DATA including all signature and nullable fields.",
+          "No changes to callback order or postcallback fresh validation, collection/getter/alias screens, source/resource/body/global/signature/allocator currentness, generic DATA implementation, prior private World equality, equation/report/flow solvers or canonical Error semantics.",
+          "Expected graph must be built from captured local constants only, not actual source/global/resource/signature values or caller callbacks. No shared native object slot/probe cache shortcuts. Existing freeze of owned fresh records may establish only the same local allocation custody as before.",
+          "Normal formatting and actual1500 file/300 function and giant non-growth checks govern; current measured files577 and862 lines leave room for small cohesive private helpers. No grants/compression/waivers.",
+          "A exact finite code/whole expected-literal inverse review, B actual oracle/runtime records review. Reuse existing meaningful ABI/exception/TDZ/focused controls; public invalid code may collapse internal branch so no false local diagnostic credit. No new postcallback coverage claimed from old helper-body fixture.",
+          "Qualify actualfull2063sources+all54owned explicitroots/excludes[] typing and normal12static underrealc108, genuine focused66+effective ABI/exception/TDZ cohorts with actualLIST authoritative and allinputs pinned. No source changes while readers live.",
+          "After review/metadata/functional success first actual single matched authentic WASI argument live prepare+engine callback, Node25.9/8192/onefork/default35/defaultRPC/qualifiedyield WITHOUT CPU profiling. Preserve any failure. Only genuine<=35/noUHE readiness allows full strict52; live+codec both mustclose. No predicted speedup/deadline waiver/cancellation.",
+          "ROOT remainsunadopted. Future ROOT receiving adds exactlythese2 existing production endpoints to prior10; sourcecount2063/newpolicyrows2 unchanged. FullROOT55typing/currentstatic/focused/related647/vector1/constructor52 remain required. No publiccompiler-sourcepush/HOLD/queue ownership changes.",
+          "Each owner private expected bundle factory <=35 normally formatted lines; exact A spec fields/threading govern. Existing imports only, no new architectural edge. Every other existing body/raw comparison inverse preserved except exact parameter threading and expected operand substitutions."
+        ],
+        "proposalOnly": true
+      },
+      "manifestSha256": "a88e09ef848f365c878ea08f0c17f93c88f9c97b20abb03a93c178f4ee873c57",
+      "constraints": [
+        "Only two existing named production files. No test/source/helper/policy/script/config/issue additions or other source changes. All previous16 inputs and failed epochs preserved.",
+        "Private per-complete-inspect/runtime-validation-invocation immutable expected DATA bundle contains canonical ReferenceError target, externref IrType, parameter/result arrays and version1 signature key expected record. Construct only fixed local constants; freeze with existing freezePreparedIrValue. Never freeze/brand caller ABI/module/source or claim actual input custody.",
+        "Create once per complete existing validation invocation after required DATA/selected guards, thread through internal operation helpers and recursive throw checks. No caller-supplied validation flag or public proof, cross-invocation/global/identity cache, actual-ABI index, new issuer or shared producer/replay authority.",
+        "Replace ONLY repeated fresh expected operand construction with bundle fields. Every actual preparedIrDataMismatch call, operand order, ABI filtering/cardinality/mutability/SSA/null/throw/source/currentness guard and error order remain exact. Expected graph DATA must equal old constructor DATA including all signature and nullable fields.",
+        "No changes to callback order or postcallback fresh validation, collection/getter/alias screens, source/resource/body/global/signature/allocator currentness, generic DATA implementation, prior private World equality, equation/report/flow solvers or canonical Error semantics.",
+        "Expected graph must be built from captured local constants only, not actual source/global/resource/signature values or caller callbacks. No shared native object slot/probe cache shortcuts. Existing freeze of owned fresh records may establish only the same local allocation custody as before.",
+        "Normal formatting and actual1500 file/300 function and giant non-growth checks govern; current measured files577 and862 lines leave room for small cohesive private helpers. No grants/compression/waivers.",
+        "A exact finite code/whole expected-literal inverse review, B actual oracle/runtime records review. Reuse existing meaningful ABI/exception/TDZ/focused controls; public invalid code may collapse internal branch so no false local diagnostic credit. No new postcallback coverage claimed from old helper-body fixture.",
+        "Qualify actualfull2063sources+all54owned explicitroots/excludes[] typing and normal12static underrealc108, genuine focused66+effective ABI/exception/TDZ cohorts with actualLIST authoritative and allinputs pinned. No source changes while readers live.",
+        "After review/metadata/functional success first actual single matched authentic WASI argument live prepare+engine callback, Node25.9/8192/onefork/default35/defaultRPC/qualifiedyield WITHOUT CPU profiling. Preserve any failure. Only genuine<=35/noUHE readiness allows full strict52; live+codec both mustclose. No predicted speedup/deadline waiver/cancellation.",
+        "ROOT remainsunadopted. Future ROOT receiving adds exactlythese2 existing production endpoints to prior10; sourcecount2063/newpolicyrows2 unchanged. FullROOT55typing/currentstatic/focused/related647/vector1/constructor52 remain required. No publiccompiler-sourcepush/HOLD/queue ownership changes.",
+        "Each owner private expected bundle factory <=35 normally formatted lines; exact A spec fields/threading govern. Existing imports only, no new architectural edge. Every other existing body/raw comparison inverse preserved except exact parameter threading and expected operand substitutions."
+      ]
+    }
+  ],
+  "predecessors": [
+    "3522-b-native-class-semantic-producer-20261014.json",
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}
