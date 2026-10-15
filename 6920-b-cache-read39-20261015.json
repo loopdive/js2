@@ -1,0 +1,107 @@
+{
+  "id": "6920",
+  "slice": "cache-read39-successor-20261015",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+  "claimed_at": "2026-10-15T16:54:47.905576+00:00",
+  "updated_at": "2026-10-15T16:54:47.905576+00:00",
+  "write_id": "b-cache-read39-e99ad9c5-0f85-4c76-9129-b623be1b13c1",
+  "handoff_scope": [
+    {
+      "kind": "cache-read39",
+      "at": "2026-10-15T16:54:47.905576+00:00",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+      "manifest": {
+        "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+        "receivingWorkspace": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-cache-read39/workspace",
+        "bootstrapSourceWorkspace": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827",
+        "status": "FINITE_ONE_FOUNDATION_ONE_EXISTING_TEST_RECEIVE_NO_GO_UNTIL_PUBLISHED",
+        "componentPreimages": [
+          {
+            "path": "src/shared/contracts/prepared-ir-data.ts",
+            "bytes": 15523,
+            "sha256": "1725a590e3af9b5007c411fa67211eac2347ebb68ecf986d7c368f8bd3bc719a"
+          },
+          {
+            "path": "tests/issue-6920-prepared-data-collection-brand.test.ts",
+            "bytes": 6523,
+            "sha256": "038aaa6d981e34a7256c27e7f201e6b736d2df0830cd7682bdba5f55ff6d365d"
+          }
+        ],
+        "canonicalNewPaths": [],
+        "productionPaths": [
+          "src/shared/contracts/prepared-ir-data.ts"
+        ],
+        "existingTestPaths": [
+          "tests/issue-6920-prepared-data-collection-brand.test.ts"
+        ],
+        "newTestPaths": [],
+        "sourceCountBefore": 2065,
+        "sourceCountConditionalAfter": 2065,
+        "basis": {
+          "AOwnGetFallbackDesign": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/native-collection-count-diagnostic-review/own-cache-get-design.json",
+            "bytes": 7662,
+            "sha256": "5ed89e976f4b8dad8bb455449bd9f9f8ee1463e5323c8596c7c0baf6d0c47554"
+          },
+          "CSelectedOutline": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/source39-cache-read-plan/selected-outline02.json",
+            "bytes": 6676,
+            "sha256": "05ef2fc7ed61aa1a24ec7d25fd88542ba6edb2c214af73ba81a3a65a16900e1c"
+          },
+          "BOracle": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-value-replay-successor-20261014-01a12827/.tmp/native-collection-cache-own-get-oracle-proposal/candidate02/sealed.json",
+            "bytes": 1709,
+            "sha256": "37ed4dc635ceb397bccae9c96c95da2ca8f7d5e62f24bc4ef08d6a378a3f8413"
+          },
+          "completeCounterSeal": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/native-collection-count-diagnostic01/sealed.json",
+            "bytes": 36822,
+            "sha256": "bf1d6a53bfc02d860502afdbdd3e88fd4d713b1d9e565baeb1a1d144274b854d"
+          },
+          "parentCompleteCounterAuthentication": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/native-collection-count-diagnostic-review/parent-terminal-authentication.json",
+            "bytes": 2523,
+            "sha256": "27289e9136b9895f14c099c84c3676a1b21a44d938faa1b7b94f102ebfaf3325"
+          },
+          "ROOTFailed52": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/source38-root-qualification/runtime-constructor/sealed-failure.json",
+            "bytes": 56477,
+            "sha256": "05a25125e048bacc69c41460bfb27d50396c2d339a55cd1a9be273bb93559a2f"
+          }
+        },
+        "constraints": [
+          "C solewriter fresh CURRENTROOT-context successor, exact2existingpaths only; save originalbodies, verifyalloffscope context/source/index/HEAD/donor unchanged. No canonicalROOT/source38/foreignwrites. No sourcepublicpush/PR/comment/HOLD/queue change.",
+          "Production exactly A7662/5ed89e97 design: privatefalse flag beforebrand, both originalinitializers byteexact, checked existingcaptureddefineProperty nullprototype immutableownget and fliptrueonlysuccess; originaldestructure+conditionaldirectread/originalapplyfallback; all other functions/rawguards/probes/cachewrite/errorpaths wholeexact. No bind/newtrust/newmodule/export/policy.",
+          "Test ONLYBcandidate02 ONEappendedcase+issuerimport in existingbrandfile; old6523wholeprefix/callbacks exact, hostileWeakMap.get positivecontrol then9genuineobservations/6accept3exactrefusals/getter0, restorationBEFOREmatchers. Reflect.apply poisoning NOTSELECTED; no newtestroot. Formatting may remove extra blank line but wholeinverse must retain originalbytes.",
+          "InitialGO implementation+format/inverse/caps/reviewONLY; NO collection/compiler/engine until exactendpointreview and parentnextGO.",
+          "Afterendpointacceptance: same2065/full59ACTUALtyping/allcompilerextensions/excludes[]/bothlists/actualcompiler0; normal12individualgates+officialfile/functioncaps+inventoryvalidarchitectureCompleteFALSE; genuineLIST old817perfileorderedplusONEprospective818/25 thenfullunfilteredrelatedonce natural0/noUHE/0pending/allcasetimes<=35000/currentmaps.",
+          "Node25.9/8192/fork1/noCPU/default35RPC/exactyield. Originalstrict35→unchanged52 eachSEPARATEparentquietGO afterfreshfunctional+metadataacceptance; no retry/cancel/waiver/profile/guessedgain. Vectororiginal1mayneedfreshafterfoundationchange; no qualificationcreditfromcounters.",
+          "Rootconstructor50/52failedremains; allpriorseals/maps historicalafternewcandidatebytes. Sourcecount/policy/rootmembership unchangedexpected; actualcensusgoverns. No local166sourcecheckpoint/mastercriterionpromotion."
+        ]
+      },
+      "manifestSha256": "08341276f9b5abd9881e06b88a615d878ae4850dbc2f99b395be6d6780e5190c",
+      "constraints": [
+        "C solewriter fresh CURRENTROOT-context successor, exact2existingpaths only; save originalbodies, verifyalloffscope context/source/index/HEAD/donor unchanged. No canonicalROOT/source38/foreignwrites. No sourcepublicpush/PR/comment/HOLD/queue change.",
+        "Production exactly A7662/5ed89e97 design: privatefalse flag beforebrand, both originalinitializers byteexact, checked existingcaptureddefineProperty nullprototype immutableownget and fliptrueonlysuccess; originaldestructure+conditionaldirectread/originalapplyfallback; all other functions/rawguards/probes/cachewrite/errorpaths wholeexact. No bind/newtrust/newmodule/export/policy.",
+        "Test ONLYBcandidate02 ONEappendedcase+issuerimport in existingbrandfile; old6523wholeprefix/callbacks exact, hostileWeakMap.get positivecontrol then9genuineobservations/6accept3exactrefusals/getter0, restorationBEFOREmatchers. Reflect.apply poisoning NOTSELECTED; no newtestroot. Formatting may remove extra blank line but wholeinverse must retain originalbytes.",
+        "InitialGO implementation+format/inverse/caps/reviewONLY; NO collection/compiler/engine until exactendpointreview and parentnextGO.",
+        "Afterendpointacceptance: same2065/full59ACTUALtyping/allcompilerextensions/excludes[]/bothlists/actualcompiler0; normal12individualgates+officialfile/functioncaps+inventoryvalidarchitectureCompleteFALSE; genuineLIST old817perfileorderedplusONEprospective818/25 thenfullunfilteredrelatedonce natural0/noUHE/0pending/allcasetimes<=35000/currentmaps.",
+        "Node25.9/8192/fork1/noCPU/default35RPC/exactyield. Originalstrict35→unchanged52 eachSEPARATEparentquietGO afterfreshfunctional+metadataacceptance; no retry/cancel/waiver/profile/guessedgain. Vectororiginal1mayneedfreshafterfoundationchange; no qualificationcreditfromcounters.",
+        "Rootconstructor50/52failedremains; allpriorseals/maps historicalafternewcandidatebytes. Sourcecount/policy/rootmembership unchangedexpected; actualcensusgoverns. No local166sourcecheckpoint/mastercriterionpromotion."
+      ]
+    }
+  ],
+  "predecessors": [
+    "3522-b-native-class-semantic-producer-20261014.json",
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}
