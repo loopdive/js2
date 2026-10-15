@@ -1,0 +1,188 @@
+{
+  "id": "6920",
+  "slice": "ordinary-numeric-core-successor-20261015",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+  "claimed_at": "2026-10-15T01:45:17.440541+00:00",
+  "updated_at": "2026-10-15T01:45:17.440541+00:00",
+  "write_id": "b-ordinary-numeric-core-0bf6c302-569a-4898-8ef3-01c6fddaeda3",
+  "handoff_scope": [
+    {
+      "kind": "ordinary-numeric-core",
+      "at": "2026-10-15T01:45:17.440541+00:00",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+      "manifest": {
+        "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+        "componentPreimages": [
+          {
+            "path": "src/ir/analysis/allocation-evidence/contracts.ts",
+            "bytes": 3794,
+            "sha256": "ecfe83ddd70e1ffcfaa9e67ca2378b08965bec5d986c15f7c063227f9db03764",
+            "scope": "Append ONLY distinct native-ordinary-number-undefined-v1 profile literal; no namespace/schema/domain changes."
+          },
+          {
+            "path": "src/ir/analysis/allocation-evidence/native-number-undefined-producer.ts",
+            "bytes": 2374,
+            "sha256": "145ccfc1e71e09ad0f0ed989d1caf381f26ea152dc9fe39f75aa63c40eb7cb29",
+            "scope": "Disjoint ordinary fallback/import before returning false when old vector inspector is absent; existing vector algorithm byte-exact. New wrapper calls unchanged generic ownership/escape only after finite ordinary census."
+          },
+          {
+            "path": "src/ir/runtime/native-number-undefined-profile.ts",
+            "bytes": 2698,
+            "sha256": "f57d40dece53aa3de34e1fbe0c54c2ff8b55a844606ea24fe3c444024fb1bdec",
+            "scope": "Disjoint ordinary report dispatcher before old vector-only path. Preserve old vector selector/tags/verifier/profile verbatim; malformed selected ordinary data must not demote to undefined or generic fallback."
+          },
+          {
+            "path": "src/ir/program/native-number-undefined-requirements.ts",
+            "bytes": 3632,
+            "sha256": "11cc82c6ffa5f2603e2486fcd520804c5d617965d51194e7f67bc1622d6c1855",
+            "scope": "Dispatch ordered common units/occurrences/boxes census to new ordinary body when exact ordinary profile is selected. Preserve API and WeakMap issuance+complete module/registry replays; no caller report or flag. Reconstruct independent namespace report on every mint/replay."
+          },
+          {
+            "path": "src/ir/analysis/allocation-evidence/native-number-undefined-legality.ts",
+            "bytes": 9915,
+            "sha256": "a36a500266a50546c61aeb59b6c74a24e39cdecca8f622b6d986934352a4cb14",
+            "scope": "Exact issued-token union/dispatch to independent ordinary legality owner. Add separate authenticated function-result field query and actual call-result/structured-result type membership; never make physical emit owns(call/early.return) true."
+          },
+          {
+            "path": "src/ir/analysis/backend-legality.ts",
+            "bytes": 23638,
+            "sha256": "d06114eb6c5164bb52484b295f01e64cda737de346a4400c669e15512d1993b1",
+            "scope": "Use genuine proof for exact current fn.resultTypes[index] and current call.resultType/if result fields only. No blanket dynamic parameter/slot/global/block-argument admission. Other backends and ordinary generic rules unchanged."
+          },
+          {
+            "path": "src/ir/program-prepare-ir.ts",
+            "bytes": 11532,
+            "sha256": "0806a9a8379b73c541d4e788e6c4f920079d3f07bc2a533442e03b57ccd505be",
+            "scope": "Collect new carrier requirements for an actual finite ordinary native population independently of nativeVectors. Genuine native policy is necessary but never positive coverage. Append existing immutable singleton ABI through unchanged append helper. No linearVectorProjection switch for ordinary completion."
+          },
+          {
+            "path": "src/ir/program-number-undefined-resources.ts",
+            "bytes": 8649,
+            "sha256": "32cbed8bce3dd3c3635ff67851463d051b56120182489fcc7adb8d3e35f41c7a",
+            "scope": "Validate complete original/all selected/support call/result-family and canonical ABI joins. Refuse actual public dynamic exports and imported/indirect/captured dynamic transport. Add nativeNumberUndefinedPhysicalSignature(...) mixed owner API for exact accepted unit/binding/result-slot and actual reservation pack. Full logical/currentness check at reservation; singleton completion separately mandatory at emission/every body use."
+          }
+        ],
+        "canonicalNewPaths": [
+          "src/ir/analysis/allocation-evidence/ordinary-number-undefined-body.ts",
+          "src/ir/analysis/allocation-evidence/ordinary-number-undefined-producer.ts",
+          "src/ir/analysis/allocation-evidence/ordinary-number-undefined-profile.ts",
+          "src/ir/analysis/allocation-evidence/ordinary-number-undefined-legality.ts",
+          "src/ir/runtime/ordinary-number-undefined-profile.ts",
+          "tests/issue-6920-native-ordinary-number-undefined.test.ts",
+          "tests/issue-6920-native-ordinary-number-undefined-execution.test.ts"
+        ],
+        "reviewedFinalProposal": {
+          "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-value-replay-successor-20261014-01a12827/.tmp/ordinary-numeric-transport-proposal/receiving-proposal.json",
+          "bytes": 17823,
+          "sha256": "87b4997bfcfe5eb641238e14d55b096723494b184ef737d20db224882201a48d"
+        },
+        "reviewedDetails": [
+          {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-value-replay-successor-20261014-01a12827/.tmp/ordinary-numeric-transport-proposal/sealed.json",
+            "bytes": 2306,
+            "sha256": "efe6a090401a66bc411e82adabad9da3092b4a3e3d2c8800ba117e8888a6a260"
+          },
+          {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-value-replay-successor-20261014-01a12827/.tmp/ordinary-numeric-transport-proposal/spec.md",
+            "bytes": 22568,
+            "sha256": "f24fbc693b2055b079d723ac37e1114fbcb5182c623d18453c653ae5031fa450"
+          },
+          {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-value-replay-successor-20261014-01a12827/.tmp/ordinary-numeric-transport-proposal/function-preimages.json",
+            "bytes": 7452,
+            "sha256": "f0b5bcd3bdea32fe703939007dd9312bfb8bba9ddc8d4369c8449a0ef7e96c62"
+          },
+          {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-value-replay-successor-20261014-01a12827/.tmp/ordinary-numeric-transport-proposal/evidence.json",
+            "bytes": 2456,
+            "sha256": "bdf4678d6d58cedeecbc00fea7e0bfa34cd78620c374c1924734c90a8d0e340f"
+          }
+        ],
+        "deferredReadOnlyCPaths": [
+          "src/ir/program-body-resources.ts",
+          "src/ir/program-consumer.ts",
+          "src/ir/program-physical-plan.ts"
+        ],
+        "budgets": {
+          "newFiles": [
+            {
+              "path": "src/ir/analysis/allocation-evidence/ordinary-number-undefined-body.ts",
+              "plannedMaxLines": 1000
+            },
+            {
+              "path": "src/ir/analysis/allocation-evidence/ordinary-number-undefined-producer.ts",
+              "plannedMaxLines": 120
+            },
+            {
+              "path": "src/ir/analysis/allocation-evidence/ordinary-number-undefined-profile.ts",
+              "plannedMaxLines": 1200
+            },
+            {
+              "path": "src/ir/analysis/allocation-evidence/ordinary-number-undefined-legality.ts",
+              "plannedMaxLines": 300
+            },
+            {
+              "path": "src/ir/runtime/ordinary-number-undefined-profile.ts",
+              "plannedMaxLines": 220
+            },
+            {
+              "path": "tests/issue-6920-native-ordinary-number-undefined.test.ts",
+              "plannedMaxLines": 1000
+            },
+            {
+              "path": "tests/issue-6920-native-ordinary-number-undefined-execution.test.ts",
+              "plannedMaxLines": 650
+            }
+          ],
+          "maxFunctionLines": 300,
+          "noAllowances": true
+        },
+        "qualificationPlan": [
+          "FreshPRIVATE currentROOT2053source bootstrap withall source/tests/policy/issue/config pins and reuseddeps; exact8existing+new5prod+2tests writable.",
+          "Implement conditional actual ordinary NumberF64/Undefined completeproducer/call/normal-return/alias/control/family census plus independent separatelycoded lifetime/namespace replay; unchangedgenericownership/escape invokedbyproducerwrapper, returnedboxesnonlocal/nonstack; oldvectorgrammar/replay byteexact.",
+          "Distinctruntimeprofile conjunction includesfullactualverifyIrFunction, canonicaltag/site/ABI joins and independentreplay. Exactissuedtoken/fieldidentity/currentness queries, no callerflags/verdicts/defaultcarrier or physicalrecipeowns(call/early.return).",
+          "Afinallyqualifiedsource3dependency must be separatelyROOTreviewed/receivedreadonly before genuine source/typed/codec finalqualification. Existingfailed01 c6c6a831 is historicaldiagnostic only; no planned64/132/liveengine credit.",
+          "C-held3signaturejoin files entirelyREADONLY; no implementation or finalphysical/engine claim untilCsealed/adopted+freshpreimages+boundedreceiving. Firstphase maytypecheck andqualify conditionalproof controls but actualsourcepositivecounts remainunclaimeduntildependencyreceived.",
+          "Bothoriginal andallselected/support completeproof, actualsource andpostmiddleend dynamiccall floors, abruptbarrier/no-normal distinctUndefined, escapedreturnedroot currentfacts; canonical arena/GC recipes/resources/publicscalar ABI remainrequired.",
+          "Fullactualsource census/excludes[] typing andnormalgates/ownedstyle. Ignoredprivate no-git wholebaseline failures preserved; no zerochangedfile success. Rootintegration normal12 rerun aftereventualexactqualifiedadoption."
+        ],
+        "constraints": [
+          "Human approvedallSessionB/sharedblockingseams takeover. PRIVATEfirstphase15paths only; preserveforeignbranches/owners/sourceheads/HOLDs/queue. NoROOTsourcewrites or source/mainpush.",
+          "No C3 signature/planner/consumer writes beforelaterreceiving; no program-body-resources patch throughanotherfile/facade.",
+          "Generic2,oldNNbody/profile, coreIR/schema/codec, allocator/layout/stack phase, GC/Linearfive-oprecipes, publicpresentation/DTS andnativevalueprimitiveabsence remainbyteexact.",
+          "No annotation/classfree/unrefineddynamic/nativepolicy aspositivefamilyproof; unknown/unsupported remainslocatedrefusal, malformedclaimeddata neverdemotesintofallback.",
+          "No type/instruction blanket exemption. Exactresultslot/currentcall/iftype membership beforeoutsider reads; emissionowns exactlyexistingfiveopkinds.",
+          "No newpublicdynamic/Boolean/Symbol/object/string/callback/closure/globalsTDZ/recursion readiness fromthisphase. These remainrequiredfuturework, notpermanentexclusionsfromgoal.",
+          "Newleaf tightercaps/maxfn300 measured; existingfunctionsbelowcaps orproductivecoherentextractionbeforegrowth; no minification/commenttrimming/budgetwaivers.",
+          "ROOTownsnewleaf truthfulinventorymetadata afteractualfilesexist, asreadonlyprivate dependency onlyatnaturallyterminalboundaries. Noexistingrow/root/edge waiver.",
+          "Allinput-pinningprocesses naturalterminal before edits, sealedfailedandpassingepochs, exactcounts, normaldeadlines/RPC unchanged; no cancels/sourcefallback/semanticpositivecache."
+        ]
+      },
+      "manifestSha256": "b635b757307b74d2c7abf2721450f761bc36f2d963c3396f76138ec1b9a8b0a2",
+      "constraints": [
+        "Human approvedallSessionB/sharedblockingseams takeover. PRIVATEfirstphase15paths only; preserveforeignbranches/owners/sourceheads/HOLDs/queue. NoROOTsourcewrites or source/mainpush.",
+        "No C3 signature/planner/consumer writes beforelaterreceiving; no program-body-resources patch throughanotherfile/facade.",
+        "Generic2,oldNNbody/profile, coreIR/schema/codec, allocator/layout/stack phase, GC/Linearfive-oprecipes, publicpresentation/DTS andnativevalueprimitiveabsence remainbyteexact.",
+        "No annotation/classfree/unrefineddynamic/nativepolicy aspositivefamilyproof; unknown/unsupported remainslocatedrefusal, malformedclaimeddata neverdemotesintofallback.",
+        "No type/instruction blanket exemption. Exactresultslot/currentcall/iftype membership beforeoutsider reads; emissionowns exactlyexistingfiveopkinds.",
+        "No newpublicdynamic/Boolean/Symbol/object/string/callback/closure/globalsTDZ/recursion readiness fromthisphase. These remainrequiredfuturework, notpermanentexclusionsfromgoal.",
+        "Newleaf tightercaps/maxfn300 measured; existingfunctionsbelowcaps orproductivecoherentextractionbeforegrowth; no minification/commenttrimming/budgetwaivers.",
+        "ROOTownsnewleaf truthfulinventorymetadata afteractualfilesexist, asreadonlyprivate dependency onlyatnaturallyterminalboundaries. Noexistingrow/root/edge waiver.",
+        "Allinput-pinningprocesses naturalterminal before edits, sealedfailedandpassingepochs, exactcounts, normaldeadlines/RPC unchanged; no cancels/sourcefallback/semanticpositivecache."
+      ]
+    }
+  ],
+  "predecessors": [
+    "3522-b-native-class-semantic-producer-20261014.json",
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}
