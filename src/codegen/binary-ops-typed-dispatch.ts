@@ -33,7 +33,7 @@ import {
   compileNumericBinaryOp,
 } from "./binary-ops.js";
 import { equalityOperandHasStaleStaticType } from "./strict-eq-stale-type.js";
-import { identityEqualityFlags } from "./loose-eq-object-identity.js"; // (#6997)
+import { identityEqualityFlags } from "./helpers/loose-eq-object-identity.js"; // (#6997)
 import { emitLooseScalarVsReferenceEquality, emitReferenceEqualityFromStack } from "./strict-eq-reference-arm.js";
 
 /**

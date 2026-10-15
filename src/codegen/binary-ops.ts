@@ -56,10 +56,10 @@ import { tryStaticToNumber } from "./expressions/misc.js";
 import { emitNativeParseNumber } from "./parse-number-native.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
 import { admitsObjectAddition, emitObjectAdd } from "./addition-to-primitive.js";
-import { compileRelationalOperands } from "./relational-operands.js"; // (#6999)
 import {
   admitsAnyRelational,
   admitsObjectRelational,
+  compileRelationalOperands,
   reduceRelationalOperandsToPrimitive,
 } from "./relational-to-primitive.js";
 // (#4491 T4) §13.15.3 `+` over object operands.

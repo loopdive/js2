@@ -19,9 +19,9 @@
  * on their existing lowering: a native-string ref (content equality), and a
  * `$AnyValue` box paired with a non-box (the box needs tag dispatch).
  */
-import { ts } from "../ts-api.js";
-import type { ValType } from "../ir/types.js";
-import type { CodegenContext } from "./context/types.js";
+import { ts } from "../../ts-api.js";
+import type { ValType } from "../../ir/types.js";
+import type { CodegenContext } from "../context/types.js";
 
 const OBJECT_FLAGS = ts.TypeFlags.Object | ts.TypeFlags.NonPrimitive;
 const NULLISH_FLAGS = ts.TypeFlags.Null | ts.TypeFlags.Undefined;
