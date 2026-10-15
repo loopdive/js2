@@ -57,6 +57,7 @@ import { emitNativeParseNumber } from "./parse-number-native.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
 import { admitsObjectAddition, emitObjectAdd } from "./addition-to-primitive.js";
 import { admitsObjectRelational, reduceRelationalOperandsToPrimitive } from "./relational-to-primitive.js";
+import { compileToPrimitiveCascadeOperand } from "./classes/class-symbol-to-primitive-operand.js"; // (#6982)
 // (#4491 T4) §13.15.3 `+` over object operands.
 import { admitsObjectAdd } from "./add-to-primitive.js";
 import { emitHostArrayCarrierBinary, hostArrayCarrierBinaryArm } from "./host-carrier-to-primitive.js"; // (#6788)
@@ -2747,19 +2748,16 @@ export function emitAnyRelational(
   if (noJsHost && ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) ensureObjectRuntime(ctx);
 
   // Compile both operands to externref temps (keep runtime strings boxed).
-  const lType = compileExpression(ctx, fctx, expr.left, { kind: "externref" });
-  if (!lType) return { kind: "i32" };
-  if (lType.kind !== "externref") coerceType(ctx, fctx, lType, { kind: "externref" });
-  const lTmp = allocTempLocal(fctx, { kind: "externref" });
-  fctx.body.push({ op: "local.set", index: lTmp });
-  const rType = compileExpression(ctx, fctx, expr.right, { kind: "externref" });
-  if (!rType) {
+  // (#6982) A class instance with `[Symbol.toPrimitive]` stays raw until step 1.
+  const l = compileToPrimitiveCascadeOperand(ctx, fctx, expr.left);
+  if (!l) return { kind: "i32" };
+  const lTmp = l.tmp;
+  const r = compileToPrimitiveCascadeOperand(ctx, fctx, expr.right);
+  if (!r) {
     releaseTempLocal(fctx, lTmp);
     return { kind: "i32" };
   }
-  if (rType.kind !== "externref") coerceType(ctx, fctx, rType, { kind: "externref" });
-  const rTmp = allocTempLocal(fctx, { kind: "externref" });
-  fctx.body.push({ op: "local.set", index: rTmp });
+  const rTmp = r.tmp;
 
   // Map a -1/0/1/2 `cmp` (or an f64 comparison) to the operator's boolean result.
   // The `2` (incomparable) sentinel must make ALL four operators yield 0, so we
@@ -2824,7 +2822,7 @@ export function emitAnyRelational(
     ensureNativeStringHelpers(ctx);
     addUnionImports(ctx);
     // §7.2.12 step 1 — the arm below must be chosen from the PRIMITIVES.
-    reduceRelationalOperandsToPrimitive(ctx, fctx, lTmp, rTmp);
+    reduceRelationalOperandsToPrimitive(ctx, fctx, lTmp, rTmp, l.raw, r.raw);
     const typeofStr = ctx.funcMap.get("__typeof_string");
     const unboxNum = ctx.funcMap.get("__unbox_number");
     const strCompare = ctx.nativeStrHelpers.get("__str_compare");

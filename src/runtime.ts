@@ -20,6 +20,7 @@ import { validateExportBoundaryPolicies } from "./boundary-policy.js";
 import type { BoundaryValuePolicy, ExportBoundaryPolicy } from "./boundary-policy.js";
 import { classifyHostImport } from "./host-import-policy.js";
 import { resolveRegExpHostImport } from "./runtime/regexp-host-accelerator.js";
+import * as intlAccel from "./runtime/intl-host-accelerator.js"; // (#6986)
 import {
   createJavaScriptAdapterManifest,
   validateJavaScriptAdapterManifest,
@@ -161,6 +162,7 @@ import { createObjectCreateClassInstanceRuntime } from "./runtime/object-create-
 import * as classStaticParent from "./runtime/class-static-parent.js";
 const _classParents = classStaticParent.classParentsFor; // (#6790) one registry per instance
 import { getWebHostConstructors } from "./runtime/web-host-constructors.js";
+import { scheduleNativeMicrotaskCheckpoint } from "./runtime/native-microtask-checkpoint.js"; // (#6982)
 import {
   _rerouteStringSymbolMethodPrimitive,
   _makeLegacyRegExpState,
@@ -11768,19 +11770,7 @@ function resolveImport(
           ...(typeof DisposableStack !== "undefined" ? { DisposableStack } : {}),
           ...(typeof AsyncDisposableStack !== "undefined" ? { AsyncDisposableStack } : {}),
           ...(typeof SuppressedError !== "undefined" ? { SuppressedError } : {}),
-          // Intl constructors (#1070)
-          ...(typeof Intl !== "undefined" && typeof Intl.ListFormat !== "undefined"
-            ? { ListFormat: Intl.ListFormat }
-            : {}),
-          ...(typeof Intl !== "undefined" && typeof Intl.NumberFormat !== "undefined"
-            ? { NumberFormat: Intl.NumberFormat }
-            : {}),
-          // (#5355) `Intl.DateTimeFormat` — the host-mirror bridge's constructor.
-          // Registered host-lane only (see extern-declarations.ts); standalone
-          // throws a TypeError instead of reaching any of this.
-          ...(typeof Intl !== "undefined" && typeof Intl.DateTimeFormat !== "undefined"
-            ? { DateTimeFormat: Intl.DateTimeFormat }
-            : {}),
+          ...intlAccel.intlHostConstructors(), // Intl constructors (#1070, #5355; #6986: every class the `intl` accelerator registers)
           // (#1792) node:url — WHATWG URL / URLSearchParams globals (Node 18+ /
           // every browser). Registered as extern-class host constructors so
           // `new URL(...)` / `new URLSearchParams(...)` bind to the real host
@@ -19658,6 +19648,7 @@ export function buildImports(
     fn =
       domBinding ??
       clockBinding ??
+      intlAccel.intlLocaleMethodImport(imp, options?.hostAccelerators) ??
       resolveImport(
         imp.intent,
         deps,
@@ -19670,7 +19661,12 @@ export function buildImports(
         hostImportCallState.getCaughtException,
       );
 
-    fn = marshalPlatformArgs(imp, fn, callbackState, _nativePrimitiveToHost, _MISS, _maybeWrapCallableUnknownArity);
+    if (intlAccel.isIntlAcceleratedImport(imp, options?.hostAccelerators)) {
+      const [toHost, fromHost, vector] = [_nativeBoundaryToHost, _nativeDynamicFromHost, _nativeBoundaryVector];
+      fn = intlAccel.marshalIntlHostImport(fn, callbackState, toHost, fromHost, _marshalWasmDateForHost, vector); // (#6986)
+    } else {
+      fn = marshalPlatformArgs(imp, fn, callbackState, _nativePrimitiveToHost, _MISS, _maybeWrapCallableUnknownArity);
+    }
     // DOM containment wrapping
     if (options?.domRoot && !domCapabilityRuntime) {
       if (imp.intent.type === "extern_class") {
@@ -20029,6 +20025,7 @@ export function wrapExports(
       let result: any;
       try {
         result = (val as Function).apply(this, marshalled);
+        scheduleNativeMicrotaskCheckpoint(exportsForMarshal); // (#6982)
       } catch (error) {
         const payload = normalizeModuleCallbackException(
           error,

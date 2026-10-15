@@ -28,6 +28,7 @@ import { brandExternMethodResult } from "./shared.js";
 import { ensureNativeStringHelpers } from "./native-strings.js";
 import { nativeTypeFromTypeNode } from "./native-type-annotations.js";
 import { reportError } from "./context/errors.js";
+import { registerHostIntlExternClasses } from "./helpers/host-intl-classes.js";
 import { registerAmbientParseImport } from "./ambient-parse-import.js";
 import { isStandaloneUnavailableTimerGlobal } from "./standalone-timers.js";
 import {
@@ -282,73 +283,10 @@ export function registerBuiltinExternClasses(ctx: CodegenContext): void {
     });
   }
 
-  // Intl.ListFormat — JS-host extern class (#6839: standalone/WASI use the Wasm-native prelude class)
-  if (!ctx.externClasses.has("ListFormat") && !["none", "wasi"].includes(ctx.targetProfile.environment)) {
-    const methods = new Map<string, { params: ValType[]; results: ValType[]; requiredParams: number }>();
-    methods.set("format", externMethod(1)); // format(list) → string (externref)
-    methods.set("formatToParts", externMethod(1)); // formatToParts(list) → array (externref)
-    methods.set("resolvedOptions", externMethod(0)); // resolvedOptions() → object (externref)
-    ctx.externClasses.set("ListFormat", {
-      importPrefix: "Intl_ListFormat",
-      namespacePath: ["Intl"],
-      className: "ListFormat",
-      constructorParams: [{ kind: "externref" }, { kind: "externref" }], // locale?, options?
-      methods,
-      properties: new Map(),
-    });
-  }
-
-  // Intl.NumberFormat — extern class for internationalized number formatting
-  if (!ctx.externClasses.has("NumberFormat")) {
-    const methods = new Map<string, { params: ValType[]; results: ValType[]; requiredParams: number }>();
-    methods.set("format", externMethod(1)); // format(n) → string (externref)
-    methods.set("formatToParts", externMethod(1)); // formatToParts(n) → array (externref)
-    methods.set("resolvedOptions", externMethod(0)); // resolvedOptions() → object (externref)
-    ctx.externClasses.set("NumberFormat", {
-      importPrefix: "Intl_NumberFormat",
-      namespacePath: ["Intl"],
-      className: "NumberFormat",
-      constructorParams: [{ kind: "externref" }, { kind: "externref" }], // locale?, options?
-      methods,
-      properties: new Map(),
-    });
-  }
-
-  // (#5355) Intl.DateTimeFormat — the host-mirror bridge. #5206 made the `Intl`
-  // NAMESPACE resolve to the host global, which fixed the fully dynamic (`any`)
-  // spelling. The TYPED spelling (`new Intl.DateTimeFormat(...)`, the one the
-  // `@js-temporal/polyfill` bundle and ordinary TS both emit) still resolved its
-  // class name from the checker to "DateTimeFormat", found no extern class here,
-  // fell through every arm of `compileNewExpression` and yielded `undefined` —
-  // while `typeof` was constant-folded from the declared TS type to "object".
-  // Registering it alongside its siblings gives the receiver an opaque host
-  // externref and routes every method to the real ICU-backed host object, which
-  // is the #679/#682 dual-backend shape: host fast path now, standalone declared
-  // out of scope with its bound (there is no ICU in pure Wasm, so a compiled
-  // shim would have to reimplement calendar + time-zone data).
-  //
-  // Like ListFormat (#6839) and unlike NumberFormat above this is gated on the
-  // JS-host lane. NumberFormat predates the #2961 no-leak ratchet and still emits
-  // `Intl_*_new` into a `--target standalone` binary with a host-import-leak warning; a NEW host
-  // import must not add to that. Standalone/WASI instead get a catchable
-  // `TypeError` from `tryCompileIntlHostOnlyNew` (new-intl-host-bridge.ts) —
-  // never a trap, never an unsatisfiable import.
-  if (!ctx.externClasses.has("DateTimeFormat") && !ctx.standalone && !ctx.wasi && !ctx.nativeStrings) {
-    const methods = new Map<string, { params: ValType[]; results: ValType[]; requiredParams: number }>();
-    methods.set("format", externMethod(1)); // format(date?) → string (externref)
-    methods.set("formatToParts", externMethod(1)); // formatToParts(date?) → array (externref)
-    methods.set("resolvedOptions", externMethod(0)); // resolvedOptions() → object (externref)
-    methods.set("formatRange", externMethod(2)); // formatRange(start, end) → string
-    methods.set("formatRangeToParts", externMethod(2)); // formatRangeToParts(start, end) → array
-    ctx.externClasses.set("DateTimeFormat", {
-      importPrefix: "Intl_DateTimeFormat",
-      namespacePath: ["Intl"],
-      className: "DateTimeFormat",
-      constructorParams: [{ kind: "externref" }, { kind: "externref" }], // locales?, options?
-      methods,
-      properties: new Map(),
-    });
-  }
+  // Intl.* — host extern classes where a host Intl exists (#6986: host-assisted
+  // lane, or the native regime with the `intl` accelerator). #6839 ListFormat
+  // prelude, #5355 DateTimeFormat gate and the no-host compile error live there.
+  registerHostIntlExternClasses(ctx);
 
   // (#1792) node:url — `URL` / `URLSearchParams` as host constructors. Both are
   // WHATWG globals present in Node 18+ and every browser, so the JS-host path

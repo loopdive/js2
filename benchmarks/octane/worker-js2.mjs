@@ -12,6 +12,11 @@ import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 
 import { exceptionPayload, renderHarnessThrownText } from "../../scripts/lib/wasm-exn-render.mjs";
+import {
+  instantiateRuntimeEvalNamespace,
+  RUNTIME_EVAL_IMPORT_MODULE,
+  selectCachedRuntimeEvalProvider,
+} from "../../scripts/runtime-eval-provider.mjs";
 import { buildImports, compile, instantiateWasm } from "../../src/index.ts";
 import {
   calibrateReps,
@@ -29,8 +34,11 @@ import { MANIFEST, REPO_ROOT } from "./fetch.mjs";
 
 // Octane sources are classic Scripts (sloppy mode): `inferModuleStrictArguments:
 // false` keeps the compiler from treating the driver as a strict module (#6937).
-// Standalone links no runtime-eval provider, so `runtimeEvalProvider: false` makes
-// eval/Function refuse in-module instead of importing the interpreter.
+// Standalone links no runtime-eval provider by default, so `runtimeEvalProvider:
+// false` makes eval/Function refuse in-module instead of importing the
+// interpreter. A bench whose manifest entry sets `runtimeEval: true` (zlib,
+// code-load, typescript, mandreel — eval is part of the workload) keeps the
+// provider imports and gets the pure-Wasm provider linked at instantiation.
 const SCRIPT_GOAL = { inferModuleStrictArguments: false };
 const LANE_OPTIONS = {
   gc: { ...SCRIPT_GOAL },
@@ -41,6 +49,10 @@ const LANE_OPTIONS = {
 const args = parseWorkerArgs();
 const meta = MANIFEST.benchmarks[args.bench];
 const now = () => performance.now();
+const laneOptions =
+  args.lane === "standalone" && meta?.runtimeEval
+    ? { ...LANE_OPTIONS.standalone, runtimeEvalProvider: undefined }
+    : LANE_OPTIONS[args.lane];
 const row = { bench: args.bench, lane: args.lane, engine: `js2 (${args.lane}) on node ${process.version}` };
 if (!LANE_OPTIONS[args.lane]) {
   emitRow({ ...row, status: "skipped", reason: `unknown js2 lane ${args.lane}` });
@@ -62,7 +74,7 @@ try {
     allowJs: true,
     skipSemanticDiagnostics: true,
     validate: false,
-    ...LANE_OPTIONS[args.lane],
+    ...laneOptions,
   });
 } catch (e) {
   emitRow({ ...row, status: "compile-error", error: `compiler threw: ${describeThrown(e)}`, stack: stackTop(e) });
@@ -95,7 +107,12 @@ try {
 let instance;
 try {
   if (args.lane === "standalone") {
-    const leaked = WebAssembly.Module.imports(mod).map((i) => `${i.module}.${i.name}`);
+    // The runtime-eval provider is itself a pure-Wasm module (QuickJS or the
+    // js2 interpreter), linked module-to-module with no JS host in between —
+    // the same link test262's standalone lane uses for eval-dependent tests.
+    // Every other import is a host leak.
+    const imports = WebAssembly.Module.imports(mod);
+    const leaked = imports.filter((i) => i.module !== RUNTIME_EVAL_IMPORT_MODULE).map((i) => `${i.module}.${i.name}`);
     if (leaked.length) {
       emitRow({
         ...row,
@@ -103,7 +120,17 @@ try {
         error: `standalone module has ${leaked.length} host import(s): ${leaked.slice(0, 6).join(", ")}`,
       });
     }
-    instance = await WebAssembly.instantiate(mod, {});
+    const linked = {};
+    if (imports.length) {
+      const provider = selectCachedRuntimeEvalProvider();
+      const providerModule = provider.bundle ?? provider.module;
+      if (!providerModule) {
+        emitRow({ ...row, status: "instantiate-error", error: `no runtime-eval provider: ${provider.message}` });
+      }
+      linked[RUNTIME_EVAL_IMPORT_MODULE] = instantiateRuntimeEvalNamespace(providerModule);
+      row.evalEngine = provider.engine;
+    }
+    instance = await WebAssembly.instantiate(mod, linked);
   } else {
     const imports = buildImports(result.imports, {}, result.stringPool);
     ({ instance } = await instantiateWasm(
