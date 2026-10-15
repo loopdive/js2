@@ -1,0 +1,195 @@
+{
+  "id": "6920",
+  "slice": "provider-snapshot37-source-receive-successor-20261015",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+  "claimed_at": "2026-10-15T15:07:40.562129+00:00",
+  "updated_at": "2026-10-15T15:07:40.562129+00:00",
+  "write_id": "b-provider-snapshot37-source-receive-c9699623-a51a-49e8-b5f1-5d753895e601",
+  "handoff_scope": [
+    {
+      "kind": "provider-snapshot37-source-receive",
+      "at": "2026-10-15T15:07:40.562129+00:00",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+      "manifest": {
+        "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+        "receivingWorkspace": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-provider-snapshot37/workspace",
+        "bootstrapSourceWorkspace": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-independent-location36/workspace",
+        "status": "FINITE_FOUR_PATH_RECEIVE_NO_GO_UNTIL_PUBLISHED",
+        "componentPreimages": [
+          {
+            "path": "src/ir/runtime/manifest.ts",
+            "bytes": 105017,
+            "sha256": "b6e6b4c7f9049cd823200a3b9d630f66f00a4033e29930bc63019b941e78531e"
+          },
+          {
+            "path": "tests/issue-6920-prepared-data-object-allocation.test.ts",
+            "bytes": 8933,
+            "sha256": "71d7a81668b0ba76d8714e1bd479aa74880da4957de081b4a928e657b2c2794f"
+          },
+          {
+            "path": "scripts/compiler-boundaries.json",
+            "bytes": 647813,
+            "sha256": "75724f080c8650d792ca1aeebebe951cc581cc146e4688cc4c74f50b2bc61ed4"
+          }
+        ],
+        "canonicalNewPaths": [
+          "src/ir/runtime/provider-snapshot.ts"
+        ],
+        "productionPaths": [
+          "src/ir/runtime/manifest.ts",
+          "src/ir/runtime/provider-snapshot.ts"
+        ],
+        "existingTestPaths": [
+          "tests/issue-6920-prepared-data-object-allocation.test.ts"
+        ],
+        "newTestPaths": [],
+        "ancillaryPolicyScope": {
+          "path": "scripts/compiler-boundaries.json",
+          "preimage": {
+            "path": "scripts/compiler-boundaries.json",
+            "bytes": 647813,
+            "sha256": "75724f080c8650d792ca1aeebebe951cc581cc146e4688cc4c74f50b2bc61ed4"
+          },
+          "onlyNewRow": "src/ir/runtime/provider-snapshot.ts",
+          "rawBytesAdded": 118
+        },
+        "sourceCountBefore": 2064,
+        "sourceCountConditionalAfter": 2065,
+        "selectedEndpoints": [
+          {
+            "target": "src/ir/runtime/manifest.ts",
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/source37-extraction-plan-header/manifest.preview.txt",
+            "bytes": 104609,
+            "sha256": "cbd9face1b444cbd339a050db9ef250c25bc75b948e5cc7abea389ed3fa8084f"
+          },
+          {
+            "target": "src/ir/runtime/provider-snapshot.ts",
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/source37-extraction-plan-header/provider-snapshot.preview.txt",
+            "bytes": 1311,
+            "sha256": "18cf8266546e0835cd44b6518c613f02370e68740a573ce4088693270b3a692a"
+          },
+          {
+            "target": "tests/issue-6920-prepared-data-object-allocation.test.ts",
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/source37-test-format/candidate.formatted.test.ts.txt",
+            "bytes": 15567,
+            "sha256": "77e80047c6dd99f9130b97662f9204f514d953488d817ce841a7163f27bf26dd"
+          },
+          {
+            "target": "scripts/compiler-boundaries.json",
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-value-replay-successor-20261014-01a12827/.tmp/provider-snapshot37-adequacy/policy.candidate.json",
+            "bytes": 647931,
+            "sha256": "2ca271da12c25dc306354e249d713d5aaa02b3ce5e0f96cac85a0921e75048ab"
+          }
+        ],
+        "basis": {
+          "authority": "takeover all Session B; Take over the blocking shared seams; parallel subagents",
+          "priorOwnership": "32a6b97338a2b22563dd387ccf752e18eab74f0f",
+          "qualifiedSOURCE36": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-independent-location36/workspace/.tmp/location36/handoff/sealed.json",
+            "bytes": 184987,
+            "sha256": "79ef21a24b0568f3fae341bfd47defb4e3c21c6b13725c7afa0e70865161dfd5"
+          },
+          "strictSOURCE36Pass": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-independent-location36/workspace/.tmp/location36/single/sealed.json",
+            "bytes": 7484,
+            "sha256": "e70938e78d134a81fb89ee3197d1041b24b205ab1f1c5b34302118ceb8019567"
+          },
+          "full52SOURCE36Failure": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-independent-location36/workspace/.tmp/location36/constructor52/sealed-failure.json",
+            "bytes": 31910,
+            "sha256": "4c900d99810c425a417d5a1b36c8fa623d3f5a9a16d3dc742d1d855e9e124768"
+          },
+          "current35CPUProvenance": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/current35-fresh-birth-provenance/sealed.json",
+            "bytes": 4690,
+            "sha256": "87e4d4c8b8fc5b0fa5f17daf4867dfd0c7d6ef996933c9a88e38badf4fda3342"
+          },
+          "AExtractionProposal": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/provider-snapshot37-extraction-proposal/proposal.json",
+            "bytes": 13015,
+            "sha256": "5270ddd567a269ab7dc7ec18b4516e6962f73a85c7134cdfbc90e5dc01601f15"
+          },
+          "ACodeReview": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/provider-snapshot37-extraction-proposal/code-review/header-preview-review.json",
+            "bytes": 6567,
+            "sha256": "678b071dabcbf844692dd9c7e8c81050b096d9e4fb2f407826e6681914e15f39"
+          },
+          "AOracleReview": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/provider-snapshot37-extraction-proposal/code-review/oracle-preview-review.json",
+            "bytes": 5125,
+            "sha256": "69683b3d902285e7bb6bedfe78fd10a56f0e328a2a33a650f6930bd0fdc5c2a2"
+          },
+          "CCodePreview": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/source37-extraction-plan-header/receipt.json",
+            "bytes": 13936,
+            "sha256": "f8a880df7b0e145bf0b87431fbc48c2c86b8028b8d64c879b9e9f92c65cb20f1"
+          },
+          "CFormattedTest": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/source37-test-format/receipt.json",
+            "bytes": 1962,
+            "sha256": "ed1fe93c32d4d207d0be475b319725c15aa485f9447cfd98a4ac76e8d7f2b81b"
+          },
+          "BIndependentPolicyAndAdequacy": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-value-replay-successor-20261014-01a12827/.tmp/provider-snapshot37-adequacy/sealed.json",
+            "bytes": 2310,
+            "sha256": "89e5c3f9356f7902628e85d372e6df1cc643c04179615f019179c411d0d6c83b"
+          }
+        },
+        "qualificationExistingTest": {
+          "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-independent-location36/workspace/tests/issue-3526-ir-runtime-manifest.test.ts",
+          "bytes": 16803,
+          "sha256": "0e4d77d2e302af1df4d2dfeeb545e39ba78fca53579feb19129243670dccc1cf"
+        },
+        "expectedQualification": {
+          "runtimeProspective": 322,
+          "runtimeFiles": 8,
+          "actualTypingRootsProspective": 58,
+          "sourceProspective": 2065,
+          "normalChecks": 12,
+          "existingRootAdded": "tests/issue-3526-ir-runtime-manifest.test.ts",
+          "old313CasesPreserved": true,
+          "newFactoryOracleCases": 1,
+          "existingManifestCasesStatic": 8
+        },
+        "constraints": [
+          "C sole physical receiver/writer in fresh exact SOURCE36 successor. Bootstrap16532 inputs including genuine ignored helper/blob, donor before-after/current exact. CAS only manifest/test/policy existing3 +newleaf absent. Preserve peers, ROOT2061/source index/HEAD, all prior failures and sealed previews. No install/Git/source adaptations.",
+          "Keep cloneProvider signature-selection ternary and every other manifest helper byte-exact. Only existing-edge new import after header plus return snapshotRuntimeProvider(value,signature,compareStrings). Focused leaf only, erased RuntimeProviderDefinition from contracts/manifest and existing shared copier sole value import. Pass actual old comparator identity to all four existing sorts. No module/value cycle, new facade/backend API or proof authority.",
+          "Move original return construction whole, wrap ONLY fresh outer literal and fresh implementation spread INSIDE original live Object.freeze calls. Preserve field/spread/symbol/key/evaluation order, all four dedup/sort/array freezes, six live freezes and receiver/arity. Never seed raw value, signature, child arrays/descendants or foreign freeze returns. No raw DATA/native/prototype/ownkey/getter/currentness/semantic-provider checks skipped or cached content authority.",
+          "Direct wrapped manifest2427 regrowth prototype is rejected and preserved. Selected normal manifest2413<2420/clone11, newleaf25/max21, test417/max78. Official whole-tree source/function caps and no regrown/newgiants/grants apply; no compression/waivers/unrelated extraction.",
+          "Policy exact independent647931/2ca271da old647813/75724f08 plus118-byte ONE row; inverse restores ALL2064 old rows/order/non-file fields. Static closure four TOTAL modules (new ir-runtime leaf+three foundation), one erased contracts type edge. Official source2065 inventory must validate; no CLEAN/global architectureComplete assertion from proposal, retain all existing architecture debt.",
+          "One appended pure computational provider oracle in EXISTING factorytest; entire old8933 prefix/26 cases exact. Cover actual helper comparator refs/six freezes/field effects/descriptors/child aliases/healthy and foreign raw guard floors, plus real public builder constructor and successful registerProvider, restores before matchers. No Model/program/engine authority from fabricated DATA.",
+          "ONE fresh qualification: genuine unfiltered prospective322 cases across8 files =old313 exact structured ancestry/title/per-file order +1 newfactorycase +unchanged existing3526 suite8 cases. Actual LIST/runtime counts/identities govern; no global file-order/fullName assumptions. Source2065/full58 ACTUAL typing roots (57+existing3526)/all resolved compiler extensions/deps/helpers/blob/base/config/excludes empty, before-after=current. Normal12+official full-tree budgets+inventory; natural0/noUHE/no pending. No redundant component/composition runs.",
+          "Node25.9/8192/fork1/noCPU/default35RPC. Only parent functional/type/static/code acceptance permits separately preflighted original strict35 with6431/a6a276 callback,153/b769 yield/default35000/defaultRPC unchanged. Genuine natural0<=35000/noUHE then separately authorized unchanged52. No automatic retry/profile/cancel/waiver/deadline increases.",
+          "ROOT2061 remains unadopted; conditional future26 endpoints=16production+9tests+policy, source2065/full59ACTUAL/style74 prospective actual sets govern. Private typing58 then actualROOT qualification required after private52 pass. All27 master migration criteria remain unproven; HOLD/A queue ownership unchanged; no public compiler-source push/comment.",
+          "CPU current35 provider guard .854330 is nearest raw-owner attribution only, not clone birth or field costs. Current36 full52 two35s failures/strict34577pass remain preserved. No hit-rate/removal/net-time/speedup/deadline guarantee. Bound-cache Function.bind option remains READONLY UNSELECTED with bootstrap effect limit; no added scope."
+        ]
+      },
+      "manifestSha256": "230427a0610cda0c437d3d6d1c42523ec9a52ef38475324a66b111a1726ddf01",
+      "constraints": [
+        "C sole physical receiver/writer in fresh exact SOURCE36 successor. Bootstrap16532 inputs including genuine ignored helper/blob, donor before-after/current exact. CAS only manifest/test/policy existing3 +newleaf absent. Preserve peers, ROOT2061/source index/HEAD, all prior failures and sealed previews. No install/Git/source adaptations.",
+        "Keep cloneProvider signature-selection ternary and every other manifest helper byte-exact. Only existing-edge new import after header plus return snapshotRuntimeProvider(value,signature,compareStrings). Focused leaf only, erased RuntimeProviderDefinition from contracts/manifest and existing shared copier sole value import. Pass actual old comparator identity to all four existing sorts. No module/value cycle, new facade/backend API or proof authority.",
+        "Move original return construction whole, wrap ONLY fresh outer literal and fresh implementation spread INSIDE original live Object.freeze calls. Preserve field/spread/symbol/key/evaluation order, all four dedup/sort/array freezes, six live freezes and receiver/arity. Never seed raw value, signature, child arrays/descendants or foreign freeze returns. No raw DATA/native/prototype/ownkey/getter/currentness/semantic-provider checks skipped or cached content authority.",
+        "Direct wrapped manifest2427 regrowth prototype is rejected and preserved. Selected normal manifest2413<2420/clone11, newleaf25/max21, test417/max78. Official whole-tree source/function caps and no regrown/newgiants/grants apply; no compression/waivers/unrelated extraction.",
+        "Policy exact independent647931/2ca271da old647813/75724f08 plus118-byte ONE row; inverse restores ALL2064 old rows/order/non-file fields. Static closure four TOTAL modules (new ir-runtime leaf+three foundation), one erased contracts type edge. Official source2065 inventory must validate; no CLEAN/global architectureComplete assertion from proposal, retain all existing architecture debt.",
+        "One appended pure computational provider oracle in EXISTING factorytest; entire old8933 prefix/26 cases exact. Cover actual helper comparator refs/six freezes/field effects/descriptors/child aliases/healthy and foreign raw guard floors, plus real public builder constructor and successful registerProvider, restores before matchers. No Model/program/engine authority from fabricated DATA.",
+        "ONE fresh qualification: genuine unfiltered prospective322 cases across8 files =old313 exact structured ancestry/title/per-file order +1 newfactorycase +unchanged existing3526 suite8 cases. Actual LIST/runtime counts/identities govern; no global file-order/fullName assumptions. Source2065/full58 ACTUAL typing roots (57+existing3526)/all resolved compiler extensions/deps/helpers/blob/base/config/excludes empty, before-after=current. Normal12+official full-tree budgets+inventory; natural0/noUHE/no pending. No redundant component/composition runs.",
+        "Node25.9/8192/fork1/noCPU/default35RPC. Only parent functional/type/static/code acceptance permits separately preflighted original strict35 with6431/a6a276 callback,153/b769 yield/default35000/defaultRPC unchanged. Genuine natural0<=35000/noUHE then separately authorized unchanged52. No automatic retry/profile/cancel/waiver/deadline increases.",
+        "ROOT2061 remains unadopted; conditional future26 endpoints=16production+9tests+policy, source2065/full59ACTUAL/style74 prospective actual sets govern. Private typing58 then actualROOT qualification required after private52 pass. All27 master migration criteria remain unproven; HOLD/A queue ownership unchanged; no public compiler-source push/comment.",
+        "CPU current35 provider guard .854330 is nearest raw-owner attribution only, not clone birth or field costs. Current36 full52 two35s failures/strict34577pass remain preserved. No hit-rate/removal/net-time/speedup/deadline guarantee. Bound-cache Function.bind option remains READONLY UNSELECTED with bootstrap effect limit; no added scope."
+      ]
+    }
+  ],
+  "predecessors": [
+    "3522-b-native-class-semantic-producer-20261014.json",
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}
