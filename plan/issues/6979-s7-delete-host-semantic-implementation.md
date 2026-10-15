@@ -331,3 +331,167 @@ Left for later slices:
   They only validated with host strings outside the production finalize
   pipeline; the round-trip is covered structurally.
 
+### S7-b checkpoint (2026-10-15, opus-6979-s7b)
+
+Branch `issue-6979-s7b-legacy-semantic-removal`. It is stacked on the S7-a head
+`917fbbca96` (draft PR #6701, itself stacked on the S6 flip #6672) and is a
+draft PR against `main`. S7 stays `in-progress`.
+
+**How this was measured.** A corpus of 1,930 programs, scanned after every
+commit: equivalence-suite sources, playground examples, and a 1-in-97 sample of
+`test262/test/{built-ins,language}`. Each program was compiled on four profiles:
+`gc` default, strict gc (`strictNoHostImports`), `standalone` and `wasi`. For
+each compile we recorded the binary sha256, success, and any `unknown` or
+`regime-gap` imports. Where a binary changed, the normalised WAT was diffed
+against the previous commit.
+
+**Policy (`src/host-import-policy.ts`).**
+- The `legacy-semantic` class and `LEGACY_SEMANTIC_BUILTIN_PREFIXES` are
+  deleted.
+- A retired host-semantic import now classifies `unknown`, owner #6979, family
+  `retired-host-semantics`. This covers host strings, Date, the `await` driver,
+  dynamic language operations, ECMAScript extern classes, and every unlisted
+  builtin.
+- `ECMASCRIPT_EXTERN_CLASSES` stays. It is the only thing that tells a declared
+  class (a platform capability) apart from an ECMAScript builtin (retired).
+  Codegen uses it through `isRetiredEcmaScriptExternClass`.
+- New class `regime-gap`, owner #5385. It covers exactly the three families the
+  lead approved. `check:host-import-policy` holds an explicit name ceiling for
+  them and runs one non-vacuous probe per family.
+- New `declared_function` intent. An ambient `declare function` from user
+  source or a non-ECMAScript lib is classified `platform-capability`
+  `declared:<name>` instead of `unknown`.
+- The #4401 publication gate (`src/compiler.ts`) rejects `unknown` on every
+  WasmGC profile, not only an explicit native-first spelling. The diagnostic
+  names #6979.
+
+**Strict gc moves onto the regime.** `nativeRegime` is now `standalone || gc`,
+approved for strict only; WASI is unchanged. Measured on the corpus:
+- strict legacy/unknown debt drops from 140 programs to 7 (the
+  eager-generator gap family);
+- 44 strict compiles that used to fail now succeed;
+- 4 that used to succeed now fail. All 4 fail with the same #680 error gc
+  already reports for them ("native generator lowering currently supports only
+  sequential numeric yields"): `yield-as-expression` #2, two
+  `for-await-of/async-gen-dstr-*` rows, and a
+  `dynamic-import/nested-async-gen` row.
+
+`create-context` asserts the invariant S7-b relies on: WasmGC codegen lowers
+with the regime or WASI, never neither. Every arm keyed on
+`!(ctx.standalone || ctx.wasi)` is therefore dead.
+
+Host-import registration sites per family (`addImport(ctx,"env",…)` /
+`ensureLateImport(ctx,…)` calls in `src/codegen` + `src/ir`). The raw
+string-literal hit counts in the state table also count the native helpers
+that share these names, so they are not a measure of host emitters.
+
+| Family | Registration sites S7-a → S7-b | `grep -rF '"<prefix>' src/codegen` S7-a → S7-b | Deleted in |
+| --- | --- | --- | --- |
+| `number_` / `bigint_` | 10 → 3 | 179 → 167 (`number_`), 27 → 23 (`bigint_`) | 55bbfc1218 |
+| `__call_` | 11 → 1 | 97 → 79 | b593e4ca9c |
+| `__array_` / `__js_array_` | 72 → 4 | 86 → 70, 120 → 7 | 928f93f22e |
+| `Promise_` / `__await` | 2 → 2 (+ dead pre-registration loop, `await` intent) | 33 → 33 | 35a23e7f4a |
+| `__construct` | the four `new` host-construct arms | 25 → 11 | 928f93f22e |
+| `string_` | 3 → 3 (`js-string` lane, kept) | 21 → 21 | — |
+| `RegExp_` (outside the accelerator) | 2 → 0 | 7 → 1 | 35a23e7f4a |
+| `JSON_` | dead scan flags | 3 → 3 | 35a23e7f4a |
+| `Map_`/`Set_`/`WeakMap_`/`WeakSet_` + ECMAScript extern classes | extern-class registration for ECMAScript builtins | 1 → 1 each | 35a23e7f4a |
+| `parse*` / `*URI*` / `escape` | dead URI fall-through | 86 → 85, 18 → 17, 19 → 19, 16 → 16 | 29c88a770f |
+| `__defineProperty_` | 4 → 3 (native object runtime), externref-class-fields.ts | 123 → 121 | 29c88a770f |
+
+Registration sites are counted by `.tmp` script: single-line `addImport(ctx, "env", "<lit>"` /
+`ensureLateImport(ctx, "<lit>"` with a literal name. Template-named registrations
+(`Promise_${m}`, `${prefix}_new`) and multi-line calls are not in this count;
+the per-family commits name the ones that were deleted.
+
+What is left, and why:
+- `number_`, `string_`: the `!ctx.nativeStrings` host-string lane. It is kept
+  for the pending `js-string` accelerator (#6978 keep-list).
+- `__defineProperty_`: these resolve to the native object runtime
+  (OBJECT_RUNTIME_HELPER_NAMES).
+- `__call_`: the WASI-only branch of the IR Promise-delay lowering.
+- `__array_` / `__js_array_`: two sites.
+  - The Promise combinator host fallthrough (`emitIterableArg`).
+  - The node-builtin named-import call (`tryCompileNodeBuiltinMemberCall`).
+    It does not fire in my `platform: "node"` / `emulateNode` probes.
+- `Promise_`: the `.then` / `.finally` host miss arms and the non-inline
+  executor `new Promise` fallthrough.
+
+All remaining sites are only reachable for shapes the regime does not lower.
+They now end in a compile error naming #6979; none appears in the corpus.
+
+**`src/runtime.ts` (`resolveImport`).**
+
+| Metric | S7-a | S7-b | Ceiling |
+| --- | --- | --- | --- |
+| `runtime.ts` lines | 20,224 | 12,050 | 20224 → 12050 |
+| `resolveImport` lines | 7,862 | 1,953 | 7862 → 1953 |
+| `resolveImport` case arms | 15 | 7 | 15 → 7 |
+| owned-adapter lines | 962 | 860 | 962 → 860 |
+
+The seven arms that remain are `caught_exception`, `extern_class`, `builtin`,
+`callback_maker`, `getter_callback_maker`, `box` and `unbox`.
+
+What was deleted:
+- `builtin` arm: 187 sub-cases for names that can no longer be published.
+- Whole intent arms: `string_method`, `typeof_check`, `any_to_index`,
+  `truthy_check`, `extern_get`, `extern_call_raw_callable`, `extern_set` and
+  `extern_set_strict`.
+- `extern_class`: the ECMAScript constructors, including the BigInt/Symbol
+  `Object(v)` boxing.
+- 77 module-level helpers that became unreferenced.
+- `compatibility-semantic-adapter.ts`, reduced to the `date` accelerator
+  intents.
+
+What stays:
+- The `regexp` (`__regexp_host_*`, `legacy-regexp.ts`), `date`
+  (`__date_parse_host`) and `intl` paths.
+- The `__temporal_*` and `__gen_*` regime-gap providers.
+- The SharedArrayBuffer constructor.
+- Every value-adapter, lifecycle and capability provider.
+
+**Equivalence gate.** Shard verdicts sum to `47 failing, 1714 passing, 22
+known-failures`. The 27 NEW rows are identical, row for row, to the same gate
+run on the S7-a head (`diff` empty); they belong to the open #6980/#6981 PRs.
+
+**GAP list.** Each row is a construct whose host import is still its only
+implementation on the native regime. The lead approved them as `regime-gap`.
+They are not fixed here; each should be filed as a #5385 regime slice.
+
+| Family | Construct | Exposing program (corpus count, gc) |
+| --- | --- | --- |
+| `eager-generator-buffer` (`__gen_*`, `__create_generator`, `__create_async_generator`) | Generator shapes the native generator lowering declines (#680), mostly async generators whose `yield` result is consumed or that are re-entered through `.throw()`/`.return()`. `addGeneratorImports({ allowNoJsHost: true })` registers the host eager-buffer bundle. | `tests/equivalence/issue-1388.test.ts` #2; test262 `AsyncGeneratorPrototype/throw/throw-suspendedYield-promise.js`, `AsyncFromSyncIteratorPrototype/throw/iterator-result-poisoned-value.js`, three `class/elements/*async-gen*` rows, `async-gen-method-static/yield-promise-reject-next-for-await-of-async-iterator.js` (7 programs; same on standalone, strict and WASI) |
+| `shared-array-buffer` (`SharedArrayBuffer_new`) | `new SharedArrayBuffer(n)` whose value escapes into an `Int32Array`/`Atomics` call has no native provider | test262 `Atomics/load/expected-return-value.js`, `Atomics/waitAsync/bad-range.js`, `Atomics/waitAsync/value-not-equal-agent.js`, `ArrayBuffer/prototype/transfer/this-is-sharedarraybuffer.js` (4 programs) |
+| `temporal-strings` (`__temporal_*_to_string`, `*_from_string_field`, `*_add_field`, `month_code`, `duration_sign`) | Temporal string parsing/formatting and duration-field arithmetic in `temporal-native.ts` call the host | test262 `Temporal/PlainDate/prototype/toString/calendarname-undefined.js`, `PlainDate/from/argument-propertybag-calendar-string.js`, `PlainDate/prototype/{add,subtract}/…`, `PlainTime/prototype/toString/roundingmode-wrong-type.js`, `Duration/from/argument-string-fractional-units-rounding-mode.js`, `Duration/prototype/toJSON/balance-subseconds.js` (7 programs) |
+
+Findings that are not gaps:
+- WASI `tests/equivalence/wrapper-constructors.test.ts` #3 needed an
+  unsatisfiable `env::__unbox_string`. It is now a compile error; a WASI host
+  could never run it.
+- An externref-backed class instance gets no field initializers on the regime.
+  The host DefineField lane (`externref-class-fields.ts`, deleted) early-returned
+  on the regime and on WASI since S6, so behaviour is unchanged.
+- Pre-existing, also on the S7-a head: `Promise.all([...])` followed by an
+  indexed read of the result traps with "dereferencing a null pointer" on gc
+  and standalone. The non-vacuity test avoids this shape.
+
+**Tests.**
+- `tests/issue-4397-native-semantic-js-host.test.ts` gains the per-family
+  non-vacuity suite. It covers 11 families × {default, native-first,
+  standalone}: zero family imports, zero `unknown`, and the result equals
+  Node's. 33/33 pass.
+- Tests that bound deleted runtime providers through hand-built manifests or
+  through the IR "host" target are retired:
+  - whole files: `fixed-host-method-calls.test.ts`,
+    `issue-3527-prepared-dynamic-async.test.ts`,
+    `issue-3527-prepared-program-async-consumer.test.ts`;
+  - async halves: `issue-3527-prepared-numeric-throw`, and the execution half of
+    `issue-3518-program-codec-replay`'s mixed-application case;
+  - the "facade" lane of `issue-3518-host-async-imports`;
+  - the `__defineProperty_value` bit-6 provider case of `issue-6474`;
+  - the compatibility half of the `issue-4399` refusal test.
+
+  The IR "host" target is never produced by `compile()`: a JS-environment
+  build projects to `standalone` in `projectIrBackendTargetProfile`.
+- The policy tests (`4401`, `4396`, `6978`, `6986`, `5131`, `4577`) are
+  re-pinned to the new classes.
