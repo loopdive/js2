@@ -288,3 +288,18 @@ The original 50 rows (file :: test):
 - symbol-iterator-class :: bracket-access [Symbol.iterator]; object-literal computed key
 - symbol-toPrimitive :: comparison operators; arithmetic
 - yield-as-expression :: yield in template literal
+
+**2026-10-15 — after merging upstream/main (#6978 accelerators, #6983).**
+`node scripts/equivalence-gate.mjs` on merge `823403f532`: `56 failing, 1714
+passing, 22 known-failures in baseline` / `FLOOR: 1714 passing tests <
+committed passingFloor 1740 (26 fewer)` / `36 NEW equivalence regression(s)`.
+The 36 = the 41 above minus the five harness rows (ir-slice10-error a/b/c/e,
+binding-null-guard). Every one is owned by a fix PR that has not merged yet
+(the row → PR assignment is mine, by symptom; owners may re-home a row):
+
+| fix | PR | rows |
+| --- | --- | --- |
+| #6980 iterators/generators | 6678 | issue-1454 ×4, issue-2033 ×8, iterator-protocol-custom, symbol-iterator-class ×2, generator-return-method, issue-1388 |
+| #6981 IR path + compile failures | 6673 | ir-slice10-error (d), ir-slice10-map-set ×2, destructuring-require-object-coercible, gradual-typing ×2, yield-as-expression, issue-6798 resolve-stage-catch |
+| #6982 toPrimitive/indexOf/await/import.meta | 6676 | symbol-toPrimitive ×2, array-indexof-no-arg ×2, await-settled-operand-yields ×2, import-meta ×2, element-assignment-externref, issue-6798 string-bool-union |
+| #6984 yield* return value | 6683 | issue-6798 yield-star-return |
