@@ -1,7 +1,8 @@
 ---
 id: 6997
 title: "codegen: `==`/`!=` between two object-typed operands (class instances, arrays, Map, Date, `C | null`) is lowered as ToPrimitive→f64 equality instead of identity — the same instance compares `false`, two distinct `{valueOf(){return 1}}` compare `true`; §7.2.15 step 1 (same Type → IsStrictlyEqual) is never checked"
-status: ready
+status: done
+completed: 2026-10-15
 sprint: current
 created: 2026-10-15
 updated: 2026-10-15
@@ -52,3 +53,15 @@ export function test(): number { const c = new C(); const e = c; return (c == e 
 - Scoped checks before pushing: the new test file, the nearest existing equivalence files for the touched area, `npx tsc --noEmit -p .` if it is fast enough, and the chained gates from CLAUDE.md (`check-loc-budget`, `check-func-budget`, `check-coercion-sites`, `check:oracle-ratchet`, `check:dead-exports`).
 - Keep gc output byte-identical where the change is standalone-only; if a shared path changes, say so in the PR body and name the equivalence files that cover it.
 - Do not widen scope: one root cause per PR. Record anything adjacent you notice as a note in this file, not as code.
+
+## Implementation notes (2026-10-15)
+
+- **Fix**: `src/codegen/loose-eq-object-identity.ts` (new) — `identityEqualityFlags` decides the typed dispatch's identity arm. `===`/`!==` as before; a loose `==`/`!=` now joins it when BOTH operands are Wasm refs and BOTH static types are object types (`Object`/`object` flags; a union may also carry `null`/`undefined`). `binary-ops-typed-dispatch.ts` replaces its two `isStrictEq`/`isStrictNeq` lines with one call, so `==` and `===` share the one ref/ref lowering (`ref.eq`, or `__any_strict_eq` for two `$AnyValue` boxes). Net 0 lines in the god-file/function, so no budget allowance.
+- **Excluded on purpose** (keep their current lowering): a native-string ref on either side (content equality / ToPrimitive of the other side), and a `$AnyValue` box paired with a non-box (needs tag dispatch).
+- **Shared path** — both lanes change. `null == null`, `undefined == null` (both `ref.null`) are now `true`, `obj == null` is `false`, as §7.2.15 steps 1-3 require.
+- **Step 3** (`binary-ops.ts` BigInt block ~L1975): not applicable — it is guarded by `leftIsBigInt !== rightIsBigInt`, so one side is always a BigInt primitive; the ref arm there only meets `Object(0n)` against a BigInt, a mixed (step 10-11) case. Left as is.
+- **Step 4** (IR lane): two IR-claimed shapes checked (`any` params holding objects; object-literal locals in an IR-claimed `test()`) — both already identity-correct; covered by the test.
+- **Adjacent, not fixed (separate root causes):**
+  - Class instance vs `any` holding the same instance (`const a: any = c; c == a`) is `false` on both lanes (pre-existing on base): the mixed struct-ref/externref pair still takes the ToPrimitive→f64 arm. Needs the externref abstract-equality cascade with the struct boxed; the gc host lane cannot ToPrimitive an opaque Wasm struct, so it is not a one-line change.
+  - IR-claimed `function same(a: any, b: any) { return a == b }` with `same({valueOf(){return 1}}, 1)` traps `illegal cast` on standalone (pre-existing on base; gc correct).
+
