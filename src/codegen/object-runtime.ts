@@ -286,6 +286,7 @@ import {
   protoLinkSetWalkArm,
   withProtoLinkNull,
 } from "./object-runtime-proxy-chain.js"; // (#6766) a Proxy as [[Prototype]]
+import { fillStructProtoLinkArms } from "./object-model/struct-proto-link.js"; // (#7009)
 import { ensureArgcGlobal, ensureCurrentThisGlobal } from "./statements/nested-declarations.js";
 import { buildLazyNativeProtoGetInstrs, flushPendingNativeProtoSeeders, getBuiltinBrand } from "./native-proto.js";
 import { applyUndefinedInstrs } from "./apply-closure-args.js";
@@ -5670,6 +5671,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
 
   ensureProxyRuntime(ctx, types, registerNative);
   fillProtoLinkArms(ctx, types, registerNative); // (#6766) per-hop Proxy arms in the prototype walkers
+  fillStructProtoLinkArms(ctx, types, registerNative); // (#7009) per-hop fnctor-struct arms
 
   // (#4749) Fill Object.assign's standalone Proxy-source CopyDataProperties
   // arm now that descriptor helpers and Proxy dispatch front-guards exist.
