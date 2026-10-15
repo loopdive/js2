@@ -20,9 +20,9 @@
 // On failure, returns a list of `IrVerifyError`s rather than throwing, so
 // callers can decide whether to bail or fall back to the legacy path.
 
-import type { IrBlock, IrInstr, IrLabelId, IrModuleDeclarations, IrValueId } from "../core/nodes.js";
+import type { IrBlock, IrInstr, IrInstrClassCall, IrLabelId, IrModuleDeclarations, IrValueId } from "../core/nodes.js";
 import type { PreparedIrFunction as IrFunction } from "./contracts/prepared.js";
-import type { IrType } from "../core/types.js";
+import type { IrClassShape, IrType } from "../core/types.js";
 import { forEachInstrDeep, forEachNestedBuffer } from "../core/nodes.js";
 import { asVal, irTypeEquals } from "../core/types.js";
 import { irSupportRef, closureSignatureEquals } from "../core/types.js";
@@ -345,8 +345,7 @@ function verifySymbolicReferences(func: IrFunction, errors: IrVerifyError[]): vo
 }
 
 export interface IrVerificationOptions {
-  /** Absent ⇒ the `JS2WASM_IR_VERIFY_DOMINANCE_NAIVE` env default. */
-  readonly verifyDominanceNaive?: boolean;
+  readonly verifyDominanceNaive: boolean;
   /**
    * (#7001) Lane fact: does the `string` IrType lower to externref (host
    * strings)? `false` makes a dynamic/externref value returned into a declared
@@ -466,7 +465,10 @@ export function verifyIrFunction(
   // #4418 — corpus-wide audit of the fast dominance analysis against the
   // naive reachability definition. Opt-in (quadratic per function); the unit
   // tests run the same cross-check on synthetic general graphs.
-  if (dominance && (options?.verifyDominanceNaive ?? process.env.JS2WASM_IR_VERIFY_DOMINANCE_NAIVE === "1")) {
+  if (
+    dominance &&
+    (options === undefined ? process.env.JS2WASM_IR_VERIFY_DOMINANCE_NAIVE === "1" : options.verifyDominanceNaive)
+  ) {
     for (const msg of crossCheckDominance(func, dominance)) {
       errors.push({ message: `dominance self-check: ${msg}`, func: func.name });
     }
@@ -1898,7 +1900,8 @@ export const TYPE_RULE_STATUS: Record<IrInstr["kind"], TypeRuleStatus> = {
   "class.super_call": { skip: "resolver-typed: method signature resolved from parentShape + methodName at lowering" },
   "class.get": { skip: "resolver-typed: field type comes from the receiver's class shape at lowering" },
   "class.set": { skip: "resolver-typed: field type comes from the receiver's class shape at lowering" },
-  "class.call": { skip: "resolver-typed: method signature resolved from the receiver's shape at lowering" },
+  // (#7000) Target identity is checked; the signature stays resolver-typed.
+  "class.call": "checked",
   "class.static_call": { skip: "resolver-typed: static method signature resolved from shape + methodName at lowering" },
   "iter.new": { skip: "resolver-typed: iterator carrier chosen by the iteration-protocol lowering" },
   "iter.next": { skip: "resolver-typed: result object carrier chosen by the iteration-protocol lowering" },
@@ -2059,8 +2062,39 @@ function checkRoadmapRule(instr: IrInstr, blockId: number, ctx: RoadmapRuleCtx):
     case "global.set":
       checkSymbolicRefCoherence(instr, blockId, ctx);
       return true;
+    case "class.call":
+      checkClassCallTarget(instr, blockId, ctx);
+      return true;
     default:
       return false;
+  }
+}
+
+/**
+ * (#7000) `class.call` is a STATIC call of the member resolved on the
+ * receiver's class-shape chain (from-ast `findClassMember`). An exact `target`
+ * must be that member's own target: one bound to any other class's member is a
+ * wrong-body call (the devirtualisation drift #7000 fixed in the selector). A
+ * receiver that is not class-shaped, or a member the walk cannot see, stays
+ * resolver-typed and is not judged here.
+ */
+function checkClassCallTarget(instr: IrInstrClassCall, blockId: number, ctx: RoadmapRuleCtx): void {
+  const receiver = ctx.typeOf.get(instr.receiver);
+  if (!instr.target || receiver?.kind !== "class") return;
+  for (let shape: IrClassShape | undefined = receiver.shape; shape; shape = shape.parent) {
+    const member = shape.methods.find(
+      (candidate) => candidate.name === instr.methodName && (candidate.memberKind ?? "method") === instr.memberKind,
+    );
+    if (!member) continue;
+    const want = member.target ? bindingKey(member.target.binding) : null;
+    const got = bindingKey(instr.target.binding);
+    if (want !== null && got !== null && want !== got)
+      roadmapError(
+        ctx,
+        blockId,
+        `class.call ${instr.methodName} target ${got} is not ${receiver.shape.className}'s ${want}`,
+      );
+    return;
   }
 }
 

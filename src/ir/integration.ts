@@ -3142,7 +3142,10 @@ export function compileIrPathFunctions(
     loweringPlans?.fnctorParameterPreselectionIsCurrent,
   );
   // (#7001) The verifier's string-result rule needs the lane's string carrier.
-  const verifyOptions = { stringIsExternref: fromAstResolver.stringIsExternref?.() };
+  const verifyOptions = {
+    verifyDominanceNaive: readEnv("JS2WASM_IR_VERIFY_DOMINANCE_NAIVE") === "1",
+    stringIsExternref: fromAstResolver.stringIsExternref?.(),
+  };
 
   // -------------------------------------------------------------------------
   // Phase 1 — Build: lower every selected AST function to an IrFunction.
