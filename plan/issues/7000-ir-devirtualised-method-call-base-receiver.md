@@ -114,6 +114,14 @@ export function test(): number { const b = new B(); return callV(b) + b.w(); }  
     3-level chain (override only on the grandchild), `const a: A = new B()`,
     exact-instance exemption, negative control (exported `callV` keeps
     `return_call` to `A_v`, no branch). 7/9 of the original rows fail on the base.
+- **Review fix (PR #6699)** — a NAMED class expression (`const Alias = class
+  Named extends A {}`) is now indexed under both `Named` and `Alias`; the walk
+  previously queued only `Named` and missed `class B extends Alias` overriding
+  `v`. Pinned at predicate level in the #7000 test (plus own-name and
+  no-override controls): that whole program does not compile on any lane
+  today, IR on or off — legacy codegen throws "inherited class callable
+  Alias_v is not exact child physical key Named_v"
+  (`src/codegen/program-abi-class-callable-planning.ts`), a separate gap.
 - **Known limit** — the scan is per source file; a subclass declared in ANOTHER
   module of a multi-file compile is not seen.
 - `scripts/gen-ir-adoption.mjs` gained the bucket row and a post-claim

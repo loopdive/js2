@@ -33,11 +33,20 @@ interface SubclassIndex {
 
 const indexCache = new WeakMap<ts.SourceFile, SubclassIndex>();
 
-/** The name other classes use to `extends` this one: its own name, or its `const X = class …` binding. */
-export function classBindingName(node: ClassLike): string | undefined {
-  if (node.name) return node.name.text;
+/**
+ * Every name another class may `extends` this one by: its own name AND, for a
+ * class expression, the variable it is bound to. `const Alias = class Named
+ * extends A {}` is reachable as `Alias` from outside and as `Named` inside its
+ * own body, so a walk that kept only one of them would miss a subclass
+ * declared through the other.
+ */
+export function classBindingNames(node: ClassLike): readonly string[] {
+  const names: string[] = [];
+  if (node.name) names.push(node.name.text);
   const parent = node.parent;
-  return parent && ts.isVariableDeclaration(parent) && ts.isIdentifier(parent.name) ? parent.name.text : undefined;
+  if (parent && ts.isVariableDeclaration(parent) && ts.isIdentifier(parent.name) && !names.includes(parent.name.text))
+    names.push(parent.name.text);
+  return names;
 }
 
 function subclassIndex(sourceFile: ts.SourceFile): SubclassIndex {
@@ -97,23 +106,26 @@ function declaresInstanceMember(cls: ClassLike, memberName: string): boolean {
 
 /**
  * Can a read or call of instance member `memberName` on a value whose STATIC
- * class is `className` reach a member declared by a class BELOW `className`?
- * `true` means a static (devirtualised) binding to `className`'s member is
+ * class is known by `classNames` reach a member declared by a class BELOW it?
+ * `true` means a static (devirtualised) binding to that class's member is
  * unsound.
  */
-function instanceMemberMayBeOverriddenBelow(sourceFile: ts.SourceFile, className: string, memberName: string): boolean {
+function instanceMemberMayBeOverriddenBelow(
+  sourceFile: ts.SourceFile,
+  classNames: readonly string[],
+  memberName: string,
+): boolean {
   const index = subclassIndex(sourceFile);
   if (index.unknownParent.some((cls) => declaresInstanceMember(cls, memberName))) return true;
   const seen = new Set<string>();
-  const pending = [className];
+  const pending = [...classNames];
   while (pending.length > 0) {
     const parentName = pending.pop()!;
     if (seen.has(parentName)) continue;
     seen.add(parentName);
     for (const subclass of index.byParent.get(parentName) ?? []) {
       if (declaresInstanceMember(subclass, memberName)) return true;
-      const subclassName = classBindingName(subclass);
-      if (subclassName !== undefined) pending.push(subclassName);
+      pending.push(...classBindingNames(subclass));
     }
   }
   return false;
@@ -152,16 +164,18 @@ function exactInstanceClassName(
 }
 
 /**
- * Is it unsound to bind `receiver.memberName` STATICALLY to the member of
- * `className` (the receiver's static class)? `resolveVariable` maps an
- * identifier to its local variable declaration (checker-backed by the caller).
+ * Is it unsound to bind `receiver.memberName` STATICALLY to the member of the
+ * receiver's static class, known by every name in `classNames`?
+ * `resolveVariable` maps an identifier to its local variable declaration
+ * (checker-backed by the caller).
  */
 export function staticMemberBindingIsUnsound(
   receiver: ts.Expression,
-  className: string,
+  classNames: readonly string[],
   memberName: string,
   resolveVariable: (node: ts.Identifier) => ts.VariableDeclaration | undefined,
 ): boolean {
-  if (exactInstanceClassName(receiver, resolveVariable) === className) return false;
-  return instanceMemberMayBeOverriddenBelow(receiver.getSourceFile(), className, memberName);
+  const exact = exactInstanceClassName(receiver, resolveVariable);
+  if (exact !== undefined && classNames.includes(exact)) return false;
+  return instanceMemberMayBeOverriddenBelow(receiver.getSourceFile(), classNames, memberName);
 }

@@ -58,7 +58,7 @@ import { ts, forEachChild } from "../ts-api.js";
 import { exactIndirectEvalStatement } from "../eval-call-shape.js";
 import { collectIrClassInstanceInitializers } from "./class-instance-initializers.js";
 import { literalComputedInstanceMethodKey } from "./class-method-names.js";
-import { classBindingName, staticMemberBindingIsUnsound } from "./class-overrides.js";
+import { classBindingNames, staticMemberBindingIsUnsound } from "./class-overrides.js";
 import { privateMemberMangledName, type IrClassId, type IrUnitId } from "./identity.js";
 import {
   isAsyncIrReady,
@@ -7781,8 +7781,8 @@ function classMethodProjection(className: string, methodName: string, isStatic: 
  */
 function instanceMemberIsVirtual(className: string, memberName: string, receiver: ts.Expression): boolean {
   const declaration = currentLocalClassDeclarations.get(className);
-  const sourceName = (declaration && classBindingName(declaration)) ?? className;
-  return staticMemberBindingIsUnsound(receiver, sourceName, memberName, (node) =>
+  const names = [...new Set([className, ...(declaration ? classBindingNames(declaration) : [])])];
+  return staticMemberBindingIsUnsound(receiver, names, memberName, (node) =>
     currentModuleBindingResolver?.localVariableDeclaration(node),
   );
 }

@@ -9,6 +9,8 @@
 // direct IR call.
 import { describe, expect, it } from "vitest";
 import { compile, type CompileOptions } from "../../src/index.js";
+import { staticMemberBindingIsUnsound } from "../../src/ir/class-overrides.js";
+import { ts } from "../../src/ts-api.js";
 import { evaluateAsJs, instantiateWithRuntime } from "./helpers.js";
 
 const LANES: { name: string; options: CompileOptions }[] = [
@@ -103,4 +105,54 @@ export function test(): number { return callV(new B()) + new B().u(); }`;
       expect(body).not.toMatch(/\b(if|br_if)\b/);
     }, 120_000);
   }
+
+  // Review counterexample (PR #6699): the intermediate subclass is a NAMED
+  // class expression and the overriding class extends it through the VARIABLE
+  // (`Alias`), not its own name (`Named`). The scan must follow both names.
+  // Asserted on the predicate: the whole program does not compile on ANY lane
+  // today, IR on or off — legacy codegen rejects it with "inherited class
+  // callable Alias_v is not exact child physical key Named_v", a separate gap.
+  describe("override reached through a named class expression's variable binding", () => {
+    const receiverOf = (source: string): ts.Expression => {
+      const file = ts.createSourceFile("alias.ts", source, ts.ScriptTarget.ES2022, true);
+      let receiver: ts.Expression | undefined;
+      const visit = (node: ts.Node): void => {
+        if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) && !receiver)
+          receiver = node.expression.expression;
+        ts.forEachChild(node, visit);
+      };
+      visit(file);
+      return receiver!;
+    };
+    const unsound = (source: string) => staticMemberBindingIsUnsound(receiverOf(source), ["A"], "v", () => undefined);
+
+    it("finds B.v below A through `Alias`", () => {
+      expect(
+        unsound(`
+class A { v(): number { return 11; } }
+const Alias = class Named extends A {};
+class B extends Alias { v(): number { return 22; } }
+function callV(a: A): number { return a.v(); }`),
+      ).toBe(true);
+    });
+
+    it("finds a subclass that extends the class expression through its own name inside its body", () => {
+      expect(
+        unsound(`
+class A { v(): number { return 11; } }
+const Alias = class Named extends A { make() { return class extends Named { v(): number { return 22; } }; } };
+function callV(a: A): number { return a.v(); }`),
+      ).toBe(true);
+    });
+
+    it("control: no override anywhere below A", () => {
+      expect(
+        unsound(`
+class A { v(): number { return 11; } }
+const Alias = class Named extends A {};
+class B extends Alias { u(): number { return 22; } }
+function callV(a: A): number { return a.v(); }`),
+      ).toBe(false);
+    });
+  });
 });

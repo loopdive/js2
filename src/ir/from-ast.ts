@@ -14108,7 +14108,7 @@ function demoteIfVirtualMember(receiver: ts.Expression, className: string, membe
     const declaration = cx.checker?.getSymbolAtLocation(node)?.valueDeclaration;
     return declaration && ts.isVariableDeclaration(declaration) ? declaration : undefined;
   };
-  if (!staticMemberBindingIsUnsound(receiver, className, memberName, resolveVariable)) return;
+  if (!staticMemberBindingIsUnsound(receiver, [className], memberName, resolveVariable)) return;
   demoteToLegacy(
     "class-method-virtual",
     `ir/from-ast: ${className}.${memberName} is overridden by a subclass — needs virtual dispatch in ${cx.funcName}`,
