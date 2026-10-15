@@ -126,6 +126,29 @@ Needs a decision: either standalone timers are absent (then 4588's pins change
 and the IR timer-shim route needs the same gate), or the Octane harness accepts
 the `timers` embedder capability.
 
+**Follow-up (2026-10-15): project-lead decision "standalone has no host timers"
+was prototyped and NOT landed.** The change is small: stop injecting the shim
+when `targetProfile.environment === "none"` (`preprocessImports`
+`noHostTimers`), and add the timer names to
+`standalone-unavailable-globals.ts` `isUnavailableName` so a bare value read
+throws too. With it, `typeof setTimeout === "undefined"`, calls and reads throw
+ReferenceError, no `env.__timer_*` import is emitted, and the module's own
+microtask queue still delivers the resulting Promise rejection. Promise
+resolution, `await` and `queueMicrotask` need no host import in standalone.
+The prototype also covered #4573 (rewritten) and #4588 (cutover tests moved to
+the host lane).
+
+It was held back because it switches off the standalone **native async
+family**. Its user-visible delay is the certified `new Promise(r =>
+setTimeout(r, ms))` running on the embedder timer capability. Against the same
+commit, 24 more tests fail in 6 files that pin that feature:
+`issue-4574-standalone-native-async-family` (13), `issue-4110-ir-fetch-all-
+parallel` (1), `issue-3518-promise-settlement-source-preservation` (8, which
+replay recorded instantiated bytes), `issue-3518-semantic-provider-source-
+acceptance` (1), `issue-4398-capability-registry` (1) and `standalone-route-
+subprocess` (1). Landing the decision means retiring or rewriting that feature
+and its receipts, not just updating two tests.
+
 ### B. `D.prototype = new G()` with a non-empty `G` breaks dynamic `new`
 
 TypeScript's `__extends` does `function __() { this.constructor = d; }
