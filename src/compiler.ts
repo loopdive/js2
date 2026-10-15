@@ -1019,8 +1019,9 @@ function validatePipelineSource(input: PipelineInput): CompileResult | undefined
     // (#6491 r3) Script goal is an EXPLICIT opt-in, never `!moduleGoal` — see
     // the `scriptGoal` doc comment in index.ts for why the negation is unsafe.
     const scriptGoal = options.scriptGoal === true;
+    const scriptTopLevel = options.inferModuleStrictArguments === false; // (#6988) synthetic-`export` Script
     for (const sf of userSourceFiles) {
-      earlyErrors.push(...detectEarlyErrors(sf, { moduleGoal, scriptGoal }));
+      earlyErrors.push(...detectEarlyErrors(sf, { moduleGoal, scriptGoal, scriptTopLevel }));
     }
     errors.push(...earlyErrors);
     if (hasNewError(earlyErrors)) {

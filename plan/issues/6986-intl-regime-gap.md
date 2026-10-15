@@ -34,7 +34,7 @@ func-budget-allow:
   - src/codegen/index.ts::generateModule
   - src/codegen/index.ts::generateMultiModule
 import-cycles-allow:
-  - largestSccSize: 707 # 2026-10-15 (#6986): src/codegen/helpers/host-intl-locale.ts compiles call operands through shared.js compileExpression and prepares the object runtime, so it joins the codegen SCC like the #6978 accelerator helpers
+  - largestSccSize: 709 # 2026-10-15 (#6986, measured on the merge preview with main's #6982 helpers): src/codegen/helpers/host-intl-locale.ts compiles call operands through shared.js compileExpression and prepares the object runtime, so it joins the codegen SCC like the #6978 accelerator helpers
 ---
 
 # #6986 — Intl is a regime gap, not an opt-in

@@ -50,6 +50,49 @@ export function nativeGeneratorExecutingCheck(ctx: CodegenContext, info: NativeG
   ];
 }
 
+/**
+ * (#6984) §27.5.3.7 step 7.a.i: a native-generator delegate is resumed with
+ * `next(received)` — copy the value the OUTER generator was resumed with into the
+ * delegate's `sent` field (a not-yet-started delegate ignores it). Without this a
+ * `const a = yield` in the delegate read its stale default instead of `.next(v)`'s
+ * argument. The `sent` fields are externref for a boxed-any carrier, else f64.
+ */
+export function delegateSentForwardInstrs(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  outer: NativeGeneratorInfo,
+  inner: NativeGeneratorInfo,
+  selfLocal: number,
+  delegLocal: number,
+): Instr[] {
+  const sentType = (info: NativeGeneratorInfo): ValType =>
+    carrierIsAny(info.elemValType) ? { kind: "externref" } : { kind: "f64" };
+  const from = sentType(outer);
+  const to = sentType(inner);
+  const out: Instr[] = [
+    { op: "local.get", index: delegLocal },
+    { op: "local.get", index: selfLocal },
+    { op: "struct.get", typeIdx: outer.stateTypeIdx, fieldIdx: outer.sentFieldIdx },
+  ];
+  if (from.kind !== to.kind) {
+    const saved = fctx.body;
+    fctx.body = out;
+    coerceType(ctx, fctx, from, to);
+    fctx.body = saved;
+  }
+  out.push({ op: "struct.set", typeIdx: inner.stateTypeIdx, fieldIdx: inner.sentFieldIdx });
+  return out;
+}
+
+/**
+ * (#6984) The `undefined` completion value of an array `yield*` for a binding slot
+ * of `type`: the f64 undefined-as-NaN sentinel, or — in a boxed-any frame, where a
+ * `yield*` nested in an expression binds an externref slot — the canonical one.
+ */
+export function delegationUndefinedInstrs(ctx: CodegenContext, type: ValType | undefined): Instr[] {
+  return type?.kind === "externref" ? canonicalUndefinedExternInstrs(ctx) : [{ op: "f64.const", value: NaN }];
+}
+
 /** Canonical conversion is invoked only after the receiver selects a numeric carrier. */
 export function ensureNativeGeneratorNumericPayload(ctx: CodegenContext): number {
   const name = "__gen_numeric_payload";

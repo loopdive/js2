@@ -28,6 +28,14 @@ export interface EarlyErrorContext {
    * because there is no module to put it in.
    */
   readonly scriptGoal: boolean;
+  /**
+   * The caller compiles a classic Script whose top-level `export`s are only a
+   * synthetic entry point (`inferModuleStrictArguments: false` — benchmark
+   * drivers, test wrappers). Top-level function declarations are then
+   * VAR-scoped (§16.1.7, duplicates last-wins) although `ts.isExternalModule`
+   * reports a module.
+   */
+  readonly scriptTopLevel: boolean;
   /** Accumulated errors (rules may push warnings/errors directly). */
   readonly errors: CompileError[];
   /** 1-based line/column for a node. */
@@ -39,7 +47,7 @@ export interface EarlyErrorContext {
 /** Build an EarlyErrorContext for a source file, with a fresh error array. */
 export function createEarlyErrorContext(
   sourceFile: ts.SourceFile,
-  opts?: { moduleGoal?: boolean; scriptGoal?: boolean },
+  opts?: { moduleGoal?: boolean; scriptGoal?: boolean; scriptTopLevel?: boolean },
 ): EarlyErrorContext {
   const errors: CompileError[] = [];
   // (#6491 r2) Module code is strict (§11.2.2). Registered BEFORE any rule
@@ -57,6 +65,7 @@ export function createEarlyErrorContext(
     sourceFile,
     moduleGoal: opts?.moduleGoal === true,
     scriptGoal: opts?.scriptGoal === true,
+    scriptTopLevel: opts?.scriptTopLevel === true,
     errors,
     pos,
     addError,

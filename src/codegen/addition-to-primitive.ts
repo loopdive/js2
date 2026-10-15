@@ -56,6 +56,10 @@ import { addStringConstantGlobal } from "./registry/imports.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
 import { compileExpression } from "./shared.js";
 import { coerceType } from "./type-coercion.js";
+import {
+  reduceClassToPrimitiveOperand,
+  tryCompileClassToPrimitiveOperand,
+} from "./classes/class-symbol-to-primitive-operand.js"; // (#6982)
 
 /** Operand types this arm must not take — `any`/`unknown` belong to #2058, i64 has no arm. */
 const EXCLUDED = ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.BigInt | ts.TypeFlags.BigIntLiteral;
@@ -358,19 +362,23 @@ export function emitObjectAdd(ctx: CodegenContext, fctx: FunctionContext, expr: 
     }
     return compileExpression(ctx, fctx, operand, externref);
   };
-  const lType = emitOperand(expr.left);
+  // (#6982) A class instance with a `[Symbol.toPrimitive]` method stays raw
+  // until step 5 — see classes/class-symbol-to-primitive-operand.ts.
+  const lRaw = tryCompileClassToPrimitiveOperand(ctx, fctx, expr.left);
+  const lType = lRaw ? externref : emitOperand(expr.left);
   if (!lType) return { kind: "f64" };
   if (lType.kind !== "externref") coerceType(ctx, fctx, lType, externref);
   const lTmp = allocTempLocal(fctx, externref);
-  fctx.body.push({ op: "local.set", index: lTmp });
-  const rType = emitOperand(expr.right);
+  if (!lRaw) fctx.body.push({ op: "local.set", index: lTmp });
+  const rRaw = tryCompileClassToPrimitiveOperand(ctx, fctx, expr.right);
+  const rType = rRaw ? externref : emitOperand(expr.right);
   if (!rType) {
     releaseTempLocal(fctx, lTmp);
     return { kind: "f64" };
   }
   if (rType.kind !== "externref") coerceType(ctx, fctx, rType, externref);
   const rTmp = allocTempLocal(fctx, externref);
-  fctx.body.push({ op: "local.set", index: rTmp });
+  if (!rRaw) fctx.body.push({ op: "local.set", index: rTmp });
 
   const typeofStr = ctx.funcMap.get("__typeof_string");
   const strConcat = ctx.nativeStrHelpers.get("__str_concat");
@@ -388,16 +396,23 @@ export function emitObjectAdd(ctx: CodegenContext, fctx: FunctionContext, expr: 
     releaseTempLocal(fctx, lTmp);
     return { kind: "f64" };
   };
-  if (typeofStr === undefined || strConcat === undefined || boxNumber === undefined || toPrimitive === null) {
-    return numericFallback();
-  }
+  const missingHelper =
+    typeofStr === undefined || strConcat === undefined || boxNumber === undefined || toPrimitive === null;
 
   // §13.15.3 step 5 — hint DEFAULT on both, in left-to-right order.
-  for (const tmp of [lTmp, rTmp]) {
-    fctx.body.push({ op: "local.get", index: tmp });
-    fctx.body.push(...toPrimitive.map((i) => ({ ...i })));
-    fctx.body.push({ op: "local.set", index: tmp });
+  for (const [tmp, raw] of [
+    [lTmp, lRaw],
+    [rTmp, rRaw],
+  ] as const) {
+    if (raw) {
+      reduceClassToPrimitiveOperand(ctx, fctx, raw, "default", tmp, toPrimitive);
+    } else if (!missingHelper) {
+      fctx.body.push({ op: "local.get", index: tmp });
+      fctx.body.push(...toPrimitive.map((i) => ({ ...i })));
+      fctx.body.push({ op: "local.set", index: tmp });
+    }
   }
+  if (missingHelper) return numericFallback();
 
   // step 7 — EITHER primitive a string ⇒ concatenate ToString of both.
   const toStr = (tmp: number): Instr[] => [
