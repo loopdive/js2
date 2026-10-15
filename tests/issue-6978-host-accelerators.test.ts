@@ -86,9 +86,10 @@ describe("#6978 host accelerator selection", () => {
     expect(() =>
       resolveCompileTargetProfile({ semanticProviders: "native-first", hostAccelerators: ["js-string"] }),
     ).toThrow("Host accelerator(s) js-string not available yet");
-    expect(() =>
-      resolveCompileTargetProfile({ semanticProviders: "native-first", hostAccelerators: ["intl"] }),
-    ).toThrow("Host accelerator(s) intl not available yet");
+    // (#6986) `intl` is available: host Intl calls marshal through the value boundary.
+    expect(
+      resolveCompileTargetProfile({ semanticProviders: "native-first", hostAccelerators: ["intl"] }).accelerators,
+    ).toEqual(["intl"]);
     expect(() => resolveCompileTargetProfile({ semanticProviders: "native-first", nativeStrings: false })).toThrow(
       'the planned "js-string" host accelerator',
     );

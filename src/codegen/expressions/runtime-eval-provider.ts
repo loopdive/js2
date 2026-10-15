@@ -42,6 +42,9 @@ export const RUNTIME_EVAL_IMPORT_MODULE = "js2wasm:runtime-eval";
 
 const RUNTIME_EVAL_PUSH_GLOBALS = "__runtime_eval_push_globals";
 const RUNTIME_EVAL_PULL_GLOBALS = "__runtime_eval_pull_globals";
+const RUNTIME_EVAL_PULL_VALUE = "__runtime_eval_pull_value";
+const RUNTIME_EVAL_PULL_READ = "__runtime_eval_pull_read";
+const RUNTIME_EVAL_PULL_COERCE = "__runtime_eval_pull_coerce";
 export const HOST_RUNTIME_EVAL_VEC_LEN = "__runtime_eval_vec_len";
 export const HOST_RUNTIME_EVAL_VEC_GET = "__runtime_eval_vec_get";
 export const HOST_RUNTIME_EVAL_CELL_GET = "__runtime_eval_cell_get";
@@ -565,6 +568,82 @@ function emitRuntimeEvalGlobalBindingPushBody(
   }
 }
 
+/**
+ * (#6985) Out-of-line helpers for the pull direction. The pull helper used to
+ * inline, per script-global binding, the realm read (which the native-first
+ * regime expands into an inline property fast path), the provider-carrier
+ * decode, the interpreted-callable adapter and the externref->typed
+ * coercion: ~7.5 locals and ~170 lines of nested `if` per name, 8,989 locals
+ * in ONE function for lodash-es. Binaryen's `coalesce-locals` interference
+ * graph is quadratic in that, and `-O4` (which re-runs it inside
+ * `inlining-optimizing`) blew the 600 s npm-compat budget. Each helper is
+ * emitted once per module (per target type for the coercion), so the pull
+ * body stays a flat `get; call; call; global.set` sequence with one local.
+ */
+function ensureRuntimeEvalPullHelper(
+  ctx: CodegenContext,
+  name: string,
+  params: ValType[],
+  result: ValType,
+  emit: (fctx: FunctionContext) => void,
+): number {
+  const existing = ctx.funcMap.get(name);
+  if (existing !== undefined) return existing;
+  const fctx = runtimeEvalSyncFunctionContext(ctx, name);
+  fctx.params = params.map((type, i) => ({ name: `p${i}`, type }));
+  fctx.returnType = result;
+  const funcIdx = mintDefinedFunc(ctx);
+  // Attach the body array before populating it so late-import / global index
+  // fixups that run while the helper is built still reach its instructions.
+  pushDefinedFunc(ctx, funcIdx, {
+    name,
+    typeIdx: addFuncType(ctx, params, [result]),
+    locals: fctx.locals,
+    body: fctx.body,
+    exported: false,
+  });
+  ctx.funcMap.set(name, funcIdx);
+  fctx.body.push(...params.map((_, i): Instr => ({ op: "local.get", index: i })));
+  emit(fctx);
+  return funcIdx;
+}
+
+/** `(externref) -> externref`: provider-carrier unwrap, then adapt an
+ * interpreted closure. Ordinary values pass through byte-for-byte. */
+function emitRuntimeEvalPullDecodeCall(ctx: CodegenContext, fctx: FunctionContext): void {
+  const externref: ValType = { kind: "externref" };
+  ensureRuntimeEvalPullHelper(ctx, RUNTIME_EVAL_PULL_VALUE, [externref], externref, (helper) => {
+    emitRuntimeEvalSharedValueUnwrap(ctx, helper);
+    emitRuntimeEvalInterpretedCallableAdapterIfCallable(ctx, helper);
+  });
+  fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get(RUNTIME_EVAL_PULL_VALUE)! });
+}
+
+/** `(realm, key) -> externref`: `__extern_get` followed by the decode. The
+ * decode is emitted INLINE here rather than as a call to the value helper: a
+ * body of just `get; call; call` is cheaper than its own call site by the
+ * user-function inliner's cost model (`ir-inline.ts`, "specialised" rule),
+ * which would copy it back into the pull body at every name. */
+function emitRuntimeEvalPullReadCall(ctx: CodegenContext, fctx: FunctionContext, getIdx: number): void {
+  const externref: ValType = { kind: "externref" };
+  ensureRuntimeEvalPullHelper(ctx, RUNTIME_EVAL_PULL_READ, [externref, externref], externref, (helper) => {
+    helper.body.push({ op: "call", funcIdx: ctx.funcMap.get("__extern_get") ?? getIdx });
+    emitRuntimeEvalSharedValueUnwrap(ctx, helper);
+    emitRuntimeEvalInterpretedCallableAdapterIfCallable(ctx, helper);
+  });
+  fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get(RUNTIME_EVAL_PULL_READ)! });
+}
+
+/** externref -> `target`, one helper per distinct target type. */
+function emitRuntimeEvalPullCoerceCall(ctx: CodegenContext, fctx: FunctionContext, target: ValType): void {
+  if (target.kind === "externref") return;
+  const name = `${RUNTIME_EVAL_PULL_COERCE}_${JSON.stringify(target).replace(/[^A-Za-z0-9]+/g, "_")}`;
+  ensureRuntimeEvalPullHelper(ctx, name, [{ kind: "externref" }], target, (helper) =>
+    coerceType(ctx, helper, { kind: "externref" }, target),
+  );
+  fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get(name)! });
+}
+
 function emitRuntimeEvalGlobalBindingPullBody(ctx: CodegenContext, fctx: FunctionContext): void {
   const names = runtimeEvalGlobalBindingNames(ctx).filter((name) => ctx.moduleGlobals.has(name));
   const lexicalNames = runtimeEvalGlobalLexicalBindingNames(ctx).filter((name) => ctx.moduleGlobals.has(name));
@@ -582,9 +661,8 @@ function emitRuntimeEvalGlobalBindingPullBody(ctx: CodegenContext, fctx: Functio
       { op: "ref.as_non_null" },
       { op: "struct.get", typeIdx: refCellTypeIdx, fieldIdx: 0 },
     );
-    emitRuntimeEvalSharedValueUnwrap(ctx, fctx);
-    emitRuntimeEvalInterpretedCallableAdapterIfCallable(ctx, fctx);
-    if (sourceType.kind !== "externref") coerceType(ctx, fctx, { kind: "externref" }, sourceType);
+    emitRuntimeEvalPullDecodeCall(ctx, fctx);
+    emitRuntimeEvalPullCoerceCall(ctx, fctx, sourceType);
     fctx.body.push({ op: "global.set", index: sourceGlobalIdx });
   }
   if (names.length === 0) return;
@@ -598,15 +676,13 @@ function emitRuntimeEvalGlobalBindingPullBody(ctx: CodegenContext, fctx: Functio
     const globalType = ctx.mod.globals[localGlobalIdx(ctx, globalIdx)]?.type ?? { kind: "externref" };
     fctx.body.push({ op: "local.get", index: globalLocal });
     emitGlobalEnvironmentKey(ctx, fctx, name);
-    fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__extern_get") ?? getIdx });
-    emitRuntimeEvalSharedValueUnwrap(ctx, fctx);
     // Eval may assign an interpreted function to any existing script-global
-    // binding, including a `var` whose initial value was not callable. Adapt
-    // by the runtime carrier shape rather than by the declaration's static
-    // kind; ordinary values and caller-owned AOT carriers pass through
-    // byte-for-byte.
-    emitRuntimeEvalInterpretedCallableAdapterIfCallable(ctx, fctx);
-    if (globalType.kind !== "externref") coerceType(ctx, fctx, { kind: "externref" }, globalType);
+    // binding, including a `var` whose initial value was not callable. The
+    // shared decoder adapts by the runtime carrier shape rather than by the
+    // declaration's static kind; ordinary values and caller-owned AOT
+    // carriers pass through byte-for-byte.
+    emitRuntimeEvalPullReadCall(ctx, fctx, getIdx);
+    emitRuntimeEvalPullCoerceCall(ctx, fctx, globalType);
     fctx.body.push({ op: "global.set", index: ctx.moduleGlobals.get(name) ?? globalIdx });
   }
 }
