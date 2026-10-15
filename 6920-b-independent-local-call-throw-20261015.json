@@ -1,0 +1,84 @@
+{
+  "id": "6920",
+  "slice": "independent-local-call-throw-successor-20261015",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+  "claimed_at": "2026-10-15T00:04:38.405391+00:00",
+  "updated_at": "2026-10-15T00:04:38.405391+00:00",
+  "write_id": "b-independent-local-call-throw-1a5fbdd8-ce31-4b43-98a3-894ed5996d1b",
+  "handoff_scope": [
+    {
+      "kind": "independent-local-call-throw",
+      "at": "2026-10-15T00:04:38.405391+00:00",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+      "manifest": {
+        "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+        "componentPreimages": [
+          {
+            "path": "src/ir/analysis/allocation-evidence/js-class-value-domains/independent.ts",
+            "bytes": 59152,
+            "sha256": "404e514e54c31191aa28f13af383192c8a712c63efcccd7cdc3d70f9947cd971"
+          },
+          {
+            "path": "tests/issue-6920-native-js-class-value-domains.test.ts",
+            "bytes": 65125,
+            "sha256": "1463ab19046705411d41099ddc2107674fe7c829f04aa284bfae93b45634a905"
+          }
+        ],
+        "canonicalNewPaths": [],
+        "reviewedProposal": {
+          "path": ".tmp/constructor-equation-repair/epoch01/independent-local-throw-receiving-proposal.json",
+          "bytes": 3631,
+          "sha256": "e13f60881e6486d4384914ab3fd85de4c82e2801dccb3793139811f5efcd54b2"
+        },
+        "operations": [
+          "Initialize per-occurrence callMayThrow from actual operation kind (!direct).",
+          "Unknown/unresolved direct callee sets local callMayThrow true alongside existing unchanged taint/obligations.",
+          "Known target contributes its actual current function summary.mayThrow before unchanged propagate invocation.",
+          "Write local callMayThrow to that occurrence call row; NEVER infer it from prior accumulated context.mayThrow. Preserve context.mayThrow, abruptReturn, taint, all summary/call argument/normal/obligation/currentness logic.",
+          "Preserve all153 existing cases/callbacks/assertions and source-phase checks.",
+          "Add genuine ordinary nonthrowing call after a potentiallythrowing class binding/construct prefix: actual call false while containing function true.",
+          "Reverse ordinary pure call and class operation order, preserving same per-call false/function true.",
+          "Add genuinely throwing known callee with actual call true and nonreturn summary; retain source actual numeric box/throw evidence.",
+          "Add actual unresolved runtime TDZ provider direct-call true plus existing opaque reason and ordinary direct-arity refusal controls.",
+          "Add standard afterEach(() => setImmediate()) from node:timers/promises captured alias, matching prior accepted model/context/allocation patterns. No RPC/timeouts/deadlines change."
+        ],
+        "qualificationPlan": [
+          "Actual list/census including new controls, focused controls and full current joined population normal0/noUHE.",
+          "Original actual24 source +24 postmiddleend packet replay with all proper strict5 negatives.",
+          "Full current source TS7 with all explicit roots/exclude[], scoped style and ordinary12 static.",
+          "Immutable source/test dependency snapshots + exact preservation and before/after hashes; no readiness or native execution credit."
+        ],
+        "constraints": [
+          "Human shared-seam takeover and Session B ownership; exact continuation only, independent derivation remains separate from producer.",
+          "Derive local call mayThrow from actual operation/unresolved target/current callee summary; preserve accumulated function context/abrupt propagation/all canonical obligations. Do not consume producer verdict.",
+          "All existing153 model cases/assertions/source checks and failed397 capsule retained. New meaningful order/pure/throwing/opaque controls and standard captured event-loop afterEach only; no timeout/RPC change.",
+          "Source producer60598/86e91855, kernel/input/contracts, source/ABI/physical/policy/issue unchanged by worker. No other path, budget/waiver, silent success, canceled tests, main/publicsource push.",
+          "Implementation only after root public receive GO. Pure48/strict/focused may follow; fullheavy joined population waits C private75/profile naturalterminal. New freeze before common qualification.",
+          "No engine or complete migration/readiness credit from logical repair; all27 full requirements remain unproven."
+        ]
+      },
+      "manifestSha256": "9631e3482a6d692dce3e03961c99ade381999fd44a244c1086b8c90c9ace06e3",
+      "constraints": [
+        "Human shared-seam takeover and Session B ownership; exact continuation only, independent derivation remains separate from producer.",
+        "Derive local call mayThrow from actual operation/unresolved target/current callee summary; preserve accumulated function context/abrupt propagation/all canonical obligations. Do not consume producer verdict.",
+        "All existing153 model cases/assertions/source checks and failed397 capsule retained. New meaningful order/pure/throwing/opaque controls and standard captured event-loop afterEach only; no timeout/RPC change.",
+        "Source producer60598/86e91855, kernel/input/contracts, source/ABI/physical/policy/issue unchanged by worker. No other path, budget/waiver, silent success, canceled tests, main/publicsource push.",
+        "Implementation only after root public receive GO. Pure48/strict/focused may follow; fullheavy joined population waits C private75/profile naturalterminal. New freeze before common qualification.",
+        "No engine or complete migration/readiness credit from logical repair; all27 full requirements remain unproven."
+      ]
+    }
+  ],
+  "predecessors": [
+    "3522-b-native-class-semantic-producer-20261014.json",
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}
