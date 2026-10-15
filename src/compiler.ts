@@ -1380,7 +1380,7 @@ function finalizePipelineModule(
         errors,
         diagnosticAnchor,
         `Native-first semantic-provider policy rejected implicit or unclassified host imports: ${details}. ` +
-          `Use the host-assisted compatibility profile for this source until its native provider is implemented.`,
+          `Omit the explicit semanticProviders option to publish it anyway; a native provider gap belongs to #5385.`,
         "error",
       );
       return failResult(errors, telemetry);
