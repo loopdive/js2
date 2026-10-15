@@ -3,7 +3,7 @@ id: 3518
 title: "IR-only default and direct front-end retirement"
 status: in-progress
 created: 2026-07-21
-updated: 2026-10-04
+updated: 2026-10-15
 priority: critical
 feasibility: hard
 reasoning_effort: medium
@@ -6840,3 +6840,23 @@ fixtures, legacy sources and full-equivalence requirements remain in force.
 The attempted new continuation claim was not published. A Git dry-run push
 returned HTTP403, permission denied to ttraenkler; no protected delivery is
 claimed from local work.
+
+## Audit 2026-10-15 — measured IR coverage at test262 scale (lead session, main `5586e2d5`)
+
+Numbers measured in-container with `trackIrOutcomes: true`, `target: "standalone"`, deterministic stride samples of `test262/test` plus the playground corpus. Issue [#7002](7002-ir-gate-integrity-telemetry-stride-ledger.md) turns this into a recurring ledger.
+
+| Measure (stride 40: 1,353 files, 1,793 terminal units) | Value |
+|---|---|
+| IR-emitted units | 57 (3 %) |
+| Legacy-emitted units | 1,605 (90 %) |
+| Emitted by both (compile-twice) | 13 |
+| Invariant outcomes | 70 (24/25 in the stride-120 crosstab are `duplicate-direct-function-body-receipt`) |
+| Files with no telemetry rows | 193 |
+| `select:body-shape-rejected` share of rejections | 1,234 / 1,634 (the playground baseline reports this bucket as 0) |
+| IR-first on vs off (670 files): success divergences / binaries differing | 0 / 2 |
+
+Stride 120 by unit kind: functions 43/138 IR-emitted, class members 11/135 (+24 invariants), module-init 3/392. The 5-file `check:ir-only` lane reads READY at 38/38 on the same main.
+
+Effort direction since 2026-09-08: 352 commits touched `src/codegen`, 20 touched `src/ir`; codegen grew 1.2 MB / 104 files in the first two weeks of October, IR 0.19 MB / 18 files. Issues closed under `ir-full-coverage`: July 40, August 39, September 9, October 1.
+
+Correctness defects found in the IR lane by the same audit: [#7000](7000-ir-devirtualised-method-call-base-receiver.md) (static devirtualisation), [#7001](7001-ir-string-result-externref-invalid-wasm.md) (string result accepts externref → invalid Wasm on native-string lanes; parity cascade misses inlined callers), [#7003](7003-ir-closure-call-exact-func-type-cast.md) (closure.call exact-type cast). Two observations without their own issue: `propagate.ts` is closed-world over visible call sites (nested functions, methods and module code are not in `buildCallGraph`; the iteration cap returns a non-fixpoint without widening) and is kept sound today only by the integration-time typeIdx parity check against legacy inference — retiring legacy makes that a live miscompile; `runtime/verify.ts` skips every nominal family (`class.*`, `object.*`, `closure.*`, `refcell.*`, `iter.*`, `extern.*`) as resolver-typed, which is where #7000/#7001 live. Value-representation gaps seen on both lanes (uninitialised typed class fields read as 0, `a[1.5]`/holes read elements instead of `undefined`, optional `number` params/fields carry `undefined` as a NaN sentinel that only some readers decode) belong to the #745/#2949 value-rep track.

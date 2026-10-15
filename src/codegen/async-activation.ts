@@ -17,7 +17,7 @@
 
 import { ts } from "../ts-api.js";
 import type { ValType, WasmFunction } from "../ir/types.js";
-import type { CodegenContext, FunctionContext } from "./context/types.js";
+import { type CodegenContext, type FunctionContext, hostFreeEnvironment } from "./context/types.js";
 import { addFuncType } from "./registry/types.js";
 import { reportError } from "./context/errors.js";
 import type { AsyncCpsPlan } from "./async-cps.js";
@@ -340,7 +340,18 @@ function emitAsyncLane(
 ): void {
   switch (decision.lane) {
     case "drive":
-      emitAsyncFrameStateMachine(ctx, fctx, decl, decision.plan);
+      // (#6982) In a JavaScript environment every native await yields a
+      // microtask turn (§27.7.5.3), settled operand or not; the JS value
+      // adapter drains the ring at the host checkpoint. Host-free embedders
+      // keep the synchronous fast path their drain contract relies on.
+      emitAsyncFrameStateMachine(
+        ctx,
+        fctx,
+        decl,
+        decision.plan,
+        false,
+        hostFreeEnvironment(ctx) ? undefined : { alwaysAsyncAwait: true },
+      );
       return;
     case "host-drive":
       emitAsyncFrameStateMachine(ctx, fctx, decl, decision.plan, /*host*/ true);
@@ -455,6 +466,18 @@ export function planAsyncClosureActivation(
   // dispatch loop, so those shapes are simply correct on it. The native
   // `drive` lane stays gated on the asyncGen-consumer exception above.
   if (decision !== null && decision.lane === "host-drive") return decision;
+  // (#6982) Native regime in a JavaScript environment: a closure whose every
+  // await is statically settled used to run inline (await elided); it must
+  // yield like JS, so it takes the drive lane. Bodies with a real suspension
+  // keep their pre-existing lowering (the native-closure park above).
+  if (
+    decision !== null &&
+    decision.lane === "drive" &&
+    !hostFreeEnvironment(ctx) &&
+    decision.plan.awaitPoints.every((a) => decision.plan.awaitedStaticallyResolved.get(a) === true)
+  ) {
+    return decision;
+  }
   return null;
 }
 
