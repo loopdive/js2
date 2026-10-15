@@ -1,0 +1,108 @@
+{
+  "id": "6920",
+  "slice": "gate-root-key29-source-successor-20261015",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+  "claimed_at": "2026-10-15T11:07:43.688609+00:00",
+  "updated_at": "2026-10-15T11:07:43.688609+00:00",
+  "write_id": "b-gate-root-key29-source-1b1d11e1-9175-4759-bec1-003f6f09744f",
+  "handoff_scope": [
+    {
+      "kind": "gate-root-key29-source",
+      "at": "2026-10-15T11:07:43.688609+00:00",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+      "manifest": {
+        "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+        "receivingWorkspace": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-gate-root-key29/workspace",
+        "bootstrapSourceWorkspace": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-world-absorption-composition28/workspace",
+        "status": "FINITE_SOURCE_ONLY_RECEIVE_NO_GO_UNTIL_PUBLISHED",
+        "componentPreimages": [
+          {
+            "path": "src/ir/analysis/allocation-evidence/js-class-value-domains/independent-kernel.ts",
+            "bytes": 32155,
+            "sha256": "2238e03d99cb10968c3c5bea69ac1a49d693d1561ccf4c321a8bb3c94b77fd63"
+          }
+        ],
+        "canonicalNewPaths": [],
+        "productionPaths": [
+          "src/ir/analysis/allocation-evidence/js-class-value-domains/independent-kernel.ts"
+        ],
+        "newTestPaths": [],
+        "sourceCountBefore": 2063,
+        "sourceCountConditionalAfter": 2063,
+        "basis": {
+          "authority": "takeoverallSessionB; takeoverblockingseams; parallelwork",
+          "priorOwnership": "328bb6b0a19adde0e4609890d7f95c5a04c31ece",
+          "strictFailure": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-world-absorption-composition28/workspace/.tmp/join28/single/sealed-failure.json",
+            "bytes": 10742,
+            "sha256": "51fe28723caf45dc08d99385315b40e9073562ba9f1b04e80b51024b09c52c56"
+          },
+          "profile": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-world-absorption-composition28/workspace/.tmp/join28/profile/sealed.json",
+            "bytes": 10698,
+            "sha256": "eb04d7cd38b8b267f726afaf5a002463e3c4769dee91f4152d38f1b2030877bb"
+          },
+          "BAnalysis": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/wasi-profile28-independent-review/sealed.json",
+            "bytes": 1867,
+            "sha256": "9eea2c6b363de1e6e46be21f2eb1a3640520a341dac2f981e2b8712dd92e2a28"
+          },
+          "AProof": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/gate-root-key-conditional-proposal/specification.json",
+            "bytes": 10689,
+            "sha256": "cf34a3ea58142ae1dffe651f3e79de5db91dbe20c6ecdffd93b5e5355256a9e8"
+          },
+          "CPlan": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-gate-root-key29-plan/plan.json",
+            "bytes": 3208,
+            "sha256": "7103ddf03abd82a2f50179b7774c4175acdc941a263aba37cc53e821b4654157"
+          },
+          "measuredPrivateStableSELF": {
+            "normalizedRoots": 0.806489,
+            "rootContainment": 0.731193
+          },
+          "noGainPrediction": true,
+          "APureExportAmendment": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/private-gate-root-key29-source-receive/pure-export-amendment-review.json",
+            "bytes": 552,
+            "sha256": "41e2ec928b437d02cf5ea2e95670d661546d31dd535c7d0354b099c8d907977d"
+          }
+        },
+        "constraints": [
+          "C solekernelwriter/notalone/no revertingothers. Fresh exactJOIN28bootstrap16527regular+2typingdeps=16529/source2063/readonlydependencylink/noinstall/Git/index; alloldfailuresimmutable.",
+          "ONLY addboundedprivatecompleteRootencoder and substitute EXACT3 privategatecalls: normalizedPrivateRoots key, privateRootsAbsorb before-map andincoming. Explicitly whitelistnormalizerbody beyond27region. LEFTONLY genericstablecall619 staysbyteexact. Genericstable/roots/join/merge/raw3 observers/privatecomparators/independent1493 andallotherproduction files wholebyteexact. No newpaths/ModelAPI/cache/proof/authority/callback/rawvalidator orsharedproduceralgorithm.",
+          "Encoder foractualclosedprivateallocation6/external2ownDATAfields ONLY. ExactASCIIfieldorder; stable(scalarname) THENreadcurrentfield THENstable(value), preserveliveJSONname/valuecallsequenceinclnullable/signedzero/nonfinite scalarsemantics. DoNOTuse producerdata.key dialect. CompilerexhaustiveRoot/variantfields mustactuallydrivealloutputfragments. FullprivateRoot/Object.is checks/dedup/localeordering remain. Extra/getter/rawrootsoutsideownedcomputation confernoacceptanceauthority; allrawguards remain.",
+          "EXACTLYONEadditionalmodule-onlypurecomputationalexport privateGateRootKey(root:Root):string is explicitlyreceived for directdurablebytecomparison with existingexportedstable. Sameactualfunctionmustdriveall3receivedsites; no facade/reexport/copiedtestencoder/harnesssubstitute. It returnsstringonly, no Model/registry/phase/ownership/DATA-admissionauthority. Contractexactclosed6/2ownenumerableDATAfields/scalar/null coordinates, NOT rawextra/missing/nonenumerable/accessor/kindvalidation. Allrawguards unchanged; liveJSON name→latefieldread→valueobservations preserved. Aexplicitapproval2026-10-15 beforepublication.",
+          "Kernelcurrent773; target<=900/newfunction100/hardnormal1500/actualofficialownerclassifiers/no grants/compression/budget edits. Freeze exactcandidate/inverse thenAcodeaccept/full55ACTUALtyping/2379conditional/excludes[]/allresolvedinputs+helper/harnessbeforeafter; normal12/static/officialkernel. No test edits byC.",
+          "B owns existingdedicatedabsorptiontest append underseparatefiniteclaim; existingrecord415 andallold466caseidentities/order unchanged. ReadonlyfrozenkerneltransferB ONLYafterAaccept+rootCASGO; Bactual2root30+newN/55typing/static; exactcasecountgenuineLISTgoverns.",
+          "Proportionatefunctional qualification: serialization-only, exactbyte/evaluationequivalence proof mandatory. Fresh focused79+record20+dedicatedold10+appendedN=109+newN unfiltered onexactfinalcomposition withfull55typing/static, actualLISTrequired. PriorJOIN28whole466 remainshistorical, NEVERclaimfreshcurrent466. Ifbyte/evaluationequivalence unsupported/newlogic/sourcechanges/failureconcerns expand toall10; no skipfailures. Genuinefinaloriginalstrict35 andunchanged52 stillmandatory.",
+          "No engine beforefunctional/meta/Aacceptance+quietGO. Exactoriginalcallback6431/a6a276e11/default35000/RPC/Node25.9/8192/fork1/noCPU/yield153/b769ca98. Onlyactualpass thenunchanged52; preserveallnatural failures/no cancellation/retry/waiver/timeextensions/fallback. ROOT2061unadopted/all27mastercriteriaunproven/no publicsourcepush/HOLD/queuechanges."
+        ]
+      },
+      "manifestSha256": "a9418930096cff0e57096d01f825fdf8079b995d89012d3d0edd9bbcef2c31b4",
+      "constraints": [
+        "C solekernelwriter/notalone/no revertingothers. Fresh exactJOIN28bootstrap16527regular+2typingdeps=16529/source2063/readonlydependencylink/noinstall/Git/index; alloldfailuresimmutable.",
+        "ONLY addboundedprivatecompleteRootencoder and substitute EXACT3 privategatecalls: normalizedPrivateRoots key, privateRootsAbsorb before-map andincoming. Explicitly whitelistnormalizerbody beyond27region. LEFTONLY genericstablecall619 staysbyteexact. Genericstable/roots/join/merge/raw3 observers/privatecomparators/independent1493 andallotherproduction files wholebyteexact. No newpaths/ModelAPI/cache/proof/authority/callback/rawvalidator orsharedproduceralgorithm.",
+        "Encoder foractualclosedprivateallocation6/external2ownDATAfields ONLY. ExactASCIIfieldorder; stable(scalarname) THENreadcurrentfield THENstable(value), preserveliveJSONname/valuecallsequenceinclnullable/signedzero/nonfinite scalarsemantics. DoNOTuse producerdata.key dialect. CompilerexhaustiveRoot/variantfields mustactuallydrivealloutputfragments. FullprivateRoot/Object.is checks/dedup/localeordering remain. Extra/getter/rawrootsoutsideownedcomputation confernoacceptanceauthority; allrawguards remain.",
+        "EXACTLYONEadditionalmodule-onlypurecomputationalexport privateGateRootKey(root:Root):string is explicitlyreceived for directdurablebytecomparison with existingexportedstable. Sameactualfunctionmustdriveall3receivedsites; no facade/reexport/copiedtestencoder/harnesssubstitute. It returnsstringonly, no Model/registry/phase/ownership/DATA-admissionauthority. Contractexactclosed6/2ownenumerableDATAfields/scalar/null coordinates, NOT rawextra/missing/nonenumerable/accessor/kindvalidation. Allrawguards unchanged; liveJSON name→latefieldread→valueobservations preserved. Aexplicitapproval2026-10-15 beforepublication.",
+        "Kernelcurrent773; target<=900/newfunction100/hardnormal1500/actualofficialownerclassifiers/no grants/compression/budget edits. Freeze exactcandidate/inverse thenAcodeaccept/full55ACTUALtyping/2379conditional/excludes[]/allresolvedinputs+helper/harnessbeforeafter; normal12/static/officialkernel. No test edits byC.",
+        "B owns existingdedicatedabsorptiontest append underseparatefiniteclaim; existingrecord415 andallold466caseidentities/order unchanged. ReadonlyfrozenkerneltransferB ONLYafterAaccept+rootCASGO; Bactual2root30+newN/55typing/static; exactcasecountgenuineLISTgoverns.",
+        "Proportionatefunctional qualification: serialization-only, exactbyte/evaluationequivalence proof mandatory. Fresh focused79+record20+dedicatedold10+appendedN=109+newN unfiltered onexactfinalcomposition withfull55typing/static, actualLISTrequired. PriorJOIN28whole466 remainshistorical, NEVERclaimfreshcurrent466. Ifbyte/evaluationequivalence unsupported/newlogic/sourcechanges/failureconcerns expand toall10; no skipfailures. Genuinefinaloriginalstrict35 andunchanged52 stillmandatory.",
+        "No engine beforefunctional/meta/Aacceptance+quietGO. Exactoriginalcallback6431/a6a276e11/default35000/RPC/Node25.9/8192/fork1/noCPU/yield153/b769ca98. Onlyactualpass thenunchanged52; preserveallnatural failures/no cancellation/retry/waiver/timeextensions/fallback. ROOT2061unadopted/all27mastercriteriaunproven/no publicsourcepush/HOLD/queuechanges."
+      ]
+    }
+  ],
+  "predecessors": [
+    "3522-b-native-class-semantic-producer-20261014.json",
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}
