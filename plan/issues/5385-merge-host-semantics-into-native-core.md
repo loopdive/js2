@@ -4,7 +4,7 @@ title: "Merge JS-host and standalone modes: one native semantic core, host seman
 status: in-progress
 assignee: ttraenkler/codex-5385
 created: 2026-09-07
-updated: 2026-09-29
+updated: 2026-10-15
 priority: high
 horizon: xl
 feasibility: hard
@@ -717,6 +717,64 @@ a missing feature.
       (`tests/issue-4399*`, `tests/issue-4397*`) stay green throughout.
 - [ ] `CLAUDE.md`, `docs/cli.md`, `docs/architecture/codegen-axes.md` and
       `marshaling-contract.md` describe one semantic core, not two modes.
+
+
+### 2026-10-14/15 checkpoint — S6 implemented, flip PR waiting on five fix PRs (Fable lead, Opus implementers)
+
+**State change on main that reframed S6.** On 2026-10-12 the JS-host
+test262 CI lane and the native-first measurement lane were retired
+(`ae7991db21`, Codex lane): `test262-native-first` is `if: false`, all 102
+shard runners measure standalone, the host baseline is frozen at
+39,379 / 48,232 (SHA `f56c6933`, `scripts/preserve-frozen-host-baseline.mjs`).
+Evidence-bar items 1–2 of #6708 therefore cannot be re-measured by a
+nightly. Verdict recorded in #6708: taken as satisfied by the 10-07 and
+10-09 runs plus the standalone ratchet (42,067 / 48,232 on main), which
+guards the same regime arms (`ctx.standalone` ≡ `nativeRegime`). Whether a
+`schedule`-only regime lane should be re-enabled is a stakeholder decision
+(S7 plan #6979, entry condition 5).
+
+**Landed today (all via PRs on `loopdive/js2wasm`):**
+
+| PR | Issue | What |
+| --- | --- | --- |
+| 6664 | #6749 | npm-compat refresh workflow fixed (prebuild step needs `build:compiler-bundle`); the refresh had failed on every run since 10-06 |
+| 6665 | #6979 | S7 deletion plan (five slices, measured state table, entry conditions) |
+| 6670 | #6978 | per-family host accelerators: `regexp` and `date` end to end; `js-string` and `intl` refuse selection with measured follow-ups |
+| 6674 | #6983 | regime npm-compat parity: acorn (closure-bag lookup on a host receiver), prettier (`-O4` 832 s → 154 s via the return-tail funnel); lit was a stale dashboard row |
+| 6677 | #6985, #6986 | follow-ups filed: lodash-es `coalesce-locals` timeout; Intl is a regime gap (host `Intl_*` imports fail at run time on regime and standalone) |
+
+**Open, blocking the flip (#6672, draft):** the flip itself works (`{}` ≡
+`native-first` byte-for-byte, `host-assisted` ≡ the pre-S6 default on three
+programs, `"auto"` warns once, default probe 0 legacy / 0 unknown imports,
+control probe 23) but its equivalence gate exposed 50 regime-in-JS rows that
+test262 never exercised. Decision: fix, not pin. Nine `issue-1197` WAT-shape
+rows pin the host element specialisation and were re-pinned to
+`host-assisted` (#6979 deletes them); five rows were test-harness defects
+(missing `setInstance`, stub import list without the boundary hooks) fixed on
+the flip branch; the remaining rows are fixed on main by:
+
+| PR | Issue | Rows | Status |
+| --- | --- | --- | --- |
+| 6678 | #6980 | 17 iterator/generator rows (GetIterator on user objects and host iterables, host exceptions rethrown on the module tag, `.return(v)`, async generators, nested yields) | review P2 fixed (completion provenance carried in the frame, not inferred from bits); hold pending reviewer |
+| 6673 | #6981 | 15 IR-path/compile rows (`Error.message`, Map/Set IR selection, `typeof` on specialised `any`, `let {} = 5`, boundary indexed read, `mayBeBoolean`) | review P2 fixed (`""` default yields to a touched builtin prototype); hold pending reviewer |
+| 6676 | #6982 | 8 rows (`Symbol.toPrimitive`, `indexOf(undefined)`, `await` of settled values yields in a JS environment + host microtask checkpoint, `import.meta.url`) | green-able |
+| 6683 | #6984 | `yield*` evaluates to the delegate's return value (nested-yield planner, spread of a boxed carrier, `next(v)` forwarding) | green-able |
+
+Combined gate on slice A + #6980 + #6981 + #6982: 1,749 passing (floor
+1,740), one new regression (the `yield*` row, #6984). After these land the
+flip branch merges main, resolves the four-file conflict with #6978
+(`target-profile.ts`, `cli.ts`, `compiler-boundaries.json`,
+`host-import-policy-baseline.json`), re-runs the gate, sets `done`, un-drafts.
+
+**Process facts worth keeping:** agent worktrees cannot `checkout -B
+upstream/main` (protected `.claude/` paths) — use `reset --mixed` +
+`restore` with the three excludes; the pre-push LOC hook measures the stale
+`/Users/thomas/Code/js2` checkout when the leading `cd` is stripped, so the
+lead pushes from agent worktrees; `gh` fails TLS inside agent sandboxes, so
+the lead opens PRs; CI's import-cycle and inventory gates evaluate the merge
+preview, so grants must be measured against main's tip; the review lane
+(`ttraenkler`) holds PRs with `[P2]` findings and expects a bounded
+correction plus a recorded handoff comment.
 
 ## Verification
 
