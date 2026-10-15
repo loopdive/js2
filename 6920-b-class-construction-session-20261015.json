@@ -1,0 +1,150 @@
+{
+  "id": "6920",
+  "slice": "class-construction-session-successor-20261015",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+  "claimed_at": "2026-10-15T01:13:40.788629+00:00",
+  "updated_at": "2026-10-15T01:13:40.788629+00:00",
+  "write_id": "b-class-construction-session-121aab39-2b8d-43c8-b64c-b759def37633",
+  "handoff_scope": [
+    {
+      "kind": "class-construction-session",
+      "at": "2026-10-15T01:13:40.788629+00:00",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+      "manifest": {
+        "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+        "componentPreimages": [
+          {
+            "path": "src/backend/wasmgc/program/native-realm.ts",
+            "bytes": 66890,
+            "sha256": "c6843c9f6b7818e2ec6cc2abc71a30b3674c90862efb5f7c83bae0750d6b27a1"
+          },
+          {
+            "path": "src/backend/wasmgc/resources/native-js-class.ts",
+            "bytes": 29196,
+            "sha256": "86ffd143c756a9185fc060aa2f47122122a75ce2b36d409c59c7bf57a4b477a0"
+          },
+          {
+            "path": "src/ir/program-physical-plan.ts",
+            "bytes": 69147,
+            "sha256": "9dde852943de9c4fd64471648f33509eae87f7da488107cb2df698d689f0ddc8"
+          },
+          {
+            "path": "src/ir/program-consumer.ts",
+            "bytes": 76310,
+            "sha256": "93ac655db85c5a075c7721050ac554ad4bbab658ab3adbe34654fb37cc7a84f2"
+          },
+          {
+            "path": "src/ir/program/native-program-resource-requirements.ts",
+            "bytes": 14183,
+            "sha256": "6c2eb88554d3cf4f4f8f00d6761f1b088c4afa9420c0d2e928d9e9c8d9b93e8d"
+          }
+        ],
+        "canonicalNewPaths": [
+          "src/backend/wasmgc/program/native-js-class-session.ts",
+          "tests/issue-6920-native-js-class-construction.test.ts",
+          "tests/issue-6920-native-js-class-construction-evidence.test.ts"
+        ],
+        "reviewedFinalProposal": {
+          "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-emission-operation-prototype/construction-final-receiving-scope.json",
+          "bytes": 6838,
+          "sha256": "63ea2e94e172125fc3616c7f863afc156af313e271c9e8610a199dcd47bce95b"
+        },
+        "reviewedDetails": [
+          {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-emission-operation-prototype/construction-reviewed-scope.json",
+            "bytes": 17964,
+            "sha256": "75f536415a071ab8055a68defc7a0087c40ff8aad9c1afa3d90c82949e082e18"
+          },
+          {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-emission-operation-prototype/construction-error-oracle-addendum.json",
+            "bytes": 2152,
+            "sha256": "40638acecb5a2a463b2f31826ae829471425bfd3fb0c27c6fb7b7021ee609c9f"
+          },
+          {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-emission-operation-prototype/class-session-extraction-map.json",
+            "bytes": 30529,
+            "sha256": "c04ad356e3dccc5a3d97812a69746d51faa3f30e8296e6b950c7a01bcb307675"
+          },
+          {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-emission-operation-prototype/construction-cap-projection.json",
+            "bytes": 1928,
+            "sha256": "9d80f42b2ca7e74c8cc25792731841dee39f42afb6f9f6a47dad312e749ec4c4"
+          },
+          {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-emission-operation-prototype/construction-logical-preflight-projection.json",
+            "bytes": 1108,
+            "sha256": "07e47e6e82de70b4a1e664e35b08b0a31891833e7bf4c0668fa67774989887c6"
+          }
+        ],
+        "readonlyReceivedDependency": {
+          "receiver": "1daabc59d127c8084d036bb216f2fdd13d3800cd",
+          "seal": {
+            "bytes": 7449,
+            "sha256": "4c5354f5c1a4acf7e9b14a84bd34af00b4020b3f65ba5081e8c2cddcbbcf4b81"
+          },
+          "rootReview": ".tmp/class-exception-legality-receive/root-review.json",
+          "source": {
+            "path": "src/ir/analysis/allocation-evidence/native-js-class-legality.ts",
+            "bytes": 14794,
+            "sha256": "590e09c60674e7041ae57079e7cb5540026d0a203ea07e29844655001da8cd11"
+          },
+          "test": {
+            "path": "tests/issue-6920-native-js-class-exception-legality.test.ts",
+            "bytes": 15107,
+            "sha256": "6a4c07d4b44414c6604db6cd7246cb142107013406284931aae3d82e2dc86cf7"
+          },
+          "scope": "copy sealed2 only into PRIVATE bootstrap as readonly dependency; C must not modify or ROOT-adopt them"
+        },
+        "operations": [
+          "C alone moves whole private class session52declarations/33compatibility exports into productive new mixed backend owner; retain fixed generic15 algorithms/API/currentness and actual direct dependencies, no reverse nativeRealm import or callback authority.",
+          "Move complete existing class-specific physical preflight into existing logical coordinator returning fresh descriptive DATA/gaps; planner shrinks and consumer threads genuine existing exception-tag token in ordinarily formatted call. No new persisted schema or tag/provider factory.",
+          "Fresh normalize/analyze/independent replay derives conservative constructor/newTarget closure: every actual known Function root must match real constructor allocation/define/site/definition and original USER binding/signature/reservation; exact targets equality; reject every unknown/bottom/external/method/realm/mixed unhandled root.",
+          "Join original constructor environment and homeObject from actual callee refs under closed unchanged heap/op proof; newTarget prototype separately; actual runtime refs never abstract-site singleton. Do not use null field3 as constructor homeObject.",
+          "Materialize actual module binding.read TDZ and finite valid-constructor dispatch to original function coordinates; one real construct instance/site, separate original frame.new/site, hidden4+firstN args/actual Undefined padding, all extra-arg effects first, normal actualself result. Only empty explicit base constructors; no silent field-init/default/rest/replacement omission.",
+          "Canonical null externref message→actual ReferenceError/TypeError provider→actual shared/defined exception tag. All new error recipes and actual wholeprogram completion require authentic own token; partial old no-tag resource stages stay genuine but grant no exceptional/wholeprogram authority.",
+          "Two new genuine source/type/codec/physical/engine and evidence tests, actual all-policy outcomes and JS oracles; source reconstruction poison only after prepare; no source-realm prototype/instanceof credit from raw payload tag."
+        ],
+        "qualificationPlan": [
+          "PRIVATE fresh current ROOT2053 copy with all source/policy/tests/config pins and reused deps; readonly B sealed2 dependency explicitly recorded; only C5existing+newproduction1+newtest2 writable. ROOT480 scheduling experiment inputs remain frozen.",
+          "Prove moved bodies/API/canonical currentness and existing generic15 exact; pin every offscope source/test, old41+27 and all old test assertions unchanged. Full actual private2054 source census and all relevant roots typed with excludes[].",
+          "Actual official function/LOC classifier and formatting: new class-session<=1500, new helpers<=300, existing planner1547/function348 shrink, consumer1684/function380 no regrowth, logical325 growth only within normal limits; no compression/grants or predicate ports.",
+          "All old75/C27/B36/common480 relevant cohorts and actual new LIST/runtime, all ordinary gates, plus genuine constructor GC standalone/WASI live+codec engine cases with unchanged35s. Report exact source-located refusals for Linear and neighboring unissued features. Root copies only exactqualified owned8 after independent review/sourcefreeze."
+        ],
+        "constraints": [
+          "Human allB/shared-seam takeover, exact bounded private continuation; preserve foreign branches/owners/publicsourceheads/HOLDs/integration queue. No main/source PR push.",
+          "Implementation GO is PRIVATE only after published receiver and rootGO. No ROOTwrites while any qualifier live; separate rootreviewed exact8 adoption after qualified seal and allROOTnaturalterminals.",
+          "Existing B seed is readonly received dependency, not C-owned source; no seed changes, fabricated site/body, generic verifier/emitter/profile/schema/policy/budget changes or unchecked caller report/boolean authority.",
+          "Missing constructor closure is explicit located unsupported DATA at preflight before actual programaccept; never an empty successful catalogue. Existing partial resource acquisition must not falsely claim wholeprogram/exception readiness or be broken by unsupported new recipe classification alone.",
+          "Retain full canonical entry/post scratch/raw/fallback currentness, actual transaction/type/tag/slot/body/completion checks. No positive cache/verdict shortcut; physical builder callbacks are genuine procedures only.",
+          "No runtime prototype/instanceof claim before actual observation join; no forced early bootstrap/host shim/trap substitution. Callee homeObject originalprototype and newTarget instanceprototype are distinct joins.",
+          "Linear, instance fields, property/method invoke, dynamic public/NN/DTS, replacement completion/default/rest and tagged neighboring op recipes remain explicit unissued/refusing frontiers, not broadened by spelling or lane identity.",
+          "No timeout/RPC adjustment, canceled test, hidden failure, source reconstruction/fallback or sourcepush; preserve all failed/passing epochs and actual nonempty floors."
+        ]
+      },
+      "manifestSha256": "8e9ca485bed2de7eeffe7e21f12693e090f6994cb3b6d073db28aaf5b9172ae7",
+      "constraints": [
+        "Human allB/shared-seam takeover, exact bounded private continuation; preserve foreign branches/owners/publicsourceheads/HOLDs/integration queue. No main/source PR push.",
+        "Implementation GO is PRIVATE only after published receiver and rootGO. No ROOTwrites while any qualifier live; separate rootreviewed exact8 adoption after qualified seal and allROOTnaturalterminals.",
+        "Existing B seed is readonly received dependency, not C-owned source; no seed changes, fabricated site/body, generic verifier/emitter/profile/schema/policy/budget changes or unchecked caller report/boolean authority.",
+        "Missing constructor closure is explicit located unsupported DATA at preflight before actual programaccept; never an empty successful catalogue. Existing partial resource acquisition must not falsely claim wholeprogram/exception readiness or be broken by unsupported new recipe classification alone.",
+        "Retain full canonical entry/post scratch/raw/fallback currentness, actual transaction/type/tag/slot/body/completion checks. No positive cache/verdict shortcut; physical builder callbacks are genuine procedures only.",
+        "No runtime prototype/instanceof claim before actual observation join; no forced early bootstrap/host shim/trap substitution. Callee homeObject originalprototype and newTarget instanceprototype are distinct joins.",
+        "Linear, instance fields, property/method invoke, dynamic public/NN/DTS, replacement completion/default/rest and tagged neighboring op recipes remain explicit unissued/refusing frontiers, not broadened by spelling or lane identity.",
+        "No timeout/RPC adjustment, canceled test, hidden failure, source reconstruction/fallback or sourcepush; preserve all failed/passing epochs and actual nonempty floors."
+      ]
+    }
+  ],
+  "predecessors": [
+    "3522-b-native-class-semantic-producer-20261014.json",
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}
