@@ -269,6 +269,7 @@ describe("#2954 LinearEmitter core-op families are byte-identical to WasmGc", ()
       () => linear.emitCallRef(),
       () => linear.emitThrow(),
       () => linear.emitTry(),
+      () => Reflect.apply(linear.emitVecNewFixed, linear, []),
       // Fixed construction must refuse when its runtime provider is absent.
       () => new LinearEmitter().emitVecNewFixed(linVec, 0, 0, 0, []),
     ]) {
