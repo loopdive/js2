@@ -1,0 +1,109 @@
+{
+  "id": "6920",
+  "slice": "world-absorption27-source-successor-20261015",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+  "claimed_at": "2026-10-15T10:18:25.140356+00:00",
+  "updated_at": "2026-10-15T10:18:25.140356+00:00",
+  "write_id": "b-world-absorption27-source-65e4e480-0635-4154-88e5-1e8c3561669c",
+  "handoff_scope": [
+    {
+      "kind": "world-absorption27-source",
+      "at": "2026-10-15T10:18:25.140356+00:00",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+      "manifest": {
+        "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+        "receivingWorkspace": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-world-absorption27/workspace",
+        "bootstrapSourceWorkspace": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-private-world-causality26/workspace",
+        "status": "FINITE_SOURCE_ONLY_RECEIVE_NO_GO_UNTIL_PUBLISHED",
+        "componentPreimages": [
+          {
+            "path": "src/ir/analysis/allocation-evidence/js-class-value-domains/independent-kernel.ts",
+            "bytes": 29589,
+            "sha256": "c7258f4f6dab271981dbe078d3e2785148f71408e805e5bd5e5f7e0c242b1e7a"
+          }
+        ],
+        "canonicalNewPaths": [],
+        "productionPaths": [
+          "src/ir/analysis/allocation-evidence/js-class-value-domains/independent-kernel.ts"
+        ],
+        "newTestPaths": [],
+        "sourceCountBefore": 2063,
+        "sourceCountConditionalAfter": 2063,
+        "basis": {
+          "authority": "takeover allofSessionB; Takeoverblocking sharedseams; keepgoingparallel",
+          "priorOwnership": "ca1094107749abe80039f5f3573a5b8ed5aefba7",
+          "strictFailure": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-private-world-causality26/workspace/.tmp/final26/single/sealed-failure.json",
+            "bytes": 10682,
+            "sha256": "83d4aa094a6e5e3f4f052807b142833cd9512c372cc58ac6549ca1bcbeb86dca"
+          },
+          "profileCapture": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-private-world-causality26/workspace/.tmp/final26/profile/sealed.json",
+            "bytes": 10606,
+            "sha256": "97d987174c205f47b09a84ca2fe87d2c4230d1e0d61c970fd320b9838256069f"
+          },
+          "soleProfileAnalysis": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/wasi-profile26-independent-review/sealed.json",
+            "bytes": 1161,
+            "sha256": "383be8b45db3e101efcda424cb54b7eaa2511cc652b5b2c94f4baa075004cf5d"
+          },
+          "parentFailedCurrentness": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/private-world-causality26-receive/parent-failed-engine-currentness.json",
+            "bytes": 270,
+            "sha256": "ee198c293965cf2da0cf99a698a0de9b66de5485767a4085413f8f825fb25dc9"
+          },
+          "AProof": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/private-world-absorption-proposal/specification.json",
+            "bytes": 12632,
+            "sha256": "0070f17376fee7f0a0ecc143374a74df6a9c1555eb10b525962a8038a8a88fe1"
+          },
+          "AReceiverSupplement": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/private-world-absorption-proposal/receiver-supplement.json",
+            "bytes": 7969,
+            "sha256": "3545f8c7926367ef530ec85de9f08ffcffbfb365b6439acb93b6bbd93305bcb3"
+          },
+          "CPlan": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-world-absorption27-plan/plan.json",
+            "bytes": 4027,
+            "sha256": "96440574844aeaa44573f53696d7c26dabf90b04c46ded2f1bbe65e0888fb9a6"
+          },
+          "measuredSelection": "Actual52977wrapper6.523555sampledsec partitions fullcommit5.085242+equalgate1.430821. Currentnewgatefullsame1.427817; joinWorldunion5.970518. Overlappingcostsnotadditive; no invocation/hitrate/gaininference."
+        },
+        "constraints": [
+          "C sole kernelwriter, notalone/no revertingothers. Fresh isolated exactfinal26 bootstrap16526regular+2typingdeps/source2063/readonlydependency symlink/noinstall/Git/index. Allold26/25/23/21failures immutable.",
+          "ONLY canOmitNormalizedWorldJoin and bounded private normalization/absorption helperregion inexistingkernel may change. Retain same sole computationalexport/name, actualclosedWorld typedcomputation; no newpaths/exports/ModelAPI/rawvalidator/brand/cache/proof/authority/callback. Wholeindependent1493 and everyotherproduction file exact.",
+          "No initialfullsamePrivateWorld precheck. Do not calljoinWorld/mergeCell/mergeGlobal/known orallocate mergedWorld/Cell/Global/Domain inpredicate. ExactAproof conditions forcanonicalbefore, Map/Set/key containment, completeactualADTcoordinates/Object.is/privateRoot/privateKey, initialization/presence lattice, DomainUNKNOWN/BOTTOM/knowncontainment, canonicalrootunion ties, leftonlyobservedrootabsentbranch widening. False/unsupported fallback oldfullcommit; noexception swallowing.",
+          "Wholeoldraw3observerbodies, joinWorld/mergeGlobal/mergeCell/privatecomparators andallhistory/normal+abruptcapture bodies byteexact. True mustprove samePrivateWorld(before,oldjoinWorld(before,incoming)), henceoriginalcommit performedzeroModelwrites/changed/aliasreplacement. Flowalive/values/slots unaffected. Preserveallrawguards/SSA/currentness/proposedreport/fixedpoint/census/engine semantics.",
+          "Kernelcurrently709; target<=900 lines withnormalformat andnewfunctiontarget<=100, hardnormal1500/classifiersactualgovern; no grants/minification/budget edits. Actualofficialfulltree+changedownerAST required, no nestedGit0changedownership credit.",
+          "Freezeexactcandidate/inverse thenAcodeaccept/full54ACTUALtyping2378/excludes[]/allresolvedextensions+dependencies/harnessbeforeafter, normal12/static/officialkernelbudget. DO NOT run oldrecord99 until Bcalibratedrecordfrozen+reviewed readonlyoverlay; olderstrictgate falseexpectations legitimatelybroaden. Bownstests underseparatefiniteclaim; Ccannoteditanytests.",
+          "Afterexactfrozenkernel+Aaccept readonlydependencytransferB permitted withCASreceipt; B qualifies newdedicatedabsorptiontest+calibratedrecord. Newtestpath mayrequire55private/56ROOTroots; not sourcecountgrowth. Separatefinalexactcompositionclaim beforecopyingtests/newroot, actualfreshallselectedfunctional/type/staticrequired becausekernelchanged.",
+          "No engine until allfunctional/metadata/codeacceptance plusseparatequietGO. OriginalWASI35000/defaultRPC/25.9/8192/fork1/noCPU/exactyield; onlygenuinepass thenunchanged52. Preserveallnatural failures; no cancellation/retry/waivers/timeextensions/fallback/publicsourcepush/HOLD/queuechanges. ROOT2061unadopted/all27mastercriteriaunproven."
+        ]
+      },
+      "manifestSha256": "d4cec0bb536ec2f3372545f2d7a5bdb7d825f1bb39b6f261725f484b628e458b",
+      "constraints": [
+        "C sole kernelwriter, notalone/no revertingothers. Fresh isolated exactfinal26 bootstrap16526regular+2typingdeps/source2063/readonlydependency symlink/noinstall/Git/index. Allold26/25/23/21failures immutable.",
+        "ONLY canOmitNormalizedWorldJoin and bounded private normalization/absorption helperregion inexistingkernel may change. Retain same sole computationalexport/name, actualclosedWorld typedcomputation; no newpaths/exports/ModelAPI/rawvalidator/brand/cache/proof/authority/callback. Wholeindependent1493 and everyotherproduction file exact.",
+        "No initialfullsamePrivateWorld precheck. Do not calljoinWorld/mergeCell/mergeGlobal/known orallocate mergedWorld/Cell/Global/Domain inpredicate. ExactAproof conditions forcanonicalbefore, Map/Set/key containment, completeactualADTcoordinates/Object.is/privateRoot/privateKey, initialization/presence lattice, DomainUNKNOWN/BOTTOM/knowncontainment, canonicalrootunion ties, leftonlyobservedrootabsentbranch widening. False/unsupported fallback oldfullcommit; noexception swallowing.",
+        "Wholeoldraw3observerbodies, joinWorld/mergeGlobal/mergeCell/privatecomparators andallhistory/normal+abruptcapture bodies byteexact. True mustprove samePrivateWorld(before,oldjoinWorld(before,incoming)), henceoriginalcommit performedzeroModelwrites/changed/aliasreplacement. Flowalive/values/slots unaffected. Preserveallrawguards/SSA/currentness/proposedreport/fixedpoint/census/engine semantics.",
+        "Kernelcurrently709; target<=900 lines withnormalformat andnewfunctiontarget<=100, hardnormal1500/classifiersactualgovern; no grants/minification/budget edits. Actualofficialfulltree+changedownerAST required, no nestedGit0changedownership credit.",
+        "Freezeexactcandidate/inverse thenAcodeaccept/full54ACTUALtyping2378/excludes[]/allresolvedextensions+dependencies/harnessbeforeafter, normal12/static/officialkernelbudget. DO NOT run oldrecord99 until Bcalibratedrecordfrozen+reviewed readonlyoverlay; olderstrictgate falseexpectations legitimatelybroaden. Bownstests underseparatefiniteclaim; Ccannoteditanytests.",
+        "Afterexactfrozenkernel+Aaccept readonlydependencytransferB permitted withCASreceipt; B qualifies newdedicatedabsorptiontest+calibratedrecord. Newtestpath mayrequire55private/56ROOTroots; not sourcecountgrowth. Separatefinalexactcompositionclaim beforecopyingtests/newroot, actualfreshallselectedfunctional/type/staticrequired becausekernelchanged.",
+        "No engine until allfunctional/metadata/codeacceptance plusseparatequietGO. OriginalWASI35000/defaultRPC/25.9/8192/fork1/noCPU/exactyield; onlygenuinepass thenunchanged52. Preserveallnatural failures; no cancellation/retry/waivers/timeextensions/fallback/publicsourcepush/HOLD/queuechanges. ROOT2061unadopted/all27mastercriteriaunproven."
+      ]
+    }
+  ],
+  "predecessors": [
+    "3522-b-native-class-semantic-producer-20261014.json",
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}
