@@ -1,0 +1,104 @@
+{
+  "id": "6920",
+  "slice": "producer-root-scalar31-source-successor-20261015",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+  "claimed_at": "2026-10-15T11:50:37.021755+00:00",
+  "updated_at": "2026-10-15T11:50:37.021755+00:00",
+  "write_id": "b-producer-root-scalar31-source-dae80119-a5b6-4a89-bfd0-e01c63e949da",
+  "handoff_scope": [
+    {
+      "kind": "producer-root-scalar31-source",
+      "at": "2026-10-15T11:50:37.021755+00:00",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+      "manifest": {
+        "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+        "receivingWorkspace": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-producer-root-scalar31/workspace",
+        "bootstrapSourceWorkspace": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-gate-root-key-composition30/workspace",
+        "status": "FINITE_SOURCE_ONLY_RECEIVE_NO_GO_UNTILPUBLISHED",
+        "componentPreimages": [
+          {
+            "path": "src/ir/analysis/allocation-evidence/js-class-value-domains/producer.ts",
+            "bytes": 61952,
+            "sha256": "64500b14bd015b0f56b13d12fd5ff02bffd1a0ab56a1592d16e059db014d26ed"
+          }
+        ],
+        "canonicalNewPaths": [],
+        "productionPaths": [
+          "src/ir/analysis/allocation-evidence/js-class-value-domains/producer.ts"
+        ],
+        "newTestPaths": [],
+        "sourceCountBefore": 2063,
+        "sourceCountConditionalAfter": 2063,
+        "basis": {
+          "authority": "takeoverallSessionB; takeoverblockingseams; parallelwork",
+          "priorOwnership": "5d6f513d40cc8b1e1c0fa69e7e9f74ce6545ac11",
+          "strictFailure": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-gate-root-key-composition30/workspace/.tmp/final30/single/sealed-failure.json",
+            "bytes": 10697,
+            "sha256": "c5ebf6a2dd649377ee85bf3a02b6772bfa6ac59c5f00ef5ba647568d92c67a08"
+          },
+          "currentProfile": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-gate-root-key-composition30/workspace/.tmp/final30/profile/sealed.json",
+            "bytes": 11006,
+            "sha256": "b4cd244558aa6501863aa2dba94cffc746d6ed0e6798e460c2e5de3fd8cead33"
+          },
+          "BSoleProfileAnalysis": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/wasi-profile30-independent-review/sealed.json",
+            "bytes": 12780,
+            "sha256": "62b1e02c73888d08eca7f1511635a85029ffef2baf7251af79496bfc7c48de17"
+          },
+          "BPositionUnknownFloor": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/wasi-profile30-independent-review/position-ticks/sealed.json",
+            "bytes": 1642,
+            "sha256": "5ab9cea93f20e8b483349e8de51a4c56ee3fa74cab38c96fbfcd3aaa3ccc920e"
+          },
+          "CPlan": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-producer-root-scalar31-plan/plan.json",
+            "bytes": 3841,
+            "sha256": "c52a5e4a8af1d2cedd4bbeb0ee1eb6c969e42aeea3dbe576d1b458ce11614c8a"
+          },
+          "AFormalSpec": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/producer-root-scalar31-proposal/specification.json",
+            "bytes": 11077,
+            "sha256": "f3e0c1e9639c2393718431d227fe356d9021ad68f07cdc3636d07c8be003ffad"
+          },
+          "measuredNearestRootKeyGenericSELF": 1.859658,
+          "removableDispatchWorkNotEstablished": true,
+          "noGainPrediction": true
+        },
+        "constraints": [
+          "Csoleproducerwriter/notalone/no revertingothers. FreshexactFINAL30bootstrap16527regular+2typingdeps=16529/source2063 readonlydependencylink/noinstall/Git/index. Alloldfailedstrict/profile/functionalseals immutable.",
+          "ONLYone smallprivatescalar(string|number|null)helper preserving actualdata.key primitive dialect: typeofnumber&&!Number.isFinite(value)?number:${value}:JSON.stringify(value), LIVE Number/JSONmethodcustody/name→latefieldread→value/nonfinite-noJSONcall behavior. ReplaceEXACT16existingkey scalar name/valuecalls ONLYinsideexistingrootKey. Existingcomplete6/2fieldobjects/returndrivers/orderingrootkinddispatch otherwiseexact. Wholeproducerinverse mustrestore61952/64500b14afterundohelper+16subs+exportalias.",
+          "EXACTLYONEadditionalmodule-onlypure computationalexport alias rootKey as privateProducerRootKey, actualfunctiondrives existing6leafcallers; nofacade/reexportpackage/ModelAPI/inputvalidation/authority/cache/registry/phaseflag. PrivateownedRootvalues onlystring|number|null; closedprimitivecontractionexplicitlypermitsremoving genericArray.isArray interceptionONLYatthose16scalarcalls, notunrestrictedhostintrinsiccallcountparity. Preserveallgenericdata.key/signature/rawguard andallotherproductionbytes.",
+          "Producer1401lines target<=1500/newfunctions100/no newpaths/grants/compression/budgetedits. Freeze exactcandidate+wholeinverse thenAcodeaccept/full55ACTUALtyping(allresolvedextensions/helpers/deps/harness)/normal12static+officialownerclassification. Bdedicatednewtestpath tests/issue-6920-native-class-producer-root-scalar.test.ts/exact2cases/hard450/newfunctions100 underseparatefiniteclaim; oldabsorption389/13+record415/20 wholebytesreadonly. No testsbyC.",
+          "BreadonlysourceoverlayonlyafterCfrozen+Aaccept+parentCASGO. Bactual3rootsrecord20+dedicatedoldabsorption13+newN=33+N(35ifN2)/full56ACTUALtyping/static; finalexactcomposition5rootsproducersemantic169+focused79+record20+absorption13+newN=281+N(283ifN2)/full56ACTUALtyping/static. GenuineLIST/unfiltered/noUHE, preservealloldcaseidentities/order. Producersemantic169 freshonceinfinal; prior466/112historicalONLY. Exactbyte/evaluationequivalence mandatory; failurescorrectnessblocker andotherlogic/sourcechanges/unresolvedconcernsrequireexpandedscope.",
+          "Noenginebeforefunctional/meta/Aacceptance+quietGO. Exactoriginalstrictcallback6431/a6a276e11/yield153/b769ca98/default35000/defaultRPC/Node25.9/8192/fork1/noCPU. Onlyactualpass thenunchanged52; preserveallnaturaloutcomes/no cancel/retry/waiver/deadlinechange/fallback. ROOT2061unadopted/all27mastercriteriaunproven; no publicsourcepush/comments/HOLD/queuechanges.",
+          "Dedicatednewtestadds1typingroot only: sourcecount2063unchanged/privateB+final56ACTUAL/futureROOT57ACTUAL conditionalgenuinelist; futureROOT21CAS13production+7tests+independentpolicy/style69actualmembership, allactualfullrelated/vector/constructor stillrequired. No actualROOTsource/test/policyadoption beforegenuineprivate52pass."
+        ]
+      },
+      "manifestSha256": "841a537a70d1374d6ea0a9602a833d3103b2346d56f770ba052378251755b4b7",
+      "constraints": [
+        "Csoleproducerwriter/notalone/no revertingothers. FreshexactFINAL30bootstrap16527regular+2typingdeps=16529/source2063 readonlydependencylink/noinstall/Git/index. Alloldfailedstrict/profile/functionalseals immutable.",
+        "ONLYone smallprivatescalar(string|number|null)helper preserving actualdata.key primitive dialect: typeofnumber&&!Number.isFinite(value)?number:${value}:JSON.stringify(value), LIVE Number/JSONmethodcustody/name→latefieldread→value/nonfinite-noJSONcall behavior. ReplaceEXACT16existingkey scalar name/valuecalls ONLYinsideexistingrootKey. Existingcomplete6/2fieldobjects/returndrivers/orderingrootkinddispatch otherwiseexact. Wholeproducerinverse mustrestore61952/64500b14afterundohelper+16subs+exportalias.",
+        "EXACTLYONEadditionalmodule-onlypure computationalexport alias rootKey as privateProducerRootKey, actualfunctiondrives existing6leafcallers; nofacade/reexportpackage/ModelAPI/inputvalidation/authority/cache/registry/phaseflag. PrivateownedRootvalues onlystring|number|null; closedprimitivecontractionexplicitlypermitsremoving genericArray.isArray interceptionONLYatthose16scalarcalls, notunrestrictedhostintrinsiccallcountparity. Preserveallgenericdata.key/signature/rawguard andallotherproductionbytes.",
+        "Producer1401lines target<=1500/newfunctions100/no newpaths/grants/compression/budgetedits. Freeze exactcandidate+wholeinverse thenAcodeaccept/full55ACTUALtyping(allresolvedextensions/helpers/deps/harness)/normal12static+officialownerclassification. Bdedicatednewtestpath tests/issue-6920-native-class-producer-root-scalar.test.ts/exact2cases/hard450/newfunctions100 underseparatefiniteclaim; oldabsorption389/13+record415/20 wholebytesreadonly. No testsbyC.",
+        "BreadonlysourceoverlayonlyafterCfrozen+Aaccept+parentCASGO. Bactual3rootsrecord20+dedicatedoldabsorption13+newN=33+N(35ifN2)/full56ACTUALtyping/static; finalexactcomposition5rootsproducersemantic169+focused79+record20+absorption13+newN=281+N(283ifN2)/full56ACTUALtyping/static. GenuineLIST/unfiltered/noUHE, preservealloldcaseidentities/order. Producersemantic169 freshonceinfinal; prior466/112historicalONLY. Exactbyte/evaluationequivalence mandatory; failurescorrectnessblocker andotherlogic/sourcechanges/unresolvedconcernsrequireexpandedscope.",
+        "Noenginebeforefunctional/meta/Aacceptance+quietGO. Exactoriginalstrictcallback6431/a6a276e11/yield153/b769ca98/default35000/defaultRPC/Node25.9/8192/fork1/noCPU. Onlyactualpass thenunchanged52; preserveallnaturaloutcomes/no cancel/retry/waiver/deadlinechange/fallback. ROOT2061unadopted/all27mastercriteriaunproven; no publicsourcepush/comments/HOLD/queuechanges.",
+        "Dedicatednewtestadds1typingroot only: sourcecount2063unchanged/privateB+final56ACTUAL/futureROOT57ACTUAL conditionalgenuinelist; futureROOT21CAS13production+7tests+independentpolicy/style69actualmembership, allactualfullrelated/vector/constructor stillrequired. No actualROOTsource/test/policyadoption beforegenuineprivate52pass."
+      ]
+    }
+  ],
+  "predecessors": [
+    "3522-b-native-class-semantic-producer-20261014.json",
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}
