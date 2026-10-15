@@ -1,0 +1,91 @@
+{
+  "id": "6920",
+  "slice": "private-merge-birth22-successor-20261015",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+  "claimed_at": "2026-10-15T08:39:20.848197+00:00",
+  "updated_at": "2026-10-15T08:39:20.848197+00:00",
+  "write_id": "b-private-merge-birth22-5cbffcc3-7dc5-48f3-9796-9d06d2a14dc6",
+  "handoff_scope": [
+    {
+      "kind": "private-merge-birth22",
+      "at": "2026-10-15T08:39:20.848197+00:00",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+      "manifest": {
+        "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+        "receivingWorkspace": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-merge-birth22/workspace",
+        "bootstrapSourceWorkspace": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-allocation-composition21/workspace",
+        "status": "RECEIVING_PREPARATION_ONLY_NO_CODE_GO_UNTIL_PUBLISHED",
+        "componentPreimages": [
+          {
+            "path": "src/ir/analysis/allocation-evidence/js-class-value-domains/independent-kernel.ts",
+            "bytes": 27316,
+            "sha256": "451b83d3f3d5c72b517916b3e24655ef0f87d9c12856992d576b35340c73d938"
+          },
+          {
+            "path": "tests/issue-6920-native-class-reference-error-value-effects.test.ts",
+            "bytes": 53271,
+            "sha256": "5d782332905894821aa419baf560d90782d48be1f93a1c1273c80fb1947df120"
+          }
+        ],
+        "canonicalNewPaths": [],
+        "productionPaths": [
+          "src/ir/analysis/allocation-evidence/js-class-value-domains/independent-kernel.ts"
+        ],
+        "newTestPaths": [],
+        "sourceCountBefore": 2063,
+        "sourceCountConditionalAfter": 2063,
+        "basis": {
+          "authority": "takeover all of session b; Take over the blocking shared seams; parallel subagents",
+          "profile": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/parallel-allocation-join-receive/profile-independent-review/summary-sealed.json",
+            "bytes": 786,
+            "sha256": "16fc3ef9c7d4ffba3eaa131a4002801e5b61fa9e9a562ba5a0739243878da964"
+          },
+          "failedReadiness": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-allocation-composition21/workspace/.tmp/join21/handoff/sealed.json",
+            "bytes": 12672,
+            "sha256": "7bbdfbb8dba4448c269aab749d04f68f3e7870eebfe257fc961baeec8231ee85"
+          },
+          "spec": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/merged-record-birth-proposal/sealed-proposal.json",
+            "bytes": 13046,
+            "sha256": "6e70ed44d4797e584e033c2da559d086730fb9fd81c8f8eb2746420695c2a508"
+          }
+        },
+        "constraints": [
+          "ONLY private mergeCell/mergeGlobal fresh result construction plus bounded local captured intrinsics/helper and append focusedtests. No other algorithm body changes; byteinverse exact. Shared copier/source/data guards unchanged.",
+          "Retain mergeCell complete original fresh spread literal and all evaluation order, all own enumerable strings/symbols/lastvalue/propertyorder, early alias return. No fixedfivefield projection. Only exclusively fresh inaccessible literal may use unvalidated local transfer, never callerinput.",
+          "Retain mergeGlobal earlyaliasreturn, originalbindingId/initialization/join evaluation order, exact3fields and plainprototype/extensibility/alltrueflags/shallowaliases. Captured zeroargordinaryallocator/defineProperty with nullprototype descriptors; no Object.assign/ordinarywrites/brandcaller/cache/newsharedAPI.",
+          "Append effective full differential rawspread/extra/symbol/nonenumerable/Proxy/gettercount/throw/descriptor/alias/prototype/intrinsicpatch/postmutation controls from sealed spec; old53271bytes/71identities exact. <=200normallyformattedappend, final<=1462 target, actualclassifier governs.",
+          "No productionnewpaths/policy/grants. Actualofficial AST ownerclassification/normal1500/300/c108gates, full2063+54ACTUALownedroots typing/excludes[],style affectedpaths, focusedfunctionalactualcounts. Do not infer no-growth from nestedGit0changed.",
+          "Fresh isolated successor bootstrap all16526regular+2ignoredgenuinetypingdeps verified before edits; immutable JOIN21/CE/LEG/priorfailures untouched. Freeze during live qualifiers.",
+          "No full52/adoption/enginecredit until quiet actual35second single passes naturally noUHE; normalNode25.9/8192/fork1/yield/defaultRPC/noCPU/realengine. No deadlineincrease/skip/cancel/fallback. No publiccompiler-sourcepush/HOLD/queuechanges. All27migrationcriteriaunproven."
+        ],
+        "proposalOnly": true
+      },
+      "manifestSha256": "2c84321a04d295199d90688e76ee8b88c14ad167c14dc64c7695f6456a09f246",
+      "constraints": [
+        "ONLY private mergeCell/mergeGlobal fresh result construction plus bounded local captured intrinsics/helper and append focusedtests. No other algorithm body changes; byteinverse exact. Shared copier/source/data guards unchanged.",
+        "Retain mergeCell complete original fresh spread literal and all evaluation order, all own enumerable strings/symbols/lastvalue/propertyorder, early alias return. No fixedfivefield projection. Only exclusively fresh inaccessible literal may use unvalidated local transfer, never callerinput.",
+        "Retain mergeGlobal earlyaliasreturn, originalbindingId/initialization/join evaluation order, exact3fields and plainprototype/extensibility/alltrueflags/shallowaliases. Captured zeroargordinaryallocator/defineProperty with nullprototype descriptors; no Object.assign/ordinarywrites/brandcaller/cache/newsharedAPI.",
+        "Append effective full differential rawspread/extra/symbol/nonenumerable/Proxy/gettercount/throw/descriptor/alias/prototype/intrinsicpatch/postmutation controls from sealed spec; old53271bytes/71identities exact. <=200normallyformattedappend, final<=1462 target, actualclassifier governs.",
+        "No productionnewpaths/policy/grants. Actualofficial AST ownerclassification/normal1500/300/c108gates, full2063+54ACTUALownedroots typing/excludes[],style affectedpaths, focusedfunctionalactualcounts. Do not infer no-growth from nestedGit0changed.",
+        "Fresh isolated successor bootstrap all16526regular+2ignoredgenuinetypingdeps verified before edits; immutable JOIN21/CE/LEG/priorfailures untouched. Freeze during live qualifiers.",
+        "No full52/adoption/enginecredit until quiet actual35second single passes naturally noUHE; normalNode25.9/8192/fork1/yield/defaultRPC/noCPU/realengine. No deadlineincrease/skip/cancel/fallback. No publiccompiler-sourcepush/HOLD/queuechanges. All27migrationcriteriaunproven."
+      ]
+    }
+  ],
+  "predecessors": [
+    "3522-b-native-class-semantic-producer-20261014.json",
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}
