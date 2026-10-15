@@ -1,0 +1,285 @@
+{
+  "id": "6920",
+  "slice": "ordinary-source-completions-successor-20261015",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+  "claimed_at": "2026-10-15T01:23:01.942339+00:00",
+  "updated_at": "2026-10-15T01:23:01.942339+00:00",
+  "write_id": "b-ordinary-source-completions-c0766101-79d1-4eba-82e1-dcee1f78b590",
+  "handoff_scope": [
+    {
+      "kind": "ordinary-source-completions",
+      "at": "2026-10-15T01:23:01.942339+00:00",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+      "manifest": {
+        "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+        "componentPreimages": [
+          {
+            "path": "src/ir/program-source.ts",
+            "bytes": 98615,
+            "sha256": "bb74bcc3896e935b0caaae07d6d188dc12892fc1912b6fd43a6078ba13c2cc40",
+            "scope": "one new helper import + replace the existing signature-normalization tail inside prepareSourceFunctionSignatures only; existing body/global/startup/module/source-map/call graph algorithms unchanged"
+          },
+          {
+            "path": "src/ir/from-ast.ts",
+            "bytes": 808739,
+            "sha256": "2d7a7e75d712610866882f69dda8660f7c937670d4799e1d34b66dc6fd228576",
+            "scope": "new coherent source-completion owner import; relocate exact existing class guard and implicit fallback emitter; lowerFunctionAstToIr private ordinary mode from actual returnType; LowerCtx one actual-builder field; lowerEarlyReturn ordinary typed transport only; final genuine source currentness check. Preserve original class-body/constructor/method algorithms and lowerThrowStatement. No new AstToIrOptions feature flag."
+          }
+        ],
+        "canonicalNewPaths": [
+          "src/ir/source-function-completions.ts",
+          "tests/issue-6920-native-ordinary-js-completions.test.ts"
+        ],
+        "reviewedFinalProposal": {
+          "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-helper-completions-20261015-01a12827/.tmp/ordinary-completion-next-proposal/proposal.json",
+          "bytes": 19527,
+          "sha256": "61f27661e9e3e5565c0a8421b3634b1025df8fb927332f9bb1a81b0ccb67dcc7"
+        },
+        "reviewedDetails": [
+          {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-helper-completions-20261015-01a12827/.tmp/ordinary-completion-next-proposal/helper-api.json",
+            "bytes": 5349,
+            "sha256": "fe73ba51498dcb33dac01ed74ecad908c4d184fe760c5cd7b36d110ccde664b2"
+          },
+          {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-helper-completions-20261015-01a12827/.tmp/ordinary-completion-next-proposal/planned-source-matrix.json",
+            "bytes": 7778,
+            "sha256": "e43720451d486d33b5f25a70ab514e042c5ed1cc6bc471d8025b461f00d7d7fb"
+          },
+          {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-helper-completions-20261015-01a12827/.tmp/ordinary-completion-next-proposal/budget-measurements-final.json",
+            "bytes": 1183,
+            "sha256": "2c32a64746af51f5380ab0e4f73addda76fbbc8f4fab9dcc2efa137c1705d0a1"
+          }
+        ],
+        "operations": [
+          {
+            "permission": "Actual source-owner signature/bodyResults map and the identical returnType used by actual builder constructor; no new caller true option or class-presence whitelist. Scalar/managed candidate contracts never widened from mere return presence.",
+            "selection": "New source contract only original existing synchronous nongenerator FunctionDeclaration whose current body has its OWN valued return and whose current semantic result is zero/void. Skip nested functions/classes; actual source identity/checker joins required. Canonical source native policy comes from existing input; not linearVectorProjection or any added public flag. Existing class-mode selection remains byte-equivalent and separate.",
+            "openDynamicMeaning": "A conservative JavaScript completion carrier because void erased actual values and all-path family is not proved; never Number/Boolean readiness or scalar projection. All calls/alias/export/body ABI use same changed contract before lowering; no late patch.",
+            "expectedTypes": "DYNAMIC unrefined permits actual dynamic/NumberF64/Boolean and genuine bare/fallthrough Undefined; actual F64/zero-result/support-role/refineddynamic does not grant Undefined/boxing permission. Original constructor.complete managed self remains unchanged.",
+            "throwBoundary": "Existing jsValueCompletionBuilder stays class-only. New ordinaryCompletionBuilder never grants class tagged throw; ordinary numericThrow/provider route and abrupt barriers stay exact."
+          },
+          [
+            {
+              "path": "src/ir/program-source.ts",
+              "writers": [
+                "prepareSourceFunctionSignatures signature/bodyResults/jsCompletions",
+                "directCalls construction",
+                "prepareStartupDirectCalls"
+              ],
+              "join": "one result contract before body/calls/startup; current prepareIrProgramSources body and option-threading remain byte-exact except existing lookup reads"
+            },
+            {
+              "path": "src/ir/from-ast.ts",
+              "writers": [
+                "lowerFunctionAstToIr builder resultTypes and ordinary source mode",
+                "lowerEarlyReturn value/box transport"
+              ],
+              "preserve": [
+                "existing class completion option/guard meaning",
+                "lowerThrowStatement ordinary/class boundary",
+                "lowerTail/coerceReturnValue scalar/managed algorithms",
+                "noEarlyReturn cleanup guards",
+                "original source sites/lifted identities"
+              ]
+            },
+            {
+              "path": "src/ir/program-abi-contracts.ts",
+              "readers": [
+                "prepareIrProgramAbiEntries"
+              ],
+              "join": "actual finished function params and preparedIrProgramCallableResults; canonical import/export aliases resolve actual unit contract; no writes"
+            },
+            {
+              "path": "src/ir/program/callable-results.ts",
+              "readers": [
+                "preparedIrProgramCallableResults"
+              ],
+              "join": "canonical ordinary body result vs async Promise carrier policy unchanged"
+            },
+            {
+              "path": "src/ir/runtime/verify.ts",
+              "readers": [
+                "verifyIrFunction",
+                "return/early.return resultType assignability"
+              ],
+              "join": "current function expected result arity/type; no verifier relaxation"
+            },
+            {
+              "path": "src/ir/program/validation.ts",
+              "readers": [
+                "validatePreparedIrProgram",
+                "actual body/direct-call/complete ABI joins"
+              ],
+              "join": "all original/selected units and exact canonical signature/target aliases; source-only helper cannot grant publication"
+            },
+            {
+              "path": "src/ir/analysis/ownership.ts",
+              "readers": [
+                "applyInstrEffect",
+                "collectAllocs",
+                "collectAliases",
+                "TOP writeback"
+              ],
+              "join": "already qualified canonical buffer/direct-use traversal; real returned root escaped+escape, never invented local"
+            },
+            {
+              "path": "src/ir/analysis/escape.ts",
+              "readers": [
+                "analyzeEscape::visitInstr",
+                "opaque backstop"
+              ],
+              "join": "already qualified actual early.return edges and aliases conservative nonlocal"
+            },
+            {
+              "path": "src/ir/analysis/linear-memory-plan.ts",
+              "readers": [
+                "prepareLinearAllocationFacts"
+              ],
+              "join": "generic analyses +unchanged stack phase; actual returned box cannot receive stackCandidate; native profile independent"
+            },
+            {
+              "path": "src/ir/program/allocations.ts",
+              "readers": [
+                "assertPreparedIrProgramAllocations"
+              ],
+              "join": "fresh independent generic original metadata replay; do not copy/drop marker to make equality"
+            },
+            {
+              "path": "src/ir/program/linear-allocation-validation.ts",
+              "readers": [
+                "unsupportedPreparedLinearAllocationEvidence",
+                "validatePreparedIrLinearAllocationEvidence"
+              ],
+              "join": "native finite profile may honestly decline; no schema/fact/admission waiver"
+            },
+            {
+              "path": "src/ir/program-codec.ts",
+              "readers": [
+                "encodePreparedIrProgram",
+                "decodePreparedIrProgram"
+              ],
+              "join": "genuine immutable semantic source-free program roundtrip; no new fields or source renderer capture"
+            }
+          ]
+        ],
+        "qualificationPlan": [
+          "Create fresh isolated actual current-root successor, snapshot all current source/policy/dependency inputs; original private2/private4/A10/A117/generic6 and historical8 remain immutable.",
+          "Fresh actual TS Program/checker/original SourceFiles -> source API on 16 fixtures/four policies (planned64), with actual LIST governing focused guards/count. No source or engine runtimes were run for this proposal.",
+          "Source positives require verify0, exact original own return payload/calls/ABI/unit joins and builder-issued alloc sites. No annotation-derived Undefined/Number proof. Whole source factory for typed pass uses clean unmodified producer input, not test-enriched metadata.",
+          "Fresh genuine typed/codec positives and original/all-selected metadata replay required independently of old20; exact Unsupported/invariant stages retained separately and do not pass a permissive prepared-or-unsupported assertion. No engine/public-artifact credit.",
+          "Returned SSA oracle independent of annotations: actual box immediately feeding return/aliases must escape/nonlocal/nonstack under current generic2; repeated branches/unseen TOP conservative, facts/replay agree. Meaningful forgeries must refuse without clearing namespaces or stack markers.",
+          "Existing native helper59/source66/current generic52 and relevant typed/codec controls remain regression evidence; normal source typing/static/immutable source freeze. Root chooses minimal joined cohorts to avoid duplicate heavy matrices."
+        ],
+        "budget": {
+          "measurement": "budget-measurements-final.json",
+          "candidateTextOnly": [
+            "program-source.ts.budget-candidate.txt",
+            "from-ast.ts.budget-candidate.txt"
+          ],
+          "currentAndCandidate": [
+            {
+              "path": "src/ir/program-source.ts",
+              "beforeLines": 2135,
+              "afterLines": 2130,
+              "changedFunctions": [
+                {
+                  "key": "src/ir/program-source.ts::prepareSourceFunctionSignatures",
+                  "before": 114,
+                  "after": 109
+                }
+              ],
+              "classification": {
+                "regrown": [],
+                "newGiants": [],
+                "granted": [],
+                "shrunk": [
+                  [
+                    "src/ir/program-source.ts::prepareSourceFunctionSignatures",
+                    109
+                  ]
+                ]
+              },
+              "syntaxOnly": true,
+              "notImplementedOrTyped": true
+            },
+            {
+              "path": "src/ir/from-ast.ts",
+              "beforeLines": 17293,
+              "afterLines": 17286,
+              "changedFunctions": [
+                {
+                  "key": "src/ir/from-ast.ts::lowerFunctionAstToIr",
+                  "before": 431,
+                  "after": 416
+                },
+                {
+                  "key": "src/ir/from-ast.ts::lowerEarlyReturn",
+                  "before": 45,
+                  "after": 51
+                }
+              ],
+              "classification": {
+                "regrown": [],
+                "newGiants": [],
+                "granted": [],
+                "shrunk": [
+                  [
+                    "src/ir/from-ast.ts::lowerFunctionAstToIr",
+                    416
+                  ]
+                ]
+              },
+              "syntaxOnly": true,
+              "notImplementedOrTyped": true
+            }
+          ],
+          "noTypedOrRuntimeCreditFromCandidate": true,
+          "newLeafCaps": {
+            "fileLines": 250,
+            "largestFunctionLines": 100,
+            "notMeasuredImplementation": true,
+            "noAllowance": true
+          },
+          "futureGate": "normal exact LOC_GATE_BASE actual branch +owned Prettier/Biome +normal12/fulltypes; no file/function/baseline allowances, no minification/comment trimming. If measured helper growth exceeds caps, report actual dependency before receiver expansion.",
+          "preservedStaticError": "initial budget-only text accidentally extracted first matching implicit-return block from native class lowerer; retained wrong-scope text/measurement, corrected before proposal. Final budget candidate changes ONLY named ordinary function scopes; no source file was touched."
+        },
+        "constraints": [
+          "Human all Session B and blocking shared seams takeover; preserve foreign branches, owners, source PR heads, HOLDs and integration queue. No source/main push.",
+          "PRIVATE fresh current ROOT bootstrap only after receiver/root GO. ROOT remains frozen through running138/40root/static12. Only existing2/newhelper/newtest writable; no generic, verifier, native profile, physical transport, DTS, policy or registry changes.",
+          "Original explicit-void own valued-return census and identical actual builder contract only. No new caller option/boolean/registration/class presence readiness. Preserve scalar/managed/async/generator/constructor contracts, class-only throw mode and ordinary throw routes.",
+          "All original source currentness, direct-call/import/export target/ABI joins before lowering and after capture. No annotation-derived normal family, fabricated sites, synthetic original nodes, silent Undefined substitution or late signature patch.",
+          "New mixed helper cap250lines/maxfn100; existing giant functions shrink, no compression or allowances. Import follows existing copyright/header conventions.",
+          "Source-stage, typed/codec, physical/runtime and public artifact readiness reported separately. Genuine nonempty fresh typed positives required; no prepared-or-unsupported success assertions or unsupported regression expectations defending a missing capability.",
+          "No live qualifier inputs edited, cancellations, deadline/RPC changes or hidden failures. Private code editing may overlap frozen ROOT checks; heavy runtimes await scheduling release.",
+          "ROOT owns subsequent truthful new mixed inventory row and issue update after actual2054 source exists and root qualifiers terminal; no architecture waiver."
+        ]
+      },
+      "manifestSha256": "6a83d54e34b33ad921d438a452c7e0efca3a0fa7b12029903c8613b10a171c0a",
+      "constraints": [
+        "Human all Session B and blocking shared seams takeover; preserve foreign branches, owners, source PR heads, HOLDs and integration queue. No source/main push.",
+        "PRIVATE fresh current ROOT bootstrap only after receiver/root GO. ROOT remains frozen through running138/40root/static12. Only existing2/newhelper/newtest writable; no generic, verifier, native profile, physical transport, DTS, policy or registry changes.",
+        "Original explicit-void own valued-return census and identical actual builder contract only. No new caller option/boolean/registration/class presence readiness. Preserve scalar/managed/async/generator/constructor contracts, class-only throw mode and ordinary throw routes.",
+        "All original source currentness, direct-call/import/export target/ABI joins before lowering and after capture. No annotation-derived normal family, fabricated sites, synthetic original nodes, silent Undefined substitution or late signature patch.",
+        "New mixed helper cap250lines/maxfn100; existing giant functions shrink, no compression or allowances. Import follows existing copyright/header conventions.",
+        "Source-stage, typed/codec, physical/runtime and public artifact readiness reported separately. Genuine nonempty fresh typed positives required; no prepared-or-unsupported success assertions or unsupported regression expectations defending a missing capability.",
+        "No live qualifier inputs edited, cancellations, deadline/RPC changes or hidden failures. Private code editing may overlap frozen ROOT checks; heavy runtimes await scheduling release.",
+        "ROOT owns subsequent truthful new mixed inventory row and issue update after actual2054 source exists and root qualifiers terminal; no architecture waiver."
+      ]
+    }
+  ],
+  "predecessors": [
+    "3522-b-native-class-semantic-producer-20261014.json",
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}
