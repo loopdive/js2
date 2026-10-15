@@ -39,6 +39,17 @@ import { emitUndefined, ensureLateImport, flushLateImportShifts } from "./late-i
 /** Core-Wasm provider namespace owned by #2928/#2527. */
 export const RUNTIME_EVAL_IMPORT_MODULE = "js2wasm:runtime-eval";
 
+/**
+ * (#6979 S7-c) May this build import the `js2wasm:runtime-eval` provider ABI?
+ * A capability question, not a semantic one: every native-regime build may,
+ * except WASI, whose host has no runtime-eval provider — its eval calls keep
+ * the #4195 refusal. Before WASI joined the regime this was exactly
+ * `ctx.standalone`.
+ */
+export function runtimeEvalProviderLinkable(ctx: CodegenContext): boolean {
+  return ctx.standalone && !ctx.wasi;
+}
+
 const RUNTIME_EVAL_PUSH_GLOBALS = "__runtime_eval_push_globals";
 const RUNTIME_EVAL_PULL_GLOBALS = "__runtime_eval_pull_globals";
 const RUNTIME_EVAL_PULL_VALUE = "__runtime_eval_pull_value";
@@ -714,7 +725,7 @@ function ensureRuntimeEvalGlobalBindingSync(ctx: CodegenContext): void {
  * object closes the AOT→interpreter visibility half without exposing compiler
  * helper globals or requiring a second provider-side callable ABI. */
 export function emitRuntimeEvalGlobalBindingSeed(ctx: CodegenContext, fctx: FunctionContext, activate = true): void {
-  if (!ctx.standalone) return;
+  if (!runtimeEvalProviderLinkable(ctx)) return;
   ensureRuntimeEvalGlobalBindingSync(ctx);
   const pushIdx = ctx.funcMap.get(RUNTIME_EVAL_PUSH_GLOBALS);
   if (pushIdx !== undefined) fctx.body.push({ op: "call", funcIdx: pushIdx });
@@ -854,7 +865,7 @@ export function emitStandaloneDirectEvalRuntime(
   call: ts.CallExpression,
 ): ValType | undefined {
   const reifiedHost = !ctx.standalone && ctx.directEvalMode === "reified-host";
-  if (!ctx.standalone && !reifiedHost) return undefined;
+  if (!runtimeEvalProviderLinkable(ctx) && !reifiedHost) return undefined;
   const args = call.arguments;
   if (args.length === 0) {
     emitUndefined(ctx, fctx);

@@ -450,7 +450,7 @@ import {
 } from "./eval-inline.js";
 import { tryHostDynamicFunctionCtorValue } from "./dynamic-function-ctor-value.js"; // (#4650)
 import { tryEvalAsCommentPeephole } from "./eval-comment-peephole.js"; // (#1240) exhaustive comment eval loop
-import { dynamicEvalRefusalMessages } from "./runtime-eval-provider.js";
+import { dynamicEvalRefusalMessages, runtimeEvalProviderLinkable } from "./runtime-eval-provider.js";
 import {
   ensureRuntimeEvalInterpretedCallbackType,
   ensureRuntimeEvalValueType,
@@ -6964,7 +6964,7 @@ function compileCallExpression(
       tryStandaloneHostFreeCall(ctx, fctx, expr, immediateFunctionCtor) ??
       tryStandaloneDynamicFunctionCtorValue(ctx, fctx, expr);
     if (r !== undefined) return r;
-    if (ctx.standalone && immediateFunctionCtor && ensureRuntimeEvalCallableCarrier(ctx, fctx)) {
+    if (runtimeEvalProviderLinkable(ctx) && immediateFunctionCtor && ensureRuntimeEvalCallableCarrier(ctx, fctx)) {
       const dyn = tryEmitInlineDynamicCall(ctx, fctx, expr, true);
       if (dyn !== null) return dyn;
     }
@@ -7108,7 +7108,7 @@ function compileCallExpression(
             ? emitStandaloneIndirectEvalRuntime(ctx, fctx, expr.arguments)
             : ctx.directEvalMode === "reified-host"
               ? emitStandaloneDirectEvalRuntime(ctx, fctx, expr)
-              : ctx.standalone && ensureRuntimeEvalCallableCarrier(ctx, fctx)
+              : runtimeEvalProviderLinkable(ctx) && ensureRuntimeEvalCallableCarrier(ctx, fctx)
                 ? emitStandaloneDirectEvalRuntime(ctx, fctx, expr)
                 : undefined
           : emitStandaloneIndirectEvalRuntime(ctx, fctx, expr.arguments);

@@ -47,6 +47,7 @@ import {
   emitRuntimeEvalProviderActive,
   emitRuntimeEvalResultUnwrap,
   RUNTIME_EVAL_IMPORT_MODULE,
+  runtimeEvalProviderLinkable,
 } from "./runtime-eval-provider.js";
 import { emitRuntimeEvalInterpretedCallableAdapter } from "../runtime-eval-callable.js";
 import { ensureRuntimeEvalInterpretedCallbackType } from "../runtime-eval-boundary.js";
@@ -2008,7 +2009,7 @@ export function tryStandaloneDynamicFunctionCtorValue(
   fctx: FunctionContext,
   expr: ts.CallExpression,
 ): InnerResult | undefined {
-  if (!ctx.standalone) return undefined;
+  if (!runtimeEvalProviderLinkable(ctx)) return undefined;
   const callee = unwrapParenExpr(expr.expression);
   if (!ts.isIdentifier(callee) || !isGlobalFunctionIdentifier(callee, ctx.checker)) return undefined;
   return emitStandaloneDynamicFunctionRuntime(ctx, fctx, expr.arguments);
@@ -2033,7 +2034,7 @@ export function emitStandaloneIndirectEvalRuntime(
   args: readonly ts.Expression[],
   sourceLocal?: number, // (#6774 S18) the source already evaluated (spread args)
 ): ValType | undefined {
-  if (!ctx.standalone) return undefined;
+  if (!runtimeEvalProviderLinkable(ctx)) return undefined;
   if (args.length === 0 && sourceLocal === undefined) {
     // (#2875 w4-F) §19.2.1.1 step 2 — `eval()` passes `undefined`, not a String,
     // so PerformEval returns it unchanged. `ref.null.extern` is `null`, a
@@ -2086,7 +2087,7 @@ export function emitStandaloneGlobalScriptEvalRuntime(
   fctx: FunctionContext,
   args: readonly ts.Expression[],
 ): ValType | undefined {
-  if (!ctx.standalone) return undefined;
+  if (!runtimeEvalProviderLinkable(ctx)) return undefined;
   if (args.length === 0) {
     emitUndefined(ctx, fctx);
     return { kind: "externref" };
@@ -2200,7 +2201,7 @@ export function emitStandaloneDynamicFunctionRuntime(
   fctx: FunctionContext,
   args: readonly ts.Expression[],
 ): ValType | undefined {
-  if (!ctx.standalone) return undefined;
+  if (!runtimeEvalProviderLinkable(ctx)) return undefined;
   if (isRuntimeEvalProviderAbsent(ctx)) return emitRefusedDynamicFunction(ctx, fctx, args);
   const repr = nativeStringRepr(ctx);
   if (repr === undefined) return undefined;

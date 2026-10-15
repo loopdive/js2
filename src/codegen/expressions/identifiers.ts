@@ -111,7 +111,7 @@ import {
 } from "../global-environment.js";
 import { runtimeEvalStateMayShadowBinding } from "../direct-eval-environment.js";
 import { emitStandaloneIntrinsicEvalValue } from "./eval-inline.js";
-import { emitHostEvalGlobalBindingSeed } from "./runtime-eval-provider.js";
+import { emitHostEvalGlobalBindingSeed, runtimeEvalProviderLinkable } from "./runtime-eval-provider.js";
 import { emitStandaloneFunctionIntrinsicValue } from "../function-intrinsic-carrier.js"; // (#4442) THE `%Function%` emitter
 import { definedFuncAt } from "../func-space.js";
 import { emitHostOrNativeBuiltinInstanceOf } from "../host-native-instanceof.js";
@@ -1612,7 +1612,7 @@ function compileIdentifierCore(
   // marker. Syntactic direct/sequence calls are intercepted in calls.ts before
   // identifier lowering reaches this branch; this is the value path that used
   // to fall through to `ref.null.extern` and made every AOT eval alias inert.
-  if (ctx.standalone && name === "eval") {
+  if (runtimeEvalProviderLinkable(ctx) && name === "eval") {
     const declaration = ctx.oracle.valueDeclarationOf(id);
     const isGlobalIntrinsic = declaration === undefined || declaration.getSourceFile().isDeclarationFile;
     if (isGlobalIntrinsic) {
