@@ -1,0 +1,80 @@
+{
+  "id": "6920",
+  "slice": "closed-exception-ssa-legality-successor-20261015",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+  "claimed_at": "2026-10-15T00:32:57.891823+00:00",
+  "updated_at": "2026-10-15T00:32:57.891823+00:00",
+  "write_id": "b-closed-exception-ssa-legality-af0639cd-6a08-45d3-afcf-a51126d60f8e",
+  "handoff_scope": [
+    {
+      "kind": "closed-exception-ssa-legality",
+      "at": "2026-10-15T00:32:57.891823+00:00",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+      "manifest": {
+        "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+        "componentPreimages": [
+          {
+            "path": "src/ir/analysis/allocation-evidence/native-js-class-legality.ts",
+            "bytes": 11433,
+            "sha256": "62ce832a9760e11303983b7f1eb39a5885840c52d5a1796df022d082e7a5bd85"
+          }
+        ],
+        "canonicalNewPaths": [
+          "tests/issue-6920-native-js-class-exception-legality.test.ts"
+        ],
+        "reviewedProposal": {
+          "path": ".tmp/class-exception-legality-triage/receiving-proposal.json",
+          "bytes": 7341,
+          "sha256": "77d0b5d27f7df4eccad7db768dc8ecf04d8b2dc1340c22f8c153cf29248fde33"
+        },
+        "reviewedCarrier": {
+          "path": ".tmp/class-exception-legality-triage/test-carrier-scope.json",
+          "bytes": 2024,
+          "sha256": "3a64def55c57148496f529de0a4343457be9d4eae43e1f3d30c011b65dab9a1a"
+        },
+        "operations": [
+          "B alone adds internal actual closed exception-SSA producer/use census within existing inspect/leaf; original and selected independent namespace replay remains mandatory.",
+          "Exact raw val.externref without typeRef is admitted only for actual null→canonical ReferenceError→throw or actual dynamic box→coerce→throw local SSA, with nonempty complete nested direct/terminator use census. No signature/slot/global/return/branch/receiver/box payload escape.",
+          "One production-compatible test embeds genuine current source fixtures; actual source→typed→codec exact replay under all four policies. Mutants are negatives; historical codec8 remains private diagnostic."
+        ],
+        "qualificationPlan": [
+          "PRIVATE fresh current2053 source copy with only one existing leaf delta and one absent test; pin source/policy/tests and preserve all prior epochs. ROOT401/commonguard input freeze remains.",
+          "Actual positive and hostile test census/runtimes, original codec8 next-frontier diagnostic, fullsource typing excludes[], scoped formatting and ordinary gates. No inferred engine success.",
+          "Separate root reviewed exact2 adoption only after private qualification and common input natural-terminal boundary."
+        ],
+        "constraints": [
+          "Human allB/shared-seam takeover; bounded sameSessionB continuation, preserve foreign branches/claims/public heads/HOLDs/queue.",
+          "PRIVATE implementation GO only after root publishes this receiver. No ROOT writes until explicit qualified adoption.",
+          "Keep general physical type predicate, signature/results/slots/globals and native type/instruction exemption APIs unchanged. Only actual local closed-use exception SSA values; no structural type-only or empty-use admission.",
+          "Keep canonical full runtime/provider/ABI validation and physical reservation/fill/currentness. No new schema/helper/provider/host capability/opcode or waiver/cache/authority shortcut.",
+          "Linear const Undefined/coerce and physical construct/invoke remain truthful unissued/refusing frontiers. No source grammar/inliner/allocator/generic verifier/emitter/policy/budget/oldtest edits.",
+          "No .tmp/private donor CI dependency, no callback verdict/fabricated site/source or backend whitelist; all four actual policies reported honestly.",
+          "No timeout/RPC adjustment, canceled test, source push, main/public PR change. Preserve all frozen failed and passing inputs through natural terminal."
+        ]
+      },
+      "manifestSha256": "ab27d9f593295641494f89c0f58bc57ca7643c076bfee5cc7adcce378a528504",
+      "constraints": [
+        "Human allB/shared-seam takeover; bounded sameSessionB continuation, preserve foreign branches/claims/public heads/HOLDs/queue.",
+        "PRIVATE implementation GO only after root publishes this receiver. No ROOT writes until explicit qualified adoption.",
+        "Keep general physical type predicate, signature/results/slots/globals and native type/instruction exemption APIs unchanged. Only actual local closed-use exception SSA values; no structural type-only or empty-use admission.",
+        "Keep canonical full runtime/provider/ABI validation and physical reservation/fill/currentness. No new schema/helper/provider/host capability/opcode or waiver/cache/authority shortcut.",
+        "Linear const Undefined/coerce and physical construct/invoke remain truthful unissued/refusing frontiers. No source grammar/inliner/allocator/generic verifier/emitter/policy/budget/oldtest edits.",
+        "No .tmp/private donor CI dependency, no callback verdict/fabricated site/source or backend whitelist; all four actual policies reported honestly.",
+        "No timeout/RPC adjustment, canceled test, source push, main/public PR change. Preserve all frozen failed and passing inputs through natural terminal."
+      ]
+    }
+  ],
+  "predecessors": [
+    "3522-b-native-class-semantic-producer-20261014.json",
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}
