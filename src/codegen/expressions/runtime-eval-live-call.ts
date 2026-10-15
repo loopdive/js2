@@ -92,6 +92,11 @@ export function runtimeEvalLiveCallFastPathEligible(
   // `reassignedFunctionDeclarations`) keeps the inline live lowering.
   if (ctx.evalOnlyLiveFuncBindings?.has(name) !== true) return false;
   if (ctx.oracle.valueDeclarationOf(expr.expression) !== declaration) return false;
+  // A call in compile-time-inlined eval code (`eval("f();")` with a constant
+  // string) lives in a synthetic source file whose bodies compile more than
+  // once; its recorded site is lost and the call vanishes (test262
+  // built-ins/Function/15.3.5.4_2-57gs.js), so it keeps the inline lowering.
+  if (sourceFileOf(expr) !== declaration.getSourceFile()) return false;
   const funcIdx = ctx.funcMap.get(name);
   return funcIdx !== undefined && definedFuncAt(ctx, funcIdx) !== undefined;
 }
@@ -245,4 +250,10 @@ function buildTrampoline(
   const fn = definedFuncAt(ctx, funcIdx);
   if (fn) fn.locals = fctx.locals;
   return funcIdx;
+}
+
+function sourceFileOf(node: ts.Node): ts.SourceFile | undefined {
+  let current: ts.Node | undefined = node;
+  while (current && !ts.isSourceFile(current)) current = current.parent;
+  return current;
 }

@@ -722,6 +722,9 @@ export function compileIdentifierCall(
   return withDeclarationBoundCallee(ctx, expr, () => {
     const body = fctx.body;
     const start = body.length;
+    // The set is keyed by AST node, which an incremental compiler reuses across
+    // compiles: only a deferral made by THIS compile of the site may count.
+    liveCallFastPath.delete(expr);
     const result = compileBoundIdentifierCall(ctx, fctx, expr, expectedType);
     if (!liveCallFastPath.delete(expr)) return result;
     // (#6990) Retarget the direct call to the live-call trampoline at finalize;
