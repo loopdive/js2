@@ -95,7 +95,6 @@ import { ensureIteratorNextCallableHandle } from "../iter-hof-native.js";
 import { isLazyIterForm, LAZY_ITER_METHODS } from "../iter-lazy-native.js";
 import { stringConstantExternrefInstrs } from "../native-strings.js";
 import { staticHostPropertyKeyInstrs } from "../host-property-key.js";
-import { usesNativeNumberFormat } from "../number-format-native.js";
 import { ensureStandaloneRegExpCarrierTestHelper } from "../regexp-standalone.js";
 import { ensureStandaloneRegExpCarrierExecHelper } from "../regexp-exec-carrier.js";
 import {
@@ -2855,10 +2854,9 @@ export function compileReceiverMethodCall(
     // `$AnyString`. Consumers then had to re-discover the representation
     // dynamically (`ref.test $AnyString`), and any consumer that could NOT —
     // notably a JS-host import argument like `parseInt` — silently received an
-    // opaque WasmGC struct. Since #3912 makes the formatter native whenever
-    // `usesNativeNumberFormat`, "are strings native here?" is the whole
-    // question, so the target-specific conjunct is gone.
-    const unwrapToNative = ctx.nativeStrings && ctx.nativeStrTypeIdx >= 0 && usesNativeNumberFormat(ctx);
+    // opaque WasmGC struct. The formatter is always native (#3912, #6979), so
+    // "are strings native here?" is the whole question.
+    const unwrapToNative = ctx.nativeStrings && ctx.nativeStrTypeIdx >= 0;
     if (radixLocalIdx !== undefined) {
       const radixFuncIdx = ctx.funcMap.get("number_toString_radix");
       if (radixFuncIdx !== undefined) {

@@ -75,7 +75,6 @@ import {
 import { parameterMayBeOmitted } from "../declarations.js";
 import { emitStringExternResultFlatten, emitStringRefResultFlatten } from "../string-materialize.js";
 import { compileStringLiteral, emitBoolToString } from "../string-ops.js";
-import { usesNativeNumberFormat } from "../number-format-native.js";
 import { emitSymbolToString } from "../symbol-native.js";
 import { resolveGlobalParseBuiltin } from "../global-builtin-resolution.js";
 import { resolveBuiltinStaticBindingAlias } from "../builtin-static-globals.js";
@@ -270,7 +269,7 @@ function tryEmitGenericIdentityResult(
  * the same operation now agree on their result type.
  */
 function emitStringBuiltinNumberResult(ctx: CodegenContext, fctx: FunctionContext): ValType {
-  if (ctx.nativeStrings && ctx.nativeStrTypeIdx >= 0 && ctx.anyStrTypeIdx >= 0 && usesNativeNumberFormat(ctx)) {
+  if (ctx.nativeStrings && ctx.nativeStrTypeIdx >= 0 && ctx.anyStrTypeIdx >= 0) {
     fctx.body.push({ op: "any.convert_extern" });
     fctx.body.push({ op: "ref.cast", typeIdx: ctx.anyStrTypeIdx });
     return { kind: "ref", typeIdx: ctx.anyStrTypeIdx };

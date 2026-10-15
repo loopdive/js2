@@ -9033,7 +9033,7 @@ function compileArrayDefaultToStringSort(
   // `illegal cast` trap on every numeric `arr.sort()`.
   //
   // #3912 removed the mismatch at its source: `number_toString` is now native
-  // wherever strings are native (`usesNativeNumberFormat`), so
+  // wherever strings are native (always since #6979), so
   // `numToStrIsHostImport` can no longer be true while `ctx.nativeStrings` is —
   // the probe was dead code. Removed here, together with #3902's temporary
   // `coercion-sites-allow` for this file, exactly as #3902's frontmatter

@@ -46,7 +46,7 @@ import {
 } from "../index.js";
 import { ensureNativeStringHelpers } from "../native-strings.js";
 import { registerBigIntToStringDemand } from "../bigint-string-context.js";
-import { emitNativeNumberFormat, usesNativeNumberFormat } from "../number-format-native.js";
+import { emitNativeNumberFormat } from "../number-format-native.js";
 import { emitNativeBigIntFormat } from "../bigint-format-native.js";
 import { emitNativeParseNumber } from "../parse-number-native.js";
 import { resolveGlobalParseBuiltin } from "../global-builtin-resolution.js";
@@ -1531,76 +1531,31 @@ export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedColl
   }
 
   // ── collectPrimitiveMethodImports finalize ──
-  const nativeNumberFormat = usesNativeNumberFormat(ctx);
-  // #1759/#3912: wherever strings are natively represented, template
-  // interpolation and String(number) need the pure-Wasm Number::toString, NOT
-  // env.number_toString — the host import hands back a real JS string, which
-  // every native consumer then mis-reads as an `$AnyString` box. All three
-  // gates below read that ONE predicate, so they cannot re-diverge.
-  const needsNativeNumberToString = state.primitiveNeeded.has("number_toString") && nativeNumberFormat;
-  if (state.primitiveNeeded.has("number_toString") && !needsNativeNumberToString) {
-    const t = addFuncType(ctx, [{ kind: "f64" }], [{ kind: "externref" }]);
-    addImport(ctx, "env", "number_toString", { kind: "func", typeIdx: t });
+  // (#6979) Number/BigInt formatting is always the WasmGC-native formatter
+  // (registered under the historical funcMap names): every WasmGC profile is
+  // the native regime or WASI, and the `env.number_*` / `env.bigint_toString*`
+  // host formatters are retired. Emit order matters: number_toPrecision
+  // delegates to the toFixed/toExponential helpers, so emitNativeNumberFormat
+  // emits those first. The defined funcs participate in the late-import
+  // index-shift fixup like emitNativeParseNumber's.
+  const fmtNative = new Set<string>();
+  for (const n of [
+    "number_toString",
+    "number_toString_radix",
+    "number_toFixed",
+    "number_toExponential",
+    "number_toPrecision",
+  ]) {
+    if (state.primitiveNeeded.has(n) && !ctx.funcMap.has(n)) fmtNative.add(n);
   }
-  // #1321: 2-arg `number_toString_radix(value, radix)` for `toString(radix)` calls.
-  // Without this, the codegen validates the radix range but then calls 1-arg
-  // `number_toString(value)`, silently producing decimal output for any radix.
-  // #1335 Phase 1: standalone/WASI emits the safe-integer radix formatter in
-  // pure Wasm instead of requesting the JS host import.
-  const needsNativeNumberToStringRadix = state.primitiveNeeded.has("number_toString_radix") && nativeNumberFormat;
-  if (state.primitiveNeeded.has("number_toString_radix") && !needsNativeNumberToStringRadix) {
-    const t = addFuncType(ctx, [{ kind: "f64" }, { kind: "f64" }], [{ kind: "externref" }]);
-    addImport(ctx, "env", "number_toString_radix", { kind: "func", typeIdx: t });
+  if (fmtNative.size > 0) {
+    emitNativeNumberFormat(ctx, fmtNative);
   }
-  // (#1644 Slice D) BigInt#toString — i64 receiver, optional i32 radix.
-  if (state.primitiveNeeded.has("bigint_toString") && !nativeNumberFormat) {
-    const t = addFuncType(ctx, [{ kind: "i64" }], [{ kind: "externref" }]);
-    addImport(ctx, "env", "bigint_toString", { kind: "func", typeIdx: t });
+  const bigintNative = new Set<string>();
+  for (const name of ["bigint_toString", "bigint_toString_radix"]) {
+    if (state.primitiveNeeded.has(name)) bigintNative.add(name);
   }
-  if (state.primitiveNeeded.has("bigint_toString_radix") && !nativeNumberFormat) {
-    const t = addFuncType(ctx, [{ kind: "i64" }, { kind: "i32" }], [{ kind: "externref" }]);
-    addImport(ctx, "env", "bigint_toString_radix", { kind: "func", typeIdx: t });
-  }
-  // #1321 / #1335 Phase 2: in standalone / WASI mode there is no JS host to
-  // satisfy the `number_toFixed` / `number_toPrecision` / `number_toExponential`
-  // imports. Emit WasmGC-native implementations (registered under the same
-  // funcMap names) instead. Emit order matters: number_toPrecision delegates to
-  // the toFixed/toExponential helpers, so emitNativeNumberFormat emits those
-  // first. The defined funcs participate in the late-import index-shift fixup
-  // like emitNativeParseNumber's.
-  if (nativeNumberFormat) {
-    const fmtNative = new Set<string>();
-    for (const n of [
-      "number_toString",
-      "number_toString_radix",
-      "number_toFixed",
-      "number_toExponential",
-      "number_toPrecision",
-    ]) {
-      if (state.primitiveNeeded.has(n) && !ctx.funcMap.has(n)) fmtNative.add(n);
-    }
-    if (fmtNative.size > 0) {
-      emitNativeNumberFormat(ctx, fmtNative);
-    }
-    const bigintNative = new Set<string>();
-    for (const name of ["bigint_toString", "bigint_toString_radix"]) {
-      if (state.primitiveNeeded.has(name)) bigintNative.add(name);
-    }
-    if (bigintNative.size > 0) emitNativeBigIntFormat(ctx, bigintNative);
-  } else {
-    if (state.primitiveNeeded.has("number_toFixed")) {
-      const t = addFuncType(ctx, [{ kind: "f64" }, { kind: "f64" }], [{ kind: "externref" }]);
-      addImport(ctx, "env", "number_toFixed", { kind: "func", typeIdx: t });
-    }
-    if (state.primitiveNeeded.has("number_toPrecision")) {
-      const t = addFuncType(ctx, [{ kind: "f64" }, { kind: "f64" }], [{ kind: "externref" }]);
-      addImport(ctx, "env", "number_toPrecision", { kind: "func", typeIdx: t });
-    }
-    if (state.primitiveNeeded.has("number_toExponential")) {
-      const t = addFuncType(ctx, [{ kind: "f64" }, { kind: "f64" }], [{ kind: "externref" }]);
-      addImport(ctx, "env", "number_toExponential", { kind: "func", typeIdx: t });
-    }
-  }
+  if (bigintNative.size > 0) emitNativeBigIntFormat(ctx, bigintNative);
   if (state.primitiveNeeded.has("string_compare") && !ctx.nativeStrings) {
     // In native strings mode, __str_compare Wasm helper handles this — no host import needed
     const t = addFuncType(ctx, [{ kind: "externref" }, { kind: "externref" }], [{ kind: "i32" }]);
