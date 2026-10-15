@@ -85,6 +85,19 @@ const CASES: [string, string][] = [
     test(`const a: any = "x"; return (a < 1 ? 1 : 0) + (a >= 1 ? 10 : 0);`),
   ],
   ["control: any numbers", test(`const a: any = 3; const b: any = 10; return (a < b ? 1 : 0) + (a > b ? 10 : 0);`)],
+  [
+    "numeric local against an any string (mixed → numeric)",
+    test(
+      `return (f("10") ? 1 : 0) + (f("2") ? 10 : 0) + (f("x") ? 100 : 0);`,
+      `function f(x: any): boolean { const n = 3; return n < x }`,
+    ),
+  ],
+  [
+    "untyped JS numeric fields keep numeric semantics (NaN is incomparable)",
+    test(
+      `const o: any = { a: 1, b: NaN }; return (o.a < 2 ? 1 : 0) + (o.b < 2 ? 10 : 0) + (o.b >= 2 ? 100 : 0) + (o.a >= o.a ? 1000 : 0);`,
+    ),
+  ],
 ];
 
 describe("#6999 standalone relational on dynamic strings", () => {

@@ -56,6 +56,7 @@ import { tryStaticToNumber } from "./expressions/misc.js";
 import { emitNativeParseNumber } from "./parse-number-native.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
 import { admitsObjectAddition, emitObjectAdd } from "./addition-to-primitive.js";
+import { compileRelationalOperandsToExtern } from "./relational-operands.js"; // (#6999)
 import {
   admitsAnyRelational,
   admitsObjectRelational,
@@ -2189,7 +2190,7 @@ export function compileBinaryExpression(
     const anyArm = admitsAnyRelational(ctx, leftTsType, rightTsType);
     const objArm = admitsObjectRelational(ctx, leftTsType, rightTsType);
     if ((anyArm || objArm) && !isBigIntType(leftTsType) && !isBigIntType(rightTsType)) {
-      return emitAnyRelational(ctx, fctx, expr, op);
+      return emitAnyRelational(ctx, fctx, expr, op, anyArm);
     }
   }
 
@@ -2741,25 +2742,16 @@ export function emitAnyRelational(
   fctx: FunctionContext,
   expr: ts.BinaryExpression,
   op: ts.SyntaxKind,
+  numericShortcut = false, // (#6999) host-free any-arm: two Wasm numbers skip the cascade
 ): ValType {
   const noJsHost = ctx.targetProfile.semanticProviders === "native-first";
   // Registered before the operands compile, so its setup cannot desync funcIdxs.
   if (noJsHost && ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) ensureObjectRuntime(ctx);
 
   // Compile both operands to externref temps (keep runtime strings boxed).
-  const lType = compileExpression(ctx, fctx, expr.left, { kind: "externref" });
-  if (!lType) return { kind: "i32" };
-  if (lType.kind !== "externref") coerceType(ctx, fctx, lType, { kind: "externref" });
-  const lTmp = allocTempLocal(fctx, { kind: "externref" });
-  fctx.body.push({ op: "local.set", index: lTmp });
-  const rType = compileExpression(ctx, fctx, expr.right, { kind: "externref" });
-  if (!rType) {
-    releaseTempLocal(fctx, lTmp);
-    return { kind: "i32" };
-  }
-  if (rType.kind !== "externref") coerceType(ctx, fctx, rType, { kind: "externref" });
-  const rTmp = allocTempLocal(fctx, { kind: "externref" });
-  fctx.body.push({ op: "local.set", index: rTmp });
+  const operands = compileRelationalOperandsToExtern(ctx, fctx, expr, op, numericShortcut && noJsHost);
+  if (operands === null) return { kind: "i32" };
+  const { lTmp, rTmp } = operands;
 
   // Map a -1/0/1/2 `cmp` (or an f64 comparison) to the operator's boolean result.
   // The `2` (incomparable) sentinel must make ALL four operators yield 0, so we
