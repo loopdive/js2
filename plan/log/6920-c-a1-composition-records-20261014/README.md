@@ -20,11 +20,11 @@ Both trees used the same `node_modules` (symlink) and the same
   to vitest. The base tree lacks `tests/issue-6920-vector-representation.test.ts`
   (added by the composition), so the base run has 74 files.
 - `rerun.sh.txt`: the full sequential run, both sides, JSON reporter,
-  `--testTimeout=35000`. Output: `base.json`, `composed.json`,
+  `--testTimeout=35000`. Output: `base.json.txt`, `composed.json.txt`,
   `base-stdout.txt`, `composed-stdout.txt` (both exit 1: failures exist on both sides).
 - `nue-rerun.sh.txt`: isolated re-run of
   `tests/issue-6920-native-number-undefined-execution.test.ts`, twice per side,
-  after `rerun.sh` finished. Output: `nue-{base,composed}-{1,2}.json`.
+  after `rerun.sh` finished. Output: `nue-{base,composed}-{1,2}.json.txt`.
 - `environment.txt`: node, vitest, lockfile hashes, nproc. Captured
   2026-10-15, after the runs, from the same container and trees.
 - `counts.txt`: suite/test counts read from each JSON report.
@@ -66,3 +66,6 @@ measured on either side.
 
 `SHA256SUMS.txt` lists the full sha256 of every file here except itself.
 Verify with `sha256sum -c SHA256SUMS.txt`.
+
+The vitest JSON reports are stored as `*.json.txt` so the repository's
+JSON formatter does not rewrite them; the bytes are exactly what vitest wrote.
