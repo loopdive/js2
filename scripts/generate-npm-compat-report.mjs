@@ -272,25 +272,14 @@ const profileIterations = Number(optionValue("--profile-iterations") ?? 40);
 const perfOnly = cliArgs.includes("--perf-only");
 const diagnosticsOnly = cliArgs.includes("--diagnostics-only");
 const selectedLane = optionValue("--lane") ?? "both";
-const NPM_COMPAT_LANES = [
-  "both",
-  "js-host",
-  "js-host-native",
-  "js-host-assisted",
-  "standalone",
-  "standalone-static",
-  "standalone-dynamic",
-];
+const NPM_COMPAT_LANES = ["both", "js-host", "standalone", "standalone-static", "standalone-dynamic"];
 if (!NPM_COMPAT_LANES.includes(selectedLane)) {
   throw new Error(`--lane expects one of ${NPM_COMPAT_LANES.join(", ")}`);
 }
-// (#6708 S6) The JS-host lane measures the DEFAULT policy, which is native-first
-// since S6. `js-host-native` is kept one cycle as an alias of that same lane (the
-// `jsHostNative` record is a copy of `jsHost`, so the dashboard keeps rendering);
-// `js-host-assisted` is the explicit control for the retired pre-S6 profile and
-// is not part of `both`.
-const runJsHostLane = selectedLane === "both" || selectedLane === "js-host" || selectedLane === "js-host-native";
-const runJsHostAssistedLane = selectedLane === "js-host-assisted";
+// (#6708 S6, #6979 S7) The JS-host lane measures the native regime, the only
+// semantic implementation; the S6 `js-host-native` alias and `js-host-assisted`
+// control lanes are gone.
+const runJsHostLane = selectedLane === "both" || selectedLane === "js-host";
 const runStandaloneLane =
   selectedLane === "both" || selectedLane === "standalone" || selectedLane === "standalone-static";
 const runStandaloneDynamicLane = selectedLane === "both" || selectedLane === "standalone-dynamic";
@@ -922,7 +911,7 @@ export function ${STANDALONE_BENCHMARK_EXPORT}(iterations) {
 // Per-package perf probes — each returns a `measurePerf(...)` result or null
 // if the package doesn't validate/run (perf is meaningless on a red surface).
 // ---------------------------------------------------------------------------
-async function perfAcornJsHost(semanticProviders) {
+async function perfAcornJsHost() {
   const { entryModulePath } = setupAcorn();
   const source = readFileSync(entryModulePath, "utf-8");
   const resultFloorExport = "__npmCompatParseBodyLength";
@@ -939,7 +928,6 @@ export function ${resultFloorExport}(input, options) {
     fileName: "acorn.mjs",
     skipSemanticDiagnostics: true,
     optimize: NPM_COMPAT_JS_HOST_OPTIMIZE_LEVEL,
-    semanticProviders,
     ...(inspectWatFunctions?.length
       ? {
           emitWat: true,
@@ -1166,8 +1154,6 @@ export function ${STANDALONE_BENCHMARK_EXPORT}(iterations, runtimeSeed) {
 async function perfAcorn() {
   const jsHost = runJsHostLane ? await collectJsHostPerfLane(() => perfAcornJsHost()) : skippedPerfLane("js-host");
   if (diagnosticsOnly) return jsHost;
-  const jsHostNative = nativeFirstAliasLane(jsHost);
-  const jsHostAssisted = await hostAssistedPerfLane(() => perfAcornJsHost("host-assisted"));
   const standalone = runStandaloneLane ? await perfAcornStandalone() : skippedPerfLane("standalone");
   const standaloneDynamic = runStandaloneDynamicLane
     ? await perfAcornStandaloneDynamic()
@@ -1176,11 +1162,11 @@ async function perfAcorn() {
     jsHost?.sampleOp ?? standalone?.sampleOp ?? "parse(own dist bundle).body.length",
     jsHost ?? failedOptimizedPerfLane("js-host", "compile-error", "host compilation failed"),
     standalone,
-    { jsHostNative, standaloneDynamic, ...jsHostAssisted },
+    { standaloneDynamic },
   );
 }
 
-async function perfClsxJsHost(semanticProviders) {
+async function perfClsxJsHost() {
   const { entryModulePath } = setupClsx();
   const clsxSource = readFileSync(entryModulePath, "utf-8");
   // Reuse one already-verified-equal op (see clsx-harness.mjs) as the
@@ -1195,7 +1181,6 @@ export function ${op.name}(first, second) {
     fileName: "clsx.mjs",
     skipSemanticDiagnostics: true,
     optimize: NPM_COMPAT_JS_HOST_OPTIMIZE_LEVEL,
-    semanticProviders,
     ...(inspectWatFunctions?.length
       ? {
           emitWat: true,
@@ -1257,7 +1242,6 @@ export function ${op.name}(first, second) {
     fileName: "clsx-constant-floor.mjs",
     skipSemanticDiagnostics: true,
     optimize: NPM_COMPAT_JS_HOST_OPTIMIZE_LEVEL,
-    semanticProviders,
   });
   if (!floorResult.success || !floorResult.binary?.length) return measured;
   const floorOptimizationFailure = npmPerfOptimizationFailure(floorResult, NPM_COMPAT_JS_HOST_OPTIMIZE_LEVEL);
@@ -1354,8 +1338,6 @@ export function ${STANDALONE_BENCHMARK_EXPORT}(iterations, runtimeSeed) {
 
 async function perfClsx() {
   const jsHost = runJsHostLane ? await collectJsHostPerfLane(() => perfClsxJsHost()) : skippedPerfLane("js-host");
-  const jsHostNative = nativeFirstAliasLane(jsHost);
-  const jsHostAssisted = await hostAssistedPerfLane(() => perfClsxJsHost("host-assisted"));
   const standalone = runStandaloneLane ? await perfClsxStandalone() : skippedPerfLane("standalone");
   const standaloneDynamic = runStandaloneDynamicLane
     ? await perfClsxStandaloneDynamic()
@@ -1364,18 +1346,17 @@ async function perfClsx() {
     jsHost?.sampleOp ?? standalone?.sampleOp ?? standaloneDynamic?.sampleOp ?? `${CLSX_PERF_OP_NAME}.length`,
     jsHost ?? failedOptimizedPerfLane("js-host", "compile-error", "host compilation failed"),
     standalone,
-    { jsHostNative, standaloneDynamic, ...jsHostAssisted },
+    { standaloneDynamic },
   );
 }
 
-async function perfCookieJsHost(semanticProviders) {
+async function perfCookieJsHost() {
   const { entryModulePath } = setupCookie();
   const cookieSource = readFileSync(entryModulePath, "utf-8");
   const result = await compile(cookieSource, {
     fileName: "index.js",
     skipSemanticDiagnostics: true,
     optimize: NPM_COMPAT_JS_HOST_OPTIMIZE_LEVEL,
-    semanticProviders,
     ...(inspectWatFunctions?.length
       ? {
           emitWat: true,
@@ -1531,8 +1512,6 @@ export function ${STANDALONE_BENCHMARK_EXPORT}(iterations, runtimeSeed) {
 
 async function perfCookie() {
   const jsHost = runJsHostLane ? await collectJsHostPerfLane(() => perfCookieJsHost()) : skippedPerfLane("js-host");
-  const jsHostNative = nativeFirstAliasLane(jsHost);
-  const jsHostAssisted = await hostAssistedPerfLane(() => perfCookieJsHost("host-assisted"));
   const standalone = runStandaloneLane ? await perfCookieStandalone() : skippedPerfLane("standalone");
   const standaloneDynamic = runStandaloneDynamicLane
     ? await perfCookieStandaloneDynamic()
@@ -1541,7 +1520,7 @@ async function perfCookie() {
     jsHost?.sampleOp ?? standalone?.sampleOp ?? standaloneDynamic?.sampleOp ?? "parseCookie(8-pair header); verify a/h",
     jsHost ?? failedOptimizedPerfLane("js-host", "compile-error", "host compilation failed"),
     standalone,
-    { jsHostNative, standaloneDynamic, ...jsHostAssisted },
+    { standaloneDynamic },
   );
 }
 
@@ -1553,7 +1532,7 @@ function litWhenModule() {
   return { entryModulePath, source: readFileSync(entryModulePath, "utf-8") };
 }
 
-async function perfLitJsHost(semanticProviders) {
+async function perfLitJsHost() {
   const { entryModulePath, source } = litWhenModule();
   const compileStarted = performance.now();
   const result = await compile(
@@ -1562,7 +1541,6 @@ async function perfLitJsHost(semanticProviders) {
       fileName: "when.js",
       skipSemanticDiagnostics: true,
       optimize: NPM_COMPAT_JS_HOST_OPTIMIZE_LEVEL,
-      semanticProviders,
     },
   );
   const compileDurationMs = performance.now() - compileStarted;
@@ -1618,8 +1596,6 @@ async function perfLitJsHost(semanticProviders) {
 
 async function perfLit() {
   const jsHost = runJsHostLane ? await collectJsHostPerfLane(() => perfLitJsHost()) : skippedPerfLane("js-host");
-  const jsHostNative = nativeFirstAliasLane(jsHost);
-  const jsHostAssisted = await hostAssistedPerfLane(() => perfLitJsHost("host-assisted"));
   const standalone = {
     ...skippedPerfLane("standalone"),
     reason: "the pinned Lit callback probe currently covers the JS-host lane only",
@@ -1632,7 +1608,7 @@ async function perfLit() {
     jsHost?.sampleOp ?? standalone?.sampleOp ?? standaloneDynamic?.sampleOp ?? "select one of two callbacks",
     jsHost ?? failedOptimizedPerfLane("js-host", "compile-error", "host compilation failed"),
     standalone,
-    { jsHostNative, standaloneDynamic, ...jsHostAssisted },
+    { standaloneDynamic },
   );
 }
 
@@ -1654,41 +1630,15 @@ async function collectJsHostPerfLane(run) {
   }
 }
 
-/**
- * (#6708) The `jsHostNative` record, one cycle after S6: the same measurement
- * as `jsHost` (the JS-host lane IS native-first now), relabelled so dashboard
- * consumers of the old key keep rendering. Retired next cycle.
- */
-function nativeFirstAliasLane(jsHost) {
-  return { ...(jsHost ?? skippedPerfLane("js-host")), semanticProviders: "native-first", environment: "javascript" };
-}
-
-/** (#6708) The explicit host-assisted control lane, only when `--lane js-host-assisted`. */
-async function hostAssistedPerfLane(run) {
-  if (!runJsHostAssistedLane) return {};
-  const metadata = { semanticProviders: "host-assisted", environment: "javascript" };
-  return { jsHostAssisted: { ...(await collectJsHostPerfLane(run)), ...metadata } };
-}
-
 function packagePerfFailure(spec, diagnostic, status = "compile-error") {
   const jsHost = runJsHostLane ? failedOptimizedPerfLane("js-host", status, diagnostic) : skippedPerfLane("js-host");
-  const jsHostNative = nativeFirstAliasLane(jsHost);
-  const jsHostAssisted = runJsHostAssistedLane
-    ? {
-        jsHostAssisted: {
-          ...failedOptimizedPerfLane("js-host", status, diagnostic),
-          semanticProviders: "host-assisted",
-          environment: "javascript",
-        },
-      }
-    : {};
   const standalone = runStandaloneLane
     ? failedOptimizedPerfLane("standalone", status, diagnostic)
     : skippedPerfLane("standalone");
   const standaloneDynamic = runStandaloneDynamicLane
     ? failedOptimizedPerfLane("standalone", status, diagnostic, { inputMode: "runtime-dynamic" })
     : skippedPerfLane("standalone", "runtime-dynamic");
-  return packagePerfRecord(spec.sampleOp, jsHost, standalone, { jsHostNative, standaloneDynamic, ...jsHostAssisted });
+  return packagePerfRecord(spec.sampleOp, jsHost, standalone, { standaloneDynamic });
 }
 
 function packageSpecifierFor(setup) {
@@ -1708,7 +1658,7 @@ function npmCompatHostImportObject(result, rootModule) {
   // (#6749) The native-first lane compiles eval-shaped spellings against the
   // `js2wasm:runtime-eval` seam instead of a host accelerator; link the cached
   // provider exactly as the test262 lane does (a no-op when nothing imports
-  // it, so the host-assisted lane is untouched). Before the linked providers:
+  // it). Before the linked providers:
   // they inherit this import object and may carry the seam themselves.
   attachConditionalImportNamespaces(rootModule ?? new WebAssembly.Module(result.binary), imports, {
     linkedProviderModules: (result.linkedModules ?? []).map((artifact) => new WebAssembly.Module(artifact.binary)),
@@ -1722,21 +1672,19 @@ function npmCompatHostImportObject(result, rootModule) {
  * (#6749) Wrap a JS-host lane's exports. A native-first (regime) build presents
  * its objects at the boundary through the export boundary policies the compile
  * result carries — without them a returned object reaches JS as `{}` and every
- * checksum over a parsed object reads 0 (cookie/hono/redux). The host-assisted
- * lane keeps the exact legacy wrapper so its numbers do not move.
+ * checksum over a parsed object reads 0 (cookie/hono/redux). (#6979) Every
+ * WasmGC build is a regime build.
  */
 function npmCompatWrapExports(result, instanceOrExports) {
-  return result.targetProfile?.semanticProviders === "native-first"
-    ? wrapCompiledExports(result, instanceOrExports)
-    : wrapExports(instanceOrExports, { signatures: result.exportSignatures });
+  return wrapCompiledExports(result, instanceOrExports);
 }
 
 async function compileNpmCompatPerfLane({ setup, spec, lane, compileOptions }) {
-  const target = lane === "js-host" || lane === "js-host-native" || lane === "js-host-assisted" ? "gc" : "standalone";
+  const target = lane === "js-host" ? "gc" : "standalone";
   const driverPath = join(setup.root, `.js2-npm-compat-perf-${lane}.mjs`);
   const packageSpecifier = packageSpecifierFor(setup);
   writeFileSync(driverPath, buildNpmCompatPerfDriver(spec, packageSpecifier, lane));
-  // (#6851) Every bounded child marks codegen, the js-host-native one too, so
+  // (#6851) Every bounded child marks codegen, the js-host one too, so
   // its overrun says where the budget went (a no-op outside a lane child).
   markLanePhase("codegen");
   const compileStarted = performance.now();
@@ -1756,9 +1704,6 @@ async function compileNpmCompatPerfLane({ setup, spec, lane, compileOptions }) {
       target,
       // Standalone lanes instantiate with zero imports: no runtime-eval provider.
       ...(target === "standalone" ? { runtimeEvalProvider: false } : {}),
-      // (#6708) The JS-host lanes measure the default policy (native-first);
-      // only the explicit control lane spells the retired host-assisted profile.
-      semanticProviders: lane === "js-host-assisted" ? "host-assisted" : undefined,
       // (#6742) Standalone lanes run wasm-opt themselves, under the size/time
       // budget, so the level that produced the artifact is known and recorded.
       optimize: target === "standalone" ? false : npmCompatOptimizationLevel("js-host"),
@@ -1934,7 +1879,7 @@ const NPM_COMPAT_REPORT_SCRIPT = join(ROOT, "scripts", "generate-npm-compat-repo
 
 /**
  * (#6661, #6660, #6851) Measure one package's lane (`standalone-static`,
- * `standalone-dynamic` or `js-host-native`) in a child process with a
+ * `standalone-dynamic` or `js-host`) in a child process with a
  * wall-clock budget. Used when the JS-host package-entry gate failed: the
  * in-process lane has no budget and shares the generator's heap, and a graph
  * that exhausted the host harness (TypeScript, webpack, jsdom, ...) would
@@ -2221,14 +2166,12 @@ async function perfNpmCompatPackage(name, { setupFactory, report, compileOptions
     };
   };
 
-  // A host-assisted correctness failure is not evidence about native-first.
-  // Preserve the existing compatibility gate for the JS-host lane only.
+  // The package-entry gate decides whether the JS-host lane runs in process
+  // or in a bounded child.
   const hostBlocked = Boolean(report && (report.compile?.success === false || report.validation?.validates === false));
   let jsHost;
-  let jsHostNative;
-  let jsHostAssisted = {};
   if (nativeImportFailure) {
-    ({ jsHost, jsHostNative } = packagePerfFailure(spec, nativeImportFailure).lanes);
+    ({ jsHost } = packagePerfFailure(spec, nativeImportFailure).lanes);
   } else {
     // (#6851, #6708) The JS-host lane is the native-first lane since S6. A
     // host-blocked graph is compiled in a bounded child, like the standalone
@@ -2244,8 +2187,6 @@ async function perfNpmCompatPackage(name, { setupFactory, report, compileOptions
           }),
         )
       : skippedPerfLane("js-host");
-    jsHostNative = nativeFirstAliasLane(jsHost);
-    jsHostAssisted = await hostAssistedPerfLane(() => runHost("js-host-assisted"));
   }
   // (#6661, #6660) Both standalone lanes compile their own host-free graph, so
   // a JS-host compile/validation failure is not evidence about them. When the
@@ -2258,7 +2199,7 @@ async function perfNpmCompatPackage(name, { setupFactory, report, compileOptions
     inProcess: (lane) => (lane === "standalone-static" ? runStatic() : runDynamic()),
     inChild: (lane) => perfLaneInChild(name, lane, report.compile?.timeoutMs ?? 120_000),
   });
-  return packagePerfRecord(spec.sampleOp, jsHost, standalone, { jsHostNative, standaloneDynamic, ...jsHostAssisted });
+  return packagePerfRecord(spec.sampleOp, jsHost, standalone, { standaloneDynamic });
 }
 
 // ---------------------------------------------------------------------------
@@ -3377,8 +3318,6 @@ const summary = {
     baseline: "same pinned package, inputs, and result observation in native Node",
     optimizationLevels: {
       "js-host": NPM_COMPAT_JS_HOST_OPTIMIZE_LEVEL,
-      "js-host-native": NPM_COMPAT_JS_HOST_OPTIMIZE_LEVEL,
-      "js-host-assisted": NPM_COMPAT_JS_HOST_OPTIMIZE_LEVEL,
       standalone: NPM_COMPAT_STANDALONE_OPTIMIZE_LEVEL,
     },
     optimizationPassPolicy:
