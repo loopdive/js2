@@ -15,12 +15,12 @@
  */
 import { NEW_TARGET_LEXICAL_LOCAL, arrowCapturesNewTarget } from "../expressions/new-target-value.js";
 import { ts, forEachChild } from "../../ts-api.js";
+import { isModuleScopeBinding } from "./module-scope-binding.js"; // (#6987)
 import type { ClosureInfo, CodegenContext, FunctionContext } from "../context/types.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import { addFuncType, destructureParamArray, destructureParamObject, getOrRegisterRefCellType } from "../index.js";
 import { addFunctionOwnLocals } from "../../ir/analysis/binding-info.js";
 import { isFunctionScopeBoundary } from "../../ir/analysis/ast-scope.js";
-import { isLexicalBindingWrite, varDeclaratorWrittenNames } from "../../ir/analysis/binding-writes.js";
 import {
   closureArityField,
   closureBagField,
@@ -36,6 +36,7 @@ import { tryEmitNativeIteratorResultParam } from "../promise-native-iterator-res
 import { materializeHoistedFunctionValueBinding } from "./funcref-as-closure.js";
 import { publishClosureSourceInfo } from "./closure-type-sources.js"; // (#6913)
 import { capturedBindingWriteTest, namesDeclaredInsideClosure } from "./closure-binding-identity.js";
+import { isWithinNode, writeTargetsByName } from "./outer-write-index.js"; // (#6988)
 import { bodyReferencesOwnThis } from "../helpers/body-references-own-this.js";
 // (#4437) per-declaration `name` / §15.1.5 `length` carrier
 import { ensureFnMetaSubtype, fnMetaSlot, registerFnMetaFamily } from "../function-instance-meta.js";
@@ -754,35 +755,18 @@ export function planClosureCaptures(
       if (enclosing) {
         const outerBody = ts.isSourceFile(enclosing) ? enclosing : (enclosing as any).body;
         if (outerBody) {
-          // Collect writes in the outer body, excluding the closure body itself
-          const outerWrites = new Set<string>();
+          // Writes in the outer body, excluding the closure body itself.
+          // (#6992) The index holds every write form (`isLexicalBindingWrite`
+          // plus `var` re-declarations); the captured binding's own declarator
+          // is not a write.
           const capturedDeclaration = referencedBindingDeclaration(ctx, arrow, name, true);
           const writesCapturedBinding = capturedBindingWriteTest(ctx, name, capturedDeclaration);
-          const collectOuterWrites = (node: ts.Node): void => {
-            // Skip the closure body itself
-            if (node === arrow) return;
-            // (#6992) Every write form — assignment of any operator, `++`/`--`,
-            // a destructuring target, a for-in/for-of head — not just `x = …`.
-            if (ts.isIdentifier(node) && isLexicalBindingWrite(node) && writesCapturedBinding(node)) {
-              outerWrites.add(name);
-            }
-            // (#6992) A `var` re-declaration with an initializer writes the
-            // captured binding; the binding's own declaration does not.
-            if (node !== capturedDeclaration) {
-              for (const id of varDeclaratorWrittenNames(node)) {
-                if (writesCapturedBinding(id)) outerWrites.add(name);
-              }
-            }
-            forEachChild(node, collectOuterWrites);
-          };
-          if (ts.isBlock(outerBody)) {
-            for (const stmt of outerBody.statements) {
-              collectOuterWrites(stmt);
-            }
-          } else {
-            collectOuterWrites(outerBody);
-          }
-          if (outerWrites.has(name)) {
+          const outsideArrow = (id: ts.Identifier): boolean => !isWithinNode(id, arrow);
+          if (
+            writeTargetsByName(outerBody)
+              .get(name)
+              ?.some((id) => id.parent !== capturedDeclaration && outsideArrow(id) && writesCapturedBinding(id))
+          ) {
             writtenInOuter.add(name);
           }
         }
@@ -836,6 +820,9 @@ export function planClosureCaptures(
       // hoisted slot, which is essential for TDZ-through-closure to fire.
       // (#6651 V5) A FREE name has no hoisted slot — the same-spelled local is from a left block.
       if (closureReferencesOnlyUnboundName(ctx, arrow, name)) continue;
+      // (#6987) A MODULE-scope binding is never a block-hoisted slot: a same-spelled
+      // local is a left inline IIFE's parameter (`(function (TypeScript) {…})(…)`).
+      if (isModuleScopeBinding(referencedBindingDeclaration(ctx, arrow, name))) continue;
       for (let i = 0; i < fctx.locals.length; i++) {
         const slot = fctx.locals[i]!;
         if (slot.name === name) {

@@ -754,6 +754,7 @@ import {
   rejectTimersUnderWasi,
   collectEnumDeclarations,
 } from "./extern-declarations.js"; // (#3272) extracted verbatim
+import { rejectIntlWithoutHost } from "./helpers/host-intl-classes.js"; // (#6986)
 import { buildLibDeclIndex } from "./lib-decl-index.js"; // (#4218) syntactic lib walk
 import { typeIsForeignReturnFnctorInstance } from "./fnctor-foreign-return.js"; // (#2071)
 import { typeIsRuntimeKeyedObjectLiteral } from "./object-model/runtime-key-open-object.js"; // (#4526)
@@ -5567,6 +5568,7 @@ export function generateModule(
       checkWasiDomUsage(ctx, ast.sourceFile);
       rejectTimersUnderWasi(ctx, ast.sourceFile);
     }
+    rejectIntlWithoutHost(ctx, ast.sourceFile); // (#6986) no host Intl ⇒ compile error, never a run-time failure
 
     // Scan lib files for DOM extern classes + globals (only if user code uses DOM)
     // After lib.d.ts refactoring, TS loads individual lib files (lib.es5.d.ts, etc.)
@@ -10817,6 +10819,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
         rejectTimersUnderWasi(ctx, sf);
       }
     }
+    for (const sf of multiAst.sourceFiles) rejectIntlWithoutHost(ctx, sf); // (#6986)
 
     // Scan lib files for DOM extern classes + globals (only if any user code uses DOM)
     // After lib.d.ts refactoring, TS loads individual lib files (lib.es5.d.ts, etc.)

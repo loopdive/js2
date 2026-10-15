@@ -84,7 +84,7 @@ Found by the 2026-10-15 audit (scoping lane). Same result on `standalone` and `g
 - `varDeclaratorWrittenNames(node)` returns the names a `var` declarator with an initializer assigns. A re-declaration (`var v = 1; … var v = 2`, or a parameter re-declared by `var`) is a write to the existing binding.
 
 **Who uses it:**
-- Legacy outer scan, `arrow-phases.ts` `collectOuterWrites`: uses both helpers. A `var` declarator counts unless it IS the captured binding's own declaration (identity via `referencedBindingDeclaration`), so the common `var x = 1; … () => x` stays by-value.
+- Legacy outer scan: `closures/outer-write-index.ts` `writeTargetsByName` (main's #6988 per-body index, read by `arrow-phases.ts`) indexes with both helpers. A `var` declarator counts unless it IS the captured binding's own declaration (`id.parent !== capturedDeclaration`, identity via `referencedBindingDeclaration`), so the common `var x = 1; … () => x` stays by-value. The index used to count every prefix/postfix unary operand (`!x`, `-x`) as a write; it now counts only `++`/`--`.
 - Legacy inner scan, `closures.ts` `collectWrittenIdentifiers`: used by arrow capture planning and by the nested-declaration, literal, object-ops, new-super, IIFE-inline and declaration-write analyses. It now catches destructuring and for-in/for-of writes inside a closure body, so `() => { [a] = [9]; }` mutates the outer `a`.
 - IR outer scan, `src/ir/closure-captures.ts` `collectOuterWrites`: name-based like before. A `var` declarator counts as a write when the name was already declared earlier in source order (outer parameters included).
 - IR inner scan, `src/ir/from-ast.ts` `analyseCaptures`: the inner `written` set uses `isLexicalBindingWrite`.
