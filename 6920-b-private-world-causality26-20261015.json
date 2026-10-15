@@ -1,0 +1,99 @@
+{
+  "id": "6920",
+  "slice": "private-world-causality26-successor-20261015",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+  "claimed_at": "2026-10-15T10:01:02.611016+00:00",
+  "updated_at": "2026-10-15T10:01:02.611016+00:00",
+  "write_id": "b-private-world-causality26-e2a7ab22-7bf2-40a8-b2ef-16229d4cd9df",
+  "handoff_scope": [
+    {
+      "kind": "private-world-causality26",
+      "at": "2026-10-15T10:01:02.611016+00:00",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+      "manifest": {
+        "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+        "receivingWorkspace": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-private-world-causality26/workspace",
+        "bootstrapSourceWorkspace": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-private-world-composition25/workspace",
+        "status": "FINITE_RECEIVING_ONLY_BOOTSTRAP_GO_WAITS_JOIN25_NATURAL_TERMINAL",
+        "componentPreimages": [
+          {
+            "path": "tests/issue-6920-native-class-independent-record-allocation.test.ts",
+            "bytes": 18899,
+            "sha256": "ef902176f3c582a7eae61ca7bd6cdbddf56028e0f5e727d6b0d6628567fb0961"
+          }
+        ],
+        "canonicalNewPaths": [],
+        "productionPaths": [],
+        "newTestPaths": [],
+        "sourceCountBefore": 2063,
+        "sourceCountConditionalAfter": 2063,
+        "basis": {
+          "authority": "Take over blocking shared seams; keep Bgoingparallel; normal finite implementation decisions",
+          "priorOwnership": "17aee32abacc97c173555c724c434f71c3585486",
+          "JOIN25Functional": "Actual9LIST456 checked; runtime ongoing. No bootstrap/engineGO until naturalterminal and raw acceptance.",
+          "endpoints": [
+            {
+              "path": "tests/issue-6920-native-class-independent-record-allocation.test.ts",
+              "snapshot": {
+                "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-value-replay-successor-20261014-01a12827/.tmp/class-private-world-oracles24/workspace/.tmp/gate24/final-handoff/snapshot/tests/issue-6920-native-class-independent-record-allocation.test.ts",
+                "bytes": 19930,
+                "sha256": "976cda496fbfab1dd47724f891c2fb1ec5085b00454f05017c78371c0230b9b5"
+              }
+            }
+          ],
+          "why": "Two isolated negative-causality corrections; no production bug/source changes. Old20identities/count/prefix preserved; source2 exact alreadyreviewed/qualified.",
+          "B04Candidate": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-value-replay-successor-20261014-01a12827/.tmp/class-private-world-oracles24/candidate04/receipt.json",
+            "bytes": 688,
+            "sha256": "e9b607ccaeec4ed1c13e8aabc120b4d895e0d4e5acc78abc012079f410e99ea4"
+          },
+          "B04Qualified": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-value-replay-successor-20261014-01a12827/.tmp/class-private-world-oracles24/workspace/.tmp/gate24/final-handoff/sealed.json",
+            "bytes": 34980,
+            "sha256": "8ab5ebe91e933ad17fbd36fb2aeb5c156b813f0dd4d2e8a6eee1681a30a22b7a"
+          },
+          "parentB04Authentication": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/private-world-causality26-receive/parent-B04-authentication.json",
+            "bytes": 758,
+            "sha256": "4bcd5a14a7323b42997975091deb33395839087a0c83a169a97b06e44a252c5c"
+          },
+          "A04Review": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/private-world-gate24-code-review/oracles04/review.json",
+            "bytes": 3054,
+            "sha256": "00a3961b2fa7af33306e741399e7253804ac77294095b6f7a9b79b84a532c626"
+          }
+        },
+        "constraints": [
+          "Only after natural allJOIN25qualifiers terminal and B04actual20/full54type/static/Aexactreview. Freshisolatedbootstrap16526regular+2typingdeps/source2063 fromimmutableJOIN25, readonly dependency link/noinstall/Git/index. CAScopyONLY04recordtest, exactly1regular delta, all16525otherregular+2deps exact.",
+          "C sole finalcontext writer/enginequalifier; A/Breadonly. Retain all02component/JOIN25 runtime and failure/diagnostic evidence, never rewrite historicalpins. No rawsource/API/cache/authority/policy/timebudget changes.",
+          "Precise composedcoverage: actualJOIN25 ninefile456 outcomes includingold02record20 retained; actualB04 affectedrecord20 on exactsame wholeproduction/context excepttest independentlyqualified, actual20identities/order equal. Fullcontext compare proves unchanged8file inputs. Do not claim universal freshfinal456. No redundant whole9rerun unless new changes/failures/concerns justify.",
+          "FinalcontextCAS/bootstrap/fullpin verification and full54ACTUALtype/static officialownedtest406classification, fresh realcompilerallresolvedfiles and actualharness beforeafter. Source2 kernel709/independent1493 unchanged; no regrown/newgiants/grants. Source2050ROOT offscope exact still required later.",
+          "After allfunctional/metadata/currentness acceptances and quietwindow genuineoriginalWASIprepare+live explicit oldyield setup/default35000/defaultRPC/Node25.9/8192/fork1/noCPU. Actual<=35000/natural0/noUHE required; onlythen unchanged52constructorlive+codec. Preserve failures naturalterminal; no skips/cancel/restart/waivers/fallback.",
+          "ROOT2061unadopted until genuine52pass; future exact19CAS13source+5tests+independentlygenerated2policyrows, thenfullROOTqualifiers. All27migrationrequirementsunproven. No publiccompilerpush/comment/HOLD/queue change."
+        ]
+      },
+      "manifestSha256": "1d18bd894e9e11e9e7f85a38312b19a745914df589d26423ced945007cb65e7d",
+      "constraints": [
+        "Only after natural allJOIN25qualifiers terminal and B04actual20/full54type/static/Aexactreview. Freshisolatedbootstrap16526regular+2typingdeps/source2063 fromimmutableJOIN25, readonly dependency link/noinstall/Git/index. CAScopyONLY04recordtest, exactly1regular delta, all16525otherregular+2deps exact.",
+        "C sole finalcontext writer/enginequalifier; A/Breadonly. Retain all02component/JOIN25 runtime and failure/diagnostic evidence, never rewrite historicalpins. No rawsource/API/cache/authority/policy/timebudget changes.",
+        "Precise composedcoverage: actualJOIN25 ninefile456 outcomes includingold02record20 retained; actualB04 affectedrecord20 on exactsame wholeproduction/context excepttest independentlyqualified, actual20identities/order equal. Fullcontext compare proves unchanged8file inputs. Do not claim universal freshfinal456. No redundant whole9rerun unless new changes/failures/concerns justify.",
+        "FinalcontextCAS/bootstrap/fullpin verification and full54ACTUALtype/static officialownedtest406classification, fresh realcompilerallresolvedfiles and actualharness beforeafter. Source2 kernel709/independent1493 unchanged; no regrown/newgiants/grants. Source2050ROOT offscope exact still required later.",
+        "After allfunctional/metadata/currentness acceptances and quietwindow genuineoriginalWASIprepare+live explicit oldyield setup/default35000/defaultRPC/Node25.9/8192/fork1/noCPU. Actual<=35000/natural0/noUHE required; onlythen unchanged52constructorlive+codec. Preserve failures naturalterminal; no skips/cancel/restart/waivers/fallback.",
+        "ROOT2061unadopted until genuine52pass; future exact19CAS13source+5tests+independentlygenerated2policyrows, thenfullROOTqualifiers. All27migrationrequirementsunproven. No publiccompilerpush/comment/HOLD/queue change."
+      ]
+    }
+  ],
+  "predecessors": [
+    "3522-b-native-class-semantic-producer-20261014.json",
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}
