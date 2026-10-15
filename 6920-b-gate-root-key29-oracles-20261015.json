@@ -1,0 +1,98 @@
+{
+  "id": "6920",
+  "slice": "gate-root-key29-oracles-successor-20261015",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+  "claimed_at": "2026-10-15T11:13:59.620484+00:00",
+  "updated_at": "2026-10-15T11:13:59.620484+00:00",
+  "write_id": "b-gate-root-key29-oracles-bd2f458e-af76-4fb6-a447-f01353f2e7b8",
+  "handoff_scope": [
+    {
+      "kind": "gate-root-key29-oracles",
+      "at": "2026-10-15T11:13:59.620484+00:00",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+      "manifest": {
+        "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+        "receivingWorkspace": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-value-replay-successor-20261014-01a12827/.tmp/class-gate-root-key-oracles29/workspace",
+        "bootstrapSourceWorkspace": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-world-absorption-composition28/workspace",
+        "status": "FINITE_SINGLE_TEST_RECEIVE_NO_GO_UNTILPUBLISHED",
+        "componentPreimages": [
+          {
+            "path": "tests/issue-6920-native-class-private-world-absorption.test.ts",
+            "bytes": 14902,
+            "sha256": "457e827ad66ce5a96b0befb90ae55ff775f93ff9e099fcfca6fb3a1dd35d57ce"
+          }
+        ],
+        "canonicalNewPaths": [],
+        "productionPaths": [],
+        "newTestPaths": [],
+        "sourceCountBefore": 2063,
+        "sourceCountConditionalAfter": 2063,
+        "basis": {
+          "authority": "takeoverallB; takeoverblockingseams; parallelwork",
+          "BProposal": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/gate-root-key-oracle-proposal/proposal.json",
+            "bytes": 6656,
+            "sha256": "dd04a5cd66c089f045581f6cc8818a252dec01ca07f391d2a758a6ca917e9640"
+          },
+          "AProof": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/gate-root-key-conditional-proposal/specification.json",
+            "bytes": 10689,
+            "sha256": "cf34a3ea58142ae1dffe651f3e79de5db91dbe20c6ecdffd93b5e5355256a9e8"
+          },
+          "APureExportAmendment": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/gate-root-key-conditional-proposal/export-amendment-review/review.json",
+            "bytes": 3858,
+            "sha256": "15a0dd445db7db0176ccb13377109639ff9c723cd9915279b21b0a1a3fba5fec"
+          },
+          "profileAnalysis": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/wasi-profile28-independent-review/sealed.json",
+            "bytes": 1867,
+            "sha256": "9eea2c6b363de1e6e46be21f2eb1a3640520a341dac2f981e2b8712dd92e2a28"
+          },
+          "readonlyRecord": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-world-absorption-composition28/workspace/tests/issue-6920-native-class-independent-record-allocation.test.ts",
+            "bytes": 20704,
+            "sha256": "d68a3827532f2ba4f275c71d2af4f25b574d5b42bc784c96bfc2da1453c11182"
+          },
+          "BFinalProposal": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/gate-root-key-oracle-proposal/final-proposal.json",
+            "bytes": 9163,
+            "sha256": "122d7bb1bada6778e6c431487109a539faeb37bacb586ddf12cfb8a3acc23630"
+          }
+        },
+        "constraints": [
+          "B solewriter exactlyexistingdedicatedabsorptiontest14902/457e827a/266lines; notalone/no revertingothers. Fresh exactJOIN28bootstrap16527regular+2typingdeps=16529/source2063 readonlydependencylink/noinstall/Git/index. Existingrecord20704/d68a3827/415linesREADONLY/all20names unaffected. No newtestroot/policy/production.",
+          "Preserveall10existingtestcasebodies/registrations/order andoldhelpers; necessaryactualproductionhelper/stable importaddition andappend~3newcases/helpers beforefinaldescribeclose permitted. Rawwhole14902preimage mustrestore afterundoingexactnewimports+newtesthelpers/cases. Normalformat target<=350/hard450/maxnewfunction100/no cramming/grants. ActualLIST countsgovern.",
+          "Directactualbyteequivalence tests importtheactualmoduleexport privateGateRootKey(root:Root):string plusoldstable; samefunctionactuallydrives3productiongate sites provenbyAreview. NO copiedencoder/harnesssourceextraction/fakereimplementation/newModel/proof/registry/authority. Alloldgenericrawvalidators unchanged. Contractclosed6/2ownenumerableDATAfields/scalar/null coordinates, not rawextra/missing/accessor/kindvalidation.",
+          "Appendmeaningful closedRootcorpus acrossallactual6allocation/2externalfields, nullable/signedzero/nonfinite/escaping/Unicode/fieldinsertionorder, exactactualbytes==oldstable; isolatedfield/key/collation controls retainfullObject.is/dedup/ordering. CaptureddelegateJSON.stringify forwarding observes exactscalarname→value ANDlatefieldread sequence; preservecurrentRootreads, finallyrestorebeforeassertions. GenuineclosedreportderivedRoot/Worldcomputation only, nofakeModel/engineproof/authority. Actualgate/oldjoinpropertycontrolstillrequired; uniformwrongprefixbyteerror mustfaildirecttest.",
+          "No Bsourceedits; readonlyfrozenkerneloverlayonlyafterCfreeze+Aaccept+rootCASGO, exactpreimage32155/2238e03d. SourceencoderexportexplicitA3858/15a0received, no facade/reexport. Freezeowncandidate/inverse+Aoraclecausalityreview beforeactualLIST2rootsrecord20+dedicatedold10+appendedN, full55ACTUAL/2379conditionaltyping/excludes[]/allresolvedhelpers/deps/harness/workerbeforeafter; normal12/officialownedtestbudget/style. Source2063/private55/ROOT56 unchanged.",
+          "Source29 is exactbyte/evaluation-equivalent3site serializationrefactor withWorldlogicunchanged. Finalfunctionalqualificationfresh3rootsfocused79+record20+dedicatedold10+N=109+N plusfull55type/static, actualLISTunfiltered/noUHE. PriorJOIN28whole466historical ONLY, nofresh466claim. Whole10required ifequivalenceunsupported/newlogic/othersourcechanges/failures/concerns. Exactoriginalstrict35 thenunchanged52 stillmandatory; no engineuntilparentquietGO.",
+          "No publicsourcepush/comments/HOLD/queue/timebudget/waiver/retry/cancel/fallback changes. ROOT2061unadopted/all27criteriaunproven; future20CAS13source+6tests+policy, ROOT56typing/style68/fullrelated/vector/constructor afteractualprivate52pass."
+        ]
+      },
+      "manifestSha256": "ff1070a6f0cee5c45f91903c376216cf47f6611191f6332e6d2d3917560e7993",
+      "constraints": [
+        "B solewriter exactlyexistingdedicatedabsorptiontest14902/457e827a/266lines; notalone/no revertingothers. Fresh exactJOIN28bootstrap16527regular+2typingdeps=16529/source2063 readonlydependencylink/noinstall/Git/index. Existingrecord20704/d68a3827/415linesREADONLY/all20names unaffected. No newtestroot/policy/production.",
+        "Preserveall10existingtestcasebodies/registrations/order andoldhelpers; necessaryactualproductionhelper/stable importaddition andappend~3newcases/helpers beforefinaldescribeclose permitted. Rawwhole14902preimage mustrestore afterundoingexactnewimports+newtesthelpers/cases. Normalformat target<=350/hard450/maxnewfunction100/no cramming/grants. ActualLIST countsgovern.",
+        "Directactualbyteequivalence tests importtheactualmoduleexport privateGateRootKey(root:Root):string plusoldstable; samefunctionactuallydrives3productiongate sites provenbyAreview. NO copiedencoder/harnesssourceextraction/fakereimplementation/newModel/proof/registry/authority. Alloldgenericrawvalidators unchanged. Contractclosed6/2ownenumerableDATAfields/scalar/null coordinates, not rawextra/missing/accessor/kindvalidation.",
+        "Appendmeaningful closedRootcorpus acrossallactual6allocation/2externalfields, nullable/signedzero/nonfinite/escaping/Unicode/fieldinsertionorder, exactactualbytes==oldstable; isolatedfield/key/collation controls retainfullObject.is/dedup/ordering. CaptureddelegateJSON.stringify forwarding observes exactscalarname→value ANDlatefieldread sequence; preservecurrentRootreads, finallyrestorebeforeassertions. GenuineclosedreportderivedRoot/Worldcomputation only, nofakeModel/engineproof/authority. Actualgate/oldjoinpropertycontrolstillrequired; uniformwrongprefixbyteerror mustfaildirecttest.",
+        "No Bsourceedits; readonlyfrozenkerneloverlayonlyafterCfreeze+Aaccept+rootCASGO, exactpreimage32155/2238e03d. SourceencoderexportexplicitA3858/15a0received, no facade/reexport. Freezeowncandidate/inverse+Aoraclecausalityreview beforeactualLIST2rootsrecord20+dedicatedold10+appendedN, full55ACTUAL/2379conditionaltyping/excludes[]/allresolvedhelpers/deps/harness/workerbeforeafter; normal12/officialownedtestbudget/style. Source2063/private55/ROOT56 unchanged.",
+        "Source29 is exactbyte/evaluation-equivalent3site serializationrefactor withWorldlogicunchanged. Finalfunctionalqualificationfresh3rootsfocused79+record20+dedicatedold10+N=109+N plusfull55type/static, actualLISTunfiltered/noUHE. PriorJOIN28whole466historical ONLY, nofresh466claim. Whole10required ifequivalenceunsupported/newlogic/othersourcechanges/failures/concerns. Exactoriginalstrict35 thenunchanged52 stillmandatory; no engineuntilparentquietGO.",
+        "No publicsourcepush/comments/HOLD/queue/timebudget/waiver/retry/cancel/fallback changes. ROOT2061unadopted/all27criteriaunproven; future20CAS13source+6tests+policy, ROOT56typing/style68/fullrelated/vector/constructor afteractualprivate52pass."
+      ]
+    }
+  ],
+  "predecessors": [
+    "3522-b-native-class-semantic-producer-20261014.json",
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}
