@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import { forEachChild, ts } from "../ts-api.js";
-import { isLexicalBindingWrite, varDeclaratorWrittenNames } from "./analysis/binding-writes.js";
+import { isLexicalBindingWrite, varDeclaratorWrittenNames } from "../shared/binding-writes.js";
 import { collectPatternBindingNames } from "./analysis/ast-scope.js";
 
 /** Conservatively collect writes in the function-like enclosing a lifted closure. */

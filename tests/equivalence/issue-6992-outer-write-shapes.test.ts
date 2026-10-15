@@ -2,7 +2,7 @@
 // assignment and `++/--`. A write through a destructuring target, a
 // `for (x of …)` / `for (x in …)` head or a `var` re-declaration left the
 // capture by-value, so the closure read a stale snapshot. The shared
-// `isLexicalBindingWrite` contract (src/ir/analysis/binding-writes.ts) now
+// `isLexicalBindingWrite` contract (src/shared/binding-writes.ts) now
 // drives every scan, and the destructuring / for-of / for-in lowerings store
 // through the capture's ref cell.
 import { describe, expect, it } from "vitest";

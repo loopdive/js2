@@ -73,7 +73,7 @@ Found by the 2026-10-15 audit (scoping lane). Same result on `standalone` and `g
 
 **The fix has two halves.** Fixing detection alone was not enough. Once a capture is correctly detected as written, it becomes a ref cell, and every lowering that writes the binding must store through that cell. The destructuring, for-of and for-in lowerings did not. They resolved `localMap[name]`, which is now the cell local, and coerced the value into it as if it were the binding's own slot. The result was `ref.null` stored into the cell local: the write was lost, and later reads trapped (`illegal cast`) or read null. Shipping detection without the write-through half would have turned wrong values into traps.
 
-**Detection: one shared contract** (`src/ir/analysis/binding-writes.ts`, below the IR):
+**Detection: one shared contract** (`src/shared/binding-writes.ts`, below both `src/ir` and `src/codegen`. Placed under `src/ir/analysis` it added two codegen-to-ir edges to the import-cycle ratchet's two-way codegen/ir pair, so it lives in `src/shared`):
 - `isLexicalBindingWrite(id)` covers:
   - every assignment operator, including `??=`, `||=` and `**=`
   - `++` and `--`

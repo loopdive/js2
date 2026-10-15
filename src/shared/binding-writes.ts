@@ -8,9 +8,10 @@
  * `({a} = …)`, `[a, b] = [b, a]`), a `for (a of …)` / `for (k in …)` head and a
  * `var` re-declaration with an initializer were missed, so the capture stayed
  * by-value and the closure read a stale snapshot. Pure AST: no checker, no
- * CodegenContext — it sits below the IR so `src/ir` and `src/codegen` share it.
+ * CodegenContext — it sits in `src/shared` (below both) so `src/ir` and `src/codegen` share it
+ * without a new codegen<->ir import edge.
  */
-import { ts } from "../../ts-api.js";
+import { ts } from "../ts-api.js";
 
 /**
  * True when `identifier` is the target an assignment (any `=`/compound/logical

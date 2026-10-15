@@ -38,7 +38,7 @@
 import { IR_STRING_COMPARE_FN } from "./runtime-symbols.js";
 import { IR_ASYNC_CONSOLE_LOG_STRING_FN, IR_ASYNC_NUMBER_TO_STRING_FN } from "./async-semantic-runtime.js";
 import { ts, forEachChild } from "../ts-api.js";
-import { isLexicalBindingWrite } from "./analysis/binding-writes.js";
+import { isLexicalBindingWrite } from "../shared/binding-writes.js";
 import { IR_CLOSURE_UNDEFINED } from "./core/closure-invocation-callables.js";
 import {
   fixedClosureParameters,

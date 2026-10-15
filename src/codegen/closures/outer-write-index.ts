@@ -3,7 +3,7 @@
 // (#6988) Per-body index of identifier write targets, for the closure-capture
 // planner's "is this captured name written outside the closure?" question.
 import { ts, forEachChild } from "../../ts-api.js";
-import { isLexicalBindingWrite, varDeclaratorWrittenNames } from "../../ir/analysis/binding-writes.js";
+import { isLexicalBindingWrite, varDeclaratorWrittenNames } from "../../shared/binding-writes.js";
 
 /**
  * Identifier write targets of an enclosing body (every form

@@ -19,7 +19,7 @@ import { widenJsDefaultGuessSlot } from "./js-default-param-type-guess.js";
  */
 
 import { ts, forEachChild } from "../ts-api.js";
-import { isLexicalBindingWrite } from "../ir/analysis/binding-writes.js";
+import { isLexicalBindingWrite } from "../shared/binding-writes.js";
 import { isVoidType, unwrapPromiseType, isPromiseType } from "../checker/type-mapper.js";
 import type { FieldDef, Instr, LocalDef, StructTypeDef, ValType } from "../ir/types.js";
 import { isStandalonePromiseActive } from "./async-scheduler.js"; // (#2867 Gap 1) native-$Promise carrier gate

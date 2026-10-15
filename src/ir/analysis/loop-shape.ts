@@ -23,7 +23,7 @@
  */
 import { forEachChild, ts } from "../../ts-api.js";
 import { collectPatternBindingNames, collectReferencedIdentifiers } from "./ast-scope.js";
-import { isLexicalBindingWrite } from "./binding-writes.js";
+import { isLexicalBindingWrite } from "../../shared/binding-writes.js";
 
 /**
  * Detect integer loop counter pattern: for (let i = INT; i < EXPR; i++)
