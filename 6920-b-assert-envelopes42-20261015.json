@@ -1,0 +1,157 @@
+{
+  "id": "6920",
+  "slice": "assert-envelopes42-successor-20261015",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+  "claimed_at": "2026-10-15T21:44:35.131803+00:00",
+  "updated_at": "2026-10-15T21:44:35.131803+00:00",
+  "write_id": "b-assert-envelopes42-e4f1abc3-21e7-4b71-845a-f948bd09bcc5",
+  "handoff_scope": [
+    {
+      "kind": "assert-envelopes42",
+      "at": "2026-10-15T21:44:35.131803+00:00",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+      "manifest": {
+        "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+        "receivingWorkspace": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-assert-envelopes42/workspace",
+        "bootstrapSourceWorkspace": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-error-signature41/workspace",
+        "canonicalROOTWorkspace": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827",
+        "status": "FINITE_TWO_EXISTING_FILE_THREE_ASSERT_ENVELOPE_EXPERIMENT_NO_SOURCE_GO_UNTIL_PUBLISHED",
+        "issueTitle": "Native Linear numeric-vector shared source handoff and integration plan",
+        "componentPreimages": [
+          {
+            "path": "src/ir/program/native-js-class-values.ts",
+            "bytes": 18327,
+            "sha256": "bb8c2489ec01a08ab20fbdf1aac60770519aad99abcb1c433332eddfc7421e6f"
+          },
+          {
+            "path": "src/ir/program/native-program-resource-requirements.ts",
+            "bytes": 35756,
+            "sha256": "52b150241a10c9b0dab0de8dcf1053d48d93dd187d1320a2982127cce81208ed"
+          }
+        ],
+        "incomingComponents": [
+          {
+            "path": "src/ir/program/native-js-class-values.ts",
+            "bytes": 18381,
+            "sha256": "5bbde4174fed53e86cca00baf3a85784ca941ef4f518fc1dc76e9b3121fd6f92",
+            "previewPath": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/source42-assert-envelope-preview01/normalizer.formatted-preview.ts.txt"
+          },
+          {
+            "path": "src/ir/program/native-program-resource-requirements.ts",
+            "bytes": 35836,
+            "sha256": "827e33140d75acddb9e9754d472596a688864627f6af2bf1ae6d5ae139ad7f2e",
+            "previewPath": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/source42-assert-envelope-preview01/resource.formatted-preview.ts.txt"
+          }
+        ],
+        "canonicalNewPaths": [],
+        "productionPaths": [
+          "src/ir/program/native-js-class-values.ts",
+          "src/ir/program/native-program-resource-requirements.ts"
+        ],
+        "existingTestPaths": [],
+        "newTestPaths": [],
+        "sourceCountBefore": 2065,
+        "sourceCountConditionalAfter": 2065,
+        "basis": {
+          "parentCurrentPreviewMapCoverageCustody": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/private-assert-envelopes42-receive/parent-preview-map-coverage-custody.json",
+            "bytes": 12910,
+            "sha256": "0a2946611651bf5cc778e78e705afc91e9495c95f8f397431817fe88c70c4ac0"
+          },
+          "CPreview": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/source42-assert-envelope-preview01/sealed.json",
+            "bytes": 4883,
+            "sha256": "290f94651f55310e769a2f71bb2bf789e957b75c00f8d89cd8b6918893ecbf28"
+          },
+          "ACopySafetyAndN0": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/source41-fresh-assert-envelopes-safety01/review.json",
+            "bytes": 11504,
+            "sha256": "602084afb86ae62d2df59a36d140e5798bc48769835ba6a83d224e6a9a708bf0"
+          },
+          "AExactPreview": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/source41-fresh-assert-envelopes-safety01/preview42-exact-review.json",
+            "bytes": 4168,
+            "sha256": "b8584864e5a2dd5d47b77ad039ae02a42a8ccdeaf6f37fa3086b45a47dad4332"
+          },
+          "COracleMembershipFacts": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/source41-assert-envelope-oracle-membership01/facts.json",
+            "bytes": 11410,
+            "sha256": "f522e9e295c206575efd73860b02f6fba2053ad8e00ea877b025a5b797ff93ca"
+          },
+          "BCurrentMappedCPU": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-value-replay-successor-20261014-01a12827/.tmp/wasi-profile41-capture-review/sealed.json",
+            "bytes": 2036,
+            "sha256": "cb8efdcb9bbc58d19c3fe93d8f848cb7d4029fe46683897ef34ec8eec0988117"
+          },
+          "BReviewAndExperimentRecommendation": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-value-replay-successor-20261014-01a12827/.tmp/wasi-profile41-capture-review/review.json",
+            "bytes": 7674,
+            "sha256": "0d202e7bdd32c6c8399caad503e3ccf64174866255eed2a57e6264a76f9d52f6"
+          },
+          "AActualCaptureProtocol": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/source41-executed-foundation-capture-method01/actual-capture-protocol-review.json",
+            "bytes": 7350,
+            "sha256": "35cf7671836c2104a6dbe424851b7896dd4f368e42fc8c4b5e77e75d7b15e6ab"
+          },
+          "expectedUnchanged818": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-value-replay-successor-20261014-01a12827/.tmp/source41-family503-coverage-adequacy/expected-cohort.json",
+            "bytes": 15324,
+            "sha256": "5c0c5010bf97cb6192b7bf30d269da43ae8cc964732336e2695a36b468a22005"
+          },
+          "parentSource41Full52Failure": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/private-runtime-signature41-receive/parent-full52-01-failure-authentication.json",
+            "bytes": 2359,
+            "sha256": "c636e5a3682293549abfd6e554d2d94927d0a3a33b889ad2a9299ac45c6bddc3"
+          }
+        },
+        "bootstrapCensus": {
+          "ordinary": 16532,
+          "explicitIgnoredHelpers": [
+            ".tmp/class-public-history-successor/paired-root.test.ts",
+            ".tmp/class-public-history-successor/source56.bin"
+          ],
+          "totalContext": 16534,
+          "source": 2065,
+          "actualWholeSource41ContextParentAuthenticated": true
+        },
+        "constraints": [
+          "C solewriter NEWprivateSOURCE42 fromFULLCURRENT SOURCE41 context16532ordinary+2genuineignoredhelpers=16534/source2065. SaveBOTHoldrawsBEFOREANYwrite; fullbeforeaftermaps exactly2allowedchanges/all16532offscopeexact/donorafterexact. Preservevalid.git129/e2f150fa actualLF/readonlynode_modules/noinstall/Gitmutations; realROOTindexHEAD+resolveda4d4c99 unchanged; no donor/ROOT/foreignwrites.",
+          "Exactly2existingnamedcopyPreparedIrDataObject imports+3WHOLEfreshouter literal wrappers: normalizer {context,actualModule}; collect/currentness {program,projection}. Originallocalreadorder/childaliases/proto/ownDATAflags/extensibility preserved; currentnessclasses.get+exactowner/identity refusal remainsBEFOREcopy. ALLborrowedchildren/rawrecursiveguards/ABI/currentness/equations untouched. No casts/newhelper/API/export/module/test/policy/typingroots/rawcallerbranding.",
+          "InitialGO bootstrap+2files/normalformat/wholeinverse/officialcaps ONLY. Previewnormalizer390to391/max210/resource799to800/max166 andALLfunctionspansunchanged/no regrown/newGiants/grants. No compiler/LIST/engine untilphysicalendpointreview+nextparentGO.",
+          "N0newtests acceptedexactmechanicalscope fromAproof/Brecommendation/currentgenuinepaths: normalize26 healthy/malformed/accessor0; resources41collectgetter0; effects79healthycollect→catalogue→currentness; copier27/brand26 rawchildguard controls. Evidence16/TDZ20copiedforeignnegatives stopbeforecurrent74 and runlateroriginal52; no isolatedpostissuedgettertest74 or per-sitepopulation fabricated. Freshunchanged818/25 required; optional854/27unselected.",
+          "Freshfull2065source+59ACTUALroots/excludes[]/allresolvedcompilerextensions/compiler+bothlists0;normal12/style76TS+policy77args/29ownedbudgets NEWmemberresourcefile+immediate2rawbaselines. Inventoryvalid/errors[]/architectureCompleteFALSE. Exactcurrent source/test/config/helper/dependency/Git beforeafter maps+truechildstatuses.",
+          "Node25.9/8192/fork1/noCPU/default35000/defaultRPC/original153yield/current6429bothawaitworkload; GIT_OPTIONAL_LOCKS0 EVERYlaunch. Parentacceptfresh818+metadata BEFOREseparateoriginalstrict35 thenoriginal52 quietGOs. No retry/signals/waivers/automaticextraCPU.",
+          "ActualcurrentSOURCE41runtime5309script370 CPU/source-map5anchorproof: native6818rawticks/probeapply6179(90.62775%), notseconds/transport-onlyprice. Wholeworkerincludesbootstrap/inspector/callback/teardown. Per3sitepopulation UNMEASURED andcandidate netgainUNKNOWN; addedreflection/descriptors/secondallocation/cacheSET explicit. PrivateSET/bind/probeweakening/unrelatedsites held.",
+          "PreserveSOURCE41strict34625.444375PASS separately/full52FAILED50of52/live36100.677125/codec35291.36462499999 anddiagnostic36608.103417000006FAIL/fullcallbackcapturevalid. Allolderfailures immutable. No ROOTadoption/local166checkpoint/publicsourcepush/PR/comment/HOLD/Aqueue/masterpromotion. Onlysignedprivatecoordinationrecordpublishwithnormalhooks here.",
+          "ProspectiveROOTdifferences become6files(heldfoundation/brand/neutral/runtime plus2envelopefiles). No old4CASmethod grants6CAS authority; privatefresh818/meta/strict/full52pass and newexactwholecontext6CASmethod/preimagesALLsaved+parentadoptionGO/freshROOTchecks stillrequired."
+        ],
+        "inheritsSource41": "FULLCURRENT SOURCE41 preserved; this experiment adds only twoexistingfile deltas. Source41 own canonicalfixture/policy/sourceindices/HOLDs unchanged."
+      },
+      "manifestSha256": "721a5a12d12ccadfcea00ee11e78e189fa2c49bc3e4bcbaf39468a1794fcfe3a",
+      "constraints": [
+        "C solewriter NEWprivateSOURCE42 fromFULLCURRENT SOURCE41 context16532ordinary+2genuineignoredhelpers=16534/source2065. SaveBOTHoldrawsBEFOREANYwrite; fullbeforeaftermaps exactly2allowedchanges/all16532offscopeexact/donorafterexact. Preservevalid.git129/e2f150fa actualLF/readonlynode_modules/noinstall/Gitmutations; realROOTindexHEAD+resolveda4d4c99 unchanged; no donor/ROOT/foreignwrites.",
+        "Exactly2existingnamedcopyPreparedIrDataObject imports+3WHOLEfreshouter literal wrappers: normalizer {context,actualModule}; collect/currentness {program,projection}. Originallocalreadorder/childaliases/proto/ownDATAflags/extensibility preserved; currentnessclasses.get+exactowner/identity refusal remainsBEFOREcopy. ALLborrowedchildren/rawrecursiveguards/ABI/currentness/equations untouched. No casts/newhelper/API/export/module/test/policy/typingroots/rawcallerbranding.",
+        "InitialGO bootstrap+2files/normalformat/wholeinverse/officialcaps ONLY. Previewnormalizer390to391/max210/resource799to800/max166 andALLfunctionspansunchanged/no regrown/newGiants/grants. No compiler/LIST/engine untilphysicalendpointreview+nextparentGO.",
+        "N0newtests acceptedexactmechanicalscope fromAproof/Brecommendation/currentgenuinepaths: normalize26 healthy/malformed/accessor0; resources41collectgetter0; effects79healthycollect→catalogue→currentness; copier27/brand26 rawchildguard controls. Evidence16/TDZ20copiedforeignnegatives stopbeforecurrent74 and runlateroriginal52; no isolatedpostissuedgettertest74 or per-sitepopulation fabricated. Freshunchanged818/25 required; optional854/27unselected.",
+        "Freshfull2065source+59ACTUALroots/excludes[]/allresolvedcompilerextensions/compiler+bothlists0;normal12/style76TS+policy77args/29ownedbudgets NEWmemberresourcefile+immediate2rawbaselines. Inventoryvalid/errors[]/architectureCompleteFALSE. Exactcurrent source/test/config/helper/dependency/Git beforeafter maps+truechildstatuses.",
+        "Node25.9/8192/fork1/noCPU/default35000/defaultRPC/original153yield/current6429bothawaitworkload; GIT_OPTIONAL_LOCKS0 EVERYlaunch. Parentacceptfresh818+metadata BEFOREseparateoriginalstrict35 thenoriginal52 quietGOs. No retry/signals/waivers/automaticextraCPU.",
+        "ActualcurrentSOURCE41runtime5309script370 CPU/source-map5anchorproof: native6818rawticks/probeapply6179(90.62775%), notseconds/transport-onlyprice. Wholeworkerincludesbootstrap/inspector/callback/teardown. Per3sitepopulation UNMEASURED andcandidate netgainUNKNOWN; addedreflection/descriptors/secondallocation/cacheSET explicit. PrivateSET/bind/probeweakening/unrelatedsites held.",
+        "PreserveSOURCE41strict34625.444375PASS separately/full52FAILED50of52/live36100.677125/codec35291.36462499999 anddiagnostic36608.103417000006FAIL/fullcallbackcapturevalid. Allolderfailures immutable. No ROOTadoption/local166checkpoint/publicsourcepush/PR/comment/HOLD/Aqueue/masterpromotion. Onlysignedprivatecoordinationrecordpublishwithnormalhooks here.",
+        "ProspectiveROOTdifferences become6files(heldfoundation/brand/neutral/runtime plus2envelopefiles). No old4CASmethod grants6CAS authority; privatefresh818/meta/strict/full52pass and newexactwholecontext6CASmethod/preimagesALLsaved+parentadoptionGO/freshROOTchecks stillrequired."
+      ]
+    }
+  ],
+  "predecessors": [
+    "3522-b-native-class-semantic-producer-20261014.json",
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}
