@@ -1,0 +1,97 @@
+{
+  "id": "6920",
+  "slice": "producer-signature33-policy-successor-20261015",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+  "claimed_at": "2026-10-15T12:48:19.781480+00:00",
+  "updated_at": "2026-10-15T12:48:19.781480+00:00",
+  "write_id": "b-producer-signature33-policy-721937d7-d0e6-4411-bd8d-ccf1658eca5c",
+  "handoff_scope": [
+    {
+      "kind": "producer-signature33-policy",
+      "at": "2026-10-15T12:48:19.781480+00:00",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+      "manifest": {
+        "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+        "receivingWorkspace": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-producer-signature33/workspace",
+        "status": "FINITE_SINGLE_ANCILLARY_ROW_RECEIVE_NO_GO_UNTIL_PUBLISHED",
+        "componentPreimages": [],
+        "canonicalNewPaths": [],
+        "productionPaths": [],
+        "newTestPaths": [],
+        "ancillaryPolicyScope": {
+          "path": "scripts/compiler-boundaries.json",
+          "before": {
+            "bytes": 647646,
+            "sha256": "d3b918d631c66675a5986d03a45b42663b9f51106f7765374e3109c1fd4a605e"
+          },
+          "candidate": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/producer-signature33-policy-preflight/candidate.json",
+            "bytes": 647813,
+            "sha256": "75724f080c8650d792ca1aeebebe951cc581cc146e4688cc4c74f50b2bc61ed4"
+          },
+          "exactAddedRow": {
+            "path": "src/ir/analysis/allocation-evidence/js-class-value-domains/producer-private-keys.ts",
+            "state": "clean",
+            "layer": "ir-analysis"
+          },
+          "separateFromSourceOwnership": true
+        },
+        "sourceCountBefore": 2064,
+        "sourceCountConditionalAfter": 2064,
+        "basis": {
+          "authority": "take over all Session B; take over blocking seams; parallel subagents",
+          "priorOwnership": "d8d91626d79fbbe83a3b95e4028cd0196695f176",
+          "sourceClaim": "f8056e26fbb9f3657e69c6a6c8f42e25c614ae07",
+          "AStaticSourceReview": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/producer-signature33-code-review/candidate01/review.json",
+            "bytes": 10647,
+            "sha256": "d972b8b5620c9b0eda1989413ee313fa883d70db68aea60d1d423c0d01251ca8"
+          },
+          "measuredClosure": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-producer-signature33/workspace/.tmp/signature33/candidate01/closure-and-sizes.json",
+            "bytes": 3255,
+            "sha256": "75b99d38500dcd39d9c0a07d6baba94d7004278df8a045a90b134f60dfd5faa1"
+          },
+          "independentRawDerivation": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/producer-signature33-policy-preflight/receipt.json",
+            "bytes": 4509,
+            "sha256": "827e596f581ff70c7f4dfafce598af4201b9f69d17ee6e407bc5855096e3940a"
+          },
+          "priorRootPolicyCandidate": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/adoption-policy-preflight/candidate.json",
+            "bytes": 647646,
+            "sha256": "d3b918d631c66675a5986d03a45b42663b9f51106f7765374e3109c1fd4a605e"
+          }
+        },
+        "constraints": [
+          "C sole exact ancillary policy row recipient in SOURCE33 workspace; not alone, preserve all other work. CAS old647646/d3b918 -> parent independently rawderived647813/75724f only. No other row edits/reordering/top-level/nonfiles changes. Raw removal of exact167-byte insertion restores entire old policy, parsed all2063 old rows/order/nonfiles exact. Parent actual stdin Prettier/idempotence/old control done; receipt4509/827e596f. Do not copy donor policy wholesale or JSON-roundtrip old body.",
+          "This single clean ir-analysis row follows actual frozen codec semantics and measured five-module value closure independently accepted by A. Official full actual check-compiler-boundaries --mode inventory --json against exact frozen2064 source/candidate policy is mandatory: exit0/inventoryValid/errors[], full source/module census/entry/hash, inspect value+type edges/unknown/unresolved/forbidden/transitive/active roots and matching complete closure. If incompatible report concrete block, do not force clean, relax checker or grant. architectureComplete may honestly remain false.",
+          "Wait all pre-policy input-sensitive source metadata jobs naturally terminal before actual policy CAS, preserve results/epochs. Then record exact before/after policy baseline and rerun affected qualification coherently so all input maps cover actual received policy; do not relabel old maps current. Source33 code stays frozen62399/8f5c and6602/e465, no additional source/test/engine edits.",
+          "B receives exact row only after parent separately directs dependency overlay; all source/oracle ownership otherwise unchanged. ROOT live647364/937049 untouched; future independently derived three-row candidate conditional only, no adoption/qualification credit here.",
+          "Normal gates/caps, genuine type census, exact bytes/effect equivalence, original strict35 then separate52 remain. No public compiler-source push/comments/HOLD/queue change. All27 master criteria unproven."
+        ]
+      },
+      "manifestSha256": "a305b93278465964a23a43e9ad7d1e69b62fd5c711e859d003c2e834d78147cd",
+      "constraints": [
+        "C sole exact ancillary policy row recipient in SOURCE33 workspace; not alone, preserve all other work. CAS old647646/d3b918 -> parent independently rawderived647813/75724f only. No other row edits/reordering/top-level/nonfiles changes. Raw removal of exact167-byte insertion restores entire old policy, parsed all2063 old rows/order/nonfiles exact. Parent actual stdin Prettier/idempotence/old control done; receipt4509/827e596f. Do not copy donor policy wholesale or JSON-roundtrip old body.",
+        "This single clean ir-analysis row follows actual frozen codec semantics and measured five-module value closure independently accepted by A. Official full actual check-compiler-boundaries --mode inventory --json against exact frozen2064 source/candidate policy is mandatory: exit0/inventoryValid/errors[], full source/module census/entry/hash, inspect value+type edges/unknown/unresolved/forbidden/transitive/active roots and matching complete closure. If incompatible report concrete block, do not force clean, relax checker or grant. architectureComplete may honestly remain false.",
+        "Wait all pre-policy input-sensitive source metadata jobs naturally terminal before actual policy CAS, preserve results/epochs. Then record exact before/after policy baseline and rerun affected qualification coherently so all input maps cover actual received policy; do not relabel old maps current. Source33 code stays frozen62399/8f5c and6602/e465, no additional source/test/engine edits.",
+        "B receives exact row only after parent separately directs dependency overlay; all source/oracle ownership otherwise unchanged. ROOT live647364/937049 untouched; future independently derived three-row candidate conditional only, no adoption/qualification credit here.",
+        "Normal gates/caps, genuine type census, exact bytes/effect equivalence, original strict35 then separate52 remain. No public compiler-source push/comments/HOLD/queue change. All27 master criteria unproven."
+      ]
+    }
+  ],
+  "predecessors": [
+    "3522-b-native-class-semantic-producer-20261014.json",
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}
