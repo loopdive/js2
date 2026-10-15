@@ -1,0 +1,155 @@
+{
+  "id": "6920",
+  "slice": "ordinary-class-physical-join-successor-20261015",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+  "claimed_at": "2026-10-15T04:41:36.974173+00:00",
+  "updated_at": "2026-10-15T04:41:36.974173+00:00",
+  "write_id": "b-ordinary-class-physical-join-3a673c18-10e4-46e6-aea6-01b67a9b160b",
+  "handoff_scope": [
+    {
+      "kind": "ordinary-class-physical-join",
+      "at": "2026-10-15T04:41:36.974173+00:00",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+      "manifest": {
+        "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+        "receivingWorkspace": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827",
+        "componentPreimages": [
+          {
+            "path": "src/ir/program-physical-plan.ts",
+            "bytes": 69147,
+            "sha256": "9dde852943de9c4fd64471648f33509eae87f7da488107cb2df698d689f0ddc8",
+            "scope": "Exactreceivedfinitecomponent parentaggregation; sourceendpoints sealed in attachedmanifests."
+          },
+          {
+            "path": "src/ir/program-body-resources.ts",
+            "bytes": 19982,
+            "sha256": "5b78d48f35d54a443aebe85d83cd21ad9d96fd7b0ccb1b4c736415a90846b814",
+            "scope": "Exactreceivedfinitecomponent parentaggregation; sourceendpoints sealed in attachedmanifests."
+          },
+          {
+            "path": "src/ir/program-consumer.ts",
+            "bytes": 76310,
+            "sha256": "93ac655db85c5a075c7721050ac554ad4bbab658ab3adbe34654fb37cc7a84f2",
+            "scope": "Exactreceivedfinitecomponent parentaggregation; sourceendpoints sealed in attachedmanifests."
+          },
+          {
+            "path": "src/backend/wasmgc/resources/native-number-undefined.ts",
+            "bytes": 5852,
+            "sha256": "5636a9844eddd1f5e9645bc405f733936a1698c52a24d2ca4da2ac610774a2f6",
+            "scope": "Exactreceivedfinitecomponent parentaggregation; sourceendpoints sealed in attachedmanifests."
+          },
+          {
+            "path": "src/backend/linear/program/memory.ts",
+            "bytes": 27755,
+            "sha256": "7f6aea9c939ab75cef464c5501486c1ed6fa131095b14c2d83bba3342c2ada07",
+            "scope": "Exactreceivedfinitecomponent parentaggregation; sourceendpoints sealed in attachedmanifests."
+          },
+          {
+            "path": "src/ir/program-number-undefined-resources.ts",
+            "bytes": 12490,
+            "sha256": "1244867e690e45e8c805e8b6c89e60d34799c2beeb40f1ce8c9ace1266d81fc8",
+            "scope": "Exactreceivedfinitecomponent parentaggregation; sourceendpoints sealed in attachedmanifests."
+          },
+          {
+            "path": "src/backend/linear/program/native-number-undefined.ts",
+            "bytes": 7341,
+            "sha256": "ab2026ab2329571f3a09126fa518711853cba81c5a92fa14172412f2729ad94d",
+            "scope": "Exactreceivedfinitecomponent parentaggregation; sourceendpoints sealed in attachedmanifests."
+          },
+          {
+            "path": "src/backend/wasmgc/program/native-realm.ts",
+            "bytes": 66890,
+            "sha256": "c6843c9f6b7818e2ec6cc2abc71a30b3674c90862efb5f7c83bae0750d6b27a1",
+            "scope": "Exactreceivedfinitecomponent parentaggregation; sourceendpoints sealed in attachedmanifests."
+          },
+          {
+            "path": "src/backend/wasmgc/resources/native-js-class.ts",
+            "bytes": 29196,
+            "sha256": "86ffd143c756a9185fc060aa2f47122122a75ce2b36d409c59c7bf57a4b477a0",
+            "scope": "Exactreceivedfinitecomponent parentaggregation; sourceendpoints sealed in attachedmanifests."
+          },
+          {
+            "path": "src/ir/program/native-program-resource-requirements.ts",
+            "bytes": 14183,
+            "sha256": "6c2eb88554d3cf4f4f8f00d6761f1b088c4afa9420c0d2e928d9e9c8d9b93e8d",
+            "scope": "Exactreceivedfinitecomponent parentaggregation; sourceendpoints sealed in attachedmanifests."
+          },
+          {
+            "path": "tests/issue-6920-native-ordinary-number-undefined.test.ts",
+            "bytes": 14447,
+            "sha256": "38ba6159d133342b520f51372a4fd2e47c1fcc7e917a6b17038ffe8f50e625d6",
+            "scope": "Exact Bfinal34semantic/4execution snapshot; preserve allold callbacks andfixtures."
+          },
+          {
+            "path": "tests/issue-6920-native-ordinary-number-undefined-execution.test.ts",
+            "bytes": 5452,
+            "sha256": "9d77777ac31f83f832047e200d5098d16d4e5f61ade1c3c7d2b7dfadd60fc6ed",
+            "scope": "Exact Bfinal34semantic/4execution snapshot; preserve allold callbacks andfixtures."
+          },
+          {
+            "path": "scripts/compiler-boundaries.json",
+            "bytes": 646767,
+            "sha256": "42970833d9f683fdd6dc6ff0cdeee5127a05ac1b9b7cb7b75680a221f7a8bb26",
+            "scope": "Onlyappend2reviewedrows;allprior2059rows/nonfilefields exact;formatterwhitespace semanticinverse required."
+          }
+        ],
+        "canonicalNewPaths": [
+          "src/backend/linear/program/native-number-undefined-layout.ts",
+          "src/backend/wasmgc/program/native-js-class-session.ts",
+          "tests/issue-6920-native-js-class-construction.test.ts",
+          "tests/issue-6920-native-js-class-construction-evidence.test.ts",
+          "tests/issue-6920-native-js-class-construction-tdz.test.ts"
+        ],
+        "sourceCountBefore": 2059,
+        "sourceCountConditionalAfter": 2061,
+        "productionPaths": 12,
+        "existingTestReplacements": 2,
+        "newConstructorTests": 3,
+        "policyRowsAppended": 2,
+        "classification": "EXPLICIT_EXPERIMENTAL_PARENT_JOIN_WITH_TWO_REQUIRED_WASI_CONSTRUCTOR_FAILURES;NOT_WHOLE_QUALIFIED",
+        "componentEndpoints": {
+          "production12": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/ordinary-class-physical-join-receive/production12.json",
+          "Btests2": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/ordinary-class-physical-join-receive/B-tests2.json",
+          "Ctests3": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/ordinary-class-physical-join-receive/C-tests3.json",
+          "BfinalSeal": "c9e0a74efa715a018c64be4658d3433281ae3157707401a647be84656dac9ace",
+          "CfinalSeal": "0a9f9f4c08e4178fe54c40bd26a12c6d43a2c1e3db4551fca5debbcf3986df50"
+        },
+        "qualificationPlan": ".tmp/ordinary-class-composition-root/epoch01/qualification-plan.json;54explicitroots/18relatedfiles+constructor3+oneexistingvectorcase;actualLISTcountsrequired",
+        "constraints": [
+          "Human allSessionB+blockingseam takeover; parentaggregates WRITE-COMPLETE frozenB/C snapshots only. Never editdonors/A/BW/BP/oldCW/newC/sourcepublic/PR/HOLD/queue/main. Ownership-onlyreceiptnotpublicsourcepermission.",
+          "Preserve all2049offscopeproduction including4newerROOTfoundation/classDATA/kernel/copier files; no wholessrc/test/policytransplant. Capturefullcurrent2059source/test/config/issue and exact10oldproduction+2oldtests+policy preimages beforewrite.",
+          "B8production endpoints+additional4C6 deps make12uniqueproduction; Ccoordinatorendpoint overriddenonlyby independentlyreviewedTDZ35756/52b15024. Sharedplanner/consumer currentROOT→C6→B inverses retained. ExactC3test snapshots plus B2existingtestendpoints only.",
+          "Appendonlycleanbackend-wasmgc sessionrow and honestmixed-needs-split wasm-physical layoutrow. Alloldrows/rules/edges/grants/activationhistory stayexact; standardPrettierstdinfilepath andorderedJSONvalueinverse/idempotence.",
+          "This experimentaljoin retains exact2requiredWASIargument refusals beforeemission atUNKNOWNcandidate. Never waiveUNKNOWN, removeassertions/countasengine, dropsupport/original/selected proof or assumeWASIpoststart. Currentqualification metadata mustsayunqualifieduntilfreshactualjoinedchecks; priorROOT183/249/459 preservedpredecessors.",
+          "No labels2logical sibling adoptioninthisjoin. Its194regressions remainseparate; compose onlyafterfirstphysicaljoin scopequalified withknownclassfrontierexplicit. No unrelatedvalueproof/newcanonicalcontract edits.",
+          "Runactualfullsrc+54roots/excludes[] typing inclallresolvedextensions, normalROOTstatic12 withrealancestor/noprivatebudgetadapter, actualarchitecturegraph two directions/SCC; source2059baseline28/110, C6+B2061prior28/111; donotclaimnooverallgrowth withoutactualmeasurement. No giantregrowth/newgrants/waivers.",
+          "ActualLIST/structuredidentities/order andruntimeafterfreeze: related18, existingoldvector1, constructor3 separateperformancewindow standardNode25/8192/35s/defaultRPC/qualifiedyield; naturalterminals/no cancellation. Preserveeveryfailedpredecessor andnewfailure honestly."
+        ]
+      },
+      "manifestSha256": "f4743f52219b080f5c98d9b2c31fb23a4a589af7249cc8660d5ac559147531de",
+      "constraints": [
+        "Human allSessionB+blockingseam takeover; parentaggregates WRITE-COMPLETE frozenB/C snapshots only. Never editdonors/A/BW/BP/oldCW/newC/sourcepublic/PR/HOLD/queue/main. Ownership-onlyreceiptnotpublicsourcepermission.",
+        "Preserve all2049offscopeproduction including4newerROOTfoundation/classDATA/kernel/copier files; no wholessrc/test/policytransplant. Capturefullcurrent2059source/test/config/issue and exact10oldproduction+2oldtests+policy preimages beforewrite.",
+        "B8production endpoints+additional4C6 deps make12uniqueproduction; Ccoordinatorendpoint overriddenonlyby independentlyreviewedTDZ35756/52b15024. Sharedplanner/consumer currentROOT→C6→B inverses retained. ExactC3test snapshots plus B2existingtestendpoints only.",
+        "Appendonlycleanbackend-wasmgc sessionrow and honestmixed-needs-split wasm-physical layoutrow. Alloldrows/rules/edges/grants/activationhistory stayexact; standardPrettierstdinfilepath andorderedJSONvalueinverse/idempotence.",
+        "This experimentaljoin retains exact2requiredWASIargument refusals beforeemission atUNKNOWNcandidate. Never waiveUNKNOWN, removeassertions/countasengine, dropsupport/original/selected proof or assumeWASIpoststart. Currentqualification metadata mustsayunqualifieduntilfreshactualjoinedchecks; priorROOT183/249/459 preservedpredecessors.",
+        "No labels2logical sibling adoptioninthisjoin. Its194regressions remainseparate; compose onlyafterfirstphysicaljoin scopequalified withknownclassfrontierexplicit. No unrelatedvalueproof/newcanonicalcontract edits.",
+        "Runactualfullsrc+54roots/excludes[] typing inclallresolvedextensions, normalROOTstatic12 withrealancestor/noprivatebudgetadapter, actualarchitecturegraph two directions/SCC; source2059baseline28/110, C6+B2061prior28/111; donotclaimnooverallgrowth withoutactualmeasurement. No giantregrowth/newgrants/waivers.",
+        "ActualLIST/structuredidentities/order andruntimeafterfreeze: related18, existingoldvector1, constructor3 separateperformancewindow standardNode25/8192/35s/defaultRPC/qualifiedyield; naturalterminals/no cancellation. Preserveeveryfailedpredecessor andnewfailure honestly."
+      ]
+    }
+  ],
+  "predecessors": [
+    "3522-b-native-class-semantic-producer-20261014.json",
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}
