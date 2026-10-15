@@ -36,7 +36,7 @@ import { allocLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { nativeStringLiteralInstrs } from "./native-strings.js";
 import { buildThrowJsErrorInstrs } from "./js-errors.js";
-import { ensureSymbolCarrier, usesNativeSymbolProvider } from "./symbol-native.js";
+import { ensureSymbolCarrier } from "./symbol-native.js";
 import { ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
 import { getExternrefToStringProvider } from "./coercion-engine.js";
 
@@ -75,7 +75,7 @@ export function buildJoinSeparatorToString(
   // class): a late import registered afterwards renumbers everything below.
   ensureLateImport(ctx, "__extern_toString", [{ kind: "externref" }], [{ kind: "externref" }]);
   const undefinedIdx = ensureLateImport(ctx, "__typeof_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
-  const symbolTypeIdx = usesNativeSymbolProvider(ctx) ? ensureSymbolCarrier(ctx) : -1;
+  const symbolTypeIdx = ensureSymbolCarrier(ctx);
   flushLateImportShifts(ctx, fctx);
   if (undefinedIdx === undefined) return null;
 

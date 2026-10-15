@@ -10,7 +10,6 @@ import { resolveWidenedVarKey } from "./widened-var-key.js";
 import { typeofOperandIsDeclared } from "./expressions/typeof-import-binding.js"; // (#6417)
 import { isBooleanType, isStringType, isSymbolType } from "../checker/type-mapper.js";
 import type { Instr, ValType } from "../ir/types.js";
-import { reportError } from "./context/errors.js";
 import { elementReadOfRebindWidenedArray } from "./declarations/array-rebind-element-widening.js";
 import { moduleGlobalIsDynamicButStaticallyPrimitive } from "./declarations/heterogeneous-scalar-var-widening.js";
 import { typeofFoldContradictedByFieldVerdict } from "./fnctor-ctor-param-types.js";
@@ -25,20 +24,13 @@ import { popBody, pushBody } from "./context/bodies.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { isStrictContext } from "./expressions/assignment.js";
 import { EVAL_SOURCE_FILENAME } from "./expressions/eval-source.js";
-import {
-  emitUndefined,
-  ensureLateImport,
-  flushLateImportShifts,
-  shiftLateImportIndices,
-} from "./expressions/late-imports.js";
+import { emitUndefined, ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
 import { resolveStructName } from "./expressions/misc.js";
 import { tryEmitArrayProtoIteratorDelete } from "./expressions/proto-override.js";
 import { addUnionImports, parseRegExpLiteral, resolveWasmType } from "./index.js";
 import { emitExternrefDestructureGuard, paramUndefinedTypeIsDefaultArtifact } from "./destructuring-params.js";
 import { buildThrowJsErrorInstrs, type JsErrorKind } from "./js-errors.js";
 import { compileStandaloneRegExpLiteral } from "./regexp-standalone.js";
-import { addImport, localGlobalIdx } from "./registry/imports.js";
-import { addFuncType, getArrTypeIdxFromVec } from "./registry/types.js";
 import {
   emitArgumentsOrdinaryNamedDelete, // (#4622) `delete arguments.length`
   emitArgumentsTypeofComparison,
@@ -949,53 +941,7 @@ export function compileRegExpLiteral(ctx: CodegenContext, fctx: FunctionContext,
   // #682 — standalone mode has a reduced native literal-substring backend.
   // Unsupported syntax still reports #1474-compatible diagnostics rather than
   // falling back to a JS-host RegExp import.
-  if (ctx.targetProfile.semanticProviders === "native-first") {
-    return compileStandaloneRegExpLiteral(ctx, fctx, pattern, flags, expr);
-  }
-
-  // Load pattern string
-  const patternResult = compileStringLiteral(ctx, fctx, pattern, expr);
-  if (!patternResult) return null;
-
-  // Load flags string (empty string "" if no flags — ref.null.extern would
-  // become null in JS, causing "Invalid flags 'null'" at runtime)
-  const flagsStr = flags ?? "";
-  const flagsResult = compileStringLiteral(ctx, fctx, flagsStr, expr);
-  if (!flagsResult) return null;
-
-  // (#3301) Ensure a minimal `externClasses` "RegExp" entry BEFORE the import:
-  // the manifest resolver routes `RegExp_new` to the real RegExp constructor
-  // only when "RegExp" is in `ctx.externClasses`, else it falls to the "builtin"
-  // intent — a no-op returning `undefined`. The pre-codegen scan sets this for a
-  // real-AST regex literal, but an eval-spliced regex (`eval("/abc/i")`, #1163)
-  // is a FOREIGN node it never walks. Mirrors the calls.ts eval-concat peephole.
-  if (!ctx.externClasses.has("RegExp")) {
-    ctx.externClasses.set("RegExp", {
-      importPrefix: "RegExp",
-      namespacePath: [],
-      className: "RegExp",
-      constructorParams: [{ kind: "externref" }, { kind: "externref" }],
-      methods: new Map(),
-      properties: new Map(),
-    });
-  }
-
-  // Call RegExp_new(pattern, flags) -> externref
-  let funcIdx = ctx.funcMap.get("RegExp_new");
-  if (funcIdx === undefined) {
-    // Register RegExp_new import on demand: (externref, externref) -> externref
-    const importsBefore = ctx.numImportFuncs;
-    const regexpNewType = addFuncType(ctx, [{ kind: "externref" }, { kind: "externref" }], [{ kind: "externref" }]);
-    addImport(ctx, "env", "RegExp_new", { kind: "func", typeIdx: regexpNewType });
-    shiftLateImportIndices(ctx, fctx, importsBefore, ctx.numImportFuncs - importsBefore);
-    funcIdx = ctx.funcMap.get("RegExp_new");
-  }
-  if (funcIdx === undefined) {
-    reportError(ctx, expr, "Missing RegExp_new import for regex literal");
-    return null;
-  }
-  fctx.body.push({ op: "call", funcIdx });
-  return { kind: "externref" };
+  return compileStandaloneRegExpLiteral(ctx, fctx, pattern, flags, expr);
 }
 
 // ── instanceof ────────────────────────────────────────────────────────

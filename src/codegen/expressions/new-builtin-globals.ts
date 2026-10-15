@@ -36,7 +36,6 @@ import { ensureNativeProxyRuntime, ensureObjectRuntime } from "../object-runtime
 import { ensureSymbolCarrier } from "../symbol-native.js";
 import { undefinedSingletonActive } from "../any-helpers.js";
 import { emitStandalonePromiseFromExecutor, emitStandalonePromiseFromExecutorValue } from "../promise-executor.js";
-import { isStandalonePromiseActive } from "../async-scheduler.js";
 import { isInertNonCallableLiteral } from "../promise-newtarget.js"; // (#5143)
 import {
   emitStandaloneTest262Error,
@@ -51,7 +50,7 @@ import type { InnerResult } from "../shared.js";
 import { compileStringLiteral } from "../string-ops.js";
 import { emitAcceleratedDateParse } from "../helpers/host-date-parse.js";
 import { coerceType as coerceTypeImpl } from "../type-coercion.js";
-import { ensureHostStrictSpreadDispatch, ensureNativeStrictSpreadRuntime } from "../iterator-native.js";
+import { ensureNativeStrictSpreadRuntime } from "../iterator-native.js";
 import { ensureDateDaysFromCivilHelper, ensureDateFormatStringHelper, ensureDateStruct } from "./builtins.js";
 import { emitStandaloneDateTimestamp } from "../standalone-clock-capability.js";
 import { mintDateCarrierDynamicMembers } from "../date-carrier-dynamic-member.js";
@@ -403,152 +402,6 @@ function emitNativeStrictExpandedProxyArguments(
 }
 
 /**
- * Emit Proxy ArgumentListEvaluation through the canonical host strict spread
- * materializer. This is the host-only fallback for a non-literal or nested
- * spread: `__array_from_iter_strict` owns ECMAScript GetIterator validation,
- * while the ordinary externref readers expose every materialized element in
- * source order. The Proxy-specific path never calls the internal iterator
- * bridge here.
- */
-function emitHostCanonicalExpandedProxyArguments(
-  ctx: CodegenContext,
-  fctx: FunctionContext,
-  args: readonly ts.Expression[],
-  compileValue: (arg: ts.Expression | undefined) => void,
-): ExpandedProxyArgumentLocals {
-  const targetLocal = allocTempLocal(fctx, { kind: "externref" });
-  const handlerLocal = allocTempLocal(fctx, { kind: "externref" });
-  const countLocal = allocTempLocal(fctx, { kind: "i32" });
-  const valueLocal = allocTempLocal(fctx, { kind: "externref" });
-  const sourceLocal = allocTempLocal(fctx, { kind: "externref" });
-  const iteratorLocal = allocTempLocal(fctx, { kind: "externref" });
-  const lengthLocal = allocTempLocal(fctx, { kind: "f64" });
-  const indexLocal = allocTempLocal(fctx, { kind: "f64" });
-
-  // Reserve all canonical provider imports before compiling any argument.
-  // Later source expressions can register additional imports; the terminal
-  // flush and name lookups below keep every emitted call index current.
-  ensureLateImport(ctx, "__iterator", [{ kind: "externref" }], [{ kind: "externref" }]);
-  ensureHostStrictSpreadDispatch(ctx);
-  const iterFn = ensureLateImport(ctx, "__array_from_iter_strict", [{ kind: "externref" }], [{ kind: "externref" }]);
-  const lengthFn = ensureLateImport(ctx, "__extern_length", [{ kind: "externref" }], [{ kind: "f64" }]);
-  const getFn = ensureLateImport(
-    ctx,
-    "__extern_get_idx",
-    [{ kind: "externref" }, { kind: "f64" }],
-    [{ kind: "externref" }],
-  );
-  flushLateImportShifts(ctx, fctx);
-  const iterIdx = ctx.funcMap.get("__array_from_iter_strict") ?? iterFn;
-  const lengthIdx = ctx.funcMap.get("__extern_length") ?? lengthFn;
-  const getIdx = ctx.funcMap.get("__extern_get_idx") ?? getFn;
-  if (iterIdx === undefined || lengthIdx === undefined || getIdx === undefined) {
-    throw new Error("strict host spread providers were not registered");
-  }
-
-  fctx.body.push(
-    { op: "ref.null.extern" },
-    { op: "local.set", index: targetLocal },
-    { op: "ref.null.extern" },
-    { op: "local.set", index: handlerLocal },
-    { op: "i32.const", value: 0 },
-    { op: "local.set", index: countLocal },
-  );
-
-  const captureValue = (): Instr[] => [
-    { op: "local.get", index: countLocal },
-    { op: "i32.const", value: 0 },
-    { op: "i32.eq" },
-    {
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [
-        { op: "local.get", index: valueLocal },
-        { op: "local.set", index: targetLocal },
-      ],
-      else: [
-        { op: "local.get", index: countLocal },
-        { op: "i32.const", value: 1 },
-        { op: "i32.eq" },
-        {
-          op: "if",
-          blockType: { kind: "empty" },
-          then: [
-            { op: "local.get", index: valueLocal },
-            { op: "local.set", index: handlerLocal },
-          ],
-          else: [{ op: "local.get", index: valueLocal }, { op: "drop" }],
-        },
-      ],
-    },
-    { op: "local.get", index: countLocal },
-    { op: "i32.const", value: 1 },
-    { op: "i32.add" },
-    { op: "local.set", index: countLocal },
-  ];
-
-  for (const arg of args) {
-    if (!ts.isSpreadElement(arg)) {
-      compileValue(arg);
-      fctx.body.push({ op: "local.set", index: valueLocal });
-      fctx.body.push(...captureValue());
-      continue;
-    }
-
-    // Evaluate the spread source once, then strictly materialize it before
-    // evaluating the following argument. This preserves both source and
-    // iterator-step ordering, including a later abrupt completion.
-    compileValue(arg.expression);
-    fctx.body.push({ op: "local.set", index: sourceLocal });
-    flushLateImportShifts(ctx, fctx);
-    fctx.body.push(
-      { op: "local.get", index: sourceLocal },
-      { op: "call", funcIdx: iterIdx },
-      { op: "local.set", index: iteratorLocal },
-      { op: "local.get", index: iteratorLocal },
-      { op: "call", funcIdx: lengthIdx },
-      { op: "local.set", index: lengthLocal },
-      { op: "f64.const", value: 0 },
-      { op: "local.set", index: indexLocal },
-      {
-        op: "block",
-        blockType: { kind: "empty" },
-        body: [
-          {
-            op: "loop",
-            blockType: { kind: "empty" },
-            body: [
-              { op: "local.get", index: indexLocal },
-              { op: "local.get", index: lengthLocal },
-              { op: "f64.ge" },
-              { op: "br_if", depth: 1 },
-              { op: "local.get", index: iteratorLocal },
-              { op: "local.get", index: indexLocal },
-              { op: "call", funcIdx: getIdx },
-              { op: "local.set", index: valueLocal },
-              ...captureValue(),
-              { op: "local.get", index: indexLocal },
-              { op: "f64.const", value: 1 },
-              { op: "f64.add" },
-              { op: "local.set", index: indexLocal },
-              { op: "br", depth: 0 },
-            ],
-          },
-        ],
-      },
-    );
-  }
-
-  return {
-    target: targetLocal,
-    handler: handlerLocal,
-    count: countLocal,
-    value: valueLocal,
-    cleanup: [iteratorLocal, sourceLocal, indexLocal, lengthLocal, valueLocal, countLocal, handlerLocal, targetLocal],
-  };
-}
-
-/**
  * Whether an Error message can carry a native Symbol at runtime. Keep the
  * strict dynamic carrier arm out of statically ordinary string/number/object
  * messages so those existing constructor bodies remain byte-identical; an
@@ -790,7 +643,6 @@ export function tryCompileBuiltinGlobalNew(
     // claimed here; a runtime value stays on the value path below, which does its
     // own callability check. Standalone-carrier gated, so host/gc is byte-inert.
     if (
-      isStandalonePromiseActive(ctx) &&
       !ctx.classSet.has("Promise") &&
       resolvesToAmbientGlobal(ctx, expr.expression) &&
       (promiseArgs.length === 0 || isInertNonCallableLiteral(ctx, fctx, promiseArgs[0]!))
@@ -987,7 +839,6 @@ export function tryCompileBuiltinGlobalNew(
       // TypeError, then stop this constructor path. Host mode keeps its real JS
       // constructor and therefore its existing coercion semantics.
       if (
-        ctx.targetProfile.semanticProviders === "native-first" &&
         args.length >= 1 &&
         !isStaticUndefinedExpr(args[0]!, fctx) &&
         ctx.oracle.staticJsTypeOf(args[0]!) === "symbol"
@@ -1037,8 +888,7 @@ export function tryCompileBuiltinGlobalNew(
       // behavioural gain. Option-less constructions (`args.length < 2`) allocate
       // nothing and emit nothing new, so their bytes are unchanged.
       const hostErrorCtorPath =
-        !(ctx.targetProfile.semanticProviders === "native-first" && isWasiErrorName(ctorName)) &&
-        !((ctx.wasi || ctx.standalone) && ctorName === "Test262Error");
+        !isWasiErrorName(ctorName) && !((ctx.wasi || ctx.standalone) && ctorName === "Test262Error");
       const optionsTmp =
         hostErrorCtorPath && args.length >= 2 ? allocTempLocal(fctx, { kind: "externref" }) : undefined;
       for (let i = 1; i < args.length; i++) {
@@ -1069,11 +919,7 @@ export function tryCompileBuiltinGlobalNew(
       // #3032). Host mode's `__new_<Name>` import does ToString in JS, so only
       // the native path needs this. Applies to both the WASI-error and
       // Test262Error branches below (both native, both standalone/WASI).
-      if (
-        ctx.targetProfile.semanticProviders === "native-first" &&
-        args.length >= 1 &&
-        !isStaticUndefinedExpr(args[0]!, fctx)
-      ) {
+      if (args.length >= 1 && !isStaticUndefinedExpr(args[0]!, fctx)) {
         // Force `number_toString` before `__any_to_string` bakes so its number
         // arm renders a raw numeric message ("42") instead of degrading to
         // "[object Object]" (a module that only constructs `new Error(n)` never
@@ -1085,10 +931,7 @@ export function tryCompileBuiltinGlobalNew(
         // supplies an `any`-typed Symbol. Register the native carrier before
         // baking the dynamic ref.test, so that callee-before-caller compilation
         // cannot leave the strict ToString arm absent.
-        const symbolTypeIdx =
-          ctx.targetProfile.semanticProviders === "native-first" && errorMessageMayCarrySymbol(ctx, args[0]!)
-            ? ensureSymbolCarrier(ctx)
-            : -1;
+        const symbolTypeIdx = errorMessageMayCarrySymbol(ctx, args[0]!) ? ensureSymbolCarrier(ctx) : -1;
         const anyToStrIdx = ensureAnyToStringHelper(ctx);
         if (anyToStrIdx >= 0) {
           fctx.body.push(
@@ -1138,7 +981,7 @@ export function tryCompileBuiltinGlobalNew(
       // module unsatisfiable at instantiation time. JS-host mode is unchanged.
       const importName = `__new_${ctorName}`;
       // #1473 — standalone mode also has no JS host; build the Error in-module.
-      if (ctx.targetProfile.semanticProviders === "native-first" && isWasiErrorName(ctorName)) {
+      if (isWasiErrorName(ctorName)) {
         emitWasiErrorConstructor(ctx, ctorName, 1);
         const internalFuncIdx = ctx.funcMap.get(importName);
         if (internalFuncIdx !== undefined) {
@@ -1376,248 +1219,130 @@ export function tryCompileBuiltinGlobalNew(
   // dispatch reads/writes/has through the traps. Both modes share the same
   // `(target, handler) -> externref` signature, so the call site is uniform.
   if (ts.isIdentifier(expr.expression) && expr.expression.text === "Proxy") {
-    if (ctx.standalone || ctx.targetProfile.semanticProviders === "native-first") {
-      const args = expr.arguments ?? [];
-      const hasSpread = args.some((arg) => ts.isSpreadElement(arg));
-      const proxyArgs = hasSpread ? flattenProxyArguments(args) : args;
-      // `ensureNativeProxyRuntime` mints `__proxy_create` before the argument
-      // expressions are visited.  Pre-register the already-supported native
-      // Symbol carrier whenever the target or handler can carry one, so the
-      // construction-time object classifier has a stable carrier to test even
-      // when this callee is compiled before its Symbol-producing caller.
-      if (nativeProxyArgsMayCarrySymbol(ctx, proxyArgs ?? args)) ensureSymbolCarrier(ctx);
-      // Force the object runtime (which registers the native __proxy_create +
-      // the trap dispatch helpers + the front-guards) before we look up the idx.
-      ensureNativeProxyRuntime(ctx);
-      const compileToExternref = (arg: ts.Expression | undefined): void => {
-        if (arg === undefined) {
-          fctx.body.push({ op: "ref.null.extern" });
-          return;
-        }
-        // An OBJECT-LITERAL handler/target must lower to an OPEN `$Object`
-        // (`__new_plain_object` + `__extern_set` per prop) so the runtime
-        // `__proxy_create` can read the traps off the handler via `__extern_get`.
-        // A closed typed struct (the default for an inline literal) hides its
-        // fields from the open-object prop-map walk, so every trap reads null and
-        // never fires. `compileObjectLiteralAsExternref` builds the open form —
-        // the same shape a `const h: any = {…}` handler takes.
-        if (ts.isObjectLiteralExpression(arg)) {
-          const r = compileOpenProxyOperandLiteral(ctx, fctx, arg); // (#6770 S7) keeps accessors / computed keys
-          if (r === null) {
-            // Builder unavailable — push undefined so the body stays valid.
-            fctx.body.push({ op: "ref.null.extern" });
-          }
-          return;
-        }
-        // Inline functions must become the same module-owned closure values
-        // used everywhere else in native semantics. Compiling them through the
-        // generic externref expectation selects the callback/host lane and can
-        // leave a null placeholder as the Proxy target. ProxyCreate then sees a
-        // primitive even though the source value is callable. Keep the closure
-        // live and cross only its canonical externref carrier here.
-        const r =
-          ts.isArrowFunction(arg) || ts.isFunctionExpression(arg)
-            ? compileArrowAsClosure(ctx, fctx, arg)
-            : compileExpression(ctx, fctx, arg, { kind: "externref" });
-        if (r && r.kind !== "externref") {
-          if (r.kind === "ref" || r.kind === "ref_null") {
-            fctx.body.push({ op: "extern.convert_any" });
-          } else {
-            coerceTypeImpl(ctx, fctx, r, { kind: "externref" });
-          }
-        } else if (!r) {
-          // void result (shouldn't happen for a value arg) — push undefined.
+    const args = expr.arguments ?? [];
+    const hasSpread = args.some((arg) => ts.isSpreadElement(arg));
+    const proxyArgs = hasSpread ? flattenProxyArguments(args) : args;
+    // `ensureNativeProxyRuntime` mints `__proxy_create` before the argument
+    // expressions are visited.  Pre-register the already-supported native
+    // Symbol carrier whenever the target or handler can carry one, so the
+    // construction-time object classifier has a stable carrier to test even
+    // when this callee is compiled before its Symbol-producing caller.
+    if (nativeProxyArgsMayCarrySymbol(ctx, proxyArgs ?? args)) ensureSymbolCarrier(ctx);
+    // Force the object runtime (which registers the native __proxy_create +
+    // the trap dispatch helpers + the front-guards) before we look up the idx.
+    ensureNativeProxyRuntime(ctx);
+    const compileToExternref = (arg: ts.Expression | undefined): void => {
+      if (arg === undefined) {
+        fctx.body.push({ op: "ref.null.extern" });
+        return;
+      }
+      // An OBJECT-LITERAL handler/target must lower to an OPEN `$Object`
+      // (`__new_plain_object` + `__extern_set` per prop) so the runtime
+      // `__proxy_create` can read the traps off the handler via `__extern_get`.
+      // A closed typed struct (the default for an inline literal) hides its
+      // fields from the open-object prop-map walk, so every trap reads null and
+      // never fires. `compileObjectLiteralAsExternref` builds the open form —
+      // the same shape a `const h: any = {…}` handler takes.
+      if (ts.isObjectLiteralExpression(arg)) {
+        const r = compileOpenProxyOperandLiteral(ctx, fctx, arg); // (#6770 S7) keeps accessors / computed keys
+        if (r === null) {
+          // Builder unavailable — push undefined so the body stays valid.
           fctx.body.push({ op: "ref.null.extern" });
         }
-      };
-
-      if (hasSpread) {
-        const flattenedProxyArgs = flattenProxyArguments(args);
-        const isStaticSpread =
-          flattenedProxyArgs !== null && !flattenedProxyArgs.some((arg) => ts.isSpreadElement(arg));
-        const locals = isStaticSpread
-          ? emitExpandedProxyArguments(fctx, flattenedProxyArgs, (arg) => compileToExternref(arg))
-          : (() => {
-              // Dynamic and nested spreads are the direct consumer of the
-              // strict native provider. Register it before compiling any
-              // source expression so late import shifts cannot stale calls.
-              ensureNativeStrictSpreadRuntime(ctx);
-              return emitNativeStrictExpandedProxyArguments(ctx, fctx, args, (arg) => compileToExternref(arg));
-            })();
-        flushLateImportShifts(ctx, fctx);
-        const proxyCreateIdx = ctx.funcMap.get("__proxy_create");
-        if (proxyCreateIdx !== undefined) {
-          fctx.body.push(
-            { op: "local.get", index: locals.target },
-            { op: "local.get", index: locals.handler },
-            { op: "call", funcIdx: proxyCreateIdx },
-          );
+        return;
+      }
+      // Inline functions must become the same module-owned closure values
+      // used everywhere else in native semantics. Compiling them through the
+      // generic externref expectation selects the callback/host lane and can
+      // leave a null placeholder as the Proxy target. ProxyCreate then sees a
+      // primitive even though the source value is callable. Keep the closure
+      // live and cross only its canonical externref carrier here.
+      const r =
+        ts.isArrowFunction(arg) || ts.isFunctionExpression(arg)
+          ? compileArrowAsClosure(ctx, fctx, arg)
+          : compileExpression(ctx, fctx, arg, { kind: "externref" });
+      if (r && r.kind !== "externref") {
+        if (r.kind === "ref" || r.kind === "ref_null") {
+          fctx.body.push({ op: "extern.convert_any" });
         } else {
-          // Runtime not available (should not happen) — drop staged values and
-          // leave the same undefined result as the ordinary defensive path.
-          fctx.body.push(
-            { op: "local.get", index: locals.target },
-            { op: "drop" },
-            { op: "local.get", index: locals.handler },
-            { op: "drop" },
-            { op: "ref.null.extern" },
-          );
+          coerceTypeImpl(ctx, fctx, r, { kind: "externref" });
         }
-        for (const local of locals.cleanup) {
-          releaseTempLocal(fctx, local);
-        }
-        return { kind: "externref" };
+      } else if (!r) {
+        // void result (shouldn't happen for a value arg) — push undefined.
+        fctx.body.push({ op: "ref.null.extern" });
       }
+    };
 
-      // §28.2.1.1 starts with ArgumentListEvaluation.  Keep the first two
-      // values alive while every remaining argument is evaluated and dropped;
-      // validation in __proxy_create must not run until that whole list has
-      // completed (a later abrupt extra argument wins).
-      const targetLocal = allocTempLocal(fctx, { kind: "externref" });
-      const handlerLocal = allocTempLocal(fctx, { kind: "externref" });
-      compileToExternref(args[0]);
-      fctx.body.push({ op: "local.set", index: targetLocal });
-      compileToExternref(args[1]);
-      fctx.body.push({ op: "local.set", index: handlerLocal });
-      for (let i = 2; i < args.length; i++) {
-        compileToExternref(args[i]);
-        fctx.body.push({ op: "drop" });
-      }
-
-      // Argument compilation may add late imports.  Flush their shifts before
-      // resolving the already-minted defined function index.
+    if (hasSpread) {
+      const flattenedProxyArgs = flattenProxyArguments(args);
+      const isStaticSpread = flattenedProxyArgs !== null && !flattenedProxyArgs.some((arg) => ts.isSpreadElement(arg));
+      const locals = isStaticSpread
+        ? emitExpandedProxyArguments(fctx, flattenedProxyArgs, (arg) => compileToExternref(arg))
+        : (() => {
+            // Dynamic and nested spreads are the direct consumer of the
+            // strict native provider. Register it before compiling any
+            // source expression so late import shifts cannot stale calls.
+            ensureNativeStrictSpreadRuntime(ctx);
+            return emitNativeStrictExpandedProxyArguments(ctx, fctx, args, (arg) => compileToExternref(arg));
+          })();
       flushLateImportShifts(ctx, fctx);
       const proxyCreateIdx = ctx.funcMap.get("__proxy_create");
       if (proxyCreateIdx !== undefined) {
-        fctx.body.push({ op: "local.get", index: targetLocal });
-        fctx.body.push({ op: "local.get", index: handlerLocal });
-        fctx.body.push({ op: "call", funcIdx: proxyCreateIdx });
-      } else {
-        // Runtime not available (should not happen) — drop args, push undefined.
-        fctx.body.push({ op: "local.get", index: targetLocal });
-        fctx.body.push({ op: "drop" });
-        fctx.body.push({ op: "local.get", index: handlerLocal });
-        fctx.body.push({ op: "drop" });
-        fctx.body.push({ op: "ref.null.extern" });
-      }
-      releaseTempLocal(fctx, handlerLocal);
-      releaseTempLocal(fctx, targetLocal);
-      return { kind: "externref" };
-    }
-    const args = expr.arguments ?? [];
-    if (args.length >= 1) {
-      const compileHostProxyArg = (arg: ts.Expression | undefined): void => {
-        if (arg === undefined) {
-          fctx.body.push({ op: "ref.null.extern" });
-          return;
-        }
-        const result = compileExpression(ctx, fctx, arg);
-        if (result && result.kind !== "externref") {
-          if (result.kind === "ref" || result.kind === "ref_null") {
-            fctx.body.push({ op: "extern.convert_any" });
-          } else {
-            coerceTypeImpl(ctx, fctx, result, { kind: "externref" });
-          }
-        } else if (!result) {
-          fctx.body.push({ op: "ref.null.extern" });
-        }
-      };
-
-      if (args.some((arg) => ts.isSpreadElement(arg))) {
-        const flattenedProxyArgs = flattenProxyArguments(args);
-        const isStaticSpread =
-          flattenedProxyArgs !== null && !flattenedProxyArgs.some((arg) => ts.isSpreadElement(arg));
-        const locals = isStaticSpread
-          ? emitExpandedProxyArguments(fctx, flattenedProxyArgs, (arg) => compileHostProxyArg(arg))
-          : emitHostCanonicalExpandedProxyArguments(ctx, fctx, args, (arg) => compileHostProxyArg(arg));
-
-        // Emit the provider only after ArgumentListEvaluation has completed.
-        let proxyIdx = ensureLateImport(
-          ctx,
-          "__proxy_create",
-          [{ kind: "externref" }, { kind: "externref" }],
-          [{ kind: "externref" }],
+        fctx.body.push(
+          { op: "local.get", index: locals.target },
+          { op: "local.get", index: locals.handler },
+          { op: "call", funcIdx: proxyCreateIdx },
         );
-        flushLateImportShifts(ctx, fctx);
-        proxyIdx = ctx.funcMap.get("__proxy_create") ?? proxyIdx;
-        if (proxyIdx !== undefined) {
-          fctx.body.push(
-            { op: "local.get", index: locals.target },
-            { op: "local.get", index: locals.handler },
-            { op: "call", funcIdx: proxyIdx },
-          );
-        } else {
-          fctx.body.push(
-            { op: "local.get", index: locals.target },
-            { op: "drop" },
-            { op: "local.get", index: locals.handler },
-            { op: "drop" },
-            { op: "ref.null.extern" },
-          );
-        }
-        for (const local of locals.cleanup) {
-          releaseTempLocal(fctx, local);
-        }
-        return { kind: "externref" };
-      }
-
-      // Evaluate the target and handler once, retain them while all extra
-      // arguments run in source order, then invoke the host provider.  This
-      // mirrors the native-first path and preserves a later abrupt completion.
-      const targetLocal = allocTempLocal(fctx, { kind: "externref" });
-      const handlerLocal = allocTempLocal(fctx, { kind: "externref" });
-      compileHostProxyArg(args[0]);
-      fctx.body.push({ op: "local.set", index: targetLocal });
-      compileHostProxyArg(args[1]);
-      fctx.body.push({ op: "local.set", index: handlerLocal });
-      for (let i = 2; i < args.length; i++) {
-        compileHostProxyArg(args[i]);
-        fctx.body.push({ op: "drop" });
-      }
-
-      // Emit call to __proxy_create(target, handler) -> externref.
-      let proxyIdx = ensureLateImport(
-        ctx,
-        "__proxy_create",
-        [{ kind: "externref" }, { kind: "externref" }],
-        [{ kind: "externref" }],
-      );
-      flushLateImportShifts(ctx, fctx);
-      proxyIdx = ctx.funcMap.get("__proxy_create") ?? proxyIdx;
-      if (proxyIdx !== undefined) {
-        fctx.body.push({ op: "local.get", index: targetLocal });
-        fctx.body.push({ op: "local.get", index: handlerLocal });
-        fctx.body.push({ op: "call", funcIdx: proxyIdx });
       } else {
-        fctx.body.push({ op: "local.get", index: targetLocal });
-        fctx.body.push({ op: "drop" });
-        fctx.body.push({ op: "local.get", index: handlerLocal });
-        fctx.body.push({ op: "drop" });
-        fctx.body.push({ op: "ref.null.extern" });
+        // Runtime not available (should not happen) — drop staged values and
+        // leave the same undefined result as the ordinary defensive path.
+        fctx.body.push(
+          { op: "local.get", index: locals.target },
+          { op: "drop" },
+          { op: "local.get", index: locals.handler },
+          { op: "drop" },
+          { op: "ref.null.extern" },
+        );
       }
-
-      releaseTempLocal(fctx, handlerLocal);
-      releaseTempLocal(fctx, targetLocal);
-
+      for (const local of locals.cleanup) {
+        releaseTempLocal(fctx, local);
+      }
       return { kind: "externref" };
     }
-    // No arguments — `new Proxy()`. Per §28.2.1.1 the missing target/handler
-    // are `undefined`, which are not objects, so construction throws TypeError.
-    // Route through __proxy_create(null, null) so the runtime raises it (#2180).
-    {
-      fctx.body.push({ op: "ref.null.extern" });
-      fctx.body.push({ op: "ref.null.extern" });
-      const proxyIdx = ensureLateImport(
-        ctx,
-        "__proxy_create",
-        [{ kind: "externref" }, { kind: "externref" }],
-        [{ kind: "externref" }],
-      );
-      flushLateImportShifts(ctx, fctx);
-      if (proxyIdx !== undefined) {
-        fctx.body.push({ op: "call", funcIdx: proxyIdx });
-      }
+
+    // §28.2.1.1 starts with ArgumentListEvaluation.  Keep the first two
+    // values alive while every remaining argument is evaluated and dropped;
+    // validation in __proxy_create must not run until that whole list has
+    // completed (a later abrupt extra argument wins).
+    const targetLocal = allocTempLocal(fctx, { kind: "externref" });
+    const handlerLocal = allocTempLocal(fctx, { kind: "externref" });
+    compileToExternref(args[0]);
+    fctx.body.push({ op: "local.set", index: targetLocal });
+    compileToExternref(args[1]);
+    fctx.body.push({ op: "local.set", index: handlerLocal });
+    for (let i = 2; i < args.length; i++) {
+      compileToExternref(args[i]);
+      fctx.body.push({ op: "drop" });
     }
+
+    // Argument compilation may add late imports.  Flush their shifts before
+    // resolving the already-minted defined function index.
+    flushLateImportShifts(ctx, fctx);
+    const proxyCreateIdx = ctx.funcMap.get("__proxy_create");
+    if (proxyCreateIdx !== undefined) {
+      fctx.body.push({ op: "local.get", index: targetLocal });
+      fctx.body.push({ op: "local.get", index: handlerLocal });
+      fctx.body.push({ op: "call", funcIdx: proxyCreateIdx });
+    } else {
+      // Runtime not available (should not happen) — drop args, push undefined.
+      fctx.body.push({ op: "local.get", index: targetLocal });
+      fctx.body.push({ op: "drop" });
+      fctx.body.push({ op: "local.get", index: handlerLocal });
+      fctx.body.push({ op: "drop" });
+      fctx.body.push({ op: "ref.null.extern" });
+    }
+    releaseTempLocal(fctx, handlerLocal);
+    releaseTempLocal(fctx, targetLocal);
     return { kind: "externref" };
   }
 
