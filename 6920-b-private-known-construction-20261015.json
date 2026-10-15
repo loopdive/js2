@@ -1,0 +1,91 @@
+{
+  "id": "6920",
+  "slice": "private-known-construction-successor-20261015",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+  "claimed_at": "2026-10-15T07:47:49.920397+00:00",
+  "updated_at": "2026-10-15T07:47:49.920397+00:00",
+  "write_id": "b-private-known-construction-42338640-304d-4977-8461-4320b4c8852c",
+  "handoff_scope": [
+    {
+      "kind": "private-known-construction",
+      "at": "2026-10-15T07:47:49.920397+00:00",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+      "manifest": {
+        "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+        "receivingWorkspace": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-reference-error-effects-successor/workspace",
+        "bootstrapSourceWorkspace": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-reference-error-effects-successor/workspace",
+        "status": "RECEIVING_PREPARATION_ONLY_NO_CODE_GO_UNTIL_PUBLISHED",
+        "componentPreimages": [
+          {
+            "path": "src/ir/analysis/allocation-evidence/js-class-value-domains/independent-kernel.ts",
+            "bytes": 26863,
+            "sha256": "23192eb0853980723475e088a52b536a347f3bb27d83b07ddb2628aa9bcd4dba"
+          },
+          {
+            "path": "tests/issue-6920-native-class-reference-error-value-effects.test.ts",
+            "bytes": 48928,
+            "sha256": "c134f648736b5f0e8059fd1bce220755285fbc2e70d2cb2360c7eecfe0a82cec"
+          }
+        ],
+        "canonicalNewPaths": [],
+        "productionPaths": [
+          "src/ir/analysis/allocation-evidence/js-class-value-domains/independent-kernel.ts"
+        ],
+        "newTestPaths": [],
+        "sourceCountBefore": 2063,
+        "sourceCountConditionalAfter": 2063,
+        "basis": {
+          "authority": "takeover all of session b; Take over the blocking shared seams; keep B going with parallel subagents",
+          "spec": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-reference-error-effects-successor/workspace/.tmp/effects-proposal/private-known-construction/proposal.json",
+            "bytes": 6998,
+            "sha256": "c1dfe85998a80678396e34442b7557e4674291161e21daceb4134445384e7654"
+          },
+          "profile17": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/wasi-profile17-independent-review/review.json",
+            "bytes": 178846,
+            "sha256": "b687f21f0b20591c9c2d1e203fbcc0b5cfb2ee7d496b52bdf80e7d3ac3a9e6d9"
+          },
+          "failed17": "SingleWASIactual46869ms strict35000 natural1/noUHE; full52notrerun; all249functional/type/staticpassed; no finalcomponentadoption"
+        },
+        "constraints": [
+          "Change ONLY private known() record construction and bounded private captured intrinsic helper(s). Retain earlyBOTTOM, existingSet/sort/roots evaluation order and arrays/referencealiasing/mutability, exactplainprototype and kind/families/roots descriptors, everybooleanflagtrue.",
+          "Use existingzeroargfreshordinaryownedallocator and captured Reflect.defineProperty withNULLprototype descriptors. No Object.assign/ordinaryassignment/prototypeSettereffects, rawinitializerbranding/newsharedAPI/nativebrandcache/proofpermission, input/World/history/fixpoint/raw/report/equation changes.",
+          "Append effective constructor differential/descriptor/alias/mutability/poisonedprototype/liveintrinsicpatch/postmutationDATA controls to existingfocusedfile; preserve original48928bytes/66names/assertions. No newexport/fakeReplayModel/publicproofauthority. Patchintrinsics onlyaroundtestcall, restoreBEFOREassertions.",
+          "Kernel<=35normallyformatted addedlines/test<=120 target; normalactual1500/300/nongrowthclassifier governs. No grants/compression/waivers.",
+          "Exactlynamed existingoneproduction+oneexistingtest; no sharedsource/helper/newpath/policy/script/issue/config changes. Preserveall other17bytes/priorfailedcapsules. Separate writers/workspaces; no sourcewritesuntilrootpublishedGO/bootstrapreceipt verified.",
+          "Aexactsource/inverse/securityreview+B/Cmeaningfuloracle review againstfrozenbytes. Actualall2063/54ownedroots typing/excludes[] andnormal12static/format includeallnewaffectedpaths. Do not forecast compilerinputorLISTcounts; actualrecordsgovern.",
+          "Coordinateparallelimplementation thenfreeze; qualifier inputscannotchangedwhilepinnerslive. Percomponent meaningfultargetedfunctionaltests andactualtyping/static beforejoin; strictenginequalification onlyquietserial onacceptedexactjoinedinputs, notparallelCPUtests/hooks.",
+          "ActualgenuineWASIlive+codec default35/defaultRPC/Node25.9/8192/fork1/qualifiedyield/noCPUprof; firstsingle actual<=35000 natural0/noUHE beforefull52. Preserveeveryfailure/no skips/timeextension/cancellation/nativeUNKNOWNfallback. Samplesnotpredictedperformance.",
+          "ROOT remainsunadopted/current2061; finalrootCAS reviewedendpoints+independentlygenerated2policyrows only, sourcecount2063/all55ROOTroots/normalstatic/focusedactualN/related647/vector1/constructor52 required. No publiccompiler-sourcepush/HOLD/queueownershipchanges. All27migrationcriteriaunproven."
+        ],
+        "proposalOnly": true
+      },
+      "manifestSha256": "6dfdba8a0838c0a7a546ed57cbf2f60124e3dbbcea4b04c04a4910f8026b408f",
+      "constraints": [
+        "Change ONLY private known() record construction and bounded private captured intrinsic helper(s). Retain earlyBOTTOM, existingSet/sort/roots evaluation order and arrays/referencealiasing/mutability, exactplainprototype and kind/families/roots descriptors, everybooleanflagtrue.",
+        "Use existingzeroargfreshordinaryownedallocator and captured Reflect.defineProperty withNULLprototype descriptors. No Object.assign/ordinaryassignment/prototypeSettereffects, rawinitializerbranding/newsharedAPI/nativebrandcache/proofpermission, input/World/history/fixpoint/raw/report/equation changes.",
+        "Append effective constructor differential/descriptor/alias/mutability/poisonedprototype/liveintrinsicpatch/postmutationDATA controls to existingfocusedfile; preserve original48928bytes/66names/assertions. No newexport/fakeReplayModel/publicproofauthority. Patchintrinsics onlyaroundtestcall, restoreBEFOREassertions.",
+        "Kernel<=35normallyformatted addedlines/test<=120 target; normalactual1500/300/nongrowthclassifier governs. No grants/compression/waivers.",
+        "Exactlynamed existingoneproduction+oneexistingtest; no sharedsource/helper/newpath/policy/script/issue/config changes. Preserveall other17bytes/priorfailedcapsules. Separate writers/workspaces; no sourcewritesuntilrootpublishedGO/bootstrapreceipt verified.",
+        "Aexactsource/inverse/securityreview+B/Cmeaningfuloracle review againstfrozenbytes. Actualall2063/54ownedroots typing/excludes[] andnormal12static/format includeallnewaffectedpaths. Do not forecast compilerinputorLISTcounts; actualrecordsgovern.",
+        "Coordinateparallelimplementation thenfreeze; qualifier inputscannotchangedwhilepinnerslive. Percomponent meaningfultargetedfunctionaltests andactualtyping/static beforejoin; strictenginequalification onlyquietserial onacceptedexactjoinedinputs, notparallelCPUtests/hooks.",
+        "ActualgenuineWASIlive+codec default35/defaultRPC/Node25.9/8192/fork1/qualifiedyield/noCPUprof; firstsingle actual<=35000 natural0/noUHE beforefull52. Preserveeveryfailure/no skips/timeextension/cancellation/nativeUNKNOWNfallback. Samplesnotpredictedperformance.",
+        "ROOT remainsunadopted/current2061; finalrootCAS reviewedendpoints+independentlygenerated2policyrows only, sourcecount2063/all55ROOTroots/normalstatic/focusedactualN/related647/vector1/constructor52 required. No publiccompiler-sourcepush/HOLD/queueownershipchanges. All27migrationcriteriaunproven."
+      ]
+    }
+  ],
+  "predecessors": [
+    "3522-b-native-class-semantic-producer-20261014.json",
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}

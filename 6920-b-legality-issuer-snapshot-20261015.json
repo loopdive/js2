@@ -1,0 +1,95 @@
+{
+  "id": "6920",
+  "slice": "legality-issuer-snapshot-successor-20261015",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+  "claimed_at": "2026-10-15T07:47:49.920397+00:00",
+  "updated_at": "2026-10-15T07:47:49.920397+00:00",
+  "write_id": "b-legality-issuer-snapshot-c88308cf-06d1-483f-9f60-c01657fb35dd",
+  "handoff_scope": [
+    {
+      "kind": "legality-issuer-snapshot",
+      "at": "2026-10-15T07:47:49.920397+00:00",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+      "manifest": {
+        "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+        "receivingWorkspace": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-value-replay-successor-20261014-01a12827/.tmp/class-legality-proof-successor/workspace",
+        "bootstrapSourceWorkspace": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-reference-error-effects-successor/workspace",
+        "status": "RECEIVING_PREPARATION_ONLY_NO_CODE_GO_UNTIL_PUBLISHED",
+        "componentPreimages": [
+          {
+            "path": "src/ir/analysis/allocation-evidence/native-js-class-legality.ts",
+            "bytes": 14794,
+            "sha256": "590e09c60674e7041ae57079e7cb5540026d0a203ea07e29844655001da8cd11"
+          },
+          {
+            "path": "tests/issue-6920-native-js-class-exception-legality.test.ts",
+            "bytes": 15107,
+            "sha256": "6a4c07d4b44414c6604db6cd7246cb142107013406284931aae3d82e2dc86cf7"
+          }
+        ],
+        "canonicalNewPaths": [],
+        "productionPaths": [
+          "src/ir/analysis/allocation-evidence/native-js-class-legality.ts"
+        ],
+        "newTestPaths": [],
+        "sourceCountBefore": 2063,
+        "sourceCountConditionalAfter": 2063,
+        "basis": {
+          "authority": "takeover all of session b; Take over the blocking shared seams; keep B going with parallel subagents",
+          "spec": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/operation-local-currentness-proposal/sealed-spec.json",
+            "bytes": 9738,
+            "sha256": "8719a9862a0c0f97d96f948f41929096707ad29d4f19cf6ce5bbd4f0f64e4f6f"
+          },
+          "profile17": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/wasi-profile17-independent-review/review.json",
+            "bytes": 178846,
+            "sha256": "b687f21f0b20591c9c2d1e203fbcc0b5cfb2ee7d496b52bdf80e7d3ac3a9e6d9"
+          },
+          "failed17": "SingleWASIactual46869ms strict35000 natural1/noUHE; full52notrerun; all249functional/type/staticpassed; no finalcomponentadoption"
+        },
+        "constraints": [
+          "Move snapshotcopy from inspect return to issueronly immediatelyafter same successful inspection/capturepoint beforeproofcreation; privateCurrentInspection vsOwner shape only, ownerpropertyordercontext,snapshot,instructions,types unchanged. No publicAPI/issuer/cache/querybatching or reusedverdict.",
+          "Retain EVERY original DATA/use/keys/owner/context/function/backend/snapshot comparison, complete original/allselected inspect/replay/SSA/null/global/type checks and exactinstruction identity/cardinality checks; public admissionquery bodies byteidentical. No callback changes/rawresourcebypass or genericDATA/copier changes.",
+          "Mandatoryfresh localdescriptor-only cycle-aware Date-slot traversal onactualcurrentcontext atold discardedcopy point beforeinstructioncomparison. CapturedgenuineDategetTime/Reflect.apply/ownKeys/getOwnPropertyDescriptor/TypeError semantics; successrejectoldunsupportedDate error, incompatibleTypeError only meansnotDate, allothererrorspropagate. Missing/accessordescriptorsrefusewithoutinvokinggetter. No cache survivesquery, no copiedcallerfacts or inputmutation.",
+          "InitialissuercopyretainsIR_CLASS_SHAPE_CELL descriptor.value===true obligation; exactlatersnapshotkeys/value/populationguard retainsmutationrefusal. FullDATA/replay retains all collection/prototype/accessor/symbol/alias/foreignidentity controls. No fakeequalProxyreflectioncounts/atomicity claim.",
+          "Existingexceptionlegalitytest adds meaningfulmaskedDate afterissuanceactualfunction substitution preservingfullDATA/instructionidentity andmodulefunctionalias; genuinehealthy/issuance/query/type/instruction controls+editfloors beforecatch. Preserveall existing36testidentities/assertions and Error/provider/copy/stale/gettercontrols; add symbolmutationrefusal ifneeded to substantiateclosure.",
+          "NewprivateDatehelper<=40 normallyformatted lines; sourceestimated<=430raw; actualnormal1500/300/nongrowthgates mandatory, no grant/compression/waiver.",
+          "Exactlynamed existingoneproduction+oneexistingtest; no sharedsource/helper/newpath/policy/script/issue/config changes. Preserveall other17bytes/priorfailedcapsules. Separate writers/workspaces; no sourcewritesuntilrootpublishedGO/bootstrapreceipt verified.",
+          "Aexactsource/inverse/securityreview+B/Cmeaningfuloracle review againstfrozenbytes. Actualall2063/54ownedroots typing/excludes[] andnormal12static/format includeallnewaffectedpaths. Do not forecast compilerinputorLISTcounts; actualrecordsgovern.",
+          "Coordinateparallelimplementation thenfreeze; qualifier inputscannotchangedwhilepinnerslive. Percomponent meaningfultargetedfunctionaltests andactualtyping/static beforejoin; strictenginequalification onlyquietserial onacceptedexactjoinedinputs, notparallelCPUtests/hooks.",
+          "ActualgenuineWASIlive+codec default35/defaultRPC/Node25.9/8192/fork1/qualifiedyield/noCPUprof; firstsingle actual<=35000 natural0/noUHE beforefull52. Preserveeveryfailure/no skips/timeextension/cancellation/nativeUNKNOWNfallback. Samplesnotpredictedperformance.",
+          "ROOT remainsunadopted/current2061; finalrootCAS reviewedendpoints+independentlygenerated2policyrows only, sourcecount2063/all55ROOTroots/normalstatic/focusedactualN/related647/vector1/constructor52 required. No publiccompiler-sourcepush/HOLD/queueownershipchanges. All27migrationcriteriaunproven."
+        ],
+        "proposalOnly": true
+      },
+      "manifestSha256": "498f5a481f16a1dec436ae67ac8747003084a00f767f37c4ee105f8368a52c77",
+      "constraints": [
+        "Move snapshotcopy from inspect return to issueronly immediatelyafter same successful inspection/capturepoint beforeproofcreation; privateCurrentInspection vsOwner shape only, ownerpropertyordercontext,snapshot,instructions,types unchanged. No publicAPI/issuer/cache/querybatching or reusedverdict.",
+        "Retain EVERY original DATA/use/keys/owner/context/function/backend/snapshot comparison, complete original/allselected inspect/replay/SSA/null/global/type checks and exactinstruction identity/cardinality checks; public admissionquery bodies byteidentical. No callback changes/rawresourcebypass or genericDATA/copier changes.",
+        "Mandatoryfresh localdescriptor-only cycle-aware Date-slot traversal onactualcurrentcontext atold discardedcopy point beforeinstructioncomparison. CapturedgenuineDategetTime/Reflect.apply/ownKeys/getOwnPropertyDescriptor/TypeError semantics; successrejectoldunsupportedDate error, incompatibleTypeError only meansnotDate, allothererrorspropagate. Missing/accessordescriptorsrefusewithoutinvokinggetter. No cache survivesquery, no copiedcallerfacts or inputmutation.",
+        "InitialissuercopyretainsIR_CLASS_SHAPE_CELL descriptor.value===true obligation; exactlatersnapshotkeys/value/populationguard retainsmutationrefusal. FullDATA/replay retains all collection/prototype/accessor/symbol/alias/foreignidentity controls. No fakeequalProxyreflectioncounts/atomicity claim.",
+        "Existingexceptionlegalitytest adds meaningfulmaskedDate afterissuanceactualfunction substitution preservingfullDATA/instructionidentity andmodulefunctionalias; genuinehealthy/issuance/query/type/instruction controls+editfloors beforecatch. Preserveall existing36testidentities/assertions and Error/provider/copy/stale/gettercontrols; add symbolmutationrefusal ifneeded to substantiateclosure.",
+        "NewprivateDatehelper<=40 normallyformatted lines; sourceestimated<=430raw; actualnormal1500/300/nongrowthgates mandatory, no grant/compression/waiver.",
+        "Exactlynamed existingoneproduction+oneexistingtest; no sharedsource/helper/newpath/policy/script/issue/config changes. Preserveall other17bytes/priorfailedcapsules. Separate writers/workspaces; no sourcewritesuntilrootpublishedGO/bootstrapreceipt verified.",
+        "Aexactsource/inverse/securityreview+B/Cmeaningfuloracle review againstfrozenbytes. Actualall2063/54ownedroots typing/excludes[] andnormal12static/format includeallnewaffectedpaths. Do not forecast compilerinputorLISTcounts; actualrecordsgovern.",
+        "Coordinateparallelimplementation thenfreeze; qualifier inputscannotchangedwhilepinnerslive. Percomponent meaningfultargetedfunctionaltests andactualtyping/static beforejoin; strictenginequalification onlyquietserial onacceptedexactjoinedinputs, notparallelCPUtests/hooks.",
+        "ActualgenuineWASIlive+codec default35/defaultRPC/Node25.9/8192/fork1/qualifiedyield/noCPUprof; firstsingle actual<=35000 natural0/noUHE beforefull52. Preserveeveryfailure/no skips/timeextension/cancellation/nativeUNKNOWNfallback. Samplesnotpredictedperformance.",
+        "ROOT remainsunadopted/current2061; finalrootCAS reviewedendpoints+independentlygenerated2policyrows only, sourcecount2063/all55ROOTroots/normalstatic/focusedactualN/related647/vector1/constructor52 required. No publiccompiler-sourcepush/HOLD/queueownershipchanges. All27migrationcriteriaunproven."
+      ]
+    }
+  ],
+  "predecessors": [
+    "3522-b-native-class-semantic-producer-20261014.json",
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}
