@@ -1,0 +1,6 @@
+node v22.22.0
+vitest vitest/3.2.7 linux-x64 node-v22.22.0
+pnpm-lock.yaml sha256 (composed tree) 6a8b59fd4430c6600dc16ac33a749d0f5fed4ef0c100425de8490e43d916f2ac
+pnpm-lock.yaml sha256 (base snapshot) 6a8b59fd4430c6600dc16ac33a749d0f5fed4ef0c100425de8490e43d916f2ac
+node_modules: shared symlink to /home/user/js2/node_modules for both trees
+nproc 4

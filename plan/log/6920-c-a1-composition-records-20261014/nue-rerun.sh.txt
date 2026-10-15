@@ -1,0 +1,11 @@
+#!/bin/sh
+# Isolated re-run of one file, twice per side (run after rerun.sh finished).
+W=/home/user/js2/.claude/worktrees/agent-a33dbfd9f56631b25
+T=tests/issue-6920-native-number-undefined-execution.test.ts
+for side in base composed; do
+  D=$W; [ $side = base ] && D=$W/.tmp/base-b
+  for i in 1 2; do
+    (cd $D && timeout 1500 npx vitest run $T --reporter=json \
+      --outputFile=$W/.tmp/compose-6662/raw/r2/nue-$side-$i.json --testTimeout=35000)
+  done
+done

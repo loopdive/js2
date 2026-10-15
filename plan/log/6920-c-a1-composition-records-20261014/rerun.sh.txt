@@ -1,0 +1,15 @@
+#!/bin/sh
+# Sequential per-case re-run of the 75-file set on base (a4d4c99c snapshot) and composed (9d681274), JSON reporter.
+W=/home/user/js2/.claude/worktrees/agent-a33dbfd9f56631b25
+O=$W/.tmp/compose-6662/raw/r2
+LIST=$(cat $W/.tmp/compose-6662/raw/main75.txt | tr '\n' ' ')
+for side in base composed; do
+  if [ $side = base ]; then D=$W/.tmp/base-b; else D=$W; fi
+  cd $D
+  # base snapshot lacks C's new test; vitest just skips missing files via the explicit list filter
+  L=""; for f in $LIST; do [ -f "$f" ] && L="$L $f"; done
+  echo "$L" | tr ' ' '\n' | grep . > $O/$side-files.txt
+  timeout 7000 npx vitest run $L --reporter=json --outputFile=$O/$side.json --testTimeout=35000 > $O/$side-stdout.txt 2>&1
+  echo "exit=$?" >> $O/$side-stdout.txt
+done
+echo DONE > $O/DONE

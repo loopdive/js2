@@ -1,0 +1,6 @@
+base.json: suites 133 (passed 104, failed 29, pending 0); tests 1432 (passed 1384, failed 46, pending 1, todo 1); success=False; startTime=1792008707903
+composed.json: suites 139 (passed 110, failed 29, pending 0); tests 1450 (passed 1404, failed 44, pending 1, todo 1); success=False; startTime=1792011345951
+nue-base-1.json: suites 1 (passed 0, failed 1, pending 0); tests 10 (passed 6, failed 4, pending 0, todo 0); success=False; startTime=1792013974884
+nue-base-2.json: suites 1 (passed 0, failed 1, pending 0); tests 10 (passed 6, failed 4, pending 0, todo 0); success=False; startTime=1792014954573
+nue-composed-1.json: suites 1 (passed 0, failed 1, pending 0); tests 10 (passed 6, failed 4, pending 0, todo 0); success=False; startTime=1792015931126
+nue-composed-2.json: suites 1 (passed 0, failed 1, pending 0); tests 10 (passed 7, failed 3, pending 0, todo 0); success=False; startTime=1792016895991
