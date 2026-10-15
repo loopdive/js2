@@ -1,0 +1,99 @@
+{
+  "id": "6920",
+  "slice": "reference-error-private-world-performance-successor-20261015",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+  "claimed_at": "2026-10-15T06:53:21.953480+00:00",
+  "updated_at": "2026-10-15T06:53:21.953480+00:00",
+  "write_id": "b-reference-error-private-world-performance-79c1228d-4184-4016-bf77-8c65ed377f96",
+  "handoff_scope": [
+    {
+      "kind": "reference-error-private-world-performance",
+      "at": "2026-10-15T06:53:21.953480+00:00",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+      "manifest": {
+        "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+        "receivingWorkspace": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-reference-error-effects-successor/workspace",
+        "bootstrapSourceWorkspace": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-reference-error-effects-successor/workspace",
+        "status": "RECEIVING_PREPARATION_ONLY_NO_CODE_GO_UNTIL_PUBLISHED",
+        "componentPreimages": [
+          {
+            "path": "src/ir/analysis/allocation-evidence/js-class-value-domains/independent-kernel.ts",
+            "bytes": 22901,
+            "sha256": "c10f36689e10eca95819434feb8cc0403785dcf188d4219405eb252ca0ae67f3"
+          },
+          {
+            "path": "tests/issue-6920-native-class-reference-error-value-effects.test.ts",
+            "bytes": 35223,
+            "sha256": "1822c91f55c6e34ca09bb35c74af149e00c8e22d6666ecb0063402d33e158659"
+          }
+        ],
+        "canonicalNewPaths": [],
+        "productionPaths": [
+          "src/ir/analysis/allocation-evidence/js-class-value-domains/independent-kernel.ts"
+        ],
+        "newTestPaths": [],
+        "sourceCountBefore": 2063,
+        "sourceCountConditionalAfter": 2063,
+        "basis": {
+          "actualWasiFailure": "constructor52natural1=36/52+UHE;WASIargs63865/66295ms exceed35000. Isolatedoriginalcallbackprofile0/1normal1~64s;allsource/inputpins unchanged.",
+          "actualProfile": "Runtimeworker80272/thread0; exclusive nativecollectionstate22.627729s splitcompare16.041623 vsfreeze6.586106. Comparechainkernel.same/worldData in joinUnitWorld/commitFlow; sourcepositionticks mostlyuncachednativeprobe. Timesoverlapnotadditive outside thisdisjointpartition, no invocation/speedupinference.",
+          "spec": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/private-world-equality-spec/spec.json",
+            "bytes": 13712,
+            "sha256": "522a853b8a1fb779398dcf9a1c4b6097b6dbcc96f7ed4ea57ca28db8237cfdfd"
+          },
+          "sourceSemantics": "Onlyoperation-local privateWorld construction/equality aftercomplete input DATA/populationvalidation, no callbacks/await betweenbefore/after. FullclassCurrent/source/support/original/allselected/resource/callbackchecks remain.",
+          "sameScopeCorrection": "Earlier wholeinput relocation preserved40genericfunctions; this finiteperformance amendment explicitly permits onlythree named privateflow comparison bodies below plusnewprivate typedhelpers, not othergenericmethods."
+        },
+        "constraints": [
+          "Exactly existing kernel andexistingfocusedtest; no independent.ts/input/producer/contracts/sharedDATA/backend/normalizer/policy/compiler/issue/scripts changes or newproductionpath. Preserveall offscope bytes includingcomplete original949line input-owner relocation andcanonicalfactorysemantics.",
+          "Kernel: add one private samePrivateWorld entry andsmallcohesive typedchildren, replaceONLY same(worldData(before),worldData(after)) in joinUnitWorld/commitFlow andsame(worldData(history),worldData(next)) in updatePublicHistory. All joins/clones/phase/history/call/census algorithms otherwisebyteexact exceptnormalformatter boundaries.",
+          "Keep same(a,b), equationSame/equationData, worldData/flowData/reportserialization andevery rawinput/binding/proposedreport comparison unchanged; no globalfastcompareoption, identity/globalcache/memoization/callerlabel or newproofissuer/permission.",
+          "World exactglobals+heap entries sorting usesexisting localeCompare stabletieorder; rootSet strings existingUTF16.sort order. GlobalState allbindingId/initialization/domain fields; Cell allroot/key/presence/valueDomain/prototypeRoots; fullclosedDomain/Root/Key schema fromsealedA spec. Arrays remainpositional/duplicate-sensitive, Map size+keypresence required, nullablefields andObject.is primitives preserved (inclnumericcoordinates/signedzero). Unknownunhandledcase mustrefuse, nevercountassequal.",
+          "Privateworldvalues mustcome onlyfromexistingvalidatedinput+replayconstructors; no rawcaller/proposedreport mayreachtrustedcomparer. No user/externalcallbacks, await or neweffects inside comparer. Ifownershipproofdoesnotcover a state, stop/report ratherthanweakenshared DATA checks.",
+          "Add meaningful reportforgery andgenuinepersistentnormal/abrupt/history/global/heap regressions toexistingfocusedtest. Preserveexisting46identities/assertions. No newpublicexport/testauthority/fakepartialReplayModel; privateRootSet/Maporder branchcoverage limits explicitlyreported asstatic+indirect ifnotpubliclyobservable. Optionalprivate diagnostic differential mustkeepactualreference same(worldData(...)) andsealedrealhelperbytes; neverclaim itasengine/readiness.",
+          "No nativeMap/Set erasedprototype checks removed, no getter execution/inputbranding, no callback-currentness/ledger/body/global/signature/resourcecheck waived. Existingexactcollection/getter/alias/forgerytests stayrequired.",
+          "Kernel525 allowsbounded <=130normallyformatted addedlines/<=7smallhelpers; test816 allows~120 coherentaddedlines. Actualnormal1500file/300function classifiergoverns; no compression/grant/waiver.",
+          "Allpredecessors incl failed52+profile remainimmutable; allinput-pinningprocesses naturallyterminal beforewrites. Newfacts/codeonlyactiveprivateCE. No testcancellation or 35s/RPC/callbacksequence/enginefixture changes.",
+          "Actualfull2063source+allownedexplicitroots/excludes[] typing andnormal12static underrealc108, genuinefocusedactualN+TDZ20+related647 andsamevector1/constructor52 required perstage. Measure genuineWASI performance, no speedup prediction fromsampletotals; all52strictactual<=35000/noUHE mandatory forqualification.",
+          "ROOTadoptionlaterexactreviewedendpointsonlyunderwholeoffscope/indexCAS; keep repaired2856/currentissue/otherowners/PRheads/HOLD/queue. Publicsourcepushnotgrantedbyownershipreceipt."
+        ],
+        "followupQualification": [
+          "FinalA typedADT/rawboundary review+B meaningfuloracle review againstexactfrozenbytes",
+          "Actualfresh typing/listFiles+normal12static/format/budgets, allbeforeafter source/context pins",
+          "PurefocusedN andTDZ20 qualifiers, actualprofile comparison separateifneeded",
+          "SamegenuineWASIlive+codec andall52enginecases strict35/defaultRPC/onefork/qualifiedyield—actualpercaseelapsedgoverns",
+          "FinalROOTfull55typing/currentallsource/normalstatic/focusedN/related647/vector1/constructor52 afteracceptedboundedjoin"
+        ],
+        "proposalOnly": true
+      },
+      "manifestSha256": "2abb3f4725462bc0b6061b1545d195d7e8e75220aee6dfb621722d7ee4e1f6b9",
+      "constraints": [
+        "Exactly existing kernel andexistingfocusedtest; no independent.ts/input/producer/contracts/sharedDATA/backend/normalizer/policy/compiler/issue/scripts changes or newproductionpath. Preserveall offscope bytes includingcomplete original949line input-owner relocation andcanonicalfactorysemantics.",
+        "Kernel: add one private samePrivateWorld entry andsmallcohesive typedchildren, replaceONLY same(worldData(before),worldData(after)) in joinUnitWorld/commitFlow andsame(worldData(history),worldData(next)) in updatePublicHistory. All joins/clones/phase/history/call/census algorithms otherwisebyteexact exceptnormalformatter boundaries.",
+        "Keep same(a,b), equationSame/equationData, worldData/flowData/reportserialization andevery rawinput/binding/proposedreport comparison unchanged; no globalfastcompareoption, identity/globalcache/memoization/callerlabel or newproofissuer/permission.",
+        "World exactglobals+heap entries sorting usesexisting localeCompare stabletieorder; rootSet strings existingUTF16.sort order. GlobalState allbindingId/initialization/domain fields; Cell allroot/key/presence/valueDomain/prototypeRoots; fullclosedDomain/Root/Key schema fromsealedA spec. Arrays remainpositional/duplicate-sensitive, Map size+keypresence required, nullablefields andObject.is primitives preserved (inclnumericcoordinates/signedzero). Unknownunhandledcase mustrefuse, nevercountassequal.",
+        "Privateworldvalues mustcome onlyfromexistingvalidatedinput+replayconstructors; no rawcaller/proposedreport mayreachtrustedcomparer. No user/externalcallbacks, await or neweffects inside comparer. Ifownershipproofdoesnotcover a state, stop/report ratherthanweakenshared DATA checks.",
+        "Add meaningful reportforgery andgenuinepersistentnormal/abrupt/history/global/heap regressions toexistingfocusedtest. Preserveexisting46identities/assertions. No newpublicexport/testauthority/fakepartialReplayModel; privateRootSet/Maporder branchcoverage limits explicitlyreported asstatic+indirect ifnotpubliclyobservable. Optionalprivate diagnostic differential mustkeepactualreference same(worldData(...)) andsealedrealhelperbytes; neverclaim itasengine/readiness.",
+        "No nativeMap/Set erasedprototype checks removed, no getter execution/inputbranding, no callback-currentness/ledger/body/global/signature/resourcecheck waived. Existingexactcollection/getter/alias/forgerytests stayrequired.",
+        "Kernel525 allowsbounded <=130normallyformatted addedlines/<=7smallhelpers; test816 allows~120 coherentaddedlines. Actualnormal1500file/300function classifiergoverns; no compression/grant/waiver.",
+        "Allpredecessors incl failed52+profile remainimmutable; allinput-pinningprocesses naturallyterminal beforewrites. Newfacts/codeonlyactiveprivateCE. No testcancellation or 35s/RPC/callbacksequence/enginefixture changes.",
+        "Actualfull2063source+allownedexplicitroots/excludes[] typing andnormal12static underrealc108, genuinefocusedactualN+TDZ20+related647 andsamevector1/constructor52 required perstage. Measure genuineWASI performance, no speedup prediction fromsampletotals; all52strictactual<=35000/noUHE mandatory forqualification.",
+        "ROOTadoptionlaterexactreviewedendpointsonlyunderwholeoffscope/indexCAS; keep repaired2856/currentissue/otherowners/PRheads/HOLD/queue. Publicsourcepushnotgrantedbyownershipreceipt."
+      ]
+    }
+  ],
+  "predecessors": [
+    "3522-b-native-class-semantic-producer-20261014.json",
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}

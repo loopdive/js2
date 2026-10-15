@@ -1,0 +1,86 @@
+{
+  "id": "6920",
+  "slice": "reference-error-tdz-oracle-successor-20261015",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+  "claimed_at": "2026-10-15T06:53:21.953480+00:00",
+  "updated_at": "2026-10-15T06:53:21.953480+00:00",
+  "write_id": "b-reference-error-tdz-oracle-b3bb1c05-ed47-496e-a38b-9ca96e5345eb",
+  "handoff_scope": [
+    {
+      "kind": "reference-error-tdz-oracle",
+      "at": "2026-10-15T06:53:21.953480+00:00",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+      "manifest": {
+        "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+        "receivingWorkspace": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-reference-error-effects-successor/workspace",
+        "bootstrapSourceWorkspace": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827",
+        "status": "RECEIVING_PREPARATION_ONLY_NO_TEST_WRITE_GO_UNTIL_PUBLISHED_AND_CONTROL_CAPTURE",
+        "componentPreimages": [
+          {
+            "path": "tests/issue-6920-native-js-class-construction-tdz.test.ts",
+            "bytes": 13929,
+            "sha256": "2229f03d245431f07ce2f31a3aca9d1dd1e692e63aaa4f8f819271486372c45b",
+            "scope": "Only obsolete healthy WASI candidate-gap expectations and adjacent explanatory comments; preserve all mutation/acquisition/TDZ/scalar execution controls. Complete private helper for genuine known catalogue may consolidate repeated healthy assertions."
+          }
+        ],
+        "canonicalNewPaths": [],
+        "productionPaths": [],
+        "newTestPaths": [],
+        "sourceCountBefore": 2063,
+        "sourceCountConditionalAfter": 2063,
+        "basis": {
+          "actualConstructor52": "natural1=36/52+oneUnhandledRPC; all16526pins unchanged",
+          "fourteenOracleFailures": "One healthy positive expects old UNKNOWN gaps;12mutants pass refusal assertions then fail unchanged healthy-recheck; copied/foreign fails initialhealthy beforeforgery. Actual precisefactoryproof now yields two gapfree constructor/newTarget candidates.",
+          "twoIndependentPerformanceFailures": "WASI live63865ms/codec66295ms >35000; UHE retained. Oracle correction never grants engine/performance qualification.",
+          "predecessors": [
+            "C13actual46/46canonical/raw-owner tests",
+            "Aacceptedproduction12 exact13",
+            "ROOT remains2061unadopted"
+          ],
+          "controlCaptureRequired": "Before edits capture actual healthy original+selected normalized Errorcalls UNKNOWN/mayThrow +2construct exact target/newTarget sets and decoded catalogue; each applied12mutant error/rows; after each untouchedhealthycheck; copiedforeign probes must actuallyexecute."
+        },
+        "constraints": [
+          "Only this existing test path; no production/policy/compiler/scripts/issue or scalar-engine source/values changes. User authorized all Session B and blocking shared seams; finite ownership receipt required before writes.",
+          "Keep all20 current test identities/order, both target variants, actual throw counts4WASI/0standalone, construct instruction args[0,2], codec byte equality and all source fixtures unchanged.",
+          "Replace exact obsolete UNKNOWN healthy predicates with actual2-row gapfree/one target AND one newTarget floors joined to genuine canonical classconstructor identity; verify same healthy catalogue after malformedcopy refusals and failed writes. Do not merely remove healthychecks or accept either oldUNKNOWN orknown.",
+          "Retain all12 exact mutation callbacks and refusal branches, provider/SSA/dominance/rawstartup pairing controls, copiedrequirements/foreignprojection unissued-acquisition assertions, failed Reflect.set false and subsequent healthyunchanged check. Strengthen observable effect/refusal provenance if needed; never claim copied/foreign coverage until actuallyrun.",
+          "Retain independent no-construct scalar TDZ prepare/roundtrip/live/codec source, JS values7/8/8, prestart error protocol and startup exactlyonce/repeated-start assertions. Update only now-obsolete explanatory comment about constructor UNKNOWN gap; scalarfixture stays no-construct/no constructorcredit.",
+          "All predecessors remainimmutable; alter active private successor only after all owninput-pinningprocesses naturallyterminal. No cancel/timeout/RPC change/expectedfail/skip/assertion weakening or aliasesmutatinghealthyoriginal.",
+          "Actual typing/static plus fresh LIST20 and entireTDZ20 runtimerequired. Fullconstructor52 still mustpass strict35/noUHE after measuredperformancefix; successfuloraclecorrection isnot physicalreadiness.",
+          "Parent adopts exactaccepted finaltest only with separatelyreviewed source fixes+fullroot55typing/normalstatic/actualfocused46/related647/vector1/constructor52, alloffscope/index exact. No publicsourcepush/PRhead/HOLD/queue changes."
+        ],
+        "followupQualification": [
+          "Fresh genuine TDZ LIST20 and actual20 including copied/foreign nowreached",
+          "Fullcurrent2063source+explicitownedtypingroots (ROOT55required), noexcludes",
+          "Normal actual formatting/Biome/whitespace/all12static underrealc108base",
+          "Preserve actual52failedperformance+UHE and allpreviousepochs; requalify genuine52enginesafterboundedperformancefix"
+        ],
+        "proposalOnly": true
+      },
+      "manifestSha256": "084ea04922d145388e39d104e2fa5516c1e2e78f73e95808fca3074fc0de6120",
+      "constraints": [
+        "Only this existing test path; no production/policy/compiler/scripts/issue or scalar-engine source/values changes. User authorized all Session B and blocking shared seams; finite ownership receipt required before writes.",
+        "Keep all20 current test identities/order, both target variants, actual throw counts4WASI/0standalone, construct instruction args[0,2], codec byte equality and all source fixtures unchanged.",
+        "Replace exact obsolete UNKNOWN healthy predicates with actual2-row gapfree/one target AND one newTarget floors joined to genuine canonical classconstructor identity; verify same healthy catalogue after malformedcopy refusals and failed writes. Do not merely remove healthychecks or accept either oldUNKNOWN orknown.",
+        "Retain all12 exact mutation callbacks and refusal branches, provider/SSA/dominance/rawstartup pairing controls, copiedrequirements/foreignprojection unissued-acquisition assertions, failed Reflect.set false and subsequent healthyunchanged check. Strengthen observable effect/refusal provenance if needed; never claim copied/foreign coverage until actuallyrun.",
+        "Retain independent no-construct scalar TDZ prepare/roundtrip/live/codec source, JS values7/8/8, prestart error protocol and startup exactlyonce/repeated-start assertions. Update only now-obsolete explanatory comment about constructor UNKNOWN gap; scalarfixture stays no-construct/no constructorcredit.",
+        "All predecessors remainimmutable; alter active private successor only after all owninput-pinningprocesses naturallyterminal. No cancel/timeout/RPC change/expectedfail/skip/assertion weakening or aliasesmutatinghealthyoriginal.",
+        "Actual typing/static plus fresh LIST20 and entireTDZ20 runtimerequired. Fullconstructor52 still mustpass strict35/noUHE after measuredperformancefix; successfuloraclecorrection isnot physicalreadiness.",
+        "Parent adopts exactaccepted finaltest only with separatelyreviewed source fixes+fullroot55typing/normalstatic/actualfocused46/related647/vector1/constructor52, alloffscope/index exact. No publicsourcepush/PRhead/HOLD/queue changes."
+      ]
+    }
+  ],
+  "predecessors": [
+    "3522-b-native-class-semantic-producer-20261014.json",
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}
