@@ -46,6 +46,7 @@ import {
 } from "./funcref-wrapper-types.js";
 import { hasExplicitThisParameter } from "./func-value-callable-signature.js";
 import { noteFunctionValueInhabitant } from "./closure-type-sources.js"; // (#6913)
+import { publishNestedFnValueInstrs } from "../closure-prototype-edge.js"; // (#6987)
 
 /**
  * (#5270 step 1.3) A `__fn_tramp_*` body is a PURE FORWARDER — it re-pushes the
@@ -389,6 +390,10 @@ function emitMemoizedNestedFnClosure(
   if (metaInit) for (const instr of metaInit) fctx.body.push(instr);
   fctx.body.push({ op: "struct.new", typeIdx: structTypeIdx });
   fctx.body.push({ op: "local.set", index: memoLocal });
+  // (#6987) Give a constructor its `__closure_proto_of` identity key.
+  if (constructible && !isSelfRef && (ctx.standalone || ctx.wasi)) {
+    fctx.body.push({ op: "local.get", index: memoLocal }, ...publishNestedFnValueInstrs(ctx, funcName));
+  }
 
   const thenArm = fctx.body;
   popBody(fctx, savedBody);

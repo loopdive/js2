@@ -688,6 +688,11 @@ function expectCanonicalArrayOperandFlow(
   expect(instructions[1], "rebuilt array next reads the sent value").toBe(`local.get ${sentLocal}`);
   expect(instructions[instructions.length - 2], "rebuilt array third operand").toBe("ref.null extern");
   expect(instructions[instructions.length - 1], "rebuilt array constructor").toMatch(/^array\.new_fixed \d+ 3$/);
+  // (#6984) A consumed resumption value puts the fixture on the boxed-any
+  // carrier (#6651 A11): its `sent` field is already externref, so the exact
+  // four-instruction pass-through (capture, sent, null, constructor) is the
+  // canonical form — no number box at all. Anything longer must be the box.
+  if (instructions.length === 4) return;
   const boxIndexes = instructions.flatMap((instruction, index) =>
     watInstructionHead(instruction) === "if" ? [index] : [],
   );
@@ -734,7 +739,12 @@ function expectCanonicalUndefinedContinuationSpill(
     `\\bglobal\\.get ${undefinedIndex}\\b\\s+extern\\.convert_any\\s+local\\.set (\\d+)`,
     "g",
   );
-  const captures = [...body.matchAll(canonicalCapture)];
+  // (#6984) The bare `yield`'s own operand is the canonical undefined too (it
+  // feeds the suspension result, never a spill), so only a capture whose local
+  // is stored into a frame field counts as the continuation capture.
+  const captures = [...body.matchAll(canonicalCapture)].filter((match) =>
+    new RegExp(`\\blocal\\.get 0\\s+local\\.get ${match[1]}\\s+struct\\.set\\b`).test(body),
+  );
   expect(captures, "one canonical undefined continuation capture").toHaveLength(1);
   const capture = captures[0]!;
   const captureLocal = capture[1]!;
@@ -825,12 +835,32 @@ function expectCanonicalUndefinedContinuationSpill(
   expectCanonicalArrayOperandFlow(rebuiltSegment, captureLocal, sentFieldLocal, numericWrapperType);
 }
 
-/** The conditional fixture has one f64 condition; its two arms set distinct successor states. */
-function watCanonicalF64BranchTargets(body: string): number[] {
-  const condition = /f64\.abs\s+f64\.const 0\s+f64\.gt\s+(\(if\b)/.exec(body);
-  expect(condition, "canonical f64 ToBoolean followed by a branch").not.toBeNull();
-  const ifStart = condition!.index! + condition![0].lastIndexOf("(if");
-  const branchBody = watBalancedExpression(body, ifStart);
+/**
+ * The conditional fixture has one canonical ToBoolean condition; its two arms
+ * set distinct successor states. (#6984) A consumed resumption value moved this
+ * generator to the boxed-any carrier (#6651 A11), whose canonical ToBoolean is
+ * the `__is_truthy` route (inline fast arms, then the helper) rather than the
+ * f64 `abs > 0` form; both shapes are accepted, nothing weaker.
+ */
+function watCanonicalBranchTargets(wat: string, body: string): number[] {
+  let ifStart: number | undefined;
+  const f64Condition = /f64\.abs\s+f64\.const 0\s+f64\.gt\s+(\(if\b)/.exec(body);
+  if (f64Condition) {
+    ifStart = f64Condition.index + f64Condition[0].lastIndexOf("(if");
+  } else {
+    const truthy = [...wat.matchAll(/^\s*\(func \$([^\s(]+)/gm)].findIndex((match) => match[1] === "__is_truthy");
+    for (const match of body.matchAll(/\(if \(result i32\)/g)) {
+      const condition = watBalancedExpression(body, match.index!);
+      if (truthy < 0 || !new RegExp(`\\bcall ${truthy}\\b`).test(condition)) continue;
+      const rest = body.slice(match.index! + condition.length);
+      const next = /^\s*\(if\s+\(then\b/.exec(rest);
+      if (next === null) continue;
+      expect(ifStart, "exactly one canonical ToBoolean branch").toBeUndefined();
+      ifStart = match.index! + condition.length + next[0].indexOf("(if");
+    }
+  }
+  expect(ifStart, "canonical ToBoolean followed by a branch").not.toBeUndefined();
+  const branchBody = watBalancedExpression(body, ifStart!);
   return [...branchBody.matchAll(/local\.get 0\s+i32\.const (\d+)\s+struct\.set \d+ 0\s+br \d+/g)].map((match) =>
     Number(match[1]),
   );
@@ -1291,7 +1321,7 @@ describe("#680 native generator expression continuations", () => {
         }
       `);
     const resume = watFunctionBody(result.wat, "__gen_resume_g");
-    const branchTargets = watCanonicalF64BranchTargets(resume);
+    const branchTargets = watCanonicalBranchTargets(result.wat, resume);
     expect(branchTargets).toHaveLength(2);
     expect(new Set(branchTargets).size).toBe(2);
 
@@ -1447,15 +1477,11 @@ describe("#680 native generator expression continuations", () => {
         export function test(): number { return g().next().done ? 1 : 0; }
       `,
     ],
-    [
-      "yield-star operand",
-      `
-        function* g(): Generator<number, void, unknown> {
-          [yield* [1]];
-        }
-        export function test(): number { return g().next().done ? 1 : 0; }
-      `,
-    ],
+    // (#6984) "yield-star operand" — `[yield* [1]];` — used to be listed here.
+    // A `yield*` whose completion value an enclosing expression consumes is now
+    // one suspension event of the nested-yield planner (`generator-yield-nested.ts`
+    // delegates into a spill the deferred statement reads), so it no longer fails
+    // closed; the positive pin is `tests/issue-6984-regime-yield-star-return.test.ts`.
     [
       "async generator",
       `

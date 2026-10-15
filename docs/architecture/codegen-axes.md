@@ -361,8 +361,12 @@ provider. A JS environment may opt single families back onto the host with
 regime's RegExp matches on the host engine (the `$NativeRegExp` object model
 stays native; only `__regex_search` is wrapped, and an unregistered program
 falls back to the native VM), and `date` parses `Date.parse` /
-`new Date(string)` arguments with the host parser. `js-string` and `intl` are
-classified but refuse selection until their host paths exist. A selected
+`new Date(string)` arguments with the host parser. `intl` (#6986) binds the
+host `Intl` with every argument and result marshalled through the JS value
+boundary; without it the regime has no Intl (only the `Intl.ListFormat`
+prelude), so a global `Intl` reference is a compile error naming the
+accelerator. `js-string` is classified but refuses selection until its host
+path exists. A selected
 family's imports classify as `host-accelerator` in
 `src/host-import-policy.ts`; selecting one for standalone/WASI, a strict
 no-host build, or the host-assisted profile is a compile error. New host

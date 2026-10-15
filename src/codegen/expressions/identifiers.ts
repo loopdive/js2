@@ -2,6 +2,7 @@
 /**
  * Identifier resolution, TDZ analysis, and instanceof handling.
  */
+import { emitHostIntlGlobal } from "../helpers/host-intl-locale.js"; // (#6986)
 import {
   autoBindingNarrowedAcrossFunctionBoundary,
   expressionHasWidenedPropertyType,
@@ -1699,6 +1700,10 @@ function compileIdentifierCore(
   // `interface Node` and also declares a local constructible `function Node`;
   // that function must reach the compiled funcref path below rather than read
   // the unrelated DOM `globalThis.Node` constructor.
+  // (#6986) `intl` accelerator: the global `Intl` read as a VALUE.
+  if (emitHostIntlGlobal(ctx, fctx, name, resolvedValueDeclaration === undefined || readsAmbientDeclaration)) {
+    return { kind: "externref" };
+  }
   if (
     !ctx.standalone &&
     !ctx.wasi &&
