@@ -1,0 +1,95 @@
+{
+  "id": "6920",
+  "slice": "producer-root-scalar31-oracles-successor-20261015",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+  "claimed_at": "2026-10-15T11:52:35.404552+00:00",
+  "updated_at": "2026-10-15T11:52:35.404552+00:00",
+  "write_id": "b-producer-root-scalar31-oracles-7a594cc6-63e0-41ee-8e98-5f83a97740fa",
+  "handoff_scope": [
+    {
+      "kind": "producer-root-scalar31-oracles",
+      "at": "2026-10-15T11:52:35.404552+00:00",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+      "manifest": {
+        "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+        "receivingWorkspace": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-value-replay-successor-20261014-01a12827/.tmp/class-producer-root-scalar-oracles31/workspace",
+        "bootstrapSourceWorkspace": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-gate-root-key-composition30/workspace",
+        "status": "FINITE_SINGLE_NEW_TEST_RECEIVE_NO_GO_UNTILPUBLISHED",
+        "componentPreimages": [],
+        "canonicalNewPaths": [
+          "tests/issue-6920-native-class-producer-root-scalar.test.ts"
+        ],
+        "productionPaths": [],
+        "newTestPaths": [
+          "tests/issue-6920-native-class-producer-root-scalar.test.ts"
+        ],
+        "sourceCountBefore": 2063,
+        "sourceCountConditionalAfter": 2063,
+        "basis": {
+          "authority": "takeoverallB; takeoverblockingseams; parallelwork",
+          "priorSourceOwnership": "0e12a9dac00003c12e8ffb9026858c5084ec6b4c",
+          "BProposal": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/producer-root-scalar31-oracle-proposal/final-proposal.json",
+            "bytes": 9329,
+            "sha256": "c262a608bc1c921abce743a806279778487535c715c9536c0ea1351a63ae8cc0"
+          },
+          "AFormalSpec": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/producer-root-scalar31-proposal/specification.json",
+            "bytes": 11077,
+            "sha256": "f3e0c1e9639c2393718431d227fe356d9021ad68f07cdc3636d07c8be003ffad"
+          },
+          "sourcePreimage": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-gate-root-key-composition30/workspace/src/ir/analysis/allocation-evidence/js-class-value-domains/producer.ts",
+            "bytes": 61952,
+            "sha256": "64500b14bd015b0f56b13d12fd5ff02bffd1a0ab56a1592d16e059db014d26ed"
+          },
+          "readonlyAbsorption": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-gate-root-key-composition30/workspace/tests/issue-6920-native-class-private-world-absorption.test.ts",
+            "bytes": 21082,
+            "sha256": "6642aef8ec1b624d705df53b3700a34c4f5266583fb7a5500d88c7f1c9097221"
+          },
+          "readonlyRecord": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-gate-root-key-composition30/workspace/tests/issue-6920-native-class-independent-record-allocation.test.ts",
+            "bytes": 20704,
+            "sha256": "d68a3827532f2ba4f275c71d2af4f25b574d5b42bc784c96bfc2da1453c11182"
+          },
+          "currentProfileAnalysis": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/wasi-profile30-independent-review/sealed.json",
+            "bytes": 12780,
+            "sha256": "62b1e02c73888d08eca7f1511635a85029ffef2baf7251af79496bfc7c48de17"
+          }
+        },
+        "constraints": [
+          "Bsolewriter exactly1newtestfile notalone/no revertingothers. FreshexactFINAL30bootstrap16527regular+2deps=16529/source2063, readonlydependencylink/noinstall/Git/index. Newtestmustbeabsentbeforewrite; noexistingtests/helper/policy/productionedits. Oldabsorption21082/6642aef8/389lines13cases andrecord20704/d68a3827/415lines20cases wholebytesreadonly.",
+          "Exactly2normallyformattedmeaningfulcases innewtesttarget300/hard450/newfunctions100/no cramming/grants. Case1directactualprivateProducerRootKey byteequalitywitholdnativeJsClassValueDataKey acrossactual6/2fields/coordinateisolates/null/nonfinite/±0/escapingUnicode/insertionorder. Case2singleforwardobserver actualNumber.isFinite+JSON.stringify receiver/arguments/results/name→lateDATAread→value/effectivefieldmutations andnonfinite-noJSONbranch; capturedelegates/Reflect.apply/restorebothdescriptorsfinallyBEFOREallasserts inclthrow. No encoderduplicate/harnesssubstitute/fakeModel/registry/authority/cross-testmoduleimport.",
+          "FixturemustderivegenuineclosedRoots fromreal source/report, computationalRootclonesonly/noSourceenginecredit. Actualonepuremodulealias rootKey asprivateProducerRootKey approvedbyA, SAMEfunctiondrivesallsixexistingproducersites; exportstringonly/nofacade/Model/inputauthority. Genericdata.key/rawguards/kernel/signatureunchanged. ClosedprivatescalardispatchcontractexplicitArray.isArrayinterceptioncontraction, butpreserveliveNumber.isFinite/nonfinite number:${v}/JSONobservations. Nogainforecast.",
+          "No Bproductionwrites. OnlyreadonlyexactfrozenCproducer overlayafterCfreeze+Aaccept+parentCASGO, exactpreimage61952/64500b14. Freezeown2cases/inverse+Acausalityreview beforeactualLIST/runtime3rootsrecord20+absorption13+new2=35prospective. Fullsource2063+56ACTUALmatchedroots/excludes[]/allresolvedcompilerextensions/helpers/deps/harnessbeforeafter; normal12+officialnewtestbudget/actualstylemembership. ActualLIST/censusgovern, no skip/filters/UHE.",
+          "Finalexactcomposition5rootsproducersemantic169+focused79+record20+absorption13+newN=281+N(283ifN2)/full56actualtype/static. No extraB169; semantic169freshonceinfinal. Prior466/112historicalonly; exactactualscalarbytes+Number/JSONequivalenceproofmandatory. Failurecorrectnessblocker; otherlogic/sourcechanges/unresolvedconcernsrequireexpandedscope.",
+          "Noengineuntilparentfinalfunctional/meta/Aacceptance+quietGO; exactoriginal35/defaultRPC/Node25.9/8192/fork1/noCPU/yield153 thenunchanged52 ONLYactualpass; no cancel/retry/waiver/deadlinechange/fallback. FutureROOT21CAS13source+7tests+independentpolicy/full57ACTUALtype/style69actualmembership/fullrelated/vector/constructor afterprivate52pass. ROOT2061unadopted/all27unproven/no publicsourcepush/comments/HOLD/queuechanges."
+        ]
+      },
+      "manifestSha256": "9c6c9c77ef46129c3ddc9a5d6647002484bc87d0c14c1c5c26bb04c0bc60691a",
+      "constraints": [
+        "Bsolewriter exactly1newtestfile notalone/no revertingothers. FreshexactFINAL30bootstrap16527regular+2deps=16529/source2063, readonlydependencylink/noinstall/Git/index. Newtestmustbeabsentbeforewrite; noexistingtests/helper/policy/productionedits. Oldabsorption21082/6642aef8/389lines13cases andrecord20704/d68a3827/415lines20cases wholebytesreadonly.",
+        "Exactly2normallyformattedmeaningfulcases innewtesttarget300/hard450/newfunctions100/no cramming/grants. Case1directactualprivateProducerRootKey byteequalitywitholdnativeJsClassValueDataKey acrossactual6/2fields/coordinateisolates/null/nonfinite/±0/escapingUnicode/insertionorder. Case2singleforwardobserver actualNumber.isFinite+JSON.stringify receiver/arguments/results/name→lateDATAread→value/effectivefieldmutations andnonfinite-noJSONbranch; capturedelegates/Reflect.apply/restorebothdescriptorsfinallyBEFOREallasserts inclthrow. No encoderduplicate/harnesssubstitute/fakeModel/registry/authority/cross-testmoduleimport.",
+        "FixturemustderivegenuineclosedRoots fromreal source/report, computationalRootclonesonly/noSourceenginecredit. Actualonepuremodulealias rootKey asprivateProducerRootKey approvedbyA, SAMEfunctiondrivesallsixexistingproducersites; exportstringonly/nofacade/Model/inputauthority. Genericdata.key/rawguards/kernel/signatureunchanged. ClosedprivatescalardispatchcontractexplicitArray.isArrayinterceptioncontraction, butpreserveliveNumber.isFinite/nonfinite number:${v}/JSONobservations. Nogainforecast.",
+        "No Bproductionwrites. OnlyreadonlyexactfrozenCproducer overlayafterCfreeze+Aaccept+parentCASGO, exactpreimage61952/64500b14. Freezeown2cases/inverse+Acausalityreview beforeactualLIST/runtime3rootsrecord20+absorption13+new2=35prospective. Fullsource2063+56ACTUALmatchedroots/excludes[]/allresolvedcompilerextensions/helpers/deps/harnessbeforeafter; normal12+officialnewtestbudget/actualstylemembership. ActualLIST/censusgovern, no skip/filters/UHE.",
+        "Finalexactcomposition5rootsproducersemantic169+focused79+record20+absorption13+newN=281+N(283ifN2)/full56actualtype/static. No extraB169; semantic169freshonceinfinal. Prior466/112historicalonly; exactactualscalarbytes+Number/JSONequivalenceproofmandatory. Failurecorrectnessblocker; otherlogic/sourcechanges/unresolvedconcernsrequireexpandedscope.",
+        "Noengineuntilparentfinalfunctional/meta/Aacceptance+quietGO; exactoriginal35/defaultRPC/Node25.9/8192/fork1/noCPU/yield153 thenunchanged52 ONLYactualpass; no cancel/retry/waiver/deadlinechange/fallback. FutureROOT21CAS13source+7tests+independentpolicy/full57ACTUALtype/style69actualmembership/fullrelated/vector/constructor afterprivate52pass. ROOT2061unadopted/all27unproven/no publicsourcepush/comments/HOLD/queuechanges."
+      ]
+    }
+  ],
+  "predecessors": [
+    "3522-b-native-class-semantic-producer-20261014.json",
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}
