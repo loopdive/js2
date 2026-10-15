@@ -4416,6 +4416,14 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/closures/outer-write-index.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
       "path": "src/codegen/closures/closure-type-sources.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -14698,6 +14706,14 @@
       "destination": "backend-wasmgc",
       "owner": "6650-spread-literal-return-carrier",
       "nextBoundary": "Separate AST-based host-path evidence from physical carrier selection."
+    },
+    {
+      "path": "src/codegen/declarations/string-replacement-callbacks.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
       "path": "src/codegen/error-subclass-proto-chain.ts",
