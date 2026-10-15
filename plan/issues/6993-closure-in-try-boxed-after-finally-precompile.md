@@ -20,6 +20,9 @@ func-budget-allow:
   # pre-compile and the matching post-statement finish call. The logic itself
   # lives in src/codegen/closures/try-capture-prebox.ts.
   - src/codegen/statements/exceptions.ts::compileTryStatement
+import-cycles-allow:
+  - largestSccSize: 710 # 2026-10-15 (#6993): the new closures/try-capture-prebox.ts helper is imported by exceptions.ts and uses locals/ref-cell registry, so it joins the codegen SCC like its sibling conditional-capture-box.ts
+  - codegen->ir: 297 # 2026-10-15 (#6993): try-capture-prebox.ts reuses the loop pre-box analysis (ir/analysis/loop-shape.ts, ast-scope.ts) instead of a third identifier scan
 ---
 
 # Closure created in `try`, variable written in `finally` → stale read

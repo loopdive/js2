@@ -16137,6 +16137,14 @@
       "path": "src/runtime/native-microtask-checkpoint.ts",
       "state": "unmigrated",
       "layer": "legacy-host"
+    },
+    {
+      "path": "src/codegen/closures/try-capture-prebox.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     }
   ]
 }
