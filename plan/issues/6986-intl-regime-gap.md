@@ -16,6 +16,24 @@ goal: architecture
 sprint: current
 parent: 5385
 related: [6978, 6708, 6979, 6809]
+loc-budget-allow:
+  # 2026-10-15 (#6986): one routing call each — the locale-method/static-call
+  # arm in compileCallExpression, the `Intl` value arm in compileIdentifierCore,
+  # the no-host-Intl check in both module drivers, the accelerator boundary prep
+  # in collectDeclarations. The logic lives in src/codegen/helpers/host-intl-*.ts.
+  - src/codegen/expressions/calls.ts
+  - src/codegen/expressions/identifiers.ts
+  - src/codegen/index.ts
+  - src/codegen/declarations.ts
+func-budget-allow:
+  # 2026-10-15 (#6986): the same single routing calls, inside these functions.
+  - src/codegen/expressions/calls.ts::compileCallExpression
+  - src/codegen/expressions/identifiers.ts::compileIdentifierCore
+  - src/codegen/declarations.ts::collectDeclarations
+  - src/codegen/index.ts::generateModule
+  - src/codegen/index.ts::generateMultiModule
+import-cycles-allow:
+  - largestSccSize: 707 # 2026-10-15 (#6986): src/codegen/helpers/host-intl-locale.ts compiles call operands through shared.js compileExpression and prepares the object runtime, so it joins the codegen SCC like the #6978 accelerator helpers
 ---
 
 # #6986 — Intl is a regime gap, not an opt-in

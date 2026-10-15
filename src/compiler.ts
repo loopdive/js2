@@ -1759,7 +1759,7 @@ export function compileSourceSync(
       ? injectIteratorStaticsPrelude(stdinInjectedSource)
       : { source: stdinInjectedSource, positionMap: PositionMap.identity(), injected: false };
   // Step 0a.46: #6839 — Wasm-native `Intl.ListFormat` prelude (host-free targets only).
-  const listFormatResult = applyIntlListFormatPrelude(targetProfile.environment, iterStaticsResult.source, options);
+  const listFormatResult = applyIntlListFormatPrelude(targetProfile, iterStaticsResult.source, options);
   const iterStaticsSource = listFormatResult.source;
 
   // Step 0a.5: Rewrite CommonJS `const X = require('Y')` patterns to ESM `import`
@@ -2024,7 +2024,7 @@ export async function compileMultiSource(
     ),
   );
   // #6839 — per-file Wasm-native `Intl.ListFormat` prelude (host-free targets only).
-  const listFormatFiles = applyIntlListFormatPreludeToFiles(multiTargetProfile.environment, timerShimmedFiles);
+  const listFormatFiles = applyIntlListFormatPreludeToFiles(multiTargetProfile, timerShimmedFiles);
   const processedFiles = profilePhase("ground-call-fold", () =>
     foldGroundCallsInMulti(listFormatFiles, entryFile, options.optimize),
   );
