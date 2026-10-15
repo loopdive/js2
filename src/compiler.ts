@@ -78,6 +78,7 @@ import {
   rewriteEvalSuperCallWithMap,
   validateHardenedMode,
   validateSafeMode,
+  withEngineRejectedIrOutcomes,
 } from "./compiler/validation.js";
 import { emitBinary, emitBinaryWithSourceMap, emitSourceMappingURLSection } from "./emit/binary.js";
 import {
@@ -1559,7 +1560,7 @@ function finalizePipelineModule(
       capabilityDiagnostics: capabilityProviderDiagnostics,
       exportBoundaries: exportBoundaryPolicies,
     }),
-    ...telemetry,
+    ...withEngineRejectedIrOutcomes(telemetry, emittedBinaryAccepted, errors), // (#7001)
   };
 }
 

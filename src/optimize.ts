@@ -604,6 +604,25 @@ function resolveWasmOptPath(n: NonNullable<typeof _nodeImports>): string | null 
 const WASM_OPT_DEFAULT_TIMEOUT_MS = 600_000;
 
 /**
+ * (#6985) Keep the compiler's module-init chunks out of Binaryen's FULL
+ * inliner. A large module initializer is deliberately emitted as bounded
+ * `__module_init_chunk_*` helpers (`src/codegen/module-init-chunks.ts`, whose
+ * prefix this pattern mirrors), but each chunk has exactly one caller and
+ * Binaryen's one-caller rule (`-ocimfs`, unlimited by default) inlines every
+ * one of them back. lodash-es then re-optimized a 985 KB `__module_init` in
+ * `inlining-optimizing`, serially: 402 s of the -O4 pipeline, against 72 s
+ * with the chunks kept opaque — the same boundary the in-tree inliner already
+ * draws (`moduleInitInlineBoundary`, `codegen/ir-inline.ts`). Initializers run
+ * once, so the call boundary costs nothing measurable.
+ *
+ * `no-full-inline` rather than `no-inline`: each Binaryen no-inline pass takes
+ * ONE pattern, and `no-inline` is already spent on the cold-constructor hint
+ * (`inline-hints.ts`). Must precede `-O<level>` — these are passes, run in
+ * command order. A module without chunks matches nothing.
+ */
+const MODULE_INIT_CHUNK_NO_INLINE_ARGS = ["--no-full-inline", "--pass-arg=no-full-inline@__module_init_chunk_*"];
+
+/**
  * (#6732) Reduce a failed `wasm-opt` run to the lines a reader can act on.
  * Binaryen's npm `bin/wasm-opt` is an Emscripten build: an abort makes Node
  * echo the offending *source line* — the whole minified 10 MB script, several
@@ -676,7 +695,16 @@ function optimizeWithSystemBinary(
     // must precede `-O<level>`: `--no-inline` is a PASS and binaryen runs
     // passes in command order.
     const hints = inlineHintArgs();
-    const args: string[] = [inputPath, ...hints.pre, `-O${level}`, "-o", outputPath, ...featureFlags, ...hints.post];
+    const args: string[] = [
+      inputPath,
+      ...hints.pre,
+      ...MODULE_INIT_CHUNK_NO_INLINE_ARGS,
+      `-O${level}`,
+      "-o",
+      outputPath,
+      ...featureFlags,
+      ...hints.post,
+    ];
     if (preserveNames) args.push("-g");
     void gc;
     void referenceTypes;
