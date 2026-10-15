@@ -1,0 +1,109 @@
+{
+  "id": "6920",
+  "slice": "producer-signature33-source-successor-20261015",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+  "claimed_at": "2026-10-15T12:40:24.048903+00:00",
+  "updated_at": "2026-10-15T12:40:24.048903+00:00",
+  "write_id": "b-producer-signature33-source-e33bef46-9a4b-4400-8424-61350826722f",
+  "handoff_scope": [
+    {
+      "kind": "producer-signature33-source",
+      "at": "2026-10-15T12:40:24.048903+00:00",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+      "manifest": {
+        "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+        "receivingWorkspace": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-producer-signature33/workspace",
+        "bootstrapSourceWorkspace": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-producer-root-scalar-composition32/workspace",
+        "status": "FINITE_SOURCE_ONLY_RECEIVE_NO_GO_UNTIL_PUBLISHED",
+        "componentPreimages": [
+          {
+            "path": "src/ir/analysis/allocation-evidence/js-class-value-domains/producer.ts",
+            "bytes": 62331,
+            "sha256": "4a46e5f848b35f1ddb0ef1ac513086940f31f2ea4d43aa6d503a2d917724cde5"
+          }
+        ],
+        "canonicalNewPaths": [
+          "src/ir/analysis/allocation-evidence/js-class-value-domains/producer-private-keys.ts"
+        ],
+        "productionPaths": [
+          "src/ir/analysis/allocation-evidence/js-class-value-domains/producer.ts",
+          "src/ir/analysis/allocation-evidence/js-class-value-domains/producer-private-keys.ts"
+        ],
+        "newTestPaths": [],
+        "sourceCountBefore": 2063,
+        "sourceCountConditionalAfter": 2064,
+        "basis": {
+          "authority": "takeover all Session B; take over blocking shared seams; parallel subagents",
+          "priorOwnership": "1b0d945edd831bd137e4b970b6a90b625d228980",
+          "AFormalSpec": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/producer-signature33-proposal/specification.json",
+            "bytes": 16037,
+            "sha256": "d6af8aea29c8d3f76cdddc1efb8918057858700b1dc9ee36616541b394a0ae47"
+          },
+          "CReadonlyPlan": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-producer-signature33-plan/plan.json",
+            "bytes": 7107,
+            "sha256": "f38ff3215f2560fbbe0229af668523df1d0d41ce7a8ba13f7858195cac74fc29"
+          },
+          "selectedOption": "LEAVE ROOT: existing rootScalarKey/rootKey/alias and all six consumers whole byte-exact; no block move or duplicate encoder",
+          "strictFailure": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-producer-root-scalar-composition32/workspace/.tmp/final32/single/sealed-failure.json",
+            "bytes": 10845,
+            "sha256": "666cc04dd4180483d4e26962d9916b68f5418fdf971af4d82a2350781abd7dd6"
+          },
+          "diagnosticProfile": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-producer-root-scalar-composition32/workspace/.tmp/final32/profile/sealed.json",
+            "bytes": 11263,
+            "sha256": "705047093604188af3138eae124f0829efc3645bcc133c12b8deba1b6a2e375e"
+          },
+          "BSoleProfileAnalysis": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/wasi-profile32-independent-review/sealed.json",
+            "bytes": 12998,
+            "sha256": "4b00fb2c1b8abc7adbc0c7f64a5a34fb548bc0d4c6b6c17030ca6986637c87ce"
+          },
+          "measuredSignatureGenericSelfSeconds": 1.346315,
+          "measuredSignatureUnionSeconds": 1.648271,
+          "noGainPrediction": true
+        },
+        "constraints": [
+          "C is sole source writer in this fresh isolated successor, not alone in the codebase; preserve others and never revert their edits. Bootstrap complete FINAL32 exact 16528 regular files plus two genuine ignored typing dependencies =16530. Verify before/after whole copy and donor; readonly dependency links, no install/Git/index writes. Preserve all immutable prior functional/strict/profile failures and evidence.",
+          "Only existing producer.ts ONE import plus signature return callee key -> signatureKey, and new producer-private-keys.ts. COMPLETE ten-field DTO construction/spread/map/sort expressions before invocation BYTE EXACT. Existing rootScalarKey/rootKey/actual alias and six consumers WHOLE BYTE EXACT. Every other existing source/test/config/policy whole byte exact. No Root block move, duplicate Root encoder, input/kernel/raw guard/global generic key/solver convergence changes.",
+          "New leaf exactly one actual pure module-only signatureKey(snapshot: ProducerSignatureSnapshot): string plus erased DTO types. Producer uses that exact export. No package/facade exports, Model/cache/registry/callback capability. Actual data.key value plus erased contracts/IR identity imports only; no producer/input/kernel/runtime/program/backend import or cycle. <=450 normally formatted lines/new functions <=100 target, normal official hard caps unchanged, no grants/compression/helper dumping. Stop with exact measurements if cannot fit.",
+          "Follow complete A spec: closed wrappers and positional tuple/array scaffolding only; whole calls subtree, Root, Cell.key, location and uncertain reference/semantic DATA subtrees delegate actual old generic key. All scalar values delegate actual generic key. Complete fixed typed Record<keyof ActualClosedType,string> drivers actively emit fields in ASCII order, not unused checks. Preserve LIVE JSON(name) -> late field read -> recursive value ordering, method custody, actual original array.map(...).join behavior, holes/own undefined/duplicates/nonfinite/order/stable collation ties. No precaptured method/field strings, equality quotient, digest, memo or speculative open-record schema.",
+          "Closed compiler-owned wrapper reflection contraction is explicit; raw admission/currentness/authority and generic behavior untouched. Actual complete snapshot must exist before serialization, only string output and same two solve comparisons. Direct byte and joint live Number/JSON effect equivalence mandatory; final result equality alone cannot prove iteration equivalence. Any mismatch is correctness blocker, uncertain record stays whole generic.",
+          "Freeze source candidate and whole inverse first; A independent exact code/closure review before metadata jobs. Then full actual 56 test roots (all 2064 source files, resolved compiler extensions/helpers/dependencies/harness, excludes empty, exact before/after input maps), normal 12 static gates and actual full-tree LOC/function classification including new leaf; no new giant/regrowth/budget permission. No C runtime/engine/CPU parsing or test writes at source stage.",
+          "Inventory row is NOT authorized by this source claim. Only after measured complete value-import closure and independent old-row/order/non-file inverse may parent receive exact separate ancillary policy scope. No assumed clean status, wholesale policy copy, fake policy row or grant. Source-only static may expose missing inventory and must report it until truthful separately authorized row is ready.",
+          "B separate dedicated new test claim expected tests/issue-6920-native-class-producer-signature-key.test.ts, four actual cases with genuine producer DTO forwarding capture; no production observer hook/fake Model/copied verdict. B source overlay only after C freeze, A acceptance and parent CAS GO. Proposed B component 39 cases/4 roots and full57 ACTUAL typing; final6 roots semantic169+focused79+record20+absorption13+scalar2+new4=287, full57 ACTUAL/2064. Counts conditional actual LIST; prior283/112/466 historical only. Semantic169 fresh once final, no duplicate B semantic run. Method supplemental review remains required before runtime GO.",
+          "No engine before actual functional/type/static/parent acceptance plus separate quiet GO. Original strict callback6431/a6a276e11 and yield153/b769ca98, default35000/defaultRPC/Node25.9/8192/fork1/noCPU; only genuine unprofiled pass then separately authorized unchanged52. Current35934 failure remains official; profiled34830 pass diagnostic only. No cancel/retry/waiver/deadline change/fallback.",
+          "ROOT2061 remains unadopted until private52 pass. Future ROOT conditional source2064/full58 ACTUAL/style71/23CAS14source+8tests+independentpolicy requires actual membership and fresh affected checks; no adoption/source push/public comments/HOLD/queue change. All27 master criteria unproven."
+        ]
+      },
+      "manifestSha256": "d3a271dce05139f2b8cfeec40f4a4742014c36ae8d755f5cc66a6100d5756bf3",
+      "constraints": [
+        "C is sole source writer in this fresh isolated successor, not alone in the codebase; preserve others and never revert their edits. Bootstrap complete FINAL32 exact 16528 regular files plus two genuine ignored typing dependencies =16530. Verify before/after whole copy and donor; readonly dependency links, no install/Git/index writes. Preserve all immutable prior functional/strict/profile failures and evidence.",
+        "Only existing producer.ts ONE import plus signature return callee key -> signatureKey, and new producer-private-keys.ts. COMPLETE ten-field DTO construction/spread/map/sort expressions before invocation BYTE EXACT. Existing rootScalarKey/rootKey/actual alias and six consumers WHOLE BYTE EXACT. Every other existing source/test/config/policy whole byte exact. No Root block move, duplicate Root encoder, input/kernel/raw guard/global generic key/solver convergence changes.",
+        "New leaf exactly one actual pure module-only signatureKey(snapshot: ProducerSignatureSnapshot): string plus erased DTO types. Producer uses that exact export. No package/facade exports, Model/cache/registry/callback capability. Actual data.key value plus erased contracts/IR identity imports only; no producer/input/kernel/runtime/program/backend import or cycle. <=450 normally formatted lines/new functions <=100 target, normal official hard caps unchanged, no grants/compression/helper dumping. Stop with exact measurements if cannot fit.",
+        "Follow complete A spec: closed wrappers and positional tuple/array scaffolding only; whole calls subtree, Root, Cell.key, location and uncertain reference/semantic DATA subtrees delegate actual old generic key. All scalar values delegate actual generic key. Complete fixed typed Record<keyof ActualClosedType,string> drivers actively emit fields in ASCII order, not unused checks. Preserve LIVE JSON(name) -> late field read -> recursive value ordering, method custody, actual original array.map(...).join behavior, holes/own undefined/duplicates/nonfinite/order/stable collation ties. No precaptured method/field strings, equality quotient, digest, memo or speculative open-record schema.",
+        "Closed compiler-owned wrapper reflection contraction is explicit; raw admission/currentness/authority and generic behavior untouched. Actual complete snapshot must exist before serialization, only string output and same two solve comparisons. Direct byte and joint live Number/JSON effect equivalence mandatory; final result equality alone cannot prove iteration equivalence. Any mismatch is correctness blocker, uncertain record stays whole generic.",
+        "Freeze source candidate and whole inverse first; A independent exact code/closure review before metadata jobs. Then full actual 56 test roots (all 2064 source files, resolved compiler extensions/helpers/dependencies/harness, excludes empty, exact before/after input maps), normal 12 static gates and actual full-tree LOC/function classification including new leaf; no new giant/regrowth/budget permission. No C runtime/engine/CPU parsing or test writes at source stage.",
+        "Inventory row is NOT authorized by this source claim. Only after measured complete value-import closure and independent old-row/order/non-file inverse may parent receive exact separate ancillary policy scope. No assumed clean status, wholesale policy copy, fake policy row or grant. Source-only static may expose missing inventory and must report it until truthful separately authorized row is ready.",
+        "B separate dedicated new test claim expected tests/issue-6920-native-class-producer-signature-key.test.ts, four actual cases with genuine producer DTO forwarding capture; no production observer hook/fake Model/copied verdict. B source overlay only after C freeze, A acceptance and parent CAS GO. Proposed B component 39 cases/4 roots and full57 ACTUAL typing; final6 roots semantic169+focused79+record20+absorption13+scalar2+new4=287, full57 ACTUAL/2064. Counts conditional actual LIST; prior283/112/466 historical only. Semantic169 fresh once final, no duplicate B semantic run. Method supplemental review remains required before runtime GO.",
+        "No engine before actual functional/type/static/parent acceptance plus separate quiet GO. Original strict callback6431/a6a276e11 and yield153/b769ca98, default35000/defaultRPC/Node25.9/8192/fork1/noCPU; only genuine unprofiled pass then separately authorized unchanged52. Current35934 failure remains official; profiled34830 pass diagnostic only. No cancel/retry/waiver/deadline change/fallback.",
+        "ROOT2061 remains unadopted until private52 pass. Future ROOT conditional source2064/full58 ACTUAL/style71/23CAS14source+8tests+independentpolicy requires actual membership and fresh affected checks; no adoption/source push/public comments/HOLD/queue change. All27 master criteria unproven."
+      ]
+    }
+  ],
+  "predecessors": [
+    "3522-b-native-class-semantic-producer-20261014.json",
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}
