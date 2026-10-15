@@ -1,0 +1,111 @@
+{
+  "id": "6920",
+  "slice": "producer-signature33-oracles-successor-20261015",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+  "claimed_at": "2026-10-15T12:43:29.673728+00:00",
+  "updated_at": "2026-10-15T12:43:29.673728+00:00",
+  "write_id": "b-producer-signature33-oracles-955adf38-de3c-47e9-a487-ab0fe5c37625",
+  "handoff_scope": [
+    {
+      "kind": "producer-signature33-oracles",
+      "at": "2026-10-15T12:43:29.673728+00:00",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+      "manifest": {
+        "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+        "receivingWorkspace": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-value-replay-successor-20261014-01a12827/.tmp/class-producer-signature-oracles33/workspace",
+        "bootstrapSourceWorkspace": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-producer-root-scalar-composition32/workspace",
+        "status": "FINITE_SINGLE_NEW_TEST_RECEIVE_NO_GO_UNTIL_PUBLISHED",
+        "componentPreimages": [],
+        "canonicalNewPaths": [
+          "tests/issue-6920-native-class-producer-signature-key.test.ts"
+        ],
+        "productionPaths": [],
+        "newTestPaths": [
+          "tests/issue-6920-native-class-producer-signature-key.test.ts"
+        ],
+        "sourceCountBefore": 2063,
+        "sourceCountConditionalAfter": 2064,
+        "basis": {
+          "authority": "take over all Session B; take over blocking seams; parallel subagents",
+          "priorSourceOwnership": "f8056e26fbb9f3657e69c6a6c8f42e25c614ae07",
+          "BProposal": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/producer-signature33-oracle-proposal/final-proposal.json",
+            "bytes": 15657,
+            "sha256": "7f18afde283d0c8c6adc44c61028e198a721a2a9878c78f968b97ff5d69b3ea0"
+          },
+          "AProposalReview": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/producer-signature33-oracle-proposal/independent-proposal-review.json",
+            "bytes": 4391,
+            "sha256": "f682b88ac6b5862e250f8d156021a1b8f971f374004efd45af5697692dae0dee"
+          },
+          "AFormalSpec": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/producer-signature33-proposal/specification.json",
+            "bytes": 16037,
+            "sha256": "d6af8aea29c8d3f76cdddc1efb8918057858700b1dc9ee36616541b394a0ae47"
+          },
+          "AMethod": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/producer-signature33-proposal/qualification-method-supplement.json",
+            "bytes": 3332,
+            "sha256": "f11488e0d80addb43d892621b3517dbaaa1f5d840d5674248a75e3177927d95f"
+          },
+          "sourceReceive": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/private-producer-signature33-source-receive/manifest.json",
+            "bytes": 8282,
+            "sha256": "d3a271dce05139f2b8cfeec40f4a4742014c36ae8d755f5cc66a6100d5756bf3"
+          },
+          "readonlyOldTests": [
+            {
+              "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-producer-root-scalar-composition32/workspace/tests/issue-6920-native-class-producer-root-scalar.test.ts",
+              "bytes": 10081,
+              "sha256": "b8c8df41879c435d40341c255cb592f1b6824eccd8a12e32197ee5cb53b6b95c"
+            },
+            {
+              "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-producer-root-scalar-composition32/workspace/tests/issue-6920-native-class-private-world-absorption.test.ts",
+              "bytes": 21082,
+              "sha256": "6642aef8ec1b624d705df53b3700a34c4f5266583fb7a5500d88c7f1c9097221"
+            },
+            {
+              "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-producer-root-scalar-composition32/workspace/tests/issue-6920-native-class-independent-record-allocation.test.ts",
+              "bytes": 20704,
+              "sha256": "d68a3827532f2ba4f275c71d2af4f25b574d5b42bc784c96bfc2da1453c11182"
+            }
+          ]
+        },
+        "constraints": [
+          "B is sole writer exactly one new test in fresh isolated successor; not alone, preserve others, do not revert their edits. Fresh FINAL32 exact16528 regular+2 genuine typing deps=16530, readonly dependency link/no install/Git/index. New test must be absent. No existing tests/helper/policy/production edits. All old35 test bodies/ordering/bytes protected.",
+          "Exactly four meaningful cases per reviewed proposal, target400/hard450 normally formatted lines/new functions<=100. No cramming/grants/helper dumping or cross-test import. Return exact bounded extension if complete controls cannot fit. Actual signatureKey vs actual generic data.key only; no copied encoder/fake Model/input authority/production hook.",
+          "Genuine normalization before forwarding spy; actual producer invocation, call-time ownDATA before/after copies, saved actual function exactly once with original argument/receiver, actual string returned unchanged. Restore spy before assertions/replay. Nonempty actual ten-field DTO and changed/stable before-after iteration PAIRS/startup-public/heap/call/value floors required. Retain no live solver aliases. Missing capture/population or pending-read trigger is failure, not filtered/pass row.",
+          "Four cases: actual per-iteration bytes+genuine convergence/replay; all ten/nested wrapper coordinates plus whole-generic Root/calls/key/location extras; order/duplicates/hole-vs-ownundefined/scalar nonfinite/escaping; joint LIVE Number/JSON full receiver/arity/result sequence with uniquely authenticated late top same-typed array-for-array replacement and nested primitive DATA mutation. Restore both descriptors before ALL assertions. In-place alias element mutation cannot prove top property late read. Scalar-to-object and specialized extra fields outside closed contract.",
+          "Only readonly C frozen producer+codec overlay after A exact code acceptance and parent CAS GO. Until that dependency is present, bootstrap and ignored planning permitted but test implementation/qualifiers wait. No source ownership. Source one import/callee/full construction/Root unchanged. Source count2064 only after exact new module received.",
+          "Freeze actual test and independent A causal review BEFORE runtime GO. Component genuine LIST record20+absorption13+scalar2+new4 prospective39/four roots, unfiltered/noUHE; full57 ACTUAL roots/all2064 source/all resolved extensions/helpers/dependencies/harness/excludes empty/input before-after maps, normal12+official affected new code/test classification+style. Actual case/list/compiler counts govern. No redundant B169 run.",
+          "Final coherent six roots semantic169+focused79+old35+new4 prospective287/full57 ACTUAL; semantic169 fresh once final. Prior466/112/283 historical only. Byte/effect mismatch is correctness blocker. Other source logic/non-equivalence/unexpected failures/unresolved effects require reassessment. No engine before final actual functional/type/static/acceptance and quietGO; original strict35 then separately authorized unchanged52 only actual pass. No cancel/retry/waiver/deadline change.",
+          "No inventory/policy writes under this claim. C closure/freeze then separately received truthful row preserving old inverse required. ROOT2061 remains unadopted; future ROOT2064/full58/style71/23CAS conditional actual scope. All27 master criteria unproven/no public source push/comments/HOLD/queue change."
+        ]
+      },
+      "manifestSha256": "d29df4f2c9173a515e9c7b410613e9665f9728ae417caa77ecd3c33c7fd5b4ff",
+      "constraints": [
+        "B is sole writer exactly one new test in fresh isolated successor; not alone, preserve others, do not revert their edits. Fresh FINAL32 exact16528 regular+2 genuine typing deps=16530, readonly dependency link/no install/Git/index. New test must be absent. No existing tests/helper/policy/production edits. All old35 test bodies/ordering/bytes protected.",
+        "Exactly four meaningful cases per reviewed proposal, target400/hard450 normally formatted lines/new functions<=100. No cramming/grants/helper dumping or cross-test import. Return exact bounded extension if complete controls cannot fit. Actual signatureKey vs actual generic data.key only; no copied encoder/fake Model/input authority/production hook.",
+        "Genuine normalization before forwarding spy; actual producer invocation, call-time ownDATA before/after copies, saved actual function exactly once with original argument/receiver, actual string returned unchanged. Restore spy before assertions/replay. Nonempty actual ten-field DTO and changed/stable before-after iteration PAIRS/startup-public/heap/call/value floors required. Retain no live solver aliases. Missing capture/population or pending-read trigger is failure, not filtered/pass row.",
+        "Four cases: actual per-iteration bytes+genuine convergence/replay; all ten/nested wrapper coordinates plus whole-generic Root/calls/key/location extras; order/duplicates/hole-vs-ownundefined/scalar nonfinite/escaping; joint LIVE Number/JSON full receiver/arity/result sequence with uniquely authenticated late top same-typed array-for-array replacement and nested primitive DATA mutation. Restore both descriptors before ALL assertions. In-place alias element mutation cannot prove top property late read. Scalar-to-object and specialized extra fields outside closed contract.",
+        "Only readonly C frozen producer+codec overlay after A exact code acceptance and parent CAS GO. Until that dependency is present, bootstrap and ignored planning permitted but test implementation/qualifiers wait. No source ownership. Source one import/callee/full construction/Root unchanged. Source count2064 only after exact new module received.",
+        "Freeze actual test and independent A causal review BEFORE runtime GO. Component genuine LIST record20+absorption13+scalar2+new4 prospective39/four roots, unfiltered/noUHE; full57 ACTUAL roots/all2064 source/all resolved extensions/helpers/dependencies/harness/excludes empty/input before-after maps, normal12+official affected new code/test classification+style. Actual case/list/compiler counts govern. No redundant B169 run.",
+        "Final coherent six roots semantic169+focused79+old35+new4 prospective287/full57 ACTUAL; semantic169 fresh once final. Prior466/112/283 historical only. Byte/effect mismatch is correctness blocker. Other source logic/non-equivalence/unexpected failures/unresolved effects require reassessment. No engine before final actual functional/type/static/acceptance and quietGO; original strict35 then separately authorized unchanged52 only actual pass. No cancel/retry/waiver/deadline change.",
+        "No inventory/policy writes under this claim. C closure/freeze then separately received truthful row preserving old inverse required. ROOT2061 remains unadopted; future ROOT2064/full58/style71/23CAS conditional actual scope. All27 master criteria unproven/no public source push/comments/HOLD/queue change."
+      ]
+    }
+  ],
+  "predecessors": [
+    "3522-b-native-class-semantic-producer-20261014.json",
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}
