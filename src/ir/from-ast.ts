@@ -10787,6 +10787,23 @@ function coerceReturnValue(value: IrValueId, cx: LowerCtx, sourceExpression?: ts
       `ir/from-ast: concrete return needs a dynamic box in ${cx.funcName}`,
     );
   }
+  // (#7001) dynamic/externref value into a STRING declared result. Only the
+  // host lane has string ≡ externref; on a native-string lane the string
+  // result is `(ref null $AnyString)` and the unconverted externref would fail
+  // Wasm validation. Demote to legacy (which coerces) — same clean
+  // "not in slice" fallback as the dynamic arm above.
+  if (declared?.kind === "string") {
+    const actualT = cx.builder.typeOf(value);
+    const isExternShaped = actualT.kind === "dynamic" || asVal(actualT)?.kind === "externref";
+    if (isExternShaped && cx.resolver?.stringIsExternref?.() !== true) {
+      throw new IrUnsupportedError(
+        "return-type-legacy-coupling",
+        "build",
+        `ir/from-ast: dynamic/externref returned into a native 'string' result needs a checked conversion in ${cx.funcName}`,
+      );
+    }
+    return value;
+  }
   // (#2856 C3) externref value into a NUMBER (f64) declared result —
   // `return hit;` where `hit = cache.get(n)` is the externref Map_get
   // result. Unbox through `__unbox_number`, exactly what legacy emits for

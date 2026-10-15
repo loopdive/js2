@@ -345,7 +345,15 @@ function verifySymbolicReferences(func: IrFunction, errors: IrVerifyError[]): vo
 }
 
 export interface IrVerificationOptions {
-  readonly verifyDominanceNaive: boolean;
+  /** Absent ⇒ the `JS2WASM_IR_VERIFY_DOMINANCE_NAIVE` env default. */
+  readonly verifyDominanceNaive?: boolean;
+  /**
+   * (#7001) Lane fact: does the `string` IrType lower to externref (host
+   * strings)? `false` makes a dynamic/externref value returned into a declared
+   * `string` result non-assignable (native strings lower to
+   * `(ref null $AnyString)`). Absent ⇒ the historical lenient answer.
+   */
+  readonly stringIsExternref?: boolean;
 }
 
 /**
@@ -458,10 +466,7 @@ export function verifyIrFunction(
   // #4418 — corpus-wide audit of the fast dominance analysis against the
   // naive reachability definition. Opt-in (quadratic per function); the unit
   // tests run the same cross-check on synthetic general graphs.
-  if (
-    dominance &&
-    (options === undefined ? process.env.JS2WASM_IR_VERIFY_DOMINANCE_NAIVE === "1" : options.verifyDominanceNaive)
-  ) {
+  if (dominance && (options?.verifyDominanceNaive ?? process.env.JS2WASM_IR_VERIFY_DOMINANCE_NAIVE === "1")) {
     for (const msg of crossCheckDominance(func, dominance)) {
       errors.push({ message: `dominance self-check: ${msg}`, func: func.name });
     }
@@ -517,7 +522,7 @@ export function verifyIrFunction(
       const declared = func.resultTypes[i]!;
       const actual = operandIrType(func, block, t.values[i]!, new Set());
       if (!actual) continue; // not locally visible — SSA-scope check reports it
-      if (!returnTypeAssignable(actual, declared)) {
+      if (!returnTypeAssignable(actual, declared, options?.stringIsExternref)) {
         errors.push({
           message:
             `return[${i}] type ${describeKind(actual)} not assignable to declared ` +
@@ -551,7 +556,7 @@ export function verifyIrFunction(
         if (i.value === null) return;
         const actual = operandIrType(func, block, i.value, new Set());
         if (!actual) return; // not locally visible — SSA-scope check reports it
-        if (!returnTypeAssignable(actual, func.resultTypes[0]!)) {
+        if (!returnTypeAssignable(actual, func.resultTypes[0]!, options?.stringIsExternref)) {
           errors.push({
             message:
               `early.return value type ${describeKind(actual)} not assignable to declared ` +
@@ -578,7 +583,7 @@ export function verifyIrFunction(
  * silently demote working IR functions to legacy, so the check only fires on
  * an unambiguous mismatch.
  */
-function returnTypeAssignable(actual: IrType, declared: IrType): boolean {
+function returnTypeAssignable(actual: IrType, declared: IrType, stringIsExternref?: boolean): boolean {
   if (actual.kind === "support-ref" || declared.kind === "support-ref") return irTypeEquals(actual, declared);
   // Fnctor values are nominal source-qualified instances, never arbitrary
   // reference-shaped carriers. An exact shape match is required in either
@@ -617,6 +622,16 @@ function returnTypeAssignable(actual: IrType, declared: IrType): boolean {
   // needs a box the IR doesn't emit; this is the #1798 numeric-`any` case the
   // from-ast layer defers to legacy. Flag it so a future regression demotes.
   if (isScalar(a)) {
+    return false;
+  }
+  // (#7001) A dynamic/externref value into a native-string result: string
+  // lowers to `(ref null $AnyString)` there, so the flow needs a checked
+  // conversion the IR does not emit. Only the host lane has string ≡ externref.
+  if (
+    declared.kind === "string" &&
+    stringIsExternref === false &&
+    (actual.kind === "dynamic" || a?.kind === "externref")
+  ) {
     return false;
   }
   // Both reference-shaped (or externref): treat as assignable. The lowerer's
