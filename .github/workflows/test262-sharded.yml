@@ -4989,7 +4989,10 @@ jobs:
               echo "WARN: import-cycles baseline bank on re-anchored tip failed (non-fatal)"
             node scripts/check-flat-dir-budget.mjs --update-on-decrease || \
               echo "WARN: flat-dir budget bank on re-anchored tip failed (non-fatal)"
-            git add -f scripts/import-cycles-baseline.json scripts/flat-dir-budget-baseline.json 2>/dev/null || true
+            # #6979 — bank `ctx.standalone` arm decreases (lowers only, never fails).
+            node scripts/check-standalone-arms.mjs --update-on-decrease || \
+              echo "WARN: standalone-arms bank on re-anchored tip failed (non-fatal)"
+            git add -f scripts/import-cycles-baseline.json scripts/flat-dir-budget-baseline.json scripts/standalone-arms-baseline.json 2>/dev/null || true
             if git diff --cached --quiet; then
               echo "Baseline already current on main (no delta after re-anchor) — nothing to push."
               PUSHED=1

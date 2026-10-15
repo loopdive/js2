@@ -233,6 +233,14 @@ jobs:
         if: steps.npm_compat.outputs.only != 'true'
         run: pnpm run check:ir-fallbacks
 
+      - name: ctx.standalone arm ratchet (#6979)
+        if: steps.npm_compat.outputs.only != 'true'
+        # Fails when `ctx.standalone` hits grow in any src/ directory beyond
+        # scripts/standalone-arms-baseline.json. The regime is the only semantic
+        # implementation; environment questions key on hostFreeEnvironment(ctx),
+        # the JS value bridge on jsValueBoundary(ctx). Main banks drops post-merge.
+        run: pnpm run check:standalone-arms
+
       - name: Native-first host semantic debt gate (#4401)
         # The artifact-only guard is load-bearing: the slim path above skips
         # pnpm setup entirely, so an unguarded pnpm step dies with exit 127 in
