@@ -1,0 +1,137 @@
+{
+  "id": "6920",
+  "slice": "producer-root-scalar32-composition-successor-20261015",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+  "claimed_at": "2026-10-15T12:03:31.692836+00:00",
+  "updated_at": "2026-10-15T12:03:31.692836+00:00",
+  "write_id": "b-producer-root-scalar32-composition-b3e739f3-b0a5-4bbe-9e57-ccd9f2f50b8e",
+  "handoff_scope": [
+    {
+      "kind": "producer-root-scalar32-composition",
+      "at": "2026-10-15T12:03:31.692836+00:00",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+      "manifest": {
+        "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+        "receivingWorkspace": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-producer-root-scalar-composition32/workspace",
+        "bootstrapSourceWorkspace": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-producer-root-scalar31/workspace",
+        "status": "FINITE_COMPOSITION_RECEIVE_NO_GO_UNTILPUBLISHED",
+        "componentPreimages": [],
+        "canonicalNewPaths": [
+          "tests/issue-6920-native-class-producer-root-scalar.test.ts"
+        ],
+        "productionPaths": [],
+        "newTestPaths": [
+          "tests/issue-6920-native-class-producer-root-scalar.test.ts"
+        ],
+        "sourceCountBefore": 2063,
+        "sourceCountConditionalAfter": 2063,
+        "basis": {
+          "authority": "takeoverallB; takeoverblockingseams; parallelwork",
+          "priorOwnership": "0a0416786d0dfb3b4d7c1e5c0af2a10a745ee0c5",
+          "CSourceMetadata": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-producer-root-scalar31/workspace/.tmp/scalar31/handoff/sealed-source-metadata.json",
+            "bytes": 13619,
+            "sha256": "6a1f4b4e305e17dc83e9d8776b13a770bf0df0efe411b3dc9b20e74dd499f920"
+          },
+          "ASourceReview": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/producer-root-scalar31-code-review/candidate01/review.json",
+            "bytes": 6653,
+            "sha256": "87ed8504d4604572f90aa18d462597ed425ed33c0cd8e21f1699b07310fd170f"
+          },
+          "AClosedBoundaryAddendum": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/producer-root-scalar31-code-review/candidate01/closed-scalar-boundary-addendum.json",
+            "bytes": 3245,
+            "sha256": "e8731e754c87cb1ebf728b8a67c1bf5b305c42df1b771c162ff378844f398afc"
+          },
+          "ASpecAndMethod": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/producer-root-scalar31-proposal/specification.json",
+            "bytes": 11077,
+            "sha256": "f3e0c1e9639c2393718431d227fe356d9021ad68f07cdc3636d07c8be003ffad"
+          },
+          "parentSourceAuthentication": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/private-producer-root-scalar31-source-receive/parent-source-metadata-authentication.json",
+            "bytes": 1219,
+            "sha256": "4a2eb36f78f914aeaf840c8f72f762612e960c0f886eb485c0d712d184da3615"
+          },
+          "CCompositionPlan": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-producer-root-scalar-composition32-plan/plan.json",
+            "bytes": 2989,
+            "sha256": "b1b5acc1fb3fcc8596e3446e348250f5e0028fc8a7fc7fa29f6e352c32a38b6d"
+          },
+          "BQualified": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-value-replay-successor-20261014-01a12827/.tmp/class-producer-root-scalar-oracles31/handoff/sealed.json",
+            "bytes": 22670,
+            "sha256": "c45ef89e935ca96f93e884d8f477c2843195ebedaa969e6edefa341c6dd40e74"
+          },
+          "BActualLIST": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-value-replay-successor-20261014-01a12827/.tmp/class-producer-root-scalar-oracles31/workspace/.tmp/scalar31/epoch01/list.json",
+            "bytes": 12543,
+            "sha256": "6ed9dd85e3170e0876de9e9c1e8a7f9e0ed778b1226ab2dab678964a1380caf8"
+          },
+          "BOracleReview": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/producer-root-scalar31-code-review/oracles01/review.json",
+            "bytes": 6627,
+            "sha256": "4f44903ce7565bcb33acdaf7f8b221e9280069ddb47c15471d7b6ad6121461d5"
+          },
+          "endpoints": [
+            {
+              "path": "tests/issue-6920-native-class-producer-root-scalar.test.ts",
+              "snapshot": {
+                "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-value-replay-successor-20261014-01a12827/.tmp/class-producer-root-scalar-oracles31/handoff/snapshots/issue-6920-native-class-producer-root-scalar.test.ts",
+                "bytes": 10081,
+                "sha256": "b8c8df41879c435d40341c255cb592f1b6824eccd8a12e32197ee5cb53b6b95c"
+              }
+            }
+          ],
+          "producer": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-producer-root-scalar31/workspace/src/ir/analysis/allocation-evidence/js-class-value-domains/producer.ts",
+            "bytes": 62331,
+            "sha256": "4a46e5f848b35f1ddb0ef1ac513086940f31f2ea4d43aa6d503a2d917724cde5"
+          },
+          "parentBAuthentication": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/private-producer-root-scalar32-composition-receive/parent-B31-component-authentication.json",
+            "bytes": 964,
+            "sha256": "f6e39ad53b855063a90a7a4f9696e2a40ea8cbfafc4493bdb0ce2865f33c9ba7"
+          },
+          "AExpected283Union": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/private-producer-root-scalar32-composition-receive/expected-case-union/receipt.json",
+            "bytes": 11182,
+            "sha256": "27b349e8cb5c87c4927a295ab2b1f25b8da735c76f979f907aecf9e1ed21bb86"
+          },
+          "actualBComponent": "35/35actual3roots/nofilter/noUHE/all16541current; full56ACTUAL/2380/16782current/normal12/officialnewtest189max63",
+          "conditionalFinalCases": 283
+        },
+        "constraints": [
+          "Csolefreshcompositionwriter/notalone/no revertingothers. FreshexactSOURCE31bootstrap16527regular+2deps=16529/source2063 thenONLYaddexactqualifiedBnewtest atreceivedabsentpath→16528regular+2deps=16530. Producer62331/4a46e5f8/1405/kernel33334/efeaf404/800 andall16527otherregular+2deps wholeexact. No adaptation/formatting/sourcewrites/Git/index/install; readonlydepslink.",
+          "Componentsnaturallyterminal/frozen/Aaccepted+parentallartifact/currentcontexts authenticated beforeGO. Whole16530finalcontext mustequalqualified B31 exactsource+newtest; preserveallpredecessorfailedstrict/profile/functionalseals.",
+          "Fresh56ACTUALtyping/excludes[]/all2063src/allresolvedcompilerextensions/helpers/deps/harnessbeforeafter; normal12/static+actualofficialfulltree/producer1401→1405/newtestactualclassifiers/no grants/newGiants/regrowth. Actualaffectedstyleincludesproducerandnewtest.",
+          "Exactscalarbyte/liveNumber+JSON/name→latefieldread→valueequivalencewithinclosedscalarateachreadcontractmandatory; explicitArrayprobecontractiononlyprivateprimitives/norawadmissionauthority. Freshactual5rootLISTproducersemantic169+focused79+record20+absorption13+newN=281+N(283ifN2); genuineLISTactualnames/perfileorder/allselectedunfiltered/noUHE/default35RPC/Node25.9/8192/fork1/noCPU. Semantic169freshONCEfinal,noadditionalB169. Prior466/112historicalonly/no freshfull10claim. Correctnessfailuremustresolve/otherlogic/sourcechanges/unresolvedconcernsexpandreevaluatedscope.",
+          "Onlyafterfinalactualfunctional/type56/static/source/oracleparentacceptance quietexactoriginalWASIprepare+live callback6431/a6a276e11/yield153/b769ca98/default35000/defaultRPC/Node25.9/8192/fork1/noCPU. Actual<=35000/natural0/noUHE mandatory; onlythenunchanged52 separatequietGO. Preserveallnaturaloutcomes/no cancel/retry/waiver/deadlinechange/fallback.",
+          "ROOT2061unadopteduntilactual52pass; futureROOT21CAS13source+7tests+independentpolicy/source2063/full57ACTUALtype/static/style69actualmembership/freshaffectedrelated/vector/constructor. All27mastercriteriaunproven; no publicsourcepush/comments/HOLD/queuechanges."
+        ]
+      },
+      "manifestSha256": "e73910b417c1f05e716374f6a11fb530e5d496e4f1ec4d647b22520c60a1404e",
+      "constraints": [
+        "Csolefreshcompositionwriter/notalone/no revertingothers. FreshexactSOURCE31bootstrap16527regular+2deps=16529/source2063 thenONLYaddexactqualifiedBnewtest atreceivedabsentpath→16528regular+2deps=16530. Producer62331/4a46e5f8/1405/kernel33334/efeaf404/800 andall16527otherregular+2deps wholeexact. No adaptation/formatting/sourcewrites/Git/index/install; readonlydepslink.",
+        "Componentsnaturallyterminal/frozen/Aaccepted+parentallartifact/currentcontexts authenticated beforeGO. Whole16530finalcontext mustequalqualified B31 exactsource+newtest; preserveallpredecessorfailedstrict/profile/functionalseals.",
+        "Fresh56ACTUALtyping/excludes[]/all2063src/allresolvedcompilerextensions/helpers/deps/harnessbeforeafter; normal12/static+actualofficialfulltree/producer1401→1405/newtestactualclassifiers/no grants/newGiants/regrowth. Actualaffectedstyleincludesproducerandnewtest.",
+        "Exactscalarbyte/liveNumber+JSON/name→latefieldread→valueequivalencewithinclosedscalarateachreadcontractmandatory; explicitArrayprobecontractiononlyprivateprimitives/norawadmissionauthority. Freshactual5rootLISTproducersemantic169+focused79+record20+absorption13+newN=281+N(283ifN2); genuineLISTactualnames/perfileorder/allselectedunfiltered/noUHE/default35RPC/Node25.9/8192/fork1/noCPU. Semantic169freshONCEfinal,noadditionalB169. Prior466/112historicalonly/no freshfull10claim. Correctnessfailuremustresolve/otherlogic/sourcechanges/unresolvedconcernsexpandreevaluatedscope.",
+        "Onlyafterfinalactualfunctional/type56/static/source/oracleparentacceptance quietexactoriginalWASIprepare+live callback6431/a6a276e11/yield153/b769ca98/default35000/defaultRPC/Node25.9/8192/fork1/noCPU. Actual<=35000/natural0/noUHE mandatory; onlythenunchanged52 separatequietGO. Preserveallnaturaloutcomes/no cancel/retry/waiver/deadlinechange/fallback.",
+        "ROOT2061unadopteduntilactual52pass; futureROOT21CAS13source+7tests+independentpolicy/source2063/full57ACTUALtype/static/style69actualmembership/freshaffectedrelated/vector/constructor. All27mastercriteriaunproven; no publicsourcepush/comments/HOLD/queuechanges."
+      ]
+    }
+  ],
+  "predecessors": [
+    "3522-b-native-class-semantic-producer-20261014.json",
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}
