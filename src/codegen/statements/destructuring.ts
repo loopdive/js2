@@ -1140,7 +1140,11 @@ export function compileArrayDestructuring(
 
   const arrTypeIdx = getArrTypeIdxFromVec(ctx, typeIdx);
   const arrDef = ctx.mod.types[arrTypeIdx];
-  const isVecArray = arrDef && arrDef.kind === "array";
+  // (#6980) The native `$Map`/`$Set` struct's field 1 is its entries array, so
+  // the vec probe matched it and destructuring read raw `$MapEntry` slots
+  // (null-deref). A collection is an iterable, not a vec: it takes the
+  // unknown-struct externref path below, whose GetIterator drives it.
+  const isVecArray = arrDef && arrDef.kind === "array" && typeIdx !== ctx.mapTypeIdx;
 
   // (#2169) Array-destructuring a Wasm-native generator (`const [a,b]=g()`).
   // The initializer lowered to a ref to the generator state struct
