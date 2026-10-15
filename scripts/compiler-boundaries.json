@@ -16137,6 +16137,14 @@
       "path": "src/runtime/native-microtask-checkpoint.ts",
       "state": "unmigrated",
       "layer": "legacy-host"
+    },
+    {
+      "path": "src/ir/class-overrides.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Pure TS-AST class-override scan feeding the IR selector and builder (#7000); retire with the IR virtual-dispatch intent or move behind the frontend-ts boundary."
     }
   ]
 }
