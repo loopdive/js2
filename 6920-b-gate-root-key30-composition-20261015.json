@@ -1,0 +1,134 @@
+{
+  "id": "6920",
+  "slice": "gate-root-key30-composition-successor-20261015",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+  "claimed_at": "2026-10-15T11:23:34.718123+00:00",
+  "updated_at": "2026-10-15T11:23:34.718123+00:00",
+  "write_id": "b-gate-root-key30-composition-0c2c9d43-bdd7-45f8-a21e-2b64568c79e3",
+  "handoff_scope": [
+    {
+      "kind": "gate-root-key30-composition",
+      "at": "2026-10-15T11:23:34.718123+00:00",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+      "manifest": {
+        "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+        "receivingWorkspace": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-gate-root-key-composition30/workspace",
+        "bootstrapSourceWorkspace": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-gate-root-key29/workspace",
+        "status": "FINITE_COMPOSITION_RECEIVE_NO_GO_UNTILPUBLISHED",
+        "componentPreimages": [
+          {
+            "path": "tests/issue-6920-native-class-private-world-absorption.test.ts",
+            "bytes": 14902,
+            "sha256": "457e827ad66ce5a96b0befb90ae55ff775f93ff9e099fcfca6fb3a1dd35d57ce"
+          }
+        ],
+        "canonicalNewPaths": [],
+        "productionPaths": [],
+        "newTestPaths": [],
+        "sourceCountBefore": 2063,
+        "sourceCountConditionalAfter": 2063,
+        "basis": {
+          "authority": "takeoverallB; takeoverblockingseams; parallelwork",
+          "priorOwnership": "c75f928d920ea3227cd6531c18113dd59f78b33d",
+          "CSourceMetadata": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-gate-root-key29/workspace/.tmp/rootkey29/handoff/sealed-source-metadata.json",
+            "bytes": 13433,
+            "sha256": "4c83c8e820633e7435bddd159efe8ff54059c5c38523f14130d92ed03e0c0749"
+          },
+          "ASourceReview": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/gate-root-key-code-review/candidate01/review.json",
+            "bytes": 6673,
+            "sha256": "6a5885a7a7bdfb23a823e75ae1855e11bb52843e16881d90bb0191e0bef45f23"
+          },
+          "AQualificationMethod": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/gate-root-key-conditional-proposal/qualification-method-review/review.json",
+            "bytes": 4906,
+            "sha256": "7c76d95d35dc4e978316f2506caafaed9ea4498a7b40888e168c7fa1ff0e2d79"
+          },
+          "parentSourceAuthentication": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/private-gate-root-key29-source-receive/parent-source-metadata-authentication.json",
+            "bytes": 1045,
+            "sha256": "4eebaf0c964bf09e1db8bdd0b1d0ef245a9452d95c26cf055868152e97b38cc8"
+          },
+          "CCompositionPlan": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-gate-root-key-composition30-plan/plan.json",
+            "bytes": 2789,
+            "sha256": "e62541606e2c18f5ebf0b69c9ee5d55dfa5f7eb81d590fe932ed7ceef17c510e"
+          },
+          "BQualified": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-value-replay-successor-20261014-01a12827/.tmp/class-gate-root-key-oracles29/handoff/sealed.json",
+            "bytes": 22130,
+            "sha256": "5580fc728964128bee9ee9856dfd7ac9a3824d46874b32b822b7111d78d41d04"
+          },
+          "BActualLIST": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-value-replay-successor-20261014-01a12827/.tmp/class-gate-root-key-oracles29/workspace/.tmp/rootkey29/epoch01/list.json",
+            "bytes": 11606,
+            "sha256": "810b95217f26f9ef23fdf9bd1af012c0f179b0b99292030e26b2f8529203a899"
+          },
+          "BOracleReview": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/gate-root-key-code-review/oracles01/review.json",
+            "bytes": 6379,
+            "sha256": "73838dbeed001b8d94ae3ed67ca5a593105b57c603cf44a72218b20753503dc4"
+          },
+          "endpoints": [
+            {
+              "path": "tests/issue-6920-native-class-private-world-absorption.test.ts",
+              "snapshot": {
+                "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-value-replay-successor-20261014-01a12827/.tmp/class-gate-root-key-oracles29/handoff/snapshots/absorption.test.ts",
+                "bytes": 21082,
+                "sha256": "6642aef8ec1b624d705df53b3700a34c4f5266583fb7a5500d88c7f1c9097221"
+              }
+            }
+          ],
+          "kernel": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-gate-root-key29/workspace/src/ir/analysis/allocation-evidence/js-class-value-domains/independent-kernel.ts",
+            "bytes": 33334,
+            "sha256": "efeaf404742a0400641d7ee8ff319ccf0f59aab4d7cf4a70424b7c8aa25bae09"
+          },
+          "parentBAuthentication": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/private-gate-root-key30-composition-receive/parent-B29-component-authentication.json",
+            "bytes": 945,
+            "sha256": "bcbb2b0deb80ddb85c830551f9abe287009455a337fdad90b6a2341a9fd7244c"
+          },
+          "AExpected112Union": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/private-gate-root-key30-composition-receive/expected-case-union/receipt.json",
+            "bytes": 11443,
+            "sha256": "69ddaea11fb1432b301ae6fc4e5b6251a24807b2c489c02bfc92367bd590d47a"
+          },
+          "actualBComponent": "33/33 actual2roots/full55ACTUAL/2379/static12/officialowned389max47; all16540runtimeand16781typepins current",
+          "conditionalFinalCases": 112
+        },
+        "constraints": [
+          "C sole freshcompositionwriter; notalone/no revertingothers. FreshexactSOURCE29bootstrap16527regular+2authentictypingdeps=16529/source2063; readonlydeps/noinstall/Git/index. OnlyCASexact Bqualified existing dedicatedtest; kernel33334/efeaf404/800 andallother16526regular+2deps wholebyteexact. No adaptation/formatting/productionwrites.",
+          "Allcomponents naturallyterminal/frozen/Aaccepted+parentallartifacts/currentcontexts authenticated beforeGO. Whole16529finalcontext mustequalqualified B29 exactkernel+test. Preserveallpredecessorfailedstrict/profile/functionalseals.",
+          "Fresh55ACTUALtyping/excludes[]/all2063src/allresolvedcompilerextensions/helpers/deps/harnessbeforeafter; normal12/static plusactualofficialfulltree/kernel773→800/oldtest266→new/functionclassifiers/no grants/newGiants/regrowth; affectedstyleactualkernel+test.",
+          "Source29onlyoneencoder+exact3substitutionwholeinverse andactualbyte/liveJSON/late-readequivalence required. Freshactual3rootLISTfocused79+record20+dedicatedold10+newN=109+N (112prospectiveonly); allselectedunfiltered/noUHE/default35/defaultRPC/Node25.9/8192/fork1/noCPU. PerfileancestorTitles+titleorder preserved; genuineLISTgoverns. Prior466historicalonly,no fresh466/fullrelatedclaim. Anyequivalencefailurecorrectnessblocker; otherlogic/sourcechanges/failureconcernsrequireexpandedreevaluatedscopeincluding10rootswhenrelevant.",
+          "Onlyafteractual3roots/type55/static/source/oracleparentacceptance quietexactoriginalWASIprepare+live callback6431/a6a276e11/yield153/b769ca98/default35000/defaultRPC/noCPU/25.9/8192/fork1. Actual<=35000/natural0/noUHE mandatory; onlythenunchanged52 separatequietGO. Naturalfailurespreserved,no cancel/retry/waiver/deadlinechanges/fallback.",
+          "ROOT2061unadopteduntilactual52pass; future20CAS13source+6tests+independentpolicy/full56ACTUALtype/static/style68actualmembership/freshaffectedrelated/vector/constructor remain. All27mastercriteriaunproven. No publicsourcepush/comments/HOLD/queuechanges."
+        ]
+      },
+      "manifestSha256": "c079c1ca5588a559a4bb2c87c37a6d1467395717bd856c8dac943653fa66a10d",
+      "constraints": [
+        "C sole freshcompositionwriter; notalone/no revertingothers. FreshexactSOURCE29bootstrap16527regular+2authentictypingdeps=16529/source2063; readonlydeps/noinstall/Git/index. OnlyCASexact Bqualified existing dedicatedtest; kernel33334/efeaf404/800 andallother16526regular+2deps wholebyteexact. No adaptation/formatting/productionwrites.",
+        "Allcomponents naturallyterminal/frozen/Aaccepted+parentallartifacts/currentcontexts authenticated beforeGO. Whole16529finalcontext mustequalqualified B29 exactkernel+test. Preserveallpredecessorfailedstrict/profile/functionalseals.",
+        "Fresh55ACTUALtyping/excludes[]/all2063src/allresolvedcompilerextensions/helpers/deps/harnessbeforeafter; normal12/static plusactualofficialfulltree/kernel773→800/oldtest266→new/functionclassifiers/no grants/newGiants/regrowth; affectedstyleactualkernel+test.",
+        "Source29onlyoneencoder+exact3substitutionwholeinverse andactualbyte/liveJSON/late-readequivalence required. Freshactual3rootLISTfocused79+record20+dedicatedold10+newN=109+N (112prospectiveonly); allselectedunfiltered/noUHE/default35/defaultRPC/Node25.9/8192/fork1/noCPU. PerfileancestorTitles+titleorder preserved; genuineLISTgoverns. Prior466historicalonly,no fresh466/fullrelatedclaim. Anyequivalencefailurecorrectnessblocker; otherlogic/sourcechanges/failureconcernsrequireexpandedreevaluatedscopeincluding10rootswhenrelevant.",
+        "Onlyafteractual3roots/type55/static/source/oracleparentacceptance quietexactoriginalWASIprepare+live callback6431/a6a276e11/yield153/b769ca98/default35000/defaultRPC/noCPU/25.9/8192/fork1. Actual<=35000/natural0/noUHE mandatory; onlythenunchanged52 separatequietGO. Naturalfailurespreserved,no cancel/retry/waiver/deadlinechanges/fallback.",
+        "ROOT2061unadopteduntilactual52pass; future20CAS13source+6tests+independentpolicy/full56ACTUALtype/static/style68actualmembership/freshaffectedrelated/vector/constructor remain. All27mastercriteriaunproven. No publicsourcepush/comments/HOLD/queuechanges."
+      ]
+    }
+  ],
+  "predecessors": [
+    "3522-b-native-class-semantic-producer-20261014.json",
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}
