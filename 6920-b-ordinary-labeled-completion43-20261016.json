@@ -1,0 +1,276 @@
+{
+  "id": "6920",
+  "slice": "ordinary-labeled-completion43-successor-20261016",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-class-value-replay-successor-20261014-01a12827",
+  "claimed_at": "2026-10-15T23:40:20.630893+00:00",
+  "updated_at": "2026-10-15T23:40:20.630893+00:00",
+  "write_id": "b-ordinary-labeled-completion43-57d70237-b8b0-4886-9d1a-d40b29ebd95e",
+  "handoff_scope": [
+    {
+      "kind": "ordinary-labeled-completion43",
+      "at": "2026-10-15T23:40:20.630893+00:00",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-class-value-replay-successor-20261014-01a12827",
+      "manifest": {
+        "productionPaths": [
+          "src/ir/analysis/allocation-evidence/ordinary-number-undefined-body.ts",
+          "src/ir/analysis/allocation-evidence/ordinary-number-undefined-profile.ts"
+        ],
+        "existingTestPaths": [],
+        "newTestPaths": [
+          "tests/issue-6920-native-ordinary-labeled-completion.test.ts"
+        ],
+        "canonicalNewProductionPaths": [],
+        "behaviorBounds": [
+          "Only genuine no-br labeled.block recursive completion and independent indexing/replay. Preserve copied child lexical SSA scope, shared global SSA/site uniqueness census, deterministic actual body occurrence order, and reachable early-return/live-out semantics.",
+          "br.label in descendants and all other unsupported families/opcodes/control remain refused. No loop/switch/throw/slot/global/TDZ/Boolean widening, parameter/host transport or class-presence permission.",
+          "Ordinary-number-undefined semantic/execution suites in currentROOT have advanced beyond old donor. Never overwrite them or physical/foundation/current class code from donor. No new source-policy row; exact current two existing policy classifications preserved."
+        ],
+        "additionalExplicitBounds": [
+          "Independent and producer proof algorithms remain independently derived over actual lexical occurrence/SSA/live-out. No descendant br.label admission, nonempty label assumed away, generated proof verdict or report authority.",
+          "Preserve all other bails and normal/abrupt distinctions; no switch/loop/Boolean/global/TDZ/throw/default-parameter or public dynamic transport widening.",
+          "JS2WASM_LINEAR_IR default/retirement routes, host options/sourceMap/optimization/CABI/multi-source behavior and runtime physical adapters remain unchanged/outside scope."
+        ],
+        "historicalEvidence_ONLY": {
+          "sourceCount2059": true,
+          "runtime194of194_7files": {
+            "actual": 194,
+            "passed": 194,
+            "files": 7,
+            "naturalExit": 0,
+            "newFocused": 30,
+            "globalFileOrderDifferent": true,
+            "perFileIdentityAndOrderVerified": true
+          },
+          "freshSource64Historical": {
+            "prepared": 64,
+            "typedCodecEqual": 54,
+            "unsupported": 10,
+            "prior52Retained": true,
+            "newLinearLabelPolicies": 2,
+            "engineExecutions": 0
+          },
+          "typingHistorical": "2059 source +1 explicit owned test root/2309 actual compiler files; this is not current full ROOT58 or private57 qualification.",
+          "notFreshCurrentCredit": true
+        },
+        "status": "FINAL_RECEIVING_PREP_ONLY_NOT_PUBLISHED_NO_SOURCE_GO",
+        "atUTC": "2026-10-15T23:08:08.635977+00:00",
+        "componentPreimages": [
+          {
+            "path": "src/ir/analysis/allocation-evidence/ordinary-number-undefined-body.ts",
+            "bytes": 20953,
+            "sha256": "931a6b84c81d41e33392131b7895da918d553309e75fdc1ef0c46ef80b2bebbc"
+          },
+          {
+            "path": "src/ir/analysis/allocation-evidence/ordinary-number-undefined-profile.ts",
+            "bytes": 23304,
+            "sha256": "72161480defccd0526522c4a53efda3bf8331333b0d72442da16b8247828b63f"
+          }
+        ],
+        "canonicalNewPaths": [
+          "tests/issue-6920-native-ordinary-labeled-completion.test.ts"
+        ],
+        "targets": [
+          {
+            "path": "src/ir/analysis/allocation-evidence/ordinary-number-undefined-body.ts",
+            "expectedPreimage": {
+              "bytes": 20953,
+              "sha256": "931a6b84c81d41e33392131b7895da918d553309e75fdc1ef0c46ef80b2bebbc"
+            },
+            "current": {
+              "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/src/ir/analysis/allocation-evidence/ordinary-number-undefined-body.ts",
+              "bytes": 20953,
+              "sha256": "931a6b84c81d41e33392131b7895da918d553309e75fdc1ef0c46ef80b2bebbc"
+            },
+            "incoming": {
+              "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-value-replay-successor-20261014-01a12827/.tmp/ordinary-labeled-completion-successor/workspace/.tmp/labeled-final-handoff/snapshot/src/ir/analysis/allocation-evidence/ordinary-number-undefined-body.ts",
+              "bytes": 21704,
+              "sha256": "4768db6ee51f9074327b51417714b25d7813010e4286d055ab26b9331a5ed8ee"
+            },
+            "currentLOC": 481,
+            "incomingLOC": 513,
+            "matches": true
+          },
+          {
+            "path": "src/ir/analysis/allocation-evidence/ordinary-number-undefined-profile.ts",
+            "expectedPreimage": {
+              "bytes": 23304,
+              "sha256": "72161480defccd0526522c4a53efda3bf8331333b0d72442da16b8247828b63f"
+            },
+            "current": {
+              "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/src/ir/analysis/allocation-evidence/ordinary-number-undefined-profile.ts",
+              "bytes": 23304,
+              "sha256": "72161480defccd0526522c4a53efda3bf8331333b0d72442da16b8247828b63f"
+            },
+            "incoming": {
+              "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-value-replay-successor-20261014-01a12827/.tmp/ordinary-labeled-completion-successor/workspace/.tmp/labeled-final-handoff/snapshot/src/ir/analysis/allocation-evidence/ordinary-number-undefined-profile.ts",
+              "bytes": 23768,
+              "sha256": "4434d6a27936801c4ef11dd036245c77975b343c5588918807f84e3a52dd1ca3"
+            },
+            "currentLOC": 532,
+            "incomingLOC": 544,
+            "matches": true
+          },
+          {
+            "path": "tests/issue-6920-native-ordinary-labeled-completion.test.ts",
+            "expectedPreimage": {
+              "absent": true
+            },
+            "current": {
+              "absent": true
+            },
+            "incoming": {
+              "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-value-replay-successor-20261014-01a12827/.tmp/ordinary-labeled-completion-successor/workspace/.tmp/labeled-final-handoff/snapshot/tests/issue-6920-native-ordinary-labeled-completion.test.ts",
+              "bytes": 12292,
+              "sha256": "ac51a5872d6cb3df89d3eb7bafe9e346bc413828ab557c9b9026aa7c13367c6f"
+            },
+            "currentLOC": null,
+            "incomingLOC": 247,
+            "matches": true
+          }
+        ],
+        "directDependencyCheck": {
+          "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-value-replay-successor-20261014-01a12827/.tmp/source43-labeled-completion-receive-draft/current-cas-dependencies.json",
+          "bytes": 8953,
+          "sha256": "c413803b52e19d01c266a41e67e1cc688f9c1855be652132300c405f871c7484"
+        },
+        "expectedMembership": {
+          "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-value-replay-successor-20261014-01a12827/.tmp/source43-labeled-completion-final-prep/expected-membership.json",
+          "bytes": 26083,
+          "sha256": "9e9f900d3e924bd484eea977f3c8cd6ed65230b7228a8aff8e9551975acd1d38"
+        },
+        "receivingBranch": "codex/6920-b-class-value-replay-successor-20261014-01a12827",
+        "bootstrap": {
+          "baseline": "Current accepted qualified ROOT2065, not donor2059",
+          "expectedContext": "16532 ordinary regular+2 explicit genuine ignored helper/blob=16534 baseline; new test prospective16535 total. Fresh actual pathset/bytes census governs.",
+          "requirements": "Copy exact qualified ROOT context+2 authentic typing dependencies; verify donor before/after and copied hashes, readonly shared node_modules symlink, no install/Git/index mutations. Save exact2 preimages; require new-test absence incl symlink. All12dependencies refreshed again before CAS. Apply only3 incoming snapshots after explicit GO.",
+          "unchanged": "policy, class/ABI/default/host/routing/physical code, existing tests/protected fixtures/peer edits"
+        },
+        "futureROOT": "No ROOT adoption authorized. New test is not in currentLOCAL166; any later ROOT receive/checkpoint needs explicit scope update, fresh qualification/parent acceptance/normal hooks.",
+        "prohibitedNow": [
+          "No bootstrap/canonical source/test/policy/config writes before separate published ownership and parent GO",
+          "No execution of prepared publisher/Git/network/ledger/stage/commit/push scripts before parent publication GO",
+          "No compiler/formatter/LIST/runtime/engine/profile jobs; only the explicitly authorized current official pure helper measurement was performed",
+          "No fresh labels/master completion/engine claims; accepted class qualification is the baseline, not SOURCE43 credit"
+        ],
+        "receivingOwner": "Session B /root/numeric_undefined_representation, sole SOURCE43 writer after published finite claim and explicit parent GO",
+        "workspace": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-value-replay-successor-20261014-01a12827/.tmp/class-ordinary-labeled-completion43/workspace",
+        "basis": [
+          {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-value-replay-successor-20261014-01a12827/.tmp/source43-labeled-completion-receive-draft/sealed.json",
+            "bytes": 2100,
+            "sha256": "c25ecdbe6fcdf3b55afe9c512c677f94e69d3d717d0a143f7f28baa85f0993cc"
+          },
+          {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/ir-completion-audit/next-master-step-after-class/note.json",
+            "bytes": 19562,
+            "sha256": "7278c1b0afb3d727bce794bd13310fbcb4af4bf5aa7ab91b441919e7a05ce066"
+          },
+          {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-value-replay-successor-20261014-01a12827/.tmp/next-master-labels-claim/sealed.json",
+            "bytes": 1136,
+            "sha256": "caaacd54cbe8e2d89aadad9bc216f2126d7b29e2ba469948dbc36580f2e7a537"
+          },
+          {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/held-labels-after-source42-semantic-refresh01/review.json",
+            "bytes": 9706,
+            "sha256": "0a53cf0a02a4f06a583f63a1a4f6ba48854e73597d2ffaf715ca014f602ddb6b"
+          },
+          {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/source42-root-full52-01/sealed-success.json",
+            "bytes": 22702,
+            "sha256": "5ece9d521842bd4e17a1e980c011c7c2e807cbf5209d08e95c7b2e514541dcd0"
+          },
+          {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/source42-root-qualification01/metadata-list-seal01/sealed.json",
+            "bytes": 54749,
+            "sha256": "a2324883cdaf9ac054e62f6bb844c4a723c35cf5c01fd419bafd2513e1f8c3c6"
+          },
+          {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/private-assert-envelopes42-receive/root-six-receive01/parent-root-full52-01-success-authentication.json",
+            "bytes": 1271,
+            "sha256": "72b6fc97bd478107a703b785266cf83729b9b427871b8da092d6a2f2ca941471"
+          }
+        ],
+        "classParentAllPassAuthority": {
+          "boundedClassQualification": "complete parent accepted",
+          "master27": "UNPROVEN",
+          "actualParentAuthentication": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/private-assert-envelopes42-receive/root-six-receive01/parent-root-full52-01-success-authentication.json",
+            "bytes": 1271,
+            "sha256": "72b6fc97bd478107a703b785266cf83729b9b427871b8da092d6a2f2ca941471"
+          }
+        },
+        "current12DependencyCheck": {
+          "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-value-replay-successor-20261014-01a12827/.tmp/source43-labeled-completion-final-prep/current-cas-dependencies.json",
+          "bytes": 8953,
+          "sha256": "c413803b52e19d01c266a41e67e1cc688f9c1855be652132300c405f871c7484"
+        },
+        "officialAll3Measurements": {
+          "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-value-replay-successor-20261014-01a12827/.tmp/source43-labeled-completion-final-prep/official-measurement-method.json",
+          "bytes": 4023,
+          "sha256": "f776bf04e57ee61b12bff782a52b1863c90e59781350f9502eb4cee68da30236"
+        },
+        "freshAffectedCohort": {
+          "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-value-replay-successor-20261014-01a12827/.tmp/source43-labeled-completion-final-prep/qualification-cohort-plan.json",
+          "bytes": 10892,
+          "sha256": "de7a7e07bf2a4f3d502dd080465ad0f87570bbb01cb4a27388a0a8d1c0d6b07f"
+        },
+        "constraints": [
+          "Only genuine no-br labeled.block recursive completion and independent indexing/replay. Preserve copied child lexical SSA scope, shared global SSA/site uniqueness census, deterministic actual body occurrence order, and reachable early-return/live-out semantics.",
+          "br.label in descendants and all other unsupported families/opcodes/control remain refused. No loop/switch/throw/slot/global/TDZ/Boolean widening, parameter/host transport or class-presence permission.",
+          "Ordinary-number-undefined semantic/execution suites in currentROOT have advanced beyond old donor. Never overwrite them or physical/foundation/current class code from donor. No new source-policy row; exact current two existing policy classifications preserved.",
+          "Independent and producer proof algorithms remain independently derived over actual lexical occurrence/SSA/live-out. No descendant br.label admission, nonempty label assumed away, generated proof verdict or report authority.",
+          "Preserve all other bails and normal/abrupt distinctions; no switch/loop/Boolean/global/TDZ/throw/default-parameter or public dynamic transport widening.",
+          "JS2WASM_LINEAR_IR default/retirement routes, host options/sourceMap/optimization/CABI/multi-source behavior and runtime physical adapters remain unchanged/outside scope.",
+          "Only exact3 received endpoints; no source/policy/new API/ABI/default/host/transport/routing permission.",
+          "No descendant br.label admission; rawguards/borrowedchildren independent proof boundaries exact.",
+          "No new source module or policy row; source2065 stays, typing60/style79TS+policy80/32 budgetactual required.",
+          "Preserve all old failures/bails/master27HOLDs and peer work; no readiness/engine inference."
+        ],
+        "requiredBeforeAction": [
+          "A/parent final exact-manifest review, then authorized normal signed private coordination publication.",
+          "Parent explicit bootstrap/CAS/qualification GO AFTER published finite record.",
+          "Recheck exact2preimages/newtestabsence/all12deps includingaa08/current ROOT epoch at actual receive; stop on mismatch."
+        ],
+        "qualificationPlan": {
+          "metadata": "Fresh all2065source+60actual roots/exclude[]/allresolvedextensions; source64 harness is ignored runtime input, not quietly claimed compiler root. All actualconfig/setup/run/pinner/workers/source64inputs/pairhelpers frozen beforeafter. Prior2385 OLD baseline only.",
+          "static": "Normal12/style79TS+policy80/Biome79/full inventoryvalid architectureFALSE permitted/official32+2immediate/currentfunctionspans/grantsnone/noancestor-noop.",
+          "runtime": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-value-replay-successor-20261014-01a12827/.tmp/source43-labeled-completion-final-prep/qualification-cohort-plan.json",
+            "bytes": 10892,
+            "sha256": "de7a7e07bf2a4f3d502dd080465ad0f87570bbb01cb4a27388a0a8d1c0d6b07f"
+          },
+          "bootstrap": "Accepted ROOT16534=16532ordinary+2authentic ignored helper/blob, copied+donorbeforeafter exact; newtest prospective16535/current source2065. Readonlysharednode_modules symlink/noinstall/noGit/indexmutation/valid.git129 preserved.",
+          "publicActions": "No ROOTadoption/LOCAL166extension/branchsourcecommit/pushPR/comment by this claim; newtest futurecheckpoint needs explicit scope update.",
+          "laterFreshOriginalConstructor52": "After current ordinary/class/logical/typed-codec affected cohorts and all metadata/static acceptance: fresh original constructor52 in separate immutable PREP+A/B preflight+parent quietGO/default35/RPC/Node25.9/8192/fork1/noCPU/exactyield, full structured per-file identities/order/natural statuses/frozen3+3versionworkers. Current ROOT max34744.54983399999 is baseline only; no new SOURCE43 engine pass inferred from source64."
+        },
+        "publisherRequirements": "Fresh unique own ignored preparation scripts/specs/private-index record namespace; audit all3 paths including canonicalNewPaths; signed Thomas+actual Codex/GPT-6 Default; normalhooks/no-force/indexpreservation/remote raceproof. Scripts remain unexecuted pending parent publication GO."
+      },
+      "manifestSha256": "e78ab782a8ff4d0e54f93a67d76c9e5e5742efc9f74141d6e05fc1141f38a4b8",
+      "constraints": [
+        "Only genuine no-br labeled.block recursive completion and independent indexing/replay. Preserve copied child lexical SSA scope, shared global SSA/site uniqueness census, deterministic actual body occurrence order, and reachable early-return/live-out semantics.",
+        "br.label in descendants and all other unsupported families/opcodes/control remain refused. No loop/switch/throw/slot/global/TDZ/Boolean widening, parameter/host transport or class-presence permission.",
+        "Ordinary-number-undefined semantic/execution suites in currentROOT have advanced beyond old donor. Never overwrite them or physical/foundation/current class code from donor. No new source-policy row; exact current two existing policy classifications preserved.",
+        "Independent and producer proof algorithms remain independently derived over actual lexical occurrence/SSA/live-out. No descendant br.label admission, nonempty label assumed away, generated proof verdict or report authority.",
+        "Preserve all other bails and normal/abrupt distinctions; no switch/loop/Boolean/global/TDZ/throw/default-parameter or public dynamic transport widening.",
+        "JS2WASM_LINEAR_IR default/retirement routes, host options/sourceMap/optimization/CABI/multi-source behavior and runtime physical adapters remain unchanged/outside scope.",
+        "Only exact3 received endpoints; no source/policy/new API/ABI/default/host/transport/routing permission.",
+        "No descendant br.label admission; rawguards/borrowedchildren independent proof boundaries exact.",
+        "No new source module or policy row; source2065 stays, typing60/style79TS+policy80/32 budgetactual required.",
+        "Preserve all old failures/bails/master27HOLDs and peer work; no readiness/engine inference."
+      ]
+    }
+  ],
+  "predecessors": [
+    "6920-b-assert-envelopes42-20261015.json"
+  ],
+  "preserves_foreign_owners": true
+}
