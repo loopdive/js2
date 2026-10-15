@@ -126,7 +126,7 @@ values pick the lowering.
 | `node` | host | WasmGC / JS-host module for a real Node host (Node ambient surface, no DOM). |
 | `deno` | host | WasmGC / JS-host module for a real Deno host (Deno ambient surface, no DOM). |
 | `wasi` | host + backend | Standalone WASI Preview 1 module: imports `fd_write` / `proc_exit` instead of JS host functions. |
-| `gc` | backend | WasmGC with JS host imports for builtins — the default backend for `web` / `node` / `deno`. |
+| `gc` | backend | WasmGC in a JS environment — the default backend for `web` / `node` / `deno`. Native semantic core plus the JS value bridge; host RegExp/Date/Intl only as `--host-accelerator` opt-ins. |
 | `linear` | backend | Linear-memory module (no WasmGC). |
 | `standalone` | backend | Pure WasmGC, no JS host and no WASI imports. Same as `--standalone`. |
 
@@ -161,17 +161,22 @@ decoder results, …) are stored i8-backed for a cheaper Component Model
 boundary. Implies native strings on the WasmGC backend. Off by default; output
 is byte-identical when off.
 
-### `--semantic-providers <auto|native-first>`
+### Semantic providers (no flag)
 
-Semantic implementation policy (#4397). `auto` (default) preserves
-compatibility; `native-first` selects the migrated Wasm-native provider
-families even under a JS host. It does not disable JS boundary wrappers or
-platform APIs.
+Every environment compiles with the Wasm-native semantic core — the same one
+`--target standalone` uses — even when a JS host instantiates the module; the
+JS host still gets the value bridge (boundary wrappers) and its platform APIs
+(#4397, #6708). The `--semantic-providers` flag, the `host-assisted`
+compatibility profile, the `auto` alias and the `JS2WASM_NATIVE_REGIME_JS`
+kill switch were removed in #6979 (S7); js2wasm 0.71.0 was the last release
+that accepted them. The API option `semanticProviders` accepts only
+`"native-first"`. A host implementation for a single family is a
+`--host-accelerator`.
 
 ### `--host-accelerator <name>`
 
-Use the JS host's implementation for one semantic family under the
-native-first regime (#6978); repeatable (`--host-accelerator=<name>` also
+Use the JS host's implementation for one semantic family instead of the
+native one (#6978); repeatable (`--host-accelerator=<name>` also
 works). `regexp` runs RegExp matches on the host engine, `date` parses
 date strings with host `Date.parse`, and `intl` (#6986) calls the host's
 `Intl` — the `Intl.*` constructors and namespace functions plus the
@@ -181,10 +186,9 @@ across the JS value boundary. Every other family keeps its native provider.
 There is no native Intl apart from `Intl.ListFormat`: without `intl`, a
 regime, standalone or WASI build that references the global `Intl` is a
 compile error naming this flag. `js-string` is recognized but not available
-yet and is rejected. The flag needs the default JS target with
-`--semantic-providers native-first`: combining it with `--target
-standalone`/`wasi`, `--no-host-imports`, or the host-assisted profile
-is a compile error, never a silent no-op.
+yet and is rejected. The flag needs the default JS target: combining it
+with `--target standalone`/`wasi` or `--no-host-imports` is a compile
+error, never a silent no-op.
 
 ### `--link <ns>`
 

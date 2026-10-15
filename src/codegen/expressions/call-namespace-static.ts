@@ -13,7 +13,6 @@
 import { jsonIsPrimitive, jsonReplacerSeesRoot, reserveJsonToJson } from "../json-stringify-carriers.js";
 import { ts } from "../../ts-api.js";
 import { tryEmitStandalonePerformanceNow } from "../standalone-unavailable-globals.js";
-import { integrityVarKey } from "../widened-var-key.js";
 import { isSymbolType } from "../../checker/type-mapper.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import {
@@ -29,7 +28,6 @@ import {
   emitStandalonePromiseReject,
   emitStandalonePromiseResolve,
   ensurePromiseSettleFunctions,
-  isStandalonePromiseActive,
 } from "../async-scheduler.js";
 import { classMemberFuncKey } from "../class-member-keys.js";
 import { compileArrowAsClosure, getClosureFuncSelfTypeIdx } from "../closures.js";
@@ -37,6 +35,7 @@ import { reportError } from "../context/errors.js";
 import { allocLocal, allocTempLocal, releaseTempLocal } from "../context/locals.js";
 import { rollbackSpeculative, snapshotSpeculative } from "../context/speculative.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
+import { hostFreeEnvironment } from "../context/types.js";
 import { isViewRefTestInstrs } from "../dataview-native.js";
 import { arrayBufferIsViewStaticDecision } from "./arraybuffer-isview-static-decision.js";
 import { ensureReflectIsConstructor } from "../reflect-construct-native.js";
@@ -69,11 +68,7 @@ import { noteReflectSetReceiverCall } from "../object-runtime-ordinary-set.js"; 
 import { compileInternalCallArgument } from "./internal-call-argument.js";
 import { emitCollectionIteratorVec } from "../map-runtime.js";
 import { nativeStringLiteralInstrs, stringConstantExternrefInstrs } from "../native-strings.js";
-import {
-  emitArgAsNativeString,
-  emitHostExternrefToNativeString,
-  emitNativeStringToHostExternref,
-} from "../string-ops.js";
+import { emitArgAsNativeString } from "../string-ops.js";
 import { emitDefinePropertyDescRuntime, emitNonObjectArgGuard } from "../object-ops.js";
 import { ensureObjectRuntime, ensureObjVecBuilders, reserveApplyClosure } from "../object-runtime.js";
 import { tryEmitLinkedStaticCall } from "../standalone-linked-static-inheritance.js"; // (#6644)
@@ -97,12 +92,7 @@ import { compileSpreadCallArgs } from "./extern.js";
 import { emitKnownRestMethodArguments, knownStaticMethodRestInfo } from "./object-method-rest-abi.js";
 import { compileSpreadCallArgsWithArguments } from "./spread-arguments-call.js";
 import { emitSetExtrasArgv, maybeSetArgcForKnownCall } from "../statements/nested-declarations.js";
-import {
-  ensureNativeSymbolBoundaryBridge,
-  ensureSymbolCarrier,
-  ensureSymbolRegistry,
-  usesNativeSymbolProvider,
-} from "../symbol-native.js";
+import { ensureNativeSymbolBoundaryBridge, ensureSymbolCarrier, ensureSymbolRegistry } from "../symbol-native.js";
 import { tryCompileTemporalStaticCall } from "../temporal-native.js";
 import { pushDefaultValue } from "../type-coercion.js";
 import { ensureDateDaysFromCivilHelper } from "./builtins.js";
@@ -139,7 +129,6 @@ import {
   emitJsonReplacerAllowList,
   isDynamicCombinatorArgEligible,
   isGlobalBuiltinIdentifier,
-  resolvePromiseSubclassThisArg,
   tryEmitJsonParsePrimitive,
   tryEmitJsonStringifyPrimitive,
 } from "./calls.js";
@@ -788,139 +777,33 @@ export function compileNamespaceStaticCall(
       // to a `ref $AnyString`; `__symbol_for_native` does the content-equality
       // lookup / insert and returns the i32 symbol id (also recording the key
       // as the registered symbol's description). Zero host imports.
-      if (usesNativeSymbolProvider(ctx)) {
-        ensureNativeSymbolBoundaryBridge(ctx);
-        const { forIdx } = ensureSymbolRegistry(ctx);
-        compileSymbolForKey(ctx, fctx, expr.arguments[0]!);
-        fctx.body.push({ op: "ref.as_non_null" });
-        fctx.body.push({ op: "call", funcIdx: forIdx });
-        return { kind: "i32" };
-      }
-      // (#3676) JS-host mode: return the module's CANONICAL i32 symbol id, not a
-      // raw host Symbol. A symbol VALUE is an i32 id everywhere else in the
-      // compiler — `mapTsTypeToWasm` maps `symbol` → i32 and the sibling
-      // producer `compileSymbolCall` (`Symbol()`) returns an unbranded
-      // `{ kind: "i32" }`. `Symbol.for` was the outlier returning `externref`,
-      // so a `symbol`-typed slot (module global, local, param) received an
-      // externref and `coerceType` bridged it with `__unbox_number` — literally
-      // `Number(Symbol())`, a guaranteed TypeError (§7.1.4) at `__module_init`.
-      // That is why React 19, whose very first statement is twelve chained
-      // `Symbol.for(...)` initializers, emitted a valid module that could not be
-      // instantiated. Returning i32 here puts `Symbol.for` on exactly the same,
-      // already-exercised footing as `Symbol()`: no new representation is
-      // introduced, an inconsistent one is removed. `__symbol_for_id` registers
-      // the id in the same per-instance cache `__box_symbol` reads, so identity
-      // survives a round trip through the host in both directions.
-      const keyType = compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "externref" });
-      if (keyType && keyType.kind !== "externref") coerceType(ctx, fctx, keyType, { kind: "externref" });
-      const funcIdx = ensureLateImport(ctx, "__symbol_for_id", [{ kind: "externref" }], [{ kind: "i32" }]);
-      flushLateImportShifts(ctx, fctx);
-      if (funcIdx !== undefined) {
-        fctx.body.push({ op: "call", funcIdx });
-        return { kind: "i32" };
-      }
-      fctx.body.push({ op: "drop" });
-      fctx.body.push({ op: "i32.const", value: 0 });
+      ensureNativeSymbolBoundaryBridge(ctx);
+      const { forIdx } = ensureSymbolRegistry(ctx);
+      compileSymbolForKey(ctx, fctx, expr.arguments[0]!);
+      fctx.body.push({ op: "ref.as_non_null" });
+      fctx.body.push({ op: "call", funcIdx: forIdx });
       return { kind: "i32" };
     }
     if (symMethod === "keyFor" && expr.arguments.length >= 1) {
       // (#2163) No-JS-host mode: the symbol is an i32 id; the native registry
       // returns its registration key (`ref_null $AnyString`, i.e. a native
       // string or undefined for an unregistered symbol). Zero host imports.
-      if (usesNativeSymbolProvider(ctx)) {
-        // (#5269 A-6) §20.4.2.6 step 1: `If sym is not a Symbol, throw a
-        // TypeError`. Without it the argument was coerced to the i32 id lane —
-        // `Symbol.keyFor(null)` / `('')` / `({})` answered `undefined` instead
-        // of throwing. Only a STATICALLY-proven non-symbol throws; `"mixed"` (a
-        // union, a narrowed `any`) keeps the existing coercion — except for ONE
-        // provable hole in it (#6651 SN1): see `isProvablyToObjectResult`.
-        const keyForArg = expr.arguments[0]!;
-        const argTag = ctx.oracle.staticJsTypeOf(keyForArg);
-        if (argTag !== "symbol" && (argTag !== "mixed" || isProvablyToObjectResult(ctx, fctx, keyForArg))) {
-          // The argument still evaluates (its side effects are observable
-          // before the throw, §20.4.2.6 runs after ArgumentListEvaluation).
-          const evaluated = compileExpression(ctx, fctx, keyForArg);
-          if (evaluated) fctx.body.push({ op: "drop" });
-          emitThrowTypeError(ctx, fctx, "Symbol.keyFor requires that the argument be a symbol");
-          return { kind: "ref_null", typeIdx: ctx.anyStrTypeIdx };
-        }
-        ensureNativeSymbolBoundaryBridge(ctx);
-        const { keyForIdx } = ensureSymbolRegistry(ctx);
-        const symType = compileExpression(ctx, fctx, keyForArg, { kind: "i32" });
-        if (symType && symType.kind !== "i32") coerceType(ctx, fctx, symType, { kind: "i32" });
-        fctx.body.push({ op: "call", funcIdx: keyForIdx });
+      const keyForArg = expr.arguments[0]!;
+      const argTag = ctx.oracle.staticJsTypeOf(keyForArg);
+      if (argTag !== "symbol" && (argTag !== "mixed" || isProvablyToObjectResult(ctx, fctx, keyForArg))) {
+        // The argument still evaluates (its side effects are observable
+        // before the throw, §20.4.2.6 runs after ArgumentListEvaluation).
+        const evaluated = compileExpression(ctx, fctx, keyForArg);
+        if (evaluated) fctx.body.push({ op: "drop" });
+        emitThrowTypeError(ctx, fctx, "Symbol.keyFor requires that the argument be a symbol");
         return { kind: "ref_null", typeIdx: ctx.anyStrTypeIdx };
       }
-      // (#3676) JS-host mode: when the argument is STATICALLY a symbol it is an
-      // i32 id (see the `Symbol.for` note above and `compileSymbolCall`), so
-      // resolve it through the id-keyed host helper. Coercing an i32 to
-      // `externref` here would box it with `__box_number` — the unbranded-i32
-      // hazard #2792 describes — and hand `Symbol.keyFor` a Number. Mirrors the
-      // identical static-type gate #3085 added for `String(sym)`.
-      // A non-symbol / `any` argument keeps the original externref path, where
-      // the host `Symbol.keyFor` produces the spec TypeError itself.
-      // (#3481) The id-keyed helper applies only when the operand's PHYSICAL
-      // representation really is the i32 id. A static type of `symbol` does not
-      // imply that: TypeScript NARROWS an `any` binding to `symbol` inside
-      // `switch (typeof k) { case "symbol": … }` / `if (typeof k === "symbol")`,
-      // yet the binding is still physically an `externref` holding a real host
-      // Symbol. Coercing that externref to i32 runs `__unbox_number` — literally
-      // `Number(Symbol())` — so `Symbol.keyFor(k)` threw
-      // "Cannot convert a Symbol value to a number" instead of answering
-      // `undefined`. That is exactly test262's `temporalHelpers.js`
-      // `formatPropertyName`, whose `case "symbol"` arm calls `Symbol.keyFor`
-      // on a narrowed `any` parameter — it gated the whole
-      // `Array/fromAsync/asyncitems-*` and `Iterator/from/*-return-method-*`
-      // families.
-      //
-      // So compile the operand ONCE under the i32 hint and dispatch on what it
-      // actually produced: i32 ⇒ the id helper (unchanged, byte-identical for
-      // every genuinely-i32 symbol); anything else ⇒ the externref host arm,
-      // where the real `Symbol.keyFor` answers `undefined` for an unregistered
-      // symbol and raises the spec TypeError for a non-symbol.
-      if (ctx.oracle.staticJsTypeOf(expr.arguments[0]!) === "symbol") {
-        // NO i32 hint here: `compileExpression` HONOURS the hint and coerces
-        // internally, so passing `{kind:"i32"}` would emit the very
-        // `__unbox_number` this arm must avoid and then report `i32` — the
-        // dispatch below could never see the externref. Compiling hint-free
-        // yields the operand's natural representation, which is `i32` for
-        // every genuinely id-carrying symbol (a `symbol` local/param, a
-        // `Symbol()` result, `Symbol.for(...)`) and `externref` only for the
-        // narrowed-`any` case this fixes.
-        const symIdType = compileExpression(ctx, fctx, expr.arguments[0]!);
-        if (symIdType === null || symIdType.kind === "i32") {
-          const keyForIdIdx = ensureLateImport(ctx, "__symbol_keyFor_id", [{ kind: "i32" }], [{ kind: "externref" }]);
-          flushLateImportShifts(ctx, fctx);
-          if (keyForIdIdx !== undefined) {
-            fctx.body.push({ op: "call", funcIdx: keyForIdIdx });
-            return { kind: "externref" };
-          }
-          fctx.body.push({ op: "drop" });
-          fctx.body.push({ op: "ref.null.extern" });
-          return { kind: "externref" };
-        }
-        if (symIdType.kind !== "externref") coerceType(ctx, fctx, symIdType, { kind: "externref" });
-        const dynIdx = ensureLateImport(ctx, "__symbol_keyFor", [{ kind: "externref" }], [{ kind: "externref" }]);
-        flushLateImportShifts(ctx, fctx);
-        if (dynIdx !== undefined) {
-          fctx.body.push({ op: "call", funcIdx: dynIdx });
-          return { kind: "externref" };
-        }
-        fctx.body.push({ op: "drop" });
-        fctx.body.push({ op: "ref.null.extern" });
-        return { kind: "externref" };
-      }
-      const symType = compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "externref" });
-      if (symType && symType.kind !== "externref") coerceType(ctx, fctx, symType, { kind: "externref" });
-      const funcIdx = ensureLateImport(ctx, "__symbol_keyFor", [{ kind: "externref" }], [{ kind: "externref" }]);
-      flushLateImportShifts(ctx, fctx);
-      if (funcIdx !== undefined) {
-        fctx.body.push({ op: "call", funcIdx });
-        return { kind: "externref" };
-      }
-      fctx.body.push({ op: "drop" });
-      fctx.body.push({ op: "ref.null.extern" });
-      return { kind: "externref" };
+      ensureNativeSymbolBoundaryBridge(ctx);
+      const { keyForIdx } = ensureSymbolRegistry(ctx);
+      const symType = compileExpression(ctx, fctx, keyForArg, { kind: "i32" });
+      if (symType && symType.kind !== "i32") coerceType(ctx, fctx, symType, { kind: "i32" });
+      fctx.body.push({ op: "call", funcIdx: keyForIdx });
+      return { kind: "ref_null", typeIdx: ctx.anyStrTypeIdx };
     }
   }
 
@@ -1085,9 +968,7 @@ export function compileNamespaceStaticCall(
 
     const externRef: ValType = { kind: "externref" };
     const i32Ty: ValType = { kind: "i32" };
-    const nativeReflectProvider = ctx.targetProfile.semanticProviders === "native-first";
     const boundaryReflectInterop =
-      nativeReflectProvider &&
       ctx.targetProfile.environment === "javascript" &&
       ctx.targetProfile.hostValueInterop !== "off" &&
       !ctx.strictNoHostImports;
@@ -1269,1725 +1150,1462 @@ export function compileNamespaceStaticCall(
     // - Reflect.apply/construct require call/constructor machinery with no
     //   native analog in this slice. Descriptor/prototype/integrity methods
     //   stay refused until their native invariants are proven end-to-end.
-    if (nativeReflectProvider) {
-      if (reflectMethod === "get" && expr.arguments.length >= 2) {
-        const argLocals = emitReflectArgumentLocals();
-        const targetLocal = argLocals[0]!;
+    if (reflectMethod === "get" && expr.arguments.length >= 2) {
+      const argLocals = emitReflectArgumentLocals();
+      const targetLocal = argLocals[0]!;
 
-        // §28.1.5 step 1: reject the native Symbol carrier after
-        // ArgumentListEvaluation, but before native property-key conversion
-        // or receiver use. Other native object carriers are sibling heap types
-        // (not subtypes of `$Object`) and must remain on their existing helper
-        // paths; a complete Type(V)-is-Object classifier is out of this scope.
-        if (mayCarryNativeReflectSymbol(expr.arguments[0])) {
-          emitNativeReflectSymbolTargetGuard(targetLocal, "Reflect.get called on non-object");
-        }
-        // (#5196 R3-2 C4) §28.1.6 step 1 for EVERY non-Object target — same
-        // guard the `deleteProperty`/`ownKeys`/`isExtensible` arms use.
-        // (#6494 S3) …plus a statically-nullish target.
-        guardReflectTargetIsObjectOrNullish(targetLocal, "Reflect.get called on non-object", expr.arguments[0]);
-        coerceReflectPropertyKey(argLocals[1]);
-
-        // (#2046/#4397) Preserve the optional receiver in Wasm. A native
-        // target uses __reflect_get_receiver; an admitted caller-owned JS
-        // target alone uses the boundary adapter. Runtime admission, rather
-        // than an `any` static type, decides the branch so Wasm-owned Proxy
-        // targets never leak into host semantics.
-        if (expr.arguments.length > 2) {
-          ensureObjectRuntime(ctx);
-          const nativeIdx = ctx.funcMap.get("__reflect_get_receiver");
-          const boundaryIdx = boundaryReflectInterop ? ctx.funcMap.get("__boundary_object_reflect_get") : undefined;
-          const admittedIdx = boundaryReflectInterop ? ctx.funcMap.get("__boundary_object_is_admitted") : undefined;
-          if (nativeIdx !== undefined) {
-            const callWithLocals = (funcIdx: number): Instr[] => [
-              ...argLocals.slice(0, 3).map((index): Instr => ({ op: "local.get", index })),
-              { op: "call", funcIdx },
-            ];
-            if (boundaryIdx !== undefined && admittedIdx !== undefined) {
-              fctx.body.push(
-                { op: "local.get", index: argLocals[0]! },
-                { op: "call", funcIdx: admittedIdx },
-                {
-                  op: "if",
-                  blockType: { kind: "val", type: externRef },
-                  then: callWithLocals(boundaryIdx),
-                  else: callWithLocals(nativeIdx),
-                },
-              );
-            } else {
-              fctx.body.push(...callWithLocals(nativeIdx));
-            }
-            releaseReflectArgumentLocals(argLocals);
-            return { kind: "externref" };
-          }
-          reportError(
-            ctx,
-            expr,
-            "Codegen error: Reflect.get with an explicit receiver could not register its native provider (#2046).",
-          );
-          releaseReflectArgumentLocals(argLocals);
-          fctx.body.push({ op: "ref.null.extern" });
-          return { kind: "externref" };
-        }
-
-        fctx.body.push({ op: "local.get", index: argLocals[0]! });
-        fctx.body.push({ op: "local.get", index: argLocals[1]! });
-        const funcIdx = ensureLateImport(ctx, "__extern_get", [externRef, externRef], [externRef]);
-        flushLateImportShifts(ctx, fctx);
-        if (funcIdx !== undefined) {
-          fctx.body.push({ op: "call", funcIdx });
-          releaseReflectArgumentLocals(argLocals);
-          return { kind: "externref" };
-        }
-        const fallback = fallbackReturn(2, "extern-null");
-        releaseReflectArgumentLocals(argLocals);
-        return fallback;
+      // §28.1.5 step 1: reject the native Symbol carrier after
+      // ArgumentListEvaluation, but before native property-key conversion
+      // or receiver use. Other native object carriers are sibling heap types
+      // (not subtypes of `$Object`) and must remain on their existing helper
+      // paths; a complete Type(V)-is-Object classifier is out of this scope.
+      if (mayCarryNativeReflectSymbol(expr.arguments[0])) {
+        emitNativeReflectSymbolTargetGuard(targetLocal, "Reflect.get called on non-object");
       }
+      // (#5196 R3-2 C4) §28.1.6 step 1 for EVERY non-Object target — same
+      // guard the `deleteProperty`/`ownKeys`/`isExtensible` arms use.
+      // (#6494 S3) …plus a statically-nullish target.
+      guardReflectTargetIsObjectOrNullish(targetLocal, "Reflect.get called on non-object", expr.arguments[0]);
+      coerceReflectPropertyKey(argLocals[1]);
 
-      if (reflectMethod === "set" && expr.arguments.length >= 2) {
-        // (#2046 PR-A defect 1) Same as Reflect.get: __reflect_set writes the
-        // data-property subset on `target` itself and has no receiver slot, so
-        // an explicit receiver was evaluated then dropped — writing to the
-        // wrong object for accessor setters (§28.1.12 → §10.1.9). Refuse
-        // loudly with an explicit receiver until PR-C lands.
-        if (expr.arguments.length > 3) {
-          if (boundaryReflectInterop && isDynamicBoundaryTarget(expr.arguments[0])) {
-            ensureObjectRuntime(ctx);
-            emitReflectArgs(4);
-            const boundaryIdx = ctx.funcMap.get("__boundary_object_reflect_set");
-            if (boundaryIdx !== undefined) {
-              fctx.body.push({ op: "call", funcIdx: boundaryIdx });
-              return { kind: "i32" };
-            }
-            return fallbackReturn(4, "i32-false");
-          }
-          // (#5316 r5 step 6) The refusal is replaced by the real thing:
-          // `__reflect_set_receiver` is §10.1.9.2 OrdinarySetWithOwnDescriptor
-          // with the receiver as an explicit parameter (see
-          // `object-runtime-ordinary-set.ts`). Same argument machinery as the
-          // 3-argument form — locals rather than the bare stack, so a throwing
-          // `toString` in ToPropertyKey still escapes (§7.1.19) — and the same
-          // §26.1.13 step 1 Object-target guard. The 3-argument path below is
-          // untouched and keeps its byte-identical lowering.
-          //
-          // The probe is done BEFORE any operand is emitted: this name is in
-          // `OBJECT_RUNTIME_HELPER_NAMES`, so `ensureLateImport` resolves it to
-          // the DEFINED native and adds no import (hence no funcIdx shift), and
-          // it answers `undefined` on a target where the native was not
-          // registered — wasi, and any tree where a primitive it needs is
-          // missing. Then the refusal below still stands, unchanged.
-          if (
-            ensureLateImport(ctx, "__reflect_set_receiver", [externRef, externRef, externRef, externRef], [i32Ty]) !==
-            undefined
-          ) {
-            const targetArg4 = expr.arguments[0]!;
-            if (emitNonObjectArgGuard(ctx, fctx, targetArg4, "Reflect.set")) {
-              fctx.body.push({ op: "i32.const", value: 0 }); // unreachable after throw
-              return { kind: "i32" };
-            }
-            const recvLocals = emitReflectArgumentLocals();
-            // (#5316 review r1 F3) §26.1.13 step 1 for every non-Object target,
-            // not just the statically-branded ones the guard above catches. See
-            // the 3-argument arm below for why this is the by-EXCLUSION emitter.
-            guardReflectTargetIsObject(recvLocals[0]!, "Reflect.set called on non-object");
-            coerceReflectPropertyKey(recvLocals[1]);
-            for (let i = 0; i < 4; i++) {
-              const local = recvLocals[i];
-              if (local === undefined) fctx.body.push({ op: "ref.null.extern" });
-              else fctx.body.push({ op: "local.get", index: local });
-            }
-            const recvSetIdx = ensureLateImport(
-              ctx,
-              "__reflect_set_receiver",
-              [externRef, externRef, externRef, externRef],
-              [i32Ty],
-            );
-            flushLateImportShifts(ctx, fctx);
-            if (recvSetIdx !== undefined) {
-              noteReflectSetReceiverCall(ctx);
-              fctx.body.push({ op: "call", funcIdx: recvSetIdx });
-              releaseReflectArgumentLocals(recvLocals);
-              return { kind: "i32" };
-            }
-            releaseReflectArgumentLocals(recvLocals);
-            fctx.body.push(
-              { op: "drop" },
-              { op: "drop" },
-              { op: "drop" },
-              { op: "drop" },
-              { op: "i32.const", value: 0 },
-            );
-            return { kind: "i32" };
-          }
-          reportError(
-            ctx,
-            expr,
-            "Codegen error: Reflect.set with an explicit receiver argument is not yet supported " +
-              "in --target standalone (#2046); the receiver would be silently dropped and accessor " +
-              "setters would write to the target instead of the receiver.",
-          );
-          fctx.body.push({ op: "i32.const", value: 0 });
-          return { kind: "i32" };
-        }
-        // §26.1.13 step 1: Reflect.set requires an Object target. The native
-        // standalone helper implements the supported [[Set]] subset but its
-        // non-$Object refusal is not the Reflect TypeError, so validate the
-        // statically primitive target at the call site (including Symbol via
-        // the shared #4945 ESSymbolLike guard) before emitting native args.
-        const targetArg = expr.arguments[0]!;
-        if (emitNonObjectArgGuard(ctx, fctx, targetArg, "Reflect.set")) {
-          fctx.body.push({ op: "i32.const", value: 0 }); // unreachable after throw
-          return { kind: "i32" };
-        }
-        // (#5196 R3-2 C5) Arguments go through locals rather than straight onto
-        // the stack so the key can take ToPropertyKey in place (an abrupt
-        // completion from a throwing `toString` must escape). Evaluation order
-        // is unchanged — `emitReflectArgumentLocals` compiles the same
-        // arguments in the same source order.
-        const setLocals = emitReflectArgumentLocals();
-        // (#5316 review r1 F3) §26.1.13 step 1 for every non-Object target.
-        // `emitNonObjectArgGuard` above is a STATIC test on the argument's TS
-        // type, so it never fires for the spelling programs actually use —
-        // `Reflect.set(1 as any, …)`, or a variable the checker calls `any`.
-        // This is the same runtime by-exclusion brand `Reflect.get`/`has` were
-        // given in #5196: it rejects only positively-branded primitives
-        // (number/string/boolean/bigint/Symbol) and admits every unrecognised
-        // object shape, so an ordinary object flowing through a representation
-        // the classifiers do not brand keeps its previous answer instead of
-        // becoming a spurious TypeError. Both `Reflect.set` arms get it: the
-        // 4-argument form is what exposed the hole, but the guard is shared and
-        // the spec text is one step for both (probe `n2`, 3-argument:
-        // base = lane = 11, node = 22).
-        guardReflectTargetIsObject(setLocals[0]!, "Reflect.set called on non-object");
-        coerceReflectPropertyKey(setLocals[1]);
-        for (let i = 0; i < 3; i++) {
-          const local = setLocals[i];
-          if (local === undefined) fctx.body.push({ op: "ref.null.extern" });
-          else fctx.body.push({ op: "local.get", index: local });
-        }
-        const funcIdx = ensureLateImport(ctx, "__reflect_set", [externRef, externRef, externRef], [i32Ty]);
-        flushLateImportShifts(ctx, fctx);
-        if (funcIdx !== undefined) {
-          fctx.body.push({ op: "call", funcIdx });
-          releaseReflectArgumentLocals(setLocals);
-          return { kind: "i32" };
-        }
-        releaseReflectArgumentLocals(setLocals);
-        fctx.body.push({ op: "drop" }, { op: "drop" }, { op: "drop" }, { op: "i32.const", value: 0 });
-        return { kind: "i32" };
-      }
-
-      if (reflectMethod === "has" && expr.arguments.length >= 2) {
-        const argLocals = emitReflectArgumentLocals();
-        const targetLocal = argLocals[0]!;
-
-        // §28.1.8 step 1: reject the native Symbol carrier before the native
-        // helper performs ToPropertyKey. Extra arguments were already
-        // evaluated above as part of ArgumentListEvaluation. Other native
-        // object carriers remain on their existing helper paths.
-        if (mayCarryNativeReflectSymbol(expr.arguments[0])) {
-          emitNativeReflectSymbolTargetGuard(targetLocal, "Reflect.has called on non-object");
-        }
-        // (#5196 R3-2 C4) §28.1.8 step 1 for EVERY non-Object target, not just
-        // the Symbol carrier — the same guard `deleteProperty`/`ownKeys`/
-        // `isExtensible` already use (it admits closure and expando carriers
-        // positively, so an ordinary callable/instance target is unaffected).
-        // (#6494 S3) …plus a statically-nullish target.
-        guardReflectTargetIsObjectOrNullish(targetLocal, "Reflect.has called on non-object", expr.arguments[0]);
-        fctx.body.push({ op: "local.get", index: argLocals[0]! });
-        fctx.body.push({ op: "local.get", index: argLocals[1]! });
-        const funcIdx = ensureLateImport(ctx, "__extern_has", [externRef, externRef], [i32Ty]);
-        flushLateImportShifts(ctx, fctx);
-        if (funcIdx !== undefined) {
-          fctx.body.push({ op: "call", funcIdx });
-          releaseReflectArgumentLocals(argLocals);
-          return { kind: "i32" };
-        }
-        // (#2046 cleanup) i32-false: a registration failure should not report
-        // a phantom `true` for `Reflect.has`.
-        const fallback = fallbackReturn(2, "i32-false");
-        releaseReflectArgumentLocals(argLocals);
-        return fallback;
-      }
-
-      if (reflectMethod === "deleteProperty" && expr.arguments.length >= 2) {
-        // (#2046 PR-A defect 3a) Reflect.deleteProperty(primitive, k) must
-        // throw a TypeError (§28.1.4 — Reflect requires an Object target),
-        // NOT return true. The shared __delete_property helper returns 1 for
-        // non-$Object targets because sloppy `delete primitive[k]` is a no-op
-        // SUCCESS — correct there, wrong for Reflect. So gate at the CALL SITE
-        // (do NOT touch the shared helper): ref.test the target against
-        // $Object; if it is not an open object, throw a catchable TypeError.
+      // (#2046/#4397) Preserve the optional receiver in Wasm. A native
+      // target uses __reflect_get_receiver; an admitted caller-owned JS
+      // target alone uses the boundary adapter. Runtime admission, rather
+      // than an `any` static type, decides the branch so Wasm-owned Proxy
+      // targets never leak into host semantics.
+      if (expr.arguments.length > 2) {
         ensureObjectRuntime(ctx);
-        const targetLocal = allocTempLocal(fctx, externRef);
-        // Evaluate the target once, save it for both the guard and the call.
-        {
-          const tArg = expr.arguments[0];
-          if (tArg !== undefined) {
-            const tTy = compileExpression(ctx, fctx, tArg, externRef);
-            if (tTy && tTy.kind !== "externref") coerceType(ctx, fctx, tTy, externRef);
-            else if (tTy === null) fctx.body.push({ op: "ref.null.extern" });
-          } else {
-            fctx.body.push({ op: "ref.null.extern" });
-          }
-        }
-        fctx.body.push({ op: "local.set", index: targetLocal });
-        // Native `$Object` targets and explicitly admitted JS boundary objects
-        // are both legitimate. Everything else remains a Reflect TypeError.
-        guardNativeReflectTarget(targetLocal, "Reflect.deleteProperty called on non-object");
-        // target is an $Object — push [target, key] and delete.
-        fctx.body.push({ op: "local.get", index: targetLocal });
-        releaseTempLocal(fctx, targetLocal);
-        {
-          const kArg = expr.arguments[1];
-          if (kArg !== undefined) {
-            const kTy = compileExpression(ctx, fctx, kArg, externRef);
-            if (kTy && kTy.kind !== "externref") coerceType(ctx, fctx, kTy, externRef);
-            else if (kTy === null) fctx.body.push({ op: "ref.null.extern" });
-          } else {
-            fctx.body.push({ op: "ref.null.extern" });
-          }
-        }
-        const funcIdx = ensureLateImport(ctx, "__delete_property", [externRef, externRef], [i32Ty]);
-        flushLateImportShifts(ctx, fctx);
-        if (funcIdx !== undefined) {
-          fctx.body.push({ op: "call", funcIdx });
-          return { kind: "i32" };
-        }
-        return fallbackReturn(0, "i32-false");
-      }
-
-      if (reflectMethod === "ownKeys" && expr.arguments.length >= 1) {
-        const targetLocal = allocTempLocal(fctx, externRef);
-        const targetType = compileExpression(ctx, fctx, expr.arguments[0]!, externRef);
-        if (targetType && targetType.kind !== "externref") coerceType(ctx, fctx, targetType, externRef);
-        else if (!targetType) fctx.body.push({ op: "ref.null.extern" });
-        fctx.body.push({ op: "local.set", index: targetLocal });
-        guardNativeReflectTarget(targetLocal, "Reflect.ownKeys called on non-object");
-
-        const funcIdx = ensureLateImport(ctx, "__getOwnPropertyNames", [externRef], [externRef]);
-        flushLateImportShifts(ctx, fctx);
-        // (#6651 cluster F) §28.1.13 is `target.[[OwnPropertyKeys]]()`, whose
-        // §10.1.11.1 order is integer indices ascending, then string keys in
-        // creation order, then SYMBOL keys in creation order.
-        // `__getOwnPropertyNames` supplies the first two groups and drops the
-        // third — the arm's own comment says "the native runtime does not
-        // retain symbol-keyed properties yet", which is stale: it does, and
-        // `Object.getOwnPropertySymbols` already reads them back with correct
-        // identity (measured — `Reflect.ownKeys(o).length` was 1 where
-        // `getOwnPropertySymbols(o).length` was 1 on the same object). So the
-        // gap is only that the two lists are never joined. Appending the
-        // symbol vec to the (freshly built, unshared) names vec is the whole
-        // §10.1.11.1 step-4 concatenation; declines to the names-only answer
-        // when any of the three helpers is absent from this module.
-        const ownSymbolsIdx = ensureLateImport(ctx, "__getOwnPropertySymbols", [externRef], [externRef]);
-        flushLateImportShifts(ctx, fctx);
-        const externLengthIdx = ensureLateImport(ctx, "__extern_length", [externRef], [{ kind: "f64" }]);
-        flushLateImportShifts(ctx, fctx);
-        const externGetIdxIdx = ensureLateImport(ctx, "__extern_get_idx", [externRef, { kind: "f64" }], [externRef]);
-        flushLateImportShifts(ctx, fctx);
-        const objVecPushIdx = ctx.funcMap.get("__objvec_push");
-        const proxyTypeIdxOwnKeys = ctx.objectRuntimeTypes?.proxyTypeIdx;
-        /** Append every own symbol key of `targetLocal` onto the names vec on the stack. */
-        const appendOwnSymbols = (): Instr[] => {
-          const symsIdx = ctx.funcMap.get("__getOwnPropertySymbols") ?? ownSymbolsIdx;
-          const lenIdx = ctx.funcMap.get("__extern_length") ?? externLengthIdx;
-          const getIdx = ctx.funcMap.get("__extern_get_idx") ?? externGetIdxIdx;
-          if (symsIdx === undefined || lenIdx === undefined || getIdx === undefined || objVecPushIdx === undefined) {
-            return [];
-          }
-          const keysLocal = allocTempLocal(fctx, externRef);
-          const symsLocal = allocTempLocal(fctx, externRef);
-          const nLocal = allocTempLocal(fctx, { kind: "f64" });
-          const iLocal = allocTempLocal(fctx, { kind: "f64" });
-          const appendLoop: Instr[] = [
-            { op: "local.get", index: targetLocal },
-            { op: "call", funcIdx: symsIdx },
-            { op: "local.tee", index: symsLocal },
-            { op: "call", funcIdx: lenIdx },
-            { op: "local.set", index: nLocal },
-            { op: "f64.const", value: 0 },
-            { op: "local.set", index: iLocal },
-            {
-              op: "block",
-              blockType: { kind: "empty" },
-              body: [
-                {
-                  op: "loop",
-                  blockType: { kind: "empty" },
-                  body: [
-                    { op: "local.get", index: iLocal },
-                    { op: "local.get", index: nLocal },
-                    { op: "f64.ge" },
-                    { op: "br_if", depth: 1 },
-                    { op: "local.get", index: keysLocal },
-                    { op: "local.get", index: symsLocal },
-                    { op: "local.get", index: iLocal },
-                    { op: "call", funcIdx: getIdx },
-                    { op: "call", funcIdx: objVecPushIdx },
-                    { op: "local.get", index: iLocal },
-                    { op: "f64.const", value: 1 },
-                    { op: "f64.add" },
-                    { op: "local.set", index: iLocal },
-                    { op: "br", depth: 0 },
-                  ],
-                },
-              ],
-            },
+        const nativeIdx = ctx.funcMap.get("__reflect_get_receiver");
+        const boundaryIdx = boundaryReflectInterop ? ctx.funcMap.get("__boundary_object_reflect_get") : undefined;
+        const admittedIdx = boundaryReflectInterop ? ctx.funcMap.get("__boundary_object_is_admitted") : undefined;
+        if (nativeIdx !== undefined) {
+          const callWithLocals = (funcIdx: number): Instr[] => [
+            ...argLocals.slice(0, 3).map((index): Instr => ({ op: "local.get", index })),
+            { op: "call", funcIdx },
           ];
-          // A `$Proxy` receiver is EXCLUDED, and the exclusion is load-bearing:
-          // `__getOwnPropertyNames`'s proxy front guard returns the §10.5.11
-          // `ownKeys` TRAP's own array, which the spec requires be returned
-          // as-is and which the user still holds a reference to. Appending to
-          // it would both mutate a user array and add keys the trap did not
-          // report. Only the ordinary `$Object` walk (a vec this call just
-          // built) is concatenated.
-          const out: Instr[] = [
-            { op: "local.set", index: keysLocal },
-            ...(proxyTypeIdxOwnKeys === undefined
-              ? appendLoop
-              : ([
-                  { op: "local.get", index: targetLocal },
-                  { op: "any.convert_extern" },
-                  { op: "ref.test", typeIdx: proxyTypeIdxOwnKeys },
-                  { op: "i32.eqz" },
-                  { op: "if", blockType: { kind: "empty" }, then: appendLoop },
-                ] satisfies Instr[])),
-            { op: "local.get", index: keysLocal },
-          ];
-          releaseTempLocal(fctx, iLocal);
-          releaseTempLocal(fctx, nLocal);
-          releaseTempLocal(fctx, symsLocal);
-          releaseTempLocal(fctx, keysLocal);
-          return out;
-        };
-        const boundaryOwnKeysIdx = boundaryReflectInterop ? ctx.funcMap.get("__boundary_object_own_keys") : undefined;
-        if (funcIdx !== undefined && boundaryOwnKeysIdx !== undefined) {
-          const resultLocal = allocTempLocal(fctx, externRef);
-          fctx.body.push({ op: "local.get", index: targetLocal });
-          fctx.body.push({ op: "call", funcIdx: boundaryOwnKeysIdx });
-          fctx.body.push({ op: "local.tee", index: resultLocal });
-          fctx.body.push({ op: "ref.is_null" });
-          fctx.body.push({
-            op: "if",
-            blockType: { kind: "val", type: externRef },
-            then: [{ op: "local.get", index: targetLocal }, { op: "call", funcIdx }, ...appendOwnSymbols()],
-            else: [{ op: "local.get", index: resultLocal }],
-          });
-          releaseTempLocal(fctx, resultLocal);
-          releaseTempLocal(fctx, targetLocal);
+          if (boundaryIdx !== undefined && admittedIdx !== undefined) {
+            fctx.body.push(
+              { op: "local.get", index: argLocals[0]! },
+              { op: "call", funcIdx: admittedIdx },
+              {
+                op: "if",
+                blockType: { kind: "val", type: externRef },
+                then: callWithLocals(boundaryIdx),
+                else: callWithLocals(nativeIdx),
+              },
+            );
+          } else {
+            fctx.body.push(...callWithLocals(nativeIdx));
+          }
+          releaseReflectArgumentLocals(argLocals);
           return { kind: "externref" };
         }
-        if (funcIdx !== undefined) {
-          fctx.body.push({ op: "local.get", index: targetLocal });
-          fctx.body.push({ op: "call", funcIdx });
-          fctx.body.push(...appendOwnSymbols());
-          releaseTempLocal(fctx, targetLocal);
-          return { kind: "externref" };
-        }
-        releaseTempLocal(fctx, targetLocal);
+        reportError(
+          ctx,
+          expr,
+          "Codegen error: Reflect.get with an explicit receiver could not register its native provider (#2046).",
+        );
+        releaseReflectArgumentLocals(argLocals);
         fctx.body.push({ op: "ref.null.extern" });
         return { kind: "externref" };
       }
 
-      if (reflectMethod === "getOwnPropertyDescriptor" && expr.arguments.length >= 2) {
-        // (#2046 S5) Route to the native __getOwnPropertyDescriptor, the same
-        // helper backing standalone Object.getOwnPropertyDescriptor. It reads
-        // the $PropEntry back into a descriptor `$Object` (data → { value,
-        // writable, enumerable, configurable }, accessor → { get, set,
-        // enumerable, configurable }) and returns `undefined` for a missing own
-        // property — §26.1.7 step 3 (FromPropertyDescriptor over
-        // [[GetOwnProperty]]). The key is coerced with ToPropertyKey inside the
-        // native via __to_property_key (#2042 S1), so numeric keys work.
-        //
-        // §26.1.7 step 1 requires a TypeError when the target is not an Object.
-        // The native returns `undefined` for a non-$Object receiver (correct
-        // for Object.getOwnPropertyDescriptor, which forwards a coerced
-        // primitive wrapper), so — exactly as the deleteProperty PR-A guard —
-        // gate at the CALL SITE with a `ref.test $Object` and throw a catchable
-        // TypeError instead. The shared native is untouched.
-        ensureObjectRuntime(ctx);
-        const targetLocal = allocTempLocal(fctx, externRef);
-        {
-          const tArg = expr.arguments[0];
-          if (tArg !== undefined) {
-            const tTy = compileExpression(ctx, fctx, tArg, externRef);
-            if (tTy && tTy.kind !== "externref") coerceType(ctx, fctx, tTy, externRef);
-            else if (tTy === null) fctx.body.push({ op: "ref.null.extern" });
-          } else {
-            fctx.body.push({ op: "ref.null.extern" });
-          }
-        }
-        fctx.body.push({ op: "local.set", index: targetLocal });
-        guardNativeReflectTarget(targetLocal, "Reflect.getOwnPropertyDescriptor called on non-object");
-        // target is an $Object — push [target, key] and read the descriptor.
-        fctx.body.push({ op: "local.get", index: targetLocal });
-        releaseTempLocal(fctx, targetLocal);
-        {
-          const kArg = expr.arguments[1];
-          if (kArg !== undefined) {
-            const kTy = compileExpression(ctx, fctx, kArg, externRef);
-            if (kTy && kTy.kind !== "externref") coerceType(ctx, fctx, kTy, externRef);
-            else if (kTy === null) fctx.body.push({ op: "ref.null.extern" });
-          } else {
-            fctx.body.push({ op: "ref.null.extern" });
-          }
-        }
-        // (#5196 R3-2 C5) §7.1.19 ToPropertyKey at the CALL SITE, on the value
-        // just pushed: the native's internal coercion does not propagate an
-        // abrupt completion from a throwing `toString`/`valueOf`.
-        {
-          const tpkIdx = ctx.funcMap.get("__to_property_key");
-          if (tpkIdx !== undefined) fctx.body.push({ op: "call", funcIdx: tpkIdx });
-        }
-        const funcIdx = ensureLateImport(ctx, "__getOwnPropertyDescriptor", [externRef, externRef], [externRef]);
-        flushLateImportShifts(ctx, fctx);
-        if (funcIdx !== undefined) {
-          fctx.body.push({ op: "call", funcIdx });
-          return { kind: "externref" };
-        }
-        return fallbackReturn(0, "extern-null");
-      }
-
-      // (#5196 R3-2 C5) `Reflect.defineProperty(target, key)` — two arguments,
-      // no descriptor. §28.1.3 runs step 1 (Object target), step 2
-      // ToPropertyKey (which is where `return-abrupt-from-property-key.js`
-      // expects its throwing `toString` to escape) and only THEN step 3
-      // ToPropertyDescriptor(undefined), which is the required TypeError. The
-      // three-argument arm below cannot serve this: its applier needs a
-      // descriptor expression. Without this branch the call compiled to the
-      // "#1472 Phase C" hard refusal, which is a COMPILE error, not a
-      // catchable one.
-      if (reflectMethod === "defineProperty" && expr.arguments.length === 2) {
-        ensureObjectRuntime(ctx);
-        const targetLocal = allocTempLocal(fctx, externRef);
-        const targetType = compileExpression(ctx, fctx, expr.arguments[0]!, externRef);
-        if (targetType && targetType.kind !== "externref") coerceType(ctx, fctx, targetType, externRef);
-        else if (!targetType) fctx.body.push({ op: "ref.null.extern" });
-        fctx.body.push({ op: "local.set", index: targetLocal });
-        guardReflectTargetIsObject(targetLocal, "Reflect.defineProperty called on non-object");
-        releaseTempLocal(fctx, targetLocal);
-        const keyType = compileExpression(ctx, fctx, expr.arguments[1]!, externRef);
-        if (keyType && keyType.kind !== "externref") coerceType(ctx, fctx, keyType, externRef);
-        else if (!keyType) fctx.body.push({ op: "ref.null.extern" });
-        const tpkIdx = ctx.funcMap.get("__to_property_key");
-        if (tpkIdx !== undefined) fctx.body.push({ op: "call", funcIdx: tpkIdx });
-        fctx.body.push({ op: "drop" });
-        emitThrowTypeError(ctx, fctx, "Property description must be an object");
-        fctx.body.push({ op: "i32.const", value: 0 }); // unreachable after throw
-        return { kind: "i32" };
-      }
-
-      if (reflectMethod === "defineProperty" && expr.arguments.length >= 3) {
-        // (#2046) Route Reflect.defineProperty(target, key, desc) through the
-        // SAME standalone runtime-descriptor applier that backs
-        // Object.defineProperty — `emitDefinePropertyDescRuntime`
-        // (object-ops.ts). Reusing it (rather than hand-rolling a
-        // `__obj_define_from_desc` call here) is essential because that helper
-        // performs the **#2372 descriptor struct reify**: an INLINE descriptor
-        // object literal (`{ value: 42, … }`) is typed by the TS checker as a
-        // closed WasmGC struct, which the native `__obj_define_from_desc`'s
-        // internal `ref.test $Object` rejects as "not an object" → spurious
-        // §10.1.6 TypeError. The helper reifies that struct into a fresh
-        // `$Object` first, so inline-literal descriptors work. The issue file
-        // recorded this arm as blocked on a write-side native (#2043); that
-        // blocker is STALE — the native is registered by ensureObjectRuntime
-        // and reachable end-to-end (it has backed Object.defineProperty since
-        // #1629b).
-        //
-        // §28.1.3 Reflect.defineProperty(target, propertyKey, attributes):
-        //   step 1: target not an Object → throw a TypeError. The native
-        //     applier silently no-ops on a non-$Object target (matching the
-        //     pre-existing standalone Object.defineProperty gap), so enforce
-        //     the §28.1.3 step-1 throw HERE with the shared
-        //     `emitNonObjectArgGuard` — it fires for a statically primitive /
-        //     null / undefined target (the test262 non-object subtests use
-        //     bare primitive literals). A runtime-`any` primitive still slips
-        //     through, an accepted imprecision shared with Object.defineProperty.
-        //   step 2: key = ? ToPropertyKey(propertyKey) — handled inside the
-        //     native via __to_property_key (#2042 S1), so numeric keys coerce.
-        //   step 3: desc = ? ToPropertyDescriptor(attributes) — a malformed
-        //     descriptor (data+accessor conflict, non-callable get/set) throws
-        //     a catchable TypeError, which the native already raises (these
-        //     originate in ToPropertyDescriptor, BEFORE [[DefineOwnProperty]],
-        //     so they throw for Reflect too).
-        //   step 4: return the boolean [[DefineOwnProperty]] result. The native
-        //     returns the obj (always truthy) and has no failure channel, so we
-        //     drop it and return i32 `true`.
-        //
-        // KNOWN LIMITATION (shared with standalone Object.defineProperty): a
-        // *rejected* redefine of an existing non-configurable property silently
-        // no-ops in the native rather than surfacing failure, so we cannot
-        // return the spec's `false` for that case — it returns `true`. Faithful
-        // handling needs a failure channel in __defineProperty_value and is out
-        // of this slice; converting the common refusal→working path is the win.
-        const objArg = expr.arguments[0];
-        const keyArg = expr.arguments[1];
-        const descArg = expr.arguments[2];
-        if (objArg !== undefined && keyArg !== undefined && descArg !== undefined) {
-          // §28.1.3 step 1: evaluate the target exactly once and reject every
-          // non-Object carrier before evaluating the property key or
-          // descriptor. This is the same runtime admission predicate used by
-          // direct ownKeys/gOPD and by the snapshotted Reflect method values.
-          const targetLocal = allocTempLocal(fctx, externRef);
-          const targetType = compileExpression(ctx, fctx, objArg, externRef);
-          if (targetType && targetType.kind !== "externref") coerceType(ctx, fctx, targetType, externRef);
-          else if (!targetType) fctx.body.push({ op: "ref.null.extern" });
-          fctx.body.push({ op: "local.set", index: targetLocal });
-          guardNativeReflectTarget(targetLocal, "Reflect.defineProperty called on non-object");
-          // `undefinedFields` is the host-only ToPropertyDescriptor presence
-          // sidecar — unused on the standalone path, so pass empty.
-          const applierStart = fctx.body.length;
-          const r = emitDefinePropertyDescRuntime(ctx, fctx, objArg, keyArg, descArg, [], targetLocal);
-          releaseTempLocal(fctx, targetLocal);
-          // (#6770 S4) §28.1.3 step 4: a REJECTED define answers `false`.
-          // The applier returns an externref; Reflect wants a boolean.
-          // (#1355 Slice F) For a PROXY receiver the standalone
-          // `__obj_define_from_desc` front-guard returns the defineProperty
-          // trap's booleanish externref (NOT the obj) — so we must surface
-          // that result, not unconditionally return true. For a non-proxy
-          // receiver the applier returns the (always-truthy) obj, so
-          // `__is_truthy` still yields the spec `true`. This keeps the
-          // non-proxy behaviour identical while making a proxy trap's
-          // false/true return observable through Reflect.defineProperty.
-          const isTruthyIdx = ctx.funcMap.get("__is_truthy");
-          if (r !== null && definePropertyBooleanFrom(ctx, fctx, applierStart, isTruthyIdx)) return { kind: "i32" };
-          if (r !== null) {
-            if (isTruthyIdx !== undefined) {
-              fctx.body.push({ op: "call", funcIdx: isTruthyIdx });
-            } else {
-              fctx.body.push({ op: "drop" });
-              fctx.body.push({ op: "i32.const", value: 1 });
-            }
-            return { kind: "i32" };
-          }
-        }
-        return fallbackReturn(0, "i32-false");
-      }
-
-      if (reflectMethod === "getPrototypeOf" && expr.arguments.length >= 1) {
-        // (#2046 PR-C) Route Reflect.getPrototypeOf(target) to the native
-        // Object.getPrototypeOf helper. It returns the `$Object.$proto` value.
-        // §28.1.1 Reflect.getPrototypeOf(target):
-        //   step 1: target not an Object → throw a TypeError. The native
-        //     returns null for a non-$Object receiver (correct for
-        //     Object.getPrototypeOf after its ToObject), so — exactly as the
-        //     deleteProperty / getOwnPropertyDescriptor PR-A guards — enforce
-        //     the §28.1.1 step-1 throw at the CALL SITE with the shared
-        //     emitNonObjectArgGuard (fires for a statically-primitive / null /
-        //     undefined target). The shared native is untouched.
-        //   step 2: return ? target.[[GetPrototypeOf]]() — the native read.
-        const arg0 = expr.arguments[0]!;
-        if (emitNonObjectArgGuard(ctx, fctx, arg0, "Reflect.getPrototypeOf")) {
-          fctx.body.push({ op: "ref.null.extern" }); // unreachable after throw
-          return { kind: "externref" };
-        }
-        const pristineIntrinsicPrototype = compilePristineIntrinsicPrototypeCapture(ctx, fctx, arg0);
-        if (pristineIntrinsicPrototype) return pristineIntrinsicPrototype;
-        const pristineIteratorPrototype = compilePristineIteratorPrototypeCapture(ctx, fctx, arg0);
-        if (pristineIteratorPrototype) return pristineIteratorPrototype;
-        const argType = compileExpression(ctx, fctx, arg0, externRef);
-        if (!argType) {
-          fctx.body.push({ op: "ref.null.extern" });
-          return { kind: "externref" };
-        }
-        if (argType.kind !== "externref") coerceType(ctx, fctx, argType, externRef);
-        const gpoIdx = ensureLateImport(ctx, "__getPrototypeOf", [externRef], [externRef]);
-        flushLateImportShifts(ctx, fctx);
-        if (gpoIdx !== undefined) {
-          fctx.body.push({ op: "call", funcIdx: gpoIdx });
-          return { kind: "externref" };
-        }
-        return fallbackReturn(0, "extern-null");
-      }
-
-      if (reflectMethod === "setPrototypeOf" && expr.arguments.length >= 2) {
-        // (#2046 PR-C) Route Reflect.setPrototypeOf(target, proto) to the
-        // native __object_setPrototypeOf — the SAME helper backing standalone
-        // Object.setPrototypeOf (calls.ts ~5829). It performs the §10.1.2.1
-        // OrdinarySetPrototypeOf extensibility + cycle checks, writes
-        // $Object.$proto (field 0) on success, and returns `obj` (NOT a
-        // boolean). §28.1.14 Reflect.setPrototypeOf(target, proto):
-        //   step 1: target not an Object → throw a TypeError. The native
-        //     silently no-ops (returns obj) on a non-$Object receiver, so
-        //     enforce the step-1 throw at the CALL SITE with the shared
-        //     emitNonObjectArgGuard (statically-primitive / null / undefined
-        //     target).
-        //   step 2: proto not Object and not null → throw a TypeError. Reuse
-        //     the same static guard on the proto arg, but `null` is a LEGAL
-        //     proto here (unlike target), so only reject a statically-
-        //     primitive NON-null proto. A `null`/object proto passes;
-        //     undefined, number/string/boolean, and Symbol proto literals throw.
-        //   step 4: return the boolean [[SetPrototypeOf]] result. The native
-        //     has no failure channel (a refused set — non-extensible target or
-        //     a cycle — silently no-ops and still returns obj), so we drop obj
-        //     and return i32 `true`. KNOWN LIMITATION (identical to the
-        //     standalone Reflect.defineProperty arm above): a *refused* set
-        //     returns the spec's `true` instead of `false`. Faithful handling
-        //     needs a boolean failure channel in __object_setPrototypeOf and is
-        //     out of this slice; converting the common refusal→working path is
-        //     the win.
-        const targetArg = expr.arguments[0]!;
-        const protoArg = expr.arguments[1]!;
-        // §28.1.14 step 1: statically-non-object target → throw TypeError.
-        if (emitNonObjectArgGuard(ctx, fctx, targetArg, "Reflect.setPrototypeOf")) {
-          fctx.body.push({ op: "i32.const", value: 0 }); // unreachable after throw
-          return { kind: "i32" };
-        }
-        // §28.1.14 step 2: a statically-primitive proto that is not null is
-        // illegal. Only `null` is a legal primitive prototype; undefined and
-        // void expressions must take the shared TypeError guard below.
-        const protoIsNullish = protoArg.kind === ts.SyntaxKind.NullKeyword;
-        if (!protoIsNullish && emitNonObjectArgGuard(ctx, fctx, protoArg, "Reflect.setPrototypeOf")) {
-          fctx.body.push({ op: "i32.const", value: 0 }); // unreachable after throw
-          return { kind: "i32" };
-        }
-        // obj (externref)
-        const objType = compileExpression(ctx, fctx, targetArg, externRef);
-        if (!objType) {
-          fctx.body.push({ op: "i32.const", value: 1 });
-          return { kind: "i32" };
-        }
-        if (objType.kind !== "externref") coerceType(ctx, fctx, objType, externRef);
-        // (#5268 step 1, cluster B) Stash the operands so the §10.4.7
-        // immutable-prototype receiver can answer `false` instead of the
-        // KNOWN LIMITATION's unconditional `true`. The ordinary refusals
-        // (non-extensible, cycle) still return `true` — closing those needs the
-        // failure channel the limitation note describes, which is not this
-        // slice; `%Object.prototype%` is the one receiver whose refusal is a
-        // pure predicate on the receiver's identity.
-        const spoTargetLocal = allocTempLocal(fctx, externRef);
-        const spoProtoLocal = allocTempLocal(fctx, externRef);
-        fctx.body.push({ op: "local.tee", index: spoTargetLocal });
-        // proto (externref) — compileProtoArg reifies an inline-literal proto
-        // into a native $Object so __object_setPrototypeOf's `ref.test $Object`
-        // succeeds (the same #2580 M3 Stage A handling Object.setPrototypeOf
-        // uses); keeps the ordinary externref path for non-literal / null protos.
-        compileProtoArg(ctx, fctx, protoArg);
-        fctx.body.push({ op: "local.tee", index: spoProtoLocal });
-        // The static guards above cannot validate values read from the realm's
-        // heterogeneous handle table. Both operands have now been evaluated;
-        // reject invalid dynamic values before the writer can mutate anything.
-        emitNativeReflectTargetGuard(ctx, fctx, spoTargetLocal, "Reflect.setPrototypeOf called on non-object");
-        fctx.body.push({ op: "local.get", index: spoProtoLocal }, { op: "ref.is_null" }, { op: "i32.eqz" });
-        const beforePrototypeGuard = fctx.body.length;
-        emitNativeReflectTargetGuard(
-          ctx,
-          fctx,
-          spoProtoLocal,
-          "Reflect.setPrototypeOf requires an object or null prototype",
-        );
-        const prototypeGuard = fctx.body.splice(beforePrototypeGuard);
-        fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: prototypeGuard });
-        const spoIdx = ensureLateImport(ctx, "__object_setPrototypeOf", [externRef, externRef], [externRef]);
-        flushLateImportShifts(ctx, fctx);
-        // (#6651 cluster F) §28.1.14 step 4 — the REAL boolean. The KNOWN
-        // LIMITATION above ("a refused set returns `true`") described the
-        // missing failure channel; #5148 cluster 2b has since built exactly
-        // that channel as `__object_setPrototypeOf_status`, a pure §10.1.2.1
-        // predicate (SameValue → true, non-extensible → false, cycle → false)
-        // that performs NO write and answers a permissive 1 for every receiver
-        // the writer does not own (non-`$Object`, `$Proxy`). So the answer is
-        // the CONJUNCTION of two bits that are each already correct:
-        //   - the ordinary bit: `__object_setPrototypeOf_status(o, p)`;
-        //   - the exotic bit: `__is_truthy(__object_setPrototypeOf(o, p))`,
-        //     which for a `$Proxy` receiver is the §10.5.2 trap's booleanish
-        //     result (the writer's proxy front guard returns it instead of the
-        //     obj) and for an ordinary receiver is the always-truthy obj → 1.
-        // Reading the writer's result through `__is_truthy` is the same rule
-        // `Reflect.defineProperty` above already applies to its applier, so
-        // this makes the two Reflect arms agree rather than adding a rule.
-        // Evaluation order is status-then-write and the operands come from the
-        // two locals, so neither argument is re-evaluated.
-        const spoStatusIdx = ensureLateImport(ctx, "__object_setPrototypeOf_status", [externRef, externRef], [i32Ty]);
-        flushLateImportShifts(ctx, fctx);
-        // (#6651 cluster F, review of the first cut) The status native's step-2
-        // SameValue compares the two ENCODED `$proto` references, and an
-        // ordinary object's `%Object.prototype%` terminal is encoded as a NULL
-        // field (`OBJ_FLAG_NULL_PROTO` distinguishes it from an explicitly
-        // null-prototype object). So `Reflect.setPrototypeOf(o, Object.prototype)`
-        // on a NON-EXTENSIBLE ordinary `o` looked like "different prototype"
-        // and fell through to the step-3 refusal — the spec says step 2 wins and
-        // the answer is `true`. That shape is REAL: it cost
-        // `Reflect/setPrototypeOf/return-true-if-proto-is-current.js` a
-        // pass → fail in the neighbourhood sweep of the first cut, which is how
-        // it was found. No probe predicted it; only the before/after row run did.
-        // The fallback asks the reader that already models the implicit
-        // terminal — `__getPrototypeOf` — and ONLY when the status bit is 0, so
-        // a live `$Proxy` never sees an extra `getPrototypeOf` trap call: the
-        // status native answers a permissive 1 for every non-`$Object` receiver,
-        // and that set is exactly the one that contains proxies.
-        const spoGpoIdx = ensureLateImport(ctx, "__getPrototypeOf", [externRef], [externRef]);
-        flushLateImportShifts(ctx, fctx);
-        const spoStrictEqIdx = ensureExternStrictEqHelper(ctx);
-        flushLateImportShifts(ctx, fctx);
-        const spoWriteIdx = ctx.funcMap.get("__object_setPrototypeOf") ?? spoIdx;
-        const spoIsTruthyIdx = ctx.funcMap.get("__is_truthy");
-        const spoSameAsCurrent = (): Instr[] => {
-          const gpo = ctx.funcMap.get("__getPrototypeOf") ?? spoGpoIdx;
-          if (gpo === undefined || spoStrictEqIdx === undefined) return [];
-          return [
-            { op: "i32.eqz" },
-            {
-              op: "if",
-              blockType: { kind: "val", type: i32Ty },
-              then: [
-                { op: "local.get", index: spoTargetLocal },
-                { op: "call", funcIdx: gpo },
-                { op: "local.get", index: spoProtoLocal },
-                { op: "call", funcIdx: spoStrictEqIdx },
-              ],
-              else: [{ op: "i32.const", value: 1 }],
-            },
-          ];
-        };
-        // The answer, built from the two locals. Declines to the previous
-        // unconditional `true` if either half is unavailable in this module.
-        const spoBooleanAnswer = (writeIdx: number): Instr[] =>
-          spoStatusIdx === undefined || spoIsTruthyIdx === undefined
-            ? [
-                { op: "local.get", index: spoTargetLocal },
-                { op: "local.get", index: spoProtoLocal },
-                { op: "call", funcIdx: writeIdx },
-                { op: "drop" },
-                { op: "i32.const", value: 1 },
-              ]
-            : [
-                { op: "local.get", index: spoTargetLocal },
-                { op: "local.get", index: spoProtoLocal },
-                { op: "call", funcIdx: spoStatusIdx },
-                ...spoSameAsCurrent(),
-                { op: "local.get", index: spoTargetLocal },
-                { op: "local.get", index: spoProtoLocal },
-                { op: "call", funcIdx: writeIdx },
-                { op: "call", funcIdx: spoIsTruthyIdx },
-                { op: "i32.and" },
-              ];
-        if (spoIdx !== undefined) {
-          const immutable = objectPrototypeIsImmutableInstrs(ctx, spoTargetLocal);
-          if (immutable) {
-            // An immutable-prototype receiver must NOT be written and must
-            // answer `SameValue(V, current)` — `current` is null, so only a
-            // null proto succeeds.
-            fctx.body.push({ op: "drop" }); // proto
-            fctx.body.push({ op: "drop" }); // obj
-            fctx.body.push(...immutable);
-            fctx.body.push({
-              op: "if",
-              blockType: { kind: "val", type: i32Ty },
-              then: [{ op: "local.get", index: spoProtoLocal }, { op: "ref.is_null" }],
-              else: spoBooleanAnswer(spoWriteIdx ?? spoIdx),
-            });
-          } else {
-            // Both operands are already in their locals (the two `local.tee`s
-            // above), so the stack copies are redundant here.
-            fctx.body.push({ op: "drop" }); // proto
-            fctx.body.push({ op: "drop" }); // obj
-            fctx.body.push(...spoBooleanAnswer(spoWriteIdx ?? spoIdx));
-          }
-          releaseTempLocal(fctx, spoProtoLocal);
-          releaseTempLocal(fctx, spoTargetLocal);
-          return { kind: "i32" };
-        }
-        releaseTempLocal(fctx, spoProtoLocal);
-        releaseTempLocal(fctx, spoTargetLocal);
-        return fallbackReturn(0, "i32-true");
-      }
-
-      if (reflectMethod === "isExtensible" && expr.arguments.length >= 1) {
-        const targetLocal = allocTempLocal(fctx, externRef);
-        const targetType = compileExpression(ctx, fctx, expr.arguments[0]!, externRef);
-        if (targetType && targetType.kind !== "externref") coerceType(ctx, fctx, targetType, externRef);
-        else if (!targetType) fctx.body.push({ op: "ref.null.extern" });
-        fctx.body.push({ op: "local.set", index: targetLocal });
-        guardNativeReflectTarget(targetLocal, "Reflect.isExtensible called on non-object");
-
-        const nativeIdx = ensureLateImport(ctx, "__object_isExtensible", [externRef], [i32Ty]);
-        flushLateImportShifts(ctx, fctx);
-        const boundaryIdx = boundaryReflectInterop ? ctx.funcMap.get("__boundary_object_is_extensible") : undefined;
-        if (nativeIdx !== undefined && boundaryIdx !== undefined) {
-          const resultLocal = allocTempLocal(fctx, i32Ty);
-          fctx.body.push({ op: "local.get", index: targetLocal });
-          fctx.body.push({ op: "call", funcIdx: boundaryIdx });
-          fctx.body.push({ op: "local.tee", index: resultLocal });
-          fctx.body.push({ op: "i32.eqz" });
-          fctx.body.push({
-            op: "if",
-            blockType: { kind: "val", type: i32Ty },
-            then: [
-              { op: "local.get", index: targetLocal },
-              { op: "call", funcIdx: nativeIdx },
-            ],
-            else: [{ op: "local.get", index: resultLocal }, { op: "i32.const", value: 1 }, { op: "i32.sub" }],
-          });
-          releaseTempLocal(fctx, resultLocal);
-          releaseTempLocal(fctx, targetLocal);
-          return { kind: "i32" };
-        }
-        fctx.body.push({ op: "local.get", index: targetLocal });
-        if (nativeIdx !== undefined) fctx.body.push({ op: "call", funcIdx: nativeIdx });
-        else {
-          fctx.body.push({ op: "drop" });
-          fctx.body.push({ op: "i32.const", value: 0 });
-        }
-        releaseTempLocal(fctx, targetLocal);
-        return { kind: "i32" };
-      }
-
-      if (reflectMethod === "preventExtensions" && expr.arguments.length >= 1) {
-        const targetLocal = allocTempLocal(fctx, externRef);
-        const targetType = compileExpression(ctx, fctx, expr.arguments[0]!, externRef);
-        if (targetType && targetType.kind !== "externref") coerceType(ctx, fctx, targetType, externRef);
-        else if (!targetType) fctx.body.push({ op: "ref.null.extern" });
-        fctx.body.push({ op: "local.set", index: targetLocal });
-        guardNativeReflectTarget(targetLocal, "Reflect.preventExtensions called on non-object");
-
-        const nativeIdx = ensureLateImport(ctx, "__object_preventExtensions", [externRef], [externRef]);
-        flushLateImportShifts(ctx, fctx);
-        // (#6651 cluster F) §28.1.11 step 2 returns the BOOLEAN
-        // `target.[[PreventExtensions]]()`. `__object_preventExtensions`'s
-        // `$Proxy` front guard already returns the §10.5.4 trap's booleanish
-        // result (the helper returns externref precisely so it can), and for
-        // an ordinary receiver it returns the always-truthy obj — so
-        // `__is_truthy` is the whole conversion, and `drop; i32.const 1`
-        // was discarding a `false` the trap had already computed. Same rule
-        // `Reflect.defineProperty` applies to its applier result.
-        const prevExtIsTruthyIdx = ctx.funcMap.get("__is_truthy");
-        const prevExtAnswer = (callIdx: number): Instr[] =>
-          prevExtIsTruthyIdx === undefined
-            ? [{ op: "call", funcIdx: callIdx }, { op: "drop" }, { op: "i32.const", value: 1 }]
-            : [
-                { op: "call", funcIdx: callIdx },
-                { op: "call", funcIdx: prevExtIsTruthyIdx },
-              ];
-        const boundaryIdx = boundaryReflectInterop
-          ? ctx.funcMap.get("__boundary_object_reflect_prevent_extensions")
-          : undefined;
-        if (nativeIdx !== undefined && boundaryIdx !== undefined) {
-          const resultLocal = allocTempLocal(fctx, i32Ty);
-          fctx.body.push({ op: "local.get", index: targetLocal });
-          fctx.body.push({ op: "call", funcIdx: boundaryIdx });
-          fctx.body.push({ op: "local.tee", index: resultLocal });
-          fctx.body.push({ op: "i32.eqz" });
-          fctx.body.push({
-            op: "if",
-            blockType: { kind: "val", type: i32Ty },
-            then: [{ op: "local.get", index: targetLocal }, ...prevExtAnswer(nativeIdx)],
-            else: [{ op: "local.get", index: resultLocal }, { op: "i32.const", value: 1 }, { op: "i32.sub" }],
-          });
-          releaseTempLocal(fctx, resultLocal);
-          releaseTempLocal(fctx, targetLocal);
-          return { kind: "i32" };
-        }
-        fctx.body.push({ op: "local.get", index: targetLocal });
-        if (nativeIdx !== undefined) {
-          fctx.body.push(...prevExtAnswer(nativeIdx));
-        } else {
-          fctx.body.push({ op: "drop" });
-          fctx.body.push({ op: "i32.const", value: 0 });
-        }
-        releaseTempLocal(fctx, targetLocal);
-        return { kind: "i32" };
-      }
-
-      // (#5140) §28.1.1 Reflect.apply(target, thisArgument, argumentsList).
-      // Standalone had NO arm at all, so every call fell through to the
-      // `#1472 Phase C` compile error. `__apply_closure` is the same bridge
-      // `fn.apply(…)` uses: it reads the argumentsList generically through
-      // `__extern_length`/`__extern_get_idx` (so a plain array works as the
-      // list carrier) and carries the `$Proxy` front-guard, so a proxy target
-      // routes into `__proxy_apply_dispatch` and runs its `apply` trap.
-      if (reflectMethod === "apply" && !boundaryReflectInterop) {
-        const argLocals = emitReflectArgumentLocals();
-        const targetLocal = argLocals[0];
-        if (targetLocal === undefined) {
-          emitThrowTypeError(ctx, fctx, "Reflect.apply called on non-object");
-          return { kind: "externref" };
-        }
-        ensureObjectRuntime(ctx);
-        // §28.1.1 step 1 IsCallable(target). Built from POSITIVE primitive
-        // brands (the `resolved-callee-guard.ts` rationale): a callable shape
-        // the classifier does not recognise — a plain compiled closure is
-        // neither `$Object` nor `$Proxy` — must not be turned into a hard
-        // throw, so only a value that positively brands as null or a primitive
-        // is rejected.
-        {
-          const before = fctx.body.length;
-          emitThrowTypeError(ctx, fctx, "Reflect.apply target is not a function");
-          const throwInstrs = fctx.body.splice(before);
-          const brandIdxs = ["__typeof_number", "__typeof_string", "__typeof_boolean", "__typeof_bigint"]
-            .map((name) => ctx.funcMap.get(name))
-            .filter((idx): idx is number => idx !== undefined);
-          fctx.body.push({ op: "local.get", index: targetLocal }, { op: "ref.is_null" });
-          for (const funcIdx of brandIdxs) {
-            fctx.body.push({ op: "local.get", index: targetLocal }, { op: "call", funcIdx }, { op: "i32.or" });
-          }
-          // (#5196 R3-2 C4) …plus the ORDINARY non-callable object:
-          // `Reflect.apply({}, 1, [])` must throw. Still a positive test —
-          // `typeof t === "object" && typeof t !== "function"` — so a callable
-          // carrier the classifier does recognise as a function (a compiled
-          // closure, a bound function, a `$Proxy` over a callable) is admitted
-          // exactly as before, and an unrecognised shape stays admitted too.
-          {
-            const typeofObjectIdx = ctx.funcMap.get("__typeof_object");
-            const typeofFunctionIdx = ctx.funcMap.get("__typeof_function");
-            if (typeofObjectIdx !== undefined && typeofFunctionIdx !== undefined) {
-              fctx.body.push(
-                { op: "local.get", index: targetLocal },
-                { op: "call", funcIdx: typeofObjectIdx },
-                { op: "local.get", index: targetLocal },
-                { op: "call", funcIdx: typeofFunctionIdx },
-                { op: "i32.eqz" },
-                { op: "i32.and" },
-                { op: "i32.or" },
-              );
-            }
-          }
-          fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: throwInstrs });
-        }
-        // (#5196 R3-2 C4) §7.3.19 CreateListFromArrayLike step 2: the
-        // argumentsList must be an Object. A MISSING third argument is the
-        // static case; a primitive/null/undefined one is the runtime case, and
-        // the shared Reflect target guard is exactly the Type(V) is Object test
-        // (it admits arrays and every callable carrier positively).
-        if (argLocals[2] === undefined) {
-          emitThrowTypeError(ctx, fctx, "Reflect.apply argumentsList is not an object");
-          releaseReflectArgumentLocals(argLocals);
-          return { kind: "externref" };
-        }
-        // (#6651 cluster F, slice F2) …and a LITERAL `null` / `undefined`
-        // argumentsList is the same question about the EXPRESSION, not about a
-        // value the runtime guard may have nulled. `emitNativeReflectNonObjectGuard`
-        // deliberately declines to brand a null carrier (this compiler's alias
-        // widening nulls ordinary objects), so `Reflect.apply(fn, null, null)`
-        // and `Reflect.apply(fn, null, undefined)` sailed past step 2 and
-        // invoked `fn` with an empty list. Measured on this branch's base:
-        // `Reflect/apply/arguments-list-is-not-array-like.js` failed on exactly
-        // those two of its ten assertions — the numeric, boolean, symbol and
-        // throwing-`length` spellings already threw. Same reasoning, same
-        // helper, as the `Reflect.{get,has}` target guard #6494 S3 added.
-        guardReflectTargetIsObjectOrNullish(
-          argLocals[2],
-          "Reflect.apply argumentsList is not an object",
-          expr.arguments[2],
-        );
-        const applyIdx = reserveApplyClosure(ctx);
-        fctx.body.push({ op: "local.get", index: targetLocal });
-        if (argLocals[1] !== undefined) fctx.body.push({ op: "local.get", index: argLocals[1] });
-        else fctx.body.push({ op: "ref.null.extern" });
-        if (argLocals[2] !== undefined) fctx.body.push({ op: "local.get", index: argLocals[2] });
-        else fctx.body.push({ op: "ref.null.extern" });
-        fctx.body.push({ op: "call", funcIdx: applyIdx });
+      fctx.body.push({ op: "local.get", index: argLocals[0]! });
+      fctx.body.push({ op: "local.get", index: argLocals[1]! });
+      const funcIdx = ensureLateImport(ctx, "__extern_get", [externRef, externRef], [externRef]);
+      flushLateImportShifts(ctx, fctx);
+      if (funcIdx !== undefined) {
+        fctx.body.push({ op: "call", funcIdx });
         releaseReflectArgumentLocals(argLocals);
         return { kind: "externref" };
       }
+      const fallback = fallbackReturn(2, "extern-null");
+      releaseReflectArgumentLocals(argLocals);
+      return fallback;
+    }
 
-      if (
-        reflectMethod === "apply" &&
-        expr.arguments.length >= 3 &&
-        boundaryReflectInterop &&
-        isDynamicBoundaryTarget(expr.arguments[0])
-      ) {
-        ensureObjectRuntime(ctx);
-        emitReflectArgs(3);
-        const boundaryIdx = ctx.funcMap.get("__boundary_object_apply");
-        if (boundaryIdx !== undefined) {
-          fctx.body.push({ op: "call", funcIdx: boundaryIdx });
-          return { kind: "externref" };
+    if (reflectMethod === "set" && expr.arguments.length >= 2) {
+      // (#2046 PR-A defect 1) Same as Reflect.get: __reflect_set writes the
+      // data-property subset on `target` itself and has no receiver slot, so
+      // an explicit receiver was evaluated then dropped — writing to the
+      // wrong object for accessor setters (§28.1.12 → §10.1.9). Refuse
+      // loudly with an explicit receiver until PR-C lands.
+      if (expr.arguments.length > 3) {
+        if (boundaryReflectInterop && isDynamicBoundaryTarget(expr.arguments[0])) {
+          ensureObjectRuntime(ctx);
+          emitReflectArgs(4);
+          const boundaryIdx = ctx.funcMap.get("__boundary_object_reflect_set");
+          if (boundaryIdx !== undefined) {
+            fctx.body.push({ op: "call", funcIdx: boundaryIdx });
+            return { kind: "i32" };
+          }
+          return fallbackReturn(4, "i32-false");
         }
-        return fallbackReturn(3, "extern-null");
-      }
-
-      // (#5140) §28.1.1 Reflect.apply(target, thisArgument, argumentsList).
-      // Standalone had NO arm here at all, so the call fell to the dynamic
-      // member path and reported "Reflect.apply is not a function". Build the
-      // argument list with CreateListFromArrayLike (length + indexed reads) and
-      // invoke through `__apply_closure`, whose front-guard already routes a
-      // `$Proxy` target into `__proxy_apply_dispatch` and a revoker carrier
-      // into `__proxy_revoke` — the same bridge `p(…)` takes.
-      if (reflectMethod === "apply" && expr.arguments.length >= 2) {
-        ensureObjectRuntime(ctx);
-        ensureObjVecBuilders(ctx);
-        const vecNewIdx = ctx.funcMap.get("__objvec_new");
-        const vecPushIdx = ctx.funcMap.get("__objvec_push");
-        const lengthIdx = ctx.funcMap.get("__extern_length");
-        const getIdxIdx = ctx.funcMap.get("__extern_get_idx");
-        const applyClosureIdx = ctx.funcMap.get("__apply_closure");
+        // (#5316 r5 step 6) The refusal is replaced by the real thing:
+        // `__reflect_set_receiver` is §10.1.9.2 OrdinarySetWithOwnDescriptor
+        // with the receiver as an explicit parameter (see
+        // `object-runtime-ordinary-set.ts`). Same argument machinery as the
+        // 3-argument form — locals rather than the bare stack, so a throwing
+        // `toString` in ToPropertyKey still escapes (§7.1.19) — and the same
+        // §26.1.13 step 1 Object-target guard. The 3-argument path below is
+        // untouched and keeps its byte-identical lowering.
+        //
+        // The probe is done BEFORE any operand is emitted: this name is in
+        // `OBJECT_RUNTIME_HELPER_NAMES`, so `ensureLateImport` resolves it to
+        // the DEFINED native and adds no import (hence no funcIdx shift), and
+        // it answers `undefined` on a target where the native was not
+        // registered — wasi, and any tree where a primitive it needs is
+        // missing. Then the refusal below still stands, unchanged.
         if (
-          vecNewIdx !== undefined &&
-          vecPushIdx !== undefined &&
-          lengthIdx !== undefined &&
-          getIdxIdx !== undefined &&
-          applyClosureIdx !== undefined
+          ensureLateImport(ctx, "__reflect_set_receiver", [externRef, externRef, externRef, externRef], [i32Ty]) !==
+          undefined
         ) {
-          const f64Ty: ValType = { kind: "f64" };
-          const fnLocal = allocTempLocal(fctx, externRef);
-          const thisLocal = allocTempLocal(fctx, externRef);
-          const listLocal = allocTempLocal(fctx, externRef);
-          const vecLocal = allocTempLocal(fctx, externRef);
-          const iLocal = allocTempLocal(fctx, f64Ty);
-          const nLocal = allocTempLocal(fctx, f64Ty);
-          const stage = (arg: ts.Expression | undefined, local: number): void => {
-            if (arg === undefined) {
-              fctx.body.push({ op: "ref.null.extern" });
-            } else {
-              const t = compileExpression(ctx, fctx, arg, externRef);
-              if (!t) fctx.body.push({ op: "ref.null.extern" });
-              else if (t.kind !== "externref") coerceType(ctx, fctx, t, externRef);
-            }
-            fctx.body.push({ op: "local.set", index: local });
-          };
-          stage(expr.arguments[0], fnLocal);
-          stage(expr.arguments[1], thisLocal);
-          stage(expr.arguments[2], listLocal);
-          fctx.body.push(
-            { op: "call", funcIdx: vecNewIdx },
-            { op: "local.set", index: vecLocal },
-            { op: "local.get", index: listLocal },
-            { op: "ref.is_null" },
-            {
-              op: "if",
-              blockType: { kind: "val", type: f64Ty },
-              then: [{ op: "f64.const", value: 0 }],
-              else: [
-                { op: "local.get", index: listLocal },
-                { op: "call", funcIdx: lengthIdx },
-              ],
-            },
-            { op: "local.set", index: nLocal },
-            { op: "f64.const", value: 0 },
-            { op: "local.set", index: iLocal },
-            {
-              op: "block",
-              blockType: { kind: "empty" },
-              body: [
-                {
-                  op: "loop",
-                  blockType: { kind: "empty" },
-                  body: [
-                    { op: "local.get", index: iLocal },
-                    { op: "local.get", index: nLocal },
-                    { op: "f64.ge" },
-                    { op: "br_if", depth: 1 },
-                    { op: "local.get", index: vecLocal },
-                    { op: "local.get", index: listLocal },
-                    { op: "local.get", index: iLocal },
-                    { op: "call", funcIdx: getIdxIdx },
-                    { op: "call", funcIdx: vecPushIdx },
-                    { op: "local.get", index: iLocal },
-                    { op: "f64.const", value: 1 },
-                    { op: "f64.add" },
-                    { op: "local.set", index: iLocal },
-                    { op: "br", depth: 0 },
-                  ],
-                },
-              ],
-            },
-            { op: "local.get", index: fnLocal },
-            { op: "local.get", index: thisLocal },
-            { op: "local.get", index: vecLocal },
-            { op: "call", funcIdx: applyClosureIdx },
+          const targetArg4 = expr.arguments[0]!;
+          if (emitNonObjectArgGuard(ctx, fctx, targetArg4, "Reflect.set")) {
+            fctx.body.push({ op: "i32.const", value: 0 }); // unreachable after throw
+            return { kind: "i32" };
+          }
+          const recvLocals = emitReflectArgumentLocals();
+          // (#5316 review r1 F3) §26.1.13 step 1 for every non-Object target,
+          // not just the statically-branded ones the guard above catches. See
+          // the 3-argument arm below for why this is the by-EXCLUSION emitter.
+          guardReflectTargetIsObject(recvLocals[0]!, "Reflect.set called on non-object");
+          coerceReflectPropertyKey(recvLocals[1]);
+          for (let i = 0; i < 4; i++) {
+            const local = recvLocals[i];
+            if (local === undefined) fctx.body.push({ op: "ref.null.extern" });
+            else fctx.body.push({ op: "local.get", index: local });
+          }
+          const recvSetIdx = ensureLateImport(
+            ctx,
+            "__reflect_set_receiver",
+            [externRef, externRef, externRef, externRef],
+            [i32Ty],
           );
-          for (const local of [nLocal, iLocal, vecLocal, listLocal, thisLocal, fnLocal]) {
-            releaseTempLocal(fctx, local);
+          flushLateImportShifts(ctx, fctx);
+          if (recvSetIdx !== undefined) {
+            noteReflectSetReceiverCall(ctx);
+            fctx.body.push({ op: "call", funcIdx: recvSetIdx });
+            releaseReflectArgumentLocals(recvLocals);
+            return { kind: "i32" };
           }
-          return { kind: "externref" };
+          releaseReflectArgumentLocals(recvLocals);
+          fctx.body.push({ op: "drop" }, { op: "drop" }, { op: "drop" }, { op: "drop" }, { op: "i32.const", value: 0 });
+          return { kind: "i32" };
+        }
+        reportError(
+          ctx,
+          expr,
+          "Codegen error: Reflect.set with an explicit receiver argument is not yet supported " +
+            "in --target standalone (#2046); the receiver would be silently dropped and accessor " +
+            "setters would write to the target instead of the receiver.",
+        );
+        fctx.body.push({ op: "i32.const", value: 0 });
+        return { kind: "i32" };
+      }
+      // §26.1.13 step 1: Reflect.set requires an Object target. The native
+      // standalone helper implements the supported [[Set]] subset but its
+      // non-$Object refusal is not the Reflect TypeError, so validate the
+      // statically primitive target at the call site (including Symbol via
+      // the shared #4945 ESSymbolLike guard) before emitting native args.
+      const targetArg = expr.arguments[0]!;
+      if (emitNonObjectArgGuard(ctx, fctx, targetArg, "Reflect.set")) {
+        fctx.body.push({ op: "i32.const", value: 0 }); // unreachable after throw
+        return { kind: "i32" };
+      }
+      // (#5196 R3-2 C5) Arguments go through locals rather than straight onto
+      // the stack so the key can take ToPropertyKey in place (an abrupt
+      // completion from a throwing `toString` must escape). Evaluation order
+      // is unchanged — `emitReflectArgumentLocals` compiles the same
+      // arguments in the same source order.
+      const setLocals = emitReflectArgumentLocals();
+      // (#5316 review r1 F3) §26.1.13 step 1 for every non-Object target.
+      // `emitNonObjectArgGuard` above is a STATIC test on the argument's TS
+      // type, so it never fires for the spelling programs actually use —
+      // `Reflect.set(1 as any, …)`, or a variable the checker calls `any`.
+      // This is the same runtime by-exclusion brand `Reflect.get`/`has` were
+      // given in #5196: it rejects only positively-branded primitives
+      // (number/string/boolean/bigint/Symbol) and admits every unrecognised
+      // object shape, so an ordinary object flowing through a representation
+      // the classifiers do not brand keeps its previous answer instead of
+      // becoming a spurious TypeError. Both `Reflect.set` arms get it: the
+      // 4-argument form is what exposed the hole, but the guard is shared and
+      // the spec text is one step for both (probe `n2`, 3-argument:
+      // base = lane = 11, node = 22).
+      guardReflectTargetIsObject(setLocals[0]!, "Reflect.set called on non-object");
+      coerceReflectPropertyKey(setLocals[1]);
+      for (let i = 0; i < 3; i++) {
+        const local = setLocals[i];
+        if (local === undefined) fctx.body.push({ op: "ref.null.extern" });
+        else fctx.body.push({ op: "local.get", index: local });
+      }
+      const funcIdx = ensureLateImport(ctx, "__reflect_set", [externRef, externRef, externRef], [i32Ty]);
+      flushLateImportShifts(ctx, fctx);
+      if (funcIdx !== undefined) {
+        fctx.body.push({ op: "call", funcIdx });
+        releaseReflectArgumentLocals(setLocals);
+        return { kind: "i32" };
+      }
+      releaseReflectArgumentLocals(setLocals);
+      fctx.body.push({ op: "drop" }, { op: "drop" }, { op: "drop" }, { op: "i32.const", value: 0 });
+      return { kind: "i32" };
+    }
+
+    if (reflectMethod === "has" && expr.arguments.length >= 2) {
+      const argLocals = emitReflectArgumentLocals();
+      const targetLocal = argLocals[0]!;
+
+      // §28.1.8 step 1: reject the native Symbol carrier before the native
+      // helper performs ToPropertyKey. Extra arguments were already
+      // evaluated above as part of ArgumentListEvaluation. Other native
+      // object carriers remain on their existing helper paths.
+      if (mayCarryNativeReflectSymbol(expr.arguments[0])) {
+        emitNativeReflectSymbolTargetGuard(targetLocal, "Reflect.has called on non-object");
+      }
+      // (#5196 R3-2 C4) §28.1.8 step 1 for EVERY non-Object target, not just
+      // the Symbol carrier — the same guard `deleteProperty`/`ownKeys`/
+      // `isExtensible` already use (it admits closure and expando carriers
+      // positively, so an ordinary callable/instance target is unaffected).
+      // (#6494 S3) …plus a statically-nullish target.
+      guardReflectTargetIsObjectOrNullish(targetLocal, "Reflect.has called on non-object", expr.arguments[0]);
+      fctx.body.push({ op: "local.get", index: argLocals[0]! });
+      fctx.body.push({ op: "local.get", index: argLocals[1]! });
+      const funcIdx = ensureLateImport(ctx, "__extern_has", [externRef, externRef], [i32Ty]);
+      flushLateImportShifts(ctx, fctx);
+      if (funcIdx !== undefined) {
+        fctx.body.push({ op: "call", funcIdx });
+        releaseReflectArgumentLocals(argLocals);
+        return { kind: "i32" };
+      }
+      // (#2046 cleanup) i32-false: a registration failure should not report
+      // a phantom `true` for `Reflect.has`.
+      const fallback = fallbackReturn(2, "i32-false");
+      releaseReflectArgumentLocals(argLocals);
+      return fallback;
+    }
+
+    if (reflectMethod === "deleteProperty" && expr.arguments.length >= 2) {
+      // (#2046 PR-A defect 3a) Reflect.deleteProperty(primitive, k) must
+      // throw a TypeError (§28.1.4 — Reflect requires an Object target),
+      // NOT return true. The shared __delete_property helper returns 1 for
+      // non-$Object targets because sloppy `delete primitive[k]` is a no-op
+      // SUCCESS — correct there, wrong for Reflect. So gate at the CALL SITE
+      // (do NOT touch the shared helper): ref.test the target against
+      // $Object; if it is not an open object, throw a catchable TypeError.
+      ensureObjectRuntime(ctx);
+      const targetLocal = allocTempLocal(fctx, externRef);
+      // Evaluate the target once, save it for both the guard and the call.
+      {
+        const tArg = expr.arguments[0];
+        if (tArg !== undefined) {
+          const tTy = compileExpression(ctx, fctx, tArg, externRef);
+          if (tTy && tTy.kind !== "externref") coerceType(ctx, fctx, tTy, externRef);
+          else if (tTy === null) fctx.body.push({ op: "ref.null.extern" });
+        } else {
+          fctx.body.push({ op: "ref.null.extern" });
         }
       }
+      fctx.body.push({ op: "local.set", index: targetLocal });
+      // Native `$Object` targets and explicitly admitted JS boundary objects
+      // are both legitimate. Everything else remains a Reflect TypeError.
+      guardNativeReflectTarget(targetLocal, "Reflect.deleteProperty called on non-object");
+      // target is an $Object — push [target, key] and delete.
+      fctx.body.push({ op: "local.get", index: targetLocal });
+      releaseTempLocal(fctx, targetLocal);
+      {
+        const kArg = expr.arguments[1];
+        if (kArg !== undefined) {
+          const kTy = compileExpression(ctx, fctx, kArg, externRef);
+          if (kTy && kTy.kind !== "externref") coerceType(ctx, fctx, kTy, externRef);
+          else if (kTy === null) fctx.body.push({ op: "ref.null.extern" });
+        } else {
+          fctx.body.push({ op: "ref.null.extern" });
+        }
+      }
+      const funcIdx = ensureLateImport(ctx, "__delete_property", [externRef, externRef], [i32Ty]);
+      flushLateImportShifts(ctx, fctx);
+      if (funcIdx !== undefined) {
+        fctx.body.push({ op: "call", funcIdx });
+        return { kind: "i32" };
+      }
+      return fallbackReturn(0, "i32-false");
+    }
 
+    if (reflectMethod === "ownKeys" && expr.arguments.length >= 1) {
+      const targetLocal = allocTempLocal(fctx, externRef);
+      const targetType = compileExpression(ctx, fctx, expr.arguments[0]!, externRef);
+      if (targetType && targetType.kind !== "externref") coerceType(ctx, fctx, targetType, externRef);
+      else if (!targetType) fctx.body.push({ op: "ref.null.extern" });
+      fctx.body.push({ op: "local.set", index: targetLocal });
+      guardNativeReflectTarget(targetLocal, "Reflect.ownKeys called on non-object");
+
+      const funcIdx = ensureLateImport(ctx, "__getOwnPropertyNames", [externRef], [externRef]);
+      flushLateImportShifts(ctx, fctx);
+      // (#6651 cluster F) §28.1.13 is `target.[[OwnPropertyKeys]]()`, whose
+      // §10.1.11.1 order is integer indices ascending, then string keys in
+      // creation order, then SYMBOL keys in creation order.
+      // `__getOwnPropertyNames` supplies the first two groups and drops the
+      // third — the arm's own comment says "the native runtime does not
+      // retain symbol-keyed properties yet", which is stale: it does, and
+      // `Object.getOwnPropertySymbols` already reads them back with correct
+      // identity (measured — `Reflect.ownKeys(o).length` was 1 where
+      // `getOwnPropertySymbols(o).length` was 1 on the same object). So the
+      // gap is only that the two lists are never joined. Appending the
+      // symbol vec to the (freshly built, unshared) names vec is the whole
+      // §10.1.11.1 step-4 concatenation; declines to the names-only answer
+      // when any of the three helpers is absent from this module.
+      const ownSymbolsIdx = ensureLateImport(ctx, "__getOwnPropertySymbols", [externRef], [externRef]);
+      flushLateImportShifts(ctx, fctx);
+      const externLengthIdx = ensureLateImport(ctx, "__extern_length", [externRef], [{ kind: "f64" }]);
+      flushLateImportShifts(ctx, fctx);
+      const externGetIdxIdx = ensureLateImport(ctx, "__extern_get_idx", [externRef, { kind: "f64" }], [externRef]);
+      flushLateImportShifts(ctx, fctx);
+      const objVecPushIdx = ctx.funcMap.get("__objvec_push");
+      const proxyTypeIdxOwnKeys = ctx.objectRuntimeTypes?.proxyTypeIdx;
+      /** Append every own symbol key of `targetLocal` onto the names vec on the stack. */
+      const appendOwnSymbols = (): Instr[] => {
+        const symsIdx = ctx.funcMap.get("__getOwnPropertySymbols") ?? ownSymbolsIdx;
+        const lenIdx = ctx.funcMap.get("__extern_length") ?? externLengthIdx;
+        const getIdx = ctx.funcMap.get("__extern_get_idx") ?? externGetIdxIdx;
+        if (symsIdx === undefined || lenIdx === undefined || getIdx === undefined || objVecPushIdx === undefined) {
+          return [];
+        }
+        const keysLocal = allocTempLocal(fctx, externRef);
+        const symsLocal = allocTempLocal(fctx, externRef);
+        const nLocal = allocTempLocal(fctx, { kind: "f64" });
+        const iLocal = allocTempLocal(fctx, { kind: "f64" });
+        const appendLoop: Instr[] = [
+          { op: "local.get", index: targetLocal },
+          { op: "call", funcIdx: symsIdx },
+          { op: "local.tee", index: symsLocal },
+          { op: "call", funcIdx: lenIdx },
+          { op: "local.set", index: nLocal },
+          { op: "f64.const", value: 0 },
+          { op: "local.set", index: iLocal },
+          {
+            op: "block",
+            blockType: { kind: "empty" },
+            body: [
+              {
+                op: "loop",
+                blockType: { kind: "empty" },
+                body: [
+                  { op: "local.get", index: iLocal },
+                  { op: "local.get", index: nLocal },
+                  { op: "f64.ge" },
+                  { op: "br_if", depth: 1 },
+                  { op: "local.get", index: keysLocal },
+                  { op: "local.get", index: symsLocal },
+                  { op: "local.get", index: iLocal },
+                  { op: "call", funcIdx: getIdx },
+                  { op: "call", funcIdx: objVecPushIdx },
+                  { op: "local.get", index: iLocal },
+                  { op: "f64.const", value: 1 },
+                  { op: "f64.add" },
+                  { op: "local.set", index: iLocal },
+                  { op: "br", depth: 0 },
+                ],
+              },
+            ],
+          },
+        ];
+        // A `$Proxy` receiver is EXCLUDED, and the exclusion is load-bearing:
+        // `__getOwnPropertyNames`'s proxy front guard returns the §10.5.11
+        // `ownKeys` TRAP's own array, which the spec requires be returned
+        // as-is and which the user still holds a reference to. Appending to
+        // it would both mutate a user array and add keys the trap did not
+        // report. Only the ordinary `$Object` walk (a vec this call just
+        // built) is concatenated.
+        const out: Instr[] = [
+          { op: "local.set", index: keysLocal },
+          ...(proxyTypeIdxOwnKeys === undefined
+            ? appendLoop
+            : ([
+                { op: "local.get", index: targetLocal },
+                { op: "any.convert_extern" },
+                { op: "ref.test", typeIdx: proxyTypeIdxOwnKeys },
+                { op: "i32.eqz" },
+                { op: "if", blockType: { kind: "empty" }, then: appendLoop },
+              ] satisfies Instr[])),
+          { op: "local.get", index: keysLocal },
+        ];
+        releaseTempLocal(fctx, iLocal);
+        releaseTempLocal(fctx, nLocal);
+        releaseTempLocal(fctx, symsLocal);
+        releaseTempLocal(fctx, keysLocal);
+        return out;
+      };
+      const boundaryOwnKeysIdx = boundaryReflectInterop ? ctx.funcMap.get("__boundary_object_own_keys") : undefined;
+      if (funcIdx !== undefined && boundaryOwnKeysIdx !== undefined) {
+        const resultLocal = allocTempLocal(fctx, externRef);
+        fctx.body.push({ op: "local.get", index: targetLocal });
+        fctx.body.push({ op: "call", funcIdx: boundaryOwnKeysIdx });
+        fctx.body.push({ op: "local.tee", index: resultLocal });
+        fctx.body.push({ op: "ref.is_null" });
+        fctx.body.push({
+          op: "if",
+          blockType: { kind: "val", type: externRef },
+          then: [{ op: "local.get", index: targetLocal }, { op: "call", funcIdx }, ...appendOwnSymbols()],
+          else: [{ op: "local.get", index: resultLocal }],
+        });
+        releaseTempLocal(fctx, resultLocal);
+        releaseTempLocal(fctx, targetLocal);
+        return { kind: "externref" };
+      }
+      if (funcIdx !== undefined) {
+        fctx.body.push({ op: "local.get", index: targetLocal });
+        fctx.body.push({ op: "call", funcIdx });
+        fctx.body.push(...appendOwnSymbols());
+        releaseTempLocal(fctx, targetLocal);
+        return { kind: "externref" };
+      }
+      releaseTempLocal(fctx, targetLocal);
+      fctx.body.push({ op: "ref.null.extern" });
+      return { kind: "externref" };
+    }
+
+    if (reflectMethod === "getOwnPropertyDescriptor" && expr.arguments.length >= 2) {
+      // (#2046 S5) Route to the native __getOwnPropertyDescriptor, the same
+      // helper backing standalone Object.getOwnPropertyDescriptor. It reads
+      // the $PropEntry back into a descriptor `$Object` (data → { value,
+      // writable, enumerable, configurable }, accessor → { get, set,
+      // enumerable, configurable }) and returns `undefined` for a missing own
+      // property — §26.1.7 step 3 (FromPropertyDescriptor over
+      // [[GetOwnProperty]]). The key is coerced with ToPropertyKey inside the
+      // native via __to_property_key (#2042 S1), so numeric keys work.
+      //
+      // §26.1.7 step 1 requires a TypeError when the target is not an Object.
+      // The native returns `undefined` for a non-$Object receiver (correct
+      // for Object.getOwnPropertyDescriptor, which forwards a coerced
+      // primitive wrapper), so — exactly as the deleteProperty PR-A guard —
+      // gate at the CALL SITE with a `ref.test $Object` and throw a catchable
+      // TypeError instead. The shared native is untouched.
+      ensureObjectRuntime(ctx);
+      const targetLocal = allocTempLocal(fctx, externRef);
+      {
+        const tArg = expr.arguments[0];
+        if (tArg !== undefined) {
+          const tTy = compileExpression(ctx, fctx, tArg, externRef);
+          if (tTy && tTy.kind !== "externref") coerceType(ctx, fctx, tTy, externRef);
+          else if (tTy === null) fctx.body.push({ op: "ref.null.extern" });
+        } else {
+          fctx.body.push({ op: "ref.null.extern" });
+        }
+      }
+      fctx.body.push({ op: "local.set", index: targetLocal });
+      guardNativeReflectTarget(targetLocal, "Reflect.getOwnPropertyDescriptor called on non-object");
+      // target is an $Object — push [target, key] and read the descriptor.
+      fctx.body.push({ op: "local.get", index: targetLocal });
+      releaseTempLocal(fctx, targetLocal);
+      {
+        const kArg = expr.arguments[1];
+        if (kArg !== undefined) {
+          const kTy = compileExpression(ctx, fctx, kArg, externRef);
+          if (kTy && kTy.kind !== "externref") coerceType(ctx, fctx, kTy, externRef);
+          else if (kTy === null) fctx.body.push({ op: "ref.null.extern" });
+        } else {
+          fctx.body.push({ op: "ref.null.extern" });
+        }
+      }
+      // (#5196 R3-2 C5) §7.1.19 ToPropertyKey at the CALL SITE, on the value
+      // just pushed: the native's internal coercion does not propagate an
+      // abrupt completion from a throwing `toString`/`valueOf`.
+      {
+        const tpkIdx = ctx.funcMap.get("__to_property_key");
+        if (tpkIdx !== undefined) fctx.body.push({ op: "call", funcIdx: tpkIdx });
+      }
+      const funcIdx = ensureLateImport(ctx, "__getOwnPropertyDescriptor", [externRef, externRef], [externRef]);
+      flushLateImportShifts(ctx, fctx);
+      if (funcIdx !== undefined) {
+        fctx.body.push({ op: "call", funcIdx });
+        return { kind: "externref" };
+      }
+      return fallbackReturn(0, "extern-null");
+    }
+
+    // (#5196 R3-2 C5) `Reflect.defineProperty(target, key)` — two arguments,
+    // no descriptor. §28.1.3 runs step 1 (Object target), step 2
+    // ToPropertyKey (which is where `return-abrupt-from-property-key.js`
+    // expects its throwing `toString` to escape) and only THEN step 3
+    // ToPropertyDescriptor(undefined), which is the required TypeError. The
+    // three-argument arm below cannot serve this: its applier needs a
+    // descriptor expression. Without this branch the call compiled to the
+    // "#1472 Phase C" hard refusal, which is a COMPILE error, not a
+    // catchable one.
+    if (reflectMethod === "defineProperty" && expr.arguments.length === 2) {
+      ensureObjectRuntime(ctx);
+      const targetLocal = allocTempLocal(fctx, externRef);
+      const targetType = compileExpression(ctx, fctx, expr.arguments[0]!, externRef);
+      if (targetType && targetType.kind !== "externref") coerceType(ctx, fctx, targetType, externRef);
+      else if (!targetType) fctx.body.push({ op: "ref.null.extern" });
+      fctx.body.push({ op: "local.set", index: targetLocal });
+      guardReflectTargetIsObject(targetLocal, "Reflect.defineProperty called on non-object");
+      releaseTempLocal(fctx, targetLocal);
+      const keyType = compileExpression(ctx, fctx, expr.arguments[1]!, externRef);
+      if (keyType && keyType.kind !== "externref") coerceType(ctx, fctx, keyType, externRef);
+      else if (!keyType) fctx.body.push({ op: "ref.null.extern" });
+      const tpkIdx = ctx.funcMap.get("__to_property_key");
+      if (tpkIdx !== undefined) fctx.body.push({ op: "call", funcIdx: tpkIdx });
+      fctx.body.push({ op: "drop" });
+      emitThrowTypeError(ctx, fctx, "Property description must be an object");
+      fctx.body.push({ op: "i32.const", value: 0 }); // unreachable after throw
+      return { kind: "i32" };
+    }
+
+    if (reflectMethod === "defineProperty" && expr.arguments.length >= 3) {
+      // (#2046) Route Reflect.defineProperty(target, key, desc) through the
+      // SAME standalone runtime-descriptor applier that backs
+      // Object.defineProperty — `emitDefinePropertyDescRuntime`
+      // (object-ops.ts). Reusing it (rather than hand-rolling a
+      // `__obj_define_from_desc` call here) is essential because that helper
+      // performs the **#2372 descriptor struct reify**: an INLINE descriptor
+      // object literal (`{ value: 42, … }`) is typed by the TS checker as a
+      // closed WasmGC struct, which the native `__obj_define_from_desc`'s
+      // internal `ref.test $Object` rejects as "not an object" → spurious
+      // §10.1.6 TypeError. The helper reifies that struct into a fresh
+      // `$Object` first, so inline-literal descriptors work. The issue file
+      // recorded this arm as blocked on a write-side native (#2043); that
+      // blocker is STALE — the native is registered by ensureObjectRuntime
+      // and reachable end-to-end (it has backed Object.defineProperty since
+      // #1629b).
+      //
+      // §28.1.3 Reflect.defineProperty(target, propertyKey, attributes):
+      //   step 1: target not an Object → throw a TypeError. The native
+      //     applier silently no-ops on a non-$Object target (matching the
+      //     pre-existing standalone Object.defineProperty gap), so enforce
+      //     the §28.1.3 step-1 throw HERE with the shared
+      //     `emitNonObjectArgGuard` — it fires for a statically primitive /
+      //     null / undefined target (the test262 non-object subtests use
+      //     bare primitive literals). A runtime-`any` primitive still slips
+      //     through, an accepted imprecision shared with Object.defineProperty.
+      //   step 2: key = ? ToPropertyKey(propertyKey) — handled inside the
+      //     native via __to_property_key (#2042 S1), so numeric keys coerce.
+      //   step 3: desc = ? ToPropertyDescriptor(attributes) — a malformed
+      //     descriptor (data+accessor conflict, non-callable get/set) throws
+      //     a catchable TypeError, which the native already raises (these
+      //     originate in ToPropertyDescriptor, BEFORE [[DefineOwnProperty]],
+      //     so they throw for Reflect too).
+      //   step 4: return the boolean [[DefineOwnProperty]] result. The native
+      //     returns the obj (always truthy) and has no failure channel, so we
+      //     drop it and return i32 `true`.
+      //
+      // KNOWN LIMITATION (shared with standalone Object.defineProperty): a
+      // *rejected* redefine of an existing non-configurable property silently
+      // no-ops in the native rather than surfacing failure, so we cannot
+      // return the spec's `false` for that case — it returns `true`. Faithful
+      // handling needs a failure channel in __defineProperty_value and is out
+      // of this slice; converting the common refusal→working path is the win.
+      const objArg = expr.arguments[0];
+      const keyArg = expr.arguments[1];
+      const descArg = expr.arguments[2];
+      if (objArg !== undefined && keyArg !== undefined && descArg !== undefined) {
+        // §28.1.3 step 1: evaluate the target exactly once and reject every
+        // non-Object carrier before evaluating the property key or
+        // descriptor. This is the same runtime admission predicate used by
+        // direct ownKeys/gOPD and by the snapshotted Reflect method values.
+        const targetLocal = allocTempLocal(fctx, externRef);
+        const targetType = compileExpression(ctx, fctx, objArg, externRef);
+        if (targetType && targetType.kind !== "externref") coerceType(ctx, fctx, targetType, externRef);
+        else if (!targetType) fctx.body.push({ op: "ref.null.extern" });
+        fctx.body.push({ op: "local.set", index: targetLocal });
+        guardNativeReflectTarget(targetLocal, "Reflect.defineProperty called on non-object");
+        // `undefinedFields` is the host-only ToPropertyDescriptor presence
+        // sidecar — unused on the standalone path, so pass empty.
+        const applierStart = fctx.body.length;
+        const r = emitDefinePropertyDescRuntime(ctx, fctx, objArg, keyArg, descArg, [], targetLocal);
+        releaseTempLocal(fctx, targetLocal);
+        // (#6770 S4) §28.1.3 step 4: a REJECTED define answers `false`.
+        // The applier returns an externref; Reflect wants a boolean.
+        // (#1355 Slice F) For a PROXY receiver the standalone
+        // `__obj_define_from_desc` front-guard returns the defineProperty
+        // trap's booleanish externref (NOT the obj) — so we must surface
+        // that result, not unconditionally return true. For a non-proxy
+        // receiver the applier returns the (always-truthy) obj, so
+        // `__is_truthy` still yields the spec `true`. This keeps the
+        // non-proxy behaviour identical while making a proxy trap's
+        // false/true return observable through Reflect.defineProperty.
+        const isTruthyIdx = ctx.funcMap.get("__is_truthy");
+        if (r !== null && definePropertyBooleanFrom(ctx, fctx, applierStart, isTruthyIdx)) return { kind: "i32" };
+        if (r !== null) {
+          if (isTruthyIdx !== undefined) {
+            fctx.body.push({ op: "call", funcIdx: isTruthyIdx });
+          } else {
+            fctx.body.push({ op: "drop" });
+            fctx.body.push({ op: "i32.const", value: 1 });
+          }
+          return { kind: "i32" };
+        }
+      }
+      return fallbackReturn(0, "i32-false");
+    }
+
+    if (reflectMethod === "getPrototypeOf" && expr.arguments.length >= 1) {
+      // (#2046 PR-C) Route Reflect.getPrototypeOf(target) to the native
+      // Object.getPrototypeOf helper. It returns the `$Object.$proto` value.
+      // §28.1.1 Reflect.getPrototypeOf(target):
+      //   step 1: target not an Object → throw a TypeError. The native
+      //     returns null for a non-$Object receiver (correct for
+      //     Object.getPrototypeOf after its ToObject), so — exactly as the
+      //     deleteProperty / getOwnPropertyDescriptor PR-A guards — enforce
+      //     the §28.1.1 step-1 throw at the CALL SITE with the shared
+      //     emitNonObjectArgGuard (fires for a statically-primitive / null /
+      //     undefined target). The shared native is untouched.
+      //   step 2: return ? target.[[GetPrototypeOf]]() — the native read.
+      const arg0 = expr.arguments[0]!;
+      if (emitNonObjectArgGuard(ctx, fctx, arg0, "Reflect.getPrototypeOf")) {
+        fctx.body.push({ op: "ref.null.extern" }); // unreachable after throw
+        return { kind: "externref" };
+      }
+      const pristineIntrinsicPrototype = compilePristineIntrinsicPrototypeCapture(ctx, fctx, arg0);
+      if (pristineIntrinsicPrototype) return pristineIntrinsicPrototype;
+      const pristineIteratorPrototype = compilePristineIteratorPrototypeCapture(ctx, fctx, arg0);
+      if (pristineIteratorPrototype) return pristineIteratorPrototype;
+      const argType = compileExpression(ctx, fctx, arg0, externRef);
+      if (!argType) {
+        fctx.body.push({ op: "ref.null.extern" });
+        return { kind: "externref" };
+      }
+      if (argType.kind !== "externref") coerceType(ctx, fctx, argType, externRef);
+      const gpoIdx = ensureLateImport(ctx, "__getPrototypeOf", [externRef], [externRef]);
+      flushLateImportShifts(ctx, fctx);
+      if (gpoIdx !== undefined) {
+        fctx.body.push({ op: "call", funcIdx: gpoIdx });
+        return { kind: "externref" };
+      }
+      return fallbackReturn(0, "extern-null");
+    }
+
+    if (reflectMethod === "setPrototypeOf" && expr.arguments.length >= 2) {
+      // (#2046 PR-C) Route Reflect.setPrototypeOf(target, proto) to the
+      // native __object_setPrototypeOf — the SAME helper backing standalone
+      // Object.setPrototypeOf (calls.ts ~5829). It performs the §10.1.2.1
+      // OrdinarySetPrototypeOf extensibility + cycle checks, writes
+      // $Object.$proto (field 0) on success, and returns `obj` (NOT a
+      // boolean). §28.1.14 Reflect.setPrototypeOf(target, proto):
+      //   step 1: target not an Object → throw a TypeError. The native
+      //     silently no-ops (returns obj) on a non-$Object receiver, so
+      //     enforce the step-1 throw at the CALL SITE with the shared
+      //     emitNonObjectArgGuard (statically-primitive / null / undefined
+      //     target).
+      //   step 2: proto not Object and not null → throw a TypeError. Reuse
+      //     the same static guard on the proto arg, but `null` is a LEGAL
+      //     proto here (unlike target), so only reject a statically-
+      //     primitive NON-null proto. A `null`/object proto passes;
+      //     undefined, number/string/boolean, and Symbol proto literals throw.
+      //   step 4: return the boolean [[SetPrototypeOf]] result. The native
+      //     has no failure channel (a refused set — non-extensible target or
+      //     a cycle — silently no-ops and still returns obj), so we drop obj
+      //     and return i32 `true`. KNOWN LIMITATION (identical to the
+      //     standalone Reflect.defineProperty arm above): a *refused* set
+      //     returns the spec's `true` instead of `false`. Faithful handling
+      //     needs a boolean failure channel in __object_setPrototypeOf and is
+      //     out of this slice; converting the common refusal→working path is
+      //     the win.
+      const targetArg = expr.arguments[0]!;
+      const protoArg = expr.arguments[1]!;
+      // §28.1.14 step 1: statically-non-object target → throw TypeError.
+      if (emitNonObjectArgGuard(ctx, fctx, targetArg, "Reflect.setPrototypeOf")) {
+        fctx.body.push({ op: "i32.const", value: 0 }); // unreachable after throw
+        return { kind: "i32" };
+      }
+      // §28.1.14 step 2: a statically-primitive proto that is not null is
+      // illegal. Only `null` is a legal primitive prototype; undefined and
+      // void expressions must take the shared TypeError guard below.
+      const protoIsNullish = protoArg.kind === ts.SyntaxKind.NullKeyword;
+      if (!protoIsNullish && emitNonObjectArgGuard(ctx, fctx, protoArg, "Reflect.setPrototypeOf")) {
+        fctx.body.push({ op: "i32.const", value: 0 }); // unreachable after throw
+        return { kind: "i32" };
+      }
+      // obj (externref)
+      const objType = compileExpression(ctx, fctx, targetArg, externRef);
+      if (!objType) {
+        fctx.body.push({ op: "i32.const", value: 1 });
+        return { kind: "i32" };
+      }
+      if (objType.kind !== "externref") coerceType(ctx, fctx, objType, externRef);
+      // (#5268 step 1, cluster B) Stash the operands so the §10.4.7
+      // immutable-prototype receiver can answer `false` instead of the
+      // KNOWN LIMITATION's unconditional `true`. The ordinary refusals
+      // (non-extensible, cycle) still return `true` — closing those needs the
+      // failure channel the limitation note describes, which is not this
+      // slice; `%Object.prototype%` is the one receiver whose refusal is a
+      // pure predicate on the receiver's identity.
+      const spoTargetLocal = allocTempLocal(fctx, externRef);
+      const spoProtoLocal = allocTempLocal(fctx, externRef);
+      fctx.body.push({ op: "local.tee", index: spoTargetLocal });
+      // proto (externref) — compileProtoArg reifies an inline-literal proto
+      // into a native $Object so __object_setPrototypeOf's `ref.test $Object`
+      // succeeds (the same #2580 M3 Stage A handling Object.setPrototypeOf
+      // uses); keeps the ordinary externref path for non-literal / null protos.
+      compileProtoArg(ctx, fctx, protoArg);
+      fctx.body.push({ op: "local.tee", index: spoProtoLocal });
+      // The static guards above cannot validate values read from the realm's
+      // heterogeneous handle table. Both operands have now been evaluated;
+      // reject invalid dynamic values before the writer can mutate anything.
+      emitNativeReflectTargetGuard(ctx, fctx, spoTargetLocal, "Reflect.setPrototypeOf called on non-object");
+      fctx.body.push({ op: "local.get", index: spoProtoLocal }, { op: "ref.is_null" }, { op: "i32.eqz" });
+      const beforePrototypeGuard = fctx.body.length;
+      emitNativeReflectTargetGuard(
+        ctx,
+        fctx,
+        spoProtoLocal,
+        "Reflect.setPrototypeOf requires an object or null prototype",
+      );
+      const prototypeGuard = fctx.body.splice(beforePrototypeGuard);
+      fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: prototypeGuard });
+      const spoIdx = ensureLateImport(ctx, "__object_setPrototypeOf", [externRef, externRef], [externRef]);
+      flushLateImportShifts(ctx, fctx);
+      // (#6651 cluster F) §28.1.14 step 4 — the REAL boolean. The KNOWN
+      // LIMITATION above ("a refused set returns `true`") described the
+      // missing failure channel; #5148 cluster 2b has since built exactly
+      // that channel as `__object_setPrototypeOf_status`, a pure §10.1.2.1
+      // predicate (SameValue → true, non-extensible → false, cycle → false)
+      // that performs NO write and answers a permissive 1 for every receiver
+      // the writer does not own (non-`$Object`, `$Proxy`). So the answer is
+      // the CONJUNCTION of two bits that are each already correct:
+      //   - the ordinary bit: `__object_setPrototypeOf_status(o, p)`;
+      //   - the exotic bit: `__is_truthy(__object_setPrototypeOf(o, p))`,
+      //     which for a `$Proxy` receiver is the §10.5.2 trap's booleanish
+      //     result (the writer's proxy front guard returns it instead of the
+      //     obj) and for an ordinary receiver is the always-truthy obj → 1.
+      // Reading the writer's result through `__is_truthy` is the same rule
+      // `Reflect.defineProperty` above already applies to its applier, so
+      // this makes the two Reflect arms agree rather than adding a rule.
+      // Evaluation order is status-then-write and the operands come from the
+      // two locals, so neither argument is re-evaluated.
+      const spoStatusIdx = ensureLateImport(ctx, "__object_setPrototypeOf_status", [externRef, externRef], [i32Ty]);
+      flushLateImportShifts(ctx, fctx);
+      // (#6651 cluster F, review of the first cut) The status native's step-2
+      // SameValue compares the two ENCODED `$proto` references, and an
+      // ordinary object's `%Object.prototype%` terminal is encoded as a NULL
+      // field (`OBJ_FLAG_NULL_PROTO` distinguishes it from an explicitly
+      // null-prototype object). So `Reflect.setPrototypeOf(o, Object.prototype)`
+      // on a NON-EXTENSIBLE ordinary `o` looked like "different prototype"
+      // and fell through to the step-3 refusal — the spec says step 2 wins and
+      // the answer is `true`. That shape is REAL: it cost
+      // `Reflect/setPrototypeOf/return-true-if-proto-is-current.js` a
+      // pass → fail in the neighbourhood sweep of the first cut, which is how
+      // it was found. No probe predicted it; only the before/after row run did.
+      // The fallback asks the reader that already models the implicit
+      // terminal — `__getPrototypeOf` — and ONLY when the status bit is 0, so
+      // a live `$Proxy` never sees an extra `getPrototypeOf` trap call: the
+      // status native answers a permissive 1 for every non-`$Object` receiver,
+      // and that set is exactly the one that contains proxies.
+      const spoGpoIdx = ensureLateImport(ctx, "__getPrototypeOf", [externRef], [externRef]);
+      flushLateImportShifts(ctx, fctx);
+      const spoStrictEqIdx = ensureExternStrictEqHelper(ctx);
+      flushLateImportShifts(ctx, fctx);
+      const spoWriteIdx = ctx.funcMap.get("__object_setPrototypeOf") ?? spoIdx;
+      const spoIsTruthyIdx = ctx.funcMap.get("__is_truthy");
+      const spoSameAsCurrent = (): Instr[] => {
+        const gpo = ctx.funcMap.get("__getPrototypeOf") ?? spoGpoIdx;
+        if (gpo === undefined || spoStrictEqIdx === undefined) return [];
+        return [
+          { op: "i32.eqz" },
+          {
+            op: "if",
+            blockType: { kind: "val", type: i32Ty },
+            then: [
+              { op: "local.get", index: spoTargetLocal },
+              { op: "call", funcIdx: gpo },
+              { op: "local.get", index: spoProtoLocal },
+              { op: "call", funcIdx: spoStrictEqIdx },
+            ],
+            else: [{ op: "i32.const", value: 1 }],
+          },
+        ];
+      };
+      // The answer, built from the two locals. Declines to the previous
+      // unconditional `true` if either half is unavailable in this module.
+      const spoBooleanAnswer = (writeIdx: number): Instr[] =>
+        spoStatusIdx === undefined || spoIsTruthyIdx === undefined
+          ? [
+              { op: "local.get", index: spoTargetLocal },
+              { op: "local.get", index: spoProtoLocal },
+              { op: "call", funcIdx: writeIdx },
+              { op: "drop" },
+              { op: "i32.const", value: 1 },
+            ]
+          : [
+              { op: "local.get", index: spoTargetLocal },
+              { op: "local.get", index: spoProtoLocal },
+              { op: "call", funcIdx: spoStatusIdx },
+              ...spoSameAsCurrent(),
+              { op: "local.get", index: spoTargetLocal },
+              { op: "local.get", index: spoProtoLocal },
+              { op: "call", funcIdx: writeIdx },
+              { op: "call", funcIdx: spoIsTruthyIdx },
+              { op: "i32.and" },
+            ];
+      if (spoIdx !== undefined) {
+        const immutable = objectPrototypeIsImmutableInstrs(ctx, spoTargetLocal);
+        if (immutable) {
+          // An immutable-prototype receiver must NOT be written and must
+          // answer `SameValue(V, current)` — `current` is null, so only a
+          // null proto succeeds.
+          fctx.body.push({ op: "drop" }); // proto
+          fctx.body.push({ op: "drop" }); // obj
+          fctx.body.push(...immutable);
+          fctx.body.push({
+            op: "if",
+            blockType: { kind: "val", type: i32Ty },
+            then: [{ op: "local.get", index: spoProtoLocal }, { op: "ref.is_null" }],
+            else: spoBooleanAnswer(spoWriteIdx ?? spoIdx),
+          });
+        } else {
+          // Both operands are already in their locals (the two `local.tee`s
+          // above), so the stack copies are redundant here.
+          fctx.body.push({ op: "drop" }); // proto
+          fctx.body.push({ op: "drop" }); // obj
+          fctx.body.push(...spoBooleanAnswer(spoWriteIdx ?? spoIdx));
+        }
+        releaseTempLocal(fctx, spoProtoLocal);
+        releaseTempLocal(fctx, spoTargetLocal);
+        return { kind: "i32" };
+      }
+      releaseTempLocal(fctx, spoProtoLocal);
+      releaseTempLocal(fctx, spoTargetLocal);
+      return fallbackReturn(0, "i32-true");
+    }
+
+    if (reflectMethod === "isExtensible" && expr.arguments.length >= 1) {
+      const targetLocal = allocTempLocal(fctx, externRef);
+      const targetType = compileExpression(ctx, fctx, expr.arguments[0]!, externRef);
+      if (targetType && targetType.kind !== "externref") coerceType(ctx, fctx, targetType, externRef);
+      else if (!targetType) fctx.body.push({ op: "ref.null.extern" });
+      fctx.body.push({ op: "local.set", index: targetLocal });
+      guardNativeReflectTarget(targetLocal, "Reflect.isExtensible called on non-object");
+
+      const nativeIdx = ensureLateImport(ctx, "__object_isExtensible", [externRef], [i32Ty]);
+      flushLateImportShifts(ctx, fctx);
+      const boundaryIdx = boundaryReflectInterop ? ctx.funcMap.get("__boundary_object_is_extensible") : undefined;
+      if (nativeIdx !== undefined && boundaryIdx !== undefined) {
+        const resultLocal = allocTempLocal(fctx, i32Ty);
+        fctx.body.push({ op: "local.get", index: targetLocal });
+        fctx.body.push({ op: "call", funcIdx: boundaryIdx });
+        fctx.body.push({ op: "local.tee", index: resultLocal });
+        fctx.body.push({ op: "i32.eqz" });
+        fctx.body.push({
+          op: "if",
+          blockType: { kind: "val", type: i32Ty },
+          then: [
+            { op: "local.get", index: targetLocal },
+            { op: "call", funcIdx: nativeIdx },
+          ],
+          else: [{ op: "local.get", index: resultLocal }, { op: "i32.const", value: 1 }, { op: "i32.sub" }],
+        });
+        releaseTempLocal(fctx, resultLocal);
+        releaseTempLocal(fctx, targetLocal);
+        return { kind: "i32" };
+      }
+      fctx.body.push({ op: "local.get", index: targetLocal });
+      if (nativeIdx !== undefined) fctx.body.push({ op: "call", funcIdx: nativeIdx });
+      else {
+        fctx.body.push({ op: "drop" });
+        fctx.body.push({ op: "i32.const", value: 0 });
+      }
+      releaseTempLocal(fctx, targetLocal);
+      return { kind: "i32" };
+    }
+
+    if (reflectMethod === "preventExtensions" && expr.arguments.length >= 1) {
+      const targetLocal = allocTempLocal(fctx, externRef);
+      const targetType = compileExpression(ctx, fctx, expr.arguments[0]!, externRef);
+      if (targetType && targetType.kind !== "externref") coerceType(ctx, fctx, targetType, externRef);
+      else if (!targetType) fctx.body.push({ op: "ref.null.extern" });
+      fctx.body.push({ op: "local.set", index: targetLocal });
+      guardNativeReflectTarget(targetLocal, "Reflect.preventExtensions called on non-object");
+
+      const nativeIdx = ensureLateImport(ctx, "__object_preventExtensions", [externRef], [externRef]);
+      flushLateImportShifts(ctx, fctx);
+      // (#6651 cluster F) §28.1.11 step 2 returns the BOOLEAN
+      // `target.[[PreventExtensions]]()`. `__object_preventExtensions`'s
+      // `$Proxy` front guard already returns the §10.5.4 trap's booleanish
+      // result (the helper returns externref precisely so it can), and for
+      // an ordinary receiver it returns the always-truthy obj — so
+      // `__is_truthy` is the whole conversion, and `drop; i32.const 1`
+      // was discarding a `false` the trap had already computed. Same rule
+      // `Reflect.defineProperty` applies to its applier result.
+      const prevExtIsTruthyIdx = ctx.funcMap.get("__is_truthy");
+      const prevExtAnswer = (callIdx: number): Instr[] =>
+        prevExtIsTruthyIdx === undefined
+          ? [{ op: "call", funcIdx: callIdx }, { op: "drop" }, { op: "i32.const", value: 1 }]
+          : [
+              { op: "call", funcIdx: callIdx },
+              { op: "call", funcIdx: prevExtIsTruthyIdx },
+            ];
+      const boundaryIdx = boundaryReflectInterop
+        ? ctx.funcMap.get("__boundary_object_reflect_prevent_extensions")
+        : undefined;
+      if (nativeIdx !== undefined && boundaryIdx !== undefined) {
+        const resultLocal = allocTempLocal(fctx, i32Ty);
+        fctx.body.push({ op: "local.get", index: targetLocal });
+        fctx.body.push({ op: "call", funcIdx: boundaryIdx });
+        fctx.body.push({ op: "local.tee", index: resultLocal });
+        fctx.body.push({ op: "i32.eqz" });
+        fctx.body.push({
+          op: "if",
+          blockType: { kind: "val", type: i32Ty },
+          then: [{ op: "local.get", index: targetLocal }, ...prevExtAnswer(nativeIdx)],
+          else: [{ op: "local.get", index: resultLocal }, { op: "i32.const", value: 1 }, { op: "i32.sub" }],
+        });
+        releaseTempLocal(fctx, resultLocal);
+        releaseTempLocal(fctx, targetLocal);
+        return { kind: "i32" };
+      }
+      fctx.body.push({ op: "local.get", index: targetLocal });
+      if (nativeIdx !== undefined) {
+        fctx.body.push(...prevExtAnswer(nativeIdx));
+      } else {
+        fctx.body.push({ op: "drop" });
+        fctx.body.push({ op: "i32.const", value: 0 });
+      }
+      releaseTempLocal(fctx, targetLocal);
+      return { kind: "i32" };
+    }
+
+    // (#5140) §28.1.1 Reflect.apply(target, thisArgument, argumentsList).
+    // Standalone had NO arm at all, so every call fell through to the
+    // `#1472 Phase C` compile error. `__apply_closure` is the same bridge
+    // `fn.apply(…)` uses: it reads the argumentsList generically through
+    // `__extern_length`/`__extern_get_idx` (so a plain array works as the
+    // list carrier) and carries the `$Proxy` front-guard, so a proxy target
+    // routes into `__proxy_apply_dispatch` and runs its `apply` trap.
+    if (reflectMethod === "apply" && !boundaryReflectInterop) {
+      const argLocals = emitReflectArgumentLocals();
+      const targetLocal = argLocals[0];
+      if (targetLocal === undefined) {
+        emitThrowTypeError(ctx, fctx, "Reflect.apply called on non-object");
+        return { kind: "externref" };
+      }
+      ensureObjectRuntime(ctx);
+      // §28.1.1 step 1 IsCallable(target). Built from POSITIVE primitive
+      // brands (the `resolved-callee-guard.ts` rationale): a callable shape
+      // the classifier does not recognise — a plain compiled closure is
+      // neither `$Object` nor `$Proxy` — must not be turned into a hard
+      // throw, so only a value that positively brands as null or a primitive
+      // is rejected.
+      {
+        const before = fctx.body.length;
+        emitThrowTypeError(ctx, fctx, "Reflect.apply target is not a function");
+        const throwInstrs = fctx.body.splice(before);
+        const brandIdxs = ["__typeof_number", "__typeof_string", "__typeof_boolean", "__typeof_bigint"]
+          .map((name) => ctx.funcMap.get(name))
+          .filter((idx): idx is number => idx !== undefined);
+        fctx.body.push({ op: "local.get", index: targetLocal }, { op: "ref.is_null" });
+        for (const funcIdx of brandIdxs) {
+          fctx.body.push({ op: "local.get", index: targetLocal }, { op: "call", funcIdx }, { op: "i32.or" });
+        }
+        // (#5196 R3-2 C4) …plus the ORDINARY non-callable object:
+        // `Reflect.apply({}, 1, [])` must throw. Still a positive test —
+        // `typeof t === "object" && typeof t !== "function"` — so a callable
+        // carrier the classifier does recognise as a function (a compiled
+        // closure, a bound function, a `$Proxy` over a callable) is admitted
+        // exactly as before, and an unrecognised shape stays admitted too.
+        {
+          const typeofObjectIdx = ctx.funcMap.get("__typeof_object");
+          const typeofFunctionIdx = ctx.funcMap.get("__typeof_function");
+          if (typeofObjectIdx !== undefined && typeofFunctionIdx !== undefined) {
+            fctx.body.push(
+              { op: "local.get", index: targetLocal },
+              { op: "call", funcIdx: typeofObjectIdx },
+              { op: "local.get", index: targetLocal },
+              { op: "call", funcIdx: typeofFunctionIdx },
+              { op: "i32.eqz" },
+              { op: "i32.and" },
+              { op: "i32.or" },
+            );
+          }
+        }
+        fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: throwInstrs });
+      }
+      // (#5196 R3-2 C4) §7.3.19 CreateListFromArrayLike step 2: the
+      // argumentsList must be an Object. A MISSING third argument is the
+      // static case; a primitive/null/undefined one is the runtime case, and
+      // the shared Reflect target guard is exactly the Type(V) is Object test
+      // (it admits arrays and every callable carrier positively).
+      if (argLocals[2] === undefined) {
+        emitThrowTypeError(ctx, fctx, "Reflect.apply argumentsList is not an object");
+        releaseReflectArgumentLocals(argLocals);
+        return { kind: "externref" };
+      }
+      // (#6651 cluster F, slice F2) …and a LITERAL `null` / `undefined`
+      // argumentsList is the same question about the EXPRESSION, not about a
+      // value the runtime guard may have nulled. `emitNativeReflectNonObjectGuard`
+      // deliberately declines to brand a null carrier (this compiler's alias
+      // widening nulls ordinary objects), so `Reflect.apply(fn, null, null)`
+      // and `Reflect.apply(fn, null, undefined)` sailed past step 2 and
+      // invoked `fn` with an empty list. Measured on this branch's base:
+      // `Reflect/apply/arguments-list-is-not-array-like.js` failed on exactly
+      // those two of its ten assertions — the numeric, boolean, symbol and
+      // throwing-`length` spellings already threw. Same reasoning, same
+      // helper, as the `Reflect.{get,has}` target guard #6494 S3 added.
+      guardReflectTargetIsObjectOrNullish(
+        argLocals[2],
+        "Reflect.apply argumentsList is not an object",
+        expr.arguments[2],
+      );
+      const applyIdx = reserveApplyClosure(ctx);
+      fctx.body.push({ op: "local.get", index: targetLocal });
+      if (argLocals[1] !== undefined) fctx.body.push({ op: "local.get", index: argLocals[1] });
+      else fctx.body.push({ op: "ref.null.extern" });
+      if (argLocals[2] !== undefined) fctx.body.push({ op: "local.get", index: argLocals[2] });
+      else fctx.body.push({ op: "ref.null.extern" });
+      fctx.body.push({ op: "call", funcIdx: applyIdx });
+      releaseReflectArgumentLocals(argLocals);
+      return { kind: "externref" };
+    }
+
+    if (
+      reflectMethod === "apply" &&
+      expr.arguments.length >= 3 &&
+      boundaryReflectInterop &&
+      isDynamicBoundaryTarget(expr.arguments[0])
+    ) {
+      ensureObjectRuntime(ctx);
+      emitReflectArgs(3);
+      const boundaryIdx = ctx.funcMap.get("__boundary_object_apply");
+      if (boundaryIdx !== undefined) {
+        fctx.body.push({ op: "call", funcIdx: boundaryIdx });
+        return { kind: "externref" };
+      }
+      return fallbackReturn(3, "extern-null");
+    }
+
+    // (#5140) §28.1.1 Reflect.apply(target, thisArgument, argumentsList).
+    // Standalone had NO arm here at all, so the call fell to the dynamic
+    // member path and reported "Reflect.apply is not a function". Build the
+    // argument list with CreateListFromArrayLike (length + indexed reads) and
+    // invoke through `__apply_closure`, whose front-guard already routes a
+    // `$Proxy` target into `__proxy_apply_dispatch` and a revoker carrier
+    // into `__proxy_revoke` — the same bridge `p(…)` takes.
+    if (reflectMethod === "apply" && expr.arguments.length >= 2) {
+      ensureObjectRuntime(ctx);
+      ensureObjVecBuilders(ctx);
+      const vecNewIdx = ctx.funcMap.get("__objvec_new");
+      const vecPushIdx = ctx.funcMap.get("__objvec_push");
+      const lengthIdx = ctx.funcMap.get("__extern_length");
+      const getIdxIdx = ctx.funcMap.get("__extern_get_idx");
+      const applyClosureIdx = ctx.funcMap.get("__apply_closure");
       if (
-        reflectMethod === "construct" &&
-        boundaryReflectInterop &&
-        isDynamicBoundaryTarget(expr.arguments[0]) &&
-        (expr.arguments[2] === undefined || isDynamicBoundaryTarget(expr.arguments[2]))
+        vecNewIdx !== undefined &&
+        vecPushIdx !== undefined &&
+        lengthIdx !== undefined &&
+        getIdxIdx !== undefined &&
+        applyClosureIdx !== undefined
       ) {
-        ensureObjectRuntime(ctx);
-        emitReflectArgs(3);
-        const boundaryIdx = ctx.funcMap.get("__boundary_object_construct");
-        if (boundaryIdx !== undefined) {
-          fctx.body.push({ op: "call", funcIdx: boundaryIdx });
-          return { kind: "externref" };
+        const f64Ty: ValType = { kind: "f64" };
+        const fnLocal = allocTempLocal(fctx, externRef);
+        const thisLocal = allocTempLocal(fctx, externRef);
+        const listLocal = allocTempLocal(fctx, externRef);
+        const vecLocal = allocTempLocal(fctx, externRef);
+        const iLocal = allocTempLocal(fctx, f64Ty);
+        const nLocal = allocTempLocal(fctx, f64Ty);
+        const stage = (arg: ts.Expression | undefined, local: number): void => {
+          if (arg === undefined) {
+            fctx.body.push({ op: "ref.null.extern" });
+          } else {
+            const t = compileExpression(ctx, fctx, arg, externRef);
+            if (!t) fctx.body.push({ op: "ref.null.extern" });
+            else if (t.kind !== "externref") coerceType(ctx, fctx, t, externRef);
+          }
+          fctx.body.push({ op: "local.set", index: local });
+        };
+        stage(expr.arguments[0], fnLocal);
+        stage(expr.arguments[1], thisLocal);
+        stage(expr.arguments[2], listLocal);
+        fctx.body.push(
+          { op: "call", funcIdx: vecNewIdx },
+          { op: "local.set", index: vecLocal },
+          { op: "local.get", index: listLocal },
+          { op: "ref.is_null" },
+          {
+            op: "if",
+            blockType: { kind: "val", type: f64Ty },
+            then: [{ op: "f64.const", value: 0 }],
+            else: [
+              { op: "local.get", index: listLocal },
+              { op: "call", funcIdx: lengthIdx },
+            ],
+          },
+          { op: "local.set", index: nLocal },
+          { op: "f64.const", value: 0 },
+          { op: "local.set", index: iLocal },
+          {
+            op: "block",
+            blockType: { kind: "empty" },
+            body: [
+              {
+                op: "loop",
+                blockType: { kind: "empty" },
+                body: [
+                  { op: "local.get", index: iLocal },
+                  { op: "local.get", index: nLocal },
+                  { op: "f64.ge" },
+                  { op: "br_if", depth: 1 },
+                  { op: "local.get", index: vecLocal },
+                  { op: "local.get", index: listLocal },
+                  { op: "local.get", index: iLocal },
+                  { op: "call", funcIdx: getIdxIdx },
+                  { op: "call", funcIdx: vecPushIdx },
+                  { op: "local.get", index: iLocal },
+                  { op: "f64.const", value: 1 },
+                  { op: "f64.add" },
+                  { op: "local.set", index: iLocal },
+                  { op: "br", depth: 0 },
+                ],
+              },
+            ],
+          },
+          { op: "local.get", index: fnLocal },
+          { op: "local.get", index: thisLocal },
+          { op: "local.get", index: vecLocal },
+          { op: "call", funcIdx: applyClosureIdx },
+        );
+        for (const local of [nLocal, iLocal, vecLocal, listLocal, thisLocal, fnLocal]) {
+          releaseTempLocal(fctx, local);
         }
-        return fallbackReturn(3, "extern-null");
+        return { kind: "externref" };
+      }
+    }
+
+    if (
+      reflectMethod === "construct" &&
+      boundaryReflectInterop &&
+      isDynamicBoundaryTarget(expr.arguments[0]) &&
+      (expr.arguments[2] === undefined || isDynamicBoundaryTarget(expr.arguments[2]))
+    ) {
+      ensureObjectRuntime(ctx);
+      emitReflectArgs(3);
+      const boundaryIdx = ctx.funcMap.get("__boundary_object_construct");
+      if (boundaryIdx !== undefined) {
+        fctx.body.push({ op: "call", funcIdx: boundaryIdx });
+        return { kind: "externref" };
+      }
+      return fallbackReturn(3, "extern-null");
+    }
+
+    if (reflectMethod === "construct") {
+      const targetArg = expr.arguments[0];
+      const listArg = expr.arguments[1];
+      const newTargetArg = expr.arguments[2];
+      const unwrappedList = listArg === undefined ? undefined : unwrapReflectConstructExpr(listArg);
+      // (#6651 cluster F, slice F2) §28.1.2 step 1 — `IsConstructor(target)`.
+      // The arm below checks IsConstructor on the NEWTARGET (`Reflect.construct
+      // newTarget is not a constructor`) and never on the TARGET, so
+      // `Reflect.construct(1, [])` reached `compileNewExpression(new 1())`
+      // and answered without throwing. Measured on this branch's base,
+      // `Reflect/construct/target-is-not-constructor-throws.js` fails on its
+      // FIRST assertion.
+      //
+      // Only the STATICALLY decidable half is taken. A runtime
+      // `__reflect_is_constructor` probe would have to evaluate `targetArg`
+      // into a local and `compileNewExpression` would then evaluate it a
+      // SECOND time — a real semantic break for `Reflect.construct(f(), [])`.
+      // The static half needs no such duplicate: it fires only where the
+      // program is guaranteed to throw, so nothing that constructs today
+      // changes.
+      //
+      // Evaluation order is preserved rather than short-circuited: JavaScript
+      // evaluates the callee's arguments before entering the builtin, so the
+      // target and every argument-list element are compiled (and dropped)
+      // ahead of the throw.
+      if (targetArg !== undefined && targetIsDefinitelyNotConstructor(targetArg)) {
+        const dropValue = (argument: ts.Expression): void => {
+          const ty = compileExpression(ctx, fctx, argument, externRef);
+          if (ty !== null) fctx.body.push({ op: "drop" });
+        };
+        dropValue(targetArg);
+        if (unwrappedList !== undefined && ts.isArrayLiteralExpression(unwrappedList)) {
+          for (const element of unwrappedList.elements) {
+            if (!ts.isOmittedExpression(element)) dropValue(element);
+          }
+        } else if (listArg !== undefined) {
+          dropValue(listArg);
+        }
+        if (newTargetArg !== undefined) dropValue(newTargetArg);
+        emitThrowTypeError(ctx, fctx, "Reflect.construct target is not a constructor");
+        return { kind: "externref" };
+      }
+      if (
+        targetArg === undefined ||
+        !unwrappedList ||
+        !ts.isArrayLiteralExpression(unwrappedList) ||
+        unwrappedList.elements.some(ts.isOmittedExpression)
+      ) {
+        reportError(
+          ctx,
+          expr,
+          "Codegen error: standalone Reflect.construct currently requires an array-literal argsList (#3371).",
+        );
+        fctx.body.push({ op: "ref.null.extern" });
+        return { kind: "externref" };
       }
 
-      if (reflectMethod === "construct") {
-        const targetArg = expr.arguments[0];
-        const listArg = expr.arguments[1];
-        const newTargetArg = expr.arguments[2];
-        const unwrappedList = listArg === undefined ? undefined : unwrapReflectConstructExpr(listArg);
-        // (#6651 cluster F, slice F2) §28.1.2 step 1 — `IsConstructor(target)`.
-        // The arm below checks IsConstructor on the NEWTARGET (`Reflect.construct
-        // newTarget is not a constructor`) and never on the TARGET, so
-        // `Reflect.construct(1, [])` reached `compileNewExpression(new 1())`
-        // and answered without throwing. Measured on this branch's base,
-        // `Reflect/construct/target-is-not-constructor-throws.js` fails on its
-        // FIRST assertion.
-        //
-        // Only the STATICALLY decidable half is taken. A runtime
-        // `__reflect_is_constructor` probe would have to evaluate `targetArg`
-        // into a local and `compileNewExpression` would then evaluate it a
-        // SECOND time — a real semantic break for `Reflect.construct(f(), [])`.
-        // The static half needs no such duplicate: it fires only where the
-        // program is guaranteed to throw, so nothing that constructs today
-        // changes.
-        //
-        // Evaluation order is preserved rather than short-circuited: JavaScript
-        // evaluates the callee's arguments before entering the builtin, so the
-        // target and every argument-list element are compiled (and dropped)
-        // ahead of the throw.
-        if (targetArg !== undefined && targetIsDefinitelyNotConstructor(targetArg)) {
-          const dropValue = (argument: ts.Expression): void => {
-            const ty = compileExpression(ctx, fctx, argument, externRef);
-            if (ty !== null) fctx.body.push({ op: "drop" });
-          };
-          dropValue(targetArg);
-          if (unwrappedList !== undefined && ts.isArrayLiteralExpression(unwrappedList)) {
-            for (const element of unwrappedList.elements) {
-              if (!ts.isOmittedExpression(element)) dropValue(element);
-            }
-          } else if (listArg !== undefined) {
-            dropValue(listArg);
-          }
-          if (newTargetArg !== undefined) dropValue(newTargetArg);
-          emitThrowTypeError(ctx, fctx, "Reflect.construct target is not a constructor");
+      const distinctNewTarget = newTargetArg !== undefined && !sameReflectConstructTarget(targetArg, newTargetArg);
+      // (#3371 r4) The static `NewTarget.prototype = …` scan is a source-text
+      // approximation of `? Get(NewTarget, "prototype")`. Where it finds
+      // nothing this arm used to emit a hard compile error; instead, take the
+      // runtime read. Evaluating NewTarget here — once, before the argument
+      // list — is what makes that read safe against an argument expression
+      // reassigning the NewTarget binding. Only the previously-erroring
+      // branch is affected, so no program that compiled before changes.
+      const staticNewTargetProto = distinctNewTarget
+        ? assignedNewTargetPrototype(ctx, newTargetArg!, expr.getStart())
+        : undefined;
+      // (#3371 review r1) …but only for the shapes whose read AND write are
+      // sound. `classifyRuntimeNewTargetSite` answers `undefined` for every
+      // shape measured to answer wrongly (a class NewTarget, a target that
+      // reads `new.target`, a non-identifier NewTarget expression, a target
+      // whose carrier has no settable prototype); those keep base's refusal
+      // below rather than silently returning the wrong prototype.
+      const newTargetRoute =
+        distinctNewTarget && staticNewTargetProto === undefined
+          ? classifyRuntimeNewTargetSite(
+              ctx,
+              unwrapReflectConstructExpr(targetArg),
+              unwrappedList.elements as readonly ts.Expression[],
+              newTargetArg!,
+            )
+          : undefined;
+      const runtimeNewTargetProto = newTargetRoute !== undefined;
+      // (#6651 W2b) A primitive `NT.prototype` → §10.1.14 step 4's default.
+      const objectProtoDefault =
+        staticNewTargetProto !== undefined &&
+        isDefinitelyPrimitivePrototype(ctx, staticNewTargetProto) &&
+        preparePrimitiveNewTargetDefault(ctx, fctx, unwrapReflectConstructExpr(targetArg));
+      const refuseDistinctNewTarget = distinctNewTarget && staticNewTargetProto === undefined && !runtimeNewTargetProto;
+      let ntValueLocal: number | undefined;
+      if (runtimeNewTargetProto) {
+        prepareRuntimeNewTargetProto(ctx, fctx);
+        ntValueLocal = allocLocal(fctx, `__reflect_construct_nt_${fctx.locals.length}`, externRef);
+        const ntv = compileExpression(ctx, fctx, newTargetArg!, externRef);
+        if (ntv && ntv.kind !== "externref") coerceType(ctx, fctx, ntv, externRef);
+        else if (ntv === null) fctx.body.push({ op: "ref.null.extern" });
+        fctx.body.push({ op: "local.set", index: ntValueLocal });
+      }
+      if (newTargetArg !== undefined && !isStaticallyConstructible(ctx, newTargetArg)) {
+        // Evaluate the runtime NewTarget exactly once, then use the finalize-
+        // filled nominal carrier classifier. Ordinary functions have a
+        // constructible wrapper subtype; arrows/method closures do not.
+        if (ntValueLocal !== undefined) {
+          fctx.body.push({ op: "local.get", index: ntValueLocal });
+        } else {
+          const ntType = compileExpression(ctx, fctx, newTargetArg, externRef);
+          if (ntType && ntType.kind !== "externref") coerceType(ctx, fctx, ntType, externRef);
+          else if (ntType === null) fctx.body.push({ op: "ref.null.extern" });
+        }
+        const isCtorIdx = ensureReflectIsConstructor(ctx);
+        fctx.body.push({ op: "call", funcIdx: isCtorIdx });
+        fctx.body.push({ op: "i32.eqz" });
+        const throwBody: Instr[] = [];
+        const savedBody = fctx.body;
+        fctx.body = throwBody;
+        emitThrowTypeError(ctx, fctx, "Reflect.construct newTarget is not a constructor");
+        fctx.body = savedBody;
+        fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: throwBody });
+      }
+
+      // The Test262 IsConstructor helper's exact probe target has an empty
+      // body and no arguments. Validation above is the observable purpose;
+      // materialize the ordinary result as a native $Object so the returned
+      // value remains a real object if a caller does observe it.
+      if (distinctNewTarget && isEmptyOrdinaryFunction(targetArg) && unwrappedList.elements.length === 0) {
+        ensureObjectRuntime(ctx);
+        const createIdx = ctx.funcMap.get("__object_create");
+        if (createIdx !== undefined) {
+          fctx.body.push(
+            ...(objectProtoDefault ? canonicalUndefinedExternInstrs(ctx) : [{ op: "ref.null.extern" } as Instr]),
+          );
+          fctx.body.push({ op: "call", funcIdx: createIdx });
           return { kind: "externref" };
         }
-        if (
-          targetArg === undefined ||
-          !unwrappedList ||
-          !ts.isArrayLiteralExpression(unwrappedList) ||
-          unwrappedList.elements.some(ts.isOmittedExpression)
-        ) {
+      }
+
+      // (#6651 RF1) A PROXY target's [[Construct]] OBSERVES the NewTarget
+      // identity (the `construct` trap's third argument), which the
+      // construct-then-patch-prototype shape below cannot carry. Declines
+      // unless the callee provably denotes a proxy.
+      const ntForProxy = distinctNewTarget ? ntValueLocal : undefined;
+      if (tryEmitProxyConstructWithNewTarget(ctx, fctx, targetArg, unwrappedList.elements, ntForProxy)) {
+        return { kind: "externref" };
+      }
+
+      // (#3371 r4) An ordinary user function is the one target whose ordinary
+      // `new` lowering CANNOT carry an arbitrary NewTarget prototype — the
+      // instance is a closed struct with no `$proto` field, so patching it
+      // afterwards is a silent no-op. Route it through the native ordinary
+      // [[Construct]] driver, which creates the instance FROM the prototype
+      // and therefore also gives the body's own `Object.getPrototypeOf(this)`
+      // the right answer.
+      if (
+        newTargetRoute === "driver" &&
+        tryEmitOrdinaryConstructWithNewTarget(
+          ctx,
+          fctx,
+          unwrapReflectConstructExpr(targetArg),
+          unwrappedList.elements as readonly ts.Expression[],
+          ntValueLocal!,
+        )
+      ) {
+        return { kind: "externref" };
+      }
+
+      // (#6775 S6) ArrayBuffer reads NewTarget.prototype BEFORE allocating.
+      const abTarget = unwrapReflectConstructExpr(targetArg);
+      const abPreRead =
+        runtimeNewTargetProto &&
+        ts.isIdentifier(abTarget) &&
+        abTarget.text === "ArrayBuffer" &&
+        isGlobalBuiltinIdentifier(ctx, fctx, abTarget) &&
+        tryEmitArrayBufferNewTargetPreRead(ctx, fctx, unwrappedList.elements, ntValueLocal!);
+      const newExpr = ts.factory.createNewExpression(targetArg, undefined, [
+        ...unwrappedList.elements,
+      ] as ts.Expression[]);
+      ts.setTextRange(newExpr, expr);
+      const resultType = compileNewExpression(ctx, fctx, newExpr);
+      if (resultType === null) {
+        fctx.body.push({ op: "ref.null.extern" });
+        return { kind: "externref" };
+      }
+      if (resultType.kind !== "externref") coerceType(ctx, fctx, resultType, externRef);
+
+      if (!distinctNewTarget || abPreRead) return { kind: "externref" };
+
+      if (refuseDistinctNewTarget) {
+        // Verbatim the pre-r4 refusal, emitted at the pre-r4 point (after the
+        // ordinary construction, with its value on the stack).
+        reportError(
+          ctx,
+          expr,
+          "Codegen error: standalone Reflect.construct cannot preserve an arbitrary distinct NewTarget " +
+            "without a statically-resolved NewTarget.prototype assignment (#3371).",
+        );
+        return { kind: "externref" };
+      }
+
+      const assignedProto = staticNewTargetProto;
+      if (assignedProto !== undefined && isDefinitelyPrimitivePrototype(ctx, assignedProto)) {
+        if (objectProtoDefault) emitObjectPrototypeDefault(ctx, fctx);
+        return { kind: "externref" };
+      }
+
+      // Preserve the constructed value while evaluating the selected proto.
+      const resultLocal = allocLocal(fctx, `__reflect_construct_result_${fctx.locals.length}`, externRef);
+      fctx.body.push({ op: "local.set", index: resultLocal });
+      if (assignedProto === undefined) {
+        // (#3371 r4) `? Get(NewTarget, "prototype")` — a real property read on
+        // the once-evaluated NewTarget value, so a getter runs (and its throw
+        // propagates) exactly as the spec requires.
+        if (!emitRuntimeNewTargetPrototype(ctx, fctx, ntValueLocal!)) {
           reportError(
             ctx,
             expr,
-            "Codegen error: standalone Reflect.construct currently requires an array-literal argsList (#3371).",
+            "Codegen error: standalone Reflect.construct cannot read NewTarget.prototype at runtime (#3371).",
           );
-          fctx.body.push({ op: "ref.null.extern" });
+          fctx.body.push({ op: "local.get", index: resultLocal });
           return { kind: "externref" };
         }
+      } else {
+        const protoType = compileExpression(ctx, fctx, assignedProto, externRef);
+        if (protoType && protoType.kind !== "externref") coerceType(ctx, fctx, protoType, externRef);
+        else if (protoType === null) fctx.body.push({ op: "ref.null.extern" });
+      }
+      const protoLocal = allocLocal(fctx, `__reflect_construct_proto_${fctx.locals.length}`, externRef);
+      fctx.body.push({ op: "local.set", index: protoLocal });
 
-        const distinctNewTarget = newTargetArg !== undefined && !sameReflectConstructTarget(targetArg, newTargetArg);
-        // (#3371 r4) The static `NewTarget.prototype = …` scan is a source-text
-        // approximation of `? Get(NewTarget, "prototype")`. Where it finds
-        // nothing this arm used to emit a hard compile error; instead, take the
-        // runtime read. Evaluating NewTarget here — once, before the argument
-        // list — is what makes that read safe against an argument expression
-        // reassigning the NewTarget binding. Only the previously-erroring
-        // branch is affected, so no program that compiled before changes.
-        const staticNewTargetProto = distinctNewTarget
-          ? assignedNewTargetPrototype(ctx, newTargetArg!, expr.getStart())
-          : undefined;
-        // (#3371 review r1) …but only for the shapes whose read AND write are
-        // sound. `classifyRuntimeNewTargetSite` answers `undefined` for every
-        // shape measured to answer wrongly (a class NewTarget, a target that
-        // reads `new.target`, a non-identifier NewTarget expression, a target
-        // whose carrier has no settable prototype); those keep base's refusal
-        // below rather than silently returning the wrong prototype.
-        const newTargetRoute =
-          distinctNewTarget && staticNewTargetProto === undefined
-            ? classifyRuntimeNewTargetSite(
-                ctx,
-                unwrapReflectConstructExpr(targetArg),
-                unwrappedList.elements as readonly ts.Expression[],
-                newTargetArg!,
-              )
-            : undefined;
-        const runtimeNewTargetProto = newTargetRoute !== undefined;
-        // (#6651 W2b) A primitive `NT.prototype` → §10.1.14 step 4's default.
-        const objectProtoDefault =
-          staticNewTargetProto !== undefined &&
-          isDefinitelyPrimitivePrototype(ctx, staticNewTargetProto) &&
-          preparePrimitiveNewTargetDefault(ctx, fctx, unwrapReflectConstructExpr(targetArg));
-        const refuseDistinctNewTarget =
-          distinctNewTarget && staticNewTargetProto === undefined && !runtimeNewTargetProto;
-        let ntValueLocal: number | undefined;
-        if (runtimeNewTargetProto) {
-          prepareRuntimeNewTargetProto(ctx, fctx);
-          ntValueLocal = allocLocal(fctx, `__reflect_construct_nt_${fctx.locals.length}`, externRef);
-          const ntv = compileExpression(ctx, fctx, newTargetArg!, externRef);
-          if (ntv && ntv.kind !== "externref") coerceType(ctx, fctx, ntv, externRef);
-          else if (ntv === null) fctx.body.push({ op: "ref.null.extern" });
-          fctx.body.push({ op: "local.set", index: ntValueLocal });
-        }
-        if (newTargetArg !== undefined && !isStaticallyConstructible(ctx, newTargetArg)) {
-          // Evaluate the runtime NewTarget exactly once, then use the finalize-
-          // filled nominal carrier classifier. Ordinary functions have a
-          // constructible wrapper subtype; arrows/method closures do not.
-          if (ntValueLocal !== undefined) {
-            fctx.body.push({ op: "local.get", index: ntValueLocal });
-          } else {
-            const ntType = compileExpression(ctx, fctx, newTargetArg, externRef);
-            if (ntType && ntType.kind !== "externref") coerceType(ctx, fctx, ntType, externRef);
-            else if (ntType === null) fctx.body.push({ op: "ref.null.extern" });
-          }
-          const isCtorIdx = ensureReflectIsConstructor(ctx);
-          fctx.body.push({ op: "call", funcIdx: isCtorIdx });
-          fctx.body.push({ op: "i32.eqz" });
-          const throwBody: Instr[] = [];
-          const savedBody = fctx.body;
-          fctx.body = throwBody;
-          emitThrowTypeError(ctx, fctx, "Reflect.construct newTarget is not a constructor");
-          fctx.body = savedBody;
-          fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: throwBody });
-        }
+      ensureObjectRuntime(ctx);
+      const resultAny = allocLocal(fctx, `__reflect_construct_any_${fctx.locals.length}`, { kind: "anyref" });
+      fctx.body.push({ op: "local.get", index: resultLocal });
+      fctx.body.push({ op: "any.convert_extern" });
+      fctx.body.push({ op: "local.set", index: resultAny });
 
-        // The Test262 IsConstructor helper's exact probe target has an empty
-        // body and no arguments. Validation above is the observable purpose;
-        // materialize the ordinary result as a native $Object so the returned
-        // value remains a real object if a caller does observe it.
-        if (distinctNewTarget && isEmptyOrdinaryFunction(targetArg) && unwrappedList.elements.length === 0) {
-          ensureObjectRuntime(ctx);
-          const createIdx = ctx.funcMap.get("__object_create");
-          if (createIdx !== undefined) {
-            fctx.body.push(
-              ...(objectProtoDefault ? canonicalUndefinedExternInstrs(ctx) : [{ op: "ref.null.extern" } as Instr]),
-            );
-            fctx.body.push({ op: "call", funcIdx: createIdx });
-            return { kind: "externref" };
-          }
-        }
-
-        // (#6651 RF1) A PROXY target's [[Construct]] OBSERVES the NewTarget
-        // identity (the `construct` trap's third argument), which the
-        // construct-then-patch-prototype shape below cannot carry. Declines
-        // unless the callee provably denotes a proxy.
-        const ntForProxy = distinctNewTarget ? ntValueLocal : undefined;
-        if (tryEmitProxyConstructWithNewTarget(ctx, fctx, targetArg, unwrappedList.elements, ntForProxy)) {
-          return { kind: "externref" };
-        }
-
-        // (#3371 r4) An ordinary user function is the one target whose ordinary
-        // `new` lowering CANNOT carry an arbitrary NewTarget prototype — the
-        // instance is a closed struct with no `$proto` field, so patching it
-        // afterwards is a silent no-op. Route it through the native ordinary
-        // [[Construct]] driver, which creates the instance FROM the prototype
-        // and therefore also gives the body's own `Object.getPrototypeOf(this)`
-        // the right answer.
-        if (
-          newTargetRoute === "driver" &&
-          tryEmitOrdinaryConstructWithNewTarget(
-            ctx,
-            fctx,
-            unwrapReflectConstructExpr(targetArg),
-            unwrappedList.elements as readonly ts.Expression[],
-            ntValueLocal!,
-          )
-        ) {
-          return { kind: "externref" };
-        }
-
-        // (#6775 S6) ArrayBuffer reads NewTarget.prototype BEFORE allocating.
-        const abTarget = unwrapReflectConstructExpr(targetArg);
-        const abPreRead =
-          runtimeNewTargetProto &&
-          ts.isIdentifier(abTarget) &&
-          abTarget.text === "ArrayBuffer" &&
-          isGlobalBuiltinIdentifier(ctx, fctx, abTarget) &&
-          tryEmitArrayBufferNewTargetPreRead(ctx, fctx, unwrappedList.elements, ntValueLocal!);
-        const newExpr = ts.factory.createNewExpression(targetArg, undefined, [
-          ...unwrappedList.elements,
-        ] as ts.Expression[]);
-        ts.setTextRange(newExpr, expr);
-        const resultType = compileNewExpression(ctx, fctx, newExpr);
-        if (resultType === null) {
-          fctx.body.push({ op: "ref.null.extern" });
-          return { kind: "externref" };
-        }
-        if (resultType.kind !== "externref") coerceType(ctx, fctx, resultType, externRef);
-
-        if (!distinctNewTarget || abPreRead) return { kind: "externref" };
-
-        if (refuseDistinctNewTarget) {
-          // Verbatim the pre-r4 refusal, emitted at the pre-r4 point (after the
-          // ordinary construction, with its value on the stack).
+      if (assignedProto === undefined) {
+        // (#3371 r4) Runtime path: the nominal view carriers keep their direct
+        // struct write; everything else takes the ordinary [[SetPrototypeOf]]
+        // instead of the "not implemented for this target carrier" refusal.
+        const carriers: { typeIdx: number; fieldIdx: number }[] = [];
+        if (ctx.dvWindowTypeIdx >= 0) carriers.push({ typeIdx: ctx.dvWindowTypeIdx, fieldIdx: 3 });
+        if (ctx.taDynViewTypeIdx >= 0) carriers.push({ typeIdx: ctx.taDynViewTypeIdx, fieldIdx: 5 });
+        if (!applyRuntimeNewTargetPrototype(ctx, fctx, resultAny, resultLocal, protoLocal, carriers)) {
           reportError(
             ctx,
             expr,
             "Codegen error: standalone Reflect.construct cannot preserve an arbitrary distinct NewTarget " +
               "without a statically-resolved NewTarget.prototype assignment (#3371).",
           );
-          return { kind: "externref" };
-        }
-
-        const assignedProto = staticNewTargetProto;
-        if (assignedProto !== undefined && isDefinitelyPrimitivePrototype(ctx, assignedProto)) {
-          if (objectProtoDefault) emitObjectPrototypeDefault(ctx, fctx);
-          return { kind: "externref" };
-        }
-
-        // Preserve the constructed value while evaluating the selected proto.
-        const resultLocal = allocLocal(fctx, `__reflect_construct_result_${fctx.locals.length}`, externRef);
-        fctx.body.push({ op: "local.set", index: resultLocal });
-        if (assignedProto === undefined) {
-          // (#3371 r4) `? Get(NewTarget, "prototype")` — a real property read on
-          // the once-evaluated NewTarget value, so a getter runs (and its throw
-          // propagates) exactly as the spec requires.
-          if (!emitRuntimeNewTargetPrototype(ctx, fctx, ntValueLocal!)) {
-            reportError(
-              ctx,
-              expr,
-              "Codegen error: standalone Reflect.construct cannot read NewTarget.prototype at runtime (#3371).",
-            );
-            fctx.body.push({ op: "local.get", index: resultLocal });
-            return { kind: "externref" };
-          }
-        } else {
-          const protoType = compileExpression(ctx, fctx, assignedProto, externRef);
-          if (protoType && protoType.kind !== "externref") coerceType(ctx, fctx, protoType, externRef);
-          else if (protoType === null) fctx.body.push({ op: "ref.null.extern" });
-        }
-        const protoLocal = allocLocal(fctx, `__reflect_construct_proto_${fctx.locals.length}`, externRef);
-        fctx.body.push({ op: "local.set", index: protoLocal });
-
-        ensureObjectRuntime(ctx);
-        const resultAny = allocLocal(fctx, `__reflect_construct_any_${fctx.locals.length}`, { kind: "anyref" });
-        fctx.body.push({ op: "local.get", index: resultLocal });
-        fctx.body.push({ op: "any.convert_extern" });
-        fctx.body.push({ op: "local.set", index: resultAny });
-
-        if (assignedProto === undefined) {
-          // (#3371 r4) Runtime path: the nominal view carriers keep their direct
-          // struct write; everything else takes the ordinary [[SetPrototypeOf]]
-          // instead of the "not implemented for this target carrier" refusal.
-          const carriers: { typeIdx: number; fieldIdx: number }[] = [];
-          if (ctx.dvWindowTypeIdx >= 0) carriers.push({ typeIdx: ctx.dvWindowTypeIdx, fieldIdx: 3 });
-          if (ctx.taDynViewTypeIdx >= 0) carriers.push({ typeIdx: ctx.taDynViewTypeIdx, fieldIdx: 5 });
-          if (!applyRuntimeNewTargetPrototype(ctx, fctx, resultAny, resultLocal, protoLocal, carriers)) {
-            reportError(
-              ctx,
-              expr,
-              "Codegen error: standalone Reflect.construct cannot preserve an arbitrary distinct NewTarget " +
-                "without a statically-resolved NewTarget.prototype assignment (#3371).",
-            );
-          }
-          fctx.body.push({ op: "local.get", index: resultLocal });
-          return { kind: "externref" };
-        }
-
-        const setCarrierProto = (typeIdx: number, fieldIdx: number): Instr[] => [
-          { op: "local.get", index: resultAny },
-          { op: "ref.cast", typeIdx },
-          { op: "local.get", index: protoLocal },
-          { op: "struct.set", typeIdx, fieldIdx },
-        ];
-        const carrierArms: Instr[] = [];
-        const unwrappedTarget = unwrapReflectConstructExpr(targetArg);
-        const isStaticDataView = ts.isIdentifier(unwrappedTarget) && unwrappedTarget.text === "DataView";
-        if (isStaticDataView && ctx.dvWindowTypeIdx >= 0) {
-          carrierArms.push(...setCarrierProto(ctx.dvWindowTypeIdx, 3));
-        } else if (ctx.dvWindowTypeIdx >= 0) {
-          carrierArms.push(
-            { op: "local.get", index: resultAny },
-            { op: "ref.test", typeIdx: ctx.dvWindowTypeIdx },
-            {
-              op: "if",
-              blockType: { kind: "empty" },
-              then: setCarrierProto(ctx.dvWindowTypeIdx, 3),
-            },
-          );
-        }
-        if (ctx.taDynViewTypeIdx >= 0) {
-          carrierArms.push(
-            { op: "local.get", index: resultAny },
-            { op: "ref.test", typeIdx: ctx.taDynViewTypeIdx },
-            {
-              op: "if",
-              blockType: { kind: "empty" },
-              then: setCarrierProto(ctx.taDynViewTypeIdx, 5),
-            },
-          );
-        }
-        if (carrierArms.length === 0) {
-          reportError(
-            ctx,
-            expr,
-            "Codegen error: standalone Reflect.construct distinct NewTarget is not implemented for this target carrier (#3371).",
-          );
-        } else {
-          fctx.body.push(...carrierArms);
         }
         fctx.body.push({ op: "local.get", index: resultLocal });
         return { kind: "externref" };
       }
-      // (#6770 S4) `Reflect.hasOwnProperty(…)` etc.: an ordinary `obj.m(…)` call.
-      if (!REFLECT_FUNCTIONS.has(reflectMethod)) return undefined;
-      // Boolean-returning methods need an i32 on the stack; the rest return
-      // externref. Pick the fallback shape per method so the surrounding
-      // expression still type-checks even though the module is already marked
-      // failed by reportError.
-      const booleanReflect = new Set([
-        "set",
-        "has",
-        "deleteProperty",
-        "defineProperty",
-        "setPrototypeOf",
-        "isExtensible",
-        "preventExtensions",
-      ]);
-      reportError(
-        ctx,
-        expr,
-        `Codegen error: Reflect.${reflectMethod} not supported in standalone mode (#1472 Phase C).`,
-      );
-      if (booleanReflect.has(reflectMethod)) {
-        fctx.body.push({ op: "i32.const", value: 0 });
-        return { kind: "i32" };
+
+      const setCarrierProto = (typeIdx: number, fieldIdx: number): Instr[] => [
+        { op: "local.get", index: resultAny },
+        { op: "ref.cast", typeIdx },
+        { op: "local.get", index: protoLocal },
+        { op: "struct.set", typeIdx, fieldIdx },
+      ];
+      const carrierArms: Instr[] = [];
+      const unwrappedTarget = unwrapReflectConstructExpr(targetArg);
+      const isStaticDataView = ts.isIdentifier(unwrappedTarget) && unwrappedTarget.text === "DataView";
+      if (isStaticDataView && ctx.dvWindowTypeIdx >= 0) {
+        carrierArms.push(...setCarrierProto(ctx.dvWindowTypeIdx, 3));
+      } else if (ctx.dvWindowTypeIdx >= 0) {
+        carrierArms.push(
+          { op: "local.get", index: resultAny },
+          { op: "ref.test", typeIdx: ctx.dvWindowTypeIdx },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: setCarrierProto(ctx.dvWindowTypeIdx, 3),
+          },
+        );
       }
-      fctx.body.push({ op: "ref.null.extern" });
+      if (ctx.taDynViewTypeIdx >= 0) {
+        carrierArms.push(
+          { op: "local.get", index: resultAny },
+          { op: "ref.test", typeIdx: ctx.taDynViewTypeIdx },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: setCarrierProto(ctx.taDynViewTypeIdx, 5),
+          },
+        );
+      }
+      if (carrierArms.length === 0) {
+        reportError(
+          ctx,
+          expr,
+          "Codegen error: standalone Reflect.construct distinct NewTarget is not implemented for this target carrier (#3371).",
+        );
+      } else {
+        fctx.body.push(...carrierArms);
+      }
+      fctx.body.push({ op: "local.get", index: resultLocal });
       return { kind: "externref" };
     }
-
-    // Reflect.get(target, key, [receiver]) — returns externref.
-    if (reflectMethod === "get" && expr.arguments.length >= 2) {
-      const argLocals = emitReflectArgumentLocals();
-      // The compatibility host helper performs ToPropertyKey before calling
-      // host Reflect.get. A statically-known Symbol target must therefore be
-      // rejected here, after all arguments have run but before that helper.
-      if (ctx.oracle.staticJsTypeOf(expr.arguments[0]!) === "symbol") {
-        emitThrowTypeError(ctx, fctx, "Reflect.get called on non-object");
-        releaseReflectArgumentLocals(argLocals);
-        return { kind: "externref" };
-      }
-      fctx.body.push(
-        { op: "local.get", index: argLocals[0]! },
-        { op: "local.get", index: argLocals[1]! },
-        ...(argLocals[2] === undefined
-          ? ([{ op: "ref.null.extern" }] as Instr[])
-          : ([{ op: "local.get", index: argLocals[2] }] as Instr[])),
-      );
-      const funcIdx = ensureLateImport(ctx, "__reflect_get", [externRef, externRef, externRef], [externRef]);
-      flushLateImportShifts(ctx, fctx);
-      if (funcIdx !== undefined) {
-        fctx.body.push({ op: "call", funcIdx });
-        releaseReflectArgumentLocals(argLocals);
-        return { kind: "externref" };
-      }
-      const fallback = fallbackReturn(3, "extern-null");
-      releaseReflectArgumentLocals(argLocals);
-      return fallback;
-    }
-
-    // Reflect.set(target, key, value, [receiver]) — returns i32 (boolean).
-    if (reflectMethod === "set" && expr.arguments.length >= 2) {
-      emitReflectArgs(4);
-      const funcIdx = ensureLateImport(ctx, "__reflect_set", [externRef, externRef, externRef, externRef], [i32Ty]);
-      flushLateImportShifts(ctx, fctx);
-      if (funcIdx !== undefined) {
-        fctx.body.push({ op: "call", funcIdx });
-        return { kind: "i32" };
-      }
-      return fallbackReturn(4, "i32-true");
-    }
-
-    // Reflect.has(target, key) — returns i32 (boolean).
-    if (reflectMethod === "has" && expr.arguments.length >= 2) {
-      const argLocals = emitReflectArgumentLocals();
-      // Keep target validation ahead of the host helper's ToPropertyKey path
-      // for statically-known Symbols while preserving full argument ordering.
-      if (ctx.oracle.staticJsTypeOf(expr.arguments[0]!) === "symbol") {
-        emitThrowTypeError(ctx, fctx, "Reflect.has called on non-object");
-        releaseReflectArgumentLocals(argLocals);
-        return { kind: "i32" };
-      }
-      fctx.body.push({ op: "local.get", index: argLocals[0]! }, { op: "local.get", index: argLocals[1]! });
-      const funcIdx = ensureLateImport(ctx, "__reflect_has", [externRef, externRef], [i32Ty]);
-      flushLateImportShifts(ctx, fctx);
-      if (funcIdx !== undefined) {
-        fctx.body.push({ op: "call", funcIdx });
-        releaseReflectArgumentLocals(argLocals);
-        return { kind: "i32" };
-      }
-      const fallback = fallbackReturn(2, "i32-true");
-      releaseReflectArgumentLocals(argLocals);
-      return fallback;
-    }
-
-    // Reflect.deleteProperty(target, key) — returns i32 (boolean).
-    if (reflectMethod === "deleteProperty" && expr.arguments.length >= 2) {
-      emitReflectArgs(2);
-      const funcIdx = ensureLateImport(ctx, "__reflect_deleteProperty", [externRef, externRef], [i32Ty]);
-      flushLateImportShifts(ctx, fctx);
-      if (funcIdx !== undefined) {
-        fctx.body.push({ op: "call", funcIdx });
-        return { kind: "i32" };
-      }
-      return fallbackReturn(2, "i32-true");
-    }
-
-    // Reflect.defineProperty(target, key, desc) — returns i32 (boolean).
-    if (reflectMethod === "defineProperty" && expr.arguments.length >= 3) {
-      emitReflectArgs(3);
-      const funcIdx = ensureLateImport(ctx, "__reflect_defineProperty", [externRef, externRef, externRef], [i32Ty]);
-      flushLateImportShifts(ctx, fctx);
-      if (funcIdx !== undefined) {
-        fctx.body.push({ op: "call", funcIdx });
-        return { kind: "i32" };
-      }
-      return fallbackReturn(3, "i32-true");
-    }
-
-    // Reflect.getOwnPropertyDescriptor(target, key) — returns externref.
-    if (reflectMethod === "getOwnPropertyDescriptor" && expr.arguments.length >= 2) {
-      emitReflectArgs(2);
-      const funcIdx = ensureLateImport(ctx, "__reflect_getOwnPropertyDescriptor", [externRef, externRef], [externRef]);
-      flushLateImportShifts(ctx, fctx);
-      if (funcIdx !== undefined) {
-        fctx.body.push({ op: "call", funcIdx });
-        return { kind: "externref" };
-      }
-      return fallbackReturn(2, "extern-null");
-    }
-
-    // Reflect.getPrototypeOf(target) — returns externref.
-    if (reflectMethod === "getPrototypeOf" && expr.arguments.length >= 1) {
-      emitReflectArgs(1);
-      const funcIdx = ensureLateImport(ctx, "__reflect_getPrototypeOf", [externRef], [externRef]);
-      flushLateImportShifts(ctx, fctx);
-      if (funcIdx !== undefined) {
-        fctx.body.push({ op: "call", funcIdx });
-        return { kind: "externref" };
-      }
-      return fallbackReturn(1, "extern-null");
-    }
-
-    // Reflect.setPrototypeOf(target, proto) — returns i32 (boolean).
-    // (#2747 d) Record the user [[Prototype]] on BOTH channels:
-    //   - __host_set_struct_proto populates `_wasmStructProto` — the SAME link
-    //     the Object.setPrototypeOf gc/host arm (calls.ts ~5980) writes and the
-    //     for-in walk consults via `_structUserProto`. Without this the
-    //     inherited keys never enumerated (verify-first: for-in dropped the
-    //     inherited key).
-    //   - __reflect_setPrototypeOf preserves the host-wrapper round-trip that
-    //     Reflect.getPrototypeOf reads (and is the only channel that handles a
-    //     non-weak-key-able empty `{}` target — #1466). Keeping it means the
-    //     existing Reflect.get/setPrototypeOf round-trip does not regress.
-    // target/proto are saved in temp locals so both calls receive them.
-    if (reflectMethod === "setPrototypeOf" && expr.arguments.length >= 2) {
-      const objLocal = allocTempLocal(fctx, externRef);
-      const protoLocal = allocTempLocal(fctx, externRef);
-      // target → objLocal
-      {
-        const a = expr.arguments[0];
-        const ty = a ? compileExpression(ctx, fctx, a, externRef) : null;
-        if (ty && ty.kind !== "externref") coerceType(ctx, fctx, ty, externRef);
-        else if (ty === null || a === undefined) fctx.body.push({ op: "ref.null.extern" });
-      }
-      fctx.body.push({ op: "local.set", index: objLocal });
-      // proto → protoLocal
-      {
-        const a = expr.arguments[1];
-        const ty = a ? compileExpression(ctx, fctx, a, externRef) : null;
-        if (ty && ty.kind !== "externref") coerceType(ctx, fctx, ty, externRef);
-        else if (ty === null || a === undefined) fctx.body.push({ op: "ref.null.extern" });
-      }
-      fctx.body.push({ op: "local.set", index: protoLocal });
-      // __host_set_struct_proto(obj, proto) → for-in channel; returns obj, drop.
-      const hIdx = ensureLateImport(ctx, "__host_set_struct_proto", [externRef, externRef], [externRef]);
-      flushLateImportShifts(ctx, fctx);
-      if (hIdx !== undefined) {
-        fctx.body.push({ op: "local.get", index: objLocal });
-        fctx.body.push({ op: "local.get", index: protoLocal });
-        fctx.body.push({ op: "call", funcIdx: hIdx });
-        fctx.body.push({ op: "drop" });
-      }
-      // __reflect_setPrototypeOf(obj, proto) → wrapper round-trip; returns i32.
-      const rIdx = ensureLateImport(ctx, "__reflect_setPrototypeOf", [externRef, externRef], [i32Ty]);
-      flushLateImportShifts(ctx, fctx);
-      if (rIdx !== undefined) {
-        fctx.body.push({ op: "local.get", index: objLocal });
-        fctx.body.push({ op: "local.get", index: protoLocal });
-        fctx.body.push({ op: "call", funcIdx: rIdx });
-        releaseTempLocal(fctx, objLocal);
-        releaseTempLocal(fctx, protoLocal);
-        return { kind: "i32" };
-      }
-      releaseTempLocal(fctx, objLocal);
-      releaseTempLocal(fctx, protoLocal);
-      // Reflect helper unavailable — return the success sentinel (true).
-      fctx.body.push({ op: "i32.const", value: 1 });
+    // (#6770 S4) `Reflect.hasOwnProperty(…)` etc.: an ordinary `obj.m(…)` call.
+    if (!REFLECT_FUNCTIONS.has(reflectMethod)) return undefined;
+    // Boolean-returning methods need an i32 on the stack; the rest return
+    // externref. Pick the fallback shape per method so the surrounding
+    // expression still type-checks even though the module is already marked
+    // failed by reportError.
+    const booleanReflect = new Set([
+      "set",
+      "has",
+      "deleteProperty",
+      "defineProperty",
+      "setPrototypeOf",
+      "isExtensible",
+      "preventExtensions",
+    ]);
+    reportError(ctx, expr, `Codegen error: Reflect.${reflectMethod} not supported in standalone mode (#1472 Phase C).`);
+    if (booleanReflect.has(reflectMethod)) {
+      fctx.body.push({ op: "i32.const", value: 0 });
       return { kind: "i32" };
     }
-
-    // Reflect.ownKeys(target) — returns externref (Array including Symbol keys, per §28.1.13).
-    if (reflectMethod === "ownKeys" && expr.arguments.length >= 1) {
-      emitReflectArgs(1);
-      const funcIdx = ensureLateImport(ctx, "__reflect_ownKeys", [externRef], [externRef]);
-      flushLateImportShifts(ctx, fctx);
-      if (funcIdx !== undefined) {
-        fctx.body.push({ op: "call", funcIdx });
-        return { kind: "externref" };
-      }
-      return fallbackReturn(1, "extern-null");
-    }
-
-    // Reflect.isExtensible(target) — returns i32 (boolean).
-    // Preserve ctx.nonExtensibleVars marking (used by Object.isFrozen / Object.preventExtensions
-    // compile-time tracking at calls.ts:2089/2180) for identifiers so legacy callers still see
-    // the same answer; but the runtime answer always comes from the host.
-    if (reflectMethod === "isExtensible" && expr.arguments.length >= 1) {
-      emitReflectArgs(1);
-      const funcIdx = ensureLateImport(ctx, "__reflect_isExtensible", [externRef], [i32Ty]);
-      flushLateImportShifts(ctx, fctx);
-      if (funcIdx !== undefined) {
-        fctx.body.push({ op: "call", funcIdx });
-        return { kind: "i32" };
-      }
-      return fallbackReturn(1, "i32-true");
-    }
-
-    // Reflect.preventExtensions(target) — returns i32 (boolean).
-    // Keep ctx.nonExtensibleVars side-effect for identifiers so the Object.* compile-time
-    // fast path stays consistent with the host's runtime answer.
-    if (reflectMethod === "preventExtensions" && expr.arguments.length >= 1) {
-      const arg0 = expr.arguments[0]!;
-      if (ts.isIdentifier(arg0)) {
-        ctx.nonExtensibleVars.add(integrityVarKey(ctx, arg0)); // (#3403) per-declaration key
-      }
-      emitReflectArgs(1);
-      const funcIdx = ensureLateImport(ctx, "__reflect_preventExtensions", [externRef], [i32Ty]);
-      flushLateImportShifts(ctx, fctx);
-      if (funcIdx !== undefined) {
-        fctx.body.push({ op: "call", funcIdx });
-        return { kind: "i32" };
-      }
-      return fallbackReturn(1, "i32-true");
-    }
-
-    // Reflect.apply(fn, thisArg, argList) — returns externref. Host performs CreateListFromArrayLike.
-    if (reflectMethod === "apply" && expr.arguments.length >= 3) {
-      emitReflectArgs(3, 2);
-      const funcIdx = ensureLateImport(ctx, "__reflect_apply", [externRef, externRef, externRef], [externRef]);
-      flushLateImportShifts(ctx, fctx);
-      if (funcIdx !== undefined) {
-        fctx.body.push({ op: "call", funcIdx });
-        return { kind: "externref" };
-      }
-      return fallbackReturn(3, "extern-null");
-    }
-
-    // Reflect.construct(C, args, [newTarget]) — returns externref.
-    // Passing ref.null.extern for omitted newTarget lets the host wrapper default to `C`.
-    //
-    // (#4394) …which makes an OMITTED newTarget indistinguishable from an
-    // explicit `null` one at the fixed-arity wasm boundary, and §26.1.2 step 3
-    // treats them oppositely: absent ⇒ default to the target, PRESENT and not a
-    // constructor ⇒ TypeError. The shim collapsed both to the 2-argument form,
-    // so `Reflect.construct(fn, [], null)` quietly constructed instead of
-    // throwing. Encode presence in the import NAME — the boundary cannot carry
-    // it any other way, and the arity is a compile-time fact.
-    if (reflectMethod === "construct" && expr.arguments.length >= 2) {
-      emitReflectArgs(3, 1);
-      const constructImport = expr.arguments.length >= 3 ? "__reflect_construct_newtarget" : "__reflect_construct";
-      const funcIdx = ensureLateImport(ctx, constructImport, [externRef, externRef, externRef], [externRef]);
-      flushLateImportShifts(ctx, fctx);
-      if (funcIdx !== undefined) {
-        fctx.body.push({ op: "call", funcIdx });
-        return { kind: "externref" };
-      }
-      return fallbackReturn(3, "extern-null");
-    }
+    fctx.body.push({ op: "ref.null.extern" });
+    return { kind: "externref" };
   }
 
   // Handle Promise.all / Promise.race / Promise.allSettled / Promise.any / Promise.resolve / Promise.reject — host-delegated static calls
@@ -3014,7 +2632,7 @@ export function compileNamespaceStaticCall(
       isAggregatorMethod;
     const isResolveReject =
       ts.isIdentifier(propAccess.expression) &&
-      (propAccess.expression.text === "Promise" || (isStandalonePromiseActive(ctx) && isPromiseSubclassReceiver)) &&
+      (propAccess.expression.text === "Promise" || isPromiseSubclassReceiver) &&
       (propAccess.name.text === "resolve" || propAccess.name.text === "reject");
     if (isAggregator) {
       const methodName = propAccess.name.text;
@@ -3040,8 +2658,7 @@ export function compileNamespaceStaticCall(
       // use exactly that shape. Explicit `Promise.METHOD.call(Sub, iterable)`
       // remains on the constructor-aware host path below.
       const arg0 = expr.arguments[0];
-      const nativeCombinatorEligible =
-        isStandalonePromiseActive(ctx) && isNativeCombinatorMethod(methodName) && expr.arguments.length === 1;
+      const nativeCombinatorEligible = isNativeCombinatorMethod(methodName) && expr.arguments.length === 1;
       // (#5197 R3-2) The ordinary native pipeline intentionally remains
       // byte-identical unless source can observe the constructor's `resolve`
       // or a per-promise `then`. In the observable case the emitter performs
@@ -3229,11 +2846,7 @@ export function compileNamespaceStaticCall(
         // `Sub` is a `class extends Promise`. Resolve it to the synthesized
         // JS subclass as thisArg and switch to directCall=0 so the runtime
         // uses it instead of substituting globalThis.Promise.
-        const subclassThisArg = resolvePromiseSubclassThisArg(ctx, fctx, propAccess.expression);
-        if (!subclassThisArg) {
-          // Direct `Promise.METHOD(iter)` — no explicit thisArg.
-          fctx.body.push({ op: "ref.null.extern" });
-        }
+        fctx.body.push({ op: "ref.null.extern" });
         if (expr.arguments.length >= 1) {
           // (#1465) The runtime helper delegates to native
           // `Promise.METHOD.call(C, iter)` which drives `GetIterator(iter)`
@@ -3251,7 +2864,7 @@ export function compileNamespaceStaticCall(
         // directCall=1 — runtime substitutes globalThis.Promise. When a
         // subclass receiver was resolved (E1), directCall=0 so the runtime
         // uses the synthesized thisArg ctor instead.
-        fctx.body.push({ op: "i32.const", value: subclassThisArg ? 0 : 1 });
+        fctx.body.push({ op: "i32.const", value: 1 });
         fctx.body.push({ op: "call", funcIdx });
         return { kind: "externref" };
       }
@@ -3274,60 +2887,35 @@ export function compileNamespaceStaticCall(
       // `Promise.reject(r)` — emit Wasm-native `$Promise` struct.new instead
       // of the JS-host `Promise_{resolve,reject}_import` (unsatisfiable in
       // WASI). (#2980 async-gen fallback lives in `isStandalonePromiseActive`.)
-      if (isStandalonePromiseActive(ctx)) {
-        // (#3125) `Promise.resolve` now routes through the spec Resolve
-        // (`__promise_resolve_value` — thenable assimilation / poisoned-then
-        // reject / promise passthrough), which needs the settle-function
-        // substrate. Ensure it BEFORE compiling the argument into the
-        // detached side buffer, so the substrate's minted-func registration
-        // can never land while `argInstrs` is off `fctx.body`/liveBodies.
-        if (methodName === "resolve") {
-          ensurePromiseSettleFunctions(ctx);
-        }
-        // Compile the value/reason argument FIRST into a side buffer
-        // so the helper controls the final Wasm op order
-        // (state | value | null | struct.new | extern.convert_any).
-        const argInstrs: Instr[] = [];
-        ctx.liveBodies.add(argInstrs);
-        const savedBody = fctx.body;
-        fctx.body = argInstrs;
-        try {
-          if (expr.arguments.length >= 1) {
-            compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "externref" });
-          } else {
-            fctx.body.push({ op: "ref.null.extern" });
-          }
-        } finally {
-          fctx.body = savedBody;
-        }
-        try {
-          if (methodName === "resolve") {
-            emitStandalonePromiseResolve(ctx, fctx, argInstrs);
-          } else {
-            emitStandalonePromiseReject(ctx, fctx, argInstrs);
-          }
-        } finally {
-          ctx.liveBodies.delete(argInstrs);
-        }
-        return { kind: "externref" };
+      if (methodName === "resolve") {
+        ensurePromiseSettleFunctions(ctx);
       }
-      const importName = `Promise_${methodName}`;
-      let funcIdx =
-        ctx.funcMap.get(importName) ??
-        ensureLateImport(ctx, importName, [{ kind: "externref" }], [{ kind: "externref" }]);
-      flushLateImportShifts(ctx, fctx);
-      funcIdx = ctx.funcMap.get(importName) ?? funcIdx;
-      if (funcIdx !== undefined) {
+      // Compile the value/reason argument FIRST into a side buffer
+      // so the helper controls the final Wasm op order
+      // (state | value | null | struct.new | extern.convert_any).
+      const argInstrs: Instr[] = [];
+      ctx.liveBodies.add(argInstrs);
+      const savedBody = fctx.body;
+      fctx.body = argInstrs;
+      try {
         if (expr.arguments.length >= 1) {
-          compileExpression(ctx, fctx, expr.arguments[0]!, {
-            kind: "externref",
-          });
+          compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "externref" });
         } else {
           fctx.body.push({ op: "ref.null.extern" });
         }
-        fctx.body.push({ op: "call", funcIdx });
-        return { kind: "externref" };
+      } finally {
+        fctx.body = savedBody;
       }
+      try {
+        if (methodName === "resolve") {
+          emitStandalonePromiseResolve(ctx, fctx, argInstrs);
+        } else {
+          emitStandalonePromiseReject(ctx, fctx, argInstrs);
+        }
+      } finally {
+        ctx.liveBodies.delete(argInstrs);
+      }
+      return { kind: "externref" };
     }
   }
 
@@ -3346,7 +2934,6 @@ export function compileNamespaceStaticCall(
     // slot — so admitting only one of them left the other on the unsatisfiable
     // `Promise_reject` host import for every custom `C`.
     (propAccess.expression.name.text === "resolve" || propAccess.expression.name.text === "reject") &&
-    isStandalonePromiseActive(ctx) &&
     // (#5197 Slice D) One argument is the ordinary `Promise.resolve.call(C)`
     // spelling: NewPromiseCapability still runs, and the settled value is
     // `undefined`. Requiring two arguments sent that whole family to the host
@@ -3459,7 +3046,7 @@ export function compileNamespaceStaticCall(
     // compilation and the transactional refusal) instead of leaking the
     // unsatisfiable `Promise_all`/`Promise_race` host import. Tried BEFORE the
     // narrow #4682 empty-array arm, which remains the fallback.
-    if (isStandalonePromiseActive(ctx) && isCustomCombinatorMethod(methodName)) {
+    if (isCustomCombinatorMethod(methodName)) {
       // (#5197 r3) A function `C` over a NON-literal iterable takes D3's step-wise drive first.
       const iterableArg = expr.arguments[1];
       if (iterableArg === undefined || !ts.isArrayLiteralExpression(iterableArg)) {
@@ -3482,7 +3069,6 @@ export function compileNamespaceStaticCall(
     // the selected capability-executor cohort observes only construction,
     // executor capture, and post-construction callable validation.
     if (
-      isStandalonePromiseActive(ctx) &&
       expr.arguments.length === 2 &&
       ts.isIdentifier(expr.arguments[0]) &&
       expr.arguments[0].text !== "Promise" &&
@@ -3539,12 +3125,7 @@ export function compileNamespaceStaticCall(
     // arguments must still be evaluated before the target method runs, and
     // preserving that ordering belongs to a separate general reflective-call
     // slice.
-    if (
-      isStandalonePromiseActive(ctx) &&
-      expr.arguments.length === 2 &&
-      ts.isIdentifier(expr.arguments[0]) &&
-      expr.arguments[0].text === "Promise"
-    ) {
+    if (expr.arguments.length === 2 && ts.isIdentifier(expr.arguments[0]) && expr.arguments[0].text === "Promise") {
       const directProp = propAccess.expression;
       const directCall = ts.factory.createCallExpression(directProp, undefined, [expr.arguments[1]!]);
       ts.setTextRange(directCall, expr);
@@ -3570,9 +3151,7 @@ export function compileNamespaceStaticCall(
       // in which case the runtime / V8 throws TypeError per spec §27.2.4.X step 2).
       // (#1116b) When thisArg names a `class X extends Promise`, resolve it to
       // a synthesized JS-callable Promise subclass; otherwise compile normally.
-      if (!resolvePromiseSubclassThisArg(ctx, fctx, expr.arguments[0]!)) {
-        compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "externref" });
-      }
+      compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "externref" });
       // arg1 = iterable (or ref.null if missing). #1465: materialise array
       // literals to JS arrays so native GetIterator can drive them.
       if (expr.arguments.length >= 2) {
@@ -3590,12 +3169,11 @@ export function compileNamespaceStaticCall(
   // Handle JSON APIs through the selected semantic provider.
   if (ts.isIdentifier(propAccess.expression) && propAccess.expression.text === "JSON") {
     const method = propAccess.name.text;
-    const useNativeJsonProvider = ctx.targetProfile.semanticProviders === "native-first";
     // (#3176/#4397) ES2025 `JSON.rawJSON` / `JSON.isRawJSON` — native provider.
     // `rawJSON` builds a branded carrier object; `isRawJSON` reads
     // the `[[IsRawJSON]]` brand bit. Both reuse the native JSON codec +
     // object runtime (no host import, no second parser).
-    if ((method === "rawJSON" || method === "isRawJSON") && useNativeJsonProvider) {
+    if (method === "rawJSON" || method === "isRawJSON") {
       if (method === "rawJSON" && expr.arguments.length >= 1) {
         // Build the carrier: `__json_rawjson` ToStrings the raw value inside
         // then validates + brands it.
@@ -3654,10 +3232,7 @@ export function compileNamespaceStaticCall(
     // §25.5.1 step 1 `ToString(undefined)` produces "undefined" — a SyntaxError
     // from the grammar, not a compile refusal. It used to miss this gate and
     // fall through to the generic `__get_builtin` compile error.
-    if (
-      (method === "stringify" || method === "parse") &&
-      (expr.arguments.length >= 1 || (method === "parse" && useNativeJsonProvider))
-    ) {
+    if ((method === "stringify" || method === "parse") && (expr.arguments.length >= 1 || method === "parse")) {
       // (#1324 primitives slice) For JSON.stringify of statically-typed
       // primitive values (null / undefined / boolean, plus number when the
       // target has a number_toString helper), emit the result without the
@@ -3686,9 +3261,8 @@ export function compileNamespaceStaticCall(
         // (#1599) …except under a native FUNCTION replacer: §25.5.2 step 12
         // serialises its return for the root (`JSON.stringify(null, () => ({a: 1}))`).
         const primitiveStringType =
-          useNativeJsonProvider &&
-          (jsonReplacerSeesRoot(ctx, expr.arguments[0]!, expr.arguments[1]) ||
-            jsonReplacerIsProxyShaped(ctx, expr.arguments[1]))
+          jsonReplacerSeesRoot(ctx, expr.arguments[0]!, expr.arguments[1]) ||
+          jsonReplacerIsProxyShaped(ctx, expr.arguments[1])
             ? undefined
             : tryEmitJsonStringifyPrimitive(ctx, fctx, expr.arguments[0]!);
         if (primitiveStringType !== undefined) {
@@ -3702,7 +3276,7 @@ export function compileNamespaceStaticCall(
           }
           return primitiveStringType;
         }
-        if (useNativeJsonProvider && expr.arguments.length >= 1) {
+        if (expr.arguments.length >= 1) {
           // #2166: thread the optional replacer (must be null/undefined) and
           // space args so `JSON.stringify(value, null, 2)` produces the
           // indented form statically instead of refusing.
@@ -3904,7 +3478,7 @@ export function compileNamespaceStaticCall(
           }
         }
       }
-      if (method === "parse" && useNativeJsonProvider) {
+      if (method === "parse") {
         // (#2166 PR-D1) The static-literal fold ignores a reviver — skip it
         // when a 2nd arg is present so `JSON.parse('5', reviver)` runs the
         // reviver walk instead of folding to the bare parsed value.
@@ -4028,100 +3602,24 @@ export function compileNamespaceStaticCall(
       // (objects, arrays, strings, and all `JSON.parse`) needs the pure-Wasm
       // codec from Phase 2, which is not yet implemented. Emit a clear
       // compile error rather than a module that traps at instantiation.
-      if (useNativeJsonProvider) {
-        reportError(
-          ctx,
-          expr,
-          `Codegen error: JSON.${method} of this value is not yet supported by the native JSON provider (#1599). ` +
-            `Pure-Wasm JSON.stringify of null/undefined/boolean works standalone; ` +
-            `numbers, objects, arrays, strings, and JSON.parse require the Phase 2 pure-Wasm codec (#1599 Phase 2). ` +
-            `Avoid this JSON shape when native semantic providers are selected for now.`,
-          "error",
-          // (#3725) STICKY. This `reportError(...); return null` pair is a
-          // deliberate refusal, but `return null` is indistinguishable from an
-          // ordinary probe miss at `compileExpression`'s rollback, which
-          // truncated the diagnostic and substituted a default value. The
-          // observable result was the opposite of a refusal: `JSON.stringify` of
-          // a closed typed-vec compiled to a clean, zero-import standalone module
-          // that trapped on every call ("dereferencing a null pointer").
-          { sticky: true },
-        );
-        return null;
-      }
-      const importName = `JSON_${method}`;
-      const funcIdx = ctx.funcMap.get(importName);
-      if (funcIdx !== undefined) {
-        // Compile first argument and coerce to externref
-        const argType = compileExpression(ctx, fctx, expr.arguments[0]!);
-        // (#3912) A NATIVE string argument must be marshalled, not merely
-        // widened. `coerceType(..., externref)` emits `extern.convert_any`,
-        // which hands the host the opaque `$AnyString` struct — the host then
-        // stringifies it as an ordinary object, so `JSON.stringify("hi")`
-        // produced `"{}"` instead of `"\"hi\""`. Object/array arguments keep
-        // `extern.convert_any`: the host data-struct bridge walks those.
-        const argIsNativeString =
-          ctx.nativeStrings &&
-          ctx.anyStrTypeIdx >= 0 &&
-          argType !== null &&
-          (argType.kind === "ref" || argType.kind === "ref_null") &&
-          ((argType as { typeIdx?: number }).typeIdx === ctx.anyStrTypeIdx ||
-            (argType as { typeIdx?: number }).typeIdx === ctx.nativeStrTypeIdx);
-        if (argIsNativeString && emitNativeStringToHostExternref(ctx, fctx)) {
-          // marshalled to a real JS string
-        } else if (argType && argType.kind !== "externref") {
-          coerceType(ctx, fctx, argType, { kind: "externref" });
-        }
-        if (method === "stringify") {
-          // Pass replacer (arg 2) and space (arg 3), or null sentinels
-          if (expr.arguments.length >= 2) {
-            const repType = compileExpression(ctx, fctx, expr.arguments[1]!);
-            if (repType && repType.kind !== "externref") {
-              coerceType(ctx, fctx, repType, { kind: "externref" });
-            }
-          } else {
-            fctx.body.push({ op: "ref.null.extern" });
-          }
-          if (expr.arguments.length >= 3) {
-            const spType = compileExpression(ctx, fctx, expr.arguments[2]!);
-            if (spType && spType.kind !== "externref") {
-              coerceType(ctx, fctx, spType, { kind: "externref" });
-            }
-          } else {
-            fctx.body.push({ op: "ref.null.extern" });
-          }
-        } else {
-          // #2013 — `JSON.parse(text, reviver)` §25.5.1: forward the reviver
-          // (arg 2) so the host applies InternalizeJSONProperty. A WasmGC
-          // closure reviver coerces to externref like any other ref and the
-          // host bridges it via `__call_fn_2`; absent → null sentinel (no-op).
-          if (expr.arguments.length >= 2) {
-            const revType = compileExpression(ctx, fctx, expr.arguments[1]!);
-            if (revType && revType.kind !== "externref") {
-              coerceType(ctx, fctx, revType, { kind: "externref" });
-            }
-          } else {
-            fctx.body.push({ op: "ref.null.extern" });
-          }
-        }
-        fctx.body.push({ op: "call", funcIdx });
-        // (#3912) `env.JSON_stringify` hands back a REAL JS string. Under native
-        // strings every downstream consumer expects an `$AnyString`, so reporting
-        // this as a bare `externref` made them soft-cast it
-        // (`any.convert_extern; ref.test $AnyString`), miss, substitute
-        // `ref.null $AnyString`, and then trap in `struct.get $AnyString 0` —
-        // `JSON.stringify({a:42}).length` was a "dereferencing a null pointer"
-        // in the whole gc-native lane. Marshal at the boundary instead.
-        //
-        // Only `stringify` returns a string; `JSON.parse` returns an arbitrary
-        // value and keeps its externref. Standalone/WASI never reach here (they
-        // have no `env::JSON_*` import), so this is confined to the one config
-        // that pairs a JS host with native strings.
-        if (method === "stringify" && ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
-          const marshalled = emitHostExternrefToNativeString(ctx, fctx);
-          if (marshalled !== null) return marshalled;
-        }
-        return { kind: "externref" };
-      }
+      reportError(
+        ctx,
+        expr,
+        `Codegen error: JSON.${method} of this value is not yet supported by the native JSON provider (#1599). ` +
+          `Pure-Wasm JSON.stringify of null/undefined/boolean works standalone; ` +
+          `numbers, objects, arrays, strings, and JSON.parse require the Phase 2 pure-Wasm codec (#1599 Phase 2). ` +
+          `Avoid this JSON shape when native semantic providers are selected for now.`,
+        "error",
+        // (#3725) STICKY. This `reportError(...); return null` pair is a
+        // deliberate refusal, but `return null` is indistinguishable from an
+        // ordinary probe miss at `compileExpression`'s rollback, which
+        // truncated the diagnostic and substituted a default value. The
+        // observable result was the opposite of a refusal: `JSON.stringify` of
+        // a closed typed-vec compiled to a clean, zero-import standalone module
+        // that trapped on every call ("dereferencing a null pointer").
+        { sticky: true },
+      );
+      return null;
     }
   }
 
@@ -4169,7 +3667,8 @@ export function compileNamespaceStaticCall(
       // only tests asserting a *real* current time (which standalone WasmGC
       // cannot provide) stay failing — and those need a clock source, not a
       // host import.
-      if (ctx.standalone === true) {
+      // (#6708) a JS environment owns a clock capability even under the regime
+      if (ctx.standalone === true && hostFreeEnvironment(ctx)) {
         emitStandaloneDateNowValue(ctx, fctx);
         return { kind: "f64" };
       }

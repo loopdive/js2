@@ -30,13 +30,8 @@ import { inheritedBuiltinReceiverType } from "../builtin-subclass-receiver.js"; 
 import { isWiredTypedArrayViewName } from "../array-object-proto.js";
 import { ensureWrapperProtoDynamicMember } from "../wrapper-proto-dynamic-demand.js"; // (#4619)
 import { exactClassExpressionTypeName } from "../class-expression-identity.js";
-import { usesHostBigIntCarrier } from "../host-bigint-carrier.js";
 import { emitNarrowedCarrierToString } from "../bigint-wide.js";
-import {
-  emitStandalonePromiseFinally,
-  emitStandalonePromiseThen,
-  isStandaloneThenChainNativeActive,
-} from "../async-scheduler.js";
+import { emitStandalonePromiseFinally, emitStandalonePromiseThen } from "../async-scheduler.js";
 import { isSupportedBuiltinStaticProperty, resolveBuiltinNamespaceValueName } from "../builtin-static-globals.js";
 import { classMemberFuncKey, fnctorAncestorOfClass } from "../class-member-keys.js";
 import { interfaceHasClassImplementer } from "../interface-class-implementer.js"; // (#6634)
@@ -54,7 +49,6 @@ import { pushBody } from "../context/bodies.js";
 import { allocLocal, allocTempLocal, getLocalType, releaseTempLocal } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { resolveReceiverStruct } from "../fnctor-escape-gate.js";
-import { tryEmitFixedHostMethodCall } from "../fixed-host-method-call.js";
 import { hostFnctorCallableFallbackImportName, reserveHostFnctorMethodDriver } from "../host-fnctor-method-driver.js";
 import { tryCompileHostStringPredicate } from "../host-string-prefix-suffix.js";
 import { tryCompileStringSymbolProtocolDispatch } from "../string-symbol-protocol.js"; // (#6651 B) §22.1.3 step 2
@@ -75,7 +69,6 @@ import {
   ensureTaDynSetHelper,
   ensureTaFromArrayLikeHelper,
   isDataViewAccessor,
-  usesNativeDataViewProvider,
 } from "../dataview-native.js";
 import { buildTaFromMapfnCallableGate, buildTypedArrayIntrinsicCarrierMatch } from "../ta-static-from-of-spec.js"; // (#6651 E2) §23.2.1 carrier identity + §23.2.2.1 step 3
 import { ensureTaDynProtoMethodHelper, hasTaDynProtoMethodHelper } from "../ta-dyn-proto-methods.js"; // (#5194 r3-1.3) dyn-view read-side helpers
@@ -204,7 +197,6 @@ import {
   maybeStampCompiledFunctionArgName,
   noJsHost,
   resolveReceiverMethodClassName,
-  usesNativeJsErrors,
   wasmFuncReturnsVoid,
 } from "./helpers.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
@@ -284,7 +276,6 @@ import {
   STANDALONE_TA_MAPFILTER_PACKED_VIEWS,
   STANDALONE_TA_SCALAR_HOFS,
   compileFunctionBind,
-  usesNativeFunctionBindProvider,
   compilePromiseThenReceiverBuffer,
   compileStandalonePromiseThenCallback,
   emitFnctorSubclassDynamicMethodCall,
@@ -299,7 +290,6 @@ import {
   normalizeNaNToZero,
   resolveAssignedNominalType,
   sourceHasMethodReassignment,
-  standaloneThenMissArmCanBeNative,
   tracesToTypedArrayIntrinsicProto,
   tryEmitAsyncGenNextDispatch,
   tryEmitAsyncGenReturnThrowDispatch,
@@ -1031,7 +1021,7 @@ export function compileReceiverMethodCall(
   // #1654/#4397 — the native DataView provider is independent of the embedder.
   // It must run before extern-class dispatch so native-first JS builds do not
   // move DataView state or byte access into the host runtime.
-  if (usesNativeDataViewProvider(ctx) && isDataViewAccessor(propAccess.name.text)) {
+  if (isDataViewAccessor(propAccess.name.text)) {
     const recvSym = receiverType.getSymbol()?.name;
     if (recvSym === "DataView") {
       const dvResult = emitDataViewAccessor(
@@ -1215,7 +1205,6 @@ export function compileReceiverMethodCall(
   // compiled async function returns through host Promise path — v1 regression)
   {
     const method = propAccess.name.text;
-    const nativeFirstPromise = ctx.targetProfile.semanticProviders === "native-first";
     // (#2903) `.finally` takes the NATIVE §27.2.5.3 lowering only when the
     // module provably cannot mint a HOST promise (or under wasi, whose
     // zero-import contract has no host route at all). Producer modules keep
@@ -1226,10 +1215,7 @@ export function compileReceiverMethodCall(
     // wrap). Zero-arg `.finally()` is admitted ONLY when the native lowering
     // will consume it; every other lane keeps the historical ≥1-argument
     // gate so its generic paths (and bytes) are untouched.
-    let nativeFinallyActive =
-      method === "finally" &&
-      isStandaloneThenChainNativeActive(ctx) &&
-      (ctx.wasi === true || nativeFirstPromise || standaloneThenMissArmCanBeNative(ctx));
+    let nativeFinallyActive = method === "finally";
     // (#2867 S2b) Zero-argument `.then()` — §27.2.5.4 with both handlers absent,
     // i.e. the identity pass-through. It was excluded by the historical
     // `arguments.length >= 1` gate below and fell through to the GENERIC
@@ -1251,11 +1237,7 @@ export function compileReceiverMethodCall(
     // untouched. `emitStandalonePromiseThen(…, null, null)` is the existing
     // absent-handler identity chain (it is what `.finally` degrades to at
     // async-scheduler.ts:4553), so this reuses machinery rather than adding any.
-    const nativeThenZeroArgActive =
-      method === "then" &&
-      expr.arguments.length === 0 &&
-      isStandaloneThenChainNativeActive(ctx) &&
-      (ctx.wasi === true || nativeFirstPromise || standaloneThenMissArmCanBeNative(ctx));
+    const nativeThenZeroArgActive = method === "then" && expr.arguments.length === 0;
     if (
       (method === "then" || method === "catch" || method === "finally") &&
       (expr.arguments.length >= 1 || nativeFinallyActive || nativeThenZeroArgActive)
@@ -1274,7 +1256,6 @@ export function compileReceiverMethodCall(
       // keeping host/gc dispatch unchanged.
       // (#5197 r3) …including an ANONYMOUS `class extends Promise` instance.
       const isNativePromiseSubclassReceiver =
-        isStandaloneThenChainNativeActive(ctx) &&
         promiseSubclassNameOfType(ctx, receiverTsType, apparentTsType) !== undefined;
       const isPromiseReceiver = recvSym === "Promise" || apparentSym === "Promise" || isNativePromiseSubclassReceiver;
       if (method === "finally" && isNativePromiseSubclassReceiver) {
@@ -1296,8 +1277,7 @@ export function compileReceiverMethodCall(
       if (
         !isPromiseReceiver &&
         (method === "then" || method === "catch" || (method === "finally" && nativeFinallyActive)) &&
-        (receiverTsType.flags & ts.TypeFlags.Any) !== 0 &&
-        isStandaloneThenChainNativeActive(ctx)
+        (receiverTsType.flags & ts.TypeFlags.Any) !== 0
       ) {
         // (#2903) `.finally` on an any-typed receiver takes the same runtime
         // `ref.test $Promise` bridge as `.then`/`.catch` — a native receiver
@@ -1308,7 +1288,7 @@ export function compileReceiverMethodCall(
         if (method === "finally") {
           (ctx.standaloneNativeFinallyNodes ??= new Set()).add(expr);
           emitStandaloneFinallyWithNativeFallback(ctx, fctx, propAccess.expression, expr.arguments[0], {
-            nullMiss: ctx.wasi === true || nativeFirstPromise,
+            nullMiss: true,
           });
           return { kind: "externref" };
         }
@@ -1319,7 +1299,7 @@ export function compileReceiverMethodCall(
           method,
           method === "then" ? expr.arguments[0] : undefined,
           method === "then" ? expr.arguments[1] : expr.arguments[0],
-          { nullMiss: ctx.wasi === true || nativeFirstPromise },
+          { nullMiss: true },
         );
         return { kind: "externref" };
       }
@@ -1342,7 +1322,7 @@ export function compileReceiverMethodCall(
         // (the deferred-combinator paths that would produce one already
         // fail to instantiate for their own unrelated missing import), so
         // this preserves WASI's behaviour byte-for-byte.
-        if (isStandaloneThenChainNativeActive(ctx) && method === "then") {
+        if (method === "then") {
           if (isNativePromiseSubclassReceiver) {
             emitStandaloneThenWithNativeFallback(
               ctx,
@@ -1353,7 +1333,7 @@ export function compileReceiverMethodCall(
               expr.arguments[1],
               { nullMiss: true },
             );
-          } else if (ctx.wasi === true || nativeFirstPromise) {
+          } else {
             const liveBuffers: Instr[][] = [];
             try {
               const promiseInstrs = compilePromiseThenReceiverBuffer(ctx, fctx, propAccess.expression, liveBuffers);
@@ -1369,15 +1349,6 @@ export function compileReceiverMethodCall(
             } finally {
               for (const b of liveBuffers) ctx.liveBodies.delete(b);
             }
-          } else {
-            emitStandaloneThenWithNativeFallback(
-              ctx,
-              fctx,
-              propAccess.expression,
-              "then",
-              expr.arguments[0],
-              expr.arguments[1],
-            );
           }
           return { kind: "externref" };
         }
@@ -1389,7 +1360,7 @@ export function compileReceiverMethodCall(
         // unchanged (onFulfilled = null) and routes a rejection through the
         // user's onRejected continuation. (#2980 class 1: same wasi/standalone
         // split as `.then` above.)
-        if (isStandaloneThenChainNativeActive(ctx) && method === "catch") {
+        if (method === "catch") {
           if (isNativePromiseSubclassReceiver) {
             emitStandaloneThenWithNativeFallback(
               ctx,
@@ -1402,7 +1373,7 @@ export function compileReceiverMethodCall(
                 nullMiss: true,
               },
             );
-          } else if (ctx.wasi === true || nativeFirstPromise) {
+          } else {
             const liveBuffers: Instr[][] = [];
             try {
               const promiseInstrs = compilePromiseThenReceiverBuffer(ctx, fctx, propAccess.expression, liveBuffers);
@@ -1414,15 +1385,6 @@ export function compileReceiverMethodCall(
             } finally {
               for (const b of liveBuffers) ctx.liveBodies.delete(b);
             }
-          } else {
-            emitStandaloneThenWithNativeFallback(
-              ctx,
-              fctx,
-              propAccess.expression,
-              "catch",
-              undefined,
-              expr.arguments[0],
-            );
           }
           return { kind: "externref" };
         }
@@ -1442,7 +1404,7 @@ export function compileReceiverMethodCall(
             emitStandaloneFinallyWithNativeFallback(ctx, fctx, propAccess.expression, expr.arguments[0], {
               nullMiss: true,
             });
-          } else if (ctx.wasi === true || nativeFirstPromise) {
+          } else {
             const liveBuffers: Instr[][] = [];
             try {
               const promiseInstrs = compilePromiseThenReceiverBuffer(ctx, fctx, propAccess.expression, liveBuffers);
@@ -1453,20 +1415,15 @@ export function compileReceiverMethodCall(
             } finally {
               for (const b of liveBuffers) ctx.liveBodies.delete(b);
             }
-          } else {
-            emitStandaloneFinallyWithNativeFallback(ctx, fctx, propAccess.expression, expr.arguments[0]);
           }
           return { kind: "externref" };
         }
 
-        // Determine import name: use Promise_then2 for .then(cb1, cb2)
-        const useThen2 = method === "then" && expr.arguments.length >= 2;
-        const importName = useThen2 ? "Promise_then2" : `Promise_${method}`;
+        // Only a producer module's `.finally` still reaches the host route.
+        const importName = `Promise_${method}`;
 
         // Register as late import (NOT during collection — #960 fix)
-        const paramTypes: ValType[] = useThen2
-          ? [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }]
-          : [{ kind: "externref" }, { kind: "externref" }];
+        const paramTypes: ValType[] = [{ kind: "externref" }, { kind: "externref" }];
         let funcIdx =
           ctx.funcMap.get(importName) ?? ensureLateImport(ctx, importName, paramTypes, [{ kind: "externref" }]);
         flushLateImportShifts(ctx, fctx);
@@ -1483,15 +1440,6 @@ export function compileReceiverMethodCall(
           });
           if (cbType && cbType.kind !== "externref") {
             coerceType(ctx, fctx, cbType, { kind: "externref" });
-          }
-          // For .then(cb1, cb2): compile second callback
-          if (useThen2) {
-            const cb2Type = compileExpression(ctx, fctx, expr.arguments[1]!, {
-              kind: "externref",
-            });
-            if (cb2Type && cb2Type.kind !== "externref") {
-              coerceType(ctx, fctx, cb2Type, { kind: "externref" });
-            }
           }
           // Re-lookup funcIdx after compiling args (late imports may shift)
           const finalIdx = ctx.funcMap.get(importName) ?? funcIdx;
@@ -2821,10 +2769,7 @@ export function compileReceiverMethodCall(
     tracesToTypedArrayIntrinsicProto(ctx, propAccess.expression);
   if (
     !receiverIsTypedArrayIntrinsicProto &&
-    !(
-      ctx.targetProfile.semanticProviders === "native-first" &&
-      (receiverType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0
-    )
+    !((receiverType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0)
   ) {
     const arrMethodResult = compileArrayMethodCall(ctx, fctx, propAccess, expr, receiverType, undefined, expectedType);
     if (arrMethodResult !== undefined) return arrMethodResult;
@@ -2970,7 +2915,7 @@ export function compileReceiverMethodCall(
   // boundary as i64. Mirror the number branch: validate radix range (2-36),
   // throw RangeError otherwise, then call bigint_toString_radix (or the
   // 1-arg bigint_toString for the default radix-10 case).
-  if (!usesHostBigIntCarrier(ctx) && isBigIntType(receiverType) && propAccess.name.text === "toString") {
+  if (isBigIntType(receiverType) && propAccess.name.text === "toString") {
     // §7.1.4: ToNumber(Symbol) is an abrupt completion. Symbols use i32 ids in
     // standalone mode, so compiling this argument with an f64 hint would
     // otherwise reinterpret the id as a numeric radix. Emit the shared
@@ -3548,26 +3493,10 @@ export function compileReceiverMethodCall(
             ? "TypeError: Cannot convert a BigInt value to a number"
             : "TypeError: Cannot convert a Symbol value to a number";
           addStringConstantGlobal(ctx, msg);
-          const strIdx = ctx.stringGlobalMap.get(msg)!;
           // #1473 — no JS host: throw a TypeError INSTANCE via the in-module
           // constructor (no `__throw_type_error` host import).
-          if (usesNativeJsErrors(ctx)) {
-            emitThrowTypeError(ctx, fctx, msg);
-            fctx.body.push({ op: "unreachable" });
-          } else {
-            const throwIdx = ensureLateImport(ctx, "__throw_type_error", [{ kind: "externref" }], []);
-            if (throwIdx !== undefined) {
-              flushLateImportShifts(ctx, fctx);
-              const throwFuncIdx = ctx.funcMap.get("__throw_type_error")!;
-              fctx.body.push({ op: "global.get", index: strIdx });
-              fctx.body.push({ op: "call", funcIdx: throwFuncIdx });
-              fctx.body.push({ op: "unreachable" });
-            } else {
-              const tagIdx = ensureExnTag(ctx);
-              fctx.body.push({ op: "global.get", index: strIdx });
-              fctx.body.push({ op: "throw", tagIdx });
-            }
-          }
+          emitThrowTypeError(ctx, fctx, msg);
+          fctx.body.push({ op: "unreachable" });
           // After unreachable / throw, the wasm stack is polymorphic.
           // Push a sentinel matching the method's return type so any
           // downstream consumer (the implicit drop / coercion in the
@@ -4285,7 +4214,7 @@ export function compileReceiverMethodCall(
         // this module (which already imports dataview-native) to avoid the
         // eval-time import cycle a closed-method-dispatch.ts import would form
         // (same reasoning as the #2927 reserveVecMethodHelper placement above).
-        if (usesNativeDataViewProvider(ctx) && isDataViewAccessor(methodName)) {
+        if (isDataViewAccessor(methodName)) {
           ensureDvAccessorHelper(ctx, methodName);
         }
         flushLateImportShifts(ctx, fctx);
@@ -4399,7 +4328,7 @@ export function compileReceiverMethodCall(
         // closure-classifier runtime arms: a callable receiver mints the
         // native `$__bound_fn` carrier; anything else keeps the EXACT
         // dispatcher path (closed-struct `bind` methods, open objects).
-        if (methodName === "bind" && usesNativeFunctionBindProvider(ctx)) {
+        if (methodName === "bind") {
           // Reserve-then-fill (#1719 discipline): the callable test needs the
           // COMPLETE closure-classifier root list, which is only settled at
           // finalize — baking `buildClosureRefTestArms` here would miss every
@@ -4663,109 +4592,6 @@ export function compileReceiverMethodCall(
       // `ref.test` the registered vec carriers; on hit call the native op, else
       // fall through to the host bridge in the `else` arm. Host/gc mode only (acorn
       // dogfoods there); standalone keeps the existing path (a noted follow-up).
-      if (
-        ctx.targetProfile.semanticProviders !== "native-first" &&
-        !ctx.standalone &&
-        (methodName === "push" || methodName === "pop") &&
-        ctx.vecTypeMap.size > 0
-      ) {
-        // (#2784 S3) Add ALL late imports FIRST and flush, so the index space is
-        // settled BEFORE reserving the native-vec helper funcIdx (a function push,
-        // which does not itself shift). Reserving the helper before these imports
-        // would leave its baked funcIdx stale after the import shift.
-        const mcIdx = ensureLateImport(
-          ctx,
-          "__extern_method_call",
-          [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
-          [{ kind: "externref" }],
-        );
-        const arrNewIdx = ensureLateImport(ctx, "__js_array_new", [], [{ kind: "externref" }]);
-        const arrPushIdx = ensureLateImport(ctx, "__js_array_push", [{ kind: "externref" }, { kind: "externref" }], []);
-        const boxNumIdx =
-          methodName === "push"
-            ? ensureLateImport(ctx, "__box_number", [{ kind: "f64" }], [{ kind: "externref" }])
-            : undefined;
-        addStringConstantGlobal(ctx, methodName);
-        flushLateImportShifts(ctx, fctx);
-        // Reserve the helper AFTER the imports settle — its funcIdx is now final.
-        // (Its body is filled in the finalize vec-export pass.)
-        const vecOpIdx = reserveVecMethodHelper(ctx, methodName === "push" ? "push" : "pop");
-        if (
-          vecOpIdx !== undefined &&
-          mcIdx !== undefined &&
-          arrNewIdx !== undefined &&
-          arrPushIdx !== undefined &&
-          (methodName === "pop" || boxNumIdx !== undefined)
-        ) {
-          // Receiver → externref → recvLocal.
-          const recvT = compileExpression(ctx, fctx, propAccess.expression, { kind: "externref" });
-          if (recvT && recvT.kind !== "externref") coerceType(ctx, fctx, recvT, { kind: "externref" });
-          else if (!recvT) fctx.body.push({ op: "ref.null.extern" });
-          const recvLocal = allocLocal(fctx, `__nvm_recv_${fctx.locals.length}`, { kind: "externref" });
-          fctx.body.push({ op: "local.set", index: recvLocal });
-          // push's single element → argLocal (evaluate side effects once, up front).
-          let argLocal: number | undefined;
-          if (methodName === "push") {
-            const a = expr.arguments[0];
-            if (a) {
-              const at = compileExpression(ctx, fctx, a, { kind: "externref" });
-              if (at && at.kind !== "externref") coerceType(ctx, fctx, at, { kind: "externref" });
-              else if (!at) fctx.body.push({ op: "ref.null.extern" });
-            } else {
-              fctx.body.push({ op: "ref.null.extern" });
-            }
-            argLocal = allocLocal(fctx, `__nvm_arg_${fctx.locals.length}`, { kind: "externref" });
-            fctx.body.push({ op: "local.set", index: argLocal });
-          }
-          // isVec = OR of ref.test over every registered vec carrier.
-          const anyTmp = allocLocal(fctx, `__nvm_any_${fctx.locals.length}`, { kind: "anyref" } as ValType);
-          fctx.body.push({ op: "local.get", index: recvLocal });
-          fctx.body.push({ op: "any.convert_extern" });
-          fctx.body.push({ op: "local.set", index: anyTmp });
-          let emitted = false;
-          for (const vi of new Set(ctx.vecTypeMap.values())) {
-            fctx.body.push({ op: "local.get", index: anyTmp });
-            fctx.body.push({ op: "ref.test", typeIdx: vi });
-            if (emitted) fctx.body.push({ op: "i32.or" });
-            emitted = true;
-          }
-          // THEN (native vec op) — emit then splice into a detached arm.
-          const thenStart = fctx.body.length;
-          if (methodName === "push") {
-            fctx.body.push({ op: "local.get", index: recvLocal });
-            fctx.body.push({ op: "local.get", index: argLocal! });
-            fctx.body.push({ op: "call", funcIdx: vecOpIdx }); // -> i32 new length
-            fctx.body.push({ op: "f64.convert_i32_s" });
-            fctx.body.push({ op: "call", funcIdx: boxNumIdx! }); // -> externref
-          } else {
-            fctx.body.push({ op: "local.get", index: recvLocal });
-            fctx.body.push({ op: "call", funcIdx: vecOpIdx }); // -> externref
-          }
-          const thenInstrs = fctx.body.splice(thenStart);
-          // ELSE (host bridge) — build the args array, then __extern_method_call.
-          const elseStart = fctx.body.length;
-          fctx.body.push({ op: "call", funcIdx: arrNewIdx });
-          const argsLocal = allocLocal(fctx, `__nvm_args_${fctx.locals.length}`, { kind: "externref" });
-          fctx.body.push({ op: "local.set", index: argsLocal });
-          if (methodName === "push") {
-            fctx.body.push({ op: "local.get", index: argsLocal });
-            fctx.body.push({ op: "local.get", index: argLocal! });
-            fctx.body.push({ op: "call", funcIdx: arrPushIdx });
-          }
-          fctx.body.push({ op: "local.get", index: recvLocal });
-          fctx.body.push(...stringConstantExternrefInstrs(ctx, methodName));
-          fctx.body.push({ op: "local.get", index: argsLocal });
-          fctx.body.push({ op: "call", funcIdx: mcIdx });
-          const elseInstrs = fctx.body.splice(elseStart);
-          fctx.body.push({
-            op: "if",
-            blockType: { kind: "val", type: { kind: "externref" } as ValType },
-            then: thenInstrs,
-            else: elseInstrs,
-          });
-          return { kind: "externref" };
-        }
-      }
 
       // (#799 WI3) Generic host-delegated method call for any/externref receivers.
       // #965: resolve known built-in receivers through __get_builtin rather than null.
@@ -4776,7 +4602,7 @@ export function compileReceiverMethodCall(
         // use the same bridge, but ordinary classes need the discriminator too).
         if (!ctx.standalone && !ctx.wasi) ctx.hostDynamicClassMethodNames.add(methodName);
         observeHostDynamicMethodCallArity(ctx, expr.arguments);
-        if (tryEmitFixedHostMethodCall(ctx, fctx, expr, propAccess, methodName)) return { kind: "externref" };
+
         // #1888: standalone builds a native $ObjVec; fixed JS-host calls were
         // handled above. Larger/spread host calls and WASI use the array bridge.
         // #1472: the JS-array builders are not globally safe to alias.
@@ -4785,16 +4611,10 @@ export function compileReceiverMethodCall(
         // (#5361) The push helper's funcidx is re-resolved by NAME after the
         // spread builder runs: expanding a spread can register late imports,
         // which shifts every defined-function index captured before them.
-        const arrPushName =
-          ctx.targetProfile.semanticProviders === "native-first" ? "__objvec_push" : "__js_array_push";
-        if (ctx.targetProfile.semanticProviders === "native-first") {
-          const b = ensureObjVecBuilders(ctx);
-          arrNewIdx = b.newIdx;
-          arrPushIdx = b.pushIdx;
-        } else {
-          arrNewIdx = ensureLateImport(ctx, "__js_array_new", [], [{ kind: "externref" }]);
-          arrPushIdx = ensureLateImport(ctx, "__js_array_push", [{ kind: "externref" }, { kind: "externref" }], []);
-        }
+        const arrPushName = "__objvec_push";
+        const b = ensureObjVecBuilders(ctx);
+        arrNewIdx = b.newIdx;
+        arrPushIdx = b.pushIdx;
         const methodCallIdx = ensureLateImport(
           ctx,
           "__extern_method_call",

@@ -15297,6 +15297,11 @@
       "layer": "legacy-host"
     },
     {
+      "path": "src/runtime/platform-arg-marshal.ts",
+      "state": "unmigrated",
+      "layer": "legacy-host"
+    },
+    {
       "path": "src/runtime/regexp-host-accelerator.ts",
       "state": "unmigrated",
       "layer": "legacy-host"

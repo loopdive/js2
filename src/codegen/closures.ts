@@ -21,7 +21,6 @@ import { widenJsDefaultGuessSlot } from "./js-default-param-type-guess.js";
 import { ts, forEachChild } from "../ts-api.js";
 import { isVoidType, unwrapPromiseType, isPromiseType } from "../checker/type-mapper.js";
 import type { FieldDef, Instr, LocalDef, StructTypeDef, ValType } from "../ir/types.js";
-import { isStandalonePromiseActive } from "./async-scheduler.js"; // (#2867 Gap 1) native-$Promise carrier gate
 import { emitEagerAsyncPromiseWrap, parkedAsyncClosureWrapsPromise } from "./async-eager-promise.js"; // (#4630)
 import { widenAsyncThenableResult } from "./async-thenable-return.js"; // (#5371)
 import { restPatternParamSlot } from "./resolved-rest-param.js"; // (#6774 S7)
@@ -2250,7 +2249,7 @@ export function computeClosureWrapperSig(
     if (isAsync) {
       retType = unwrapPromiseType(retType, ctx.checker);
     }
-    if (!isAsync && isStandalonePromiseActive(ctx) && isPromiseType(retType)) {
+    if (!isAsync && isPromiseType(retType)) {
       closureReturnType = { kind: "externref" };
     }
     if (closureReturnType === null && !isVoidType(retType) && !(retType.flags & ts.TypeFlags.Never)) {

@@ -1,4 +1,3 @@
-import { parseTest262SemanticProviders } from "../scripts/test262-lane.mjs";
 /**
  * Test262 runner — compiles a filtered subset of the official ECMAScript
  * conformance suite through js2wasm and validates the results.
@@ -3889,7 +3888,6 @@ export async function handleNegativeTest(
       fileName: "test.ts",
       emitWat: false,
       ...(target ? { target } : {}),
-      semanticProviders: parseTest262SemanticProviders(process.env.TEST262_SEMANTIC_PROVIDERS),
       // #6776: the runner validates itself with source-mapped reporting; the library default would turn the negative-test arm's compile failure into an incidental pass (see #2920).
       validate: false,
     };
@@ -4480,7 +4478,6 @@ async function runOriginalHarnessVariant(
         // opaque "wasm exception during module init" label. The exec path
         // below already calls the exported __module_init after setInstance.
         ...(target ? { target } : {}),
-        semanticProviders: parseTest262SemanticProviders(process.env.TEST262_SEMANTIC_PROVIDERS),
         ...(target === undefined || target === "standalone" ? { deferTopLevelInit: true } : {}),
         // (#4035) The harness INSPECTS the module from JS — it renders native
         // exception payloads via `__exn_render_*` (#2962) and drains the
@@ -4631,7 +4628,6 @@ async function runOriginalHarnessVariant(
       const instantiateStarted = performance.now();
       instance = await instantiateTest262Module(result.binary, imports, {
         target,
-        semanticProviders: parseTest262SemanticProviders(process.env.TEST262_SEMANTIC_PROVIDERS),
         providerLabel: RUNTIME_EVAL_PROVIDER_LABEL,
         // (#5248) Empty on every non-Temporal row, so the shared finaliser takes
         // its existing path byte-for-byte.
@@ -4776,11 +4772,8 @@ export async function runTest262File(
   // (#5248) Resolved BEFORE the primary variant so the strict rerun links the
   // identical artifact — two provider instances for one test would give the
   // rerun a different `Temporal` object identity than the sloppy run saw.
-  // The precompiled Temporal provider borrows host semantics; it cannot certify a native-first row.
   const temporal =
-    parseTest262SemanticProviders(process.env.TEST262_SEMANTIC_PROVIDERS) === "auto" &&
-    test262TemporalLaneEnabled(target) &&
-    test262NeedsTemporalGlobal(filePath, meta)
+    test262TemporalLaneEnabled(target, temporalCacheDir()) && test262NeedsTemporalGlobal(filePath, meta)
       ? await getTest262TemporalProvider(target)
       : null;
   const primary = await runOriginalHarnessVariant(
@@ -4989,7 +4982,6 @@ export async function runSyntheticTest262File(
       // which is exactly the 6-file `language/module-code/*` regression that
       // parked the stack PR #2835/#2839 in the merge queue.
       ...(target ? { target } : {}),
-      semanticProviders: parseTest262SemanticProviders(process.env.TEST262_SEMANTIC_PROVIDERS),
       ...(moduleGoal || (target !== undefined && target !== "standalone") ? {} : { deferTopLevelInit: true }),
       // #1251: align with the sharded runner — both `scripts/compiler-fork-worker.mjs`
       // (the production path that records the committed JSONL) and `tests/test262-vitest.test.ts`

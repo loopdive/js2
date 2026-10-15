@@ -304,11 +304,6 @@ export function isDataViewAccessor(name: string): boolean {
   return Object.prototype.hasOwnProperty.call(DV_ACCESSORS, name);
 }
 
-/** Select the Wasm-owned DataView carrier independently of the embedder. */
-export function usesNativeDataViewProvider(ctx: CodegenContext): boolean {
-  return noJsHost(ctx) || ctx.targetProfile.semanticProviders === "native-first";
-}
-
 /**
  * (#5150) §25.1.4.1 `ArrayBuffer.isView(arg)`, decided HOST-FREE: true iff the
  * value carries a [[ViewedArrayBuffer]] slot. Every TypedArray lowers to some
@@ -2264,7 +2259,6 @@ export function emitDataViewAccessor(
  * throw templates capture their ctor indices anyway.
  */
 export function ensureDvAccessorHelper(ctx: CodegenContext, member: string): number | undefined {
-  if (!usesNativeDataViewProvider(ctx)) return undefined;
   const acc = DV_ACCESSORS[member];
   if (!acc) return undefined;
   const helperName = `__dv_m_${member}`;
@@ -2443,7 +2437,6 @@ export function emitDataViewProtoMemberBody(
   fctx: FunctionContext,
   member: string,
 ): ValType | null {
-  if (!usesNativeDataViewProvider(ctx)) return null;
   const resultType: ValType = { kind: "externref" };
 
   if (DV_GETTER_MEMBERS.has(member)) {

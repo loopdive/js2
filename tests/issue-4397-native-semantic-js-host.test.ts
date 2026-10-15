@@ -12,7 +12,7 @@ function wasmImports(binary: Uint8Array): WebAssembly.ModuleImportDescriptor[] {
 
 async function instantiate(source: string, semanticProviders?: "native-first") {
   const result = await compile(source, {
-    fileName: `issue-4397-${semanticProviders ?? "host-assisted"}.ts`,
+    fileName: `issue-4397-${semanticProviders ?? "default"}.ts`,
     semanticProviders,
   });
   expect(result.success, result.errors.map((error) => error.message).join("; ")).toBe(true);
@@ -91,12 +91,13 @@ describe("#4397 native semantics in a JavaScript environment", () => {
     expect(native.importsHelper).toContain('"semanticProviders": "native-first"');
     buildCompiledAdapterImports(native.adapterManifest!, { RegExp: observedRegExp });
     expect(definitions).toBe(0);
-
-    const compatibility = await compile(`export function value(): number { return 1; }`, {
-      fileName: "issue-4397-ambient-compat.ts",
+    // (#6979) The host-assisted compatibility profile that did install ambient
+    // semantics is gone; the default build installs none either.
+    const implicit = await compile(`export function value(): number { return 1; }`, {
+      fileName: "issue-4397-ambient-default.ts",
     });
-    buildCompiledImports(compatibility, { RegExp: observedRegExp });
-    expect(definitions).toBeGreaterThan(0);
+    buildCompiledImports(implicit, { RegExp: observedRegExp });
+    expect(definitions).toBe(0);
   });
 
   it("selects native strings without disabling JS capabilities or their boundary marshal", async () => {
@@ -190,25 +191,6 @@ describe("#4397 native semantics in a JavaScript environment", () => {
       },
     });
     expect(result.hostImportInventory?.filter((entry) => entry.classification === "legacy-semantic")).toEqual([]);
-  });
-
-  it("keeps compatibility-profile dynamic values on the identity-preserving host boundary", async () => {
-    const result = await compile(`export function echoAny(input: any): any { return input; }`, {
-      fileName: "issue-4397-compatibility-dynamic-boundary.ts",
-    });
-    expect(result.success, result.errors.map((error) => error.message).join("; ")).toBe(true);
-    expect(result.exportSignatures?.echoAny).toEqual({ params: ["dynamic"], result: "dynamic" });
-    expect(result.exportBoundaryPolicies?.echoAny).toEqual({
-      params: [{ kind: "dynamic", policy: "copied-value" }],
-      result: { kind: "dynamic", policy: "copied-value" },
-    });
-
-    const imports = buildCompiledImports(result);
-    const { instance } = await WebAssembly.instantiate(result.binary, imports);
-    imports.setInstance?.(instance);
-    const exports = wrapCompiledExports(result, instance);
-    const input = { value: 42 };
-    expect(exports.echoAny(input)).toBe(input);
   });
 
   it("keeps native arrays canonical and exposes a live array facade only at the boundary", async () => {

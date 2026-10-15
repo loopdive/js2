@@ -60,12 +60,7 @@ import { emitMappedArgParamSync } from "./logical-ops.js";
 import { resolveStructName } from "./misc.js";
 import { isSloppyImplicitGlobalBinding } from "./implicit-global-binding.js"; // (#3966) `p++` on a realm-global property
 import { emitConstIdentifierUpdateGuard } from "./identifier-assignment.js";
-import {
-  compileHostBigIntIdentifierUpdate,
-  emitHostBigIntBinaryOpFromStack,
-  emitStructMemberIncDec,
-  isHostBigIntUpdate,
-} from "./host-bigint-updates.js";
+import { emitStructMemberIncDec } from "./host-bigint-updates.js";
 
 /**
  * §13.4 UpdateExpression evaluation applies ToNumeric to the operand's current
@@ -545,29 +540,6 @@ function emitMemberIncDecExternrefFallback(
   return { kind: "f64" };
 }
 
-function emitHostBigIntArrayIncDec(
-  ctx: CodegenContext,
-  fctx: FunctionContext,
-  elemType: ValType,
-  objTmp: number,
-  vecTypeIdx: number,
-  idxTmp: number,
-  arrayTypeIdx: number,
-  arithOp: "add" | "sub",
-  mode: "prefix" | "postfix",
-): ValType | null {
-  const one = ts.factory.createBigIntLiteral("1");
-  return emitHostBigIntBinaryOpFromStack(
-    ctx,
-    fctx,
-    elemType,
-    one,
-    arithOp === "add" ? 0 : 1,
-    mode === "postfix",
-    (newValue) => emitBoundsGuardedArraySet(fctx, objTmp, vecTypeIdx, idxTmp, newValue, arrayTypeIdx),
-  );
-}
-
 /**
  * Compile prefix/postfix increment/decrement on member expressions:
  *   ++obj.x, obj.x++, --obj[i], obj[i]--, etc.
@@ -935,9 +907,6 @@ function compileMemberIncDec(
         // Preserve the old/new values as host BigInts instead of sending them
         // through the numeric f64 update path. Standalone/WASI remain on the
         // existing i64 path because this predicate is host-only.
-        if (isHostBigIntUpdate(ctx, operand)) {
-          return emitHostBigIntArrayIncDec(ctx, fctx, elemType, objTmp, typeIdx, idxTmp, arrayTypeIdx, arithOp, mode);
-        }
 
         // Coerce to f64 for arithmetic if needed
         if (elemType.kind !== "f64" && elemType.kind !== "i32") {
@@ -1086,8 +1055,6 @@ function compilePrefixUpdate(
     const w = compileWithUpdateExpression(ctx, fctx, updateOperand, isIncrement, /*prefix*/ true);
     if (w !== undefined) return w;
     if (emitConstIdentifierUpdateGuard(ctx, fctx, updateOperand)) return { kind: "f64" };
-    if (isHostBigIntUpdate(ctx, updateOperand))
-      return compileHostBigIntIdentifierUpdate(ctx, fctx, updateOperand, isIncrement, false);
   }
   switch (expr.operator) {
     case ts.SyntaxKind.PlusPlusToken: {
@@ -1475,9 +1442,7 @@ function compilePostfixUnary(
   if (ts.isIdentifier(postOperand)) {
     // const bindings — increment/decrement throws TypeError at runtime
     if (emitConstIdentifierUpdateGuard(ctx, fctx, postOperand)) return { kind: "f64" };
-    if (isHostBigIntUpdate(ctx, postOperand)) {
-      return compileHostBigIntIdentifierUpdate(ctx, fctx, postOperand, isIncrement, true);
-    }
+
     const idx = fctx.localMap.get(postOperand.text);
     if (idx === undefined) {
       // (#3039) x++/x-- on a boxed captured global — update through the cell,

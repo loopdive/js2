@@ -135,6 +135,7 @@ import {
   sameExportedFunction,
 } from "./runtime/exported-function-identity.js";
 import { resolvePlatformCapabilityImport, wrapConsoleForHost } from "./runtime/console-host-marshal.js"; // (#6685)
+import { marshalPlatformArgs } from "./runtime/platform-arg-marshal.js"; // (#6708) regime carriers → JS values
 import {
   CLOCK_CAPABILITY_AUTHORITY,
   createCompiledDomCapabilityRuntime,
@@ -4835,7 +4836,7 @@ export function buildCompiledAdapterImports(
   return buildImports(imports, deps, frozenManifest.stringPool, {
     ...options,
     ...authority,
-    ambientCompatibility: options.ambientCompatibility ?? targetProfile.semanticProviders !== "native-first",
+    ambientCompatibility: options.ambientCompatibility ?? targetProfile.semanticProviders === "backend-defined",
     hostAccelerators: options.hostAccelerators ?? targetProfile.accelerators,
   });
 }
@@ -19663,6 +19664,8 @@ export function buildImports(
     if (intlAccel.isIntlAcceleratedImport(imp, options?.hostAccelerators)) {
       const [toHost, fromHost, vector] = [_nativeBoundaryToHost, _nativeDynamicFromHost, _nativeBoundaryVector];
       fn = intlAccel.marshalIntlHostImport(fn, callbackState, toHost, fromHost, _marshalWasmDateForHost, vector); // (#6986)
+    } else {
+      fn = marshalPlatformArgs(imp, fn, callbackState, _nativePrimitiveToHost, _MISS, _maybeWrapCallableUnknownArity);
     }
     // DOM containment wrapping
     if (options?.domRoot && !domCapabilityRuntime) {

@@ -81,17 +81,28 @@ function marshal(value: any, direction: "OUT" | "IN", depth: number, exports): a
 decision **input** (consumed by `isHostCallbackArgument`), feeding `marshal`'s
 closure cell — it is not a parallel conversion path and is not dead code.
 
-## Per-cell mode matrix (dual-mode, per CLAUDE.md)
+## Per-cell matrix (one semantic core, #6708)
 
-| Cell | JS-host mode | Standalone mode |
+Since #6708 there is one native semantic core in every environment: the value
+representation inside the module is the same whether a JS host instantiates it
+or not. What a JS environment adds is the **boundary adapter** below — it runs
+only when a value crosses to or from JS — plus opt-in *accelerators* (#6978:
+`wasm:js-string`, host RegExp/Date/Intl), which swap a provider family for a
+host implementation without changing the representation contract.
+
+| Cell | Semantic representation (every environment) | JS boundary adapter (JS environment only) |
 |---|---|---|
-| vec ⇄ Array | `marshal` deep-convert | representable (WasmGC vec ↔ native array) |
-| primitive | `marshal` box/coerce | representable |
-| closure ⇄ callback | `__fn_wrap` / `__call_extern_fn` | representable (closure struct + `call_ref`); host-fn IN is host-only |
-| struct ⇄ object | `_wrapForHost` Proxy | **host-only** — standalone reads struct fields directly (the #2101/#2158 struct readers); no JS Proxy |
+| vec ⇄ Array | WasmGC vec | `marshal` deep-convert |
+| primitive | native value | `marshal` box/coerce |
+| closure ⇄ callback | closure struct + `call_ref` | `__fn_wrap` / `__call_extern_fn` (host-fn IN) |
+| struct ⇄ object | struct fields read directly (the #2101/#2158 struct readers) | `_wrapForHost` Proxy |
 
-The struct-mirror cell is the single place a standalone fallback is mandatory.
-M4 (below) audits and documents it.
+Accelerator note: a selected accelerator may route a family (strings, RegExp,
+Date, Intl) through host imports classified `host-accelerator`; the native
+provider stays the fallback, and an accelerator is a compile error outside a
+JS environment. The retired `host-assisted` profile (one release, removed in
+S7) is the only configuration in which these cells still lower through
+`legacy-semantic` host imports.
 
 ## Migration order
 

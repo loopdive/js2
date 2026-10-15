@@ -24,7 +24,6 @@ import {
   fillExternGetErrorProps,
 } from "./registry/error-types.js";
 import { analyzeLinearUint8 } from "./linear-uint8-analysis.js";
-import { usesHostBigIntCarrier } from "./host-bigint-carrier.js";
 import { readonlyErasureMappedAliasTarget } from "./readonly-erasure-mapped-type.js";
 import { isShapelessObjectType } from "./shapeless-object-type.js"; // (#5348)
 import { genericStructFactoryExpression } from "./generic-struct-factory.js";
@@ -57,7 +56,6 @@ import { finalizeModuleValueCaches } from "./module-value-caches.js"; // (#4150/
 import { fillLinkedRealmPropertyRead } from "./object-model/linked-realm-property-read.js";
 import type { MultiTypedAST, TypedAST } from "../checker/index.js";
 import {
-  isBigIntType,
   isBooleanType,
   isExternalDeclaredClass,
   isHeterogeneousPrimitiveUnion,
@@ -303,7 +301,6 @@ import type {
   OptionalParamInfo,
   RestParamInfo,
 } from "./context/types.js";
-import type { NodeBuiltinImport } from "../import-resolver.js";
 import { ensureMapRuntimeTypes } from "./map-runtime.js";
 import { scanForNewTarget } from "./new-target.js"; // (#2023)
 import { scanForDynamicProto, fillDynamicProtoHelpers } from "./dynamic-proto.js"; // (#802)
@@ -3093,12 +3090,7 @@ function planIrOverlay(
   const resolveAmbientClassCall =
     jsHostExterns && options.resolveModuleBindings !== false ? makeIrAmbientClassCallResolver(ast.checker) : undefined;
   const supportsHostPromiseDelay = jsHostExterns && !ctx.fast && !ctx.nativeStrings;
-  const supportsStandalonePromiseDelay =
-    ctx.standalone &&
-    ctx.nativeStrings &&
-    !ctx.wasi &&
-    !ctx.fast &&
-    ctx.targetProfile.semanticProviders === "native-first";
+  const supportsStandalonePromiseDelay = ctx.standalone && ctx.nativeStrings && !ctx.wasi && !ctx.fast;
   const resolvePromiseDelay =
     (supportsHostPromiseDelay || supportsStandalonePromiseDelay) && options.resolveModuleBindings !== false
       ? makeIrPromiseDelayResolver(ast.checker)
@@ -4491,7 +4483,6 @@ function preparedExactLexicalModuleInit(
     (ctx.nativeStrings &&
       ctx.standalone &&
       !ctx.wasi &&
-      ctx.targetProfile.semanticProviders === "native-first" &&
       planning?.plan.invocation.target === "standalone" &&
       (planning.plan.invocation.kind === "wasm-start" || planning.plan.invocation.kind === "deferred-export")) ||
     // (#3523 R4 gap 3) The WASI lane. `nativeStrings` auto-enables for WASI, so
@@ -5846,14 +5837,7 @@ export function generateModule(
     noteRegexPropertySource(ctx, ast.sourceFile); // (#6677) link the \p{…} table only if spellable
     noteUntypedRegExpDemand(ctx, ast.sourceFile); // (#6651 B10)
 
-    if (
-      options?.experimentalIR &&
-      ctx.standalone &&
-      ctx.nativeStrings &&
-      !ctx.wasi &&
-      !ctx.fast &&
-      ctx.targetProfile.semanticProviders === "native-first"
-    ) {
+    if (options?.experimentalIR && ctx.standalone && ctx.nativeStrings && !ctx.wasi && !ctx.fast) {
       registerIrAsyncPromiseDelayResolver(ctx, makeIrPromiseDelayResolver(ast.checker));
     }
     prepareIdentityPreservingStructuralParams(ctx, [ast.sourceFile]);
@@ -12741,9 +12725,7 @@ export function resolveWasmType(ctx: CodegenContext, tsType: ts.Type, _depth = 0
   // the existing i64 carrier until they have a native arbitrary-precision
   // implementation. Explicit native `i64` annotations returned above remain
   // i64 on every target.
-  if (usesHostBigIntCarrier(ctx) && isBigIntType(tsType)) {
-    return { kind: "externref" };
-  }
+
   const jsBodyArrayReturnOverride = ctx.jsBodyArrayReturnOverrides?.get(tsType);
   if (jsBodyArrayReturnOverride) return jsBodyArrayReturnOverride;
   // (#6774 S21) An accessor object literal is ALWAYS an open `$Object` at run

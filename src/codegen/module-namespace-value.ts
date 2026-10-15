@@ -1028,7 +1028,7 @@ function reserveNamespaceObjectHelpers(
   // Establish the native descriptor helper only for the native provider. Host
   // GC uses the shared descriptor late import below; eagerly minting the native
   // runtime there would incorrectly require native-string helpers.
-  if (moduleNamespaceTag && ctx.targetProfile.semanticProviders === "native-first") ensureObjectRuntime(ctx);
+  if (moduleNamespaceTag) ensureObjectRuntime(ctx);
   ensureLateImport(ctx, "__new_plain_object", [], [{ kind: "externref" }]);
   ensureLateImport(ctx, "__extern_set", [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }], []);
   if (moduleNamespaceTag) {

@@ -288,13 +288,7 @@ export function observeApprovedIrFnctor(input: ObserveIrFnctorProducerInput): bo
   const identityContext = ctx.irPlanningIdentityContext;
   if (!registry || !ctx.programAbiTypes || !identityContext) return false;
 
-  if (
-    ctx.standalone &&
-    !ctx.wasi &&
-    ctx.nativeStrings &&
-    !ctx.fast &&
-    ctx.targetProfile.semanticProviders === "native-first"
-  ) {
+  if (ctx.standalone && !ctx.wasi && ctx.nativeStrings && !ctx.fast) {
     const syntax = proveIrFnctorInputConstructorSyntax(ctx.checker, identityContext, input.declaration);
     const argument = input.site.arguments?.[0];
     const reservation = syntax

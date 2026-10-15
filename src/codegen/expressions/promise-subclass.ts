@@ -37,7 +37,6 @@ import { ts } from "../../ts-api.js";
 import type { ValType } from "../../ir/types.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { addStringConstantGlobal } from "../index.js";
-import { isStandalonePromiseActive } from "../async-scheduler.js";
 import { emitClassExpressionStaticsBeforeValue } from "../class-expression-static-init.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { emitLazyClassObjectGet } from "./extern.js";
@@ -280,35 +279,4 @@ function emitRegisterPromiseSubclassCtor(ctx: CodegenContext, fctx: FunctionCont
   // defined function but no import, so no shift — still, be defensive).
   const registerIdxNow = ctx.funcMap.get(registerName) ?? registerIdx;
   fctx.body.push({ op: "call", funcIdx: registerIdxNow });
-}
-
-/**
- * Convenience for the value-read position: if `name` denotes a `class extends
- * Promise`, emit the unified `__promise_subclass_ctor` externref and return
- * true; else return false (caller falls through to its normal handling).
- */
-export function tryEmitPromiseSubclassValue(ctx: CodegenContext, fctx: FunctionContext, name: string): boolean {
-  // The cached JavaScript constructor is compatibility semantics, not boundary
-  // value adaptation. Native-first/host-free lanes recognize the class above
-  // but may not materialize it through this host import.
-  if (isStandalonePromiseActive(ctx)) return false;
-  const resolved = resolvePromiseSubclassName(ctx, name);
-  if (resolved === undefined) return false;
-  return emitPromiseSubclassCtor(ctx, fctx, resolved);
-}
-
-/**
- * Receiver-position helper (combinator `thisArg`): same unification, but the
- * argument arrives as a `ts.Expression`. Only a bare identifier (or class-expr
- * alias) is eligible. Returns true if it emitted the unified ctor externref.
- */
-export function tryEmitPromiseSubclassReceiver(
-  ctx: CodegenContext,
-  fctx: FunctionContext,
-  argExpr: ts.Expression,
-): boolean {
-  if (!ts.isIdentifier(argExpr)) return false;
-  if (isStandalonePromiseActive(ctx)) return false;
-  const resolved = resolvePromiseSubclassIdentifier(ctx, argExpr);
-  return resolved !== undefined && emitPromiseSubclassCtor(ctx, fctx, resolved);
 }

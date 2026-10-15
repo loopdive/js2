@@ -115,15 +115,6 @@ function ensureDynamicAdd(ctx: CodegenContext, carrier: ValType): void {
     return;
   }
 
-  if (ctx.targetProfile.semanticProviders !== "native-first") {
-    const hostAdd = ensureLateImport(ctx, "__host_add", [carrier, carrier], [carrier]);
-    flushLateImportShifts(ctx, null);
-    const settled = ctx.funcMap.get("__host_add") ?? hostAdd;
-    if (settled === undefined) throw new Error("dyn-ops: __host_add unavailable");
-    ctx.funcMap.set(IR_DYN_ADD_FN, settled);
-    return;
-  }
-
   ensureAnyHelpers(ctx);
   const honest = ensureAnyFromExternHelper(ctx, { forceHonest: true });
   const toExtern = ensureAnyToExternHelper(ctx);
@@ -159,27 +150,6 @@ function ensureDynamicRel(ctx: CodegenContext, carrier: ValType, op: RelNeed): v
   }
 
   const i32: ValType = { kind: "i32" };
-  if (ctx.targetProfile.semanticProviders !== "native-first") {
-    const hostCompare = ensureLateImport(ctx, "__host_compare", [carrier, carrier], [i32]);
-    flushLateImportShifts(ctx, null);
-    const settled = ctx.funcMap.get("__host_compare") ?? hostCompare;
-    if (settled === undefined) throw new Error("dyn-ops: __host_compare unavailable");
-    addHelper(
-      ctx,
-      relName(op),
-      [carrier, carrier],
-      [i32],
-      [
-        { op: "local.get", index: 0 },
-        { op: "local.get", index: 1 },
-        { op: "call", funcIdx: settled },
-        { op: "local.set", index: 2 },
-        ...compareSignBody(op, 2),
-      ],
-      [{ name: "cmp", type: i32 }],
-    );
-    return;
-  }
 
   ensureAnyHelpers(ctx);
   ensureNativeStringHelpers(ctx);
@@ -331,19 +301,10 @@ function ensureDynamicCallBoundaryExtern(ctx: CodegenContext): number {
 
 function ensureDynamicMethodCall(ctx: CodegenContext, carrier: ValType, arity: 0 | 1): void {
   const externref: ValType = { kind: "externref" };
-  const nativeSemanticProviders = ctx.targetProfile.semanticProviders === "native-first";
-  const arrayNewName = nativeSemanticProviders ? "__objvec_new" : "__js_array_new";
-  const arrayPushName = nativeSemanticProviders ? "__objvec_push" : "__js_array_push";
+  const arrayNewName = "__objvec_new";
+  const arrayPushName = "__objvec_push";
 
-  if (nativeSemanticProviders) {
-    ensureObjectRuntime(ctx);
-  } else {
-    ensureLateImport(ctx, arrayNewName, [], [externref]);
-    ensureLateImport(ctx, arrayPushName, [externref, externref], []);
-    ensureLateImport(ctx, "__extern_method_call", [externref, externref, externref], [externref]);
-    if (ctx.fast) ensureLateImport(ctx, "__extern_get", [externref, externref], [externref]);
-    flushLateImportShifts(ctx, null);
-  }
+  ensureObjectRuntime(ctx);
 
   const arrayNew = ctx.funcMap.get(arrayNewName);
   const arrayPush = ctx.funcMap.get(arrayPushName);
@@ -357,32 +318,28 @@ function ensureDynamicMethodCall(ctx: CodegenContext, carrier: ValType, arity: 0
   let keyToExtern: number | undefined;
   let argumentToExtern: number | undefined;
   let resultFromExtern: number | undefined;
-  if (nativeSemanticProviders) {
-    if (ctx.fast) {
-      const rawExtern = ensureDynamicCallBoundaryExtern(ctx);
-      receiverToExtern = rawExtern;
-      keyToExtern = rawExtern;
-      argumentToExtern = ensureAnyToExternHelper(ctx);
-      resultFromExtern = ensureAnyFromExternHelper(ctx, { forceHonest: true });
-      if (argumentToExtern === undefined || resultFromExtern === undefined) {
-        throw new Error("dyn-ops: fast standalone method-call carrier bridge unavailable");
-      }
-    } else if (ctx.standalone || ctx.wasi) {
-      // Host-free externref carriers still pass through the canonical AnyValue
-      // classifier used by the established standalone path. In native-first
-      // JS, however, an externref may be a raw JS-owned boundary object; keep
-      // that identity untouched so the per-instance boundary adapter can
-      // recognise it.
-      const rawExtern = ensureDynamicCallBoundaryExtern(ctx);
-      receiverToExtern = rawExtern;
-      keyToExtern = rawExtern;
-      fromExtern = ensureAnyFromExternHelper(ctx, { forceHonest: true });
-      if (fromExtern === undefined) {
-        throw new Error("dyn-ops: standalone method-call classifier unavailable");
-      }
+  if (ctx.fast) {
+    const rawExtern = ensureDynamicCallBoundaryExtern(ctx);
+    receiverToExtern = rawExtern;
+    keyToExtern = rawExtern;
+    argumentToExtern = ensureAnyToExternHelper(ctx);
+    resultFromExtern = ensureAnyFromExternHelper(ctx, { forceHonest: true });
+    if (argumentToExtern === undefined || resultFromExtern === undefined) {
+      throw new Error("dyn-ops: fast standalone method-call carrier bridge unavailable");
     }
-  } else if (ctx.fast) {
-    throw new Error("dyn-ops: fast host dynamic method calls are not enabled");
+  } else if (ctx.standalone || ctx.wasi) {
+    // Host-free externref carriers still pass through the canonical AnyValue
+    // classifier used by the established standalone path. In native-first
+    // JS, however, an externref may be a raw JS-owned boundary object; keep
+    // that identity untouched so the per-instance boundary adapter can
+    // recognise it.
+    const rawExtern = ensureDynamicCallBoundaryExtern(ctx);
+    receiverToExtern = rawExtern;
+    keyToExtern = rawExtern;
+    fromExtern = ensureAnyFromExternHelper(ctx, { forceHonest: true });
+    if (fromExtern === undefined) {
+      throw new Error("dyn-ops: standalone method-call classifier unavailable");
+    }
   }
 
   const argsLocal = 2 + arity;

@@ -110,10 +110,7 @@ export function admitsAnyAdditionOperands(
   left: ts.Type,
   right: ts.Type,
 ): boolean {
-  if (
-    ctx.anyValueTypeIdx < 0 ||
-    (ctx.targetProfile.semanticProviders === "native-first" && ctx.nativeStrings && ctx.anyStrTypeIdx >= 0)
-  ) {
+  if (ctx.anyValueTypeIdx < 0 || (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0)) {
     // The earlier AnyValue arm uses the whole-program numeric proof only for
     // nonnegative indices; keep that admission unchanged.
     const usesGroundedProof = ctx.anyValueTypeIdx >= 0;
@@ -219,8 +216,7 @@ function emitAddOperand(
   deferred: DeferredAddOperand[],
   callableText?: string,
 ): number | null {
-  const noJsHost = ctx.targetProfile.semanticProviders === "native-first";
-  if (noJsHost && callableText !== undefined) {
+  if (callableText !== undefined) {
     // Match the existing concat operand's physical-carrier check. Evaluate the
     // original expression once, even when its callable has no closure carrier;
     // defer its established NativeFunction rendering until both sides exist.
@@ -258,8 +254,8 @@ function emitAddOperand(
     fctx.body.push({ op: "local.set", index: srcTmp });
     return srcTmp;
   }
-  let structName = noJsHost ? resolveStructNameForExpr(ctx, fctx, inner) : undefined;
-  if (noJsHost && structName === undefined && ts.isIdentifier(inner)) {
+  let structName = resolveStructNameForExpr(ctx, fctx, inner);
+  if (structName === undefined && ts.isIdentifier(inner)) {
     const localIdx = fctx.localMap.get(inner.text);
     const localType =
       localIdx === undefined
@@ -306,7 +302,7 @@ function emitAddOperand(
       }
     }
   }
-  if (noJsHost && structHasStaticNumericToPrimitive(ctx, structName)) {
+  if (structHasStaticNumericToPrimitive(ctx, structName)) {
     const opType = compileExpression(ctx, fctx, inner);
     if (!opType) return null;
     // Save the physical value without invoking user conversion. Both source
@@ -371,8 +367,6 @@ export function emitAnyAdd(
   expr: ts.BinaryExpression,
   callableText?: readonly [string | undefined, string | undefined],
 ): ValType {
-  const noJsHost = ctx.targetProfile.semanticProviders === "native-first";
-
   // #1988: in standalone/WASI the §13.15.3 string-vs-numeric decision must be
   // made on the ToPrimitive(default) results, not the raw operands — an object
   // or array reduces (valueOf→toString) to a STRING, which forces string
@@ -382,7 +376,7 @@ export function emitAnyAdd(
   // does cannot desync the current function body. It registers only defined
   // funcs (no import shift) and is idempotent, so this is a no-op when the
   // object runtime is already present.
-  if (noJsHost && ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
+  if (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
     ensureObjectRuntime(ctx);
   }
 
@@ -423,26 +417,7 @@ export function emitAnyAddFromExternTemps(
   rTmp: number,
   deferred: readonly DeferredAddOperand[] = [],
 ): ValType {
-  const noJsHost = ctx.targetProfile.semanticProviders === "native-first";
-
   // ── JS-host: JS `+` via __host_add ──
-  if (!noJsHost) {
-    fctx.body.push({ op: "local.get", index: lTmp });
-    fctx.body.push({ op: "local.get", index: rTmp });
-    releaseTempLocal(fctx, rTmp);
-    releaseTempLocal(fctx, lTmp);
-    const hostIdx = ensureLateImport(
-      ctx,
-      "__host_add",
-      [{ kind: "externref" }, { kind: "externref" }],
-      [{ kind: "externref" }],
-    );
-    flushLateImportShifts(ctx, fctx);
-    const finalIdx = ctx.funcMap.get("__host_add") ?? hostIdx;
-    if (finalIdx === undefined) throw new Error("Missing import after ensureLateImport: __host_add");
-    fctx.body.push({ op: "call", funcIdx: finalIdx });
-    return { kind: "externref" };
-  }
 
   // ── Standalone / WASI: build §13.15.3 in-module ──
   // Requires native-string support for the concat arm; otherwise fall back.

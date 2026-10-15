@@ -75,7 +75,6 @@ import { ensureObjVecBuilders, ensureObjectRuntime, reserveApplyClosure } from "
 import { ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
 import { coerceType, compileExpression } from "./shared.js";
 import { buildTargetTaggedTry } from "../ir/try-table.js";
-import { isStandalonePromiseActive } from "./async-scheduler.js";
 import { ensureNativeIteratorRuntime } from "./iterator-native.js";
 import {
   buildCustomCapabilityExecutorInstrs,
@@ -942,7 +941,6 @@ export function tryEmitClassReceiverCombinatorCall(
   expr: ts.CallExpression,
   method: NativeCombinator,
 ): ValType | undefined {
-  if (!isStandalonePromiseActive(ctx)) return undefined;
   const ctorArg = expr.arguments[0];
   if (ctorArg === undefined || expr.arguments.length > 2) return undefined;
   const className = resolveCompiledClassReceiver(ctx, ctorArg);

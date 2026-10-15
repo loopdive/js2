@@ -648,30 +648,6 @@ describe("#5383 S2c — the standalone provider's `Intl` refusal shim", () => {
 describe("#5383 S2c — the shim re-keys the standalone provider and leaves the host lane alone", () => {
   const polyfillSource = "export const Temporal = { PlainDate: 1 };\n";
 
-  it("the `gc` key is the fingerprint of the BUNDLE — the host provider is unaffected", () => {
-    // The same two-part fingerprint `temporalProviderCacheKey` computes, with
-    // the source NOT wrapped. If a future edit ever prepends anything on the
-    // host lane this is what fails, and the host artifact sha would move with
-    // it (measured identical across S2c: key 372a41be…, sha baff93a9…).
-    const optionFingerprint = JSON.stringify({
-      target: "gc",
-      fast: false,
-      nativeStrings: false,
-      utf8Storage: false,
-      semanticProviders: "auto",
-      hostBridge: "auto",
-      platform: "web",
-    });
-    const hash = createHash("sha256");
-    for (const part of [polyfillSource, optionFingerprint]) {
-      hash.update(String(part.length));
-      hash.update(":");
-      hash.update(part);
-      hash.update("\n");
-    }
-    expect(temporalProviderCacheKey({ polyfillSource })).toBe(hash.digest("hex"));
-  });
-
   it("standalone and wasi keys differ from `gc` and from each other", () => {
     const gc = temporalProviderCacheKey({ polyfillSource });
     const standalone = temporalProviderCacheKey({ polyfillSource, compileOptions: { target: "standalone" } as never });
@@ -2018,19 +1994,20 @@ describe("#5383 S3 the per-target Temporal lane gate", () => {
     }
   };
 
-  it("stamps host and standalone under different names, and keeps host's historical name", async () => {
+  it("stamps host and standalone under different names, neither the pre-S6 historical one", async () => {
     // One cache dir holds both providers; a shared file name could only ever
     // certify one of them, and the other lane would read a key that does not
-    // match the artifact it is about to ask for.
+    // match the artifact it is about to ask for. (#6979) The historical
+    // `prewarm.json` belonged to the removed host-semantics provider.
     const { temporalPrewarmStampName, TEMPORAL_PREWARM_STAMP } = await temporal();
-    expect(temporalPrewarmStampName(undefined)).toBe(TEMPORAL_PREWARM_STAMP);
-    expect(temporalPrewarmStampName(undefined)).toBe("prewarm.json");
+    expect(temporalPrewarmStampName(undefined)).toBe("prewarm-native-first.json");
+    expect(temporalPrewarmStampName(undefined)).not.toBe(TEMPORAL_PREWARM_STAMP);
     expect(temporalPrewarmStampName("standalone")).toBe("prewarm-standalone.json");
   });
 
-  it("asks for the host-free provider on standalone and the default one on host", async () => {
+  it("asks for the host-free provider on standalone and the regime one on host", async () => {
     const { temporalProviderCompileOptions } = await temporal();
-    expect(temporalProviderCompileOptions(undefined)).toBeUndefined();
+    expect(temporalProviderCompileOptions(undefined)).toEqual({ hostBridge: "always" });
     expect(temporalProviderCompileOptions("standalone")).toEqual({ target: "standalone", hostBridge: "off" });
   });
 
@@ -2070,15 +2047,14 @@ describe("#5383 S3 the per-target Temporal lane gate", () => {
         "standalone",
       );
       expect(test262TemporalLaneEnabled("standalone", dir)).toBe(true);
-      // The host lane never needs a stamp (it may build cold), and writing one
-      // target's stamp must not land in the other's slot.
-      expect(test262TemporalLaneEnabled(undefined, dir)).toBe(true);
+      // Writing one target's stamp must not land in the other's slot.
+      expect(test262TemporalLaneEnabled(undefined, dir)).toBe(false);
       writeTemporalPrewarmStamp(
         dir,
         { key: "host-key", namespace: "js2wasm:npm:@js-temporal/polyfill:h", bytes: 3, buildMs: 1, cacheHit: false },
         undefined,
       );
-      expect(readFileSync(join(dir, "prewarm.json"), "utf-8")).toContain("host-key");
+      expect(readFileSync(join(dir, "prewarm-native-first.json"), "utf-8")).toContain("host-key");
       expect(readFileSync(join(dir, "prewarm-standalone.json"), "utf-8")).toContain("sa-key");
     });
   });
@@ -2189,6 +2165,6 @@ describe("#5383 S3 the pre-warm step and the CI job", () => {
     const shared = readRepoFile("tests", "test262-shared.ts");
     expect(shared).toContain("test262TemporalLaneEnabled(TEST262_TARGET)");
     const runner = readRepoFile("tests", "test262-runner.ts");
-    expect(runner).toContain("test262TemporalLaneEnabled(target)");
+    expect(runner).toContain("test262TemporalLaneEnabled(target, temporalCacheDir())");
   });
 });

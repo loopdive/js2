@@ -71,7 +71,6 @@ import {
   resolveExternrefVecArg,
   type NativeCombinator,
 } from "./promise-combinators.js";
-import { isStandalonePromiseActive } from "./async-scheduler.js";
 import { demandPromiseDynamicMember } from "./promise-dynamic-member-read.js"; // (#6651 D5)
 import { buildTargetTaggedTry } from "../ir/try-table.js";
 
@@ -607,7 +606,6 @@ const combLocals = (stateRefNull: ValType): { name: string; type: ValType }[] =>
 function ensureCustomCombinatorRuntime(ctx: CodegenContext): CustomCombinatorRuntime | null {
   const cached = (ctx as CtxWithCustomCombinator).__promiseCustomCombinator;
   if (cached) return cached;
-  if (!isStandalonePromiseActive(ctx)) return null;
 
   const ids = ensureCombinatorFunctions(ctx);
   ensureObjectRuntime(ctx);
@@ -969,7 +967,6 @@ function emitStandalonePromiseCustomCombinator(
   constructorLocal: number,
   iterable: CustomCombinatorIterable | undefined,
 ): boolean {
-  if (!isStandalonePromiseActive(ctx)) return false;
   if (!isCustomCombinatorMethod(method)) return false;
   const capability = ensureCustomCapabilityRuntime(ctx);
   const runtime = ensureCustomCombinatorRuntime(ctx);

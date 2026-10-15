@@ -62,7 +62,6 @@ import {
 } from "./async-cps.js";
 import { supportedAsyncGraphModulePlan } from "./async-graph-module-plan.js";
 import {
-  asyncFnNeedsHostDrive,
   asyncGenDrivableUnderCarrier,
   asyncGenStem,
   buildAsyncFrameInfo,
@@ -90,6 +89,7 @@ import { addFunctionOwnLocals } from "../ir/analysis/binding-info.js"; // (#2103
 import { dedupeDiagnosticsFrom, reportError } from "./context/errors.js";
 import type { CodegenContext, FunctionContext, OptionalParamInfo } from "./context/types.js";
 import { jsValueBoundary } from "./context/types.js";
+import { usesJsEnvironmentPlatformGlobal } from "./extern-declarations.js";
 import { compileFunctionBody, dumpFrameBreach, registerInlinableFunction } from "./audited-function-body.js";
 import { _hasRuntimeComputedKey, objectLiteralForcesHostPath } from "./literals.js"; // (#3024/#4638) module-global externref routing in lockstep with the literal's own host-path gate
 import { prepareIntlAcceleratorBoundary } from "./helpers/host-intl-locale.js"; // (#6986)
@@ -135,7 +135,6 @@ import {
   ensureAsyncDriveRuntime,
   ensureNativePromiseBoundaryBridge,
   getOrRegisterPromiseType,
-  isStandalonePromiseActive,
 } from "./async-scheduler.js";
 import {
   ensureNativeDynamicBoundaryTag,
@@ -400,7 +399,7 @@ function recordExportListSignature(
   localName: string,
   exportedName: string,
 ): void {
-  if (ctx.targetProfile.semanticProviders !== "native-first" || !jsValueBoundary(ctx)) return;
+  if (!jsValueBoundary(ctx)) return;
   if (ctx.exportSignatures.has(exportedName)) return;
   const decl = sourceFile.statements.find(
     (s): s is ts.FunctionDeclaration => ts.isFunctionDeclaration(s) && s.name?.text === localName && !!s.body,
@@ -470,10 +469,10 @@ function recordExportSignature(
   if (!anyHit) return;
   ctx.exportSignatures.set(exportName, { params, result });
   if (ctx.nativeStrings && stringHit) ensureNativeStringBoundaryBridge(ctx);
-  if ((symbolHit || dynamicHit) && ctx.targetProfile.semanticProviders === "native-first") {
+  if (symbolHit || dynamicHit) {
     ensureNativeSymbolBoundaryBridge(ctx);
   }
-  if (dynamicHit && ctx.targetProfile.semanticProviders === "native-first") {
+  if (dynamicHit) {
     ensureNativeDynamicBoundaryBridge(ctx);
   }
   if (promiseHit) {
@@ -2651,6 +2650,11 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
   // restores #4931's unconditional module-Proxy widening for same-tree A/B.
   const proxyModuleEscapeGateEnabled = readEnv("JS2WASM_PROXY_MODULE_ESCAPE_GATE") !== "0";
   const runtimeModuleGroups = runtimeModuleDeclarationGroups(sourceFile);
+  // (#6708) A JS-environment regime module that binds a DOM platform global
+  // hands it Wasm-owned strings; export the bridge the runtime marshal reads.
+  if (isEntryFile && ctx.nativeStrings && jsValueBoundary(ctx) && usesJsEnvironmentPlatformGlobal(ctx)) {
+    ensureNativeStringBoundaryBridge(ctx);
+  }
 
   // First: collect enum declarations (so enum values are available)
   collectEnumDeclarations(ctx, sourceFile);
@@ -3317,10 +3321,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
             // pre-unwrap under the carrier so the declared result matches the
             // raw-T body (else externref-result vs f64-body = invalid Wasm).
             // Carrier-gated → off-carrier bytes identical.
-            const effRetType =
-              isStandalonePromiseActive(ctx) && hasAsyncModifier(fnExpr)
-                ? unwrapPromiseType(retType, ctx.checker)
-                : retType;
+            const effRetType = hasAsyncModifier(fnExpr) ? unwrapPromiseType(retType, ctx.checker) : retType;
             const results = isVoidType(effRetType) ? [] : [resolveWasmType(ctx, effRetType)];
             const typeIdx = addFuncType(ctx, params, results, `${name}_type`);
             const funcIdx = ctx.numImportFuncs + ctx.mod.functions.length;
@@ -3387,10 +3388,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
           // function-expression export; pre-unwrap an async fn's Promise<T>
           // result under the carrier so the declared result matches the raw-T
           // body. Carrier-gated → off-carrier bytes identical.
-          const effRetType =
-            isStandalonePromiseActive(ctx) && hasAsyncModifier(fnExpr)
-              ? unwrapPromiseType(retType, ctx.checker)
-              : retType;
+          const effRetType = hasAsyncModifier(fnExpr) ? unwrapPromiseType(retType, ctx.checker) : retType;
           const results = isVoidType(effRetType) ? [] : [resolveWasmType(ctx, effRetType)];
           const typeIdx = addFuncType(ctx, params, results, `${name}_type`);
           const funcIdx = ctx.numImportFuncs + ctx.mod.functions.length;
