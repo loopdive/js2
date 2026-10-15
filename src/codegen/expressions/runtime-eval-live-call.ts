@@ -186,6 +186,10 @@ function buildTrampoline(
     body: fctx.body,
     exported: false,
   });
+  // The trampoline is not a source function, so the ES5 §15.3.5.4 caller-strict
+  // marker must sit on the call INTO it, as for the #1058 outlined dyn-call
+  // helpers (test262 built-ins/Function/15.3.5.4_2-57gs.js).
+  (ctx.outlinedDynamicCallHelpers ??= new Map()).set(fctx.name, fctx.name);
 
   const direct: Instr[] = [
     ...params.map((_, i) => ({ op: "local.get", index: i }) as Instr),
