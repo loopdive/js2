@@ -1,0 +1,73 @@
+{
+  "id": "6920",
+  "slice": "ordinary-numeric-gc-dispatch-successor-20261015",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+  "claimed_at": "2026-10-15T01:57:43.074668+00:00",
+  "updated_at": "2026-10-15T01:57:43.074668+00:00",
+  "write_id": "b-ordinary-numeric-gc-dispatch-1d59347e-b91d-4da0-8151-4c4f68db5a4b",
+  "handoff_scope": [
+    {
+      "kind": "ordinary-numeric-gc-dispatch",
+      "at": "2026-10-15T01:57:43.074668+00:00",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+      "manifest": {
+        "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+        "componentPreimages": [
+          {
+            "path": "src/ir/program/native-number-undefined-allocation-validation.ts",
+            "bytes": 3062,
+            "sha256": "f842afbde7fc315cc40e45e1afa25b03716e7e25c0a8dfa0331abf29739aee86",
+            "scope": "Only assertNativeNumberUndefinedGcAllocations: after complete provenance and invalid-view census permit canonical generic GC validation for actual disjoint ordinary not-covered views, with none verified native; preserve old vector/mixed behavior."
+          }
+        ],
+        "canonicalNewPaths": [],
+        "reviewedEvidence": {
+          "source64Seal": "2850/c9e9381bf7b473fafdef63458c4e2cea44aae917c32f4267cda2a3147f32bb2f",
+          "sourcePrepared": 64,
+          "typedPreparedCodecEqual": 34,
+          "typedUnsupported": 30,
+          "invariants": 0,
+          "rootVerifiedArtifacts": 7,
+          "rootVerifiedSnapshots": 4
+        },
+        "qualificationPlan": [
+          "Private extra one-file dispatch change only after all private input-pinning processes naturally finish; preserve inverse and every other line.",
+          "Source64 remains64 source-prepared and preserves its34 prior typed/codec positives without new invariants; new native positives counted separately.",
+          "Old vector, malformed/getter, mixed verified/uncovered, whole original/selected provenance and namespace controls required. Full typing, budget/style and ROOT integration checks remain mandatory."
+        ],
+        "constraints": [
+          "Human all Session B/shared-seam takeover. Private extra one GC reader; first phase15 predecessor b34d0799 remains bounded. No ROOT writes or source/main/PR/HOLD/queue push.",
+          "Not-covered reports have no profile discriminator. Positively identify actual DATA-safe disjoint ordinary scrutiny population in all relevant views; no class/vector. Unrefined dynamic triggers scrutiny only, never positive coverage.",
+          "Complete invalid-first census and final allocation provenance precede fallback. No verified native view participates; old vector and mixed verified/uncovered behavior remains unchanged.",
+          "Returning false invokes existing complete generic GC validation, never native verification, type/legality/signature/emission/public readiness. Preserve generic verifier/ownership/escape/schema/geometry.",
+          "No namespace drop/forgery. Unknown namespaces, source/selected facts and all currentness errors remain checked through native or canonical generic route.",
+          "C3 physical joins remain deferred; no unfilled physical pack authentication fabricated, no default carrier or completion claim.",
+          "No deadline/RPC changes, canceled tests, positive semantic cache or hidden failures. Preserve failed and passing epochs."
+        ]
+      },
+      "manifestSha256": "b090f1985f0252c6e793a299132fb52c4649e8225569d7df83bd57b453fbce52",
+      "constraints": [
+        "Human all Session B/shared-seam takeover. Private extra one GC reader; first phase15 predecessor b34d0799 remains bounded. No ROOT writes or source/main/PR/HOLD/queue push.",
+        "Not-covered reports have no profile discriminator. Positively identify actual DATA-safe disjoint ordinary scrutiny population in all relevant views; no class/vector. Unrefined dynamic triggers scrutiny only, never positive coverage.",
+        "Complete invalid-first census and final allocation provenance precede fallback. No verified native view participates; old vector and mixed verified/uncovered behavior remains unchanged.",
+        "Returning false invokes existing complete generic GC validation, never native verification, type/legality/signature/emission/public readiness. Preserve generic verifier/ownership/escape/schema/geometry.",
+        "No namespace drop/forgery. Unknown namespaces, source/selected facts and all currentness errors remain checked through native or canonical generic route.",
+        "C3 physical joins remain deferred; no unfilled physical pack authentication fabricated, no default carrier or completion claim.",
+        "No deadline/RPC changes, canceled tests, positive semantic cache or hidden failures. Preserve failed and passing epochs."
+      ]
+    }
+  ],
+  "predecessors": [
+    "3522-b-native-class-semantic-producer-20261014.json",
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}
