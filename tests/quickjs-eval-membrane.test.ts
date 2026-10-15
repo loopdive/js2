@@ -1319,6 +1319,11 @@ export function binaryGlobal() {
   // realm typed array, so its element reads from the realm.
   return typeof heap === "object" ? evalIt("heap[" + 5 + "]") : -1;
 }
+var tsObj = { toString: function () { return "ts"; } };
+export function toStringCoercion() {
+  var f = Function("a", "return '' + a;");
+  return evalIt("('' + tsObj) === 'ts' ? 1 : 0") + (f(tsObj) === "ts" ? 10 : 0);
+}
 export function bagMethod() { return evalIt("bag.add(" + 2 + ")"); }
 export function compiledSeesIt() { evalIt("var g" + "lobalMock = new Mock();"); return globalMock.v + 2; }
 `;
@@ -1375,6 +1380,9 @@ describe.skipIf(!enabled)("quickjs eval membrane — [[Construct]] of a compiled
     const t0 = performance.now();
     expect(exports_.binaryGlobal!()).toBe(42);
     expect(performance.now() - t0).toBeLessThan(10_000);
+  });
+  it("ToPrimitive on a compiled object calls its own toString, not Function.prototype's", () => {
+    expect(exports_.toStringCoercion!()).toBe(11);
   });
   it("the constructed object is a compiled object the compiled side can read", () => {
     expect(exports_.compiledSeesIt!()).toBe(42);

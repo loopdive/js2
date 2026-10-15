@@ -97,6 +97,15 @@ takes 88 ms, zlib setup 1 s, and one run ~16 s (2026-10-14, contended box).
 Residual: compiled code cannot read the elements of an eval-created typed
 array. The box only round-trips it.
 
+3. **Owner-routed reads on a non-callable target skip the closure bag.**
+   The carrier property trampoline read the carrier's closure-own bag first.
+   For a carrier rebound onto a plain compiled object that bag is empty and
+   falls back to `%Function.prototype%`, so `'' + obj` inside evaluated code
+   called `Function.prototype.toString` on a non-function and threw. That was
+   the ES5 ratchet breach that parked the first merge-group run (test262
+   `built-ins/Function/S15.3.2.1_A2_T6.js`, run 38661141645). The trampoline now
+   reads the target directly when the target is not callable.
+
 ## Residuals
 
 - A compiled function's `prototype` does not cross the carrier's property
