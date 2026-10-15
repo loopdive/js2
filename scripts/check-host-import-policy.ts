@@ -29,6 +29,10 @@ const REGIME_GAP_CEILING: Record<string, readonly string[]> = {
     "__temporal_plain_date_from_string_field",
     "__temporal_duration_from_string_field",
     "__temporal_plain_date_add_field",
+    "__temporal_plain_date_month_code",
+    "__temporal_plain_time_from_string_field",
+    "__temporal_plain_time_add_field",
+    "__temporal_duration_sign",
   ],
 };
 {

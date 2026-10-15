@@ -120,7 +120,6 @@ describe("#4397 native semantics in a JavaScript environment", () => {
 
     const inventory = result.hostImportInventory ?? [];
     expect(inventory.filter((entry) => entry.classification === "unknown")).toEqual([]);
-    expect(inventory.filter((entry) => entry.classification === "unknown")).toEqual([]);
     expect(inventory).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ name: "console_log_string", classification: "platform-capability" }),
@@ -224,7 +223,6 @@ describe("#4397 native semantics in a JavaScript environment", () => {
       getValues: { result: { kind: "aggregate", policy: "live-view" } },
     });
     expect(native.result.hostImportInventory?.filter((entry) => entry.classification === "unknown")).toEqual([]);
-    expect(native.result.hostImportInventory?.filter((entry) => entry.classification === "unknown")).toEqual([]);
   });
 
   it("runs object-rest CopyDataProperties natively while retaining JS-owned boundary objects", async () => {
@@ -288,7 +286,6 @@ describe("#4397 native semantics in a JavaScript environment", () => {
       ]),
     );
     expect(native.result.hostImportInventory?.filter((entry) => entry.classification === "unknown")).toEqual([]);
-    expect(native.result.hostImportInventory?.filter((entry) => entry.classification === "unknown")).toEqual([]);
   });
 
   it("keeps DataView window and byte semantics in Wasm while admitting caller-owned views", async () => {
@@ -321,7 +318,6 @@ describe("#4397 native semantics in a JavaScript environment", () => {
         expect.objectContaining({ name: "__boundary_object_call", classification: "value-adapter" }),
       ]),
     );
-    expect(native.result.hostImportInventory?.filter((entry) => entry.classification === "unknown")).toEqual([]);
     expect(native.result.hostImportInventory?.filter((entry) => entry.classification === "unknown")).toEqual([]);
   });
 
@@ -380,7 +376,6 @@ describe("#4397 native semantics in a JavaScript environment", () => {
         expect.objectContaining({ name: "__boundary_callback_call_1", classification: "value-adapter" }),
       ]),
     );
-    expect(boundary.result.hostImportInventory?.filter((entry) => entry.classification === "unknown")).toEqual([]);
     expect(boundary.result.hostImportInventory?.filter((entry) => entry.classification === "unknown")).toEqual([]);
   });
 
@@ -580,7 +575,6 @@ describe("#4397 native semantics in a JavaScript environment", () => {
       wasmImports(native.result.binary).filter((entry) => /^(Map|Set|WeakMap|Date|number|bigint)_/.test(entry.name)),
     ).toEqual([]);
     expect(native.result.hostImportInventory?.filter((entry) => entry.classification === "unknown")).toEqual([]);
-    expect(native.result.hostImportInventory?.filter((entry) => entry.classification === "unknown")).toEqual([]);
   });
 
   it("keeps native-first BigInts on the signed-i64 carrier across storage and operators", async () => {
@@ -632,7 +626,6 @@ describe("#4397 native semantics in a JavaScript environment", () => {
       ]),
     );
     expect(native.result.hostImportInventory?.filter((entry) => entry.classification === "unknown")).toEqual([]);
-    expect(native.result.hostImportInventory?.filter((entry) => entry.classification === "unknown")).toEqual([]);
   });
 
   it("formats the full signed-i64 BigInt range natively for radices 2 through 36", async () => {
@@ -677,7 +670,6 @@ describe("#4397 native semantics in a JavaScript environment", () => {
       expect.arrayContaining(["__array_join_any", "__get_builtin"]),
     );
     expect(native.result.hostImportInventory?.filter((entry) => entry.classification === "unknown")).toEqual([]);
-    expect(native.result.hostImportInventory?.filter((entry) => entry.classification === "unknown")).toEqual([]);
   });
 
   it("keeps Proxy.revocable and its revoker in Wasm", async () => {
@@ -706,7 +698,6 @@ describe("#4397 native semantics in a JavaScript environment", () => {
     expect(native.exports.inspect()).toBe(1);
     expect(native.exports.run()).toBe(42);
     expect(wasmImports(native.result.binary).map(({ name }) => name)).not.toContain("__proxy_revocable");
-    expect(native.result.hostImportInventory?.filter((entry) => entry.classification === "unknown")).toEqual([]);
     expect(native.result.hostImportInventory?.filter((entry) => entry.classification === "unknown")).toEqual([]);
   });
 
@@ -853,7 +844,6 @@ describe("#4397 native semantics in a JavaScript environment", () => {
     expect(imports).not.toContain("__js_array_new");
     expect(imports).not.toContain("__js_array_push");
     expect(native.result.hostImportInventory?.filter((entry) => entry.classification === "unknown")).toEqual([]);
-    expect(native.result.hostImportInventory?.filter((entry) => entry.classification === "unknown")).toEqual([]);
   });
 
   it("runs parse and URI string globals through their native providers", async () => {
@@ -886,7 +876,6 @@ describe("#4397 native semantics in a JavaScript environment", () => {
     ]) {
       expect(imports).not.toContain(name);
     }
-    expect(native.result.hostImportInventory?.filter((entry) => entry.classification === "unknown")).toEqual([]);
     expect(native.result.hostImportInventory?.filter((entry) => entry.classification === "unknown")).toEqual([]);
   });
 
@@ -934,7 +923,6 @@ describe("#4397 native semantics in a JavaScript environment", () => {
       ]),
     );
     expect(native.result.hostImportInventory?.filter((entry) => entry.classification === "unknown")).toEqual([]);
-    expect(native.result.hostImportInventory?.filter((entry) => entry.classification === "unknown")).toEqual([]);
   });
 
   it("keeps Symbol semantics native and converts identity only at the JS boundary", async () => {
@@ -975,7 +963,6 @@ describe("#4397 native semantics in a JavaScript environment", () => {
         ["__symbol_register_desc", "__symbol_description", "__box_symbol"].includes(entry.name),
       ),
     ).toEqual([]);
-    expect(native.result.hostImportInventory?.filter((entry) => entry.classification === "unknown")).toEqual([]);
     expect(native.result.hostImportInventory?.filter((entry) => entry.classification === "unknown")).toEqual([]);
   });
 
@@ -1339,7 +1326,6 @@ describe("#4397 native semantics in a JavaScript environment", () => {
       ]),
     );
     expect(native.result.hostImportInventory?.filter((entry) => entry.classification === "unknown")).toEqual([]);
-    expect(native.result.hostImportInventory?.filter((entry) => entry.classification === "unknown")).toEqual([]);
     expect(native.result.hostImportSummary?.byClassification).toMatchObject({
       "regime-gap": 0,
       unknown: 0,
@@ -1356,4 +1342,197 @@ describe("#4397 native semantics in a JavaScript environment", () => {
     expect(crossingCounts.__boundary_object_is_frozen).toBeGreaterThan(0);
     expect(crossingCounts.__boundary_callback_call_1).toBeGreaterThan(0);
   });
+});
+
+/**
+ * (#6979 S7-b) Per-family non-vacuity: every retired host-semantic import
+ * family has a program that exercises it, compiles on the default profile, an
+ * explicit native-first spelling and standalone with ZERO imports from that
+ * family, and still computes what Node computes. String-producing programs
+ * return a hash of their string so the comparison does not depend on the
+ * boundary string representation of each profile.
+ */
+describe("#6979 retired host-semantic families stay native", () => {
+  const HASH = `function hash(s: string): number {
+    let h = 0;
+    for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) % 1000000007;
+    return h;
+  }`;
+  const hash = (s: string): number => {
+    let h = 0;
+    for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) % 1000000007;
+    return h;
+  };
+  type Family = { name: string; imports: RegExp; source: string; expected: () => unknown };
+  const families: Family[] = [
+    {
+      name: "number_ / bigint_ formatting",
+      imports: /^(number_|bigint_)/,
+      source: `${HASH} export function run(): number {
+        return hash((12.345).toFixed(2) + "|" + (255).toString(16) + "|" + (1234.5).toPrecision(6) + "|" +
+          (0.00012).toExponential(1) + "|" + String(12345678901234567890n));
+      }`,
+      expected: () =>
+        hash(
+          (12.345).toFixed(2) +
+            "|" +
+            (255).toString(16) +
+            "|" +
+            (1234.5).toPrecision(6) +
+            "|" +
+            (0.00012).toExponential(1) +
+            "|" +
+            String(12345678901234567890n),
+        ),
+    },
+    {
+      name: "__call_ array callback bridges",
+      imports: /^__call_/,
+      source: `export function run(): number {
+        const f: any = (x: number): number => x * 2;
+        const doubled: number[] = [1, 2, 3].map(f);
+        return doubled.filter((x) => x > 2).reduce((a, b) => a + b, 0);
+      }`,
+      expected: () =>
+        [1, 2, 3]
+          .map((x) => x * 2)
+          .filter((x) => x > 2)
+          .reduce((a, b) => a + b, 0),
+    },
+    {
+      name: "__array_ / __js_array_ builders",
+      imports: /^(__array_|__js_array_)/,
+      source: `${HASH} export function run(): number {
+        const a: any = [3, 1, 2];
+        a.sort();
+        return hash(a.join(",") + "|" + [...[7, 8].entries()].length + "|" + Array.of(1, 2, 3).length + "|" +
+          [1, 2].concat([3]).length + "|" + a.includes(2));
+      }`,
+      expected: () => {
+        const a: any = [3, 1, 2];
+        a.sort();
+        return hash(
+          a.join(",") +
+            "|" +
+            [...[7, 8].entries()].length +
+            "|" +
+            Array.of(1, 2, 3).length +
+            "|" +
+            [1, 2].concat([3]).length +
+            "|" +
+            a.includes(2),
+        );
+      },
+    },
+    {
+      name: "Promise_ / await driver",
+      imports: /^(Promise_|__await)/,
+      source: `export async function run(): Promise<number> {
+        const a = await Promise.resolve(1);
+        const b = await new Promise<number>((resolve) => resolve(2));
+        return a + b + 3;
+      }`,
+      expected: () => 6,
+    },
+    {
+      name: "__construct dynamic construction",
+      imports: /^__construct/,
+      source: `function F(this: any, x: number) { this.x = x; }
+      export function run(): number { const C: any = F; return new C(4).x + 1; }`,
+      expected: () => 5,
+    },
+    {
+      name: "string_ methods",
+      imports: /^string_/,
+      source: `${HASH} export function run(): number {
+        return hash("  Hello  ".trim().toUpperCase().split("L").join("-") + "|" + "abc".padStart(5, "*"));
+      }`,
+      expected: () => hash("  Hello  ".trim().toUpperCase().split("L").join("-") + "|" + "abc".padStart(5, "*")),
+    },
+    {
+      name: "RegExp_ (no accelerator)",
+      imports: /^RegExp_/,
+      source: `${HASH} export function run(): number {
+        return hash(/a(b+)c/.exec("xabbcx")![1]! + "|" + "a1b2".replace(/\\d/g, "#"));
+      }`,
+      expected: () => hash(/a(b+)c/.exec("xabbcx")![1]! + "|" + "a1b2".replace(/\d/g, "#")),
+    },
+    {
+      name: "JSON_",
+      imports: /^JSON_/,
+      source: `${HASH} export function run(): number {
+        return hash(JSON.stringify({ a: 1, b: [true, null] }) + JSON.parse("[1,2]").length);
+      }`,
+      expected: () => hash(JSON.stringify({ a: 1, b: [true, null] }) + JSON.parse("[1,2]").length),
+    },
+    {
+      name: "Map_ / Set_ / WeakMap_ / WeakSet_",
+      imports: /^(Map_|Set_|WeakMap_|WeakSet_)/,
+      source: `export function run(): number {
+        const m = new Map<string, number>([["a", 1]]); m.set("b", 2);
+        const s = new Set<number>([1, 2, 2]);
+        const k = {}; const w = new WeakMap<object, number>(); w.set(k, 3);
+        const ws = new WeakSet<object>(); ws.add(k);
+        return m.get("b")! + m.size + s.size + w.get(k)! + (ws.has(k) ? 1 : 0);
+      }`,
+      expected: () => 2 + 2 + 2 + 3 + 1,
+    },
+    {
+      name: "parse* / URI / escape globals",
+      imports: /^(parseInt|parseFloat|decodeURI|encodeURI|escape|unescape)/,
+      source: `${HASH} export function run(): number {
+        return hash(parseInt("ff", 16) + parseFloat("1.5") + "|" + encodeURIComponent("a b") + "|" +
+          decodeURI("%41") + "|" + escape("a+b") + "|" + unescape("%41"));
+      }`,
+      expected: () =>
+        hash(
+          // biome-ignore lint/style/useNumericLiterals: the oracle must call the same global the program does
+          parseInt("ff", 16) +
+            parseFloat("1.5") +
+            "|" +
+            encodeURIComponent("a b") +
+            "|" +
+            decodeURI("%41") +
+            "|" +
+            escape("a+b") +
+            "|" +
+            unescape("%41"),
+        ),
+    },
+    {
+      name: "__defineProperty_ descriptors",
+      imports: /^(__defineProperty_|__getOwnPropertyDescriptor)/,
+      source: `export function run(): number {
+        const o: any = {};
+        Object.defineProperty(o, "x", { value: 4, enumerable: false });
+        const d = Object.getOwnPropertyDescriptor(o, "x")!;
+        return d.value + (d.enumerable ? 10 : 0) + Object.keys(o).length;
+      }`,
+      expected: () => 4,
+    },
+  ];
+  const profiles = [
+    { label: "default", options: {} },
+    { label: "native-first", options: { semanticProviders: "native-first" as const } },
+    { label: "standalone", options: { target: "standalone" as const } },
+  ];
+  for (const family of families) {
+    for (const profile of profiles) {
+      it(`${family.name} on ${profile.label}`, async () => {
+        const result = await compile(family.source, {
+          fileName: `issue-6979-${profile.label}.ts`,
+          ...profile.options,
+        });
+        expect(result.success, result.errors.map((error) => error.message).join("; ")).toBe(true);
+        const familyImports = wasmImports(result.binary).filter((entry) => family.imports.test(entry.name));
+        expect(familyImports).toEqual([]);
+        expect(result.hostImportSummary?.byClassification.unknown).toBe(0);
+        const imports = buildCompiledImports(result);
+        const { instance } = await WebAssembly.instantiate(result.binary, imports);
+        imports.setInstance?.(instance);
+        const exports = wrapCompiledExports(result, instance) as Record<string, () => unknown>;
+        expect(await exports.run!()).toEqual(family.expected());
+      });
+    }
+  }
 });

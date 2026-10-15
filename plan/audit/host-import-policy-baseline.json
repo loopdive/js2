@@ -5,10 +5,10 @@
     "maximumImports": 446
   },
   "runtimeSource": {
-    "maximumRuntimeTsLines": 20224,
-    "maximumResolveImportLines": 7862,
-    "maximumResolveImportCases": 15,
-    "maximumOwnedAdapterLines": 962,
+    "maximumRuntimeTsLines": 12050,
+    "maximumResolveImportLines": 1953,
+    "maximumResolveImportCases": 7,
+    "maximumOwnedAdapterLines": 860,
     "maximumExplicitCapabilityLines": 1194
   }
 }
