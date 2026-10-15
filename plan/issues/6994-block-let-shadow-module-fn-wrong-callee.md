@@ -1,7 +1,7 @@
 ---
 id: 6994
 title: "codegen: a block-scoped `let`/`const` that shares its name with a module global, module function or nested function declaration leaks a never-assigned hoisted slot past its block (post-block reads see 0/null/trap) and, inside the block, a call resolves to the nested declaration instead of the block's own closure (hoistLetConstWithTdz pass 2 + saveBlockScopedShadowsForNames; call-identifier nestedBindingVisible)"
-status: ready
+status: in-progress
 sprint: current
 created: 2026-10-15
 updated: 2026-10-15

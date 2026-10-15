@@ -23,6 +23,7 @@ import { beginFinallyCompletionSnapshot, endFinallyCompletionSnapshot } from "./
 import { buildStandardTryTable } from "../../ir/try-table.js";
 import { createFinallyRanGuard } from "./finally-ran-guard.js"; // (#6651 U4)
 import { allocFinallyPrivateLocal } from "./finally-private-local.js";
+import { finishTryFinallyPreBox, preBoxTryFinallyCapturedBindings } from "../closures/try-capture-prebox.js"; // (#6993)
 
 type BoxedCapture = { refCellTypeIdx: number; valType: ValType };
 
@@ -367,6 +368,8 @@ export function compileTryStatement(ctx: CodegenContext, fctx: FunctionContext, 
   // whose N matches one of these (post +1 adjustment) targets an outer label
   // and needs further bumping for +2 insertion sites.
   const outerBreakDepths = new Set<number>();
+  // (#6993) Before the finally pre-compile: finally and closures share one cell.
+  const tryPreBoxed = preBoxTryFinallyCapturedBindings(ctx, fctx, stmt);
   if (stmt.finallyBlock) {
     // Pre-adjust break/continue/rethrow depths by +1 because the finally is
     // emitted inside the try block (which adds 1 label level).
@@ -819,6 +822,7 @@ export function compileTryStatement(ctx: CodegenContext, fctx: FunctionContext, 
       catchAll: catchAllBody,
     });
   }
+  finishTryFinallyPreBox(fctx, tryPreBoxed);
 }
 
 /** Compile a function declaration nested inside another function.
