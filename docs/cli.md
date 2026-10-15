@@ -172,10 +172,16 @@ platform APIs.
 
 Use the JS host's implementation for one semantic family under the
 native-first regime (#6978); repeatable (`--host-accelerator=<name>` also
-works). `regexp` runs RegExp matches on the host engine and `date` parses
-date strings with host `Date.parse`; every other family keeps its native
-provider. `js-string` and `intl` are recognized but not available yet and are
-rejected. The flag needs the default JS target with
+works). `regexp` runs RegExp matches on the host engine, `date` parses
+date strings with host `Date.parse`, and `intl` (#6986) calls the host's
+`Intl` — the `Intl.*` constructors and namespace functions plus the
+locale-sensitive `toLocaleString`/`toLocaleDateString`/`toLocaleTimeString`/
+`localeCompare` methods — with strings, options objects and Dates marshalled
+across the JS value boundary. Every other family keeps its native provider.
+There is no native Intl apart from `Intl.ListFormat`: without `intl`, a
+regime, standalone or WASI build that references the global `Intl` is a
+compile error naming this flag. `js-string` is recognized but not available
+yet and is rejected. The flag needs the default JS target with
 `--semantic-providers native-first`: combining it with `--target
 standalone`/`wasi`, `--no-host-imports`, or the host-assisted profile
 is a compile error, never a silent no-op.
