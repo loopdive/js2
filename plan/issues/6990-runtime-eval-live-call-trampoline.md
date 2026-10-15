@@ -70,7 +70,7 @@ else                             call $f(params)
 - If the plain path emits no direct call, the inline live lowering is
   restored.
 
-Module: `src/codegen/runtime-eval-live-call.ts`.
+Module: `src/codegen/expressions/runtime-eval-live-call.ts`.
 
 ## Measured
 

@@ -25,7 +25,7 @@ import { ensureObjVecBuilders } from "../object-runtime.js";
 import { emitWasiErrorConstructor, isWasiErrorName } from "../registry/error-types.js";
 import { addStringConstantGlobal, ensureExnTag, localGlobalIdx, nextModuleGlobalIdx } from "../registry/imports.js";
 import { addFuncType, getOrRegisterRefCellType } from "../registry/types.js";
-import { emitRuntimeEvalEverEntered } from "../runtime-eval-live-call.js";
+import { emitRuntimeEvalEverEntered } from "./runtime-eval-live-call.js";
 import {
   emitRuntimeEvalAotCallableAdapter,
   emitRuntimeEvalInterpretedCallableAdapterIfCallable,

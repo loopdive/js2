@@ -25,15 +25,15 @@
  * typed from the FINAL signature, and only calls still aimed at the callee's
  * current index are moved.
  */
-import { ts } from "../ts-api.js";
-import type { Instr, ValType } from "../ir/types.js";
-import type { CodegenContext, FunctionContext } from "./context/types.js";
-import { definedFuncAt, funcSignatureOf, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
-import { addFuncType } from "./registry/types.js";
-import { localGlobalIdx, nextModuleGlobalIdx } from "./registry/imports.js";
-import { ensureObjVecBuilders, reserveApplyClosure } from "./object-runtime.js";
-import { emitRuntimeEvalGlobalLexicalReadOrFallback } from "./global-environment.js";
-import { coerceType } from "./shared.js";
+import { ts } from "../../ts-api.js";
+import type { Instr, ValType } from "../../ir/types.js";
+import type { CodegenContext, FunctionContext } from "../context/types.js";
+import { definedFuncAt, funcSignatureOf, mintDefinedFunc, pushDefinedFunc } from "../func-space.js";
+import { addFuncType } from "../registry/types.js";
+import { localGlobalIdx, nextModuleGlobalIdx } from "../registry/imports.js";
+import { ensureObjVecBuilders, reserveApplyClosure } from "../object-runtime.js";
+import { emitRuntimeEvalGlobalLexicalReadOrFallback } from "../global-environment.js";
+import { coerceType } from "../shared.js";
 
 /** Private `moduleGlobals` key of the "provider ever entered" flag. */
 const EVER_ENTERED_GLOBAL = "\0runtime-eval-ever-entered";

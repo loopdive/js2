@@ -19,7 +19,7 @@
  */
 
 import ts from "typescript";
-import { fillRuntimeEvalLiveCallTrampolines } from "./runtime-eval-live-call.js";
+import { fillRuntimeEvalLiveCallTrampolines } from "./expressions/runtime-eval-live-call.js";
 import type { Instr, ValType } from "../ir/types.js";
 import { buildTargetTaggedTry } from "../ir/try-table.js";
 import { allocLocal } from "./context/locals.js";

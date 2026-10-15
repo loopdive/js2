@@ -9,7 +9,7 @@
 // identifier cases, so the caller in calls.ts continues its dispatch chain.
 // Moved verbatim: the emitted Wasm is byte-identical.
 import { guardedExternRefResultBridge } from "./dispatch-extern-result-bridge.js";
-import { recordRuntimeEvalLiveCallSites, runtimeEvalLiveCallFastPathEligible } from "../runtime-eval-live-call.js";
+import { recordRuntimeEvalLiveCallSites, runtimeEvalLiveCallFastPathEligible } from "./runtime-eval-live-call.js";
 import { ts } from "../../ts-api.js";
 import { widenJsDefaultGuessSlot } from "../js-default-param-type-guess.js";
 import {

@@ -9392,7 +9392,7 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
-      "path": "src/codegen/runtime-eval-live-call.ts",
+      "path": "src/codegen/expressions/runtime-eval-live-call.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
