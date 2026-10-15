@@ -19,6 +19,19 @@ export interface NativeAwaitClassificationOptions {
   readonly rejectStepFuncIdx: number;
   readonly markRejectionHandledFuncIdx: number;
   readonly setThrowMode: readonly Instr[];
+  /**
+   * (#6995) Thenable adoption for a non-`$Promise` operand (§27.7.5.3 Await
+   * step 2, PromiseResolve): when the operand has a callable `then`, mint a
+   * pending `$Promise`, resolve it with the operand (which enqueues the
+   * PromiseResolveThenableJob) and suspend on it. Absent → the operand is
+   * delivered as a plain value (pre-#6995 behaviour).
+   */
+  readonly thenableAdoption?: {
+    readonly hasCallableThenFuncIdx: number;
+    readonly resolveValueFuncIdx: number;
+    /** Pushes a fresh PENDING `(ref $Promise)`. */
+    readonly newPendingPromise: readonly Instr[];
+  };
 }
 
 /** Build the native Promise/plain-value classification shared by prepared awaits. */
@@ -74,6 +87,28 @@ export function buildNativeAwaitClassification(options: NativeAwaitClassificatio
         { op: "local.get", index: awaitedLocal },
         { op: "struct.set", typeIdx: stateTypeIdx, fieldIdx: options.sentField },
       ];
+  const adopt = options.thenableAdoption;
+  const deliverNonPromise: Instr[] =
+    adopt === undefined
+      ? deliverPlain
+      : [
+          { op: "local.get", index: awaitedLocal },
+          { op: "call", funcIdx: adopt.hasCallableThenFuncIdx },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              ...adopt.newPendingPromise,
+              { op: "local.set", index: promiseLocal },
+              { op: "local.get", index: promiseLocal },
+              { op: "local.get", index: awaitedLocal },
+              { op: "call", funcIdx: adopt.resolveValueFuncIdx },
+              { op: "drop" },
+              ...markPending,
+            ],
+            else: deliverPlain,
+          },
+        ];
   const pendingOrRejected: Instr[] = [
     { op: "local.get", index: promiseLocal },
     { op: "struct.get", typeIdx: promiseTypeIdx, fieldIdx: 0 },
@@ -102,7 +137,7 @@ export function buildNativeAwaitClassification(options: NativeAwaitClassificatio
         { op: "i32.eq" },
         { op: "if", blockType: { kind: "empty" }, then: deliverFromPromise, else: pendingOrRejected },
       ],
-      else: deliverPlain,
+      else: deliverNonPromise,
     },
   ];
 }

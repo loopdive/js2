@@ -956,7 +956,66 @@ function awaitedLocalIsProvablySettled(ctx: CodegenContext, awaitExpr: ts.AwaitE
 }
 
 function awaitProvablyCannotSuspend(ctx: CodegenContext, awaitExpr: ts.AwaitExpression): boolean {
-  const operandType = ctx.checker.getTypeAtLocation(awaitExpr.expression);
+  return exprProvablyNonThenable(ctx, awaitExpr.expression);
+}
+
+/**
+ * (#6995) Is this await's operand provably SETTLED when the await runs on the
+ * synchronous pass-through (the native lanes' declined-body fallback)? Then the
+ * honest unwrap (`emitStandaloneAwaitUnwrap` `throwOnRejected`) delivers it
+ * exactly: a value passes through, a fulfilled `$Promise` yields its value, a
+ * rejected one throws into the enclosing `try`. Only a PENDING operand is out
+ * of that lane's reach. Settled: statically-resolved operands (incl.
+ * `Promise.resolve(<static>)`), provably non-thenable operands, a once-written
+ * local holding a static settled value, `Promise.reject(...)`, and
+ * `Promise.resolve(<provably non-thenable>)`. Every uncertain answer is `false`.
+ */
+export function awaitOperandProvablySettled(
+  ctx: CodegenContext,
+  awaitExpr: ts.AwaitExpression,
+  plan: AsyncCpsPlan,
+): boolean {
+  if (plan.awaitedStaticallyResolved.get(awaitExpr) === true) return true;
+  if (awaitProvablyCannotSuspend(ctx, awaitExpr) || awaitedLocalIsProvablySettled(ctx, awaitExpr)) return true;
+  const operand = unwrapAwaitOperand(awaitExpr.expression);
+  if (!ts.isCallExpression(operand) || !ts.isPropertyAccessExpression(operand.expression)) return false;
+  const callee = operand.expression;
+  if (!ts.isIdentifier(callee.expression) || callee.expression.text !== "Promise") return false;
+  if (callee.name.text === "reject") return true;
+  if (callee.name.text !== "resolve") return false;
+  const arg = operand.arguments[0];
+  return arg === undefined || exprProvablyNonThenable(ctx, arg);
+}
+
+/**
+ * (#6995) The native drive lane's `await <thenable>` adoption resources
+ * (`buildNativeAwaitClassification` `thenableAdoption`): the #3125 thenable
+ * substrate's callable-`then` probe + the assimilating resolve. `undefined`
+ * when the substrate is unavailable (the operand is then delivered as-is).
+ */
+function nativeThenableAdoption(
+  ctx: CodegenContext,
+  promiseTypeIdx: number,
+): { hasCallableThenFuncIdx: number; resolveValueFuncIdx: number; newPendingPromise: Instr[] } | undefined {
+  const hasCallableThenFuncIdx = ctx.funcMap.get("__promise_has_callable_then");
+  const resolveValueFuncIdx = ctx.funcMap.get("__promise_resolve_value");
+  if (hasCallableThenFuncIdx === undefined || resolveValueFuncIdx === undefined) return undefined;
+  return {
+    hasCallableThenFuncIdx,
+    resolveValueFuncIdx,
+    newPendingPromise: [
+      { op: "i32.const", value: PROMISE_STATE_PENDING },
+      { op: "ref.null.extern" },
+      { op: "ref.null.extern" },
+      closureBagInitInstr(),
+      { op: "i32.const", value: 0 },
+      { op: "struct.new", typeIdx: promiseTypeIdx },
+    ],
+  };
+}
+
+function exprProvablyNonThenable(ctx: CodegenContext, expr: ts.Expression): boolean {
+  const operandType = ctx.checker.getTypeAtLocation(expr);
   const parts = operandType.isUnion() ? operandType.types : [operandType];
   for (const part of parts) {
     if ((part.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0) return false;
@@ -2284,6 +2343,7 @@ export function ensureAsyncResumeFunction(
               markRejectionHandledFuncIdx: rt?.markRejectionHandledFuncIdx ?? -1,
               rejectionDispatchFuncIdx: rt?.rejectionDispatchFuncIdx,
               setThrowMode: setStateI32FromConst(info, frameLocal, MODE_FIELD, MODE_THROW),
+              thenableAdoption: nativeThenableAdoption(ctx, info.promiseTypeIdx),
             }),
           );
 

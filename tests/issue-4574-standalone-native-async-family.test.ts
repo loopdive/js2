@@ -416,7 +416,9 @@ describe("#4574 standalone native async-family ownership", () => {
     const parallelFamily = familyBody(result.wat, "fetchAllParallel");
     expect(parallelEntry.match(/\barray\.new_fixed\b/g)).toHaveLength(1);
     expect(callsToName(result.wat, parallelFamily, "fetchUser")).toBe(1);
-    expect(callsToMatching(result.wat, parallelFamily, /promise.*all/i, "native Promise.all")).toBe(1);
+    // (#6995) `promise_all`, not `promise.*all`: the latter also matched the
+    // thenable probe `__promise_has_callable_then` the native await now calls.
+    expect(callsToMatching(result.wat, parallelFamily, /promise_all/i, "native Promise.all")).toBe(1);
     const allFulfill = extractFunctionBody(result.wat, "__combinator_all_fulfill");
     // The Promise.all fulfillment callback stores `value` through the index
     // captured for that input, rather than through completion order. Generic
