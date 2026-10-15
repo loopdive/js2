@@ -15,6 +15,7 @@
  */
 import { NEW_TARGET_LEXICAL_LOCAL, arrowCapturesNewTarget } from "../expressions/new-target-value.js";
 import { ts, forEachChild } from "../../ts-api.js";
+import { isModuleScopeBinding } from "./module-scope-binding.js"; // (#6987)
 import type { ClosureInfo, CodegenContext, FunctionContext } from "../context/types.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import { addFuncType, destructureParamArray, destructureParamObject, getOrRegisterRefCellType } from "../index.js";
@@ -819,6 +820,9 @@ export function planClosureCaptures(
       // hoisted slot, which is essential for TDZ-through-closure to fire.
       // (#6651 V5) A FREE name has no hoisted slot — the same-spelled local is from a left block.
       if (closureReferencesOnlyUnboundName(ctx, arrow, name)) continue;
+      // (#6987) A MODULE-scope binding is never a block-hoisted slot: a same-spelled
+      // local is a left inline IIFE's parameter (`(function (TypeScript) {…})(…)`).
+      if (isModuleScopeBinding(referencedBindingDeclaration(ctx, arrow, name))) continue;
       for (let i = 0; i < fctx.locals.length; i++) {
         const slot = fctx.locals[i]!;
         if (slot.name === name) {

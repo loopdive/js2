@@ -53,6 +53,9 @@ export const HOST_RUNTIME_DIRECT_EVAL_IMPORT = "__extern_direct_eval";
  * provider reads the structurally canonical cells into ENV_GLOBAL.names/slots;
  * the slot itself is deliberately non-enumerable and non-configurable. */
 export const RUNTIME_EVAL_GLOBAL_LEXICAL_CELLS_PROPERTY = "__js2wasm_runtime_eval_global_lexical_cells__";
+/** Hidden global-object slot holding this module's membrane hook carrier (see
+ * the push body). Read by the provider at each entry. */
+export const RUNTIME_EVAL_MEMBRANE_HOOK_PROPERTY = "__js2wasm_runtime_eval_membrane_hook__";
 /** Extensible map for lexical names introduced by a global Script source. */
 export const RUNTIME_EVAL_GLOBAL_DYNAMIC_LEXICALS_PROPERTY = "__js2wasm_runtime_eval_global_dynamic_lexicals__";
 /**
@@ -391,6 +394,27 @@ function emitRuntimeEvalGlobalBindingPushBody(
       { op: "local.get", index: cellsLocal },
       // has-value + explicitly writable:true, enumerable:false,
       // configurable:false. Later pushes may replace only the carrier value.
+      { op: "f64.const", value: 0xb9 },
+      { op: "call", funcIdx: ctx.funcMap.get("__defineProperty_value") ?? defineIdx! },
+      { op: "drop" },
+    );
+  }
+
+  if (ctx.standalone) {
+    // Membrane hook: a canonical AOT-callable carrier whose trampolines the
+    // provider copies (`__runtime_eval_rebind_carrier`) onto any compiled
+    // object it reads from evaluated code, so that read runs HERE — through
+    // this module's `__extern_get`, its getters and prototype chain, with
+    // closure-valued results carrier-wrapped and therefore callable. Without
+    // it the provider walks the object itself and a method stored on it
+    // crosses as a non-callable (the #4307 `bag.m` residual).
+    addStringConstantGlobal(ctx, RUNTIME_EVAL_MEMBRANE_HOOK_PROPERTY);
+    fctx.body.push({ op: "local.get", index: globalLocal });
+    emitGlobalEnvironmentKey(ctx, fctx, RUNTIME_EVAL_MEMBRANE_HOOK_PROPERTY);
+    fctx.body.push({ op: "ref.null.extern" });
+    emitRuntimeEvalAotCallableAdapter(ctx, fctx);
+    fctx.body.push(
+      // has-value + writable, non-enumerable, non-configurable (as above).
       { op: "f64.const", value: 0xb9 },
       { op: "call", funcIdx: ctx.funcMap.get("__defineProperty_value") ?? defineIdx! },
       { op: "drop" },
