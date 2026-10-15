@@ -1,0 +1,74 @@
+{
+  "id": "6920",
+  "slice": "generic-test-callable-refs-successor-20261015",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+  "claimed_at": "2026-10-15T00:44:46.467059+00:00",
+  "updated_at": "2026-10-15T00:44:46.467059+00:00",
+  "write_id": "b-generic-test-callable-refs-9eaab157-f8b8-4e9b-99df-872a9302f3e7",
+  "handoff_scope": [
+    {
+      "kind": "generic-test-callable-refs",
+      "at": "2026-10-15T00:44:46.467059+00:00",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+      "manifest": {
+        "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+        "componentPreimages": [
+          {
+            "path": "tests/ir/ownership-analysis.test.ts",
+            "bytes": 11766,
+            "sha256": "0d8a771a4c604aa34bffa4e8045ea1333f3c4067b8cfcbaed63ac00506b233fd"
+          },
+          {
+            "path": "tests/ir/escape-analysis.test.ts",
+            "bytes": 5849,
+            "sha256": "5f90b47a73eccbaabef204305b7d400e188134f6b8109e0be3ac73cd721ddc71"
+          }
+        ],
+        "canonicalNewPaths": [],
+        "reviewedProposal": {
+          "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-helper-completions-20261015-01a12827/.tmp/generic-structured-effects/legacy-fixture-type-proposal/proposal.json",
+          "bytes": 2890,
+          "sha256": "7fef68b48546e4abfca3bcb73e12b92c8dbf9cf72e2c84fdd81c56ea125a81dc"
+        },
+        "operations": [
+          "A alone imports existing irSupportFuncRef and replaces six incomplete callable target literals in existing ownership/escape tests: five opaque sink refs and one lifted-capture ref.",
+          "Support references use existing synthetic test identities.sourceId and distinct opaque-sink/captured-lifted roles. These intra-procedural fixtures have no actual target body/declaration; no invented source unit, body, provider or execution authority.",
+          "All existing21 test identities/assertions/control/argument lists/expectations retained, no callback or coverage waiver. This closes the six actual TS2741 failures without weakening required IrFuncRef.binding."
+        ],
+        "qualificationPlan": [
+          "Only apply after all prior private source/test processes naturallyterminal (oldbroad703 and CLASS03 alreadyterminal). Preserve original fixture bytes and old six-error typing epoch.",
+          "Exact inverse of six target expressions/two imports recovers old test bytes; actual21 runtime plus new31 test LIST/runtime truthful; full2053src+all3testroots/exclude[] naturally0 with ordinary scopedstyle/static gates.",
+          "Root review exact2 fixture deltas as part of generic2+new2 candidate, separate exactqualifiedadoption before common ROOT freeze."
+        ],
+        "constraints": [
+          "Human allB/shared-seam takeover; bounded test-fixture continuation of generic receiver d9ef8a05b990977c135755895211c1d8caac30fb; no unrelated owners/branches/HOLD/queue changes.",
+          "PRIVATE implementation only after receiving published and rootGO; no ROOT writes before qualified exact adoption/rootGO.",
+          "No assertions/control/count/oracle changes, no casts hiding missingbindings or fabricated sourcebody/provider authority.",
+          "Do not alter production core/builder/callable bindings/typing schema; only two test imports and six named reference expressions.",
+          "Preserve all broad703/CLASS03/type02 failures; no timeout/RPC change, testcancellation or source/main/PR push."
+        ]
+      },
+      "manifestSha256": "b95b2ddb92981f1bd39d8a65a6b5a6013fbfc7fc367bce446f344e4be8eeb2e0",
+      "constraints": [
+        "Human allB/shared-seam takeover; bounded test-fixture continuation of generic receiver d9ef8a05b990977c135755895211c1d8caac30fb; no unrelated owners/branches/HOLD/queue changes.",
+        "PRIVATE implementation only after receiving published and rootGO; no ROOT writes before qualified exact adoption/rootGO.",
+        "No assertions/control/count/oracle changes, no casts hiding missingbindings or fabricated sourcebody/provider authority.",
+        "Do not alter production core/builder/callable bindings/typing schema; only two test imports and six named reference expressions.",
+        "Preserve all broad703/CLASS03/type02 failures; no timeout/RPC change, testcancellation or source/main/PR push."
+      ]
+    }
+  ],
+  "predecessors": [
+    "3522-b-native-class-semantic-producer-20261014.json",
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}
