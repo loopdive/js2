@@ -1,0 +1,77 @@
+{
+  "id": "6920",
+  "slice": "preparation-copy-record-successor-20261015",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-class-resource-session-20261015-01a12827",
+  "claimed_at": "2026-10-15T03:27:48.942353+00:00",
+  "updated_at": "2026-10-15T03:27:48.942353+00:00",
+  "write_id": "b-preparation-copy-record-6376746d-a0ed-4b62-b45a-dd3049034b46",
+  "handoff_scope": [
+    {
+      "kind": "preparation-copy-record",
+      "at": "2026-10-15T03:27:48.942353+00:00",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-class-resource-session-20261015-01a12827",
+      "manifest": {
+        "receivingBranch": "codex/6920-b-class-resource-session-20261015-01a12827",
+        "componentPreimages": [
+          {
+            "path": "src/ir/analysis/alloc-registry.ts",
+            "bytes": 16450,
+            "sha256": "33a611e89ae5a9b54fefd59167da726c31bfd38a1b2d7ebc1ef82062396299a5",
+            "scope": "Only direct canonical fixed allocator import and actual nonarray Object.create(prototype) output allocation selection; every source input and copy algorithm remains exact."
+          }
+        ],
+        "canonicalNewPaths": [
+          "tests/issue-6920-preparation-copy-record-allocation.test.ts"
+        ],
+        "reviewedProposal": {
+          "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-construction-prototype/workspace/.tmp/construction/kernel-profile-arguments/next-copy-receiving-proposal.json",
+          "bytes": 3232,
+          "sha256": "feb174e3d34086765af80a0541a04eb2128a456d8a7cc4c91664b8367db60cb7"
+        },
+        "productionOwner": "C private constructor workspace only; parent ROOT qualification currently frozen and must remain unchanged",
+        "dependencies": [
+          "Independently reviewed C4 ordinary/null fresh allocators; current private70/70 fulltyping/static12, failedargument3/4 retained.",
+          "Current ROOT2059 C4 adopted but scoped qualification still live; no ROOT/public readiness transfer."
+        ],
+        "qualificationPlan": [
+          "Fresh same ordinary/null prototype and own keys/descriptors/NaN/-0/undefined/IR marker; inherited-setter0 and __proto__ own-data parity",
+          "Graph alias/cycles/copied identities and Map/Set/array constructors/nonextensibility preserved",
+          "Caller erased Map/Set/WeakMap/WeakSet/Date refusal before/after outputs; original caller never branded",
+          "After healthy output validation, mutable value/getter/prototype/foreign child still refused and getter0",
+          "Existing3518 preparation/allocation replay, source-map DATA and6920 evidence/copy tests unchanged, genuine source/codec argument phases exact limits",
+          "Whole prior function/file inverse exact except import/allocation and official normal budget/type/style checks"
+        ],
+        "constraints": [
+          "Human all Session B and blocking shared seams takeover. Only one existing production path and one named new test in C private workspace; never ROOT/B/A/source-main/PR/HOLD/queue changes.",
+          "At the actual validated nonarray copier allocation only, choose fixed null factory iff prototype===null, else received fixed ordinary factory. Existing prototype/array/Date/native Map/Set/WeakMap/WeakSet/accessor/marker/alias/cycle/extensibility/length semantics and every input probe remain exact. No caller object/prototype/child registration or semantic cache.",
+          "Preserve all original unrelated functions/constants and entire copy function except this expression/import and unavoidable explicit formatting. Independently reconstruct old whole module from recorded spans. No callback, generic allocator API, permission flag, comparison/fixpoint/cache/core allocator geometry or opcode recipe change.",
+          "Previously inherited copier issues stay explicit; do not use this allocation task to weaken or rewrite descriptor/probe algorithms. Fresh output negative slot brand is the sole new fact; live validation/mutations still apply.",
+          "Actual new focused controls plus unchanged relevant old preparation/copy/source-map/evidence controls; full source+owned tests typing excludes[], normal style/architecture/LOC/function checks with no giant regrowth/new grants. Standard35s/default RPC/actualNode25/8192; natural terminals, no test cancellation.",
+          "After component qualification, same actual argument four phases once for this new source delta; preserve every earlier failed/default/profile epoch and actual outcomes. Allocation-registry input probe cost and copy API safety cost remain, no promised deadline closure or causal speedup from aggregate profile ancestry."
+        ]
+      },
+      "manifestSha256": "8342e5cd9867fc7f492e1b408cc70319154fc3e164154cbe6a39fe97475e8af9",
+      "constraints": [
+        "Human all Session B and blocking shared seams takeover. Only one existing production path and one named new test in C private workspace; never ROOT/B/A/source-main/PR/HOLD/queue changes.",
+        "At the actual validated nonarray copier allocation only, choose fixed null factory iff prototype===null, else received fixed ordinary factory. Existing prototype/array/Date/native Map/Set/WeakMap/WeakSet/accessor/marker/alias/cycle/extensibility/length semantics and every input probe remain exact. No caller object/prototype/child registration or semantic cache.",
+        "Preserve all original unrelated functions/constants and entire copy function except this expression/import and unavoidable explicit formatting. Independently reconstruct old whole module from recorded spans. No callback, generic allocator API, permission flag, comparison/fixpoint/cache/core allocator geometry or opcode recipe change.",
+        "Previously inherited copier issues stay explicit; do not use this allocation task to weaken or rewrite descriptor/probe algorithms. Fresh output negative slot brand is the sole new fact; live validation/mutations still apply.",
+        "Actual new focused controls plus unchanged relevant old preparation/copy/source-map/evidence controls; full source+owned tests typing excludes[], normal style/architecture/LOC/function checks with no giant regrowth/new grants. Standard35s/default RPC/actualNode25/8192; natural terminals, no test cancellation.",
+        "After component qualification, same actual argument four phases once for this new source delta; preserve every earlier failed/default/profile epoch and actual outcomes. Allocation-registry input probe cost and copy API safety cost remain, no promised deadline closure or causal speedup from aggregate profile ancestry."
+      ]
+    }
+  ],
+  "predecessors": [
+    "3522-b-native-class-semantic-producer-20261014.json",
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}
