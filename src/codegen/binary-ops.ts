@@ -56,7 +56,7 @@ import { tryStaticToNumber } from "./expressions/misc.js";
 import { emitNativeParseNumber } from "./parse-number-native.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
 import { admitsObjectAddition, emitObjectAdd } from "./addition-to-primitive.js";
-import { compileRelationalOperandsToExtern } from "./relational-operands.js"; // (#6999)
+import { compileRelationalOperands } from "./relational-operands.js"; // (#6999)
 import {
   admitsAnyRelational,
   admitsObjectRelational,
@@ -2749,9 +2749,12 @@ export function emitAnyRelational(
   if (noJsHost && ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) ensureObjectRuntime(ctx);
 
   // Compile both operands to externref temps (keep runtime strings boxed).
-  const operands = compileRelationalOperandsToExtern(ctx, fctx, expr, op, numericShortcut && noJsHost);
+  // (#6982) A class instance with `[Symbol.toPrimitive]` stays raw until step 1.
+  const operands = compileRelationalOperands(ctx, fctx, expr, op, numericShortcut && noJsHost);
   if (operands === null) return { kind: "i32" };
-  const { lTmp, rTmp } = operands;
+  const { l, r } = operands;
+  const lTmp = l.tmp;
+  const rTmp = r.tmp;
 
   // Map a -1/0/1/2 `cmp` (or an f64 comparison) to the operator's boolean result.
   // The `2` (incomparable) sentinel must make ALL four operators yield 0, so we
@@ -2816,7 +2819,7 @@ export function emitAnyRelational(
     ensureNativeStringHelpers(ctx);
     addUnionImports(ctx);
     // §7.2.12 step 1 — the arm below must be chosen from the PRIMITIVES.
-    reduceRelationalOperandsToPrimitive(ctx, fctx, lTmp, rTmp);
+    reduceRelationalOperandsToPrimitive(ctx, fctx, lTmp, rTmp, l.raw, r.raw);
     const typeofStr = ctx.funcMap.get("__typeof_string");
     const unboxNum = ctx.funcMap.get("__unbox_number");
     const strCompare = ctx.nativeStrHelpers.get("__str_compare");

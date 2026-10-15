@@ -59,6 +59,10 @@
 import { ts } from "../ts-api.js";
 import { runtimeToPrimitiveInstrs } from "./coercion-engine.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
+import {
+  type RawToPrimitiveOperand,
+  reduceClassToPrimitiveOperand,
+} from "./classes/class-symbol-to-primitive-operand.js";
 
 /** Operand types the cascade must not take — it has no i64 arm. */
 export const TO_PRIMITIVE_EXCLUDED_FLAGS =
@@ -138,10 +142,20 @@ export function reduceRelationalOperandsToPrimitive(
   fctx: FunctionContext,
   lTmp: number,
   rTmp: number,
+  lRaw?: RawToPrimitiveOperand,
+  rRaw?: RawToPrimitiveOperand,
 ): void {
-  for (const tmp of [lTmp, rTmp]) {
+  for (const [tmp, raw] of [
+    [lTmp, lRaw],
+    [rTmp, rRaw],
+  ] as const) {
     const toPrimitiveInstrs = runtimeToPrimitiveInstrs(ctx, "number");
-    if (toPrimitiveInstrs === null) return;
+    // (#6982) A raw class operand reduces statically via its `[Symbol.toPrimitive]`.
+    if (raw) {
+      reduceClassToPrimitiveOperand(ctx, fctx, raw, "number", tmp, toPrimitiveInstrs);
+      continue;
+    }
+    if (toPrimitiveInstrs === null) continue;
     fctx.body.push({ op: "local.get", index: tmp });
     fctx.body.push(...toPrimitiveInstrs);
     fctx.body.push({ op: "local.set", index: tmp });

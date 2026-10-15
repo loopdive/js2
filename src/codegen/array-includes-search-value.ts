@@ -74,6 +74,8 @@ export function emitIncludesSearchValue(
     emitUndefined(ctx, fctx);
   } else if (valType.kind === "f64") {
     fctx.body.push({ op: "f64.const", value: Number.NaN });
+  } else if (valType.kind === "ref_null" && ctx.nativeStrings && valType.typeIdx === ctx.anyStrTypeIdx) {
+    fctx.body.push({ op: "ref.null", typeIdx: valType.typeIdx });
   } else {
     return true;
   }
@@ -98,7 +100,13 @@ export function emitIncludesSearchValue(
  *   right for `[10,20,30]`. `includes` resolves this the OTHER way (its
  *   SameValueZero arm deliberately makes NaN match NaN, which is how it finds a
  *   hole) — copying that here would wrongly match `[NaN].indexOf()`.
- * - **any other element type** (i32 elements, native-string / object refs) — no
+ * - **native-string vec** (`(string | undefined)[]` under the native regime,
+ *   #6982) — `undefined` is the null `AnyString` carrier, which is exactly what
+ *   the explicit `indexOf(undefined)` spelling compiles to, so the absent form
+ *   searches the same `ref.null`: `["x",undefined,"z"].indexOf()` is `1`. (The
+ *   carrier does not tell `undefined` from `null` — shared with the explicit
+ *   spelling, so the two cannot disagree.)
+ * - **any other element type** (i32 elements, object refs) — no
  *   value of that type is `undefined`, so nothing can match. Returning `true`
  *   says so and the caller answers -1 without scanning. That return is
  *   load-bearing: leaving `valTmp` at its zero default would compare against
@@ -116,6 +124,8 @@ export function emitIndexOfAbsentSearchValue(
     emitUndefined(ctx, fctx);
   } else if (valType.kind === "f64") {
     fctx.body.push({ op: "f64.const", value: Number.NaN });
+  } else if (valType.kind === "ref_null" && ctx.nativeStrings && valType.typeIdx === ctx.anyStrTypeIdx) {
+    fctx.body.push({ op: "ref.null", typeIdx: valType.typeIdx });
   } else {
     return true;
   }

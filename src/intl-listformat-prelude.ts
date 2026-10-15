@@ -25,6 +25,7 @@
  * ICU-backed host object.
  */
 import { PositionMap, type CompilerSourceOriginSpan } from "./position-map.js";
+import { hostIntlAvailable } from "./target-profile.js";
 import { ts } from "./ts-api.js";
 
 /** The binding every `Intl.ListFormat` access is rewritten to. */
@@ -106,9 +107,10 @@ function preludeOrigins(prelude: string): CompilerSourceOriginSpan[] {
   return origins;
 }
 
-/** The host-free environments the prelude serves; JS-host keeps the ICU host object. */
-function servesEnvironment(environment: string): boolean {
-  return environment === "none" || environment === "wasi";
+/** The profiles the prelude serves: every build without a host Intl (#6986: incl. the JS-environment regime). */
+type IntlPreludeProfile = Parameters<typeof hostIntlAvailable>[0];
+function servesEnvironment(profile: IntlPreludeProfile): boolean {
+  return !hostIntlAvailable(profile);
 }
 
 /**
@@ -117,20 +119,20 @@ function servesEnvironment(environment: string): boolean {
  * (`allowJs` ⇒ a JS unit).
  */
 export function applyIntlListFormatPrelude(
-  environment: string,
+  profile: IntlPreludeProfile,
   source: string,
   options: { readonly fileName?: string; readonly allowJs?: boolean },
 ): IntlListFormatPreludeResult {
-  if (!servesEnvironment(environment)) return { source, positionMap: PositionMap.identity(), injected: false };
+  if (!servesEnvironment(profile)) return { source, positionMap: PositionMap.identity(), injected: false };
   return injectIntlListFormatPrelude(source, options.fileName ?? (options.allowJs === true ? "input.js" : "input.ts"));
 }
 
 /** Multi-file entry: inject per file (keyed by file name) for a host-free `environment`. */
 export function applyIntlListFormatPreludeToFiles(
-  environment: string,
+  profile: IntlPreludeProfile,
   files: Record<string, string>,
 ): Record<string, string> {
-  if (!servesEnvironment(environment)) return files;
+  if (!servesEnvironment(profile)) return files;
   return Object.fromEntries(Object.entries(files).map(([k, v]) => [k, injectIntlListFormatPrelude(v, k).source]));
 }
 

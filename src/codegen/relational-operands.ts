@@ -20,11 +20,22 @@
  */
 import { ts } from "../ts-api.js";
 import type { ValType } from "../ir/types.js";
+import {
+  compileToPrimitiveCascadeOperand,
+  type RawToPrimitiveOperand,
+  tryCompileClassToPrimitiveOperand,
+} from "./classes/class-symbol-to-primitive-operand.js";
 import { allocTempLocal, releaseTempLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { coerceType, compileExpression } from "./shared.js";
 
 const EXTERNREF: ValType = { kind: "externref" };
+
+/** One cascade operand: its externref temp, plus a raw class operand still owed ToPrimitive (#6982). */
+export interface CascadeOperand {
+  tmp: number;
+  raw?: RawToPrimitiveOperand;
+}
 
 function f64RelOp(op: ts.SyntaxKind): "f64.lt" | "f64.le" | "f64.gt" | "f64.ge" {
   if (op === ts.SyntaxKind.LessThanToken) return "f64.lt";
@@ -38,65 +49,72 @@ function isWasmNumber(t: ValType): boolean {
   return t.kind === "f64" || (t.kind === "i32" && t.symbol !== true);
 }
 
+type NaturalOperand = { raw: RawToPrimitiveOperand } | { local: number; type: ValType };
+
+/** Compile one operand at its natural type into a temp (a #6982 class operand stays raw). */
+function compileNatural(ctx: CodegenContext, fctx: FunctionContext, expr: ts.Expression): NaturalOperand | null {
+  const raw = tryCompileClassToPrimitiveOperand(ctx, fctx, expr);
+  if (raw) return { raw };
+  const type = compileExpression(ctx, fctx, expr);
+  if (!type) return null;
+  const local = allocTempLocal(fctx, type);
+  fctx.body.push({ op: "local.set", index: local });
+  return { local, type };
+}
+
+function releaseNatural(fctx: FunctionContext, o: NaturalOperand): void {
+  releaseTempLocal(fctx, "raw" in o ? o.raw.local : o.local);
+}
+
+/** Box a natural operand into an externref cascade temp. */
+function toCascade(ctx: CodegenContext, fctx: FunctionContext, o: NaturalOperand): CascadeOperand {
+  if ("raw" in o) return { tmp: allocTempLocal(fctx, EXTERNREF), raw: o.raw };
+  fctx.body.push({ op: "local.get", index: o.local });
+  if (o.type.kind !== "externref") coerceType(ctx, fctx, o.type, EXTERNREF);
+  releaseTempLocal(fctx, o.local);
+  const tmp = allocTempLocal(fctx, EXTERNREF);
+  fctx.body.push({ op: "local.set", index: tmp });
+  return { tmp };
+}
+
 /**
- * Leave both operands in externref temps and return them, or return `null` when
+ * Compile both operands for the cascade and return them, or return `null` when
  * the comparison is already complete on the stack (an i32 — the numeric
  * shortcut, or a failed operand compile).
  */
-export function compileRelationalOperandsToExtern(
+export function compileRelationalOperands(
   ctx: CodegenContext,
   fctx: FunctionContext,
   expr: ts.BinaryExpression,
   op: ts.SyntaxKind,
   numericShortcut: boolean,
-): { lTmp: number; rTmp: number } | null {
+): { l: CascadeOperand; r: CascadeOperand } | null {
   if (!numericShortcut) {
-    const lType = compileExpression(ctx, fctx, expr.left, EXTERNREF);
-    if (!lType) return null;
-    if (lType.kind !== "externref") coerceType(ctx, fctx, lType, EXTERNREF);
-    const lTmp = allocTempLocal(fctx, EXTERNREF);
-    fctx.body.push({ op: "local.set", index: lTmp });
-    const rType = compileExpression(ctx, fctx, expr.right, EXTERNREF);
-    if (!rType) {
-      releaseTempLocal(fctx, lTmp);
+    const l = compileToPrimitiveCascadeOperand(ctx, fctx, expr.left);
+    if (!l) return null;
+    const r = compileToPrimitiveCascadeOperand(ctx, fctx, expr.right);
+    if (!r) {
+      releaseTempLocal(fctx, l.tmp);
       return null;
     }
-    if (rType.kind !== "externref") coerceType(ctx, fctx, rType, EXTERNREF);
-    const rTmp = allocTempLocal(fctx, EXTERNREF);
-    fctx.body.push({ op: "local.set", index: rTmp });
-    return { lTmp, rTmp };
+    return { l, r };
   }
 
-  const lType = compileExpression(ctx, fctx, expr.left);
-  if (!lType) return null;
-  const lRaw = allocTempLocal(fctx, lType);
-  fctx.body.push({ op: "local.set", index: lRaw });
-  const rType = compileExpression(ctx, fctx, expr.right);
-  if (!rType) {
-    releaseTempLocal(fctx, lRaw);
+  const l = compileNatural(ctx, fctx, expr.left);
+  if (!l) return null;
+  const r = compileNatural(ctx, fctx, expr.right);
+  if (!r) {
+    releaseNatural(fctx, l);
     return null;
   }
-  const rRaw = allocTempLocal(fctx, rType);
-  fctx.body.push({ op: "local.set", index: rRaw });
-  const numeric = isWasmNumber(lType) && isWasmNumber(rType);
-  const target: ValType = numeric ? { kind: "f64" } : EXTERNREF;
-  const temps: number[] = [];
-  for (const [raw, type] of [
-    [lRaw, lType],
-    [rRaw, rType],
-  ] as const) {
-    fctx.body.push({ op: "local.get", index: raw });
-    if (type.kind !== target.kind) coerceType(ctx, fctx, type, target);
-    if (numeric) continue;
-    const tmp = allocTempLocal(fctx, EXTERNREF);
-    fctx.body.push({ op: "local.set", index: tmp });
-    temps.push(tmp);
-  }
-  releaseTempLocal(fctx, rRaw);
-  releaseTempLocal(fctx, lRaw);
-  if (numeric) {
+  if ("type" in l && "type" in r && isWasmNumber(l.type) && isWasmNumber(r.type)) {
+    for (const o of [l, r]) {
+      fctx.body.push({ op: "local.get", index: o.local });
+      if (o.type.kind !== "f64") coerceType(ctx, fctx, o.type, { kind: "f64" });
+      releaseTempLocal(fctx, o.local);
+    }
     fctx.body.push({ op: f64RelOp(op) });
     return null;
   }
-  return { lTmp: temps[0]!, rTmp: temps[1]! };
+  return { l: toCascade(ctx, fctx, l), r: toCascade(ctx, fctx, r) };
 }

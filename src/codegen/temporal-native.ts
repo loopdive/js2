@@ -184,6 +184,10 @@ function temporalKindForExpression(
   ctx: CodegenContext,
   fctx: FunctionContext,
   expr: ts.Expression,
+  // Declarations whose initializer is already being followed: mutually
+  // referencing initializers (`var a = b; … var b = a;`, common in Emscripten
+  // output) otherwise recurse until the stack overflows.
+  visiting: Set<ts.Declaration> = new Set(),
 ): TemporalKind | undefined {
   const target = unwrapExpression(expr);
   if (ts.isIdentifier(target)) {
@@ -201,10 +205,11 @@ function temporalKindForExpression(
     const sym = ctx.checker.getSymbolAtLocation(target);
     const decls = sym?.getDeclarations() ?? [];
     for (const decl of decls) {
-      if (ts.isVariableDeclaration(decl) && decl.initializer) {
+      if (ts.isVariableDeclaration(decl) && decl.initializer && !visiting.has(decl)) {
         const init = unwrapExpression(decl.initializer);
         if (ts.isIdentifier(init) && init.text === target.text) continue;
-        const initKind = temporalKindForExpression(ctx, fctx, init);
+        visiting.add(decl);
+        const initKind = temporalKindForExpression(ctx, fctx, init, visiting);
         if (initKind) return initKind;
       }
     }
@@ -219,7 +224,7 @@ function temporalKindForExpression(
     if (staticKind && callTarget.name.text === "from") return staticKind;
     if (temporalNowMethod(ctx, callTarget.expression) && callTarget.name.text === "plainDateISO") return "PlainDate";
 
-    const receiverKind = temporalKindForExpression(ctx, fctx, callTarget.expression);
+    const receiverKind = temporalKindForExpression(ctx, fctx, callTarget.expression, visiting);
     if (receiverKind === "PlainDate" && (callTarget.name.text === "add" || callTarget.name.text === "subtract")) {
       return "PlainDate";
     }
