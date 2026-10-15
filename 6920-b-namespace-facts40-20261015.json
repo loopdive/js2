@@ -1,0 +1,116 @@
+{
+  "id": "6920",
+  "slice": "namespace-facts40-successor-20261015",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+  "claimed_at": "2026-10-15T18:57:51.324852+00:00",
+  "updated_at": "2026-10-15T18:57:51.324852+00:00",
+  "write_id": "b-namespace-facts40-3789bb6c-3714-4481-8274-8f8a2f24c17d",
+  "handoff_scope": [
+    {
+      "kind": "namespace-facts40",
+      "at": "2026-10-15T18:57:51.324852+00:00",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+      "manifest": {
+        "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+        "receivingWorkspace": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-namespace-facts40/workspace",
+        "bootstrapSourceWorkspace": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-cache-read39/workspace",
+        "canonicalROOTWorkspace": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827",
+        "status": "FINITE_ONE_EXISTING_NEUTRAL_PROFILE_RECEIVE_NO_SOURCE_GO_UNTIL_PUBLISHED",
+        "issueTitle": "Native Linear numeric-vector shared source handoff and integration plan",
+        "componentPreimages": [
+          {
+            "path": "src/ir/analysis/allocation-evidence/native-js-class-profile.ts",
+            "bytes": 25921,
+            "sha256": "2ec24e24ee5e4684a069497f74c3223b9080162518564d7f30050245a59dfe3a"
+          }
+        ],
+        "incomingComponent": {
+          "path": "src/ir/analysis/allocation-evidence/native-js-class-profile.ts",
+          "bytes": 26001,
+          "sha256": "6bcd885b8e423b622aebf1c931b3451478c4f03b95bdaaf264f36c0b691dc9d1",
+          "previewPath": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/source40-fact-copy-preview01/formatted-preview.ts.txt"
+        },
+        "canonicalNewPaths": [],
+        "productionPaths": [
+          "src/ir/analysis/allocation-evidence/native-js-class-profile.ts"
+        ],
+        "existingTestPaths": [],
+        "newTestPaths": [],
+        "sourceCountBefore": 2065,
+        "sourceCountConditionalAfter": 2065,
+        "inheritsSource39": "Frozen SOURCE39 full ordinary context; only candidate foundation15981/aa08c9de and brandtest9059/9011aeb7 differ from ROOT. Both remain held/unadopted. All other ordinary files/source exact required.",
+        "basis": {
+          "CPreview": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/source40-fact-copy-preview01/sealed.json",
+            "bytes": 2798,
+            "sha256": "f70f916ecc84bf9671a5db5108b81dd0889fc375b33069129643bc751f018375"
+          },
+          "ACopyProof": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/namespace-fact-outer-copy-option/proof.json",
+            "bytes": 7793,
+            "sha256": "9691b6dc65e9e757ae164aa8c85614a8c2c744c18c65d32522934360c2547f29"
+          },
+          "AExactPreviewReview": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/namespace-fact-outer-copy-option/source40-preview01-review.json",
+            "bytes": 3551,
+            "sha256": "6083c1f4f1f5e8db1f05b46819f80d7ae7abd98559695385357372dc7ec3295a"
+          },
+          "BMeasuredFamily": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-value-replay-successor-20261014-01a12827/.tmp/source39-right-family501-interpretation03/sealed.json",
+            "bytes": 811,
+            "sha256": "ec26194da8cf310248e7264036c49f2b7938e25661933ec08c5b2a0416a3e8b4"
+          },
+          "BZeroNewTestsAdequacy": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-value-replay-successor-20261014-01a12827/.tmp/source40-coverage-adequacy/sealed.json",
+            "bytes": 789,
+            "sha256": "32d30fa44d879ecf5830119b34f4cf07a3e5fefc57c299779911f34c22eaa473"
+          },
+          "expectedUnchanged818": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-value-replay-successor-20261014-01a12827/.tmp/source40-coverage-adequacy/expected-cohort.json",
+            "bytes": 18701,
+            "sha256": "d76c1a28eb705aeeffe1cdf3a5c3244a55238b850c2856a0b507eda7450e70fb"
+          },
+          "parentFamilyAuthentication": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/private-cache-read39-receive/parent-family501-03-terminal-authentication.json",
+            "bytes": 1239,
+            "sha256": "2c46c8fdc1662991d99dfae0f7bcfecbca2c980e3a39ca8e87032d8d88e4b202"
+          }
+        },
+        "constraints": [
+          "C solewriter NEW private SOURCE40 workspace from full frozen SOURCE39 ordinary context; save ONE originalbody BEFOREwrite, verify donorafter/full offscope context/ROOTindexHEAD unchanged. No canonicalROOT/SOURCE39/foreign writes.",
+          "Exactly existingfoundation namedcopyPreparedIrDataObject import plus TWO complete ownership/escape literal wrappers per26001/6bcd885b preview. Literalbodies/expressionorder/opsarrayidentity/primitivevalues/prototype/ownfieldflags/order unchanged; freshresultonly negativebrand. No casts/newAPI/helper/export/module/policy/typingroot/childseeding/rawguard or deadline changes.",
+          "InitialGO bootstrap+exactonefilecomposition/normalformat/inverse/officialcaps ONLY; no compiler/LIST/engine until endpoint review and next parent GO. Sourcecount2065/full59 roots unchanged expected, actualcensusgoverns; preview600lines/maxfunction266 unchanged/no regrown/newGiants/grants.",
+          "N=0newtests accepted for exact scope; class-specific isolated metadata-field mutant absent and not claimed. Fresh unfiltered actual818/25 per-file structured ordered identities/casecounts exact to expectedcohort; no old818 qualification reuse. Existingcopier27/brand26/nativeallocation52 actualcoverage retained.",
+          "Afterendpointacceptance fresh actualfull59/2065/allcompilerextensions/compiler+bothlists0/excludes[], normal12 individualgates+officialfile/functioncaps/inventoryvalidarchitectureCompleteFALSE and applicable style union. All source/config/tests/helpers/compilerinputs mapsbeforeafterCURRENT.",
+          "Node25.9/8192/fork1/noCPU/originalyield/default35RPC/current6429 bothawait workload. Functional818+metadata parentacceptance BEFORE separately received originalstrict35 then unchanged52 quietGOs. No retries/cancels/timeoutwaivers/profiling/guessedgain.",
+          "Measured18612 root501 no-slot events and0 descendants support only scoped freshfactROOT candidate, not time savings. Addedcopy/reflection cost/netbenefit unknown until actualgates. Unknownfamily70793roots+43371desc remainsunresolved.",
+          "ROOTfull52 twofail/SOURCE39strict35937FAIL and all diagnosticdeadlinefailures preserved. No ROOTadoption/local166checkpoint/publicsourcepush/PR/comment/HOLD/Aqueue/mastercriterion promotion here."
+        ]
+      },
+      "manifestSha256": "38d2b4c67bc526012bf0e85882ef5cbfeff8593664417f056e8b9a08b56324c5",
+      "constraints": [
+        "C solewriter NEW private SOURCE40 workspace from full frozen SOURCE39 ordinary context; save ONE originalbody BEFOREwrite, verify donorafter/full offscope context/ROOTindexHEAD unchanged. No canonicalROOT/SOURCE39/foreign writes.",
+        "Exactly existingfoundation namedcopyPreparedIrDataObject import plus TWO complete ownership/escape literal wrappers per26001/6bcd885b preview. Literalbodies/expressionorder/opsarrayidentity/primitivevalues/prototype/ownfieldflags/order unchanged; freshresultonly negativebrand. No casts/newAPI/helper/export/module/policy/typingroot/childseeding/rawguard or deadline changes.",
+        "InitialGO bootstrap+exactonefilecomposition/normalformat/inverse/officialcaps ONLY; no compiler/LIST/engine until endpoint review and next parent GO. Sourcecount2065/full59 roots unchanged expected, actualcensusgoverns; preview600lines/maxfunction266 unchanged/no regrown/newGiants/grants.",
+        "N=0newtests accepted for exact scope; class-specific isolated metadata-field mutant absent and not claimed. Fresh unfiltered actual818/25 per-file structured ordered identities/casecounts exact to expectedcohort; no old818 qualification reuse. Existingcopier27/brand26/nativeallocation52 actualcoverage retained.",
+        "Afterendpointacceptance fresh actualfull59/2065/allcompilerextensions/compiler+bothlists0/excludes[], normal12 individualgates+officialfile/functioncaps/inventoryvalidarchitectureCompleteFALSE and applicable style union. All source/config/tests/helpers/compilerinputs mapsbeforeafterCURRENT.",
+        "Node25.9/8192/fork1/noCPU/originalyield/default35RPC/current6429 bothawait workload. Functional818+metadata parentacceptance BEFORE separately received originalstrict35 then unchanged52 quietGOs. No retries/cancels/timeoutwaivers/profiling/guessedgain.",
+        "Measured18612 root501 no-slot events and0 descendants support only scoped freshfactROOT candidate, not time savings. Addedcopy/reflection cost/netbenefit unknown until actualgates. Unknownfamily70793roots+43371desc remainsunresolved.",
+        "ROOTfull52 twofail/SOURCE39strict35937FAIL and all diagnosticdeadlinefailures preserved. No ROOTadoption/local166checkpoint/publicsourcepush/PR/comment/HOLD/Aqueue/mastercriterion promotion here."
+      ]
+    }
+  ],
+  "predecessors": [
+    "3522-b-native-class-semantic-producer-20261014.json",
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}
