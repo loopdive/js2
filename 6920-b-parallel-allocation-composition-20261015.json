@@ -1,0 +1,156 @@
+{
+  "id": "6920",
+  "slice": "parallel-allocation-composition-successor-20261015",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+  "claimed_at": "2026-10-15T08:07:35.819620+00:00",
+  "updated_at": "2026-10-15T08:07:35.819620+00:00",
+  "write_id": "b-parallel-allocation-composition-3d636a06-f2f2-4dcf-b37d-891bab711fb4",
+  "handoff_scope": [
+    {
+      "kind": "parallel-allocation-composition",
+      "at": "2026-10-15T08:07:35.819620+00:00",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+      "manifest": {
+        "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+        "receivingWorkspace": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-allocation-composition21/workspace",
+        "bootstrapSourceWorkspace": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-reference-error-effects-successor/workspace",
+        "status": "RECEIVING_PREPARATION_ONLY_NO_COMPOSITION_GO_UNTIL_PUBLISHED",
+        "componentPreimages": [
+          {
+            "path": "src/ir/analysis/allocation-evidence/js-class-value-domains/independent-kernel.ts",
+            "bytes": 27316,
+            "sha256": "451b83d3f3d5c72b517916b3e24655ef0f87d9c12856992d576b35340c73d938"
+          },
+          {
+            "path": "tests/issue-6920-native-class-reference-error-value-effects.test.ts",
+            "bytes": 53271,
+            "sha256": "5d782332905894821aa419baf560d90782d48be1f93a1c1273c80fb1947df120"
+          },
+          {
+            "path": "src/ir/analysis/allocation-evidence/native-js-class-legality.ts",
+            "bytes": 14794,
+            "sha256": "590e09c60674e7041ae57079e7cb5540026d0a203ea07e29844655001da8cd11"
+          },
+          {
+            "path": "tests/issue-6920-native-js-class-exception-legality.test.ts",
+            "bytes": 15107,
+            "sha256": "6a4c07d4b44414c6604db6cd7246cb142107013406284931aae3d82e2dc86cf7"
+          }
+        ],
+        "canonicalNewPaths": [],
+        "productionPaths": [
+          "src/ir/analysis/allocation-evidence/js-class-value-domains/independent-kernel.ts",
+          "src/ir/analysis/allocation-evidence/native-js-class-legality.ts"
+        ],
+        "newTestPaths": [],
+        "sourceCountBefore": 2063,
+        "sourceCountConditionalAfter": 2063,
+        "basis": {
+          "authority": "takeover all of session b; Take over the blocking shared seams; parallel subagents",
+          "parentFullPreflight": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/parallel-allocation-join-receive/parent-preflight.json",
+            "bytes": 2834,
+            "sha256": "a060479921198451bf9fd0490f9bc164611f97d898d2ff6f8100c69d49bed012"
+          },
+          "CQualified": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-reference-error-effects-successor/workspace/.tmp/effects-handoff/private-known19/sealed.json",
+            "bytes": 10479,
+            "sha256": "02aeb2d227f2c47bab6169e8a6517be99816104dfd996724361c214d7e0473ca"
+          },
+          "C54ActualCorrection": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-reference-error-effects-successor/workspace/.tmp/effects-handoff/private-known19/context-correction20.json",
+            "bytes": 33761,
+            "sha256": "7de648026ff77ab165abacbafaa3dec8b80f94345e7616791c8973ad14591475"
+          },
+          "BQualified": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-value-replay-successor-20261014-01a12827/.tmp/class-legality-proof-successor/workspace/.tmp/legality-implementation/sealed.json",
+            "bytes": 30132,
+            "sha256": "90d7ce07e9d0bd13ab88995bf5dbfe790c4697cbafb4b96678e16c8f00f7ff3f"
+          },
+          "AReviews": [
+            {
+              "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/private-known-code-review/review.json",
+              "bytes": 8227,
+              "sha256": "9b5bc299e6d20608a0ac7ad22be079d22627efdff804b9b2e888982868c68ffa"
+            },
+            {
+              "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/legality-issuer-code-review/final/review.json",
+              "bytes": 6684,
+              "sha256": "1587dd7033ed012a1ff9896a7cfb54b699ba6a8ceaea76db575102007eed1ad9"
+            }
+          ],
+          "endpoints": [
+            {
+              "path": "src/ir/analysis/allocation-evidence/js-class-value-domains/independent-kernel.ts",
+              "snapshot": {
+                "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-reference-error-effects-successor/workspace/.tmp/effects-draft/snapshot-19/snapshot/src/ir/analysis/allocation-evidence/js-class-value-domains/independent-kernel.ts",
+                "bytes": 27316,
+                "sha256": "451b83d3f3d5c72b517916b3e24655ef0f87d9c12856992d576b35340c73d938"
+              }
+            },
+            {
+              "path": "tests/issue-6920-native-class-reference-error-value-effects.test.ts",
+              "snapshot": {
+                "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-reference-error-effects-successor/workspace/.tmp/effects-draft/snapshot-19/snapshot/tests/issue-6920-native-class-reference-error-value-effects.test.ts",
+                "bytes": 53271,
+                "sha256": "5d782332905894821aa419baf560d90782d48be1f93a1c1273c80fb1947df120"
+              }
+            },
+            {
+              "path": "src/ir/analysis/allocation-evidence/native-js-class-legality.ts",
+              "snapshot": {
+                "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-value-replay-successor-20261014-01a12827/.tmp/class-legality-proof-successor/workspace/.tmp/legality-implementation/candidate-final/snapshot/src/ir/analysis/allocation-evidence/native-js-class-legality.ts",
+                "bytes": 16371,
+                "sha256": "4d307a5519da8b1a6fd0388f9c5a9149764d4f915f249ce8ca01102ff27b700c"
+              }
+            },
+            {
+              "path": "tests/issue-6920-native-js-class-exception-legality.test.ts",
+              "snapshot": {
+                "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-value-replay-successor-20261014-01a12827/.tmp/class-legality-proof-successor/workspace/.tmp/legality-implementation/candidate-final/snapshot/tests/issue-6920-native-js-class-exception-legality.test.ts",
+                "bytes": 19421,
+                "sha256": "25afedcabc9456fa1803744d95e3d08f6c2d1546086ede45851280f16e104058"
+              }
+            }
+          ],
+          "crossWorkspace": "Parentverified184capsuleartifacts/all16526regularfiles; exactfour differencesonly/all16522offscopeequal; restoredhelper/supportexactboth"
+        },
+        "constraints": [
+          "Fresh isolated private JOINworkspace bootstrap exactCknown19 currentregular16526/source2063 plus genuineignoredpairedhelper/support. Reuse readonlydependency symlink; no install/Git/sourceindex/publicbranch changes. Source/test logicalpaths unchanged/no newproduction/policyrow.",
+          "After bootstrappreimage/allcontextverification, copyONLYtwo exactBfinalsnapshot endpoints(native-js-class-legality source+exceptiontest). Cknownkernel/focused alreadybase andmuststayexact. No codeadaptation/formatting/contextnormalization/fallback/cache/phasechange; stop onmismatch.",
+          "CASbeforeeachcopy, preserveoldbytes andverifyfullafterdelta EXACTtwoBtargets fromCbase; allother16524regularfilesexact inclallsource/tests/config/policy/scripts/currentissue/helper/support. Fullcrosscontextnotonlylocalpreimages. Endpoints mustequalreviewedexactC2+B2 snapshots.",
+          "Allcomponentpinnersnaturallyterminal beforebootstrap/join; preserve immutableC19/correction20/Bfinal andall18/17/prematcher/TypeScriptfailures. No changeswhileJOINqualifierslive. C soleJOINwriter/qualifierowner; A/Breadonlyreviews.",
+          "Freshfull2063production+54ACTUALmatchedcomponentroots/excludes[]/actualall-extensioncompilerinputs+helper/support/configpins, normal12commands+genuineofficialownedfile/functionclassifications(nestedgit0change isnotownednongrowthproof), exactcurrentstyle/inventory/layerclosure.",
+          "FreshactualLISTandgenuinejoinedfunctional7rootcohort preservesall249oldcaseidentities withfiniteC5+B5appendexpected; actualNgoverns, no countforecastcredit. ExactperfileLISTruntimeorder/noUHE/no skip; allfullsource/context/runtime/workerpinsbeforeafter.",
+          "Onlyafterjoinedmetadata/functional/source-reviewacceptance singleauthenticWASIprepare+live callbackquiet/default35/defaultRPC/Node25.9/8192/fork1/qualifiedyield/noCPUprof. Actualelapsed<=35000/natural0/noUHE mandatory, nottimerlabel. Fullunchangedconstructor52 onlyifgenuine singlepasses. Bothlive+codecargumentcases muststrictpass, preserveeveryfailure.",
+          "ParentROOT2061remainsunadopted. Later exactROOTCAS13production/3testendpoints+independentlygenerated2policyrows,full2063+55ACTUALroots/style67/newfocusedN/relatedold647identities+newDatecases/vector1with9filtered/constructor52 currentserial required. No publiccompiler-sourcepush/HOLD/queueownershipchange; all27migrationcriteriaunproven."
+        ],
+        "proposalOnly": true
+      },
+      "manifestSha256": "1f9b1116d4555040b665bc1794dfdf4b026afa7f0d955c7a6ff0bf0ed752fbd9",
+      "constraints": [
+        "Fresh isolated private JOINworkspace bootstrap exactCknown19 currentregular16526/source2063 plus genuineignoredpairedhelper/support. Reuse readonlydependency symlink; no install/Git/sourceindex/publicbranch changes. Source/test logicalpaths unchanged/no newproduction/policyrow.",
+        "After bootstrappreimage/allcontextverification, copyONLYtwo exactBfinalsnapshot endpoints(native-js-class-legality source+exceptiontest). Cknownkernel/focused alreadybase andmuststayexact. No codeadaptation/formatting/contextnormalization/fallback/cache/phasechange; stop onmismatch.",
+        "CASbeforeeachcopy, preserveoldbytes andverifyfullafterdelta EXACTtwoBtargets fromCbase; allother16524regularfilesexact inclallsource/tests/config/policy/scripts/currentissue/helper/support. Fullcrosscontextnotonlylocalpreimages. Endpoints mustequalreviewedexactC2+B2 snapshots.",
+        "Allcomponentpinnersnaturallyterminal beforebootstrap/join; preserve immutableC19/correction20/Bfinal andall18/17/prematcher/TypeScriptfailures. No changeswhileJOINqualifierslive. C soleJOINwriter/qualifierowner; A/Breadonlyreviews.",
+        "Freshfull2063production+54ACTUALmatchedcomponentroots/excludes[]/actualall-extensioncompilerinputs+helper/support/configpins, normal12commands+genuineofficialownedfile/functionclassifications(nestedgit0change isnotownednongrowthproof), exactcurrentstyle/inventory/layerclosure.",
+        "FreshactualLISTandgenuinejoinedfunctional7rootcohort preservesall249oldcaseidentities withfiniteC5+B5appendexpected; actualNgoverns, no countforecastcredit. ExactperfileLISTruntimeorder/noUHE/no skip; allfullsource/context/runtime/workerpinsbeforeafter.",
+        "Onlyafterjoinedmetadata/functional/source-reviewacceptance singleauthenticWASIprepare+live callbackquiet/default35/defaultRPC/Node25.9/8192/fork1/qualifiedyield/noCPUprof. Actualelapsed<=35000/natural0/noUHE mandatory, nottimerlabel. Fullunchangedconstructor52 onlyifgenuine singlepasses. Bothlive+codecargumentcases muststrictpass, preserveeveryfailure.",
+        "ParentROOT2061remainsunadopted. Later exactROOTCAS13production/3testendpoints+independentlygenerated2policyrows,full2063+55ACTUALroots/style67/newfocusedN/relatedold647identities+newDatecases/vector1with9filtered/constructor52 currentserial required. No publiccompiler-sourcepush/HOLD/queueownershipchange; all27migrationcriteriaunproven."
+      ]
+    }
+  ],
+  "predecessors": [
+    "3522-b-native-class-semantic-producer-20261014.json",
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}
