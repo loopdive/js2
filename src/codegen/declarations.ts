@@ -92,6 +92,7 @@ import type { CodegenContext, FunctionContext, OptionalParamInfo } from "./conte
 import { jsValueBoundary } from "./context/types.js";
 import { compileFunctionBody, dumpFrameBreach, registerInlinableFunction } from "./audited-function-body.js";
 import { _hasRuntimeComputedKey, objectLiteralForcesHostPath } from "./literals.js"; // (#3024/#4638) module-global externref routing in lockstep with the literal's own host-path gate
+import { prepareIntlAcceleratorBoundary } from "./helpers/host-intl-locale.js"; // (#6986)
 import {
   objectLiteralTakesHostCarrier,
   unwrapReturnCarrierExpression,
@@ -2653,6 +2654,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
 
   // First: collect enum declarations (so enum values are available)
   collectEnumDeclarations(ctx, sourceFile);
+  prepareIntlAcceleratorBoundary(ctx, sourceFile, ensureNativeDynamicBoundaryBridge); // (#6986)
 
   // Second: collect interfaces and type aliases (so struct types are available).
   // Skip declarations from `.d.ts` files: those describe shapes of host

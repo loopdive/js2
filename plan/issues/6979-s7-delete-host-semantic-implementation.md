@@ -121,6 +121,17 @@ main. Move it to `depends_on` once that PR has merged.)
   `platform-capability`, `value-adapter`, `instance-lifecycle` or
   `host-accelerator` (family-named, #6978) — an import that fits none is a
   compile error, not `unknown`.
+- Keep-list, `intl` family (#6986): the `Intl_<Class>_*` extern-class imports
+  (`namespacePath: ["Intl"]`, registered by
+  `src/codegen/helpers/host-intl-classes.ts`), `global_Intl` and the
+  `__intl_*` builtins (`src/codegen/helpers/host-intl-locale.ts`), with their
+  runtime marshal `src/runtime/intl-host-accelerator.ts`. None of them is
+  `legacy-semantic`: selected they classify `host-accelerator`/`intl`;
+  unselected, the extern classes and `global_Intl` classify
+  `platform-capability` (host-assisted lane) and the `__intl_*` builtins are
+  never emitted. Once `host-assisted` is gone (S7-a),
+  `hostIntlAvailable` (`src/target-profile.ts`) reduces to "the `intl`
+  accelerator is selected".
 - Codegen emitters of those imports are deleted, prefix family by prefix
   family, in this order (largest dead surface first, each a commit that
   leaves the tree green): `number_` (179 sites), `__defineProperty_` (116),

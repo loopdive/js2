@@ -67,6 +67,7 @@ import {
 } from "./expressions/helpers.js";
 import { canonicalUndefinedExternInstrs, nullishExternTestInstrs } from "./any-helpers.js"; // (#4519) §7.3.2 receiver check: null OR the undefined singleton
 import { emitUndefined } from "./expressions/late-imports.js"; // (#5269 B-d) the canonical `undefined` carrier
+import { emitNativeImportMetaUrl } from "./expressions/import-meta-url-native.js"; // (#6982)
 import { receiverIsUndefinedIdentifier } from "./nullish-receiver-coercible.js"; // (#4519) the one decline that guard needs
 import { tracesToTypedArrayIntrinsicProto } from "./expressions/calls.js"; // (#6769 S7a) `%TypedArray%.prototype` receiver
 import { resolvesToAmbientGlobal } from "./expressions/non-constructable.js";
@@ -1791,6 +1792,8 @@ export function trySuperAndImportMetaRead(
     expr.expression.name.text === "meta"
   ) {
     if (propName === "url") {
+      const nativeUrl = emitNativeImportMetaUrl(ctx, fctx); // (#6982) native strings + JS embedder
+      if (nativeUrl !== null) return nativeUrl;
       // #1494 — Bind to the host's `import.meta.url` (passed by the generated
       // loader via deps.importMetaUrl). Falls back to undefined when no
       // loader is present.
@@ -1927,13 +1930,19 @@ export function tryGlobalThisAndProcessRead(
       // object the JS-host import answers when no `process` exists (react's
       // NODE_ENV gate). (#6910) The process is a PLATFORM capability: a JS
       // environment reads the host's, admitted at the value boundary.
-      if (ctx.standalone && procProp === "env" && (hostFreeEnvironment(ctx) || !jsValueBoundary(ctx))) {
+      const noHostProcess = ctx.standalone && (hostFreeEnvironment(ctx) || !jsValueBoundary(ctx));
+      if (noHostProcess && procProp === "env") {
         const idx = ensureLateImport(ctx, "__new_plain_object", [], [{ kind: "externref" }]);
         flushLateImportShifts(ctx, fctx);
         if (idx !== undefined) fctx.body.push({ op: "call", funcIdx: idx });
         else fctx.body.push({ op: "ref.null.extern" });
         return { kind: "externref" };
       }
+      // (#6987) Every other `process.*` getter is a JS-host import a host-free
+      // build may not carry. Fall through to the ordinary unresolvable-global
+      // lowering (`process` is undeclared there: ReferenceError on read,
+      // `typeof process === "undefined"`), exactly like `process.exit`.
+      if (noHostProcess) return PA_FALLTHROUGH;
       if (hostImport !== undefined) {
         const idx = ensureLateImport(ctx, hostImport, [], [{ kind: "externref" }]);
         flushLateImportShifts(ctx, fctx);

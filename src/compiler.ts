@@ -1020,8 +1020,9 @@ function validatePipelineSource(input: PipelineInput): CompileResult | undefined
     // (#6491 r3) Script goal is an EXPLICIT opt-in, never `!moduleGoal` — see
     // the `scriptGoal` doc comment in index.ts for why the negation is unsafe.
     const scriptGoal = options.scriptGoal === true;
+    const scriptTopLevel = options.inferModuleStrictArguments === false; // (#6988) synthetic-`export` Script
     for (const sf of userSourceFiles) {
-      earlyErrors.push(...detectEarlyErrors(sf, { moduleGoal, scriptGoal }));
+      earlyErrors.push(...detectEarlyErrors(sf, { moduleGoal, scriptGoal, scriptTopLevel }));
     }
     errors.push(...earlyErrors);
     if (hasNewError(earlyErrors)) {
@@ -1760,7 +1761,7 @@ export function compileSourceSync(
       ? injectIteratorStaticsPrelude(stdinInjectedSource)
       : { source: stdinInjectedSource, positionMap: PositionMap.identity(), injected: false };
   // Step 0a.46: #6839 — Wasm-native `Intl.ListFormat` prelude (host-free targets only).
-  const listFormatResult = applyIntlListFormatPrelude(targetProfile.environment, iterStaticsResult.source, options);
+  const listFormatResult = applyIntlListFormatPrelude(targetProfile, iterStaticsResult.source, options);
   const iterStaticsSource = listFormatResult.source;
 
   // Step 0a.5: Rewrite CommonJS `const X = require('Y')` patterns to ESM `import`
@@ -2025,7 +2026,7 @@ export async function compileMultiSource(
     ),
   );
   // #6839 — per-file Wasm-native `Intl.ListFormat` prelude (host-free targets only).
-  const listFormatFiles = applyIntlListFormatPreludeToFiles(multiTargetProfile.environment, timerShimmedFiles);
+  const listFormatFiles = applyIntlListFormatPreludeToFiles(multiTargetProfile, timerShimmedFiles);
   const processedFiles = profilePhase("ground-call-fold", () =>
     foldGroundCallsInMulti(listFormatFiles, entryFile, options.optimize),
   );
