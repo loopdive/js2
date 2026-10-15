@@ -57,7 +57,6 @@ export type ImportIntent =
   // hands out has [[Construct]] like the source callable does.
   | { type: "callback_maker"; constructible?: boolean }
   | { type: "getter_callback_maker" }
-  | { type: "await" }
   | { type: "typeof_check"; targetType: string }
   | { type: "box"; targetType: string }
   | { type: "unbox"; targetType: string }

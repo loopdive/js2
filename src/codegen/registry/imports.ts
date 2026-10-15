@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /** Import/global registration and late index-space fixups. */
+import { isRetiredEcmaScriptExternClass } from "../../host-import-policy.js";
 import { registerWideBigIntTypes } from "../bigint-wide.js";
 import { buildOpenBigIntType } from "../../runtime/wasmgc/values/bigint-carrier-layouts.js";
 import type { Instr, ValType, WasmFunction } from "../../ir/types.js";
@@ -1964,6 +1965,8 @@ export function collectUsedExternImports(ctx: CodegenContext, sourceFile: ts.Sou
     let current: string | undefined = className;
     while (current) {
       const info = ctx.externClasses.get(current);
+      // (#6979) ECMAScript builtins have no host extern-class imports any more.
+      if (info && isRetiredEcmaScriptExternClass(info.className, ctx.targetProfile.accelerators)) return null;
       if (info) {
         if (kind === "method" && info.methods.has(memberName)) return info;
         if (kind === "property" && info.properties.has(memberName)) return info;
@@ -1999,7 +2002,9 @@ export function collectUsedExternImports(ctx: CodegenContext, sourceFile: ts.Sou
         !isNativeEncodingClass(className)
       ) {
         const info = ctx.externClasses.get(className);
-        if (info) register(`${info.importPrefix}_new`, info.constructorParams, [{ kind: "externref" }]);
+        if (info && !isRetiredEcmaScriptExternClass(info.className, ctx.targetProfile.accelerators)) {
+          register(`${info.importPrefix}_new`, info.constructorParams, [{ kind: "externref" }]);
+        }
       }
     }
 

@@ -3024,55 +3024,9 @@ function tryEvalAsRegExpPeephole(
   // through the standalone carrier (`pattern.source` became undefined in the
   // ES5 BMP escape tests). This preserves the peephole's one-evaluation
   // property while keeping the module host-free.
-  if (ctx.standalone) {
-    return compileStandaloneRegExpConstructor(ctx, fctx, [xExpr], expr) ?? undefined;
-  }
-
-  // Register `RegExp_new(pattern, flags) -> externref` on demand. The 7 target
-  // tests (regexp/S7.8.5_*, comments/S7.4_A6, AnnexB/RegExp/RegExp-*-escape-BMP)
-  // build their regex via eval *only* — they never write `new RegExp(...)` or a
-  // `/.../` literal in source, so the pre-pass scan in `index.ts` does NOT
-  // register `RegExp_new` and `ctx.externClasses` does NOT contain a `"RegExp"`
-  // entry at this point. We mirror the on-demand registration pattern from
-  // `compileRegExpLiteral` (`src/codegen/typeof-delete.ts:172-180`) so the
-  // peephole works even when the source has no other RegExp use.
-  //
-  // Both the import AND a minimal externClasses entry are needed: the host
-  // import resolver (`src/compiler/import-manifest.ts:46-51`) only routes
-  // `RegExp_new` to the extern_class constructor when "RegExp" is in
-  // `mod.externClasses`. Without that entry, the resolver falls through to
-  // the "builtin" branch, which has no handler for `RegExp_new` and resolves
-  // to a no-op that returns undefined — making the produced "regex" undefined
-  // at runtime even though codegen looked correct.
-  if (!ctx.externClasses.has("RegExp")) {
-    ctx.externClasses.set("RegExp", {
-      importPrefix: "RegExp",
-      namespacePath: [],
-      className: "RegExp",
-      constructorParams: [{ kind: "externref" }, { kind: "externref" }],
-      methods: new Map(),
-      properties: new Map(),
-    });
-  }
-  let funcIdx = ctx.funcMap.get("RegExp_new");
-  if (funcIdx === undefined) {
-    const importsBefore = ctx.numImportFuncs;
-    const regexpNewType = addFuncType(ctx, [{ kind: "externref" }, { kind: "externref" }], [{ kind: "externref" }]);
-    addImport(ctx, "env", "RegExp_new", { kind: "func", typeIdx: regexpNewType });
-    shiftLateImportIndices(ctx, fctx, importsBefore, ctx.numImportFuncs - importsBefore);
-    funcIdx = ctx.funcMap.get("RegExp_new");
-  }
-  if (funcIdx === undefined) return undefined;
-
-  // Argument 0: pattern source (X compiled to externref).
-  compileExpression(ctx, fctx, xExpr, { kind: "externref" });
-  // Argument 1: flags — empty string. The eval-of-regex shape is
-  // `eval("/" + X + "/")` with no flag tail, so flags is always "".
-  const emptyFlagsResult = compileStringLiteral(ctx, fctx, "", expr);
-  if (!emptyFlagsResult) return undefined;
-  const finalIdx = ctx.funcMap.get("RegExp_new") ?? funcIdx;
-  fctx.body.push({ op: "call", funcIdx: finalIdx });
-  return { kind: "externref" };
+  // (#6979) Every profile has the Wasm-native RegExp carrier; the host
+  // `RegExp_new` peephole is retired.
+  return compileStandaloneRegExpConstructor(ctx, fctx, [xExpr], expr) ?? undefined;
 }
 
 /** Returns true if the given `eval` identifier resolves to the global eval function (not a local shadow). */

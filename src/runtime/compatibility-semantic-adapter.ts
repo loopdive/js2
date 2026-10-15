@@ -12,7 +12,6 @@ export interface CompatibilitySemanticAdapterContext {
 export function isCompatibilitySemanticIntent(intent: ImportIntent): boolean {
   switch (intent.type) {
     case "string_literal":
-    case "await":
     case "host_eq":
     case "host_loose_eq":
     case "host_add":
@@ -41,8 +40,6 @@ export function resolveCompatibilitySemanticImport(
   switch (intent.type) {
     case "string_literal":
       return () => intent.value;
-    case "await":
-      return (value: unknown) => value;
     case "host_eq":
       return (left: unknown, right: unknown) => (context.strictEqual(left, right) ? 1 : 0);
     case "host_loose_eq":

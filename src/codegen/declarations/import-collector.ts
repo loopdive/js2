@@ -97,28 +97,9 @@ export interface UnifiedCollectorState {
   // -- collectStringStaticImports --
   needsFromCharCode: boolean;
   needsFromCodePoint: boolean;
-  // -- collectPromiseImports --
-  promiseNeeded: Set<string>;
-  promiseNeedConstructor: boolean;
-  promiseNeedThen2: boolean;
-  // -- collectJsonImports --
-  jsonNeedStringify: boolean;
-  jsonNeedParse: boolean;
   // -- collectCallbackImports --
   callbackFound: boolean;
   getterCallbackFound: boolean; // Object.defineProperty accessor descriptors (#929)
-  // -- collectAsyncCpsImports (#1042) --
-  // A CPS-eligible async function (single tail-await, no try-across-await) needs
-  // __make_callback + Promise_then2 + Promise_resolve registered UPFRONT so the
-  // outer-body driver gets stable funcMap indices (the outer body is not in
-  // ctx.liveBodies during emission, so a late import would not have its `call`
-  // opcodes shifted — the #1384 hazard). Only set when ASYNC_CPS_ENABLED.
-  asyncCpsFound: boolean;
-  // (#1042 host drive) A host-drive-eligible async fn (linear multi-await /
-  // try-finally-across-await, shapes the CPS lane rejects) needs the six host
-  // settle-backend imports registered UPFRONT — same #1384 stable-index
-  // rationale as asyncCpsFound.
-  asyncHostDriveFound: boolean;
   // -- collectUnionImports --
   unionFound: boolean;
   // -- collectGeneratorImports --
@@ -127,10 +108,6 @@ export interface UnifiedCollectorState {
   // repeat stem is a collision (second gen falls to legacy), so it flips the
   // module to non-drivable (carrier off). See widenAsyncGenFallback.
   asyncGenDrivableStems: Set<string>;
-  // -- collectIteratorImports --
-  iteratorFound: boolean;
-  // -- collectArrayIteratorImports --
-  arrayIteratorFound: boolean;
   // -- collectForInStringLiterals --
   forInFound: boolean;
   forInLiterals: Set<string>;
@@ -195,20 +172,11 @@ export function createUnifiedCollectorState(sourceFile: ts.SourceFile): UnifiedC
     escapeNeeded: new Set(),
     needsFromCharCode: false,
     needsFromCodePoint: false,
-    promiseNeeded: new Set(),
-    promiseNeedConstructor: false,
-    promiseNeedThen2: false,
-    jsonNeedStringify: false,
-    jsonNeedParse: false,
     callbackFound: false,
     getterCallbackFound: false,
-    asyncCpsFound: false,
-    asyncHostDriveFound: false,
     unionFound: false,
     generatorFound: false,
     asyncGenDrivableStems: new Set(),
-    iteratorFound: false,
-    arrayIteratorFound: false,
     forInFound: false,
     forInLiterals: new Set(),
     inExprLiterals: new Set(),
@@ -884,51 +852,19 @@ export function unifiedVisitNode(ctx: CodegenContext, state: UnifiedCollectorSta
     if (node.expression.name.text === "fromCodePoint") state.needsFromCodePoint = true;
   }
 
-  // ── collectPromiseImports ──
+  // ── collectJsonImports ── `JSON.stringify(<number>)` needs the native
+  // number formatter (the host `JSON_*` imports are retired, #6979).
   if (
     ts.isCallExpression(node) &&
     ts.isPropertyAccessExpression(node.expression) &&
     ts.isIdentifier(node.expression.expression) &&
-    node.expression.expression.text === "Promise"
+    node.expression.expression.text === "JSON" &&
+    node.expression.name.text === "stringify"
   ) {
-    const method = node.expression.name.text;
-    if (
-      method === "all" ||
-      method === "race" ||
-      method === "resolve" ||
-      method === "reject" ||
-      method === "allSettled" ||
-      method === "any"
-    ) {
-      state.promiseNeeded.add(method);
+    const arg = node.arguments[0];
+    if (arg && isNumberType(ctx.checker.getTypeAtLocation(arg))) {
+      state.primitiveNeeded.add("number_toString");
     }
-  }
-  // NOTE: Promise instance methods (.then/.catch/.finally) are NOT detected here.
-  // Pre-registering them adds func types that shift struct type indices, breaking
-  // non-Promise code in the same module. They're handled at codegen time instead.
-  if (ts.isNewExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "Promise") {
-    state.promiseNeedConstructor = true;
-  }
-
-  // ── collectJsonImports ──
-  if (
-    ts.isCallExpression(node) &&
-    ts.isPropertyAccessExpression(node.expression) &&
-    ts.isIdentifier(node.expression.expression) &&
-    node.expression.expression.text === "JSON"
-  ) {
-    const method = node.expression.name.text;
-    if (method === "stringify") {
-      state.jsonNeedStringify = true;
-      const arg = node.arguments[0];
-      if (arg) {
-        const argType = ctx.checker.getTypeAtLocation(arg);
-        if (isNumberType(argType)) {
-          state.primitiveNeeded.add("number_toString");
-        }
-      }
-    }
-    if (method === "parse") state.jsonNeedParse = true;
   }
 
   // ── collectCallbackImports ──
@@ -937,19 +873,6 @@ export function unifiedVisitNode(ctx: CodegenContext, state: UnifiedCollectorSta
       state.callbackFound = true;
     }
   }
-
-  // ── collectAsyncCpsImports (#1042) ──
-  // Detect a CPS-eligible async function so the host imports the driver emits
-  // (__make_callback / Promise_then2 / Promise_resolve) are registered upfront
-  // with STABLE funcMap indices. Mirrors the activation gate exactly (single
-  // tail-await canonical shape, no try-across-await, JS-host).
-  //
-  // (#2957 phase 2) Widened to async ARROWS and FUNCTION EXPRESSIONS: those
-  // shapes now activate the CPS machine too (via `closures.ts`), so their host
-  // imports must likewise be pre-registered. If they were not, a module whose
-  // only async fns are arrows would reach `emitAsyncStateMachine` with the
-  // imports missing → it bails and the arrow silently falls back to the legacy
-  // sync pass-through. Method shapes remain phase 3.
 
   // (#1239) Object literals carrying get/set accessor declarations also
   // route through `__make_getter_callback` via compileObjectLiteralWithAccessors.
@@ -1236,31 +1159,6 @@ export function unifiedVisitNode(ctx: CodegenContext, state: UnifiedCollectorSta
         if (ts.isIdentifier(typeRef.expression) && typeRef.expression.text === "Promise") {
           ctx.moduleHasHostPromiseSource = true;
         }
-      }
-    }
-  }
-
-  // ── collectArrayIteratorImports ──
-  if (!state.arrayIteratorFound && ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
-    const methodName = node.expression.name.text;
-    if (methodName === "entries" || methodName === "keys" || methodName === "values") {
-      const recvType = ctx.checker.getTypeAtLocation(node.expression.expression);
-      const sym = (recvType as ts.TypeReference).symbol ?? (recvType as ts.Type).symbol;
-      if (sym?.name === "Array") {
-        state.arrayIteratorFound = true;
-      }
-    }
-  }
-
-  // ── collectIteratorImports ──
-  if (!state.iteratorFound && ts.isForOfStatement(node)) {
-    const exprType = ctx.checker.getTypeAtLocation(node.expression);
-    const sym = (exprType as ts.TypeReference).symbol ?? (exprType as ts.Type).symbol;
-    if (sym?.name !== "Array") {
-      if (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0 && isStringType(exprType)) {
-        // In fast mode, strings are iterated natively
-      } else {
-        state.iteratorFound = true;
       }
     }
   }
@@ -1718,46 +1616,6 @@ export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedColl
     }
   }
 
-  // ── collectPromiseImports finalize ──
-  // Only register STATIC Promise methods (e.g., Promise.resolve, Promise.all).
-  // Instance methods (.then/.catch/.finally) are NOT pre-registered because
-  // adding their func types here shifts struct type indices, breaking
-  // non-Promise code in the same module (#855 regression fix).
-  //
-  // (#1326 Phase 1B) In standalone (WASI) mode, skip pre-registration of
-  // `Promise_resolve` / `Promise_reject` — these are unsatisfiable host
-  // imports there; the codegen call site emits Wasm-native `struct.new
-  // $Promise` instead. Other Promise methods (all/race/allSettled/any)
-  // are still host-routed in 1B; Phase 3 will add native combinators.
-  //
-  // (#1368) Aggregators (all/race/allSettled/any) take (thisArg, iterable) so
-  // the codegen can pass through `Promise.all.call(C, …)` thisArg semantics
-  // and the runtime can default to globalThis.Promise when wasm passes null.
-  // Resolve/reject keep their original 1-arg signature.
-  for (const method of state.promiseNeeded) {
-    if (method === "then" || method === "catch" || method === "finally") continue;
-    if (method === "resolve" || method === "reject") continue;
-    // (#2867 Gap 4) Under the native-`$Promise` carrier, `Promise.all`/`Promise.race`
-    // over an array literal lower to the host-free native combinator (no host
-    // import). Skip the unsatisfiable `Promise_all`/`Promise_race` pre-registration
-    // here; the host path (generic iterables / subclass receivers) still
-    // lazily `ensureLateImport`s it at the call site when actually needed.
-    // (#3137) `allSettled`/`any` are native on the same machinery now — same skip.
-    if (method === "all" || method === "race" || method === "allSettled" || method === "any") continue;
-    const importName = `Promise_${method}`;
-    if (!ctx.funcMap.has(importName)) {
-      const isAggregator = method === "all" || method === "race" || method === "allSettled" || method === "any";
-      // (#1116) Aggregators take (thisArg, iterable, directCall) so the runtime
-      // can distinguish a codegen-default thisArg from an explicit user-provided
-      // one (which may need to throw TypeError per spec).
-      const params: ValType[] = isAggregator
-        ? [{ kind: "externref" }, { kind: "externref" }, { kind: "i32" }]
-        : [{ kind: "externref" }];
-      const typeIdx = addFuncType(ctx, params, [{ kind: "externref" }]);
-      addImport(ctx, "env", importName, { kind: "func", typeIdx });
-    }
-  }
-
   // ── collectJsonImports finalize ──
   // (#1599 Phase 1) In standalone (no-JS-host) / WASI mode there is no JS
   // host to provide `env::JSON_stringify` / `env::JSON_parse`. Registering
@@ -1768,7 +1626,7 @@ export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedColl
   // slice (#1324) is still lowered to pure Wasm and needs no host import.
 
   // ── collectCallbackImports finalize ──
-  if (state.callbackFound || state.getterCallbackFound || state.asyncCpsFound) {
+  if (state.callbackFound || state.getterCallbackFound) {
     const typeIdx = addFuncType(ctx, [{ kind: "i32" }, { kind: "externref" }], [{ kind: "externref" }]);
     // (#3235) `callbackFound` fires for ANY arrow/function-expr — coarse. In
     // JS-host mode the upfront registration gives `__make_callback` a stable
@@ -1787,24 +1645,6 @@ export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedColl
       addImport(ctx, "env", "__make_getter_callback", { kind: "func", typeIdx });
     }
   }
-
-  // ── collectAsyncCpsImports finalize (#1042) ──
-  // The CPS driver (emitAsyncStateMachine) emits `Promise_resolve` (wrap the
-  // awaited value) and `Promise_then2` (chain the continuation) by stable
-  // funcMap index. Register both upfront so the outer async body never takes
-  // the late-import path (its `call` opcodes would not be shifted — #1384).
-  // `__make_callback` is registered above. Idempotent via funcMap guard so a
-  // module that also uses `.then(cb1,cb2)` / `Promise.resolve` is unaffected.
-
-  // ── collectAsyncHostDriveImports finalize (#1042 host drive) ──
-  // The host settle backend of the #2906 resume machine additionally needs
-  // `__make_callback` (its step adapters are `__cb_<id>` reactions) and the
-  // deferred-promise trio: `Promise_new_pending` allocates the result promise
-  // the async fn returns; the resume machine settles it later from a microtask
-  // via `Promise_settle_resolve`/`Promise_settle_reject` (runtime.ts stashes
-  // the resolve/reject capabilities on the promise as `__r`/`__j`). The settle
-  // imports declare an externref result (the JS fns return undefined) so the
-  // shared `call <fulfill>; drop` settle shape stays uniform across backends.
 
   // ── collectUnionImports finalize ──
   if (state.unionFound) {

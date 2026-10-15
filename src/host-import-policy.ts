@@ -103,6 +103,23 @@ const ECMASCRIPT_EXTERN_CLASSES = new Set([
   "BigUint64Array",
 ]);
 
+/**
+ * (#6979) Would a host extern-class import of `className` be a retired
+ * host-semantic import under these accelerators? ECMAScript builtins are owned
+ * by the native regime; RegExp/Date reach the host only through their selected
+ * accelerator, and SharedArrayBuffer is a named regime gap. Codegen uses this
+ * to stop registering imports the publication gate would reject.
+ */
+export function isRetiredEcmaScriptExternClass(
+  className: string,
+  accelerators: readonly HostAcceleratorFamily[] | undefined,
+): boolean {
+  if (!ECMASCRIPT_EXTERN_CLASSES.has(className) || className === "SharedArrayBuffer") return false;
+  if (className === "RegExp") return accelerators?.includes("regexp") !== true;
+  if (className === "Date") return accelerators?.includes("date") !== true;
+  return true;
+}
+
 function classifyBuiltin(name: string): HostImportPolicy {
   if (VALUE_ADAPTER_BUILTINS.has(name)) {
     return policy("value-adapter", "js-value-bridge", 4399, true, "JS/Wasm value marshaling or exception transfer");
@@ -305,8 +322,6 @@ function classifyIntrinsicHostImport(descriptor: ImportDescriptor, environment?:
     case "box":
     case "unbox":
       return policy("value-adapter", "dynamic-values", 4399, true, "JS/Wasm dynamic value conversion");
-    case "await":
-      return retired("host Promise/await driver");
     case "typeof_check":
     case "any_to_index":
     case "extern_get":

@@ -85,9 +85,6 @@ function classifyImport(name: string, mod: WasmModule): ImportIntent {
   if (name === "__make_callback_ctor") return { type: "callback_maker", constructible: true };
   if (name === "__make_getter_callback") return { type: "getter_callback_maker" };
 
-  // Async/await
-  if (name === "__await") return { type: "await" };
-
   // Dynamic import()
   if (name === "__dynamic_import") return { type: "dynamic_import" };
 
