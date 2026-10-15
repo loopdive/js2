@@ -1,0 +1,142 @@
+{
+  "id": "6920",
+  "slice": "producer-signature34-composition-successor-20261015",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+  "claimed_at": "2026-10-15T13:07:57.529885+00:00",
+  "updated_at": "2026-10-15T13:07:57.529885+00:00",
+  "write_id": "b-producer-signature34-composition-d3b87365-0d1e-4f59-a486-cadf6eb4b421",
+  "handoff_scope": [
+    {
+      "kind": "producer-signature34-composition",
+      "at": "2026-10-15T13:07:57.529885+00:00",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "goal": "complete ir migration"
+      },
+      "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+      "manifest": {
+        "receivingBranch": "codex/6920-b-native-js-class-integration-20261014-01a12827",
+        "receivingWorkspace": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-producer-signature-composition34/workspace",
+        "bootstrapSourceWorkspace": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-producer-signature33/workspace",
+        "status": "FINITE_TEST_ONLY_COMPOSITION_RECEIVE_NO_GO_UNTIL_PUBLISHED",
+        "componentPreimages": [],
+        "canonicalNewPaths": [
+          "tests/issue-6920-native-class-producer-signature-key.test.ts"
+        ],
+        "productionPaths": [],
+        "newTestPaths": [
+          "tests/issue-6920-native-class-producer-signature-key.test.ts"
+        ],
+        "sourceCountBefore": 2064,
+        "sourceCountConditionalAfter": 2064,
+        "basis": {
+          "authority": "take over all Session B; take over blocking seams; parallel subagents",
+          "priorOwnership": "96941e1afb8eed0e8024f25e5aa34ba29a9548c8",
+          "CSourcePostpolicy": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-producer-signature33/workspace/.tmp/signature33/handoff/sealed-source-metadata-postpolicy.json",
+            "bytes": 50499,
+            "sha256": "42c63e1223f44815a8e5ae78ae2f2c6b2786d3a936177d753d9db42364cfaf7d"
+          },
+          "ASourceReview": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/producer-signature33-code-review/candidate01/review.json",
+            "bytes": 10647,
+            "sha256": "d972b8b5620c9b0eda1989413ee313fa883d70db68aea60d1d423c0d01251ca8"
+          },
+          "APostpolicyReview": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/producer-signature33-code-review/postpolicy/review.json",
+            "bytes": 7082,
+            "sha256": "a0592608c6bd951d0fc80327cfd53a448199b16159715cb79578acc2410b1125"
+          },
+          "AMethod": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/producer-signature33-proposal/qualification-method-supplement.json",
+            "bytes": 3332,
+            "sha256": "f11488e0d80addb43d892621b3517dbaaa1f5d840d5674248a75e3177927d95f"
+          },
+          "parentSourceAuthentication": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/private-producer-signature33-source-receive/parent-postpolicy-metadata-authentication.json",
+            "bytes": 1019,
+            "sha256": "3c9b6373811da33029a3c324a93253fe2f1c08255ba0d4ac83feee8ed6e65e32"
+          },
+          "CCompositionPlan": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-resource-session-20261015-01a12827/.tmp/class-producer-signature-composition34-plan/plan.json",
+            "bytes": 3618,
+            "sha256": "b04ff1f6db92b093190465701980f63368656af150e7053dcee44b9c9024ecba"
+          },
+          "BQualified": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-value-replay-successor-20261014-01a12827/.tmp/class-producer-signature-oracles33/handoff/sealed.json",
+            "bytes": 26615,
+            "sha256": "f7cb0fb707edc88e24afdb50a9b972e76c1c72874e87d3afe4fa236346d9c0fe"
+          },
+          "BActualLIST": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-value-replay-successor-20261014-01a12827/.tmp/class-producer-signature-oracles33/workspace/.tmp/signature33/epoch01/list.json",
+            "bytes": 13916,
+            "sha256": "fae88fa704b1698a72bb21623ed3d9f111dc176e86f2dae2605d0c6298ef945f"
+          },
+          "BOracleReview": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/producer-signature33-code-review/oracles02/review.json",
+            "bytes": 8766,
+            "sha256": "0a7c32dc1c7d4242b1cc77c8b9783f132a28c60173315f32b6673402fa2c0101"
+          },
+          "parentBAuthentication": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/private-producer-signature33-oracles-receive/parent-component-authentication.json",
+            "bytes": 1224,
+            "sha256": "c3176f88edaefd107c69f805c5142fa3676bc52c9fcd19a8a9a4db8591919774"
+          },
+          "AExpected287Union": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/producer-signature34-expected-case-union/receipt.json",
+            "bytes": 10311,
+            "sha256": "306dbe0df7a1485aca0bcd780889388385d882ce8c84f2e4e6e43eb5a5f87ff6"
+          },
+          "AActualBListSupplement": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/producer-signature34-expected-case-union/actual-B-list-supplement.json",
+            "bytes": 4330,
+            "sha256": "10618922e75c4881c7346c83e4ad4f32d8457ca0cb0235eab56693159189b15e"
+          },
+          "AStrictDraftReview": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/reference-error-effects-receive/producer-signature34-expected-case-union/strict-draft-review/review.json",
+            "bytes": 6128,
+            "sha256": "01b1eafda3fe851627defc100d7becbdb4cd630a50f3e000a8af432871331e7f"
+          },
+          "endpoint": {
+            "path": "tests/issue-6920-native-class-producer-signature-key.test.ts",
+            "snapshot": {
+              "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-value-replay-successor-20261014-01a12827/.tmp/class-producer-signature-oracles33/candidate02/snapshot/tests/issue-6920-native-class-producer-signature-key.test.ts",
+              "bytes": 19058,
+              "sha256": "14cf36f86f747b2c8c0bb9626e1628ef8959cc19eb87ad3a8ff295d837574fa2"
+            }
+          },
+          "actualBComponent": "39/39actual4roots/natural0/noUHE/0pending/all16544runtimecurrent; full57ACTUAL/2064/2382type0/16784current; normal12/official424max82passed. Parent all67artifacts+runtime/type/metadata maps and old35 identities/order verified.",
+          "conditionalFinalCases": 287
+        },
+        "constraints": [
+          "C sole fresh composition receiver, not alone, preserve all others. Fresh exact qualified postpolicy SOURCE33 bootstrap16529 regular+2 genuine typing dependencies=16531/source2064. Verify whole copy/donor-after, readonly dependencies/no install/Git/index. Then ONLY add exact B19058/14cf36f8 new test at absent path =>16530regular+2deps=16532. No source/policy/existingtest adaptation/formatting or any other existing file changes.",
+          "All component jobs naturally terminal/frozen and A accepted; parent all67 B artifacts and all runtime16544/type16784/metadata16541 maps before=after=current verified; source all37prepolicy+16postpolicy artifacts/currentcontext/wholeproducerinverse reviewed. Preserve all prior strict failures and diagnostic profiles/functional seals. Producer62399/8f5c/newleaf6602/e465 and policy647813/75724f08 whole exact.",
+          "Fresh full2064 source +57 ACTUAL roots/excludes[]/allresolved compiler extensions/helpers/dependencies/source56.bin/harness/config before-after maps. Normal12 actual gates and official fulltree LOC/function budgets/actual new codec158/max18+producer1406/max274+newtest424/max82/no newGiants/regrowth/grants. Actual style membership includes new codec and test. Prior source typing56 bridge does not replace fresh57 execution.",
+          "Fresh genuine six-root LIST semantic169 +focused79+record20+absorption13+scalar2+new4 =287 expected. A exact structured union10311/306dbe0d and actual B39 supplement4330/10618922 govern per-file ancestor/title identities/order; no global file order assumption. Allselected unfiltered/0pending/noUHE/default35RPC/Node25.9/8192/fork1/noCPU. Semantic169 fresh once final; no B extra169. Prior283/466/112 historical only. Byte/effect proof mandatory; A disclosed per-use isolated tuple-key mutant limit is not expanded coverage.",
+          "Bona fide direct actual signature vs generic bytes and live Number/JSON observations preserved. Whole snapshot materialized before call; producer Root block/alias/sixconsumers/convergence comparisons exact. No equality quotient/cache/authority/raw guard changes. Other source logic/non-equivalence/unexpected failure/unresolved concern requires reassessment/meaningful expanded checks, not coverage substitution.",
+          "Only after final actual functional/full57/static and parent acceptance: materialize exact A-reviewed strict draft; refresh actual target/base/pinner/dependency currentness and single-case LIST, wait separate quietGO. Original callback6431/a6a276e11 +yield153/b769ca98/default35000/defaultRPC/Node25.9/8192/fork1/noCPU unchanged. Only genuine natural0 <=35000/noUHE permits separately authorized unchanged52. No engine/profile/retry/cancel/waiver/deadline change under this initial compositionGO.",
+          "New policy row already exact and qualified with source33; all2063 old rows/nonfiles/order/rawinverse and architectureCompletefalse debt preserved. No new policy/source/test edits beyond exact test addition. ROOT2061 stays unadopted until private52 pass; futureROOT23CAS14prod+8tests+independentpolicy/full58ACTUAL/style71/freshaffectedchecks conditional. All27 master criteria unproven/no public compiler push/comments/HOLD/queue change."
+        ]
+      },
+      "manifestSha256": "9649f4a92fe4101e2ad3f428f14a845ec37b2e2567161dae35ece0c9479e5f38",
+      "constraints": [
+        "C sole fresh composition receiver, not alone, preserve all others. Fresh exact qualified postpolicy SOURCE33 bootstrap16529 regular+2 genuine typing dependencies=16531/source2064. Verify whole copy/donor-after, readonly dependencies/no install/Git/index. Then ONLY add exact B19058/14cf36f8 new test at absent path =>16530regular+2deps=16532. No source/policy/existingtest adaptation/formatting or any other existing file changes.",
+        "All component jobs naturally terminal/frozen and A accepted; parent all67 B artifacts and all runtime16544/type16784/metadata16541 maps before=after=current verified; source all37prepolicy+16postpolicy artifacts/currentcontext/wholeproducerinverse reviewed. Preserve all prior strict failures and diagnostic profiles/functional seals. Producer62399/8f5c/newleaf6602/e465 and policy647813/75724f08 whole exact.",
+        "Fresh full2064 source +57 ACTUAL roots/excludes[]/allresolved compiler extensions/helpers/dependencies/source56.bin/harness/config before-after maps. Normal12 actual gates and official fulltree LOC/function budgets/actual new codec158/max18+producer1406/max274+newtest424/max82/no newGiants/regrowth/grants. Actual style membership includes new codec and test. Prior source typing56 bridge does not replace fresh57 execution.",
+        "Fresh genuine six-root LIST semantic169 +focused79+record20+absorption13+scalar2+new4 =287 expected. A exact structured union10311/306dbe0d and actual B39 supplement4330/10618922 govern per-file ancestor/title identities/order; no global file order assumption. Allselected unfiltered/0pending/noUHE/default35RPC/Node25.9/8192/fork1/noCPU. Semantic169 fresh once final; no B extra169. Prior283/466/112 historical only. Byte/effect proof mandatory; A disclosed per-use isolated tuple-key mutant limit is not expanded coverage.",
+        "Bona fide direct actual signature vs generic bytes and live Number/JSON observations preserved. Whole snapshot materialized before call; producer Root block/alias/sixconsumers/convergence comparisons exact. No equality quotient/cache/authority/raw guard changes. Other source logic/non-equivalence/unexpected failure/unresolved concern requires reassessment/meaningful expanded checks, not coverage substitution.",
+        "Only after final actual functional/full57/static and parent acceptance: materialize exact A-reviewed strict draft; refresh actual target/base/pinner/dependency currentness and single-case LIST, wait separate quietGO. Original callback6431/a6a276e11 +yield153/b769ca98/default35000/defaultRPC/Node25.9/8192/fork1/noCPU unchanged. Only genuine natural0 <=35000/noUHE permits separately authorized unchanged52. No engine/profile/retry/cancel/waiver/deadline change under this initial compositionGO.",
+        "New policy row already exact and qualified with source33; all2063 old rows/nonfiles/order/rawinverse and architectureCompletefalse debt preserved. No new policy/source/test edits beyond exact test addition. ROOT2061 stays unadopted until private52 pass; futureROOT23CAS14prod+8tests+independentpolicy/full58ACTUAL/style71/freshaffectedchecks conditional. All27 master criteria unproven/no public compiler push/comments/HOLD/queue change."
+      ]
+    }
+  ],
+  "predecessors": [
+    "3522-b-native-class-semantic-producer-20261014.json",
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}
