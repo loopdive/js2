@@ -4279,6 +4279,78 @@ function isStandaloneDynamicClassMethod(ctx: CodegenContext, decl: GeneratorDecl
 }
 
 /**
+ * (#2203) True when `decl` is a generator nested inside another function that
+ * reads or writes a binding from an enclosing scope (a "capture"). In the
+ * JS-host lane such a generator stays on the eager-buffer path (the native
+ * candidate gates bail on it); host-free builds handle captures natively or
+ * refuse the generator (#7010).
+ */
+function generatorCapturesOuterScope(ctx: CodegenContext, decl: GeneratorDecl): boolean {
+  if (!decl.body) return false;
+  // Only generators nested inside another function-like scope can capture; a
+  // top-level generator's free variables are module globals, which the native
+  // lowering already reads/writes directly (no host buffer needed).
+  let ancestor: ts.Node | undefined = decl.parent;
+  let nested = false;
+  while (ancestor) {
+    if (ts.isSourceFile(ancestor)) break;
+    if (
+      ts.isFunctionDeclaration(ancestor) ||
+      ts.isFunctionExpression(ancestor) ||
+      ts.isArrowFunction(ancestor) ||
+      ts.isMethodDeclaration(ancestor) ||
+      ts.isConstructorDeclaration(ancestor) ||
+      ts.isGetAccessorDeclaration(ancestor) ||
+      ts.isSetAccessorDeclaration(ancestor)
+    ) {
+      nested = true;
+      break;
+    }
+    ancestor = ancestor.parent;
+  }
+  if (!nested) return false;
+
+  let captures = false;
+  const checker = ctx.checker;
+  function scan(node: ts.Node): void {
+    if (captures) return;
+    if (ts.isIdentifier(node) && !(ts.isPropertyAccessExpression(node.parent) && node.parent.name === node)) {
+      const sym = checker.getSymbolAtLocation(node);
+      const declNode = sym?.declarations?.[0];
+      if (declNode) {
+        // A binding declared OUTSIDE the generator body, yet inside some
+        // enclosing function (i.e. not a module global / global builtin), is a
+        // capture. Walk the declaration's ancestors: if we reach the generator
+        // decl it is local (not a capture); if we reach an enclosing function
+        // first it is captured; if we reach the SourceFile it is a module/global
+        // binding the native path handles directly.
+        let p: ts.Node | undefined = declNode;
+        while (p) {
+          if (p === decl) return; // declared within the generator → local
+          if (p === decl.body) return;
+          if (
+            ts.isFunctionDeclaration(p) ||
+            ts.isFunctionExpression(p) ||
+            ts.isArrowFunction(p) ||
+            ts.isMethodDeclaration(p) ||
+            ts.isConstructorDeclaration(p)
+          ) {
+            // Reached an enclosing function before the SourceFile → captured.
+            captures = true;
+            return;
+          }
+          if (ts.isSourceFile(p)) return; // module-level binding → not a capture
+          p = p.parent;
+        }
+      }
+    }
+    ts.forEachChild(node, scan);
+  }
+  scan(decl.body);
+  return captures;
+}
+
+/**
  * Result struct (`{ value, done }`) for a generator whose yields have the given
  * `elemValType`. The numeric (f64) variant is cached on
  * `ctx.nativeGeneratorResultTypeIdx` (the historical singleton, kept so the many
