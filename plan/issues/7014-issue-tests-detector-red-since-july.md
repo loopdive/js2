@@ -88,8 +88,10 @@ Also measured:
    changes (the workflow, the two gate scripts, the reporter, the id module),
    reading the public baseline over https and never pushing it. Concurrency is
    per-PR for those runs, so they do not queue behind main.
-5. **Sentinels.** 54 of the 60 `it.fails` pins that pass on main are promoted to `it`
-   (22 files). Their companion tests that recorded the old wrong value are
+5. **Sentinels.** 57 `it.fails` pins that pass on main are promoted to `it`
+   (25 files): 54 of the 60 measured locally, plus 3 more the PR's own full run
+   found (`issue-4465` R3, `issue-4480` R1, `issue-4655-concat-carrier`
+   absent-tail). Their companion tests that recorded the old wrong value are
    updated to the JS-correct value where the companion said so:
    - `issue-2107`: the #4258 erasure-recording twin is deleted, as its own
      comment required; the kill-switch now asserts `=== null` is `false` (0)
@@ -102,33 +104,77 @@ Also measured:
      in JS). A NEW residual found there is pinned `it.fails`: calling the user
      function installed on `Array.prototype` does not return its value.
 
-## Residuals (not fixed here)
+## After — the PR's own full run (issue-tests run 38837528175, PR #6710)
 
-- **6 sentinels left as `it.fails`**: `issue-4491-wave4.test.ts` (2) and
-  `issue-4655.test.ts` (4) pass on main, but each file also has a red test
-  unrelated to the pins, so touching it trips the fix-on-touch changed-root
-  gate in `quality`:
-  - `issue-4491-wave4` "reads an array-index ACCESSOR through a narrowed
-    parameter" — an uncaught `WebAssembly.Exception` in standalone.
-  - `issue-4655` `built-ins/Array/prototype/toString/S15.4.4.2_A1_T4.js` —
-    `fail: Test262Error`.
-  Both need their own fix (or a decision) before those pins can be promoted.
-  Until then the detector's gate keeps failing on these 6 unexpected passes.
-- **The regression backlog against the July baseline** (~800 files that went red
-  between 2026-07-24 and now, plus files added since). The detector was blind
-  for that whole window, so none of it was triaged. This change makes the shards
-  report it with error lines; it does not fix or re-baseline it. Green needs one
-  of: triage + fixes, a maintainer-approved re-baseline of
-  `issue-tests-baseline.json` in js2wasm-baselines, or retiring this workflow
-  for #6783's lane once that lane seeds (which #6783 already proposes, and which
-  needs the promote/partials ordering above fixed first).
-- Other red tests seen while doing this (not in touched files):
-  `issue-4623` "does NOT fold when the program installs its own isPrototypeOf".
+All 12 shards `success`: every shard wrote its partial, 0 `ERR_MODULE_NOT_FOUND`,
+0 heap-limit deaths. Shard wall-clock 14–68 min (shard 6 hit the 30-min batch
+timeout once; its 7 in-flight files were re-run alone and finished). The suite
+measured end to end for the first time since July: **6,431 failing / 49,845
+passing tests** over 4,622 files.
+
+The `gate` verdict (advisory on PRs) is still red, for two reasons:
+
+1. **14 unexpected passes** were measured on that run. 3 are promoted by the
+   follow-up commit (above), so **11 remain**, each in a file that also has an
+   unrelated red test (touching the file would fail the fix-on-touch
+   changed-root gate in `quality`):
+
+   | file | pins left | the file's other red test |
+   |---|---|---|
+   | `issue-4491-wave4` | 2 | "reads an array-index ACCESSOR through a narrowed parameter" — uncaught `WebAssembly.Exception` (standalone) |
+   | `issue-4655` | 4 | `Array/prototype/toString/S15.4.4.2_A1_T4.js` — `fail: Test262Error` |
+   | `issue-4492-wave5` | 4 | R1 CONTROL "a NAMED array receiver DOES honour the override" — `expected false to be true` |
+   | `issue-4489` | 1 | "a name that is both a `var` and a function declaration keeps the function" — CE `Duplicate identifier 'f'` |
+
+2. **5,622 failing tests in 599 files are not in the July baseline**
+   (classified by first error line, `.tmp/classify.mjs`-style regexes over the
+   partials' new `messages`):
+
+   | class | files | tests |
+   |---|---|---|
+   | `issue-3518-*` / `issue-4376-*` source-hash and source-inventory pins (assert SHA256/length/counts of `src/` files; stale on any edit by construction) | 111 | 4,325 |
+   | other source-hash/inventory pins | 18 | 241 |
+   | value assertions (`expected X to be Y`) — real behaviour changes, unclassified | 307 | 673 |
+   | compile errors | 35 | 84 |
+   | `TypeError`/`ReferenceError` inside the test harness | 24 | 84 |
+   | source-grep / snapshot assertions (`toContain`, `toMatch`) | 33 | 59 |
+   | missing host import at instantiate (`Import #N … module is not an object`) | 18 | 44 |
+   | Wasm traps (`RuntimeError`, `illegal cast`, uncaught `WebAssembly.Exception`) | 9 | 14 |
+   | worker crash even alone at 4 GB (`test262.test.ts`, `test262-errors.test.ts`, two #3518 files) | 2 | 2 |
+   | other | 41 | 94 |
+
+   The detector was blind for this whole window, so none of it was triaged.
+
+## Residuals (not fixed here) and the plan to green
+
+1. **Source-pin suites (129 files / 4,566 tests, 81% of the backlog).**
+   `issue-3518-*`/`issue-4376-*` pin raw source hashes, lengths and inventory
+   counts of `src/` files. They are not compiler regressions, and they will go
+   red again on the next edit to a pinned file. They need an owner decision:
+   retire them, or move them to a lane that runs only when the pinned files
+   change. Fixing them by updating hashes would only last until the next merge.
+2. **Value / CE / trap / host-import classes (~420 files / ~950 tests).** These
+   need real triage. Run the gate, take its REGRESSION lines (they now carry the
+   error), bucket them by the issue number in the test file name, and route each
+   bucket to that issue's owner. Wasm traps and CEs come first.
+3. **The 11 remaining sentinels**: fix the four "other red test" rows above,
+   then promote.
+4. **Getting the detector green.** Once 1–3 shrink the backlog, either a
+   maintainer re-baselines `issue-tests-baseline.json` in js2wasm-baselines from a
+   complete run, with this issue holding the absorbed list, or this workflow is
+   retired for #6783's ci.yml lane (which #6783 already proposes). The #6783
+   lane cannot seed today: `promote merged report to main baseline` runs ~2 min
+   after the push, before the ci.yml issue-tests partials exist (its log says
+   "no issue-tests-partials-<sha> artifact yet" on every promote checked). Its
+   bank also refuses while any unexpected pass exists.
+- Also seen while doing this (not in a touched file): `issue-4623` "does NOT fold
+  when the program installs its own isPrototypeOf".
 
 ## Acceptance
 
 - Every issue-tests shard writes a partial (no exit 2 from a lost report).
 - No `ERR_MODULE_NOT_FOUND` for `scripts/compiler-bundle.mjs` in shard logs.
-- The 54 promoted pins pass in CI (node 25).
+- The promoted pins pass in CI (node 25).
 - The gate's remaining failures are named (REGRESSION lines with error text,
-  and the 6 unexpected passes above), not a skipped job.
+  and the remaining unexpected passes above), not a skipped job.
+- Done (green on main) only after the "plan to green" steps above.
