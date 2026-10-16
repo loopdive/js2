@@ -286,6 +286,7 @@ import {
   protoLinkSetWalkArm,
   withProtoLinkNull,
 } from "./object-runtime-proxy-chain.js"; // (#6766) a Proxy as [[Prototype]]
+import { fillStructProtoLinkArms } from "./object-model/struct-proto-link.js"; // (#7009)
 import { ensureArgcGlobal, ensureCurrentThisGlobal } from "./statements/nested-declarations.js";
 import { buildLazyNativeProtoGetInstrs, flushPendingNativeProtoSeeders, getBuiltinBrand } from "./native-proto.js";
 import { applyUndefinedInstrs } from "./apply-closure-args.js";
@@ -5670,6 +5671,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
 
   ensureProxyRuntime(ctx, types, registerNative);
   fillProtoLinkArms(ctx, types, registerNative); // (#6766) per-hop Proxy arms in the prototype walkers
+  fillStructProtoLinkArms(ctx, types, registerNative); // (#7009) per-hop fnctor-struct arms
 
   // (#4749) Fill Object.assign's standalone Proxy-source CopyDataProperties
   // arm now that descriptor helpers and Proxy dispatch front-guards exist.
@@ -7611,6 +7613,11 @@ interface ExternGetIdxBodyParams {
   proxyTypeIdx?: number;
   /** Pre-built per-`__vec_<k>` dispatch arms (empty at registration time). */
   vecArms: Instr[];
+  /** (#6981) A JS-environment native regime admits host objects through the
+   *  export boundary: a non-null value that is no native carrier is read with
+   *  the same `Get(O, ToString(i))` as the `$Object` arm, whose `__extern_get`
+   *  owns the boundary-object fallback. False keeps the historical miss. */
+  foreignIndexedGet?: boolean;
   /** (#2106 S1) Factory for the miss ("index absent") result instrs. A FACTORY
    *  — not a shared array — because the miss appears in several branches and
    *  shared Instr objects get double-remapped by the finalize walks (see
@@ -7632,6 +7639,27 @@ interface ExternGetIdxBodyParams {
  * The typed-vec arms sit BEFORE the `$ObjVec` test because a `__vec_<k>` is not
  * a `$ObjVec`; placing them first keeps the `$ObjVec` fast path unchanged.
  */
+/** (#6981) The `foreignIndexedGet` arm: non-null → `__extern_get(v, ToString(i))`. */
+function foreignIndexedGetInstrs(p: ExternGetIdxBodyParams): Instr[] {
+  if (!p.foreignIndexedGet || !p.objArrayLikeArms) return [];
+  return [
+    { op: "local.get", index: 2 },
+    { op: "ref.is_null" },
+    { op: "i32.eqz" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: 0 },
+        { op: "local.get", index: 1 },
+        { op: "call", funcIdx: p.numberToStringIdx },
+        { op: "call", funcIdx: p.externGetIdx },
+        { op: "return" },
+      ],
+    },
+  ];
+}
+
 export function buildExternGetIdxBody(p: ExternGetIdxBodyParams): Instr[] {
   const { objArrayLikeArms, objectTypeIdx, objVecTypeIdx, objVecArrTypeIdx } = p;
   const objIdxArm: Instr[] = objArrayLikeArms
@@ -7677,7 +7705,7 @@ export function buildExternGetIdxBody(p: ExternGetIdxBodyParams): Instr[] {
     {
       op: "if",
       blockType: { kind: "empty" },
-      then: [...p.missInstrs(), { op: "return" }],
+      then: [...foreignIndexedGetInstrs(p), ...p.missInstrs(), { op: "return" }],
     },
     // vec = cast<$ObjVec>(any) ; i = i32(idx)
     { op: "local.get", index: 2 },

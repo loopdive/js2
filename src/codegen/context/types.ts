@@ -459,6 +459,8 @@ export interface NativeGeneratorInfo {
   nativeDelegates?: boolean;
   /** Generic protocol callbacks must reject reentrant next/return/throw. */
   executingFieldIdx?: number;
+  /** (#6980) Numeric-carrier `.return(v)` provenance — see `frame-core.ts` RETURN_ORIGIN_*. */
+  returnOriginFieldIdx?: number;
   /** Source-level generator function name. */
   functionName: string;
   /**
@@ -4250,6 +4252,9 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    *  later reads. Mirrors `methodClosureGlobals` (#1394) for the function-decl
    *  case where the same JS identifier is read as a value at multiple sites. */
   funcClosureGlobals: Map<string, number>;
+  /** (#6987) Latest memoized VALUE of a capturing nested constructor, keyed by
+   *  name — the `__closure_proto_of` identity key such a function lacks. */
+  nestedFnValueGlobals?: Map<string, number>;
   /** (#4530) Canonical singleton KEY per target function index. An import
    *  alias (`import cx from 'clsx'` → funcMap "cx" → clsx's funcIdx) reads the
    *  same function value under a different name; keying the singleton pair by

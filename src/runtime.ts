@@ -20,6 +20,7 @@ import { validateExportBoundaryPolicies } from "./boundary-policy.js";
 import type { BoundaryValuePolicy, ExportBoundaryPolicy } from "./boundary-policy.js";
 import { classifyHostImport } from "./host-import-policy.js";
 import { resolveRegExpHostImport } from "./runtime/regexp-host-accelerator.js";
+import * as intlAccel from "./runtime/intl-host-accelerator.js"; // (#6986)
 import {
   createJavaScriptAdapterManifest,
   validateJavaScriptAdapterManifest,
@@ -126,7 +127,11 @@ import {
 } from "./runtime/host-async-imports.js";
 import { markPromiseHandled, PROMISE_INTRINSICS } from "./runtime/promise-intrinsics.js";
 import { createHostImportCallState } from "./runtime/host-import-call-state.js";
-import { createBoundaryValueAdapter, isBoundaryValueImportIntent } from "./runtime/boundary-value-adapter.js";
+import {
+  createBoundaryValueAdapter,
+  isBoundaryValueImportIntent,
+  withModuleTagThrow,
+} from "./runtime/boundary-value-adapter.js";
 import { createInstanceLifecycleAdapter } from "./runtime/instance-lifecycle-adapter.js";
 import {
   installFreshDataStructAssociationToken,
@@ -161,6 +166,7 @@ import { createObjectCreateClassInstanceRuntime } from "./runtime/object-create-
 import * as classStaticParent from "./runtime/class-static-parent.js";
 const _classParents = classStaticParent.classParentsFor; // (#6790) one registry per instance
 import { getWebHostConstructors } from "./runtime/web-host-constructors.js";
+import { scheduleNativeMicrotaskCheckpoint } from "./runtime/native-microtask-checkpoint.js"; // (#6982)
 import {
   _rerouteStringSymbolMethodPrimitive,
   _makeLegacyRegExpState,
@@ -11520,8 +11526,14 @@ function resolveImport(
     coherentBuiltinRealms.has(globalSandbox!) ? ((globalSandbox![name] as T | undefined) ?? fallback) : fallback;
   if (isBoundaryValueImportIntent(intent)) {
     return createBoundaryValueAdapter(intent, {
-      object: (operation) => _createBoundaryObjectImport(operation, callbackState),
-      callback: (arity) => _createBoundaryCallbackImport(arity, callbackState),
+      object: (operation) =>
+        withModuleTagThrow(
+          _createBoundaryObjectImport(operation, callbackState),
+          callbackState,
+          _nativeDynamicFromHost,
+        ),
+      callback: (arity) =>
+        withModuleTagThrow(_createBoundaryCallbackImport(arity, callbackState), callbackState, _nativeDynamicFromHost),
       promise: (operation) => _createBoundaryPromiseImport(operation, callbackState),
     });
   }
@@ -11768,19 +11780,7 @@ function resolveImport(
           ...(typeof DisposableStack !== "undefined" ? { DisposableStack } : {}),
           ...(typeof AsyncDisposableStack !== "undefined" ? { AsyncDisposableStack } : {}),
           ...(typeof SuppressedError !== "undefined" ? { SuppressedError } : {}),
-          // Intl constructors (#1070)
-          ...(typeof Intl !== "undefined" && typeof Intl.ListFormat !== "undefined"
-            ? { ListFormat: Intl.ListFormat }
-            : {}),
-          ...(typeof Intl !== "undefined" && typeof Intl.NumberFormat !== "undefined"
-            ? { NumberFormat: Intl.NumberFormat }
-            : {}),
-          // (#5355) `Intl.DateTimeFormat` — the host-mirror bridge's constructor.
-          // Registered host-lane only (see extern-declarations.ts); standalone
-          // throws a TypeError instead of reaching any of this.
-          ...(typeof Intl !== "undefined" && typeof Intl.DateTimeFormat !== "undefined"
-            ? { DateTimeFormat: Intl.DateTimeFormat }
-            : {}),
+          ...intlAccel.intlHostConstructors(), // Intl constructors (#1070, #5355; #6986: every class the `intl` accelerator registers)
           // (#1792) node:url — WHATWG URL / URLSearchParams globals (Node 18+ /
           // every browser). Registered as extern-class host constructors so
           // `new URL(...)` / `new URLSearchParams(...)` bind to the real host
@@ -19658,6 +19658,7 @@ export function buildImports(
     fn =
       domBinding ??
       clockBinding ??
+      intlAccel.intlLocaleMethodImport(imp, options?.hostAccelerators) ??
       resolveImport(
         imp.intent,
         deps,
@@ -19670,7 +19671,12 @@ export function buildImports(
         hostImportCallState.getCaughtException,
       );
 
-    fn = marshalPlatformArgs(imp, fn, callbackState, _nativePrimitiveToHost, _MISS, _maybeWrapCallableUnknownArity);
+    if (intlAccel.isIntlAcceleratedImport(imp, options?.hostAccelerators)) {
+      const [toHost, fromHost, vector] = [_nativeBoundaryToHost, _nativeDynamicFromHost, _nativeBoundaryVector];
+      fn = intlAccel.marshalIntlHostImport(fn, callbackState, toHost, fromHost, _marshalWasmDateForHost, vector); // (#6986)
+    } else {
+      fn = marshalPlatformArgs(imp, fn, callbackState, _nativePrimitiveToHost, _MISS, _maybeWrapCallableUnknownArity);
+    }
     // DOM containment wrapping
     if (options?.domRoot && !domCapabilityRuntime) {
       if (imp.intent.type === "extern_class") {
@@ -20015,7 +20021,13 @@ export function wrapExports(
             return symbolId;
           }
           if (sig.params[index] === "promise") return _nativeDynamicFromHost(arg, exportsForMarshal);
-          if (sig.params[index] === "dynamic") return _nativeDynamicFromHost(arg, exportsForMarshal);
+          // (#6980) An `any` argument's null is the in-module `ref.null` every
+          // null check tests (and the one `_nativePrimitiveToHost` maps back);
+          // the tag-0 box is only for boundary-object reads, where a raw null
+          // return means "not admitted".
+          if (sig.params[index] === "dynamic") {
+            return arg === null ? null : _nativeDynamicFromHost(arg, exportsForMarshal);
+          }
           return arg;
         });
       }
@@ -20029,6 +20041,7 @@ export function wrapExports(
       let result: any;
       try {
         result = (val as Function).apply(this, marshalled);
+        scheduleNativeMicrotaskCheckpoint(exportsForMarshal); // (#6982)
       } catch (error) {
         const payload = normalizeModuleCallbackException(
           error,

@@ -101,6 +101,7 @@ import { ts } from "../ts-api.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { nativeStringLiteralInstrs } from "./native-strings.js";
 import { addFuncType } from "./registry/types.js";
+import { nextModuleGlobalIdx } from "./registry/imports.js";
 import { PROTO_FROM_FUNCTION } from "./proto-function-value.js";
 
 /** WasmGC `eq` abstract heap type — the key domain for the identity match. */
@@ -200,7 +201,34 @@ function singletonFunctionDeclaration(ctx: CodegenContext, name: string): ts.Fun
 /** Return the canonical function-value global for an approved fnctor name. */
 function fnctorPrototypeValueGlobalIdx(ctx: CodegenContext, name: string): number | undefined {
   if (hasModuleBindingAssignment(ctx, name)) return undefined;
-  return ctx.funcClosureGlobals.get(name) ?? ctx.moduleGlobals.get(name);
+  return ctx.funcClosureGlobals.get(name) ?? ctx.nestedFnValueGlobals?.get(name) ?? ctx.moduleGlobals.get(name);
+}
+
+/**
+ * (#6987) A CAPTURING nested constructor is memoized in a frame LOCAL
+ * (`funcref-as-closure.ts`), so it had no identity key and every dynamic
+ * consumer (`new NS.Table()`, `NS.Table.prototype`) used the closure's own
+ * `prototype` bag entry — while the static `Table.prototype.add = …` in its
+ * declaring scope wrote the per-fnctor global. TypeScript's namespace emit
+ * (`(function (ts) { var K; var Table = (function () { function Table() {
+ * this.k = K; } … })(); ts.Table = Table; })(…)`) split exactly there and the
+ * instances found no methods. Publish the memoized value at its creation into a
+ * per-name module global; the edge then matches it by `ref.eq` like the
+ * top-level singleton. Consumes the closure struct ref on the stack.
+ */
+export function publishNestedFnValueInstrs(ctx: CodegenContext, name: string): Instr[] {
+  let idx = ctx.nestedFnValueGlobals?.get(name);
+  if (idx === undefined) {
+    idx = nextModuleGlobalIdx(ctx);
+    ctx.mod.globals.push({
+      name: `__fn_value_${name}`,
+      type: { kind: "externref" },
+      mutable: true,
+      init: [{ op: "ref.null.extern" }],
+    });
+    (ctx.nestedFnValueGlobals ??= new Map()).set(name, idx);
+  }
+  return [{ op: "extern.convert_any" }, { op: "global.set", index: idx }];
 }
 
 /**

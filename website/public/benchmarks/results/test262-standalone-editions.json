@@ -1062,18 +1062,18 @@
   },
   {
     "edition": "ES2018",
-    "pass": 3889,
-    "fail": 475,
-    "ce": 459,
+    "pass": 3899,
+    "fail": 534,
+    "ce": 390,
     "skip": 0,
     "total": 4823,
     "pct": 81,
     "features": [
       {
         "name": "async-iteration",
-        "pass": 2960,
-        "fail": 406,
-        "ce": 444,
+        "pass": 2970,
+        "fail": 465,
+        "ce": 375,
         "skip": 0,
         "total": 3810,
         "pct": 78
@@ -1081,8 +1081,8 @@
       {
         "name": "destructuring-binding",
         "pass": 1105,
-        "fail": 85,
-        "ce": 195,
+        "fail": 86,
+        "ce": 194,
         "skip": 0,
         "total": 1385,
         "pct": 80
@@ -1090,8 +1090,8 @@
       {
         "name": "Symbol.iterator",
         "pass": 360,
-        "fail": 246,
-        "ce": 46,
+        "fail": 255,
+        "ce": 37,
         "skip": 0,
         "total": 652,
         "pct": 55
@@ -1117,8 +1117,8 @@
       {
         "name": "Symbol.asyncIterator",
         "pass": 122,
-        "fail": 193,
-        "ce": 47,
+        "fail": 212,
+        "ce": 28,
         "skip": 0,
         "total": 362,
         "pct": 34
@@ -1252,8 +1252,8 @@
       {
         "name": "Reflect.construct",
         "pass": 4,
-        "fail": 0,
-        "ce": 2,
+        "fail": 2,
+        "ce": 0,
         "skip": 0,
         "total": 6,
         "pct": 67
@@ -1508,8 +1508,8 @@
   {
     "edition": "ES2020",
     "pass": 1179,
-    "fail": 685,
-    "ce": 153,
+    "fail": 686,
+    "ce": 152,
     "skip": 18,
     "total": 2035,
     "pct": 58,
@@ -1535,8 +1535,8 @@
       {
         "name": "dynamic-import",
         "pass": 246,
-        "fail": 261,
-        "ce": 32,
+        "fail": 262,
+        "ce": 31,
         "skip": 18,
         "total": 557,
         "pct": 44
@@ -1670,8 +1670,8 @@
       {
         "name": "async-iteration",
         "pass": 13,
-        "fail": 1,
-        "ce": 29,
+        "fail": 2,
+        "ce": 28,
         "skip": 2,
         "total": 45,
         "pct": 29
@@ -2186,48 +2186,48 @@
   },
   {
     "edition": "ES2022",
-    "pass": 4253,
-    "fail": 1159,
-    "ce": 380,
+    "pass": 4313,
+    "fail": 1251,
+    "ce": 228,
     "skip": 0,
     "total": 5792,
-    "pct": 73,
+    "pct": 74,
     "features": [
       {
         "name": "class",
-        "pass": 3374,
-        "fail": 662,
-        "ce": 247,
+        "pass": 3434,
+        "fail": 746,
+        "ce": 103,
         "skip": 0,
         "total": 4283,
-        "pct": 79
+        "pct": 80
       },
       {
         "name": "class-fields-public",
-        "pass": 1274,
-        "fail": 567,
-        "ce": 216,
+        "pass": 1334,
+        "fail": 651,
+        "ce": 72,
         "skip": 0,
         "total": 2057,
-        "pct": 62
+        "pct": 65
       },
       {
         "name": "class-methods-private",
-        "pass": 1468,
-        "fail": 171,
-        "ce": 70,
+        "pass": 1484,
+        "fail": 191,
+        "ce": 34,
         "skip": 0,
         "total": 1709,
-        "pct": 86
+        "pct": 87
       },
       {
         "name": "class-static-methods-private",
-        "pass": 1181,
-        "fail": 202,
-        "ce": 130,
+        "pass": 1193,
+        "fail": 218,
+        "ce": 102,
         "skip": 0,
         "total": 1513,
-        "pct": 78
+        "pct": 79
       },
       {
         "name": "generators",
@@ -2240,21 +2240,21 @@
       },
       {
         "name": "class-fields-private",
-        "pass": 926,
-        "fail": 138,
-        "ce": 69,
+        "pass": 952,
+        "fail": 164,
+        "ce": 17,
         "skip": 0,
         "total": 1133,
-        "pct": 82
+        "pct": 84
       },
       {
         "name": "async-iteration",
-        "pass": 770,
-        "fail": 92,
-        "ce": 226,
+        "pass": 830,
+        "fail": 184,
+        "ce": 74,
         "skip": 0,
         "total": 1088,
-        "pct": 71
+        "pct": 76
       },
       {
         "name": "destructuring-binding",
@@ -2285,18 +2285,18 @@
       },
       {
         "name": "class-static-fields-private",
-        "pass": 217,
-        "fail": 92,
-        "ce": 36,
+        "pass": 233,
+        "fail": 112,
+        "ce": 0,
         "skip": 0,
         "total": 345,
-        "pct": 63
+        "pct": 68
       },
       {
         "name": "Symbol.iterator",
         "pass": 216,
-        "fail": 76,
-        "ce": 16,
+        "fail": 80,
+        "ce": 12,
         "skip": 0,
         "total": 308,
         "pct": 70
@@ -2322,8 +2322,8 @@
       {
         "name": "computed-property-names",
         "pass": 83,
-        "fail": 132,
-        "ce": 16,
+        "fail": 140,
+        "ce": 8,
         "skip": 0,
         "total": 231,
         "pct": 36
@@ -2340,8 +2340,8 @@
       {
         "name": "Symbol.asyncIterator",
         "pass": 80,
-        "fail": 76,
-        "ce": 20,
+        "fail": 84,
+        "ce": 12,
         "skip": 0,
         "total": 176,
         "pct": 45
@@ -2403,8 +2403,8 @@
       {
         "name": "Symbol",
         "pass": 9,
-        "fail": 34,
-        "ce": 5,
+        "fail": 38,
+        "ce": 1,
         "skip": 0,
         "total": 48,
         "pct": 19
@@ -3571,8 +3571,8 @@
   },
   {
     "edition": "ES2026",
-    "pass": 4583,
-    "fail": 194,
+    "pass": 4584,
+    "fail": 193,
     "ce": 144,
     "skip": 0,
     "total": 4921,
@@ -3580,8 +3580,8 @@
     "features": [
       {
         "name": "Temporal",
-        "pass": 4480,
-        "fail": 107,
+        "pass": 4481,
+        "fail": 106,
         "ce": 24,
         "skip": 0,
         "total": 4611,
@@ -4305,8 +4305,8 @@
   {
     "edition": "Unclassified (untagged)",
     "pass": 4723,
-    "fail": 661,
-    "ce": 61,
+    "fail": 660,
+    "ce": 62,
     "skip": 0,
     "total": 5445,
     "pct": 87

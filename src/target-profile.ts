@@ -112,6 +112,22 @@ export function hasHostAccelerator(
 }
 
 /**
+ * (#6986) Does this build have a host `Intl` to call? Yes on the host-assisted
+ * lane and under the selected `intl` accelerator; no on every other WasmGC
+ * build (native-first in a JS environment, standalone, WASI, strict). There is
+ * no native Intl beyond the `Intl.ListFormat` prelude (#6839), so a host-free
+ * build that uses `Intl` is a compile error naming the accelerator rather than a
+ * silent run-time failure. The linear backend keeps its own behaviour.
+ */
+export function hostIntlAvailable(
+  profile: Pick<CompileTargetProfile, "backend" | "environment" | "semanticProviders" | "accelerators">,
+): boolean {
+  if (profile.backend !== "wasmgc") return true;
+  if (profile.environment !== "javascript") return false;
+  return profile.semanticProviders !== "native-first" || hasHostAccelerator(profile, "intl");
+}
+
+/**
  * (#6978) Validate a host-accelerator request against the resolved policy. An
  * accelerator swaps a native provider for the JS host's, so it needs a JS
  * environment that permits host imports and a native-first policy to swap out
@@ -165,9 +181,6 @@ const PENDING_HOST_ACCELERATORS: Partial<Record<HostAcceleratorFamily, string>> 
   "js-string":
     "the regime's string providers (self-hosted stdlib, IR string ops) assume the native string struct, " +
     "so a regime build cannot run on wasm:js-string strings",
-  intl:
-    "host Intl calls do not yet marshal native strings and Wasm-owned option objects, and Intl imports are " +
-    "emitted with or without the accelerator",
 };
 
 export function resolveCompileTargetProfile(input: TargetProfileInput = {}): CompileTargetProfile {

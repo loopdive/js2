@@ -121,6 +121,8 @@ describe("#2928 E6 — runtime-eval provider seam", () => {
     expect(workflow).toContain("uses: actions/upload-artifact@v6");
     expect(workflow).toContain("uses: actions/download-artifact@v7");
     expect(workflow).toContain("build-quickjs-eval-provider.mjs --require-cache");
-    expect(workflow).toContain("needs: [validate-inputs, runtime-eval-provider]");
+    // (598c554535 added temporal-provider to the same list) — assert the
+    // provider dependency, not the exact list spelling.
+    expect(workflow).toMatch(/needs: \[validate-inputs, runtime-eval-provider[,\]]/);
   });
 });

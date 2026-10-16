@@ -145,11 +145,13 @@ describe("#5206 — the host `Intl` global", () => {
 
   it("keeps standalone and WASI host-free (no `__get_globalThis` import)", async () => {
     // Standalone/WASI have no host Intl; the fix is host-lane only and must
-    // not introduce a host import there.
+    // not introduce a host import there. (#6986) Since there is no Intl to read
+    // either, the reference is a compile error naming the accelerator.
     const source = `export function test(): string { return typeof (Intl as any); }`;
     for (const target of ["standalone", "wasi"] as const) {
       const result = await compile(source, { fileName: "issue-5206.ts", target });
-      expect(result.success).toBe(true);
+      expect(result.success).toBe(false);
+      expect(result.errors.map((e) => e.message).join("\n")).toContain("--host-accelerator intl");
       expect(result.imports.map((i) => i.name)).not.toContain("__get_globalThis");
     }
   });

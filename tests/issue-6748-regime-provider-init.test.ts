@@ -166,9 +166,18 @@ describe("#6748 — the regime reads the bare Intl identifier natively", () => {
     }
   }
 
-  it("throws at init without the shim — the cause of every regime Temporal failure", { timeout: 120_000 }, async () => {
-    expect(await runInit(POLYFILL_HEAD)).toBe("init-threw");
-  });
+  it(
+    "refuses at compile time without the shim — no longer a silent init failure (#6986)",
+    { timeout: 120_000 },
+    async () => {
+      // Before #6986 the bare global read compiled to null and threw at init — the
+      // cause of every regime Temporal failure. The regime has no host Intl, so the
+      // reference is now a compile error that names the `intl` host accelerator.
+      const result = await compile(POLYFILL_HEAD, { ...REGIME, allowJs: true, fileName: "probe.js" } as never);
+      expect(result.success).toBe(false);
+      expect(result.errors.map((error) => error.message).join("\n")).toContain("--host-accelerator intl");
+    },
+  );
 
   it("initializes with the module-scoped Intl shim the provider now carries", { timeout: 120_000 }, async () => {
     expect(await runInit(`${standaloneIntlShimSource()}\n${POLYFILL_HEAD}`)).toBe("1");

@@ -18,6 +18,7 @@ import { newExpressionReconstructsAsObject } from "../fnctor-instance-object-slo
 import { overlayRouteActive } from "../typed-lane-overlay-route.js";
 import { getVecInfo } from "../type-coercion.js";
 import { paramReceivesOnlyProvenanceClosedArrayLiterals } from "./provenance-closed-arrays.js";
+import { functionNameIsStringReplacement } from "./string-replacement-callbacks.js"; // (#6988)
 import type { ValType } from "../../ir/types.js";
 import type { CodegenContext } from "../context/types.js";
 
@@ -339,43 +340,6 @@ function isNonValueIdentifierPosition(node: ts.Identifier): boolean {
  */
 export function functionNameEscapesAsValue(funcName: string, sourceFile: ts.SourceFile): boolean {
   return valueReferencedNames(sourceFile).has(funcName);
-}
-
-/**
- * A String replacement callback is the one escaping function boundary whose
- * parameter ABI is deliberately dynamic here: replace supplies a mixture of
- * strings and numeric offsets that body-only arithmetic cannot soundly narrow.
- * Other host callbacks (notably Array HOF predicates) have established native
- * scalar ABIs, so treating every value escape as dynamic corrupts their call
- * frames and their synthesized `arguments` objects.
- */
-function functionNameIsStringReplacement(funcName: string, sourceFile: ts.SourceFile): boolean {
-  let found = false;
-  const visit = (node: ts.Node): void => {
-    if (found) return;
-    if (ts.isCallExpression(node) && node.arguments.length >= 2) {
-      const replacement = node.arguments[1];
-      if (ts.isIdentifier(replacement) && replacement.text === funcName) {
-        let methodName: string | undefined;
-        if (ts.isPropertyAccessExpression(node.expression)) {
-          methodName = node.expression.name.text;
-        } else if (
-          ts.isElementAccessExpression(node.expression) &&
-          node.expression.argumentExpression &&
-          ts.isStringLiteralLike(node.expression.argumentExpression)
-        ) {
-          methodName = node.expression.argumentExpression.text;
-        }
-        if (methodName === "replace" || methodName === "replaceAll") {
-          found = true;
-          return;
-        }
-      }
-    }
-    forEachChild(node, visit);
-  };
-  forEachChild(sourceFile, visit);
-  return found;
 }
 
 /**
