@@ -75,26 +75,27 @@ describe("#4088 instrument controls (these must keep discriminating)", () => {
   });
 });
 
-// LIVE DEFECT. `it.fails` passes while the body throws, and turns RED the
-// moment the trap is fixed — at which point flip these to plain `it`.
-describe("#4088 array literal, differing object-literal member counts — LIVE DEFECT", () => {
-  it.fails("[{a,b},{c}] — the minimal repro, no Iterator, no Symbol, no harness", async () => {
+// Was a LIVE DEFECT pinned with `it.fails`. The trap is fixed on main as of
+// 2026-10-16 (the issue-tests detector reported all five as UNEXPECTED PASS),
+// so they are plain `it` now (#7014).
+describe("#4088 array literal, differing object-literal member counts — fixed", () => {
+  it("[{a,b},{c}] — the minimal repro, no Iterator, no Symbol, no harness", async () => {
     expect(await moduleInit(len2(`[{ a() {}, b() {} }, { c() {} }]`))).toBe("ok");
   });
 
-  it.fails("[{c},{a,b}] — reversed; the rule is symmetric", async () => {
+  it("[{c},{a,b}] — reversed; the rule is symmetric", async () => {
     expect(await moduleInit(len2(`[{ c() {} }, { a() {}, b() {} }]`))).toBe("ok");
   });
 
-  it.fails("[{a:1,b:2},{c:3}] — data properties, not methods", async () => {
+  it("[{a:1,b:2},{c:3}] — data properties, not methods", async () => {
     expect(await moduleInit(len2(`[{ a: 1, b: 2 }, { c: 3 }]`))).toBe("ok");
   });
 
-  it.fails("3-vs-1 member counts", async () => {
+  it("3-vs-1 member counts", async () => {
     expect(await moduleInit(len2(`[{ a() {}, b() {}, e() {} }, { c() {} }]`))).toBe("ok");
   });
 
-  it.fails("the original #3593 spelling (the file that surfaced it): [{next,return},{[Symbol.iterator]}]", async () => {
+  it("the original #3593 spelling (the file that surfaced it): [{next,return},{[Symbol.iterator]}]", async () => {
     expect(await moduleInit(len2(`[{ next() {}, return() {} }, { [Symbol.iterator]() {} }]`))).toBe("ok");
   });
 });
