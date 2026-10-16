@@ -416,7 +416,7 @@ describe("#4637 — measured residuals (see the issue's Residuals table for owne
     ).toBe(3);
   });
 
-  it.fails("obj.call resolves through a %Function.prototype% prototype (S15.3.4.4_A1_T2)", async () => {
+  it("obj.call resolves through a %Function.prototype% prototype (S15.3.4.4_A1_T2)", async () => {
     // Same missing materialization, reached from the other side.
     expect(
       await runModule(
