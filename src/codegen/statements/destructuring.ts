@@ -769,7 +769,11 @@ export function compileObjectDestructuring(
       compileExternrefObjectDestructuringDecl(ctx, fctx, pattern, { kind: "externref" });
       return;
     }
-    // No __box_number available — fall through to error
+    // (#6981) No host `__box_number` (native regime): box through the
+    // coercion engine's native arm instead of rejecting a coercible number.
+    coerceType(ctx, fctx, { kind: "f64" }, { kind: "externref" });
+    compileExternrefObjectDestructuringDecl(ctx, fctx, pattern, { kind: "externref" });
+    return;
   }
 
   // Determine struct type — prefer the actual Wasm type from compileExpression
