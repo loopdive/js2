@@ -27765,6 +27765,155 @@
           }
         }
       }
+    },
+    {
+      "generatedAt": "2026-10-16T03:11:48.470Z",
+      "sourceRevision": "379f2b123c20c95f2778c2a70758613af7481704",
+      "optimizationLevels": {
+        "js-host": 4,
+        "js-host-native": 4,
+        "standalone": 4
+      },
+      "packages": {
+        "uuid": {
+          "jsHostNative": {
+            "dynamic": 0.1171430448423457
+          },
+          "jsHost": {
+            "dynamic": 0.08968579998115188
+          },
+          "standalone": {
+            "static": 0.2012465560256192,
+            "dynamic": 0.20401312794920637
+          }
+        },
+        "acorn": {
+          "jsHostNative": {
+            "dynamic": 0.061830261233539525
+          },
+          "jsHost": {
+            "dynamic": 0.001941232868766332
+          },
+          "standalone": {
+            "static": 186135.19570800662,
+            "dynamic": 0.07618977120877003
+          }
+        },
+        "cookie": {
+          "jsHostNative": {
+            "dynamic": 0.010860617292681242
+          },
+          "jsHost": {
+            "dynamic": 0.0012897876701149491
+          },
+          "standalone": {
+            "static": 416.80484975754536,
+            "dynamic": 0.1138520655251369
+          }
+        },
+        "lodash": {
+          "jsHostNative": {},
+          "jsHost": {},
+          "standalone": {
+            "static": 0.06475353493238485,
+            "dynamic": 0.03892402336729867
+          }
+        },
+        "react": {
+          "jsHostNative": {
+            "dynamic": 0.022795795925773212
+          },
+          "jsHost": {
+            "dynamic": 0.019221980901068105
+          },
+          "standalone": {
+            "static": 0.3787293719951349,
+            "dynamic": 0.008877814283525845
+          }
+        },
+        "prettier": {
+          "jsHostNative": {
+            "dynamic": 0.02509056274965865
+          },
+          "jsHost": {
+            "dynamic": 0.050440450386570336
+          },
+          "standalone": {
+            "static": 1.919099606562495,
+            "dynamic": 0.029146690658762398
+          }
+        },
+        "clsx": {
+          "jsHostNative": {
+            "dynamic": 0.027171908849409322
+          },
+          "jsHost": {
+            "dynamic": 0.08937315704427848
+          },
+          "standalone": {
+            "static": 11.9991950237203,
+            "dynamic": 0.17944380474994415
+          }
+        },
+        "marked": {
+          "jsHostNative": {
+            "dynamic": 0.0009726912657848441
+          },
+          "jsHost": {
+            "dynamic": 0.007843901699847758
+          },
+          "standalone": {
+            "static": 0.0005408464307298013,
+            "dynamic": 0.0007727013849601664
+          }
+        },
+        "hono": {
+          "jsHostNative": {
+            "dynamic": 0.08235504771358991
+          },
+          "jsHost": {
+            "dynamic": 0.0055242692646061955
+          },
+          "standalone": {
+            "static": 0.12915929223761746,
+            "dynamic": 0.13540674089021648
+          }
+        },
+        "lodash-es": {
+          "jsHostNative": {
+            "dynamic": 0.02394684977766902
+          },
+          "jsHost": {},
+          "standalone": {
+            "static": 0.08030141102820085,
+            "dynamic": 0.04592887199211842
+          }
+        },
+        "redux": {
+          "jsHostNative": {
+            "dynamic": 0.040496666481165774
+          },
+          "jsHost": {
+            "dynamic": 0.0020283183118033577
+          },
+          "standalone": {
+            "static": 0.05640794501316347,
+            "dynamic": 0.058024547083086936
+          }
+        },
+        "moment": {
+          "jsHostNative": {
+            "dynamic": 0.0020017465317903587
+          },
+          "jsHost": {
+            "dynamic": 0.005899541062987863
+          },
+          "standalone": {
+            "static": 0.0017861356887929032,
+            "dynamic": 0.0016145554506281081
+          }
+        }
+      }
     }
   ]
 }
