@@ -1,0 +1,148 @@
+{
+  "id": "6920",
+  "slice": "b-native-source-facts-accessor-test-repair-20261016",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "requested_by": "ttraenkler",
+  "status": "in-progress",
+  "branch": "codex/6920-b-source42-qualified-local-checkpoint",
+  "claimed_at": "2026-10-16T04:44:50Z",
+  "updated_at": "2026-10-16T04:44:50Z",
+  "write_id": "108bf69a-4112-429a-a390-4570845f8934",
+  "handoff_scope": [
+    {
+      "kind": "native-source-facts-accessor-test-only-repair",
+      "at": "2026-10-16T04:44:50Z",
+      "authority": {
+        "humanAnswer": "Take over the blocking shared seams",
+        "priorHumanAnswer": "takeover all of session b",
+        "boundedContext": "Native API/routing, checked allocation preparation, carrier/emission/startup/allocator recipe. Applied here ONLY to one existing native-source-facts accessor regression test and its existing issue evidence; not all of issue6865.",
+        "receivingDecision": "Parent ROOT explicitly selected finite two-file takeover; publication and actual source receiving remain separately gated."
+      },
+      "receivingOwner": "Session B logical ownership; Session C sole physical managed-worktree writer after its read-only six-file qualification and parent actual receiving GO",
+      "receivingBranch": "codex/6920-b-source42-qualified-local-checkpoint",
+      "receivingWorkspace": "/Users/thomas/.codex/worktrees/6920-b-source42-checkpoint-20261016/ts2wasm",
+      "baselineHead": "a4d4c99ccc9cd4fe27bd6dba91180fc575616529",
+      "baselineState": "Existing staged182 checkpoint preserved; no new successful checkpoint commit inferred. This record does not stage or commit source.",
+      "exactPaths": [
+        "tests/issue-6865-native-linear-source-facts.test.ts",
+        "plan/issues/6920-native-linear-shared-source-handoff.md"
+      ],
+      "exactTargetCount": 2,
+      "targets": [
+        {
+          "path": "tests/issue-6865-native-linear-source-facts.test.ts",
+          "preimage": {
+            "path": "/Users/thomas/.codex/worktrees/6920-b-source42-checkpoint-20261016/ts2wasm/tests/issue-6865-native-linear-source-facts.test.ts",
+            "bytes": 16169,
+            "sha256": "d7ca8d3935f010131fa3aa9be89ee3a53bf3d9a9cc2045ca2667e1805043cdb9"
+          },
+          "proposal": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/native-facts-accessor-diagnostic-repair01/issue-6865-native-linear-source-facts.test.ts.txt",
+            "bytes": 16806,
+            "sha256": "67bdcad0b8846a3e27857e1134a2bff01ac4c408d6d2c652b29a588733675a75",
+            "gitBlobSHA1": "554c8471ee421386b0f5632b06140245e7fc5ffe"
+          },
+          "purpose": "Repair stale direct-validator diagnostic expectation while strengthening actual PreparedIrProgramInvariantError class/code/path/non-executable-DATA checks and immediate getter0. Preserve independent shape accessor rejection and every other case/registration."
+        },
+        {
+          "path": "plan/issues/6920-native-linear-shared-source-handoff.md",
+          "preimage": {
+            "path": "/Users/thomas/.codex/worktrees/6920-b-source42-checkpoint-20261016/ts2wasm/plan/issues/6920-native-linear-shared-source-handoff.md",
+            "bytes": 766487,
+            "sha256": "d49c9d12f731ae6cc36824b0a41b293fed20020af168cc804833fc1e0a0d1d77"
+          },
+          "futureUpdate": "Meaningful append of exact blocking failure, typed rejection/getter0 repair scope and actual fresh qualification outcomes before a later normal checkpoint commit. Future result content is not invented or required before receiving ownership. Preserve old evidence/HOLDs/criteria; no grant-only edit/new waiver/cap/grant."
+        }
+      ],
+      "proposalAuthority": {
+        "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-native-js-class-integration-20261014-01a12827/.tmp/native-facts-accessor-diagnostic-repair01/sealed.json",
+        "bytes": 1641,
+        "sha256": "eeda78cc75862652effda69d0224ea4241206692944fef54871d9aefc7ecfa88"
+      },
+      "qualification": "After finite publication and separate parent install/qualification GO: actual focused LIST and natural runtime of the unchanged-registration source-facts suite, getter0/category/path controls, normal format/type/budget/style as scoped by parent. Parent-reported19 is historical floor only; actual fresh LIST governs. No production/order/default35/RPC/probe/codec/backend behavior changes.",
+      "foreignPreservation": {
+        "primary6865": {
+          "record": "6865.json",
+          "raw": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-value-replay-successor-20261014-01a12827/.tmp/checkpoint6865-issue-ownership-query01/records.raw/6865.json",
+            "bytes": 436,
+            "sha256": "e3e6a8388147ddc586d8c33fa8b99dc13f3f11bdef30d7e3837f8a28f50a8067"
+          },
+          "treeRow": {
+            "path": "6865.json",
+            "mode": "100644",
+            "type": "blob",
+            "oid": "d72471c3afb8a4bbe6bf3ff38b8c087f800323a7",
+            "bytes": 436,
+            "sha256": "e3e6a8388147ddc586d8c33fa8b99dc13f3f11bdef30d7e3837f8a28f50a8067"
+          }
+        },
+        "relevantSlices": [
+          {
+            "record": "6865-data-cycle-own-fields-20261008.json",
+            "raw": {
+              "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-value-replay-successor-20261014-01a12827/.tmp/checkpoint6865-issue-ownership-query01/records.raw/6865-data-cycle-own-fields-20261008.json",
+              "bytes": 427,
+              "sha256": "61bcf5d52449d8c68fb6a16e04cecd013ea1e338d2570dd108fc5820a9166343"
+            },
+            "treeRow": {
+              "path": "6865-data-cycle-own-fields-20261008.json",
+              "mode": "100644",
+              "type": "blob",
+              "oid": "5ae2fa396d17ac91889bf2916597b05919d64e28",
+              "bytes": 427,
+              "sha256": "61bcf5d52449d8c68fb6a16e04cecd013ea1e338d2570dd108fc5820a9166343"
+            }
+          },
+          {
+            "record": "6865-native-linear-source-facts-20261008.json",
+            "raw": {
+              "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-value-replay-successor-20261014-01a12827/.tmp/checkpoint6865-issue-ownership-query01/records.raw/6865-native-linear-source-facts-20261008.json",
+              "bytes": 2147,
+              "sha256": "86c915fa921e040cb006e07e194e11a6795cbcd6fbf00324b5b28ff9f16d9636"
+            },
+            "treeRow": {
+              "path": "6865-native-linear-source-facts-20261008.json",
+              "mode": "100644",
+              "type": "blob",
+              "oid": "5925db014585b736ee95c635d15a261a8c2e3e96",
+              "bytes": 2147,
+              "sha256": "86c915fa921e040cb006e07e194e11a6795cbcd6fbf00324b5b28ff9f16d9636"
+            }
+          }
+        ],
+        "all51IssueRecords": {
+          "authority": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-value-replay-successor-20261014-01a12827/.tmp/checkpoint6865-issue-ownership-query01/sealed.json",
+            "bytes": 18690,
+            "sha256": "b8985de505a5d2c3fd9e6cd6bcbbc9280eade1930bd3433b836ef1a6265804d2"
+          },
+          "held": 51,
+          "sameB": 2,
+          "foreign": 49,
+          "meaning": "All existing assignees, statuses, branches and raw records preserved, including primary unmapped-emission and data-cycle/source-facts lanes. Scope has two exact files only; no whole6865 ownership, expiry or live-peer inactivity inference."
+        },
+        "allCurrent3225Records": {
+          "authority": {
+            "path": "/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-6920-b-class-value-replay-successor-20261014-01a12827/.tmp/argument-vector30-live-ledger-refresh02/sealed.json",
+            "bytes": 18942,
+            "sha256": "1911dd08327556f869a31396b3f15b875a45b996da8bf80ebe91fcbb03e0c22b"
+          },
+          "head": "413d1759f6ba9817f7d2a6d799ea6881aec26845",
+          "meaning": "Preserve every mode/blob byte and all intervening records; no existing assignment record release/reassignment/overwrite. Fresh head/filename collision audit mandatory before private publication."
+        }
+      },
+      "exclusions": [
+        "All production sources, validation ordering and raw descriptor/native guards",
+        "Any other test, helper, receipt, source metrology, compiler policy or stage182 path",
+        "Any foreign branch/staged payload, public compiler-source head, PR, main, HOLD or queue ownership",
+        "Any carrier30 scope expansion, full migration/readiness/qualification claim, broad source/oracle retirement"
+      ],
+      "sourceInstallationAuthority": "NOT supplied by this record push; C installs exact accepted test and later issue bytes only after separate parent receiving GO."
+    }
+  ],
+  "predecessors": [
+    "6920-b-native-checked-preparation-takeover-20261013.json"
+  ],
+  "preserves_foreign_owners": true
+}
