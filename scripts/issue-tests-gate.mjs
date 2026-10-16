@@ -118,14 +118,24 @@ async function runVitest() {
   const files = SHARD ? shardSlice(all, SHARD) : all;
   if (files.length === 0) {
     console.log(`issue-tests-gate: shard ${SHARD || "full"} selected no files (population ${all.length}).`);
-    return { failing: new Set(), passing: new Set(), unexpectedPasses: new Set(), messages: {} };
+    return {
+      failing: new Set(),
+      passing: new Set(),
+      unexpectedPasses: new Set(),
+      messages: {},
+      runIntegrityErrors: [],
+    };
   }
   console.log(
     `issue-tests-gate: running ${files.length}/${all.length} root test file(s)${SHARD ? ` (shard ${SHARD})` : ""}.`,
   );
   process.env.CI = "1";
-  const results = await runFiles(REPO_ROOT, makeToRel(REPO_ROOT), files, { label: `shard ${SHARD || "full"}` });
-  return resultsToIds(files, results);
+  const runIntegrityErrors = [];
+  const results = await runFiles(REPO_ROOT, makeToRel(REPO_ROOT), files, {
+    label: `shard ${SHARD || "full"}`,
+    onRunIntegrity: (error) => runIntegrityErrors.push(error),
+  });
+  return { ...resultsToIds(files, results), runIntegrityErrors };
 }
 
 function mergePartials(dir) {
@@ -133,6 +143,7 @@ function mergePartials(dir) {
   const passing = new Set();
   const unexpectedPasses = new Set();
   const messages = {};
+  const runIntegrityErrors = [];
   for (const f of readdirSync(dir)) {
     if (!f.endsWith(".json")) continue;
     const p = JSON.parse(readFileSync(join(dir, f), "utf8"));
@@ -141,11 +152,14 @@ function mergePartials(dir) {
     // (#3340) Preserve the inverted-sentinel classification across shard merge.
     for (const id of p.unexpectedPasses || []) unexpectedPasses.add(id);
     Object.assign(messages, p.messages || {});
+    for (const error of p.runIntegrityErrors || []) runIntegrityErrors.push(`${f}: ${error}`);
   }
-  return { failing, passing, unexpectedPasses, messages };
+  return { failing, passing, unexpectedPasses, messages, runIntegrityErrors };
 }
 
-const { failing, passing, unexpectedPasses, messages } = MERGE_DIR ? mergePartials(MERGE_DIR) : await runVitest();
+const { failing, passing, unexpectedPasses, messages, runIntegrityErrors } = MERGE_DIR
+  ? mergePartials(MERGE_DIR)
+  : await runVitest();
 
 // Shard mode: emit a partial artifact and exit 0 — the merge job gates.
 if (SHARD && !MERGE_DIR && !UPDATE && !RATCHET) {
@@ -153,7 +167,13 @@ if (SHARD && !MERGE_DIR && !UPDATE && !RATCHET) {
   writeFileSync(
     partialPath,
     JSON.stringify(
-      { failing: [...failing], passing: [...passing], unexpectedPasses: [...unexpectedPasses], messages },
+      {
+        failing: [...failing],
+        passing: [...passing],
+        unexpectedPasses: [...unexpectedPasses],
+        messages,
+        runIntegrityErrors,
+      },
       null,
       2,
     ),
@@ -162,6 +182,14 @@ if (SHARD && !MERGE_DIR && !UPDATE && !RATCHET) {
     `issue-tests-gate: wrote partial ${partialPath} (${failing.size} fail / ${passing.size} pass / ${unexpectedPasses.size} unexpected-pass)`,
   );
   process.exit(0);
+}
+
+// Run-level errors are evidence of an incomplete/untrustworthy measurement,
+// never accepted rot. Refuse BEFORE update, bootstrap or ratchet can write.
+if (runIntegrityErrors.length) {
+  console.error("\n✗ issue-tests run integrity failed:");
+  for (const error of runIntegrityErrors) console.error(`    RUN ERROR: ${error}`);
+  process.exit(2);
 }
 
 function writeBaseline(knownFailures) {

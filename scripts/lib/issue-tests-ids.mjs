@@ -60,6 +60,16 @@ export function resultsToIds(files, results) {
       fail(testId(rel, "<collect>"), r.entry.message);
       continue;
     }
+    // Hook/suite failures remain red independently of the assertion verdicts.
+    if (
+      r.entry.status === "failed" &&
+      (r.entry.message || r.entry.fileFailureMessages?.length || !asserts.some((a) => a.status === "failed"))
+    ) {
+      fail(
+        testId(rel, "<file>"),
+        r.entry.fileFailureMessages?.[0] || r.entry.message || "file failed outside its assertions",
+      );
+    }
     for (const a of asserts) {
       const id = testId(rel, a.fullName || a.title);
       if (a.status === "failed") {
