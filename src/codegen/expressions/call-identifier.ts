@@ -84,6 +84,7 @@ import { resolveVariadicBuiltinStaticPlainAlias } from "../builtin-static-plain-
 import { bindingMayReceiveHostCallable } from "../analysis/mixed-assignment-carrier.js";
 import { ensureStandaloneBuiltinStaticMethodClosure } from "../builtin-value-read.js";
 import { localBindingShadowsCapturingFunction } from "../function-declaration-observation.js";
+import { blockBindingShadowsNestedDeclaration } from "../function-declaration-observation.js"; // (#6994)
 import { genericIdentityReturnParamIndex, genericStructFactoryCall } from "../generic-struct-factory.js";
 import { isUnaliasedNodeFsImportBinding, standaloneDependencyNodeFsThrowMessage } from "../node-fs-binding-identity.js";
 import { compileDiscardedArgument } from "./inline-iife-arguments.js";
@@ -1754,7 +1755,9 @@ function compileBoundIdentifierCall(
           break;
         }
       }
-      isOutOfScopeNestedBinding = !visible;
+      // (#6994) Lexical precedence: an in-scope block `let`/`const` of that name shadows it too.
+      isOutOfScopeNestedBinding =
+        !visible || blockBindingShadowsNestedDeclaration(ctx, expr.expression, nestedOwnerDecl);
     }
 
     const locallyShadowsFunction = localBindingShadowsCapturingFunction(ctx, fctx, expr.expression);
