@@ -2,7 +2,7 @@
 import * as path from "path";
 import { ts } from "./ts-api.js";
 import type { CompileOptions } from "./index.js";
-import { rewriteCjsRequire } from "./cjs-rewrite.js";
+import { type CjsRewriteOptions, rewriteCjsRequire } from "./cjs-rewrite.js";
 import { foldStandaloneProcessEnvBranches } from "./cjs-standalone-env-fold.js";
 import { hoistStandaloneNestedRequires } from "./cjs-standalone-nested-require.js";
 import { getDefaultEnvironment } from "./env.js";
@@ -49,6 +49,12 @@ export class ModuleResolver {
    * the static graph, see `cjs-standalone-nested-require.ts`).
    */
   readonly foldSource: (source: string, filePath: string) => string;
+  /**
+   * (#6751) Options for the CJS rewrite this resolver applies. Host-free
+   * targets also observe `module.exports` writes made through an alias of
+   * `module`; the JS-host rewrite is unchanged.
+   */
+  readonly cjsRewriteOptions: CjsRewriteOptions;
 
   /**
    * Create a resolver rooted at a directory.
@@ -64,6 +70,7 @@ export class ModuleResolver {
     this.extensions = options?.resolve?.extensions ?? [".ts", ".tsx", ".d.ts"];
     this.consumerDrivenBarrels = options?.resolve?.consumerDrivenBarrels === true;
     const define = options?.define;
+    this.cjsRewriteOptions = { aliasedModuleExports: (options?.target ?? "gc") !== "gc" };
     this.foldSource =
       options?.target === "standalone"
         ? (source, filePath) =>
@@ -674,7 +681,7 @@ export function resolveAllImports(entryFile: string, resolver: ModuleResolver): 
     // Rewrite CJS `const X = require('Y')` to ESM `import X from 'Y'` so the
     // dependency-walk below picks up CommonJS modules' transitive deps the same
     // way it picks up ESM ones (#1279).
-    content = rewriteCjsRequire(content);
+    content = rewriteCjsRequire(content, resolver.cjsRewriteOptions);
 
     // Parse to find import specifiers
     const sf = ts.createSourceFile(
