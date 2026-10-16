@@ -144,6 +144,12 @@ jobs:
         run: node scripts/issue-tests-gate.mjs --update-on-decrease
       - name: Gate against baseline (pull_request, read-only)
         if: github.event_name == 'pull_request'
+        # Advisory on PRs (#7014): a PR run exists to prove the shards measure
+        # end to end (a shard that loses its report still fails the job). The
+        # verdict against main's baseline is printed in full here, but while
+        # main itself carries the pre-existing backlog a red verdict would only
+        # make the PR UNSTABLE, which auto-enqueue skips.
+        continue-on-error: true
         env:
           MERGE_PARTIALS_DIR: issue-tests-partials
           ISSUE_TESTS_BASELINE: /tmp/js2wasm-baselines/issue-tests-baseline.json
