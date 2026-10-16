@@ -16,7 +16,7 @@ import {
 } from "./eager-capture-box.js";
 import { redeclarationWidenedLocalSlotType } from "../declarations/redeclared-var-widening.js";
 import type { CodegenContext, FunctionContext, NullGuardFact, NullishExclusion } from "../context/types.js";
-import { emitCoercedLocalSet, noJsHost } from "../expressions/helpers.js";
+import { emitCoercedLocalSet } from "../expressions/helpers.js";
 import { emitUndefined } from "../expressions/late-imports.js";
 import {
   nativeGeneratorBindingType,
@@ -174,9 +174,9 @@ export function transferredArrayLikeResultNeedsExternref(
   if (hostRegExpMatchResultNeedsExternref(ctx, initializer)) return true;
   if (taStaticFromOfReflectiveCallNeedsExternref(ctx, initializer)) return true; // (#6651 E5)
   if (objectAssignResultNeedsExternref(ctx, initializer)) return true; // (#6770 S1)
-  if (integrityLiteralResultNeedsExternref(ctx.standalone, initializer)) return true; // (#6770 S2)
+  if (integrityLiteralResultNeedsExternref(true, initializer)) return true; // (#6770 S2)
   if (reflectiveArrayCallNeedsExternref(ctx, initializer)) return true; // (#6771) Array.from/of.call, O-returning borrows
-  if (!(ctx.standalone || ctx.wasi) || !initializer || !ts.isCallExpression(initializer)) return false;
+  if (!initializer || !ts.isCallExpression(initializer)) return false;
   const callee = initializer.expression;
   if (!ts.isPropertyAccessExpression(callee) || ts.isPrivateIdentifier(callee.name)) return false;
   const memberName = callee.name.text;
@@ -900,7 +900,7 @@ function localTypeForDeclaration(ctx: CodegenContext, type: ts.Type, decl?: ts.V
   const nativeLocal = nativeTypeOfDeclaration(ctx.checker, decl);
   if (nativeLocal) return nativeLocal;
   if (decl && ctx.ordinaryToPrimitiveObjectDeclarations.has(decl)) return { kind: "externref" };
-  if (ctx.standalone && decl && ctx.redeclaredObjectIdentityDeclarations.has(decl)) return { kind: "externref" };
+  if (decl && ctx.redeclaredObjectIdentityDeclarations.has(decl)) return { kind: "externref" };
   // (#4121) A mixed-assignment demotion is "could not rule out"; a positive
   // unboxing proof is "ruled in", and outranks it. See
   // `numericProofOverridesMixedCarrier`.
@@ -944,7 +944,7 @@ export function resolveSpillLocalValType(ctx: CodegenContext, decl: ts.VariableD
   if (!ts.isIdentifier(decl.name)) return null;
   const name = decl.name.text;
   if (ctx.ordinaryToPrimitiveObjectDeclarations.has(decl)) return { kind: "externref" };
-  if (ctx.standalone && ctx.redeclaredObjectIdentityDeclarations.has(decl)) return { kind: "externref" };
+  if (ctx.redeclaredObjectIdentityDeclarations.has(decl)) return { kind: "externref" };
   // Names the main-body analysis already routed to a host / externref slot
   // (accessor literal, host-spread literal, growable / out-of-shape object).
   if (ctx.externrefAccessorVars.has(name)) return { kind: "externref" };
@@ -963,7 +963,7 @@ export function resolveSpillLocalValType(ctx: CodegenContext, decl: ts.VariableD
       // (#802 Slice A) A proto-receiver literal is promoted to an open `$Object`
       // (externref, standalone-only) in compileObjectLiteral — the spill slot
       // must match.
-      if (ctx.standalone && ctx.dynamicProtoLiteralNodes.has(init)) return { kind: "externref" };
+      if (ctx.dynamicProtoLiteralNodes.has(init)) return { kind: "externref" };
       const forcesHostObject = init.properties.some(
         (p) =>
           ts.isGetAccessorDeclaration(p) ||
@@ -1077,7 +1077,7 @@ export function hoistedVarRetypesToConcreteRef(ctx: CodegenContext, decl: ts.Var
 }
 
 function inferStandaloneRegExpMatchArrayType(ctx: CodegenContext, declaration: ts.VariableDeclaration): ValType | null {
-  return ctx.standalone ? inferStandaloneRegExpMatchResultType(ctx, declaration) : null;
+  return inferStandaloneRegExpMatchResultType(ctx, declaration);
 }
 
 /**
@@ -1097,7 +1097,7 @@ function inferSubarraySubviewType(
   fctx: FunctionContext,
   initializer: ts.Expression | undefined,
 ): ValType | null {
-  if (!(ctx.standalone || ctx.wasi) || !initializer) return null;
+  if (!initializer) return null;
   const unwrapped = stripInferenceWrapper(initializer);
   if (!ts.isCallExpression(unwrapped) || !ts.isPropertyAccessExpression(unwrapped.expression)) return null;
   if (unwrapped.expression.name.text !== "subarray") return null;
@@ -1814,7 +1814,7 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
       ts.isIdentifier(decl.name) &&
       ctx.growableObjectLiteralVars.has(decl.name.text);
     const initIsOrdinaryToPrimitiveObjectLiteral = ctx.ordinaryToPrimitiveObjectDeclarations.has(decl);
-    const initIsRedeclaredObjectIdentityLiteral = ctx.standalone && ctx.redeclaredObjectIdentityDeclarations.has(decl);
+    const initIsRedeclaredObjectIdentityLiteral = ctx.redeclaredObjectIdentityDeclarations.has(decl);
     // (#802 Slice A) A proto-receiver object literal is built as an open `$Object`
     // (externref) in compileObjectLiteral so `Object.setPrototypeOf(o, p)` &
     // inherited reads work; the local must be externref so reads/writes route
@@ -1822,7 +1822,6 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
     // and the store isn't ref.cast to the closed struct TS infers (which would
     // trap — the value is a `$Object`, not that struct).
     const initIsProtoReceiverLiteral =
-      ctx.standalone &&
       decl.initializer !== undefined &&
       ts.isObjectLiteralExpression(decl.initializer) &&
       ctx.dynamicProtoLiteralNodes.has(decl.initializer);
@@ -2019,13 +2018,8 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
                                         : // (#1337/#4397) In a JS environment, both the
                                           // compatibility exotic and native `$__bound_fn`
                                           // are externref carriers, never the target struct.
-                                          decl.initializer &&
-                                            !ctx.standalone &&
-                                            !noJsHost(ctx) &&
-                                            isBindCarrierCall(decl.initializer)
-                                          ? { kind: "externref" as const }
-                                          : (genericFactoryInitializerType ??
-                                            localTypeForDeclaration(ctx, varType, decl)))));
+                                          (genericFactoryInitializerType ??
+                                          localTypeForDeclaration(ctx, varType, decl)))));
     // (#2660 S3b) A provably-monomorphic `new F(...)` binding of an approved
     // fnctor gets the reserved struct slot instead of externref. Same (cached)
     // verdict as the var hoister / let-const pre-hoister, so a reused
@@ -2308,116 +2302,107 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
             if (localSlot && localSlot.type.kind !== "externref") localSlot.type = closureType;
           }
           stackType = closureType;
-        } else if (
-          closureType.kind === "externref" &&
-          !ctx.standalone &&
-          !noJsHost(ctx) &&
-          isBindCarrierCall(decl.initializer)
-        ) {
-          // (#1337/#4397) A `.bind(...)` result is a provider-owned externref
-          // carrier. Keep it as externref so neither the native `$__bound_fn`
-          // nor the compatibility JS exotic is cast to the target's wrapper.
-          if (!fctx.boxedCaptures?.has(name) && localIdx >= fctx.params.length) {
-            const localSlot = fctx.locals[localIdx - fctx.params.length];
-            if (localSlot) localSlot.type = { kind: "externref" };
-          }
-          stackType = { kind: "externref" };
-        } else if (closureType.kind === "externref" && callSigs!.length > 0) {
-          // The initializer returned externref but the type is callable.
-          // This happens when a function returns a closure coerced to externref.
-          // Find the matching closure info by comparing the TS call signature
-          // against registered closure types and unbox (any.convert_extern + ref.cast).
-          const sig = callSigs![0]!;
-          const sigParamCount = sig.parameters.length;
-          const sigRetType = ctx.checker.getReturnTypeOfSignature(sig);
-          const sigRetWasm = isVoidType(sigRetType) ? null : resolveWasmType(ctx, sigRetType);
-          const sigParamWasmTypes: ValType[] = [];
-          for (let i = 0; i < sigParamCount; i++) {
-            const paramType = ctx.checker.getTypeOfSymbol(sig.parameters[i]!);
-            sigParamWasmTypes.push(widenJsDefaultGuessSymbolSlot(sig.parameters[i], resolveWasmType(ctx, paramType)));
-          }
-
-          let matchedClosureInfo:
-            | { structTypeIdx: number; info: typeof ctx.closureInfoByTypeIdx extends Map<number, infer V> ? V : never }
-            | undefined;
-          for (const [typeIdx, info] of ctx.closureInfoByTypeIdx) {
-            if (info.paramTypes.length !== sigParamCount) continue;
-            if (sigRetWasm === null && info.returnType !== null) continue;
-            if (sigRetWasm !== null && info.returnType === null) continue;
-            if (sigRetWasm !== null && info.returnType !== null && sigRetWasm.kind !== info.returnType.kind) continue;
-            let paramsMatch = true;
+        } else {
+          if (closureType.kind === "externref" && callSigs!.length > 0) {
+            // The initializer returned externref but the type is callable.
+            // This happens when a function returns a closure coerced to externref.
+            // Find the matching closure info by comparing the TS call signature
+            // against registered closure types and unbox (any.convert_extern + ref.cast).
+            const sig = callSigs![0]!;
+            const sigParamCount = sig.parameters.length;
+            const sigRetType = ctx.checker.getReturnTypeOfSignature(sig);
+            const sigRetWasm = isVoidType(sigRetType) ? null : resolveWasmType(ctx, sigRetType);
+            const sigParamWasmTypes: ValType[] = [];
             for (let i = 0; i < sigParamCount; i++) {
-              if (sigParamWasmTypes[i]!.kind !== info.paramTypes[i]!.kind) {
-                paramsMatch = false;
+              const paramType = ctx.checker.getTypeOfSymbol(sig.parameters[i]!);
+              sigParamWasmTypes.push(widenJsDefaultGuessSymbolSlot(sig.parameters[i], resolveWasmType(ctx, paramType)));
+            }
+
+            let matchedClosureInfo:
+              | {
+                  structTypeIdx: number;
+                  info: typeof ctx.closureInfoByTypeIdx extends Map<number, infer V> ? V : never;
+                }
+              | undefined;
+            for (const [typeIdx, info] of ctx.closureInfoByTypeIdx) {
+              if (info.paramTypes.length !== sigParamCount) continue;
+              if (sigRetWasm === null && info.returnType !== null) continue;
+              if (sigRetWasm !== null && info.returnType === null) continue;
+              if (sigRetWasm !== null && info.returnType !== null && sigRetWasm.kind !== info.returnType.kind) continue;
+              let paramsMatch = true;
+              for (let i = 0; i < sigParamCount; i++) {
+                if (sigParamWasmTypes[i]!.kind !== info.paramTypes[i]!.kind) {
+                  paramsMatch = false;
+                  break;
+                }
+              }
+              if (paramsMatch) {
+                matchedClosureInfo = { structTypeIdx: typeIdx, info };
                 break;
               }
             }
-            if (paramsMatch) {
-              matchedClosureInfo = { structTypeIdx: typeIdx, info };
-              break;
-            }
-          }
 
-          // (#3432) The match-and-recast below is only sound when the LOCAL SLOT
-          // actually takes the narrowed closure type. When the slot is (or must
-          // stay) externref — the #962 guard already refuses to narrow it — the
-          // sequence was `any.convert_extern` + guarded cast to ONE
-          // signature-matched closure struct + widen back to externref: a pure
-          // round-trip whose else-arm NULLS the value. Signature wrapper structs
-          // are distinct root-child siblings with creation-ORDER-dependent RTTs
-          // (see reference #2873), and `closureInfoByTypeIdx` iteration picks an
-          // arbitrary first match, so a perfectly good closure of a SIBLING
-          // wrapper type read out of an array (`var f = factories[k]`) was
-          // destroyed to null — testTypedArray.js's `argFactory.bind(...)`
-          // then threw "bind called on non-callable" (~1.8k TypedArray tests).
-          // Skip the destructive recast whenever the slot stays externref; the
-          // externref-callee dispatch handles calls on it in both lanes.
-          //
-          // (#3432 follow-up — the +107 null_deref merge_group cluster) The
-          // skip is NOT free: the recast also NORMALIZED the stored value to
-          // "matched-closure-struct or null", and the #1941 gate
-          // (`calleeMayBeHostCallable`) relies on that invariant to omit the
-          // #1712 `__call_function` fallback arm at direct-call sites of
-          // ordinary locals. With the value left as a raw externref, a
-          // FOREIGN callable (a bridge-wrapped wasm closure read back off a
-          // property — test262's `var format = compareArray.format;` — or a
-          // bound/host function) reaches the closure-struct dispatch, where
-          // the guarded root cast nulls and `struct.get` traps
-          // "dereferencing a null pointer" (previously the recast nulled the
-          // value at the DECL, so the call threw a catchable TypeError
-          // instead). Record the decl so `calleeMayBeHostCallable` emits the
-          // host-dispatch arm for calls of exactly these variables.
-          const slotTypeForCast =
-            localIdx < fctx.params.length
-              ? fctx.params[localIdx]?.type
-              : fctx.locals[localIdx - fctx.params.length]?.type;
-          if (slotTypeForCast?.kind === "externref") {
-            // Slot stays a raw externref here whether a signature MATCHED but
-            // the #962 guard kept it externref (#3432) OR nothing matched
-            // (#3460, the else-arm below) — either way the value can be a
-            // foreign/bridge/null callable (`var f = obj.missingFn`). Record the
-            // decl so `calleeMayBeHostCallable` emits the #1712 __call_function
-            // arm; without it the closure-struct dispatch nulls the guarded cast
-            // and `struct.get`-traps (uncatchable) where spec wants a catchable
-            // TypeError. Arm emission is !standalone&&!wasi-gated → #1941 holds.
-            (ctx.skippedClosureRecastDecls ??= new Set()).add(decl);
-          }
-          if (matchedClosureInfo && slotTypeForCast?.kind !== "externref") {
-            // Convert externref back to closure struct ref (guarded to avoid illegal cast)
-            fctx.body.push({ op: "any.convert_extern" });
-            emitGuardedRefCast(fctx, matchedClosureInfo.structTypeIdx);
-            const castType: ValType = { kind: "ref_null", typeIdx: matchedClosureInfo.structTypeIdx };
-            if (!fctx.boxedCaptures?.has(name) && localIdx >= fctx.params.length) {
-              const localSlot = fctx.locals[localIdx - fctx.params.length];
-              // Do NOT narrow externref → ref (#962)
-              if (localSlot && localSlot.type.kind !== "externref") localSlot.type = castType;
+            // (#3432) The match-and-recast below is only sound when the LOCAL SLOT
+            // actually takes the narrowed closure type. When the slot is (or must
+            // stay) externref — the #962 guard already refuses to narrow it — the
+            // sequence was `any.convert_extern` + guarded cast to ONE
+            // signature-matched closure struct + widen back to externref: a pure
+            // round-trip whose else-arm NULLS the value. Signature wrapper structs
+            // are distinct root-child siblings with creation-ORDER-dependent RTTs
+            // (see reference #2873), and `closureInfoByTypeIdx` iteration picks an
+            // arbitrary first match, so a perfectly good closure of a SIBLING
+            // wrapper type read out of an array (`var f = factories[k]`) was
+            // destroyed to null — testTypedArray.js's `argFactory.bind(...)`
+            // then threw "bind called on non-callable" (~1.8k TypedArray tests).
+            // Skip the destructive recast whenever the slot stays externref; the
+            // externref-callee dispatch handles calls on it in both lanes.
+            //
+            // (#3432 follow-up — the +107 null_deref merge_group cluster) The
+            // skip is NOT free: the recast also NORMALIZED the stored value to
+            // "matched-closure-struct or null", and the #1941 gate
+            // (`calleeMayBeHostCallable`) relies on that invariant to omit the
+            // #1712 `__call_function` fallback arm at direct-call sites of
+            // ordinary locals. With the value left as a raw externref, a
+            // FOREIGN callable (a bridge-wrapped wasm closure read back off a
+            // property — test262's `var format = compareArray.format;` — or a
+            // bound/host function) reaches the closure-struct dispatch, where
+            // the guarded root cast nulls and `struct.get` traps
+            // "dereferencing a null pointer" (previously the recast nulled the
+            // value at the DECL, so the call threw a catchable TypeError
+            // instead). Record the decl so `calleeMayBeHostCallable` emits the
+            // host-dispatch arm for calls of exactly these variables.
+            const slotTypeForCast =
+              localIdx < fctx.params.length
+                ? fctx.params[localIdx]?.type
+                : fctx.locals[localIdx - fctx.params.length]?.type;
+            if (slotTypeForCast?.kind === "externref") {
+              // Slot stays a raw externref here whether a signature MATCHED but
+              // the #962 guard kept it externref (#3432) OR nothing matched
+              // (#3460, the else-arm below) — either way the value can be a
+              // foreign/bridge/null callable (`var f = obj.missingFn`). Record the
+              // decl so `calleeMayBeHostCallable` emits the #1712 __call_function
+              // arm; without it the closure-struct dispatch nulls the guarded cast
+              // and `struct.get`-traps (uncatchable) where spec wants a catchable
+              // TypeError. Arm emission is !standalone&&!wasi-gated → #1941 holds.
+              (ctx.skippedClosureRecastDecls ??= new Set()).add(decl);
             }
-            stackType = castType;
+            if (matchedClosureInfo && slotTypeForCast?.kind !== "externref") {
+              // Convert externref back to closure struct ref (guarded to avoid illegal cast)
+              fctx.body.push({ op: "any.convert_extern" });
+              emitGuardedRefCast(fctx, matchedClosureInfo.structTypeIdx);
+              const castType: ValType = { kind: "ref_null", typeIdx: matchedClosureInfo.structTypeIdx };
+              if (!fctx.boxedCaptures?.has(name) && localIdx >= fctx.params.length) {
+                const localSlot = fctx.locals[localIdx - fctx.params.length];
+                // Do NOT narrow externref → ref (#962)
+                if (localSlot && localSlot.type.kind !== "externref") localSlot.type = castType;
+              }
+              stackType = castType;
+            } else {
+              stackType = closureType;
+            }
           } else {
             stackType = closureType;
           }
-        } else {
-          stackType = closureType;
         }
       } else {
         // #1197: while compiling the initializer for an i32-specialized number[]

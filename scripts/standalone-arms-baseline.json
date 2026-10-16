@@ -10,7 +10,6 @@
   "src/codegen/helpers": 5,
   "src/codegen/object-model": 27,
   "src/codegen/registry": 9,
-  "src/codegen/statements": 36,
   "src/ir": 24,
   "src/runtime/contracts": 2
 }

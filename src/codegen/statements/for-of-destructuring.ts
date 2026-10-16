@@ -2277,28 +2277,17 @@ function compileForOfAssignDestructuringExternref(
   // `__extern_get_idx(src, f64 i)` — the native `__extern_get` is string-keyed
   // and misses the `$Vec` carrier `__array_from_iter_n` produces. Host mode
   // keeps `__extern_get` + `__box_number` (byte-identical to pre-#4447).
-  const useIdxReads = ctx.standalone || ctx.wasi;
-  const readName = useIdxReads ? "__extern_get_idx" : "__extern_get";
-  const readKeyType: ValType = useIdxReads ? { kind: "f64" } : { kind: "externref" };
+  const readName = "__extern_get_idx";
+  const readKeyType: ValType = { kind: "f64" };
   // Ensure the reader is available (#1866: ensureLateImport routes to the
   // native object-runtime impl under --target standalone — no leaked
   // `env::__extern_get` host import — and to the host import in JS-host mode).
   ensureLateImport(ctx, readName, [{ kind: "externref" }, readKeyType], [{ kind: "externref" }]);
   flushLateImportShifts(ctx, fctx);
-  let getIdx = ctx.funcMap.get(readName);
+  const getIdx = ctx.funcMap.get(readName);
   if (getIdx === undefined) return;
 
-  // Ensure __box_number is available (host mode only — it boxes the index key).
-  let boxIdx = ctx.funcMap.get("__box_number");
-  if (!useIdxReads && boxIdx === undefined) {
-    const importsBefore = ctx.numImportFuncs;
-    const boxType = addFuncType(ctx, [{ kind: "f64" }], [{ kind: "externref" }]);
-    addImport(ctx, "env", "__box_number", { kind: "func", typeIdx: boxType });
-    shiftLateImportIndices(ctx, fctx, importsBefore, ctx.numImportFuncs - importsBefore);
-    boxIdx = ctx.funcMap.get("__box_number");
-    getIdx = ctx.funcMap.get(readName);
-  }
-  if ((!useIdxReads && boxIdx === undefined) || getIdx === undefined) return;
+  if (getIdx === undefined) return;
 
   /**
    * Push `src[i]` as an externref — the single read shape this function used to
@@ -2308,7 +2297,7 @@ function compileForOfAssignDestructuringExternref(
   const pushElemRead = (i: number): void => {
     fctx.body.push({ op: "local.get", index: srcLocal });
     fctx.body.push({ op: "f64.const", value: i });
-    if (!useIdxReads) fctx.body.push({ op: "call", funcIdx: boxIdx! });
+
     fctx.body.push({ op: "call", funcIdx: getIdx! });
   };
 

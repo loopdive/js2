@@ -1330,7 +1330,6 @@ function shouldCaptureEnclosingDirectEvalState(
   reachesDirectEval = functionMayReachDirectEval(stmt, ctx.oracle),
 ): boolean {
   return (
-    (ctx.standalone || ctx.wasi) &&
     !reachesDirectEval &&
     (fctx.directEvalActivationStatePoolLocal !== undefined ||
       enclosingFunctionOwnScopeMayReachDirectEval(stmt, ctx.oracle))
@@ -3952,7 +3951,6 @@ export function emitSetExtrasArgv(
     // runtime supplies the matching length/index readers. WASI deliberately
     // stays on the existing best-effort path: unlike standalone, its object
     // runtime does not expose the array-like reader arm yet.
-    const useNativeMaterializer = ctx.standalone;
     // (#4782) Register the number boxer HERE — before the reader funcidxs are
     // captured and the shift is flushed. `boxVecElem` caches `__box_number`
     // once and silently drops the value when it is absent, and this loop can
@@ -3963,19 +3961,17 @@ export function emitSetExtrasArgv(
     let lenFn: number | undefined;
     let getFn: number | undefined;
     let iterFn: number | undefined;
-    if (useNativeMaterializer) {
-      ensureObjectRuntime(ctx);
-      ensureNativeArrayFromIterN(ctx);
-      lenFn = ctx.funcMap.get("__extern_length");
-      getFn = ctx.funcMap.get("__extern_get_idx");
-      iterFn = ctx.funcMap.get("__array_from_iter_n");
-    }
+    ensureObjectRuntime(ctx);
+    ensureNativeArrayFromIterN(ctx);
+    lenFn = ctx.funcMap.get("__extern_length");
+    getFn = ctx.funcMap.get("__extern_get_idx");
+    iterFn = ctx.funcMap.get("__array_from_iter_n");
     flushLateImportShifts(ctx, fctx);
     if (lenFn !== undefined && getFn !== undefined && iterFn !== undefined) {
       const boxIdx = ctx.funcMap.get("__box_number");
       // Box a vec element of the given type to externref (extras are externref).
       const anyToExtern = (t: ValType): Instr[] | undefined =>
-        ctx.standalone && isAnyValue(t, ctx) ? coercionInstrs(ctx, t, { kind: "externref" }, fctx) : undefined;
+        isAnyValue(t, ctx) ? coercionInstrs(ctx, t, { kind: "externref" }, fctx) : undefined;
       const boxVecElem = (elemType: ValType): Instr[] => spreadElemToExternInstrs(elemType, boxIdx, anyToExtern);
       // Per-extra descriptor.
       type Slot =
@@ -4080,7 +4076,7 @@ export function emitSetExtrasArgv(
           // The native materializer also accepts a step bound. A spread is an
           // unbounded ArgumentListEvaluation, so pass -1; the host strict
           // import has the historical one-argument signature.
-          if (useNativeMaterializer) fctx.body.push({ op: "f64.const", value: -1 });
+          fctx.body.push({ op: "f64.const", value: -1 });
           fctx.body.push({ op: "call", funcIdx: iterFn });
           const srcLocal = allocLocal(fctx, `__xa_src_${fctx.locals.length}`, { kind: "externref" });
           fctx.body.push({ op: "local.set", index: srcLocal });
@@ -4262,19 +4258,8 @@ export function emitArgumentsVecBody(
   const numArgs = paramTypes.length;
   const { vecTypeIdx: vti, arrTypeIdx: ati, argsLocalIdx: argsLocal, arrTmpIdx: arrTmp } = locals;
   const rest = prepareRestArgs(ctx, fctx, paramTypes, formals); // (#6651 I7) a trailing rest formal
-  const argumentsVecTypeIdx = registerWithHost && ctx.standalone ? getOrRegisterArgumentsVecType(ctx, vti, ati) : vti;
+  const argumentsVecTypeIdx = registerWithHost ? getOrRegisterArgumentsVecType(ctx, vti, ati) : vti;
   if (argumentsVecTypeIdx !== vti) reserveArgumentsLengthBrand(ctx);
-  // (#2743 a) Register this arguments vec with the host so its `[[Prototype]]`
-  // resolves to %Object.prototype% and `.constructor`/`hasOwnProperty` behave
-  // like an ordinary Object (§10.4.4). This is a NEW host import; adding it
-  // shifts function indices, so register + flush HERE — before any `call` is
-  // emitted below — so the box/unbox `funcMap` lookups resolve post-shift and
-  // already-emitted bodies (this fctx + prior functions) are walked by the
-  // flush. Host-mode only: standalone/WASI keeps the bare opaque vec.
-  if (registerWithHost && !ctx.standalone && !ctx.wasi) {
-    ensureLateImport(ctx, "__register_arguments", [{ kind: "externref" }], []);
-    flushLateImportShifts(ctx, fctx);
-  }
 
   const { globalIdx: extrasGlobalIdx, vecTypeIdx: extrasVecTypeIdx } = ensureExtrasArgvGlobal(ctx);
   const argcGlobalIdx = ensureArgcGlobal(ctx);
@@ -4362,16 +4347,6 @@ export function emitArgumentsVecBody(
     totalLenLocalIdx: totalLenLocal,
     argcLocalIdx: argcLocal,
   });
-
-  // (#2743 a) Tag the freshly-built vec as an ordinary arguments Object. The
-  // import + index shift were settled at the top of this function, so the
-  // funcMap entry is final here — no further shift between registration and use.
-  const registerArgsIdx = ctx.funcMap.get("__register_arguments");
-  if (registerWithHost && registerArgsIdx !== undefined && !ctx.standalone && !ctx.wasi) {
-    fctx.body.push({ op: "local.get", index: argsLocal });
-    fctx.body.push({ op: "extern.convert_any" });
-    fctx.body.push({ op: "call", funcIdx: registerArgsIdx });
-  }
 
   // Standalone arguments identity is carried by the concrete WasmGC subtype
   // constructed above; no global overlay-table registration is required.

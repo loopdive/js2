@@ -970,9 +970,7 @@ export function compileIfStatement(ctx: CodegenContext, fctx: FunctionContext, s
   // --define substitution of process.env.NODE_ENV), emit only the taken branch.
   // Handles: "x" === "y", "x" !== "y", true, false, !true, !false
   const optionalHostGuardIsFalse =
-    (ctx.standalone || ctx.wasi) &&
-    ctx.requiresStandaloneDomCapability !== true &&
-    conditionRequiresDocumentPresence(stmt.expression);
+    ctx.requiresStandaloneDomCapability !== true && conditionRequiresDocumentPresence(stmt.expression);
   const constResult = optionalHostGuardIsFalse ? false : evaluateConstantCondition(stmt.expression);
   if (constResult !== undefined) {
     // Route the taken branch through compileStatement so its Block case runs
@@ -1280,217 +1278,165 @@ function emitSwitchObjectIdentityEq(
  * never crash.
  */
 function emitSwitchStrictEq(ctx: CodegenContext, fctx: FunctionContext, lTmp: number, rTmp: number): void {
-  const noJsHost = ctx.standalone === true || ctx.wasi === true;
-  if (noJsHost) {
-    const EQ_HEAP = -19; // WasmGC `eq` abstract heap type
-    addUnionImports(ctx);
-    const typeofNum = ctx.funcMap.get("__typeof_number")!;
-    const typeofBool = ctx.funcMap.get("__typeof_boolean")!;
-    const typeofBigint = ctx.funcMap.get("__typeof_bigint")!;
-    const unboxNum = ctx.funcMap.get("__unbox_number")!;
-    const unboxBool = ctx.funcMap.get("__unbox_boolean")!;
-    const toBigint = ctx.funcMap.get("__to_bigint")!;
+  const EQ_HEAP = -19; // WasmGC `eq` abstract heap type
+  addUnionImports(ctx);
+  const typeofNum = ctx.funcMap.get("__typeof_number")!;
+  const typeofBool = ctx.funcMap.get("__typeof_boolean")!;
+  const typeofBigint = ctx.funcMap.get("__typeof_bigint")!;
+  const unboxNum = ctx.funcMap.get("__unbox_number")!;
+  const unboxBool = ctx.funcMap.get("__unbox_boolean")!;
+  const toBigint = ctx.funcMap.get("__to_bigint")!;
 
-    const lAny = allocLocal(fctx, `__sweq_l_${fctx.locals.length}`, { kind: "anyref" });
-    const rAny = allocLocal(fctx, `__sweq_r_${fctx.locals.length}`, { kind: "anyref" });
-    const identityArm: Instr[] = [
-      { op: "local.get", index: lAny },
-      { op: "ref.test", typeIdx: EQ_HEAP },
-      { op: "local.get", index: rAny },
-      { op: "ref.test", typeIdx: EQ_HEAP },
-      { op: "i32.and" },
-      {
-        op: "if",
-        blockType: { kind: "val", type: { kind: "i32" } },
-        then: [
-          { op: "local.get", index: lAny },
-          { op: "ref.cast", typeIdx: EQ_HEAP },
-          { op: "local.get", index: rAny },
-          { op: "ref.cast", typeIdx: EQ_HEAP },
-          { op: "ref.eq" },
-        ],
-        else: [{ op: "i32.const", value: 0 }],
-      },
-    ];
-    const refArm: Instr[] = [
-      { op: "local.get", index: lTmp },
-      { op: "any.convert_extern" },
-      { op: "local.set", index: lAny },
-      { op: "local.get", index: rTmp },
-      { op: "any.convert_extern" },
-      { op: "local.set", index: rAny },
-    ];
-    let stringArmEmitted = false;
-    if (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
-      ensureNativeStringHelpers(ctx);
-      const flattenIdx = ctx.nativeStrHelpers.get("__str_flatten");
-      const strEqIdx = ctx.nativeStrHelpers.get("__str_equals");
-      if (flattenIdx !== undefined && strEqIdx !== undefined) {
-        stringArmEmitted = true;
-        refArm.push(
-          { op: "local.get", index: lAny },
-          { op: "ref.test", typeIdx: ctx.anyStrTypeIdx },
-          { op: "local.get", index: rAny },
-          { op: "ref.test", typeIdx: ctx.anyStrTypeIdx },
-          { op: "i32.and" },
-          {
-            op: "if",
-            blockType: { kind: "val", type: { kind: "i32" } },
-            then: [
-              { op: "local.get", index: lAny },
-              { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx },
-              { op: "call", funcIdx: flattenIdx },
-              { op: "local.get", index: rAny },
-              { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx },
-              { op: "call", funcIdx: flattenIdx },
-              { op: "call", funcIdx: strEqIdx },
-            ],
-            else: identityArm,
-          },
-        );
-      }
-    }
-    if (!stringArmEmitted) refArm.push(...identityArm);
-
-    const taggedCascade: Instr[] = [
-      { op: "local.get", index: lTmp },
-      { op: "call", funcIdx: typeofNum },
-      { op: "local.get", index: rTmp },
-      { op: "call", funcIdx: typeofNum },
-      { op: "i32.and" },
-      {
-        op: "if",
-        blockType: { kind: "val", type: { kind: "i32" } },
-        then: [
-          { op: "local.get", index: lTmp },
-          { op: "call", funcIdx: unboxNum },
-          { op: "local.get", index: rTmp },
-          { op: "call", funcIdx: unboxNum },
-          { op: "f64.eq" },
-        ],
-        else: [
-          { op: "local.get", index: lTmp },
-          { op: "call", funcIdx: typeofBool },
-          { op: "local.get", index: rTmp },
-          { op: "call", funcIdx: typeofBool },
-          { op: "i32.and" },
-          {
-            op: "if",
-            blockType: { kind: "val", type: { kind: "i32" } },
-            then: [
-              { op: "local.get", index: lTmp },
-              { op: "call", funcIdx: unboxBool },
-              { op: "local.get", index: rTmp },
-              { op: "call", funcIdx: unboxBool },
-              { op: "i32.eq" },
-            ],
-            else: [
-              { op: "local.get", index: lTmp },
-              { op: "call", funcIdx: typeofBigint },
-              { op: "local.get", index: rTmp },
-              { op: "call", funcIdx: typeofBigint },
-              { op: "i32.and" },
-              {
-                op: "if",
-                blockType: { kind: "val", type: { kind: "i32" } },
-                then: [
-                  { op: "local.get", index: lTmp },
-                  { op: "call", funcIdx: toBigint },
-                  { op: "local.get", index: rTmp },
-                  { op: "call", funcIdx: toBigint },
-                  { op: "i64.eq" },
-                ],
-                else: refArm,
-              },
-            ],
-          },
-        ],
-      },
-    ];
-
-    // (#4621 D) NULL arm, ahead of the tag cascade. `null` is the null
-    // externref, so `any.convert_extern` hands the identity arm a null anyref —
-    // and `ref.test (ref eq)` on a null answers 0. The cascade therefore fell
-    // all the way through to an identity test that CANNOT be true for two
-    // nulls, making `switch (null) { case null: }` miss its own case and take
-    // `default` (measured: `language/statements/switch/S12.11_A1_T{3,4}`,
-    // "SwitchTest(null) === 192. Actual: 32"). §7.2.16 step 1: same Type ⇒
-    // Null === Null is true.
-    //
-    // `undefined` is NOT null in this representation — it is the tag-1
-    // singleton (#4489), so `ref.is_null` is false for it and `null ===
-    // undefined` still answers false through the both-must-be-null test below.
-    // The JS-host branch further down needs no arm: `__host_eq` is JS `===`.
-    fctx.body.push(
-      { op: "local.get", index: lTmp },
-      { op: "ref.is_null" },
-      { op: "local.get", index: rTmp },
-      { op: "ref.is_null" },
-      { op: "i32.or" },
-      {
-        op: "if",
-        blockType: { kind: "val", type: { kind: "i32" } },
-        then: [
-          { op: "local.get", index: lTmp },
-          { op: "ref.is_null" },
-          { op: "local.get", index: rTmp },
-          { op: "ref.is_null" },
-          { op: "i32.and" },
-        ],
-        else: taggedCascade,
-      },
-    );
-    return;
-  }
-
-  // JS-host mode: delegate to JS `===` via `__host_eq`, with a both-numbers
-  // unbox fallback to recover equal numbers boxed in distinct externrefs (the
-  // same #1383-gated fallback the `===` operator uses).
-  const hostEqIdx = ensureLateImport(
-    ctx,
-    "__host_eq",
-    [{ kind: "externref" }, { kind: "externref" }],
-    [{ kind: "i32" }],
-  );
-  flushLateImportShifts(ctx, fctx);
-  const finalHostEqIdx = ctx.funcMap.get("__host_eq") ?? hostEqIdx;
-  const typeofNumIdx = ctx.funcMap.get("__typeof_number");
-  const unboxIdx = ctx.funcMap.get("__unbox_number");
-  fctx.body.push(
-    { op: "local.get", index: lTmp },
-    { op: "local.get", index: rTmp },
+  const lAny = allocLocal(fctx, `__sweq_l_${fctx.locals.length}`, { kind: "anyref" });
+  const rAny = allocLocal(fctx, `__sweq_r_${fctx.locals.length}`, { kind: "anyref" });
+  const identityArm: Instr[] = [
+    { op: "local.get", index: lAny },
+    { op: "ref.test", typeIdx: EQ_HEAP },
+    { op: "local.get", index: rAny },
+    { op: "ref.test", typeIdx: EQ_HEAP },
+    { op: "i32.and" },
     {
-      op: "call",
-      funcIdx: finalHostEqIdx!,
-    },
-  );
-  if (typeofNumIdx !== undefined && unboxIdx !== undefined) {
-    // Wrap: host_eq || (bothNumbers && unbox-eq).
-    fctx.body.push({
       op: "if",
       blockType: { kind: "val", type: { kind: "i32" } },
-      then: [{ op: "i32.const", value: 1 }],
+      then: [
+        { op: "local.get", index: lAny },
+        { op: "ref.cast", typeIdx: EQ_HEAP },
+        { op: "local.get", index: rAny },
+        { op: "ref.cast", typeIdx: EQ_HEAP },
+        { op: "ref.eq" },
+      ],
+      else: [{ op: "i32.const", value: 0 }],
+    },
+  ];
+  const refArm: Instr[] = [
+    { op: "local.get", index: lTmp },
+    { op: "any.convert_extern" },
+    { op: "local.set", index: lAny },
+    { op: "local.get", index: rTmp },
+    { op: "any.convert_extern" },
+    { op: "local.set", index: rAny },
+  ];
+  let stringArmEmitted = false;
+  if (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
+    ensureNativeStringHelpers(ctx);
+    const flattenIdx = ctx.nativeStrHelpers.get("__str_flatten");
+    const strEqIdx = ctx.nativeStrHelpers.get("__str_equals");
+    if (flattenIdx !== undefined && strEqIdx !== undefined) {
+      stringArmEmitted = true;
+      refArm.push(
+        { op: "local.get", index: lAny },
+        { op: "ref.test", typeIdx: ctx.anyStrTypeIdx },
+        { op: "local.get", index: rAny },
+        { op: "ref.test", typeIdx: ctx.anyStrTypeIdx },
+        { op: "i32.and" },
+        {
+          op: "if",
+          blockType: { kind: "val", type: { kind: "i32" } },
+          then: [
+            { op: "local.get", index: lAny },
+            { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx },
+            { op: "call", funcIdx: flattenIdx },
+            { op: "local.get", index: rAny },
+            { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx },
+            { op: "call", funcIdx: flattenIdx },
+            { op: "call", funcIdx: strEqIdx },
+          ],
+          else: identityArm,
+        },
+      );
+    }
+  }
+  if (!stringArmEmitted) refArm.push(...identityArm);
+
+  const taggedCascade: Instr[] = [
+    { op: "local.get", index: lTmp },
+    { op: "call", funcIdx: typeofNum },
+    { op: "local.get", index: rTmp },
+    { op: "call", funcIdx: typeofNum },
+    { op: "i32.and" },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "i32" } },
+      then: [
+        { op: "local.get", index: lTmp },
+        { op: "call", funcIdx: unboxNum },
+        { op: "local.get", index: rTmp },
+        { op: "call", funcIdx: unboxNum },
+        { op: "f64.eq" },
+      ],
       else: [
         { op: "local.get", index: lTmp },
-        { op: "call", funcIdx: typeofNumIdx },
+        { op: "call", funcIdx: typeofBool },
         { op: "local.get", index: rTmp },
-        { op: "call", funcIdx: typeofNumIdx },
+        { op: "call", funcIdx: typeofBool },
         { op: "i32.and" },
         {
           op: "if",
           blockType: { kind: "val", type: { kind: "i32" } },
           then: [
             { op: "local.get", index: lTmp },
-            { op: "call", funcIdx: unboxIdx },
+            { op: "call", funcIdx: unboxBool },
             { op: "local.get", index: rTmp },
-            { op: "call", funcIdx: unboxIdx },
-            { op: "f64.eq" },
+            { op: "call", funcIdx: unboxBool },
+            { op: "i32.eq" },
           ],
-          else: [{ op: "i32.const", value: 0 }],
+          else: [
+            { op: "local.get", index: lTmp },
+            { op: "call", funcIdx: typeofBigint },
+            { op: "local.get", index: rTmp },
+            { op: "call", funcIdx: typeofBigint },
+            { op: "i32.and" },
+            {
+              op: "if",
+              blockType: { kind: "val", type: { kind: "i32" } },
+              then: [
+                { op: "local.get", index: lTmp },
+                { op: "call", funcIdx: toBigint },
+                { op: "local.get", index: rTmp },
+                { op: "call", funcIdx: toBigint },
+                { op: "i64.eq" },
+              ],
+              else: refArm,
+            },
+          ],
         },
       ],
-    });
-  }
+    },
+  ];
+
+  // (#4621 D) NULL arm, ahead of the tag cascade. `null` is the null
+  // externref, so `any.convert_extern` hands the identity arm a null anyref —
+  // and `ref.test (ref eq)` on a null answers 0. The cascade therefore fell
+  // all the way through to an identity test that CANNOT be true for two
+  // nulls, making `switch (null) { case null: }` miss its own case and take
+  // `default` (measured: `language/statements/switch/S12.11_A1_T{3,4}`,
+  // "SwitchTest(null) === 192. Actual: 32"). §7.2.16 step 1: same Type ⇒
+  // Null === Null is true.
+  //
+  // `undefined` is NOT null in this representation — it is the tag-1
+  // singleton (#4489), so `ref.is_null` is false for it and `null ===
+  // undefined` still answers false through the both-must-be-null test below.
+  // The JS-host branch further down needs no arm: `__host_eq` is JS `===`.
+  fctx.body.push(
+    { op: "local.get", index: lTmp },
+    { op: "ref.is_null" },
+    { op: "local.get", index: rTmp },
+    { op: "ref.is_null" },
+    { op: "i32.or" },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "i32" } },
+      then: [
+        { op: "local.get", index: lTmp },
+        { op: "ref.is_null" },
+        { op: "local.get", index: rTmp },
+        { op: "ref.is_null" },
+        { op: "i32.and" },
+      ],
+      else: taggedCascade,
+    },
+  );
+  return;
 }
 
 export function compileSwitchStatement(ctx: CodegenContext, fctx: FunctionContext, stmt: ts.SwitchStatement): void {
@@ -1508,17 +1454,11 @@ export function compileSwitchStatement(ctx: CodegenContext, fctx: FunctionContex
   const homogeneousCaseClass = homogeneousSwitchCaseClass(ctx, stmt);
   const provenNumericDiscriminant =
     homogeneousClass === null &&
-    (ctx.standalone === true || ctx.wasi === true) &&
     homogeneousCaseClass === "number" &&
     isProvenNumericLocalSwitchDiscriminant(ctx, fctx, stmt.expression);
   const strictPerCase = homogeneousClass === null && !provenNumericDiscriminant;
-  const guardedNumericCases =
-    strictPerCase && (ctx.standalone === true || ctx.wasi === true) && homogeneousCaseClass === "number";
-  const objectIdentityPerCase =
-    strictPerCase &&
-    !guardedNumericCases &&
-    (ctx.standalone === true || ctx.wasi === true) &&
-    switchHasOnlyObjectCases(ctx, stmt);
+  const guardedNumericCases = strictPerCase && homogeneousCaseClass === "number";
+  const objectIdentityPerCase = strictPerCase && !guardedNumericCases && switchHasOnlyObjectCases(ctx, stmt);
 
   // Detect if the switch discriminant or any case value involves strings (#245).
   // Check both the discriminant type and case expression types, since the
