@@ -50,6 +50,12 @@ export class ModuleResolver {
    */
   readonly foldSource: (source: string, filePath: string) => string;
   /**
+   * (#6855) Resolve a bare specifier on an ESM `import` edge through the
+   * package's `exports` map, as Node's ESM loader does. Standalone only: the
+   * JS-host lane keeps TypeScript's Node10 `main` resolution unchanged.
+   */
+  private readonly esmPackageExports: boolean;
+  /**
    * (#6751) Options for the CJS rewrite this resolver applies. Host-free
    * targets also observe `module.exports` writes made through an alias of
    * `module`; the JS-host rewrite is unchanged.
@@ -70,6 +76,7 @@ export class ModuleResolver {
     this.extensions = options?.resolve?.extensions ?? [".ts", ".tsx", ".d.ts"];
     this.consumerDrivenBarrels = options?.resolve?.consumerDrivenBarrels === true;
     const define = options?.define;
+    this.esmPackageExports = options?.target === "standalone";
     this.cjsRewriteOptions = { aliasedModuleExports: (options?.target ?? "gc") !== "gc" };
     this.foldSource =
       options?.target === "standalone"
@@ -169,9 +176,12 @@ export class ModuleResolver {
    *
    * @param specifier - The import specifier (e.g., "lodash", "./utils")
    * @param containingFile - The file that contains the import statement
+   * @param edge - `"esm-import"` for an ESM `import`/`export … from` edge of a
+   *   pure-ESM file (#6855): a bare specifier then honours the package's
+   *   `exports` map under the `import` condition. Omitted for `require` edges.
    * @returns The resolved file path, or null if the module is external or not found
    */
-  resolve(specifier: string, containingFile: string): string | null {
+  resolve(specifier: string, containingFile: string, edge?: "esm-import"): string | null {
     // Check if the package is in the externals list
     const pkgName = getBarePackageName(specifier);
     if (pkgName && this.externals.has(pkgName)) {
@@ -186,9 +196,19 @@ export class ModuleResolver {
     const resolutionContainingFile = this.host.realpath?.(containingFile) ?? containingFile;
 
     // Build a cache key from the canonical importer identity.
-    const cacheKey = `${resolutionContainingFile}::${specifier}`;
+    const esmExports = edge === "esm-import" && this.esmPackageExports && pkgName !== null;
+    const cacheKey = `${resolutionContainingFile}::${specifier}${esmExports ? "::esm" : ""}`;
     if (this.resolveCache.has(cacheKey)) {
       return this.resolveCache.get(cacheKey)!;
+    }
+
+    if (esmExports) {
+      const viaExports = this.resolvePackageExports(pkgName, specifier, resolutionContainingFile);
+      if (viaExports !== null) {
+        this.resolveCache.set(cacheKey, viaExports);
+        this.recordResolvedImport(resolutionContainingFile, specifier, viaExports);
+        return viaExports;
+      }
     }
 
     // Package `imports` ("#" subpath imports) are invisible to the Node10
@@ -405,6 +425,55 @@ export class ModuleResolver {
     return null;
   }
 
+  /**
+   * (#6855) Node's PACKAGE_EXPORTS_RESOLVE for an ESM `import` of a bare
+   * specifier: the package's `exports` map under `ESM_EXPORT_CONDITIONS`. TypeScript's Node10 resolver ignores `exports` and answers
+   * `main`, which for a dual package is often a UMD/CJS build — stylis's
+   * `dist/umd/stylis.js` populates no ESM namespace, so every named import of
+   * it read `undefined` (styled-components module init threw "called value is
+   * not a function"). Returns null when the package has no `exports`, the
+   * subpath does not match, or the target is not a file, so the caller falls
+   * back to the unchanged Node10 resolution.
+   */
+  private resolvePackageExports(pkgName: string, specifier: string, containingFile: string): string | null {
+    const pkgRoot = this.findPackageRoot(pkgName, containingFile);
+    if (pkgRoot === null) return null;
+    let exportsField: unknown;
+    try {
+      const manifest = JSON.parse(getFs()!.readFileSync(path.join(pkgRoot, "package.json"), "utf-8"));
+      exportsField = (manifest as { exports?: unknown } | null)?.exports;
+    } catch {
+      return null;
+    }
+    if (exportsField === undefined || exportsField === null) return null;
+    const subpath = `.${specifier.slice(pkgName.length)}`;
+    const isSubpathMap =
+      typeof exportsField === "object" &&
+      !Array.isArray(exportsField) &&
+      Object.keys(exportsField).some((key) => key.startsWith("."));
+    const target = isSubpathMap
+      ? matchSubpathImports(exportsField as Record<string, unknown>, subpath, ESM_EXPORT_CONDITIONS)
+      : subpath === "."
+        ? resolveImportConditions(exportsField, "", ESM_EXPORT_CONDITIONS)
+        : null;
+    if (target === null || !target.startsWith("./")) return null;
+    const targetPath = path.resolve(pkgRoot, target);
+    if (!this.tryStatFile(targetPath)) return null;
+    return this.host.realpath?.(targetPath) ?? targetPath;
+  }
+
+  /** Node's package lookup: the nearest `node_modules/<pkgName>` above the importer. */
+  private findPackageRoot(pkgName: string, containingFile: string): string | null {
+    let dir = path.dirname(containingFile);
+    for (;;) {
+      const pkgRoot = path.join(dir, "node_modules", pkgName);
+      if (this.tryStatFile(path.join(pkgRoot, "package.json"))) return this.host.realpath?.(pkgRoot) ?? pkgRoot;
+      const parent = path.dirname(dir);
+      if (parent === dir) return null;
+      dir = parent;
+    }
+  }
+
   /** True if `p` exists and is a directory. */
   private tryStatDir(p: string): boolean {
     const fs = getFs();
@@ -547,23 +616,40 @@ export class ModuleResolver {
  * that ships a `browser` no-op beside its real implementation would silently
  * run different code in the two lanes and mask real defects.
  */
-const SUBPATH_IMPORT_CONDITIONS = new Set(["node", "import", "default"]);
+const SUBPATH_IMPORT_CONDITIONS: ReadonlySet<string> = new Set(["node", "import", "default"]);
+
+/**
+ * (#6855) Export conditions for a bare-package `import` edge under
+ * `--target standalone`: Node's ESM set plus the bundler `module` condition.
+ * js2wasm links the whole graph into one module the way a bundler does, and
+ * `module` names the package's own ESM build — the file the legacy resolver
+ * already picked through `pkg.module` (`findImplementationBody`). Without it,
+ * `@emotion/is-prop-valid` would move from its ESM build to Node's
+ * `cjs.mjs` → `cjs.js` CommonJS wrapper. Key order inside the package's
+ * conditions object still decides, exactly as in Node.
+ */
+const ESM_EXPORT_CONDITIONS: ReadonlySet<string> = new Set(["module", "node", "import", "default"]);
 
 /** Resolve a conditions value (string | array | conditions object) to a target. */
-function resolveImportConditions(value: unknown, substitution: string, depth = 0): string | null {
+function resolveImportConditions(
+  value: unknown,
+  substitution: string,
+  conditions: ReadonlySet<string> = SUBPATH_IMPORT_CONDITIONS,
+  depth = 0,
+): string | null {
   if (depth > 8) return null;
   if (typeof value === "string") return value.replaceAll("*", substitution);
   if (Array.isArray(value)) {
     for (const candidate of value) {
-      const resolved = resolveImportConditions(candidate, substitution, depth + 1);
+      const resolved = resolveImportConditions(candidate, substitution, conditions, depth + 1);
       if (resolved !== null) return resolved;
     }
     return null;
   }
   if (typeof value !== "object" || value === null) return null;
   for (const [condition, branch] of Object.entries(value)) {
-    if (!SUBPATH_IMPORT_CONDITIONS.has(condition)) continue;
-    const resolved = resolveImportConditions(branch, substitution, depth + 1);
+    if (!conditions.has(condition)) continue;
+    const resolved = resolveImportConditions(branch, substitution, conditions, depth + 1);
     if (resolved !== null) return resolved;
   }
   return null;
@@ -574,9 +660,13 @@ function resolveImportConditions(value: unknown, substitution: string, depth = 0
  * PACKAGE_IMPORTS_EXPORTS_RESOLVE): exact key first, then the single-`*`
  * pattern key with the longest matching prefix.
  */
-function matchSubpathImports(imports: Record<string, unknown>, specifier: string): string | null {
+function matchSubpathImports(
+  imports: Record<string, unknown>,
+  specifier: string,
+  conditions: ReadonlySet<string> = SUBPATH_IMPORT_CONDITIONS,
+): string | null {
   if (Object.hasOwn(imports, specifier)) {
-    const exact = resolveImportConditions(imports[specifier], "");
+    const exact = resolveImportConditions(imports[specifier], "", conditions);
     if (exact !== null) return exact;
   }
   let bestPrefix = "";
@@ -594,7 +684,7 @@ function matchSubpathImports(imports: Record<string, unknown>, specifier: string
     bestSubstitution = specifier.slice(prefix.length, specifier.length - suffix.length);
     bestValue = imports[key];
   }
-  return bestValue === undefined ? null : resolveImportConditions(bestValue, bestSubstitution);
+  return bestValue === undefined ? null : resolveImportConditions(bestValue, bestSubstitution, conditions);
 }
 
 /**
@@ -681,7 +771,12 @@ export function resolveAllImports(entryFile: string, resolver: ModuleResolver): 
     // Rewrite CJS `const X = require('Y')` to ESM `import X from 'Y'` so the
     // dependency-walk below picks up CommonJS modules' transitive deps the same
     // way it picks up ESM ones (#1279).
-    content = rewriteCjsRequire(content, resolver.cjsRewriteOptions);
+    const rewritten = rewriteCjsRequire(content, resolver.cjsRewriteOptions);
+    // (#6855) Only a file the rewrite left untouched is pure ESM: its import /
+    // export-from edges are real ESM `import`s, resolved through `exports`
+    // under the `import` condition. A rewritten `require` keeps Node10.
+    const esmEdge = rewritten === content ? "esm-import" : undefined;
+    content = rewritten;
 
     // Parse to find import specifiers
     const sf = ts.createSourceFile(
@@ -699,17 +794,17 @@ export function resolveAllImports(entryFile: string, resolver: ModuleResolver): 
     // Visit dependencies first (post-order DFS) so their content lands
     // in `resolved` before this file's content. This produces a true
     // topological order: deps before importers, entry last.
-    const resolveAndVisit = (specifier: string): void => {
-      const resolvedPath = resolver.resolve(specifier, canonicalPath);
+    const resolveAndVisit = (specifier: string, edge?: "esm-import"): void => {
+      const resolvedPath = resolver.resolve(specifier, canonicalPath, edge);
       if (resolvedPath) visit(resolvedPath);
     };
     for (const stmt of sf.statements) {
       if (ts.isImportDeclaration(stmt) && ts.isStringLiteral(stmt.moduleSpecifier)) {
-        resolveAndVisit(stmt.moduleSpecifier.text);
+        resolveAndVisit(stmt.moduleSpecifier.text, esmEdge);
       }
       // Also handle export ... from "..."
       if (ts.isExportDeclaration(stmt) && stmt.moduleSpecifier && ts.isStringLiteral(stmt.moduleSpecifier)) {
-        resolveAndVisit(stmt.moduleSpecifier.text);
+        resolveAndVisit(stmt.moduleSpecifier.text, esmEdge);
       }
 
       // Some CommonJS bindings wrap a static require call, e.g.
