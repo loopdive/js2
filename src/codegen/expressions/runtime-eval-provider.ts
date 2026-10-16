@@ -32,7 +32,11 @@ import {
   refreshRuntimeEvalCallableTrampolines,
   RUNTIME_EVAL_WRAP_CALLABLE,
 } from "../runtime-eval-callable.js";
-import { buildRuntimeEvalValueUnwrap, ensureRuntimeEvalProviderActiveGlobal } from "../runtime-eval-boundary.js";
+import {
+  buildRuntimeEvalValueUnwrap,
+  emitRuntimeEvalEverEntered,
+  ensureRuntimeEvalProviderActiveGlobal,
+} from "../runtime-eval-boundary.js";
 import { coerceType, compileExpression } from "../shared.js";
 import { emitUndefined, ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 
@@ -718,6 +722,7 @@ export function emitRuntimeEvalGlobalBindingSeed(ctx: CodegenContext, fctx: Func
   ensureRuntimeEvalGlobalBindingSync(ctx);
   const pushIdx = ctx.funcMap.get(RUNTIME_EVAL_PUSH_GLOBALS);
   if (pushIdx !== undefined) fctx.body.push({ op: "call", funcIdx: pushIdx });
+  emitRuntimeEvalEverEntered(ctx, fctx); // (#6990) live-call trampolines leave their direct path
   if (activate) emitRuntimeEvalProviderActive(ctx, fctx, true);
 }
 
