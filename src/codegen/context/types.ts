@@ -4941,6 +4941,16 @@ export function hostFreeEnvironment(ctx: CodegenContext): boolean {
 }
 
 /**
+ * (#6979 S7-c) Does console output go to the in-module stdout sink
+ * (`__stdout_append`, #3469)? Only with no embedder at all: WASI writes through
+ * `fd_write` and a JavaScript environment through the host console. An
+ * environment question, so it holds whichever semantic regime lowers the module.
+ */
+export function inModuleStdoutSink(ctx: CodegenContext): boolean {
+  return ctx.targetProfile.environment === "none";
+}
+
+/**
  * (#5385 S2, #6686) Does the module keep the JS VALUE bridge (string marshal,
  * admitted-object MOP, callbacks)? `"required"` = JS embedder + bridge on; the
  * host-free `hostBridge: "always"` projection (`"enabled"`) may not import it.

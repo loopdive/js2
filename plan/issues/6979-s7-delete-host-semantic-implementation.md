@@ -17,6 +17,10 @@ sprint: current
 parent: 5385
 depends_on: [6708]
 related: [4396, 4397, 4399, 4401, 6191, 6749, 6750, 6978]
+loc-budget-allow:
+  # 2026-10-16 (#6979 S7-c): +1 import line for runtimeEvalProviderLinkable, the WASI-excluding
+  # runtime-eval capability gate; the S7-c expressions fold removes far more than it adds.
+  - src/codegen/expressions/eval-inline.ts
 ---
 
 # #6979 — S7: delete the host-semantic implementation

@@ -28,7 +28,7 @@ import { emitStrFlattenHelpers, emitStrToUtf8Helper } from "./native-strings-cor
 import { emitStrConcatHelpers, emitStrCompareHelpers, emitStrSliceCharHelpers } from "./native-strings-basics.js";
 import { allocLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
-import { hostFreeEnvironment, jsValueBoundary } from "./context/types.js";
+import { hostFreeEnvironment, inModuleStdoutSink, jsValueBoundary } from "./context/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3) stable-regime minting
 import { ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
 import { emitNativeNumberFormat } from "./number-format-native.js";
@@ -1991,11 +1991,11 @@ export const STANDALONE_STDOUT_APPEND_FN = "__stdout_append";
  * console surface.
  */
 export function standaloneConsoleSinkAvailable(ctx: CodegenContext): boolean {
-  return ctx.standalone && ctx.nativeStrings && ctx.funcMap.get(STANDALONE_STDOUT_APPEND_FN) !== undefined;
+  return inModuleStdoutSink(ctx) && ctx.nativeStrings && ctx.funcMap.get(STANDALONE_STDOUT_APPEND_FN) !== undefined;
 }
 
 export function ensureStandaloneStdoutSink(ctx: CodegenContext): void {
-  if (!ctx.standalone) return;
+  if (!inModuleStdoutSink(ctx)) return;
   if (!ctx.nativeStrings) return;
   if (ctx.stdoutAccGlobalIdx >= 0) return; // already minted
 
