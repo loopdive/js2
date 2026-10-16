@@ -1,10 +1,11 @@
 ---
 id: 6708
 title: "S6: `semanticProviders` defaults to native-first in every environment; host semantics only as named opt-in accelerators"
-status: in-progress
+status: done
+completed: 2026-10-16
 assignee: ttraenkler/opus-6708-a
 created: 2026-09-27
-updated: 2026-10-14
+updated: 2026-10-16
 priority: high
 horizon: l
 feasibility: hard
@@ -303,3 +304,18 @@ binding-null-guard). Every one is owned by a fix PR that has not merged yet
 | #6981 IR path + compile failures | 6673 | ir-slice10-error (d), ir-slice10-map-set ×2, destructuring-require-object-coercible, gradual-typing ×2, yield-as-expression, issue-6798 resolve-stage-catch |
 | #6982 toPrimitive/indexOf/await/import.meta | 6676 | symbol-toPrimitive ×2, array-indexof-no-arg ×2, await-settled-operand-yields ×2, import-meta ×2, element-assignment-externref, issue-6798 string-bool-union |
 | #6984 yield* return value | 6683 | issue-6798 yield-star-return |
+
+**2026-10-16 — final state (S6-A done).** #6980, #6981, #6982, #6984 and
+#6986 are on main and merged into this branch (merge `1d20eeee45`; the
+runtime.ts conflict resolved like the S7-a branch: an Intl-accelerated import
+takes the #6986 marshal, every other import the #6708 platform marshal).
+`node scripts/equivalence-gate.mjs`: `equivalence-gate: 20 failing, 1787
+passing, 22 known-failures in baseline.` / `✓ No new equivalence regressions.`
+(passing 1787 ≥ floor 1740; the nine `issue-1197` rows stay pinned to
+host-assisted, #6979). `pnpm run check:host-import-policy`: default probes 33
+probes / 452 imports / 0 legacy / 0 unknown; host-assisted control 23 legacy;
+`runtimeTsLines` 20240 under main's ceiling 20243. Focused suites on the
+merged tree: 4396 18/18, 6686 5/5, 6978 9/9, 6986 17/17, playground 1/1,
+4401 7/7, 4397 29/30 (the known `assignmentRest` row, red on main too).
+Evidence item 3 (npm-compat parity, #6664) and item 4 (perf) remain open in
+#5385; the accelerators are #6978 (done).
