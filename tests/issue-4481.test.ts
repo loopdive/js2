@@ -123,18 +123,37 @@ describe("#4481 — shadowing DEFEATS the fold (absent-not-wrong)", () => {
     ["Object.setPrototypeOf anywhere", "var o = {}; Object.setPrototypeOf(o, null);", "o.toString"],
     ["Object.create anywhere", "var p = {}; var q = Object.create(p); var o = {};", "o.toString"],
     ["a `__proto__` write (§B.3.1 relink)", "var o = {}; o.__proto__ = null;", "o.toString"],
-    // A write onto a BUILTIN prototype is on the chain and must disable it.
-    [
-      "a write onto the builtin prototype",
-      'Array.prototype.valueOf = function(){ return "poly"; }; var a = [1];',
-      "a.valueOf",
-    ],
+    // (A write onto a BUILTIN prototype is the separate test below: there the
+    // instance read and the prototype read are the SAME user function, so the
+    // `!==` shape of this table is the wrong JS answer for it.)
     // Reassignment invalidates the object-literal proof.
     ["a reassigned binding", "var o = {}; o = [1,2];", "o.toString"],
   ])("declines: %s", async (_label, setup, inst) => {
     const proto = inst.startsWith("a.") ? "Array.prototype" : "Object.prototype";
     const member = inst.slice(inst.indexOf(".") + 1);
     expect(await runStandalone(truth(setup, `${inst} !== ${proto}.${member}`))).toBe(1);
+  });
+
+  // A write onto a BUILTIN prototype is on the chain and must disable the
+  // fold: the instance must read the USER function, which IS the prototype's
+  // member now. This row used to sit in the `!==` table above and assert
+  // `a.valueOf !== Array.prototype.valueOf` — false in JS, since both name the
+  // user function; it passed only while one side still read the builtin.
+  // Main answers the identity JS-correctly as of 2026-10-16 (#7014).
+  it("declines: a write onto the builtin prototype (instance and prototype read the same user function)", async () => {
+    const setup = 'Array.prototype.valueOf = function(){ return "poly"; }; var a = [1];';
+    expect(
+      await runStandalone(truth(setup, 'typeof a.valueOf === "function" && a.valueOf === Array.prototype.valueOf')),
+    ).toBe(1);
+  });
+
+  // RESIDUAL (#7014, measured 2026-10-16): the identity above is right, but
+  // CALLING the user function through the instance does not return its value —
+  // `a.valueOf()` and `Array.prototype.valueOf()` both answer something other
+  // than "poly". Pinned so a fix shows up here.
+  it.fails("RESIDUAL: calling a user function installed on a builtin prototype returns its value", async () => {
+    const setup = 'Array.prototype.valueOf = function(){ return "poly"; }; var a = [1];';
+    expect(await runStandalone(truth(setup, 'a.valueOf() === "poly"'))).toBe(1);
   });
 
   it("still observes the OWN value it declined for", async () => {
@@ -177,37 +196,35 @@ describe("#4481 — the call path is unchanged", () => {
     expect(await runStandalone(truth(setup, "viaInstance.call([]) === viaProto.call([])"))).toBe(1);
   });
 
-  it("keeps an unwired member's value-call CATCHABLE, exactly as base did", async () => {
-    // `Array.prototype.join` has no native value-call body yet, so the
-    // factory's `refusalBodyFallback` throws a CATCHABLE TypeError rather than
-    // trapping. Measured on base and after: `1` both times — identity did not
-    // convert a working call into a refusal, and did not convert the refusal
-    // into a trap.
+  it("an instance-read member's value-call runs (was a CATCHABLE refusal)", async () => {
+    // When #4481 landed, `Array.prototype.join` had no native value-call body,
+    // so the factory's `refusalBodyFallback` threw a CATCHABLE TypeError rather
+    // than trapping, and this pinned that. The body is wired on main as of
+    // 2026-10-16 (#7014): the call succeeds with the JS answer, which is what
+    // this asserts now (3 would be a wrong answer, 2 the old refusal).
     const src = `var a = [1,2];
-      try { a.join.call(a, "-"); return 0; }
-      catch (e) { return (e instanceof TypeError) ? 1 : 2; }`;
+      try { return a.join.call(a, "-") === "1-2" ? 1 : 3; }
+      catch (e) { return (e instanceof TypeError) ? 2 : 4; }`;
     expect(await runStandalone(src)).toBe(1);
   });
 
-  it("does NOT make the two `.call` SITES equivalent — and never claimed to", async () => {
-    // Worth pinning because it is the obvious over-claim to make from an
-    // identity fix. `Array.prototype.join.call(a, "-")` SUCCEEDS while
-    // `a.join.call(a, "-")` throws — measured `21` on base AND after, i.e.
-    // unchanged. The proto spelling is claimed SYNTACTICALLY by calls.ts's
-    // reflective `.call` route, which never materializes the value at all
-    // (native-proto-value-read.ts records that it deliberately bypasses the
-    // resolver), so equal VALUES do not imply equal call SITES.
+  it("the two `.call` SITES now agree — both succeed", async () => {
+    // Pinned at #4481 as `21`: `Array.prototype.join.call(a, "-")` SUCCEEDED
+    // while `a.join.call(a, "-")` threw, because the proto spelling is claimed
+    // SYNTACTICALLY by calls.ts's reflective `.call` route and equal VALUES did
+    // not imply equal call SITES. With the instance-side value-call wired (see
+    // above) both succeed — `11`, the JS answer (measured 2026-10-16, #7014).
     const src = `var a = [1,2];
       var viaInstance = 0, viaProto = 0;
       try { a.join.call(a, "-"); viaInstance = 1; } catch (e) { viaInstance = (e instanceof TypeError) ? 2 : 3; }
       try { Array.prototype.join.call(a, "-"); viaProto = 1; } catch (e) { viaProto = (e instanceof TypeError) ? 2 : 3; }
       return viaInstance * 10 + viaProto;`;
-    expect(await runStandalone(src)).toBe(21);
+    expect(await runStandalone(src)).toBe(11);
   });
 });
 
 describe("#4481 — measured residuals", () => {
-  it.fails("makes an instance-borrowed `hasOwnProperty` CALLABLE", async () => {
+  it("makes an instance-borrowed `hasOwnProperty` CALLABLE", async () => {
     // `o.hasOwnProperty.call(x, k)` now reaches the same refusal the prototype
     // spelling reaches (`… is not yet implemented in --target standalone`)
     // instead of `Cannot read properties of undefined`. Same TypeError either

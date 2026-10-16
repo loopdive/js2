@@ -111,7 +111,7 @@ const ALLOW_KEY = "known-failures-allow";
 // Root files owned by another gate: linear-*/c-abi/simd* run in `linear-tests`;
 // the test262 chunk / local-shard / vitest entry points run the conformance
 // corpus itself (test262-sharded.yml), not a unit suite.
-const ROOT_EXCLUDE = /^(linear-|c-abi\.|simd|test262-(chunk|local-shard|vitest\.))/;
+export const ROOT_EXCLUDE = /^(linear-|c-abi\.|simd|test262-(chunk|local-shard|vitest\.))/;
 
 function listTestFiles(root, dir, rel) {
   const abs = join(root, dir);
@@ -402,7 +402,7 @@ function vitestOnce(root, toRel, files, { serial, heapMb, timeoutMs }) {
  * with the reason. `serial: true` skips the parallel pass (confirmation
  * re-runs). Returns Map<rel, {entry} | {crash}>.
  */
-async function runFiles(root, toRel, files, { label, serial = false }) {
+export async function runFiles(root, toRel, files, { label, serial = false }) {
   const batch = envInt("KNOWN_FAILURES_BATCH", 150);
   const heap = envInt("KNOWN_FAILURES_FORK_HEAP_MB", 2048);
   const rerunHeap = envInt("KNOWN_FAILURES_RERUN_HEAP_MB", 4096);

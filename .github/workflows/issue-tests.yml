@@ -31,10 +31,21 @@ on:
   schedule:
     - cron: "17 */6 * * *"
   workflow_dispatch:
+  # (#7014) A PR that changes this detector's own machinery proves it on the
+  # whole suite before it lands — the detector went 3 months without a green
+  # run because its runner changes were never exercised end-to-end. PR runs
+  # gate read-only against the public baseline and never push it back.
+  pull_request:
+    paths:
+      - ".github/workflows/issue-tests.yml"
+      - "scripts/issue-tests-gate.mjs"
+      - "scripts/lib/issue-tests-ids.mjs"
+      - "scripts/known-failures-gate.mjs"
+      - "scripts/lib/known-failures-reporter.mjs"
 
 concurrency:
-  group: issue-tests-main
-  cancel-in-progress: false
+  group: issue-tests-${{ github.event_name == 'pull_request' && github.ref || 'main' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   shard:
@@ -42,6 +53,7 @@ jobs:
     # fork schedules must not run an expensive suite with no deploy key.
     if: github.repository == 'loopdive/js2'
     runs-on: ubuntu-latest
+    timeout-minutes: 150
     env:
       # This broad post-merge detector intentionally stays toolchain-light and
       # preserves its pre-#4242 outcomes. The dedicated QuickJS workflow tests
@@ -64,6 +76,19 @@ jobs:
           corepack enable
           corepack prepare pnpm@10.30.2 --activate
       - run: pnpm install --frozen-lockfile
+      - name: Prepare the Test262 harness inputs and bundles root tests read
+        run: |
+          # (#7014) Same preparation as ci.yml `issue-tests-shard` and the
+          # changed-root gate in `quality`: some root files execute pinned
+          # test262 inputs, spawn scripts/test262-worker.mjs (which imports the
+          # compiler bundle — without it 10 tests died ERR_MODULE_NOT_FOUND on
+          # scripts/compiler-bundle.mjs in run 38797187257), or need the
+          # runtime bundle / runtime-eval refusal provider (#4234).
+          git submodule update --init --checkout test262
+          git submodule update --init --checkout test262-fyi/data
+          pnpm run build:compiler-bundle
+          pnpm exec esbuild scripts/runtime-bundle-entry.ts --bundle --platform=node --format=esm --outfile=scripts/runtime-bundle.mjs --external:typescript --external:binaryen
+          node scripts/build-runtime-eval-provider.mjs --refusal-only
       - name: Run root-suite shard ${{ matrix.shard }}/12
         env:
           SHARD: ${{ matrix.shard }}/12
@@ -96,6 +121,7 @@ jobs:
           path: issue-tests-partials
           merge-multiple: true
       - name: Fetch baseline from js2wasm-baselines
+        if: github.event_name != 'pull_request'
         env:
           BASELINE_DEPLOY_KEY: ${{ secrets.BASELINE_DEPLOY_KEY }}
         run: |
@@ -104,16 +130,28 @@ jobs:
           mkdir -p ~/.ssh
           ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
           git clone --depth=1 git@github.com:loopdive/js2wasm-baselines.git /tmp/js2wasm-baselines
+      - name: Fetch baseline read-only (pull_request, #7014)
+        # Fork PRs get no secrets; the baselines repo is public, so a PR reads
+        # it over https and never writes it.
+        if: github.event_name == 'pull_request'
+        run: git clone --depth=1 https://github.com/loopdive/js2wasm-baselines.git /tmp/js2wasm-baselines
       - name: Gate against baseline (bootstrap + auto-ratchet)
+        if: github.event_name != 'pull_request'
         env:
           MERGE_PARTIALS_DIR: issue-tests-partials
           ISSUE_TESTS_BASELINE: /tmp/js2wasm-baselines/issue-tests-baseline.json
           ALLOW_BOOTSTRAP: "1"
         run: node scripts/issue-tests-gate.mjs --update-on-decrease
+      - name: Gate against baseline (pull_request, read-only)
+        if: github.event_name == 'pull_request'
+        env:
+          MERGE_PARTIALS_DIR: issue-tests-partials
+          ISSUE_TESTS_BASELINE: /tmp/js2wasm-baselines/issue-tests-baseline.json
+        run: node scripts/issue-tests-gate.mjs
       - name: Push ratcheted baseline back
         # Runs even when the gate failed (new regressions) — a newly-fixed
         # test's ratchet-down should still bank, and a bootstrap must persist.
-        if: always()
+        if: always() && github.event_name != 'pull_request'
         env:
           BASELINE_DEPLOY_KEY: ${{ secrets.BASELINE_DEPLOY_KEY }}
         run: |
