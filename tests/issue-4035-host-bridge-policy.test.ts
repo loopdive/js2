@@ -83,7 +83,11 @@ describe("#4035 host-bridge export policy", () => {
     // 2e23e49fb1 AND with #6666 applied (REALISTIC has a source throw, so its
     // renderer flavor is unchanged). Re-anchored so the cap still catches a
     // cascade; the drift itself is unowned growth, not banked as "fine".
-    expect(size).toBeLessThan(40_000);
+    // (#6979 S7-c, 2026-10-16) WASI now lowers with the native regime, so it
+    // carries the same runtime as --target standalone: REALISTIC measured
+    // 37,729 B on the old WASI lowering, 69,307 B on the regime, and 68,066 B
+    // for --target standalone with the same options. Re-anchored to the regime.
+    expect(size).toBeLessThan(72_000);
   });
 
   it("publishes the bridge for a standalone module on explicit opt-in", async () => {

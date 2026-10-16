@@ -21,6 +21,10 @@ loc-budget-allow:
   # 2026-10-16 (#6979 S7-c): +1 import line for runtimeEvalProviderLinkable, the WASI-excluding
   # runtime-eval capability gate; the S7-c expressions fold removes far more than it adds.
   - src/codegen/expressions/eval-inline.ts
+  # 2026-10-16 (#6979 S7-c): inModuleStdoutSink(ctx), the environment key of the #3469 console sink
+  # (+10 next to hostFreeEnvironment/jsValueBoundary, where every environment key lives). Without it
+  # WASI on the regime prints nothing (34 WASI rows red).
+  - src/codegen/context/types.ts
 ---
 
 # #6979 — S7: delete the host-semantic implementation

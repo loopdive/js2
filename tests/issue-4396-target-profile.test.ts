@@ -68,7 +68,7 @@ const cases: ReadonlyArray<readonly [string, TargetProfileInput, ReturnType<type
       semanticProviders: "native-first",
       hostValueInterop: "off",
       strictEnvImportGate: true,
-      nativeRegime: false,
+      nativeRegime: true, // (#6979 S7-c) WASI lowers with the regime
       nativeStringsRequiredByPolicy: true,
     },
   ],
@@ -83,7 +83,7 @@ const cases: ReadonlyArray<readonly [string, TargetProfileInput, ReturnType<type
       semanticProviders: "native-first",
       hostValueInterop: "off",
       strictEnvImportGate: false,
-      nativeRegime: false,
+      nativeRegime: true,
       nativeStringsRequiredByPolicy: true,
     },
   ],

@@ -28,10 +28,11 @@ import { ProgramAbiFnctorRegistry } from "../program-abi-fnctor-planning.js";
 import type { CodegenContext, CodegenOptions } from "./types.js";
 import { readEnv } from "../../env.js";
 
+// (#6979 S7-c) The native RegExp engine belongs to the regime, not to an
+// environment: keyed on the environment, a WASI regime build had no engine and
+// refused every RegExp the standalone and gc builds compile.
 function selectNativeRegExpEngine(targetProfile: CompileTargetProfile) {
-  return targetProfile.target === "standalone" || targetProfile.environment === "javascript"
-    ? nativeLiteralRegExpEngineConfig()
-    : null;
+  return targetProfile.nativeRegime ? nativeLiteralRegExpEngineConfig() : null;
 }
 
 function createRedeclaredObjectIdentityState() {
@@ -574,19 +575,19 @@ export function createCodegenContext(
     }
   }
 
-  return assertNativeRegimeOrWasi(ctx, targetProfile);
+  return assertNativeRegime(ctx, targetProfile);
 }
 
 /**
- * (#6979 S7-b) The host-semantic lane is gone: WasmGC codegen runs either the
- * native semantic regime (`standalone`) or WASI, never neither. Every
- * `!(ctx.standalone || ctx.wasi)` arm is therefore dead, and S7-b deletes the
- * retired host imports those arms emitted. Fail loudly if a new profile breaks
- * the invariant instead of silently reviving them.
+ * (#6979 S7-b/S7-c) The host-semantic lane is gone and WASI joined the regime:
+ * every WasmGC build lowers with the native semantic regime, so the regime flag
+ * is true wherever src/codegen runs and every arm keyed on its absence is dead.
+ * S7-c folds those arms away directory by directory. Fail loudly if a new
+ * profile breaks the invariant instead of silently reviving them.
  */
-function assertNativeRegimeOrWasi(ctx: CodegenContext, targetProfile: CompileTargetProfile): CodegenContext {
-  if (targetProfile.backend === "wasmgc" && !ctx.standalone && !ctx.wasi) {
-    throw new Error(`#6979: WasmGC target '${targetProfile.target}' must lower with the native regime or WASI`);
+function assertNativeRegime(ctx: CodegenContext, targetProfile: CompileTargetProfile): CodegenContext {
+  if (targetProfile.backend === "wasmgc" && !ctx.standalone) {
+    throw new Error(`#6979: WasmGC target '${targetProfile.target}' must lower with the native regime`);
   }
   return ctx;
 }

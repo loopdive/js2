@@ -1315,8 +1315,7 @@ export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedColl
   // mints the in-module GC string sink (`__stdout_acc` + `__stdout_append`) and
   // finalize emits the `__stdout_prepare`/`__stdout_char` readout exports. The
   // sink stays 100% host-free (WasmGC in-module), so the #2961 import-leak gate
-  // still rejects genuine host imports. (#6685, #6979) Keyed on the environment: a JS one keeps `console_*`
-  // below, WASI its `fd_write` writers.
+  // still rejects genuine host imports. (#6685, #6979) Environment-keyed (JS: `console_*`; WASI: fd_write).
   if (inModuleStdoutSink(ctx) && (state.consoleNeededByMethod.size > 0 || state.consoleValueRead)) {
     ctx.usesStandaloneConsoleSink = true;
   }
