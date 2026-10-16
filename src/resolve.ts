@@ -2,7 +2,7 @@
 import * as path from "path";
 import { ts } from "./ts-api.js";
 import type { CompileOptions } from "./index.js";
-import { rewriteCjsRequire } from "./cjs-rewrite.js";
+import { type CjsRewriteOptions, rewriteCjsRequire } from "./cjs-rewrite.js";
 import { foldStandaloneProcessEnvBranches } from "./cjs-standalone-env-fold.js";
 import { hoistStandaloneNestedRequires } from "./cjs-standalone-nested-require.js";
 import { getDefaultEnvironment } from "./env.js";
@@ -55,6 +55,12 @@ export class ModuleResolver {
    * JS-host lane keeps TypeScript's Node10 `main` resolution unchanged.
    */
   private readonly esmPackageExports: boolean;
+  /**
+   * (#6751) Options for the CJS rewrite this resolver applies. Host-free
+   * targets also observe `module.exports` writes made through an alias of
+   * `module`; the JS-host rewrite is unchanged.
+   */
+  readonly cjsRewriteOptions: CjsRewriteOptions;
 
   /**
    * Create a resolver rooted at a directory.
@@ -71,6 +77,7 @@ export class ModuleResolver {
     this.consumerDrivenBarrels = options?.resolve?.consumerDrivenBarrels === true;
     const define = options?.define;
     this.esmPackageExports = options?.target === "standalone";
+    this.cjsRewriteOptions = { aliasedModuleExports: (options?.target ?? "gc") !== "gc" };
     this.foldSource =
       options?.target === "standalone"
         ? (source, filePath) =>
@@ -764,7 +771,7 @@ export function resolveAllImports(entryFile: string, resolver: ModuleResolver): 
     // Rewrite CJS `const X = require('Y')` to ESM `import X from 'Y'` so the
     // dependency-walk below picks up CommonJS modules' transitive deps the same
     // way it picks up ESM ones (#1279).
-    const rewritten = rewriteCjsRequire(content);
+    const rewritten = rewriteCjsRequire(content, resolver.cjsRewriteOptions);
     // (#6855) Only a file the rewrite left untouched is pure ESM: its import /
     // export-from edges are real ESM `import`s, resolved through `exports`
     // under the `import` condition. A rewritten `require` keeps Node10.
