@@ -61,7 +61,7 @@ import { usesNativeJsErrors } from "../js-errors.js";
 import { CARRIER_BAG_HAS } from "../carrier-bag-visibility.js";
 import { ERROR_PROP_GET } from "../error-props.js";
 import { registerEmitWasiErrorConstructor } from "./error-constructor-delegates.js";
-import { buildErrorSubclassProtoChainArm } from "../error-subclass-proto-chain.js";
+import { buildErrorSubclassProtoChainArm, intrinsicErrorMessageDefaultArm } from "../error-subclass-proto-chain.js";
 import { isCollectionCarrierClass } from "../classes/standalone-collection-carrier.js"; // (#6754)
 
 // (#2962) `getOrRegisterErrorStructType` moved to registry/types.ts so
@@ -930,6 +930,9 @@ export function fillExternGetErrorProps(ctx: CodegenContext): void {
               ],
             },
             ...subclassProtoArms,
+            // (#6981) No own `message` and no subclass prototype answered: an
+            // untouched builtin prototype supplies the intrinsic "" default.
+            ...intrinsicErrorMessageDefaultArm(ctx, keyEquals("message"), nativeStringLiteralInstrs(ctx, "")),
           ],
         },
         // No match → fall through to the original body → standard miss.

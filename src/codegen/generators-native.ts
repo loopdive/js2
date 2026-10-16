@@ -94,6 +94,9 @@ import {
   setStateInstrs,
   setModeInstrs,
   storeSpills,
+  consumeReturnOriginInstrs,
+  setReturnOriginInstrs,
+  RETURN_ORIGIN_NONE,
 } from "./frame-core.js";
 // (#3271) Pure AST-scan predicate primitives now live in
 // generators-native-ast-scan.ts; imported back for the planner + candidacy gates.
@@ -2236,6 +2239,23 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
       : false;
   }
 
+  /**
+   * (#6980) Terms of a nested sequenced-binary chain along its single
+   * yield-holding path, in evaluation order — `(("a" + yield) + "b")` →
+   * `["a", yield, "b"]`. `undefined` unless that path ends in an admitted yield
+   * and every node on it is a sequenced binary.
+   */
+  function sequencedBinaryYieldPath(node: ts.Expression): ts.Expression[] | undefined {
+    const inner = unwrapContinuationWrapper(node);
+    if (continuationYieldOf(inner)) return [inner];
+    if (!ts.isBinaryExpression(inner) || !isSequencedBinaryOperator(inner.operatorToken.kind)) return undefined;
+    const leftYields = containsAnyYield(inner.left);
+    if (leftYields === containsAnyYield(inner.right)) return undefined;
+    const path = sequencedBinaryYieldPath(leftYields ? inner.left : inner.right);
+    if (!path) return undefined;
+    return leftYields ? [...path, inner.right] : [inner.left, ...path];
+  }
+
   function lowerSequencedContinuation(
     host: ContinuationHost,
     terms: readonly ts.Expression[],
@@ -2431,6 +2451,14 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
       (continuationYieldOf(root.left) !== null || continuationYieldOf(root.right) !== null)
         ? root
         : undefined;
+    // (#6980) `"a" + (yield) + "b"` parses as `(("a" + yield) + "b")`: the yield
+    // sits one sequenced-binary level down. Descend the yield's path only —
+    // each yield-free sibling stays one whole term, captured (operators and all)
+    // before the suspension, exactly where §13.15.3 evaluates it.
+    const nestedBinaryTerms =
+      continuationYieldsMayCarryOperands && !binaryRoot && ts.isBinaryExpression(root)
+        ? sequencedBinaryYieldPath(root)
+        : undefined;
     // (#6651 A4) A template's substitutions evaluate left to right (§13.2.8.6),
     // the same sequence again.
     const templateRoot =
@@ -2439,7 +2467,16 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
       root.templateSpans.some((span) => continuationYieldOf(span.expression) !== null)
         ? root
         : undefined;
-    if (!singleYield && !arrayRoot && !objectRoot && !conditionalRoot && !commaRoot && !binaryRoot && !templateRoot) {
+    if (
+      !singleYield &&
+      !arrayRoot &&
+      !objectRoot &&
+      !conditionalRoot &&
+      !commaRoot &&
+      !binaryRoot &&
+      !templateRoot &&
+      !nestedBinaryTerms
+    ) {
       return "not-applicable";
     }
 
@@ -2503,7 +2540,7 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
     }
     const sequenced = binaryRoot
       ? [binaryRoot.left, binaryRoot.right]
-      : templateRoot?.templateSpans.map((span) => span.expression);
+      : (nestedBinaryTerms ?? templateRoot?.templateSpans.map((span) => span.expression));
     if (sequenced) {
       return lowerSequencedContinuation(host, sequenced.map(unwrapContinuationWrapper), unwind)
         ? "lowered"
@@ -4366,6 +4403,23 @@ export function sourceNeedsGeneratorHostImports(ctx: CodegenContext, sourceFile:
 
   function visit(node: ts.Node): void {
     if (needsHost) return;
+    // (#6980) An async generator in a module whose async gens ALL drive
+    // host-free (the pre-body `moduleHasNonDrivableAsyncGen` verdict, the same
+    // shape predicate the emit gate uses) never emits a legacy buffer. Counting
+    // it here registered the `__gen_result_*` imports anyway, and every
+    // `IteratorResult` `.value`/`.done` read then routed to them (NaN, or a
+    // native-first policy rejection).
+    if (
+      (ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node) || ts.isMethodDeclaration(node)) &&
+      node.asteriskToken &&
+      node.body &&
+      ctx.moduleHasAsyncGen === true &&
+      ctx.moduleHasNonDrivableAsyncGen !== true &&
+      ts.getModifiers(node)?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword)
+    ) {
+      found = true;
+      return;
+    }
     if (ts.isFunctionDeclaration(node) && node.asteriskToken && node.body) {
       found = true;
       // A non-native-candidate generator needs the host imports; so does a
@@ -4755,6 +4809,15 @@ export function registerNativeGenerator(
     );
   const executingFieldIdx = noJsHostTarget(ctx) ? stateFields.length : undefined;
   if (executingFieldIdx !== undefined) stateFields.push({ name: "executing", type: { kind: "i32" }, mutable: true });
+  // (#6980) `.return(v)` provenance for numeric-carrier frames (frame-core.ts).
+  const returnOriginFieldIdx =
+    noJsHostTarget(ctx) && genCarrierFieldType(elemValType).kind === "f64" ? stateFields.length : undefined;
+  if (returnOriginFieldIdx !== undefined) {
+    stateFields.push(
+      { name: "ret_origin", type: { kind: "i32" }, mutable: true },
+      { name: "ret_value", type: { kind: "externref" }, mutable: true },
+    );
+  }
 
   // (#3032 W6) NOMINAL BRAND for the state struct. Two generators with the
   // same shape (e.g. `function* g1() { yield; }` and `function* g2() {
@@ -4840,6 +4903,7 @@ export function registerNativeGenerator(
     elemValType,
     nativeDelegates,
     executingFieldIdx,
+    returnOriginFieldIdx,
     delegationSlots: delegationSlots.length > 0 ? delegationSlots : undefined,
     vecDelegationSlots: vecDelegationSlots.length > 0 ? vecDelegationSlots : undefined,
     iterableDelegationSlots: iterableDelegationSlots.length > 0 ? iterableDelegationSlots : undefined,
@@ -5391,6 +5455,7 @@ function emitDelegateCloseForward(
             { op: "local.get", index: closeDelegLocal },
             ...closeAbruptPayload,
             { op: "struct.set", typeIdx: closeInner.stateTypeIdx, fieldIdx: closeInner.abruptFieldIdx },
+            ...setReturnOriginInstrs(closeInner, [{ op: "local.get", index: closeDelegLocal }], RETURN_ORIGIN_NONE),
             { op: "local.get", index: closeDelegLocal },
             { op: "local.get", index: selfLocal },
             { op: "struct.get", typeIdx: info.stateTypeIdx, fieldIdx: ERROR_FIELD },
@@ -5524,7 +5589,7 @@ function compileState(
     // field stays f64, so complete with the elem default (string `.return(v)` is
     // a documented follow-up). br depth is exitDepth + 2 — inside the outer
     // `if (mode != 0)` AND the inner `if (mode == 2) … else …`.
-    const returnBody: Instr[] = [];
+    const returnBody: Instr[] = [...consumeReturnOriginInstrs(info, selfLocal)];
     if (valTypesMatch(genCarrierFieldType(info.elemValType), info.elemValType)) {
       returnBody.push({ op: "local.get", index: selfLocal });
       returnBody.push({ op: "struct.get", typeIdx: info.stateTypeIdx, fieldIdx: info.abruptFieldIdx });
@@ -6337,6 +6402,7 @@ function emitGenericDelegationState(
           info.abruptFieldIdx,
           convert([{ op: "local.get", index: value }], { kind: "externref" }, carrier),
         ),
+        ...setReturnOriginInstrs(info, [{ op: "local.get", index: selfLocal }], RETURN_ORIGIN_NONE),
         ...setModeInstrs(info, selfLocal, 1),
         ...unwind(1),
       ],
@@ -6609,7 +6675,7 @@ function emitUnwindWalk(
     { op: "struct.get", typeIdx: info.stateTypeIdx, fieldIdx: ERROR_FIELD },
     { op: "throw", tagIdx: ensureExnTag(ctx) },
   ];
-  const returnBody: Instr[] = [];
+  const returnBody: Instr[] = [...consumeReturnOriginInstrs(info, o.selfLocal)];
   if (valTypesMatch(genCarrierFieldType(info.elemValType), info.elemValType)) {
     returnBody.push({ op: "local.get", index: o.selfLocal });
     returnBody.push({ op: "struct.get", typeIdx: info.stateTypeIdx, fieldIdx: info.abruptFieldIdx });
@@ -7147,6 +7213,9 @@ export function compileNativeGeneratorFunction(
     fctx.body.push({ op: "i32.const", value: 0 });
   }
   if (info.executingFieldIdx !== undefined) fctx.body.push({ op: "i32.const", value: 0 });
+  if (info.returnOriginFieldIdx !== undefined) {
+    fctx.body.push({ op: "i32.const", value: RETURN_ORIGIN_NONE }, { op: "ref.null.extern" });
+  }
   fctx.body.push({ op: "struct.new", typeIdx: info.stateTypeIdx });
   // The factory-prototype bridge can only recover a factory identity for the
   // declaration/expression closures cached in `ctx.funcMap`. A method factory

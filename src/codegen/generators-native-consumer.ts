@@ -60,6 +60,10 @@ import {
   RESULT_DONE_FIELD,
   setStateFieldFromLocal,
   setStateI32FromConst,
+  setReturnOriginInstrs,
+  RETURN_ORIGIN_ARMED,
+  RETURN_ORIGIN_CONSUMED,
+  RETURN_ORIGIN_NONE,
 } from "./frame-core.js";
 // (#3271) Core emit helpers imported back from the planner/register/emit module.
 // Value-level cycle (the core re-exports this module's entry points); safe
@@ -672,6 +676,7 @@ function buildNativeGeneratorDispatch(
             ...loadCastState(anyLocal, info.stateTypeIdx),
             { op: "i32.const", value: 0 },
             { op: "struct.set", typeIdx: info.stateTypeIdx, fieldIdx: info.modeFieldIdx },
+            ...setReturnOriginInstrs(info, loadCastState(anyLocal, info.stateTypeIdx), RETURN_ORIGIN_CONSUMED),
             ...nativeReturnResultFromLocal(ctx, info, vLocal),
           ],
           else: [
@@ -686,6 +691,7 @@ function buildNativeGeneratorDispatch(
                 ...loadCastState(anyLocal, info.stateTypeIdx),
                 { op: "i32.const", value: 0 },
                 { op: "struct.set", typeIdx: info.stateTypeIdx, fieldIdx: info.modeFieldIdx },
+                ...setReturnOriginInstrs(info, loadCastState(anyLocal, info.stateTypeIdx), RETURN_ORIGIN_CONSUMED),
                 ...nativeReturnResultFromLocal(ctx, info, vLocal),
               ],
               else: [
@@ -703,6 +709,7 @@ function buildNativeGeneratorDispatch(
         },
       ];
     }
+    thenBody.unshift(...returnOriginEntryInstrs(info, anyLocal, methodName, valueAnyLocal));
     if ((ctx.standalone || ctx.wasi) && methodName !== "throw" && !carrierIsAny(info.elemValType)) {
       thenBody.unshift(
         { op: "local.get", index: valueAnyLocal! },
@@ -723,6 +730,116 @@ function buildNativeGeneratorDispatch(
     ];
   }
   return { instrs: branch(0), resultType };
+}
+
+/**
+ * (#6980) Per-branch entry for the `.return(v)` provenance marker (frame-core.ts
+ * RETURN_ORIGIN_*). `.return(v)` keeps the ORIGINAL argument in the frame and
+ * arms the marker before any arm runs; `.next()` drops a CONSUMED marker that
+ * no dispatcher observed (an IteratorClose resume), but keeps an ARMED one —
+ * a `finally` that yields still owes the pending return to a later `.next()`.
+ */
+function returnOriginEntryInstrs(
+  info: NativeGeneratorInfo,
+  anyLocal: number,
+  methodName: string,
+  valueAnyLocal: number | undefined,
+): Instr[] {
+  const field = info.returnOriginFieldIdx;
+  if (field === undefined) return [];
+  const frame = (): Instr[] => loadCastState(anyLocal, info.stateTypeIdx);
+  if (methodName === "return" && valueAnyLocal !== undefined) {
+    return [
+      ...frame(),
+      { op: "local.get", index: valueAnyLocal },
+      { op: "struct.set", typeIdx: info.stateTypeIdx, fieldIdx: field + 1 },
+      ...setReturnOriginInstrs(info, frame(), RETURN_ORIGIN_ARMED),
+    ];
+  }
+  if (methodName !== "next") return [];
+  return [
+    ...frame(),
+    { op: "struct.get", typeIdx: info.stateTypeIdx, fieldIdx: field },
+    { op: "i32.const", value: RETURN_ORIGIN_CONSUMED },
+    { op: "i32.eq" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: setReturnOriginInstrs(info, frame(), RETURN_ORIGIN_NONE),
+      else: [],
+    },
+  ];
+}
+
+/**
+ * (#6980) Applied to an opaque `.return` / `.next` dispatcher's result (local 0 =
+ * the receiver). A frame whose marker reads CONSUMED completed with exactly the
+ * `.return(v)` value it was armed with — the result struct's f64 `value` holds
+ * only `__gen_numeric_payload(v)`, so a non-number `v` is re-issued from the
+ * frame as an externref `{ value: v, done: true }`. A `finally` that completes
+ * with its own `return x` wrote `abrupt` and disarmed the marker, so its result
+ * is kept whatever its bits.
+ */
+function returnOriginResultInstrs(
+  ctx: CodegenContext,
+  fn: { typeIdx: number; locals: { name: string; type: ValType }[] },
+  methodName: string,
+): Instr[] {
+  const typeofNumberIdx = ctx.funcMap.get("__typeof_number");
+  const fnType = ctx.mod.types[fn.typeIdx];
+  const infos = Array.from(ctx.nativeGenerators.values()).filter((i) => i.returnOriginFieldIdx !== undefined);
+  if (methodName === "throw" || typeofNumberIdx === undefined || fnType?.kind !== "func" || infos.length === 0) {
+    return [];
+  }
+  const extRes = ensureNativeGeneratorResultType(ctx, { kind: "externref" });
+  const res = fnType.params.length + fn.locals.length;
+  fn.locals.push({ name: "__ret_res", type: { kind: "anyref" } });
+  const out: Instr[] = [{ op: "local.set", index: res }];
+  for (const info of infos) {
+    const field = info.returnOriginFieldIdx!;
+    const frame = (): Instr[] => loadCastState(0, info.stateTypeIdx);
+    out.push(
+      { op: "local.get", index: 0 },
+      { op: "ref.test", typeIdx: info.stateTypeIdx },
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "i32" } },
+        then: [
+          ...frame(),
+          { op: "struct.get", typeIdx: info.stateTypeIdx, fieldIdx: field },
+          { op: "i32.const", value: RETURN_ORIGIN_CONSUMED },
+          { op: "i32.eq" },
+        ],
+        else: [{ op: "i32.const", value: 0 }],
+      },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          ...setReturnOriginInstrs(info, frame(), RETURN_ORIGIN_NONE),
+          ...frame(),
+          { op: "struct.get", typeIdx: info.stateTypeIdx, fieldIdx: field + 1 },
+          { op: "call", funcIdx: typeofNumberIdx },
+          { op: "i32.eqz" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              ...frame(),
+              { op: "struct.get", typeIdx: info.stateTypeIdx, fieldIdx: field + 1 },
+              { op: "i32.const", value: 1 },
+              { op: "struct.new", typeIdx: extRes },
+              { op: "local.set", index: res },
+            ],
+            else: [],
+          },
+        ],
+        else: [],
+      },
+    );
+  }
+  out.push({ op: "local.get", index: res });
+  return out;
 }
 
 /**
@@ -786,7 +903,12 @@ export function fillNativeGeneratorMethodDispatches(ctx: CodegenContext): void {
     // externref. Preserve the JS-host helper's historical eqref result path.
     fn.body =
       ctx.standalone || ctx.wasi
-        ? [...instrs, { op: "extern.convert_any" }, { op: "call", funcIdx: ctx.funcMap.get("__gen_result_unwrap")! }]
+        ? [
+            ...instrs,
+            ...returnOriginResultInstrs(ctx, fn, dispatch.methodName),
+            { op: "extern.convert_any" },
+            { op: "call", funcIdx: ctx.funcMap.get("__gen_result_unwrap")! },
+          ]
         : instrs;
   }
 }
