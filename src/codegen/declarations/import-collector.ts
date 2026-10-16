@@ -28,7 +28,7 @@ import {
 import { hasStaticModifier } from "../ast-modifiers.js"; // (#3132 S2) method-drive pre-pass gates
 import { bodyNeedsArgumentsObject } from "../helpers/body-uses-arguments.js";
 import { emitNativeEscape, emitNativeUnescape } from "../escape-native.js";
-import { isNativeGeneratorCandidate, sourceNeedsGeneratorHostImports } from "../generators-native.js";
+import { isNativeGeneratorCandidate } from "../generators-native.js";
 import { reportEagerGeneratorAbruptResumptions } from "../generator-eager-refusal.js";
 import {
   FUNCTIONAL_ARRAY_METHODS,
@@ -2162,12 +2162,12 @@ export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedColl
   // (in `./index.ts`) so the IR path can call the same helper when it
   // claims a generator function (#1169f). The helper is idempotent —
   // guards on `ctx.funcMap.has("__gen_create_buffer")` internally.
+  // (#7010) Host-free builds (standalone, WASI, the native regime) never
+  // register the bundle: the eager buffer has no host-free implementation, so a
+  // generator neither native lowering claims is a compile error at its emit site
+  // (`refuseEagerGeneratorBuffer`), not a silent `__gen_*` host dependency.
   if (state.generatorFound) {
-    const needsNoJsHostFallback =
-      (ctx.standalone || ctx.wasi) && sourceNeedsGeneratorHostImports(ctx, state.sourceFile);
-    if (!(ctx.standalone || ctx.wasi) || needsNoJsHostFallback) {
-      addGeneratorImports(ctx, { allowNoJsHost: needsNoJsHostFallback });
-    }
+    if (!(ctx.standalone || ctx.wasi)) addGeneratorImports(ctx);
     reportEagerGeneratorAbruptResumptions(ctx, state.sourceFile); // (#6781) traced .throw()/.return() on eager
   }
 

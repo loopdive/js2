@@ -21,6 +21,14 @@ async function compileStandalone(source: string) {
   return result;
 }
 
+/** (#7010) A non-drivable async-gen method is a compile error naming #7010 (no host buffer). */
+async function compileRefused(source: string) {
+  const result = await compile(source, { fileName: "test.ts", target: "standalone", skipSemanticDiagnostics: true });
+  expect(result.success).toBe(false);
+  expect(result.errors.map((e) => e.message).join("\n")).toMatch(/#7010/);
+  return result;
+}
+
 function genImportNames(result: { imports?: { name?: string; field?: string }[] }): string[] {
   return (result.imports ?? [])
     .map((i) => String(i.name ?? i.field ?? ""))
@@ -215,36 +223,39 @@ describe("#3132 S2 — receiver threading + object-literal async-gen method driv
     expect(ret).toBe(7);
   });
 
-  it("a STATIC method reading this keeps the legacy host path (correct-or-legacy)", async () => {
-    const r = await compileStandalone(`
+  it("a STATIC method reading this is refused, not lowered to the host buffer (#7010)", async () => {
+    const r = await compileRefused(`
       class C { static v = 3; static async *m() { yield this.v; } }
       function go() { C.m(); }
       export function test() { go(); return 1; }
     `);
-    expect(genImportNames(r)).not.toEqual([]);
+    expect(genImportNames(r)).toEqual([]);
   });
 
-  it("a super-reading method keeps the legacy host path (correct-or-legacy)", async () => {
-    const r = await compileStandalone(`
+  it("a super-reading method is refused, not lowered to the host buffer (#7010)", async () => {
+    const r = await compileRefused(`
       class B { f() { return 2; } }
       class C extends B { async *m() { yield super.f(); } }
       function go() { new C().m(); }
       export function test() { go(); return 1; }
     `);
-    expect(genImportNames(r)).not.toEqual([]);
+    expect(genImportNames(r)).toEqual([]);
   });
 
-  it("an arguments-reading method keeps the legacy host path (correct-or-legacy)", async () => {
-    const r = await compileStandalone(`
+  it("an arguments-reading method is refused, not lowered to the host buffer (#7010)", async () => {
+    const r = await compileRefused(`
       class C { async *m(a: number) { yield arguments.length; } }
       function go() { new C().m(1); }
       export function test() { go(); return 1; }
     `);
-    expect(genImportNames(r)).not.toEqual([]);
+    expect(genImportNames(r)).toEqual([]);
   });
 
-  it("a mixed module (drivable + legacy method) stays valid: carrier off, driven half correct", async () => {
-    const ret = await runStandalone(`
+  it("a mixed module (drivable + non-drivable method) is refused at the non-drivable method (#7010)", async () => {
+    // Before #7010 the static `this`-reading method fell to the eager host
+    // buffer (unsatisfiable `__gen_*` imports in any host-free build) and the
+    // driven half ran with the carrier off. Now the module is a compile error.
+    const r = await compileRefused(`
       let n = 0;
       class C {
         v = 4;
@@ -258,7 +269,7 @@ describe("#3132 S2 — receiver threading + object-literal async-gen method driv
       }
       export function test() { go(); return n; }
     `);
-    expect(ret).toBe(4);
+    expect(genImportNames(r)).toEqual([]);
   });
 
   it("class-expression and nested-class methods drive with correct values", async () => {

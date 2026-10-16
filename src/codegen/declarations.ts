@@ -154,11 +154,7 @@ import { emitNativeParseNumber } from "./parse-number-native.js";
 import { emitNativeUriDecode, emitNativeUriEncode } from "./uri-encoding-native.js";
 import { emitNativeEscape, emitNativeUnescape } from "./escape-native.js";
 import { emitNativeNumberFormat } from "./number-format-native.js";
-import {
-  isNativeGeneratorCandidate,
-  registerNativeGenerator,
-  sourceNeedsGeneratorHostImports,
-} from "./generators-native.js";
+import { isNativeGeneratorCandidate, registerNativeGenerator } from "./generators-native.js";
 import { emitWasiErrorConstructor, isWasiErrorName } from "./registry/error-types.js";
 import { addImport, addStringConstantGlobal, localGlobalIdx, nextModuleGlobalIdx } from "./registry/imports.js";
 import {

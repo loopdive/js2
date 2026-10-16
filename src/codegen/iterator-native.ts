@@ -140,8 +140,8 @@ const ITER_KIND_OBJ = 4;
  * (#3075) IterRec kind tag for a HOST generator object: the externref returned
  * by the legacy eager-buffer generator runtime (`__create_generator` /
  * `__create_async_generator` — the host fallback that `yield*`-and-friends
- * sync/async generator bodies still take even under `--target standalone`, see
- * `sourceNeedsGeneratorHostImports`). Such a value internalizes OUTSIDE every
+ * sync/async generator bodies take in the JS-host lane; since #7010 host-free
+ * builds refuse those generators instead). Such a value internalizes OUTSIDE every
  * GC heap subhierarchy (not struct / array / i31), so no native arm can read
  * it — before this arm it hit the hard-cast tail (`illegal cast [in
  * __iterator]`, the 468-record standalone for-of/for-await dstr cluster). A
@@ -342,8 +342,8 @@ const GENSTATE_STATE_FIELD = 0;
 /**
  * (#3075) Resolved fill-time deps of the HOSTGEN arm — the legacy eager-buffer
  * generator HOST IMPORTS (`addGeneratorImports` bundle), present exactly when
- * some generator body in the module bailed to the host path
- * (`sourceNeedsGeneratorHostImports`). All are IMPORT funcIdxs resolved from
+ * some generator body in the module bailed to the host path (JS host only
+ * since #7010). All are IMPORT funcIdxs resolved from
  * funcMap at fill time; later import shifts walk the rebuilt bodies like any
  * other defined function (same discipline as the USER/vec-family arms).
  */
@@ -2807,7 +2807,7 @@ export function fillNativeIteratorLateArms(ctx: CodegenContext): void {
 
   // (#3075) HOSTGEN-arm deps — the legacy eager-buffer generator HOST imports.
   // Present exactly when some generator body bailed to the host path under
-  // standalone/wasi (`sourceNeedsGeneratorHostImports`) — the module already
+  // standalone/wasi (unreachable since #7010, which refuses them) — the module already
   // carries the imports, so driving them adds no new host dependency. Without
   // them (the common zero-import standalone module) every body below is
   // byte-identical.
