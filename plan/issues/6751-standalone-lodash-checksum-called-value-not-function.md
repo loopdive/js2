@@ -1,7 +1,8 @@
 ---
 id: 6751
 title: "standalone lodash: after module init, the perf checksum (`words(text).length + kebabCase(text).length`) throws `called value is not a function`"
-status: ready
+status: done
+completed: 2026-10-16
 sprint: current
 created: 2026-09-29
 priority: high
@@ -96,3 +97,56 @@ which is a smaller second defect.
 
 Next step: make the default import read the real `module.exports` slot after
 the CJS body runs, so that any write path, aliased or not, is observed.
+
+## Implementation Plan
+
+Measured 2026-10-16 on `ee58c1aa26`: lane still `runtime-error`, phase
+`checksum`, `TypeError: called value is not a function`. The reduction above
+reproduces with 0 imports.
+
+Mechanism: `src/cjs-rewrite.ts` wraps a CJS file in a prelude
+(`let __cjs_default_export = {}; const exports = __cjs_default_export;
+const module = {};`) and rewrites only the literal `module.exports` spelling
+to `__cjs_default_export`. lodash writes `freeModule.exports = _`, where
+`freeModule` aliases `module`, so the write lands on the throwaway `module`
+object and the default export stays the empty `exports` object.
+
+Fix (host-free targets only, so the JS-host binary stays byte-identical):
+
+1. `CjsRewriteOptions.aliasedModuleExports`. When it is set and `module` is
+   read as a value anywhere other than `module.exports` (`moduleIsAliased`),
+   seed `const module = { exports: __cjs_default_export }` and append
+   `if (module.exports !== exports) __cjs_default_export = module.exports;`
+   before the existing `export { __cjs_default_export as default }`.
+   A direct `module.exports = X` is still rewritten to the cell, so it leaves
+   `module.exports === exports` and the footer does nothing.
+2. `ModuleResolver` (`src/resolve.ts`) owns the rewrite that `compileProject`
+   feeds into `compileMultiSource`. It sets the option for every target except
+   `gc`. The later rewrite in `compileMultiSource` is a no-op on an already
+   rewritten source, so `src/compiler.ts` is left unchanged.
+
+Acceptance: the reduction returns `words = 3`, `typeof pkg === "function"`
+and `pkg._ === pkg` in standalone mode. The lodash standalone-dynamic lane
+measures with a matching checksum. The gc binary of the reduction is
+byte-identical.
+
+## Resolution
+
+Implemented as planned (`src/cjs-rewrite.ts`, `src/resolve.ts`). Regression
+test: `tests/issue-6751-cjs-aliased-module-exports.test.ts`. The aliased case
+and the rewrite unit check fail on the parent. The literal
+`module.exports = _` control passes on both.
+
+| Lane (standalone-dynamic) | before | after |
+|---|---|---|
+| lodash | `runtime-error` (checksum, `called value is not a function`) | `measured`, checksum 54 = 54, ratio 0.034, 2,814,757 B |
+| lodash-es | `measured`, checksum 54, 5,300,194 B | `measured`, checksum 54, 5,300,194 B (ESM, not affected) |
+
+The gc binary of the reduction has the same SHA-1 before and after
+(`c5a85411…`).
+
+Scoped standalone test262 ran on base and on the fix: `language/module-code`
+(all rows) plus the two `dynamic-import/namespace/*own-property-keys-sort.js`
+rows, 601 rows in total. These are the only test262 files that contain a CJS
+surface token, and only inside comments. Both runs gave 368 pass, 188 fail,
+41 compile_error and 4 skip, with the same non-pass set row for row.
