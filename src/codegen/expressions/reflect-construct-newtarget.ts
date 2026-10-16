@@ -676,7 +676,6 @@ export function tryEmitOrdinaryConstructWithNewTarget(
   args: readonly ts.Expression[],
   ntLocal: number,
 ): boolean {
-  if (!ctx.standalone) return false;
   if (args.length > MAX_NATIVE_CONSTRUCT_ARITY) return false;
   if (args.some((a) => ts.isSpreadElement(a))) return false;
   if (!isUnreassignedOrdinaryFunction(ctx, target)) return false;
@@ -820,7 +819,7 @@ export function tryEmitProxyConstructWithNewTarget(
   ntLocal: number | undefined,
 ): boolean {
   if (ntLocal === undefined) return false;
-  if (!ctx.standalone) return false;
+
   if (args.length > MAX_NATIVE_CONSTRUCT_ARITY) return false;
   if (args.some((a) => ts.isSpreadElement(a))) return false;
   let target = targetArg;
@@ -1328,7 +1327,6 @@ export function classifyRuntimeNewTargetSite(
   if (targetReadsNewTarget(ctx, target)) return undefined;
 
   const driverEligible =
-    ctx.standalone &&
     args.length <= MAX_NATIVE_CONSTRUCT_ARITY &&
     !args.some((a) => ts.isSpreadElement(a)) &&
     isUnreassignedOrdinaryFunction(ctx, target) &&
@@ -1356,7 +1354,6 @@ export function classifyRuntimeNewTargetSite(
   // `j6_reassigned_target.js` (node 3 — the target is a reassigned `let`) and
   // leaves those three refused.
   if (targetKind.kind === "function") {
-    if (!ctx.standalone) return undefined;
     // A target that DOES statically resolve to one unreassigned function
     // declaration gets the closed-struct `new` lowering, on which the
     // post-construction patch is a silent no-op — so if the driver declined

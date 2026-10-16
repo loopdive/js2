@@ -4,14 +4,6 @@ import type { ts } from "../../ts-api.js";
 import { getLocalType } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { coerceType } from "../shared.js";
-import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
-
-/** Prepare host undefined padding before reserving the compiled apply bridge. */
-export function prepareCompiledApplyBridge(ctx: CodegenContext, fctx: FunctionContext): void {
-  if (ctx.standalone || ctx.wasi) return;
-  ensureLateImport(ctx, "__get_undefined", [], [{ kind: "externref" }]);
-  flushLateImportShifts(ctx, fctx);
-}
 
 /** Push a materialized arguments vec as externref without iterable wrapping. */
 export function emitMaterializedArgumentsVector(

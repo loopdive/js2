@@ -18,7 +18,7 @@ export function emitBuiltinArrayConstructOnNull(
   },
 ): void {
   const { emitStandaloneArrayConstructor } = services;
-  if (!(ctx.standalone || ctx.wasi)) return;
+
   const global = ctx.builtinObjectGlobals.get("Array");
   if (global === undefined) return;
   const ctor = emitStandaloneArrayConstructor(ctx, arguments_.length);

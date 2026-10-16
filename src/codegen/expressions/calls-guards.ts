@@ -93,7 +93,7 @@ export function runtimeEvalMayReplaceCallee(
   fctx: FunctionContext,
   callee: ts.Expression,
 ): boolean {
-  if (!ctx.standalone || ctx.runtimeEvalGlobalFunctionBindings !== true || !ts.isIdentifier(callee)) return false;
+  if (ctx.runtimeEvalGlobalFunctionBindings !== true || !ts.isIdentifier(callee)) return false;
   const name = callee.text;
   if (fctx.localMap.has(name)) return false;
   return (ctx.globalObjectVarBindings?.has(name) ?? false) || (ctx.globalLexicalBindings?.has(name) ?? false);

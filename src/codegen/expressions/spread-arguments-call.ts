@@ -36,7 +36,6 @@ import { allocLocal } from "../context/locals.js";
 import { popBody, pushBody } from "../context/bodies.js";
 import type { CodegenContext, FunctionContext, OptionalParamInfo } from "../context/types.js";
 import { getArrTypeIdxFromVec } from "../index.js";
-import { noJsHost } from "../js-errors.js";
 import { coerceType } from "../shared.js";
 import { pushDefaultValue, pushParamSentinel } from "../type-coercion.js";
 import { emitSetExtrasArgv, ensureArgcGlobal, ensureExtrasArgvGlobal } from "../statements/nested-declarations.js";
@@ -100,11 +99,6 @@ export function compileSpreadCallArgsWithArguments(
   const formalCount = paramTypes.length - paramOffset - trailingParamCount;
   if (formalCount <= 0) return false;
   if (!args.some((a) => ts.isSpreadElement(a))) return false;
-  // WASI without the standalone object runtime has neither the host readers nor
-  // the native materializer, so `emitSetExtrasArgv` degrades to a static path
-  // that does NOT flatten spreads. Binding formals off that list would be worse
-  // than the status quo; leave those targets on the existing lowering.
-  if (noJsHost(ctx) && !ctx.standalone) return false;
 
   const { globalIdx: extrasGlobalIdx, vecTypeIdx: extrasVecTypeIdx } = ensureExtrasArgvGlobal(ctx);
   const arrTypeIdx = getArrTypeIdxFromVec(ctx, extrasVecTypeIdx);

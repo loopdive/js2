@@ -372,25 +372,16 @@ export function fillProtoIteratorDriver(ctx: CodegenContext): void {
   if (!ctx.protoIteratorDriverReserved) return;
   const driverIdx = ctx.funcMap.get(DRIVE_PROTO_ITERATOR);
   if (driverIdx === undefined) {
-    if (ctx.standalone) throw new Error("#1719 standalone CPR driver identity could not be resolved at fill");
-    return;
+    throw new Error("#1719 standalone CPR driver identity could not be resolved at fill");
   }
   const driverFn = definedFuncAt(ctx, driverIdx);
   if (!driverFn) {
-    if (ctx.standalone) throw new Error("#1719 standalone CPR driver body could not be resolved at fill");
-    return;
+    throw new Error("#1719 standalone CPR driver body could not be resolved at fill");
   }
 
   const callMethod0 = ctx.funcMap.get("__call_fn_method_0");
   if (callMethod0 === undefined) {
-    if (ctx.standalone) {
-      throw new Error("#1719 standalone CPR driver dispatcher could not be resolved at fill");
-    }
-    // No arity-0 closure dispatcher emitted (no qualifying closure) — the driver
-    // is unreachable from any live read-drive in that case, but keep a valid
-    // body so the module verifies: return undefined (null externref).
-    driverFn.body = [{ op: "ref.null.extern" }];
-    return;
+    throw new Error("#1719 standalone CPR driver dispatcher could not be resolved at fill");
   }
   driverFn.body = [
     { op: "local.get", index: 0 }, // thisVal (array-as-this)
@@ -432,22 +423,13 @@ export function emitArrayProtoIteratorDrive(
 ): number {
   let iteratorIdx: number | undefined;
   let overrideGlobalIdx = overrideGlobalIdxBeforeSettlement;
-  if (ctx.standalone) {
-    // #1719 standalone contract: `__iterator_next` accepts only a canonical
-    // `$IterRec`, while the captured generator override returns a raw
-    // `$GenState_*`. Reserve the shared normalizer BEFORE retaining any
-    // shiftable global/function index, then settle the late-import batch and
-    // resolve every identity again from its authoritative registry.
-    ensureLateImport(ctx, "__iterator", [{ kind: "externref" }], [{ kind: "externref" }]);
-    flushLateImportShifts(ctx, fctx);
-    iteratorIdx = ctx.funcMap.get("__iterator");
-    if (iteratorIdx === undefined) {
-      throw new Error("#1719 standalone CPR normalizer '__iterator' could not be resolved");
-    }
-    reserveProtoIteratorDriver(ctx);
-  } else {
-    reserveProtoIteratorDriver(ctx);
+  ensureLateImport(ctx, "__iterator", [{ kind: "externref" }], [{ kind: "externref" }]);
+  flushLateImportShifts(ctx, fctx);
+  iteratorIdx = ctx.funcMap.get("__iterator");
+  if (iteratorIdx === undefined) {
+    throw new Error("#1719 standalone CPR normalizer '__iterator' could not be resolved");
   }
+  reserveProtoIteratorDriver(ctx);
 
   // Constructing the missing-iterator throw may add its error/string imports
   // and flush their index shifts. Do that before retaining any absolute CPR
@@ -465,13 +447,11 @@ export function emitArrayProtoIteratorDrive(
   if (driverIdx === undefined) {
     throw new Error("#1719 CPR driver could not be resolved after iterator error settlement");
   }
-  if (ctx.standalone) {
-    iteratorIdx = ctx.funcMap.get("__iterator");
-    if (iteratorIdx === undefined) {
-      throw new Error(
-        "#1719 standalone CPR normalizer '__iterator' could not be resolved after iterator error settlement",
-      );
-    }
+  iteratorIdx = ctx.funcMap.get("__iterator");
+  if (iteratorIdx === undefined) {
+    throw new Error(
+      "#1719 standalone CPR normalizer '__iterator' could not be resolved after iterator error settlement",
+    );
   }
 
   // (#5154 cluster A) §7.4.2 GetIterator: an EMPTY override slot means the

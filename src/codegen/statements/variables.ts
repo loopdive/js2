@@ -91,10 +91,7 @@ import { detectNullGuardAlias } from "./null-guard-alias.js"; // (#4555) extract
 import { reusedVarSlotIndex } from "./var-slot-reuse.js"; // (#4555) §10.5 step 8
 import { emitRealmGlobalPrimitiveMethodWriteback } from "../global-environment.js";
 import { chunkDeclarationIsFunctionLocal, isModuleInitChunkFunctionContext } from "../module-init-chunks.js";
-import {
-  tryCompileClassExpressionBindingValue,
-  tryEmitPromiseSubclassClassExpressionValue,
-} from "../expressions/promise-subclass.js";
+import { tryCompileClassExpressionBindingValue } from "../expressions/promise-subclass.js";
 import { hostRegExpMatchResultNeedsExternref, stripInferenceWrapper } from "../regexp-host-match.js";
 import { taStaticFromOfReflectiveCallNeedsExternref } from "../ta-static-from-of-spec.js";
 import { objectAssignResultNeedsExternref } from "../object-model/object-assign-primitive-operands.js";
@@ -1695,14 +1692,11 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
       if (decl.initializer) {
         const globalDef = ctx.mod.globals[localGlobalIdx(ctx, moduleGlobalIdx)];
         const wasmType = globalDef?.type ?? resolveWasmType(ctx, ctx.checker.getTypeAtLocation(decl));
-        const materializationStart = fctx.body.length;
         const widenedInit = rebindWidenedArrayInit(ctx, decl, wasmType);
         if (widenedInit) {
           compileArrayLiteral(ctx, fctx, widenedInit, { kind: "externref" }); // (#6651 U4) straight into the widened vec
-        } else if (tryEmitPromiseSubclassClassExpressionValue(ctx, fctx, decl.initializer, wasmType) === undefined) {
-          compileExpression(ctx, fctx, decl.initializer, wasmType);
         } else {
-          emitHandledClassExpressionBindingEffects(ctx, fctx, decl.initializer, materializationStart);
+          compileExpression(ctx, fctx, decl.initializer, wasmType);
         }
         const initLocal = allocLocal(fctx, `__module_global_init_${fctx.locals.length}`, wasmType);
         fctx.body.push({ op: "local.set", index: initLocal });

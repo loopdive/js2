@@ -151,10 +151,8 @@ function compileConsoleCall(
       }
       // (#6685) Native regime: a dynamic arg may be a Wasm-owned string; export
       // the bridge so the console capability hands the host a JS string.
-      if (ctx.standalone) {
-        ensureNativeStringBoundaryBridge(ctx);
-        flushLateImportShifts(ctx, fctx);
-      }
+      ensureNativeStringBoundaryBridge(ctx);
+      flushLateImportShifts(ctx, fctx);
       const funcIdx = ctx.funcMap.get(`console_${method}_externref`);
       if (funcIdx !== undefined) {
         fctx.body.push({ op: "call", funcIdx });

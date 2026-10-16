@@ -15,9 +15,8 @@
  * discipline used by accessor-driver.ts.
  */
 import type { Instr, ValType } from "../ir/types.js";
-import { addFuncType } from "./index.js";
 import type { CodegenContext } from "./context/types.js";
-import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
+import { definedFuncAt } from "./func-space.js";
 import { ensureArgcGlobal } from "./statements/nested-declarations.js";
 
 const EXTERNREF: ValType = { kind: "externref" };
@@ -30,26 +29,6 @@ function driverName(arity: number): string {
 /** Host fallback used when live lookup yields a genuine JS callable. */
 export function hostFnctorCallableFallbackImportName(arity: number): string {
   return `__extern_call_raw_callable_${arity}`;
-}
-
-/** Reserve a stable `(receiver, rawClosure, ...args) -> externref` driver. */
-export function reserveHostFnctorMethodDriver(ctx: CodegenContext, arity: number): number {
-  const name = driverName(arity);
-  const existing = ctx.funcMap.get(name);
-  if (existing !== undefined) return existing;
-
-  const params = Array.from({ length: arity + 2 }, () => EXTERNREF);
-  const typeIdx = addFuncType(ctx, params, [EXTERNREF], `$${name}_type`);
-  const funcIdx = mintDefinedFunc(ctx);
-  pushDefinedFunc(ctx, funcIdx, {
-    name,
-    typeIdx,
-    locals: [],
-    body: [{ op: "unreachable" }],
-    exported: false,
-  });
-  ctx.funcMap.set(name, funcIdx);
-  return funcIdx;
 }
 
 /** Highest reserved driver arity, or -1 when the host fast path is unused. */

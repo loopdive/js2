@@ -1331,21 +1331,6 @@ function strictMethodDispatch(
   return out;
 }
 
-/**
- * Reserve the host-side strict method surface.  The canonical host materializer
- * remains the provider for the host lane; this flag only asks finalization to
- * expose an exact receiver-aware fallback for closed WasmGC object literals.
- * It is deliberately separate from `ensureNativeStrictSpreadRuntime`, which
- * is standalone/WASI-only and owns the native provider bodies.
- */
-export function ensureHostStrictSpreadDispatch(ctx: CodegenContext): void {
-  strictHostSpreadByCtx.add(ctx);
-  // `fillNativeIteratorLateArms` is the existing post-dispatch finalization
-  // seam. Mark the work pending without registering the native compatibility
-  // quartet; the host branch below returns after emitting only these helpers.
-  ctx.nativeIteratorUserArmPending = true;
-}
-
 /** Emit one host-visible exact method dispatcher with structural fallback. */
 function emitHostStrictMethodDispatcher(
   ctx: CodegenContext,

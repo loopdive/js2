@@ -29,7 +29,6 @@ import { reserveBoolMethodString } from "./bool-to-locale-string.js"; // (#6771 
 import { inheritedBuiltinReceiverType } from "../builtin-subclass-receiver.js"; // (#6651 C5)
 import { isWiredTypedArrayViewName } from "../array-object-proto.js";
 import { ensureWrapperProtoDynamicMember } from "../wrapper-proto-dynamic-demand.js"; // (#4619)
-import { exactClassExpressionTypeName } from "../class-expression-identity.js";
 import { emitNarrowedCarrierToString } from "../bigint-wide.js";
 import { emitStandalonePromiseFinally, emitStandalonePromiseThen } from "../async-scheduler.js";
 import { isSupportedBuiltinStaticProperty, resolveBuiltinNamespaceValueName } from "../builtin-static-globals.js";
@@ -49,7 +48,6 @@ import { pushBody } from "../context/bodies.js";
 import { allocLocal, allocTempLocal, getLocalType, releaseTempLocal } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { resolveReceiverStruct } from "../fnctor-escape-gate.js";
-import { hostFnctorCallableFallbackImportName, reserveHostFnctorMethodDriver } from "../host-fnctor-method-driver.js";
 import { tryCompileHostStringPredicate } from "../host-string-prefix-suffix.js";
 import { tryCompileStringSymbolProtocolDispatch } from "../string-symbol-protocol.js"; // (#6651 B) §22.1.3 step 2
 import { observeHostDynamicMethodCallArity } from "../dynamic-method-call-arity.js";
@@ -148,8 +146,7 @@ import { tryCompileTemporalMethodCall } from "../temporal-native.js";
 import { ensureTextEncodingHelpers } from "../text-encoding-native.js";
 import { isArgumentsObjectIdentifier } from "../arguments-object-mop.js";
 import { emitSymbolArgToNumberThrow } from "../tonumber-symbol-throw.js"; // (#4779)
-import { defaultValueInstrs, emitGuardedRefCast, getVecInfo, pushDefaultValue } from "../type-coercion.js";
-import { isDeclinedVecCallbackMethod } from "./vec-callback-method-host-delegation.js"; // (#6848)
+import { defaultValueInstrs, emitGuardedRefCast, pushDefaultValue } from "../type-coercion.js";
 import { compileDateMethodCall } from "./builtins.js";
 // (#4479 slice 2) Annex B §B.2.2 legacy accessor methods on an ordinary receiver.
 import { tryCompileAnnexBAccessorCall } from "../object-proto-annex-b-accessors.js";
@@ -159,7 +156,6 @@ import {
   compileObjectPrototypeFallback,
   tryExternClassMethodOnAny,
 } from "./calls-closures.js";
-import { sourceDefinesFunctionMember } from "../source-function-members.js";
 import { compileExternMethodCall, compileSpreadCallArgs } from "./extern.js";
 import { compileSpreadCallArgsWithArguments } from "./spread-arguments-call.js";
 import { tryEmitValueOfFallback } from "./valueof-fallback.js";
@@ -188,7 +184,6 @@ import {
   getFuncParamTypes,
   getWasmFuncReturnType,
   isEffectivelyVoidReturn,
-  maybeStampCompiledFunctionArgName,
   noJsHost,
   resolveReceiverMethodClassName,
   wasmFuncReturnsVoid,
@@ -541,16 +536,7 @@ function tryCompileLateFnctorPrototypeMethodCall(
   const pinnedReceiver = resolveReceiverStruct(ctx, fctx, propAccess.expression);
   const isThisReceiver = propAccess.expression.kind === ts.SyntaxKind.ThisKeyword;
   const pinnedFnctor = pinnedReceiver?.startsWith("__fnctor_") === true;
-  if (ctx.standalone) {
-    if (!isThisReceiver && !pinnedFnctor) return undefined;
-  } else {
-    // (#3668) JS-host parser recursion used to bounce every `this.m(...)`
-    // between Wasm and `__extern_method_call`, consuming one native JS frame
-    // per recursive-descent edge. Only take the in-module dispatcher when the
-    // escape analysis proves the receiver's concrete fnctor struct. Dynamic /
-    // unpinned receivers retain the host MOP path.
-    if (ctx.wasi || !pinnedFnctor) return undefined;
-  }
+  if (!isThisReceiver && !pinnedFnctor) return undefined;
 
   // (#3683 S3) Inside a typed twin, `this.<m>(...)` on a write-once prototype
   // method of the SAME fnctor lowers to a direct call. MUST run before the
@@ -570,34 +556,10 @@ function tryCompileLateFnctorPrototypeMethodCall(
     ? flattenCallArgs(expr.arguments)
     : [...expr.arguments];
   if (dispatchArgs === null) return undefined;
-  // The canonical closure-method surface is intentionally capped at arity 8.
-  // Preserve the generic host path above that cap instead of reserving an
-  // unfillable private driver.
-  if (!ctx.standalone && !ctx.wasi && dispatchArgs.length > 8) return undefined;
 
   const methodName = propAccess.name.text;
-  const dispatchIdx = ctx.standalone
-    ? reserveClosedMethodDispatch(ctx, methodName, dispatchArgs.length)
-    : reserveHostFnctorMethodDriver(ctx, dispatchArgs.length);
-  const rawGetIdx =
-    ctx.standalone || ctx.wasi
-      ? undefined
-      : ensureLateImport(
-          ctx,
-          "__extern_get_raw_callable",
-          [{ kind: "externref" }, { kind: "externref" }],
-          [{ kind: "externref" }],
-        );
-  if (!ctx.standalone && !ctx.wasi) {
-    ensureLateImport(ctx, "__get_undefined", [], [{ kind: "externref" }]);
-    ensureLateImport(
-      ctx,
-      hostFnctorCallableFallbackImportName(dispatchArgs.length),
-      Array.from({ length: dispatchArgs.length + 2 }, () => ({ kind: "externref" }) as ValType),
-      [{ kind: "externref" }],
-    );
-  }
-  if (!ctx.standalone && !ctx.wasi) addStringConstantGlobal(ctx, methodName);
+  const dispatchIdx = reserveClosedMethodDispatch(ctx, methodName, dispatchArgs.length);
+
   flushLateImportShifts(ctx, fctx);
   const recvType = compileExpression(ctx, fctx, propAccess.expression, { kind: "externref" });
   if (recvType && recvType.kind !== "externref") {
@@ -615,26 +577,7 @@ function tryCompileLateFnctorPrototypeMethodCall(
     fctx.body.push(...buildCallSiteNullishReceiverGuard(ctx, guardTmp, methodName));
     releaseTempLocal(fctx, guardTmp);
   }
-  if (!ctx.standalone && !ctx.wasi) {
-    // Keep one receiver copy for `this`, then resolve the current method value
-    // without wrapping the Wasm closure as a JavaScript Function. The lookup
-    // import returns before the closure is invoked, so recursive descent does
-    // not retain a host frame.
-    const recvLocal = allocLocal(fctx, `__host_fnctor_recv_${fctx.locals.length}`, {
-      kind: "externref",
-    });
-    fctx.body.push({ op: "local.set", index: recvLocal });
-    fctx.body.push({ op: "local.get", index: recvLocal });
-    fctx.body.push({ op: "local.get", index: recvLocal });
-    fctx.body.push(...stringConstantExternrefInstrs(ctx, methodName));
-    if (rawGetIdx !== undefined) {
-      fctx.body.push({ op: "call", funcIdx: rawGetIdx });
-    } else {
-      fctx.body.push({ op: "drop" });
-      fctx.body.push({ op: "drop" });
-      fctx.body.push({ op: "ref.null.extern" });
-    }
-  }
+
   for (const arg of dispatchArgs) {
     const argType = compileExpression(ctx, fctx, arg, { kind: "externref" });
     if (argType && argType.kind !== "externref") {
@@ -664,7 +607,7 @@ function tryCompileStandaloneFnctorLazyMethodMiss(
   receiverClassName: string,
   methodName: string,
 ): InnerResult | undefined {
-  if (!ctx.standalone || fnctorAncestorOfClass(ctx, receiverClassName) === undefined) return undefined;
+  if (fnctorAncestorOfClass(ctx, receiverClassName) === undefined) return undefined;
 
   let owner: string | undefined = receiverClassName;
   let hasCompiledNextMethod = false;
@@ -763,7 +706,6 @@ function tryCompileStandaloneFnctorLazyMethodMiss(
  *    such a write compiles byte-identically on the primitive path.
  */
 function declinesToOwnOrInheritedSlot(ctx: CodegenContext, receiverType: ts.Type, method: string): boolean {
-  if (!ctx.standalone) return false;
   const isWrapper =
     isStringWrapperType(receiverType) || isNumberWrapperType(receiverType) || isBooleanWrapperType(receiverType);
   if (!isWrapper && !(isStringType(receiverType) && ctx.protoNamedDirty)) return false;
@@ -874,7 +816,7 @@ export function compileReceiverMethodCall(
   const primitiveToLocaleString = tryEmitPrimitiveToLocaleStringInvoke(ctx, fctx, expr, propAccess);
   if (primitiveToLocaleString !== undefined) return primitiveToLocaleString;
 
-  if (ctx.standalone && propAccess.name.text === "concat" && ts.isIdentifier(propAccess.expression)) {
+  if (propAccess.name.text === "concat" && ts.isIdentifier(propAccess.expression)) {
     const text = propAccess.getSourceFile().text;
     const escaped = propAccess.expression.text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const installed = new RegExp(
@@ -1304,7 +1246,7 @@ export function compileReceiverMethodCall(
         // #2895 — `tests/issue-1326.test.ts` asserts the WAT never
         // contains "Promise_then" for `--target wasi`, and instantiates
         // with an EMPTY imports object). So the `ref.test` + host-fallback
-        // hardening below is scoped to the NON-wasi case (`ctx.standalone`
+        // hardening below is scoped to the NON-wasi case (the regime flag
         // under the carrier-widen measurement) — the only configuration
         // the #2980 decision measure actually exercises, and one where a
         // host `Promise_then`/`Promise_then2`/`Promise_catch` import is
@@ -1516,7 +1458,7 @@ export function compileReceiverMethodCall(
     // first (§7.1.1.1), then apply the method's result type. `Number.prototype.
     // toString` with a radix is NOT this path (excluded by member name above),
     // so it falls through to the radix-aware toString lowering. Gated on
-    // `ctx.standalone` specifically — WASI keeps the host-import object
+    // the regime flag specifically — WASI keeps the host-import object
     // machinery (the native object-runtime is standalone-only), so it stays on
     // the legacy paths below.
     // (#3175) `Number.prototype.valueOf()` — [[NumberData]] is +0 (§21.1.3).
@@ -1532,7 +1474,7 @@ export function compileReceiverMethodCall(
       return { kind: "f64" };
     }
 
-    if (ctx.standalone && isWrapperValueAccessor) {
+    if (isWrapperValueAccessor) {
       ensureObjectRuntime(ctx);
       const toPrimIdx = ctx.funcMap.get("__to_primitive");
       if (toPrimIdx !== undefined) {
@@ -1590,49 +1532,6 @@ export function compileReceiverMethodCall(
     if (recvSymName === "Boolean" && wrapperMethodName === "valueOf") {
       compileExpression(ctx, fctx, propAccess.expression, { kind: "i32" });
       return { kind: "i32" };
-    }
-  }
-
-  // An array or property read can retain a union of unrelated class instance
-  // types. Selecting the first member's method body is unsound: the runtime
-  // value may carry any member's private fields and implementation. On the JS
-  // host lane, use the existing runtime class-member bridge when every
-  // candidate has an externref-compatible ABI. The bridge ref.tests the real
-  // WasmGC instance and dispatches to that class's own method.
-  if (!ctx.standalone && !ctx.wasi && receiverType.isUnion() && !ts.isPrivateIdentifier(propAccess.name)) {
-    const methodName = propAccess.name.text;
-    const classNames = new Set<string>();
-    let bridgeCompatible = true;
-    for (const memberType of receiverType.types) {
-      const memberName =
-        exactClassExpressionTypeName(ctx, memberType) ??
-        canonicalClassExpressionName(ctx, memberType.getSymbol()?.name);
-      if (!memberName || !ctx.classSet.has(memberName)) continue;
-      classNames.add(memberName);
-
-      let owner: string | undefined = memberName;
-      let methodParams: ValType[] | undefined;
-      while (owner !== undefined) {
-        const fullName = `${owner}_${methodName}`;
-        const methodIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName, "instance")) ?? ctx.funcMap.get(fullName);
-        if (methodIdx !== undefined) {
-          methodParams = getFuncParamTypes(ctx, methodIdx);
-          break;
-        }
-        owner = ctx.classParentMap.get(owner);
-      }
-      if (
-        methodParams === undefined ||
-        methodParams.length === 0 ||
-        methodParams.slice(1).some((param) => param.kind !== "externref" && param.kind !== "ref_extern")
-      ) {
-        bridgeCompatible = false;
-        break;
-      }
-    }
-    if (bridgeCompatible && classNames.size > 1) {
-      const dynamicResult = emitFnctorSubclassDynamicMethodCall(ctx, fctx, expr, propAccess, methodName, true);
-      if (dynamicResult !== undefined) return dynamicResult;
     }
   }
 
@@ -2290,8 +2189,7 @@ export function compileReceiverMethodCall(
         for (let i = 0; i < Math.min(expr.arguments.length, methodParamCount); i++) {
           const sourceParam =
             memberDecl !== undefined && ts.isMethodDeclaration(memberDecl) ? memberDecl.parameters[i] : undefined;
-          const forceArrayLiteralVec =
-            (ctx.standalone || ctx.wasi) && sourceParam !== undefined && ts.isArrayBindingPattern(sourceParam.name);
+          const forceArrayLiteralVec = sourceParam !== undefined && ts.isArrayBindingPattern(sourceParam.name);
           compileInternalCallArgument(ctx, fctx, expr.arguments[i]!, paramTypes?.[i + 1], forceArrayLiteralVec); // +1 to skip self
         }
       }
@@ -2608,7 +2506,6 @@ export function compileReceiverMethodCall(
   // (round-half-to-even store). Float views + `any`-held receivers are still
   // excluded (see the view set / the R4b/R4c notes).
   if (
-    ctx.standalone &&
     (propAccess.name.text === "map" || propAccess.name.text === "filter") &&
     expr.arguments.length >= 1 &&
     !expr.arguments.some((a) => ts.isSpreadElement(a))
@@ -2669,7 +2566,7 @@ export function compileReceiverMethodCall(
   // here; the dynamic-view (`$__ta_dyn_view`) shape keeps its own #3058/#3162
   // path in array-methods.ts (disjoint receiver). map/filter (typed-RESULT)
   // deferred to R4b. Standalone-gated → gc/wasi byte-identical.
-  if (ctx.standalone && STANDALONE_TA_SCALAR_HOFS.has(propAccess.name.text)) {
+  if (STANDALONE_TA_SCALAR_HOFS.has(propAccess.name.text)) {
     // A concrete typed-array receiver carries its view name directly on the
     // type symbol (the known-element-kind shape this interception targets).
     const taName = receiverType.getSymbol?.()?.getName?.();
@@ -2721,7 +2618,6 @@ export function compileReceiverMethodCall(
   // arm and binding-aware so an explicit local/parameter named `arguments`
   // remains on the ordinary property path.
   if (
-    (ctx.standalone || ctx.wasi) &&
     propAccess.name.text === "toString" &&
     expr.arguments.length === 0 &&
     ts.isIdentifier(propAccess.expression) &&
@@ -2746,9 +2642,7 @@ export function compileReceiverMethodCall(
   // `subarray/invoked-as-method.js` already passed: `subarray` is not an
   // `ARRAY_METHODS` name, so it never reached this claim.
   const receiverIsTypedArrayIntrinsicProto =
-    ctx.standalone &&
-    ts.isPropertyAccessExpression(propAccess) &&
-    tracesToTypedArrayIntrinsicProto(ctx, propAccess.expression);
+    ts.isPropertyAccessExpression(propAccess) && tracesToTypedArrayIntrinsicProto(ctx, propAccess.expression);
   if (
     !receiverIsTypedArrayIntrinsicProto &&
     !((receiverType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0)
@@ -2830,7 +2724,7 @@ export function compileReceiverMethodCall(
     // once at the call site and report the native string type so consumers
     // see a native receiver directly. JS-host mode keeps the externref.
     //
-    // (#3912) The old third conjunct was `(ctx.standalone || ctx.wasi)` — the
+    // (#3912) The old third conjunct was `(the regime flag || ctx.wasi)` — the
     // SAME between-family mismatch this issue fixes in `import-collector.ts`,
     // one layer down. `fast` sets `nativeStrings` but neither of those, so
     // `.toString()` reported a bare `externref` that in fact wrapped an
@@ -2873,7 +2767,6 @@ export function compileReceiverMethodCall(
   // the `__extern_toLocaleString` path below for real Intl grouping. A call
   // WITH a locale argument also falls through to that host path.
   if (
-    (ctx.standalone || ctx.wasi) &&
     isNumberMethodReceiver(ctx, receiverType) &&
     propAccess.name.text === "toLocaleString" &&
     expr.arguments.length === 0
@@ -2883,7 +2776,7 @@ export function compileReceiverMethodCall(
     const funcIdx = ctx.funcMap.get("number_toString");
     if (funcIdx !== undefined) {
       fctx.body.push({ op: "call", funcIdx });
-      const unwrapToNative = ctx.nativeStrings && ctx.nativeStrTypeIdx >= 0 && (ctx.standalone || ctx.wasi);
+      const unwrapToNative = ctx.nativeStrings && ctx.nativeStrTypeIdx >= 0;
       if (unwrapToNative) {
         fctx.body.push({ op: "any.convert_extern" });
         fctx.body.push({ op: "ref.cast", typeIdx: ctx.anyStrTypeIdx });
@@ -3334,11 +3227,11 @@ export function compileReceiverMethodCall(
       // slice (cs-2160) already recovers the internal `[[PrimitiveValue]]` slot
       // via the native `__to_primitive` engine helper; reuse the SAME helper
       // here as the receiver so the method dispatches against the wrapped
-      // primitive string. Gated on `ctx.standalone` (the native object-runtime
+      // primitive string. Gated on the regime flag (the native object-runtime
       // / `__to_primitive` machinery is standalone-only — WASI keeps the host
       // object path). No new coercion site: `__to_primitive` is the existing
       // §7.1.1.1 engine helper.
-      if (ctx.standalone && isStringWrapperType(receiverType) && method !== "toString" && method !== "valueOf") {
+      if (isStringWrapperType(receiverType) && method !== "toString" && method !== "valueOf") {
         ensureObjectRuntime(ctx);
         const toPrimIdx = ctx.funcMap.get("__to_primitive");
         if (toPrimIdx !== undefined && ctx.anyStrTypeIdx >= 0) {
@@ -3729,7 +3622,7 @@ export function compileReceiverMethodCall(
     // `__extern_toString` (registered host-free under standalone via #1866),
     // which removes the CE while matching the locale-independent value. Host
     // (gc) mode keeps `__extern_toLocaleString` for real Intl grouping.
-    const toLSName = ctx.standalone || ctx.wasi ? "__extern_toString" : "__extern_toLocaleString";
+    const toLSName = "__extern_toString";
     const toLSIdx = ensureLateImport(ctx, toLSName, [{ kind: "externref" }], [{ kind: "externref" }]);
     flushLateImportShifts(ctx, fctx);
     if (toLSIdx !== undefined) {
@@ -3744,7 +3637,7 @@ export function compileReceiverMethodCall(
       // `__extern_toString` straight away, which joins a post-detach length 0
       // and returns "" (`toLocaleString/detached-buffer.js`). The receiver stays
       // on the stack; the guard is stack-neutral.
-      if (ctx.standalone && ctx.taDynViewTypeIdx >= 0 && ctx.funcMap.has("__new_TypeError")) {
+      if (ctx.taDynViewTypeIdx >= 0 && ctx.funcMap.has("__new_TypeError")) {
         const recvLocal = allocLocal(fctx, `__tls_recv_${fctx.locals.length}`, { kind: "externref" });
         fctx.body.push(
           { op: "local.tee", index: recvLocal },
@@ -3775,7 +3668,6 @@ export function compileReceiverMethodCall(
   // catchable TypeError; do not fall through to the generic externref call
   // ladder, which would reintroduce a host-only toString import in standalone.
   if (
-    ctx.standalone &&
     propAccess.name.text === "toString" &&
     expr.arguments.length === 0 &&
     sourceDeletesBuiltinPrototypeMember(ctx, fctx, propAccess.expression, "toString")
@@ -3791,7 +3683,6 @@ export function compileReceiverMethodCall(
   // an exact transferred-intrinsic proof; arbitrary user functions stay on
   // their existing dynamic/refusal path.
   if (
-    ctx.standalone &&
     propAccess.name.text === "toString" &&
     expr.arguments.length === 0 &&
     resolveBuiltinNamespaceValueName(ctx, propAccess.expression) === "Array" &&
@@ -3821,7 +3712,7 @@ export function compileReceiverMethodCall(
     // Receiver-precise (`sourceOverridesMethodOnReceiver`): a module that does not
     // override `toString` on this binding compiles byte-identically. (#4482: `ctx`
     // widens "this binding" to a `new A(…)` binding whose ctor installs the slot.)
-    !(ctx.standalone && sourceOverridesMethodOnReceiver(propAccess.expression, "toString", ctx))
+    !sourceOverridesMethodOnReceiver(propAccess.expression, "toString", ctx)
   ) {
     // #1463 — `someFn.toString()` where `someFn` is a top-level function
     // declaration → return the captured source text directly. Must happen
@@ -4012,48 +3903,12 @@ export function compileReceiverMethodCall(
       // Try to resolve via registered extern classes (e.g. Set.union, Map.get)
       // when the receiver type is `any` but the method matches a built-in.
       {
-        const builtinNamespace = ctx.standalone
-          ? resolveBuiltinNamespaceValueName(ctx, propAccess.expression)
-          : undefined;
+        const builtinNamespace = resolveBuiltinNamespaceValueName(ctx, propAccess.expression);
         const preferOpenBuiltinNamespace =
           builtinNamespace !== undefined && isSupportedBuiltinStaticProperty(builtinNamespace, methodName);
         if (!preferOpenBuiltinNamespace) {
           const externResult = tryExternClassMethodOnAny(ctx, fctx, expr, propAccess, methodName);
           if (externResult !== null) return externResult;
-        }
-      }
-
-      // An any/externref receiver can be a closed object literal whose own
-      // callable field shadows a same-spelled class method. The closed method
-      // dispatcher cannot know which instance field is populated and would
-      // claim the prototype arm first (Marked's hooks use this shape). Keep
-      // this host-only and narrow it to names for which both a callable field
-      // and a compiled instance method exist; the normal host object bridge
-      // performs the live JavaScript property lookup.
-      if (!ctx.standalone && !ctx.wasi) {
-        // A closed object literal may store a callable in an externref field
-        // even when the checker reports `any` at this call site.  Prefer the
-        // host's live property lookup for those fields.  Do not use the
-        // syntactic fact that the receiver is a property access as a signal:
-        // Marked's `this.tokenizer.space()` has the same `any` checker type,
-        // but `space` is a compiled class method and must stay on the closed
-        // Wasm dispatcher.  The field table is the semantic distinction.
-        const hasCallableField = [...ctx.structFields.values()].some((fields) =>
-          fields.some((field) => field.name === methodName && field.type.kind === "externref"),
-        );
-        const receiverPropertySymbol = ts.isPropertyAccessExpression(propAccess.expression)
-          ? ctx.checker.getSymbolAtLocation(propAccess.expression.name)
-          : undefined;
-        // A declared class property (for example `this.tokenizer`) still has
-        // a concrete Wasm owner even when allowJs reports `any`; let the
-        // closed dispatcher resolve its methods.  An unknown owner (`i.hooks`)
-        // or a local object literal is genuinely late-bound and needs the
-        // host's live callable-field lookup.
-        const receiverOwnerIsUnknown =
-          !ts.isPropertyAccessExpression(propAccess.expression) || receiverPropertySymbol === undefined;
-        if (hasCallableField && receiverOwnerIsUnknown) {
-          const dynamicFieldCall = emitWrapperDynamicMethodCall(ctx, fctx, propAccess.expression, methodName, expr);
-          if (dynamicFieldCall !== null) return dynamicFieldCall;
         }
       }
 
@@ -4080,98 +3935,14 @@ export function compileReceiverMethodCall(
       // null and it falls through to the generic path.
       const hasSpreadArg = expr.arguments.some((a) => ts.isSpreadElement(a));
       const dispatchArgs: ts.Expression[] | null = hasSpreadArg ? flattenCallArgs(expr.arguments) : [...expr.arguments];
-      const hasKnownUserClassMethod = [...ctx.classSet].some((className) => {
-        const fullName = `${className}_${methodName}`;
-        // The closed dispatcher carries an instance receiver as its first
-        // argument. Static class methods have no such slot and must stay on
-        // the class-object/host bridge (otherwise `anyClass.staticMethod()`
-        // passes the constructor as the first user argument). Only instance
-        // members can be safely represented by this dispatcher.
-        return (
-          ctx.classMethodSet.has(fullName) &&
-          (ctx.funcMap.has(classMemberFuncKey(ctx, fullName, "instance")) || ctx.funcMap.has(fullName))
-        );
-      });
-      const userMethodArities: number[] = [];
-      const userMethodFuncsByCarrierShape = new Map<string, Set<number>>();
-      const seenUserMethodCarriers = new Set<string>();
-      let hasUserRestMethod = false;
-      for (const [rawStructName] of ctx.structFields) {
-        const structName = ctx.classExprNameMap.get(rawStructName) ?? rawStructName;
-        if (seenUserMethodCarriers.has(structName)) continue;
-        seenUserMethodCarriers.add(structName);
-        const fullName = `${structName}_${methodName}`;
-        // Static-only members share the class object's struct carrier but do
-        // not accept the instance receiver expected by this dispatcher.
-        if (!ctx.classMethodSet.has(fullName)) continue;
-        const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName, "instance")) ?? ctx.funcMap.get(fullName);
-        if (funcIdx === undefined) continue;
-        const params = getFuncParamTypes(ctx, funcIdx);
-        if (params) userMethodArities.push(Math.max(0, params.length - 1));
-        const fields = ctx.structFields.get(structName) ?? [];
-        const typeIdx = ctx.structMap.get(structName);
-        const typeDef = typeIdx === undefined ? undefined : ctx.mod.types[typeIdx];
-        const superTypeIdx = typeDef?.kind === "struct" ? typeDef.superTypeIdx : -1;
-        const carrierShape = `${superTypeIdx};${fields
-          .map((field) =>
-            field.type.kind === "ref" || field.type.kind === "ref_null"
-              ? `${field.type.kind}:${field.type.typeIdx}`
-              : field.type.kind,
-          )
-          .join(",")}`;
-        let funcsForShape = userMethodFuncsByCarrierShape.get(carrierShape);
-        if (!funcsForShape) {
-          funcsForShape = new Set<number>();
-          userMethodFuncsByCarrierShape.set(carrierShape, funcsForShape);
-        }
-        funcsForShape.add(funcIdx);
-        if (ctx.funcRestParams.has(fullName)) hasUserRestMethod = true;
-      }
-      // The generated dispatcher currently specializes one fixed method ABI.
-      // Activate it on the host lane only when every concrete source candidate
-      // has that same non-rest ABI. Otherwise a subclass override with another
-      // arity can satisfy its base struct's ref.test and silently run the base
-      // body, while a rest vec would be mistaken for one positional argument.
-      const hasUniformUserMethodAbi =
-        userMethodArities.length > 0 &&
-        !hasUserRestMethod &&
-        userMethodArities.every((arity) => arity === userMethodArities[0]) &&
-        [...userMethodFuncsByCarrierShape.values()].every((funcs) => funcs.size === 1);
-      // A callable class field shadows a prototype method of the same name.
-      // A closed method dispatcher cannot represent that per-instance choice:
-      // its method arm would win before the field closure is read. Leave this
-      // collision on the generic host path, whose normal property lookup sees
-      // the actual field value (Marked's `parse`/`parseInline` shape).
-      const hasUserClassField = [...ctx.classSet].some((className) =>
-        (ctx.structFields.get(className) ?? []).some(
-          (field) => field.name === methodName && field.type.kind === "externref",
-        ),
-      );
-      const needsRuntimeUserMethodName =
-        hasUniformUserMethodAbi &&
-        (sourceDefinesFunctionMember(expr.getSourceFile(), methodName) || hasKnownUserClassMethod) &&
-        !(hasUserClassField && hasKnownUserClassMethod);
-      const needsRuntimeUserMethodDispatch = dispatchArgs !== null && needsRuntimeUserMethodName;
-      // The closed dispatcher is also the JS-host implementation for an
-      // any-typed call into a compiled class.  Mark the name before reserving
-      // it so finalization can preserve JavaScript's ordinary under-application
-      // semantics (missing parameters are `undefined`, even when the checker
-      // did not recover an optional marker from an allowJs source).
-      if (needsRuntimeUserMethodDispatch && !ctx.standalone && !ctx.wasi) {
-        ctx.hostDynamicClassMethodNames.add(methodName);
-      }
-      if (
-        (ctx.standalone || ctx.wasi || needsRuntimeUserMethodDispatch) &&
-        dispatchArgs !== null &&
-        !recvIsBuiltinClass
-      ) {
+      if (dispatchArgs !== null && !recvIsBuiltinClass) {
         const arity = dispatchArgs.length;
         const dispatchIdx = reserveClosedMethodDispatch(ctx, methodName, arity);
         // #3507 — reserve the native RegExp carrier helper while function
         // indices are still append-safe. The dispatcher fill only reads it.
-        if (ctx.standalone && methodName === "test" && arity === 1) {
+        if (methodName === "test" && arity === 1) {
           ensureStandaloneRegExpCarrierTestHelper(ctx);
-        } else if (ctx.standalone && methodName === "exec" && arity === 1) {
+        } else if (methodName === "exec" && arity === 1) {
           ensureStandaloneRegExpCarrierExecHelper(ctx); // (#6672) the exec twin
         }
         // (#2927) For the in-place array mutation forms (`push` arity 1 / `pop`
@@ -4369,7 +4140,6 @@ export function compileReceiverMethodCall(
           // crosses with). Mirrors the `Object.groupBy` / `.call`/`.apply`
           // (#3016) precedent; standalone-gated so gc/wasi stay byte-identical.
           if (
-            ctx.standalone &&
             (NATIVE_HOF_METHODS.has(methodName) || LAZY_ITER_METHODS.has(methodName)) &&
             (ts.isArrowFunction(arg) || ts.isFunctionExpression(arg))
           ) {
@@ -4397,24 +4167,16 @@ export function compileReceiverMethodCall(
       // `o.m(a, ...xs)` keeps falling through to the generic path (no
       // regression — it returns the same value as before this slice).
       //
-      // Gated to `ctx.standalone` ONLY (not wasi): the `__extern_get_idx`
+      // Gated to the regime flag ONLY (not wasi): the `__extern_get_idx`
       // array-like / wasm-vec indexing arms the dispatcher relies on are
-      // emitted only under standalone (`objArrayLikeArms = ctx.standalone` in
+      // emitted only under standalone (`objArrayLikeArms = the regime flag` in
       // object-runtime.ts). Under wasi they are absent, so a vararg dispatcher
       // would read null args — wasi keeps the existing fall-through behaviour
       // (the same pre-existing wasi arg-vec gap noted in the issue). Widening
       // the array-like arms to wasi is a separate, broader change.
       const isSingleDynamicSpread =
-        (ctx.standalone || (!ctx.wasi && needsRuntimeUserMethodName)) &&
-        !recvIsBuiltinClass &&
-        expr.arguments.length === 1 &&
-        ts.isSpreadElement(expr.arguments[0]!);
+        !recvIsBuiltinClass && expr.arguments.length === 1 && ts.isSpreadElement(expr.arguments[0]!);
       if (isSingleDynamicSpread) {
-        // Host mode needs the same class-member export surface as the fixed
-        // arity dispatcher. The spread source supplies the vararg bridge's
-        // runtime argument list; recording the name here lets finalization
-        // emit the matching receiver-discriminating method arm.
-        if (!ctx.standalone && !ctx.wasi) ctx.hostDynamicClassMethodNames.add(methodName);
         const dispatchIdx = reserveClosedMethodDispatchVararg(ctx, methodName);
         flushLateImportShifts(ctx, fctx);
         // Receiver as externref.
@@ -4447,7 +4209,7 @@ export function compileReceiverMethodCall(
       // declared param from the vec via `__extern_get_idx`. (`$ObjVec` is
       // exactly what `__extern_get_idx` and `__objvec_push` operate on.)
       //
-      // Gated to `ctx.standalone` ONLY (same constraint as Slice 4 — the
+      // Gated to the regime flag ONLY (same constraint as Slice 4 — the
       // `__extern_get_idx` array-like / wasm-vec indexing arms the dispatcher
       // and the loop-append rely on are emitted only under standalone). Scope:
       // exactly ONE spread, which must be the LAST argument; any other spread
@@ -4456,7 +4218,6 @@ export function compileReceiverMethodCall(
       const spreadCount = expr.arguments.filter((a) => ts.isSpreadElement(a)).length;
       const lastArg = expr.arguments[expr.arguments.length - 1];
       const isMixedTrailingSpread =
-        ctx.standalone &&
         !recvIsBuiltinClass &&
         expr.arguments.length >= 2 &&
         spreadCount === 1 &&
@@ -4572,11 +4333,6 @@ export function compileReceiverMethodCall(
       // (#799 WI3) Generic host-delegated method call for any/externref receivers.
       // #965: resolve known built-in receivers through __get_builtin rather than null.
       {
-        // A dynamic receiver can still be a compiled ordinary class instance.
-        // Record the property name so finalization can expose the matching
-        // WasmGC method bridge to the host runtime (fnctor subclasses already
-        // use the same bridge, but ordinary classes need the discriminator too).
-        if (!ctx.standalone && !ctx.wasi) ctx.hostDynamicClassMethodNames.add(methodName);
         observeHostDynamicMethodCallArity(ctx, expr.arguments);
 
         // #1888: standalone builds a native $ObjVec; fixed JS-host calls were
@@ -4661,67 +4417,6 @@ export function compileReceiverMethodCall(
     }
   }
 
-  // (#3201) Unknown-method fallback for NATIVE (ref/ref_null) receivers on
-  // the JS-host lane. Every arm above has declined — historically this fell
-  // through to the calls.ts "graceful fallback" (compile callee + args for
-  // side effects, return null), which silently nulled Sputnik's expando-
-  // classifier idiom (`arr.getClass = Object.prototype.toString;
-  // arr.getClass()` — 65+ test262 fails across splice/slice/concat) and any
-  // other method stored as an expando on a struct/vec. The host mirror DOES
-  // carry expando writes (`__extern_set_strict`) and reads (`__extern_get`),
-  // so delegate to the same `__extern_method_call(recv, name, args)` generic
-  // the any/externref ladder (#799 WI3) and the fnctor-subclass miss (#3123)
-  // use — `fn.apply(recv, args)` with correct `this` binding on the host
-  // side. Host (gc) lane only: #3201's scope is the default lane and its
-  // acceptance forbids standalone regressions (the native dispatcher's
-  // struct-expando coverage is a follow-up).
-  if (!ctx.standalone && !ctx.wasi) {
-    // recvWasm hoisted above the any-arm block — one checker resolution
-    // serves both fallbacks (oracle ratchet #1930/#3273).
-    //
-    // (#3176 merge-queue park) The arm must only claim TRUE expandos —
-    // methods NOT declared on the static receiver type. The original
-    // unconditional delegation hijacked calls the downstream compiled paths
-    // handled correctly (compiled class instance methods like Temporal's
-    // polyfill `since`/`until`, and static class fields like
-    // `class C { static f = () => this }` — C.f is a declared member) into
-    // `__extern_method_call`, whose host mirror does NOT carry compiled
-    // class methods → "since is not a function" / null cascades: 215
-    // merge_group regressions (211 Temporal + class static-field arrows).
-    // `recvTsType.getProperty` / `.isClass` are Type-object reads on the
-    // ALREADY-hoisted resolution — no net-new direct checker usage
-    // (ratchet #1930/#3273). The Sputnik classifier idiom
-    // (`arr.getClass = …` on a vec/struct or object literal) is by
-    // definition undeclared on the receiver's type, so the #3201 wins keep
-    // hitting the arm.
-    //
-    // Class-declared instance types are ALSO declined even when getProperty
-    // misses: a class extending an unresolvable base (e.g.
-    // `class X extends Temporal.PlainYearMonth` — no TS lib typings for the
-    // base) has an incomplete member set, so a getProperty miss is not
-    // evidence of an expando (Temporal/PlainYearMonth/prototype/equals/
-    // use-internal-slots.js regressed exactly this way). Declining restores
-    // the pre-#3201 downstream path, which handled these correctly.
-    if (
-      (recvWasm.kind === "ref" || recvWasm.kind === "ref_null") &&
-      ((recvTsType.getProperty(propAccess.name.text) === undefined && !(recvTsType.isClass?.() ?? false)) ||
-        isDeclinedVecCallbackMethod(ctx, () => getVecInfo(ctx, recvWasm.typeIdx) !== null, propAccess.name.text)) // (#6848)
-    ) {
-      // rawStructReceiver: the expando sidecar (`_wasmStructProps`) is keyed
-      // by the RAW struct ref — an externref expected-type compile would
-      // route a vec receiver through `__make_iterable`'s copy, losing the
-      // identity the sidecar lookup needs.
-      const delegated = emitFnctorSubclassDynamicMethodCall(
-        ctx,
-        fctx,
-        expr,
-        propAccess,
-        propAccess.name.text,
-        /* rawStructReceiver */ true,
-      );
-      if (delegated !== undefined) return delegated;
-    }
-  }
   return undefined;
 }
 

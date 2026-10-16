@@ -23,7 +23,6 @@ export function tryEmitDynamicToPrimitiveMethodCall(
   expr: ts.CallExpression,
   elemAccess: ts.ElementAccessExpression,
 ): InnerResult | undefined {
-  if (!ctx.standalone) return undefined;
   if (resolveComputedKeyExpression(ctx, elemAccess.argumentExpression) !== "@@toPrimitive") return undefined;
   if (expr.questionDotToken !== undefined || elemAccess.questionDotToken !== undefined) return undefined;
   if (expr.arguments.some((a) => ts.isSpreadElement(a))) return undefined;

@@ -751,7 +751,7 @@ export function compileTailDispatch(
         // whose `.next()` answered `null`; emit the live record directly so
         // `map[Symbol.iterator]().next()` is by construction what
         // `map.entries().next()` is.
-        if (methodName === "@@iterator" && (ctx.standalone || ctx.wasi) && ctx.nativeStrings) {
+        if (methodName === "@@iterator" && ctx.nativeStrings) {
           const recvSymName = receiverType.getSymbol()?.name;
           if (recvSymName === "Map" || recvSymName === "Set") {
             const isSet = recvSymName === "Set";
@@ -792,7 +792,7 @@ export function compileTailDispatch(
         // arms the finalize step S3 added for the diverted carrier.
         const iterRecvSymName = receiverType.getSymbol()?.name;
         const typedArrayIterRecv = iterRecvSymName !== undefined && TYPED_ARRAY_NAMES.has(iterRecvSymName);
-        if (methodName === "@@iterator" && (ctx.standalone || ctx.wasi) && resolveArrayInfo(ctx, receiverType)) {
+        if (methodName === "@@iterator" && resolveArrayInfo(ctx, receiverType)) {
           // (#6484 S2) THE CARRIER MIGRATION the #5147 note deferred. This arm
           // used to answer a SNAPSHOT `$Vec`, which is why `.next()` on
           // `[1,2][Symbol.iterator]()` answered null — a vec has no cursor. The
@@ -844,7 +844,7 @@ export function compileTailDispatch(
         // singleton is lazy, and the finalize arm below reads its global — and
         // arm the finalize step. The statically-typed `ArrayIterator` binding
         // already routes through the #3013 compile-time arm and is untouched.
-        if (methodName === "@@iterator" && (ctx.standalone || ctx.wasi) && typedArrayIterRecv) {
+        if (methodName === "@@iterator" && typedArrayIterRecv) {
           const protoType = emitArrayIteratorPrototypeSingleton(ctx, fctx);
           if (protoType) {
             fctx.body.push({ op: "drop" });
@@ -859,9 +859,7 @@ export function compileTailDispatch(
         // empty native string. This exact pristine-realm shape is used by
         // Deno to discover `%StringIteratorPrototype%` during bootstrap.
         const recvType =
-          methodName === "@@iterator" &&
-          (ctx.standalone || ctx.wasi) &&
-          isPristineStringPrototypeExpression(fctx, elemAccess.expression)
+          methodName === "@@iterator" && isPristineStringPrototypeExpression(fctx, elemAccess.expression)
             ? compileStringLiteral(ctx, fctx, "")
             : compileExpression(ctx, fctx, elemAccess.expression);
         if (recvType) {
@@ -1118,10 +1116,9 @@ export function compileTailDispatch(
       // Try struct method: structName_methodName
       // (#6774 S6) An open `$Object` literal binding keeps the dynamic call: the
       // closed-shape method arm would `ref.cast` it to the stale inferred struct.
-      const structTypeName =
-        ctx.standalone && isAccessorReceiver(ctx, skipTransparentExpressions(elemAccess.expression))
-          ? undefined
-          : resolveStructName(ctx, receiverType);
+      const structTypeName = isAccessorReceiver(ctx, skipTransparentExpressions(elemAccess.expression))
+        ? undefined
+        : resolveStructName(ctx, receiverType);
       if (structTypeName) {
         const fullName = `${structTypeName}_${methodName}`;
         const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName, "instance")); // (#6772 S4)
@@ -1525,7 +1522,6 @@ export function compileTailDispatch(
           elementFact.kind === "object" && elementFact.shape === undefined && externrefArrayElement;
         if (
           (elementIsUnresolved || undefinedExternrefElement || shapelessObjectExternrefElement) &&
-          (ctx.standalone || externrefArrayElement) &&
           receiverArrayInfo
         ) {
           const dyn = tryEmitInlineDynamicCall(ctx, fctx, expr, true);

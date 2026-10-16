@@ -106,20 +106,6 @@ export function variableStatementContainsPromiseSubclass(
   });
 }
 
-/** Emit the host constructor value for a Promise-subclass class expression. */
-export function tryEmitPromiseSubclassClassExpressionValue(
-  ctx: CodegenContext,
-  fctx: FunctionContext,
-  initializer: ts.Expression,
-  valueType: ValType,
-): ValType | undefined {
-  if (ctx.standalone || ctx.wasi || !ts.isClassExpression(initializer)) return undefined;
-  const syntheticName = ctx.anonClassExprNames.get(initializer);
-  const resolved = syntheticName === undefined ? undefined : resolvePromiseSubclassName(ctx, syntheticName);
-  if (resolved === undefined || !emitPromiseSubclassCtor(ctx, fctx, resolved)) return undefined;
-  return emitClassExpressionStaticsBeforeValue(ctx, fctx, initializer, valueType);
-}
-
 /** Compile a class-expression binding, preserving Promise and class-object values. */
 export function tryCompileClassExpressionBindingValue(
   ctx: CodegenContext,
@@ -129,8 +115,6 @@ export function tryCompileClassExpressionBindingValue(
 ): ValType | undefined {
   if (!ts.isClassExpression(initializer)) return undefined;
   const syntheticName = ctx.anonClassExprNames.get(initializer);
-  const promiseValue = tryEmitPromiseSubclassClassExpressionValue(ctx, fctx, initializer, valueType);
-  if (promiseValue !== undefined) return promiseValue;
   if (
     syntheticName === undefined ||
     !ctx.classObjectGlobals?.has(syntheticName) ||

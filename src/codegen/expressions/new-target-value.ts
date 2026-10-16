@@ -130,7 +130,7 @@ function emitClassNewTargetValue(ctx: CodegenContext, fctx: FunctionContext, cla
  * binding: a creator read compiled after it may execute before it is written.
  */
 export function snapshotArrowNewTarget(ctx: CodegenContext, fctx: FunctionContext, arrow: ts.Node): void {
-  if (!ctx.standalone || !ts.isArrowFunction(arrow) || !referencesOwnNewTarget(arrow)) return;
+  if (!ts.isArrowFunction(arrow) || !referencesOwnNewTarget(arrow)) return;
   compileNewTargetValue(ctx, fctx);
   const slot = fctx.newTargetSnapshotLocal ?? allocLocal(fctx, "__new_target_snapshot", { kind: "externref" });
   fctx.newTargetSnapshotLocal = slot;
@@ -139,12 +139,7 @@ export function snapshotArrowNewTarget(ctx: CodegenContext, fctx: FunctionContex
 
 /** The capture-analysis twin: does this arrow capture the creator's snapshot? */
 export function arrowCapturesNewTarget(ctx: CodegenContext, fctx: FunctionContext, arrow: ts.Node): boolean {
-  return (
-    ctx.standalone &&
-    fctx.newTargetSnapshotLocal !== undefined &&
-    ts.isArrowFunction(arrow) &&
-    referencesOwnNewTarget(arrow)
-  );
+  return fctx.newTargetSnapshotLocal !== undefined && ts.isArrowFunction(arrow) && referencesOwnNewTarget(arrow);
 }
 
 /** The binding a fnctor's `new.target` reads: `function F(){}` → `F`, `var F = function(){}` → `F`. */

@@ -78,7 +78,7 @@ export function hoistParameterEvalVars(
   fctx: FunctionContext,
   owner: ts.SignatureDeclarationBase,
 ): void {
-  if (!ctx.standalone || isStrictContext(owner, ctx.inferModuleStrictArguments)) return;
+  if (isStrictContext(owner, ctx.inferModuleStrictArguments)) return;
   const paramNames = new Set<string>(["arguments"]);
   const addNames = (name: ts.BindingName): void => {
     if (ts.isIdentifier(name)) paramNames.add(name.text);

@@ -99,7 +99,7 @@ const STANDALONE_REFUSED_IMPORT = (name: string): boolean =>
  * compiler.ts).
  */
 function refuseStandaloneObjectImport(ctx: CodegenContext, name: string): boolean {
-  if (!ctx.standalone || !STANDALONE_REFUSED_IMPORT(name)) return false;
+  if (!STANDALONE_REFUSED_IMPORT(name)) return false;
   if (!ctx.standaloneRefusedImports) ctx.standaloneRefusedImports = new Set<string>();
   if (ctx.standaloneRefusedImports.has(name)) return true;
   ctx.standaloneRefusedImports.add(name);
@@ -139,7 +139,7 @@ function refuseStandaloneObjectImport(ctx: CodegenContext, name: string): boolea
  * a single source construct queues at most one error. Returns true if refused.
  */
 function refuseStandaloneToPrimitive(ctx: CodegenContext, name: string): boolean {
-  if (!ctx.standalone || name !== "__to_primitive") return false;
+  if (name !== "__to_primitive") return false;
   if (!ctx.standaloneRefusedImports) ctx.standaloneRefusedImports = new Set<string>();
   if (ctx.standaloneRefusedImports.has(name)) return true;
   ctx.standaloneRefusedImports.add(name);
@@ -477,8 +477,8 @@ export function ensureLateImport(
   // `__extern_get`). The Deno `fd_read`/`fd_write` stdio lowering itself already
   // fires on the type-stripped shape and is unaffected; this is purely the shared
   // dyn-read / object-runtime host-import gate. Mirrors the `ctx.wasi ||
-  // ctx.standalone` routing of UNION_NATIVE_HELPER_NAMES above and the #2609
-  // `__object_is` host-free (`ctx.standalone || ctx.wasi`) registration inside
+  // the regime flag` routing of UNION_NATIVE_HELPER_NAMES above and the #2609
+  // `__object_is` host-free (`the regime flag || ctx.wasi`) registration inside
   // ensureObjectRuntime.
   if (OBJECT_RUNTIME_HELPER_NAMES.has(name)) {
     ensureObjectRuntime(ctx);
@@ -510,24 +510,22 @@ export function ensureLateImport(
   // BEFORE `refuseStandaloneObjectImport` — `__extern_slice` matches its
   // `__extern_` refusal prefix. Registration is append-only (defined funcs,
   // no import-index shift), the same invariant as the routes above.
-  if (ctx.standalone || ctx.wasi) {
-    if (name === "__array_from_iter_n") {
-      ensureNativeArrayFromIterN(ctx);
-      return ctx.funcMap.get(name);
-    }
-    if (name === "__extern_slice") {
-      ensureNativeExternSlice(ctx);
-      return ctx.funcMap.get(name);
-    }
-    if (
-      name === "__iterator" ||
-      name === "__iterator_next" ||
-      name === "__iterator_return" ||
-      name === "__iterator_rest"
-    ) {
-      ensureNativeIteratorRuntime(ctx);
-      return ctx.funcMap.get(name);
-    }
+  if (name === "__array_from_iter_n") {
+    ensureNativeArrayFromIterN(ctx);
+    return ctx.funcMap.get(name);
+  }
+  if (name === "__extern_slice") {
+    ensureNativeExternSlice(ctx);
+    return ctx.funcMap.get(name);
+  }
+  if (
+    name === "__iterator" ||
+    name === "__iterator_next" ||
+    name === "__iterator_return" ||
+    name === "__iterator_rest"
+  ) {
+    ensureNativeIteratorRuntime(ctx);
+    return ctx.funcMap.get(name);
   }
   // #1472 Phase A — refuse dynamic-shape object/property host imports under
   // --target standalone with a clear compile error. We still register the

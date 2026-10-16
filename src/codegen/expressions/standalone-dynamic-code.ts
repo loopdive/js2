@@ -49,7 +49,7 @@ const DYNAMIC_FUNCTION_REFUSED =
   "(standalone module compiled with runtimeEvalProvider: false)";
 
 export function isRuntimeEvalProviderAbsent(ctx: CodegenContext): boolean {
-  return ctx.standalone && ctx.runtimeEvalProviderAbsent === true;
+  return ctx.runtimeEvalProviderAbsent === true;
 }
 
 export function emitRefusedDynamicFunction(

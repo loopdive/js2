@@ -1517,7 +1517,7 @@ function compileNativeStringCompoundAssignment(
     // `ref.cast` trapped with `illegal cast` (test262 S11.13.2_A4.4_T1.4).
     // Test first; on a non-string, run the §7.1.17 walker `__extern_toString`
     // (ToPrimitive → ToString — unwraps wrappers, stringifies objects).
-    const externToStrIdx = ctx.standalone || ctx.wasi ? ctx.funcMap.get("__extern_toString") : undefined;
+    const externToStrIdx = ctx.funcMap.get("__extern_toString");
     if (externToStrIdx !== undefined) {
       const extTmp = allocTempLocal(fctx, { kind: "externref" });
       fctx.body.push({ op: "local.set", index: extTmp });
@@ -2010,8 +2010,7 @@ export function compileCompoundAssignment(
   // standalone/WASI. "Already round-trips" holds for `any += number` and is
   // FALSE for a runtime STRING — which is how acorn's `message += " (" + …`
   // rendered as the number NaN. Mirrors `emitAnyAdd`'s own `noJsHost` test.
-  const anyCompoundAddEligible = ctx.anyValueTypeIdx < 0 || ctx.standalone === true || ctx.wasi === true;
-  if (plusEqualsUnboxed && plusLeftTsType && plusRightTsType && anyCompoundAddEligible) {
+  if (plusEqualsUnboxed && plusLeftTsType && plusRightTsType) {
     const leftTsType = plusLeftTsType;
     const rightTsType = plusRightTsType;
     const leftIsAnyish = (leftTsType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;

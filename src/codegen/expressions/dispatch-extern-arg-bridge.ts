@@ -29,7 +29,6 @@ import type { CodegenContext } from "../context/types.js";
 
 /** Admission + plain crossing for a no-host ref → externref argument. */
 export function standaloneRefToExternBridge(ctx: CodegenContext, from: ValType, to: ValType): Instr[] | null {
-  if (!(ctx.standalone || ctx.wasi)) return null;
   if (from.kind !== "ref" && from.kind !== "ref_null") return null;
   if (to.kind !== "externref") return null;
   if (from.typeIdx === ctx.anyValueTypeIdx) return null;

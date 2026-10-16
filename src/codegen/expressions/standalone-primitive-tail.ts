@@ -108,7 +108,6 @@ export function tryCompileStandaloneDeletedStringToString(
   ) => InnerResult,
 ): InnerResult | undefined {
   if (
-    !ctx.standalone ||
     propAccess.name.text !== "toString" ||
     !isStringWrapperType(receiverType) ||
     !ctx.deletedBuiltinPrototypeMembers?.has("String.prototype.toString")
@@ -150,7 +149,6 @@ export function tryCompileStandaloneDeletedBooleanToString(
   ) => InnerResult,
 ): InnerResult | undefined {
   if (
-    !ctx.standalone ||
     propAccess.name.text !== "toString" ||
     receiverType.getSymbol()?.name !== "Boolean" ||
     !ctx.deletedBuiltinPrototypeMembers?.has("Boolean.prototype.toString")
@@ -191,7 +189,7 @@ export function tryCompileStandaloneBooleanToString(
     expectedType?: ValType,
   ) => InnerResult,
 ): InnerResult | undefined {
-  if (!ctx.standalone || receiverType.getSymbol()?.name !== "Boolean" || propAccess.name.text !== "toString") {
+  if (receiverType.getSymbol()?.name !== "Boolean" || propAccess.name.text !== "toString") {
     return undefined;
   }
 
@@ -294,7 +292,7 @@ export function tryCompileStandaloneNumberPrototypeTail(
   expectedType: ValType | undefined,
   callbacks: NumberPrototypeTailCallbacks,
 ): InnerResult | undefined {
-  if (!ctx.standalone || propAccess.name.text !== "toString") return undefined;
+  if (propAccess.name.text !== "toString") return undefined;
 
   if (
     callbacks.sourceOverridesBuiltinPrototypeMember(ctx, callExpr, "Number", "toString") &&

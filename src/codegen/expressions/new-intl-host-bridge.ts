@@ -58,7 +58,7 @@ function isIntlQualified(expr: ts.NewExpression): boolean {
  * Host lane always returns `undefined` here: on it the extern class IS
  * registered, so the extern-constructor arm claims the expression well before
  * this is reached. The `externClasses` probe (rather than a bare
- * `ctx.standalone` test) keeps those two facts from drifting apart — this arm
+ * the regime flag test) keeps those two facts from drifting apart — this arm
  * can only fire where the registration did not.
  */
 export function tryCompileIntlHostOnlyNew(

@@ -98,7 +98,6 @@ import {
   argumentExternViews,
   bridgedRestFixedCount,
   collectRestDispatchPlans,
-  restShapedWrapperCandidates,
   restSlotMarshalInstrs,
 } from "./callable-rest-bridge.js"; // (#5334)
 import { tryCompileGetPrototypeOfIsPrototypeOf } from "./object-get-prototype-of.js";
@@ -158,25 +157,12 @@ type FuncCandidate = {
 function callablePropertyRefBridge(ctx: CodegenContext, from: ValType, to: ValType): Instr[] | null {
   const isHostExtern = (type: ValType): boolean => type.kind === "externref" || type.kind === "ref_extern";
   if (valTypesMatch(from, to) || (isHostExtern(from) && isHostExtern(to))) return [];
-  if (ctx.standalone || ctx.wasi) {
-    if ((from.kind === "ref" || from.kind === "ref_null") && isHostExtern(to)) {
-      for (const info of ctx.nativeGenerators.values()) {
-        if (info.stateTypeIdx === from.typeIdx) return [{ op: "extern.convert_any" }];
-      }
+  if ((from.kind === "ref" || from.kind === "ref_null") && isHostExtern(to)) {
+    for (const info of ctx.nativeGenerators.values()) {
+      if (info.stateTypeIdx === from.typeIdx) return [{ op: "extern.convert_any" }];
     }
-    return standaloneRefToExternBridge(ctx, from, to); // (#6704)
   }
-
-  if ((from.kind === "ref" || from.kind === "ref_null") && from.typeIdx !== ctx.anyValueTypeIdx && isHostExtern(to)) {
-    return [{ op: "extern.convert_any" }];
-  }
-  if (isHostExtern(from) && (to.kind === "ref" || to.kind === "ref_null")) {
-    return [
-      { op: "any.convert_extern" },
-      { op: to.kind === "ref_null" ? "ref.cast_null" : "ref.cast", typeIdx: to.typeIdx },
-    ];
-  }
-  return null;
+  return standaloneRefToExternBridge(ctx, from, to);
 }
 
 /** `fillApplyClosure` only emits dynamic method dispatchers for arities 0..8. */
@@ -298,17 +284,7 @@ function reserveSpeculativeClosureFuncCandidateTypes(
   if (declared.returnType !== null) tryAlt([]);
   if (declaredKind !== "f64") tryAlt([{ kind: "f64" }]);
   if (declaredKind !== "i32") tryAlt([{ kind: "i32" }]);
-  // (#5334) The pure-rest shape `(...args) -> R` as well, so a rest closure
-  // stored after this site compiles (jest's `vi.fn()` spy) has an arm; its vec
-  // slot is filled at runtime by the bridge.
-  if (!ctx.standalone && !ctx.wasi) {
-    const declaredResult = declared.returnType === null ? [] : [declared.returnType];
-    for (const info of restShapedWrapperCandidates(ctx, sourceFile, [declaredResult, [{ kind: "externref" }], []])) {
-      if (seen.has(info.funcTypeIdx)) continue;
-      seen.add(info.funcTypeIdx);
-      funcCandidates.push({ ...info, restReading: true });
-    }
-  }
+
   return funcCandidates;
 }
 
@@ -330,7 +306,6 @@ function collectClosureFuncCandidates(
   const funcCandidates: FuncCandidate[] = [...initialCandidates];
   const seen = new Set<number>(initialCandidates.map((candidate) => candidate.funcTypeIdx));
 
-  const hostLane = !ctx.standalone && !ctx.wasi;
   for (const [, info] of ctx.closureInfoByTypeIdx) {
     // (#5334) A trailing externref vec is admitted on the candidate's FIXED
     // prefix; whether it is a rest vec or a real array parameter is decided at
@@ -338,7 +313,7 @@ function collectClosureFuncCandidates(
     // only padded declared formals, so it takes that reading only when the vec
     // is provably empty. Any other rest carrier keeps the fail-closed guard: a
     // positional helper ABI cannot synthesize it.
-    const restFixedCount = bridgedRestFixedCount(ctx, info.paramTypes, hostLane);
+    const restFixedCount = bridgedRestFixedCount(ctx, info.paramTypes, false);
     if (restFixedCount === null && rejectRestCandidates && info.hasRestParam === true) continue;
     if (restFixedCount !== null) {
       if (restFixedCount > sigParamCount || (rejectRestCandidates && restFixedCount !== sigParamCount)) continue;
@@ -475,7 +450,7 @@ function emitRootFuncrefDispatch(
     expectedReturn === null ? ({ kind: "empty" } as const) : ({ kind: "val", type: expectedReturn } as const);
   const numericKind = (t: ValType): boolean => t.kind === "i32" || t.kind === "f64" || t.kind === "i64";
   // (#5334) Read-only over the registry, as the deferred finalizer requires.
-  const restPlans = collectRestDispatchPlans(ctx, !ctx.standalone && !ctx.wasi);
+  const restPlans = collectRestDispatchPlans(ctx, false);
 
   // Build the dispatch chain bottom-up; innermost else = throw TypeError.
   let funcDispatch: Instr[] = terminal;
@@ -1482,17 +1457,11 @@ export function compileCallablePropertyCall(
           ts.isFunctionExpression(decl) ||
           (ts.isVariableDeclaration(decl) && !!decl.initializer && ts.isFunctionExpression(decl.initializer))));
     const approvedStandaloneFnctor =
-      ctx.standalone &&
-      (ctx.fnctorEscapeGate?.approvedNames.has(className) === true ||
-        (recvSym?.name !== undefined && ctx.fnctorEscapeGate?.approvedNames.has(recvSym.name) === true));
-    if (isFnCtorInstance && (!ctx.standalone || approvedStandaloneFnctor)) {
-      if (ctx.standalone) {
-        const dyn = emitFnctorSubclassDynamicMethodCall(ctx, fctx, expr, propAccess, methodName);
-        if (dyn !== undefined) return dyn;
-      } else {
-        const dyn = emitWrapperDynamicMethodCall(ctx, fctx, propAccess.expression, methodName, expr);
-        if (dyn !== null) return dyn;
-      }
+      ctx.fnctorEscapeGate?.approvedNames.has(className) === true ||
+      (recvSym?.name !== undefined && ctx.fnctorEscapeGate?.approvedNames.has(recvSym.name) === true);
+    if (isFnCtorInstance && approvedStandaloneFnctor) {
+      const dyn = emitFnctorSubclassDynamicMethodCall(ctx, fctx, expr, propAccess, methodName);
+      if (dyn !== undefined) return dyn;
     }
   }
 
@@ -1667,7 +1636,6 @@ export function compileCallablePropertyCall(
   // call_ref path, while a dynamic spread stays on the existing fallback until
   // it has a value-preserving ObjVec concat.
   if (
-    (ctx.standalone || ctx.wasi) &&
     !expr.arguments.some((argument) => ts.isSpreadElement(argument)) &&
     expr.arguments.length <= REALM_DYNAMIC_CALL_MAX_ARITY &&
     expressionDescendsFromRealmStructuralBinding(ctx, fctx, propAccess.expression)
@@ -2151,10 +2119,7 @@ export function compileCallableElementAccessCall(
   // calling a null funcref). Bind the receiver explicitly and call the native
   // closure ABI directly; this is deliberately limited to the statically
   // resolvable Function-prototype symbol and standalone mode.
-  if (
-    ctx.standalone &&
-    resolveComputedKeyExpression(ctx, elemAccess.argumentExpression) === FUNCTION_PROTO_HAS_INSTANCE_MEMBER
-  ) {
+  if (resolveComputedKeyExpression(ctx, elemAccess.argumentExpression) === FUNCTION_PROTO_HAS_INSTANCE_MEMBER) {
     const receiver = elemAccess.expression;
     const fact = ctx.oracle.typeFactOf(receiver);
     const directFunctionProto =
@@ -2401,7 +2366,7 @@ export function tryExternClassMethodOnAny(
   // arity guard is dropped for both members: `exec()` / `test()` with ZERO
   // args is the §22.2.6.2 step-3 `ToString(undefined)` case, and it must reach
   // the brand-checking native closure just as the one-arg form does.
-  if (ctx.standalone && (methodName === "test" || methodName === "exec") && expr.arguments.length <= 1) {
+  if ((methodName === "test" || methodName === "exec") && expr.arguments.length <= 1) {
     return null;
   }
 
@@ -2583,13 +2548,12 @@ export function tryExternClassMethodOnAny(
   // `__extern_method_call` bottom arm. JS-host mode is untouched (the generic
   // WeakMap_* host bridge is satisfiable and correct there).
   if (
-    (ctx.standalone || ctx.wasi) &&
-    (methodName === "get" ||
-      methodName === "set" ||
-      methodName === "has" ||
-      methodName === "add" ||
-      methodName === "delete" ||
-      methodName === "clear")
+    methodName === "get" ||
+    methodName === "set" ||
+    methodName === "has" ||
+    methodName === "add" ||
+    methodName === "delete" ||
+    methodName === "clear"
   ) {
     return null;
   }
@@ -2763,5 +2727,5 @@ export function tryExternClassMethodOnAny(
  * `any`-receiver native `join` above declines it.
  */
 function joinOnTypedArrayIntrinsicProto(ctx: CodegenContext, propAccess: ts.PropertyAccessExpression): boolean {
-  return ctx.standalone === true && tracesToTypedArrayIntrinsicProto(ctx, propAccess.expression);
+  return tracesToTypedArrayIntrinsicProto(ctx, propAccess.expression);
 }

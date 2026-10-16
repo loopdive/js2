@@ -221,11 +221,7 @@ function isPristineStringIteratorCall(ctx: CodegenContext, fctx: FunctionContext
  * long enough to route around the generic `$Object`-only prototype helper.
  */
 function tryEmitBuiltinFunctionPrototype(ctx: CodegenContext, fctx: FunctionContext, argType: ValType): boolean {
-  if (
-    (!ctx.standalone && !ctx.wasi) ||
-    (argType.kind !== "ref" && argType.kind !== "ref_null") ||
-    !ctx.builtinFnMetaByTypeIdx?.has(argType.typeIdx)
-  ) {
+  if ((argType.kind !== "ref" && argType.kind !== "ref_null") || !ctx.builtinFnMetaByTypeIdx?.has(argType.typeIdx)) {
     return false;
   }
 
@@ -458,7 +454,6 @@ function emitObjectCreateDynamicProperties(
  */
 function isStandaloneClassProtoObjectReceiver(ctx: CodegenContext, receiver: ts.Expression): boolean {
   return (
-    ctx.standalone === true &&
     ts.isPropertyAccessExpression(receiver) &&
     receiver.name.text === "prototype" &&
     ts.isIdentifier(receiver.expression) &&
@@ -630,7 +625,6 @@ export function compileBuiltinStaticCall(
   // asUintN is exact for non-negative values (a negative value with bits>=64
   // is inherently not representable in i64 — documented out of scope).
   if (
-    (ctx.standalone === true || ctx.wasi === true) &&
     ts.isIdentifier(propAccess.expression) &&
     propAccess.expression.text === "BigInt" &&
     (propAccess.name.text === "asIntN" || propAccess.name.text === "asUintN")
@@ -758,7 +752,6 @@ export function compileBuiltinStaticCall(
   // `env::__get_builtin` host import (which would otherwise refuse / fail to
   // instantiate). Placed before the generic builtin-member fallthrough.
   if (
-    ctx.standalone &&
     ts.isIdentifier(propAccess.expression) &&
     isGlobalRegExpIdentifier(ctx, propAccess.expression) &&
     propAccess.name.text === "escape" &&
@@ -903,7 +896,7 @@ export function compileBuiltinStaticCall(
     // revoked-proxy TypeError is the whole point of `isArray/proxy-revoked.js`.
     // The runtime predicate answers correctly for a live proxy too (it unwraps
     // to the target), so routing here is strictly closer to the spec.
-    const mayBeProxy = ctx.standalone && tracesToProxyValue(ctx, expr.arguments[0]!);
+    const mayBeProxy = tracesToProxyValue(ctx, expr.arguments[0]!);
     // (#6771 S7) …or `Construct(C)` from a constructor-`this` `Array.from`/`of`.
     const mayBeConstructed = arrayCtorThisCallSeen(ctx) && argWasmType.kind !== "i32" && argWasmType.kind !== "f64";
     if (argWasmType.kind === "externref" || isErasedTsType || isErasedCarrier || mayBeProxy || mayBeConstructed) {
@@ -1394,7 +1387,7 @@ export function compileBuiltinStaticCall(
     // callback. Evaluate and discard the complete argument list first, as a
     // normal call does, so `thisArg` and extra-argument side effects are not
     // skipped. Keep dynamic values on the existing runtime path.
-    if (ctx.standalone && hasMapFn && ctx.oracle.staticJsTypeOf(expr.arguments[1]!) === "symbol") {
+    if (hasMapFn && ctx.oracle.staticJsTypeOf(expr.arguments[1]!) === "symbol") {
       for (const arg of expr.arguments) {
         const argType = compileExpression(ctx, fctx, arg);
         if (argType) fctx.body.push({ op: "drop" });
@@ -1493,7 +1486,7 @@ export function compileBuiltinStaticCall(
     // result. (WeakMap is not iterable; WeakSet/Map-with-mapFn keep the
     // existing routing.)
     //
-    // Gated to `ctx.standalone` (the `--target standalone` pure-Wasm target),
+    // Gated to the regime flag (the `--target standalone` pure-Wasm target),
     // NOT plain `nativeStrings` nor WASI. The entries-mode `$ObjVec` pair
     // materialization tickles a PRE-EXISTING substrate limitation that the
     // stricter targets surface but this slice does not own:
@@ -1506,7 +1499,7 @@ export function compileBuiltinStaticCall(
     // change, so they are escalated as the entries-mode substrate follow-up
     // rather than half-fixed here. Under `--target standalone` the path lowers
     // to a zero-import, fully-native module (verified), so ship that.
-    if (!hasMapFn && ctx.standalone && ctx.nativeStrings && argSymName === "Map") {
+    if (!hasMapFn && ctx.nativeStrings && argSymName === "Map") {
       const matType = emitCollectionIteratorVec(ctx, fctx, expr.arguments[0]!, "entries", /* isSet */ false);
       if (matType != null && matType !== VOID_RESULT && (matType.kind === "ref" || matType.kind === "ref_null")) {
         // The materialized vec carries 2-element `$ObjVec` `[key, value]` pairs
@@ -1917,7 +1910,7 @@ export function compileBuiltinStaticCall(
 
     // Compile the argument — returns the object itself (freeze/seal return their arg)
     // (#6770 S2) An inline literal is built as the identity-bearing `$Object`.
-    const inlineLiteral = ctx.standalone ? integrityCallLiteralArg(expr) : undefined;
+    const inlineLiteral = integrityCallLiteralArg(expr);
     if (inlineLiteral) compileObjectAssignArg(ctx, fctx, inlineLiteral);
     let argType = inlineLiteral ? ({ kind: "externref" } as ValType) : compileExpression(ctx, fctx, expr.arguments[0]!);
     if (!argType) return null;
@@ -2000,7 +1993,7 @@ export function compileBuiltinStaticCall(
       // `preventExtensions` only: `seal`/`freeze` call `__object_seal` /
       // `__object_freeze`, which carry no proxy front guard, so there is no
       // status to honour there and their emitted bytes are untouched.
-      const proxyTypeIdxPE = ctx.standalone ? ctx.objectRuntimeTypes?.proxyTypeIdx : undefined;
+      const proxyTypeIdxPE = ctx.objectRuntimeTypes?.proxyTypeIdx;
       if (hostIdx !== undefined && method === "preventExtensions" && proxyTypeIdxPE !== undefined) {
         const truthyIdx = ensureLateImport(ctx, "__is_truthy", [{ kind: "externref" }], [{ kind: "i32" }]);
         const throwNotPrevented = buildThrowJsErrorInstrs(
@@ -2271,7 +2264,7 @@ export function compileBuiltinStaticCall(
     // the check is at the CALL SITE and not in the status helper: giving that
     // helper a proxy guard would run the trap once for the status and again
     // for the write, which is observable.
-    const proxyTypeIdxSPO = ctx.standalone ? ctx.objectRuntimeTypes?.proxyTypeIdx : undefined;
+    const proxyTypeIdxSPO = ctx.objectRuntimeTypes?.proxyTypeIdx;
     const spoTruthyIdx =
       proxyTypeIdxSPO === undefined || resolvedSpoIdx === undefined || !specChecksAvailable
         ? undefined
@@ -2339,7 +2332,7 @@ export function compileBuiltinStaticCall(
     // intrinsic bootstrap query. Route directly to the metadata-bearing
     // singleton so the generic standalone `__iterator` fallback cannot throw
     // before `StringIteratorPrototype.next` is inspected.
-    if ((ctx.standalone || ctx.wasi) && isPristineStringIteratorCall(ctx, fctx, arg0)) {
+    if (isPristineStringIteratorCall(ctx, fctx, arg0)) {
       const protoType = emitIteratorPrototypeSingleton(ctx, fctx, "String");
       if (protoType) return protoType;
       fctx.body.push({ op: "ref.null.extern" });
@@ -2397,10 +2390,7 @@ export function compileBuiltinStaticCall(
     // `built-ins/GeneratorFunction/**` row uses — and for a provably unchanged
     // object-literal generator METHOD (`o.m`, see the predicate). Neither
     // operand evaluation is observable, so neither is compiled.
-    if (
-      (ctx.standalone || ctx.wasi) &&
-      (isStaticSyncGeneratorFunctionValue(ctx, arg0) || isDynamicGeneratorFunctionValue(ctx, arg0))
-    ) {
+    if (isStaticSyncGeneratorFunctionValue(ctx, arg0) || isDynamicGeneratorFunctionValue(ctx, arg0)) {
       const t = emitGeneratorFunctionPrototypeSingleton(ctx, fctx);
       if (t) return t;
     }
@@ -2424,7 +2414,7 @@ export function compileBuiltinStaticCall(
         // (= %GeneratorFunction.prototype%) singleton — host-free — instead of
         // leaking `__get_generator_function_prototype`. Async generators keep
         // the host import.
-        if (!isAsyncGen && (ctx.standalone || ctx.wasi)) {
+        if (!isAsyncGen) {
           const t = emitGeneratorFunctionPrototypeSingleton(ctx, fctx);
           if (t) return t;
         }
@@ -2470,7 +2460,6 @@ export function compileBuiltinStaticCall(
     // value. Without it the native `__getPrototypeOf` returns null for the
     // opaque function closure. Host/gc keeps the `__getPrototypeOf` import path.
     if (
-      (ctx.standalone || ctx.wasi) &&
       ts.isIdentifier(arg0) &&
       !fctx.localMap.has(arg0.text) &&
       ctx.topLevelFunctionNames.has(arg0.text) &&
@@ -2501,7 +2490,7 @@ export function compileBuiltinStaticCall(
     // standalone fallback below returns `ref.null.extern`, which made the
     // identity assertion pass only coincidentally (null === null). Host/gc mode
     // keeps the `__getPrototypeOf` host import (byte-inert).
-    if ((ctx.standalone || ctx.wasi) && argTsType.getSymbol()?.name === "ArrayIterator") {
+    if (argTsType.getSymbol()?.name === "ArrayIterator") {
       const argType = compileExpression(ctx, fctx, arg0);
       if (argType) fctx.body.push({ op: "drop" });
       const protoType = emitArrayIteratorPrototypeSingleton(ctx, fctx);
@@ -2516,7 +2505,7 @@ export function compileBuiltinStaticCall(
     // carriers do not model [[Prototype]], so the generic fallback returns
     // null; route only checker-proven `StringIterator` values and preserve the
     // argument's evaluation side effects before returning the singleton.
-    if ((ctx.standalone || ctx.wasi) && argTsType.getSymbol()?.name === "StringIterator") {
+    if (argTsType.getSymbol()?.name === "StringIterator") {
       const argType = compileExpression(ctx, fctx, arg0);
       if (argType) fctx.body.push({ op: "drop" });
       const protoType = emitIteratorPrototypeSingleton(ctx, fctx, "String");
@@ -2539,7 +2528,7 @@ export function compileBuiltinStaticCall(
         : argTsType.getSymbol()?.name === "SetIterator"
           ? "Set"
           : undefined;
-    if ((ctx.standalone || ctx.wasi) && iteratorPrototypeKind !== undefined) {
+    if (iteratorPrototypeKind !== undefined) {
       const argType = compileExpression(ctx, fctx, arg0);
       if (argType) fctx.body.push({ op: "drop" });
       const protoType = emitIteratorPrototypeSingleton(ctx, fctx, iteratorPrototypeKind);
@@ -2561,60 +2550,58 @@ export function compileBuiltinStaticCall(
       // singleton. Field null = never dynamically set → the singleton (the
       // pre-#802 answer); the explicit-null sentinel reads as JS null
       // (`__dynproto_norm`); any other stored value is returned as-is.
-      if (ctx.standalone) {
-        const dpRoot = dynamicProtoRootFor(ctx, className);
-        const dpRootTypeIdx = dpRoot !== undefined ? ctx.structMap.get(dpRoot) : undefined;
-        const dpFieldIdx = dpRoot !== undefined ? dynamicProtoFieldIdx(ctx, dpRoot) : undefined;
-        if (dpRoot !== undefined && dpRootTypeIdx !== undefined && dpFieldIdx !== undefined) {
-          const argType = compileExpression(ctx, fctx, arg0);
-          if (!argType) {
-            fctx.body.push({ op: "ref.null.extern" });
-            return { kind: "externref" };
-          }
-          const recvStructName =
-            argType.kind === "ref" ? ctx.typeIdxToStructName.get((argType as { typeIdx: number }).typeIdx) : undefined;
-          if (recvStructName !== undefined && dynamicProtoRootFor(ctx, recvStructName) === dpRoot) {
-            // Non-null struct receiver: inline field read.
-            const normIdx = reserveDynprotoNorm(ctx);
-            fctx.body.push({ op: "struct.get", typeIdx: dpRootTypeIdx, fieldIdx: dpFieldIdx });
-            const fLocal = allocLocal(fctx, `__dp_proto_${fctx.locals.length}`, { kind: "externref" });
-            fctx.body.push({ op: "local.tee", index: fLocal });
-            fctx.body.push({ op: "ref.is_null" });
-            // Build the lazy-singleton instrs off to the side so they can live
-            // in the then-arm (emitLazyProtoGet appends to fctx.body).
-            const saved = pushBody(fctx);
-            const haveSingleton = emitLazyProtoGet(ctx, fctx, className);
-            const singletonInstrs = fctx.body;
-            popBody(fctx, saved);
-            if (!haveSingleton) {
-              singletonInstrs.length = 0;
-              singletonInstrs.push({ op: "ref.null.extern" });
-            }
-            fctx.body.push({
-              op: "if",
-              blockType: { kind: "val", type: { kind: "externref" } },
-              then: singletonInstrs,
-              else: [
-                { op: "local.get", index: fLocal },
-                { op: "call", funcIdx: normIdx },
-              ],
-            });
-            return { kind: "externref" };
-          }
-          // Nullable / externref-typed receiver: route through the generic
-          // native `__getPrototypeOf`, whose prepended (#802) marked arm reads
-          // the struct field (finalize fill). No trap on a null receiver.
-          if (argType.kind !== "externref") coerceType(ctx, fctx, argType, { kind: "externref" });
-          const gptIdx = ensureLateImport(ctx, "__getPrototypeOf", [{ kind: "externref" }], [{ kind: "externref" }]);
-          flushLateImportShifts(ctx, fctx);
-          if (gptIdx !== undefined) {
-            fctx.body.push({ op: "call", funcIdx: gptIdx });
-          } else {
-            fctx.body.push({ op: "drop" });
-            fctx.body.push({ op: "ref.null.extern" });
-          }
+      const dpRoot = dynamicProtoRootFor(ctx, className);
+      const dpRootTypeIdx = dpRoot !== undefined ? ctx.structMap.get(dpRoot) : undefined;
+      const dpFieldIdx = dpRoot !== undefined ? dynamicProtoFieldIdx(ctx, dpRoot) : undefined;
+      if (dpRoot !== undefined && dpRootTypeIdx !== undefined && dpFieldIdx !== undefined) {
+        const argType = compileExpression(ctx, fctx, arg0);
+        if (!argType) {
+          fctx.body.push({ op: "ref.null.extern" });
           return { kind: "externref" };
         }
+        const recvStructName =
+          argType.kind === "ref" ? ctx.typeIdxToStructName.get((argType as { typeIdx: number }).typeIdx) : undefined;
+        if (recvStructName !== undefined && dynamicProtoRootFor(ctx, recvStructName) === dpRoot) {
+          // Non-null struct receiver: inline field read.
+          const normIdx = reserveDynprotoNorm(ctx);
+          fctx.body.push({ op: "struct.get", typeIdx: dpRootTypeIdx, fieldIdx: dpFieldIdx });
+          const fLocal = allocLocal(fctx, `__dp_proto_${fctx.locals.length}`, { kind: "externref" });
+          fctx.body.push({ op: "local.tee", index: fLocal });
+          fctx.body.push({ op: "ref.is_null" });
+          // Build the lazy-singleton instrs off to the side so they can live
+          // in the then-arm (emitLazyProtoGet appends to fctx.body).
+          const saved = pushBody(fctx);
+          const haveSingleton = emitLazyProtoGet(ctx, fctx, className);
+          const singletonInstrs = fctx.body;
+          popBody(fctx, saved);
+          if (!haveSingleton) {
+            singletonInstrs.length = 0;
+            singletonInstrs.push({ op: "ref.null.extern" });
+          }
+          fctx.body.push({
+            op: "if",
+            blockType: { kind: "val", type: { kind: "externref" } },
+            then: singletonInstrs,
+            else: [
+              { op: "local.get", index: fLocal },
+              { op: "call", funcIdx: normIdx },
+            ],
+          });
+          return { kind: "externref" };
+        }
+        // Nullable / externref-typed receiver: route through the generic
+        // native `__getPrototypeOf`, whose prepended (#802) marked arm reads
+        // the struct field (finalize fill). No trap on a null receiver.
+        if (argType.kind !== "externref") coerceType(ctx, fctx, argType, { kind: "externref" });
+        const gptIdx = ensureLateImport(ctx, "__getPrototypeOf", [{ kind: "externref" }], [{ kind: "externref" }]);
+        flushLateImportShifts(ctx, fctx);
+        if (gptIdx !== undefined) {
+          fctx.body.push({ op: "call", funcIdx: gptIdx });
+        } else {
+          fctx.body.push({ op: "drop" });
+          fctx.body.push({ op: "ref.null.extern" });
+        }
+        return { kind: "externref" };
       }
       // Compile and drop the argument (for side effects)
       const argType = compileExpression(ctx, fctx, arg0);
@@ -2659,7 +2646,7 @@ export function compileBuiltinStaticCall(
       // Compile the proto argument
       if (arg0.kind === ts.SyntaxKind.NullKeyword) {
         fctx.body.push({ op: "ref.null.extern" });
-      } else if (ctx.standalone) {
+      } else {
         // #2580 M3 Stage A — build an INLINE-LITERAL proto as a native `$Object`
         // (compileProtoArg) so __object_create's `ref.test $Object` succeeds and
         // the $proto link is recorded; a closed-shape literal struct would fail
@@ -2668,17 +2655,6 @@ export function compileBuiltinStaticCall(
         // compileProtoArg.
         compileProtoArg(ctx, fctx, arg0);
         classInstanceIdx = reserveStandaloneObjectCreateClassInstance(ctx);
-      } else {
-        const argType = compileExpression(ctx, fctx, arg0);
-        if (!argType) {
-          // Expression produced no value — push null as fallback
-          fctx.body.push({ op: "ref.null.extern" });
-        } else if (argType.kind !== "externref") {
-          // (#1462) Use coerceType — handles f64 → __box_number, i32 → boxed,
-          // ref/ref_null → extern.convert_any. Bare extern.convert_any here would
-          // emit an illegal cast on primitive types (e.g. `Object.create(5)`).
-          coerceType(ctx, fctx, argType, { kind: "externref" });
-        }
       }
       if (classInstanceIdx !== undefined) {
         emitStandaloneObjectCreateClassInstance(fctx, classInstanceIdx, hostIdx);
@@ -2813,18 +2789,8 @@ export function compileBuiltinStaticCall(
         // the native `__defineProperty_value`/`__defineProperty_accessor`
         // store. Host/gc/wasi keep the precise `__defineProperty_desc` import.
         let dpDescIdx: number | undefined;
-        if (ctx.standalone) {
-          ensureObjectRuntime(ctx);
-          dpDescIdx = ctx.funcMap.get("__obj_define_from_desc");
-        } else {
-          dpDescIdx = ensureLateImport(
-            ctx,
-            "__defineProperty_desc",
-            [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
-            [{ kind: "externref" }],
-          );
-          flushLateImportShifts(ctx, fctx);
-        }
+        ensureObjectRuntime(ctx);
+        dpDescIdx = ctx.funcMap.get("__obj_define_from_desc");
 
         for (const prop of descsLiteral.properties) {
           if (!ts.isPropertyAssignment(prop)) continue;
@@ -2869,7 +2835,7 @@ export function compileBuiltinStaticCall(
             // emit (import unavailable) and skips computed/symbol keys, so a
             // fall-through to the generic path is side-effect-free.
             let descValType: ValType | null | undefined;
-            if (ctx.standalone && ts.isObjectLiteralExpression(prop.initializer)) {
+            if (ts.isObjectLiteralExpression(prop.initializer)) {
               descValType = compileObjectLiteralAsExternref(ctx, fctx, prop.initializer);
             }
             if (descValType === undefined || descValType === null) {
@@ -2936,7 +2902,6 @@ export function compileBuiltinStaticCall(
   // exactly as they do in the 2-argument case. Host/gc keeps its existing
   // lowering, so those bytes are unchanged.
   if (
-    ctx.standalone &&
     ts.isIdentifier(propAccess.expression) &&
     propAccess.expression.text === "Object" &&
     propAccess.name.text === "getOwnPropertyDescriptor" &&
@@ -2979,25 +2944,13 @@ export function compileBuiltinStaticCall(
   ) {
     const arg0 = expr.arguments[0]!;
     const arg1 = expr.arguments[1]!;
-    // §10.4.1.1: in Script code, top-level `this` is the realm global object.
-    // It must stay on the host-MOP path here: the checker's global interface
-    // resolves to a large static struct, whose missing-property fast path would
-    // return undefined without consulting the property just created by sloppy
-    // unresolvable PutValue. This is deliberately gOPD-local; general Script
-    // `this` lowering belongs to the source-goal implementation (#3365).
-    const isScriptGlobalThisReceiver =
-      arg0.kind === ts.SyntaxKind.ThisKeyword &&
-      fctx.name === "__module_init" &&
-      !ts.isExternalModule(arg0.getSourceFile()) &&
-      !ctx.standalone &&
-      !ctx.wasi;
 
     // (#2874) Under standalone, register the native object runtime so the
     // typed-receiver fast path's `ensureLateImport("__create_descriptor", …)`
     // below resolves to the native `__create_descriptor` (object-runtime.ts)
     // instead of leaking the `env::__create_descriptor` host import (which has
     // no standalone carrier — the module would trap). Idempotent.
-    if (ctx.standalone) ensureObjectRuntime(ctx);
+    ensureObjectRuntime(ctx);
 
     // Try compile-time fast path: known struct + literal property name.
     // (#2965) Standalone also canonicalizes NON-string literal keys
@@ -3009,7 +2962,7 @@ export function compileBuiltinStaticCall(
     // `gOPD(obj, -20).value` threw on a property that exists as "-20"
     // (test262 15.2.3.3-2-* — argument 'P' is a number/boolean). Host/gc
     // mode is NOT rerouted (its dynamic path delegates ToPropertyKey to the
-    // host import and already passes) — gated on ctx.standalone so host
+    // host import and already passes) — gated on the regime flag so host
     // bytes stay identical.
     const arg0TsType = ctx.checker.getTypeAtLocation(arg0);
     // (#2917) A standalone Array subclass's struct is vestigial — the instance
@@ -3018,14 +2971,13 @@ export function compileBuiltinStaticCall(
     // the instance IS the parent's carrier, so only the dynamic native knows its own keys. Ditto a fnctor carrier.
     const arg0SymName = arg0TsType.getSymbol()?.name;
     const structName =
-      isScriptGlobalThisReceiver ||
       isStandaloneArraySubclass(ctx, arg0SymName) ||
       (arg0SymName !== undefined && newSiteBuiltinParent(ctx, arg0SymName) !== undefined)
         ? undefined
         : closedReflectiveStructName(ctx, arg0TsType, resolveStructName(ctx, arg0TsType));
     const literalKeyText = (e: ts.Expression): string | undefined => {
       if (ts.isStringLiteral(e)) return e.text;
-      if (!ctx.standalone) return undefined;
+
       if (ts.isNumericLiteral(e)) return String(Number(e.text));
       if (ts.isPrefixUnaryExpression(e) && e.operator === ts.SyntaxKind.MinusToken && ts.isNumericLiteral(e.operand)) {
         return String(-Number(e.operand.text));
@@ -3161,30 +3113,28 @@ export function compileBuiltinStaticCall(
                   // Resolved AFTER the then-arm's late imports, for the same
                   // source-order reason the `ensureGetUndefined` comment below
                   // gives: the then-arm's funcIdx are already baked.
-                  if (ctx.standalone) {
-                    const dynGopdIdx = ensureLateImport(
-                      ctx,
-                      "__getOwnPropertyDescriptor",
-                      [{ kind: "externref" }, { kind: "externref" }],
-                      [{ kind: "externref" }],
-                    );
-                    if (dynGopdIdx !== undefined) {
-                      flushLateImportShifts(ctx, fctx);
-                      // The raw native-literal emitter, not
-                      // `stringConstantExternrefInstrs`: this arm is gated on
-                      // `ctx.standalone`, and standalone FORCES
-                      // `nativeStrings: true` (`create-context.ts`), so there is
-                      // no second string regime to dispatch over here — and
-                      // registering a `stringGlobalMap` entry for the key would
-                      // push it into `ctx.mod.stringPool` for no reader.
-                      return [
-                        { op: "local.get", index: gopdTmp },
-                        { op: "extern.convert_any" },
-                        ...nativeStringLiteralInstrs(ctx, propLiteral),
-                        { op: "extern.convert_any" },
-                        { op: "call", funcIdx: dynGopdIdx },
-                      ] satisfies Instr[];
-                    }
+                  const dynGopdIdx = ensureLateImport(
+                    ctx,
+                    "__getOwnPropertyDescriptor",
+                    [{ kind: "externref" }, { kind: "externref" }],
+                    [{ kind: "externref" }],
+                  );
+                  if (dynGopdIdx !== undefined) {
+                    flushLateImportShifts(ctx, fctx);
+                    // The raw native-literal emitter, not
+                    // `stringConstantExternrefInstrs`: this arm is gated on
+                    // the regime flag, and standalone FORCES
+                    // `nativeStrings: true` (`create-context.ts`), so there is
+                    // no second string regime to dispatch over here — and
+                    // registering a `stringGlobalMap` entry for the key would
+                    // push it into `ctx.mod.stringPool` for no reader.
+                    return [
+                      { op: "local.get", index: gopdTmp },
+                      { op: "extern.convert_any" },
+                      ...nativeStringLiteralInstrs(ctx, propLiteral),
+                      { op: "extern.convert_any" },
+                      { op: "call", funcIdx: dynGopdIdx },
+                    ] satisfies Instr[];
                   }
                   // (#3321) Cast would fail — the runtime miss must be JS
                   // `undefined` on every lane: host/gc → the real
@@ -3479,7 +3429,7 @@ export function compileBuiltinStaticCall(
     // reaching-def aliasing (`var m = Math; gOPD(m, "atan2")` — the dominant
     // 15.2.3.3-4-* fixture shape) via the conservative AST-only resolver in
     // builtin-static-gopd.ts; direct unshadowed builtins resolve as before.
-    if (ctx.standalone && propLiteral !== undefined) {
+    if (propLiteral !== undefined) {
       const builtinRecv = resolveBuiltinReceiverName(fctx, arg0, BUILTIN_CLASS_NAMES);
       if (builtinRecv !== undefined && tryEmitStandaloneBuiltinStaticGopd(ctx, fctx, builtinRecv, propLiteral)) {
         return { kind: "externref" };
@@ -3497,7 +3447,7 @@ export function compileBuiltinStaticCall(
     // RegExp annex-B legacy statics) keep the refusal. Both operands are
     // side-effect-free (builtin/alias identifier + `Symbol.species` fold),
     // so neither is compiled — same discipline as the Phase-3 literal arm.
-    if (ctx.standalone && propLiteral === undefined && isSymbolSpeciesKeyExpression(fctx, arg1)) {
+    if (propLiteral === undefined && isSymbolSpeciesKeyExpression(fctx, arg1)) {
       // (#5194 step 2) `%TypedArray%` reaches this arm only through the
       // harness's `var TypedArray = Object.getPrototypeOf(Int8Array)` binding,
       // which `resolveBuiltinReceiverName` cannot name (it is not a global
@@ -3518,7 +3468,6 @@ export function compileBuiltinStaticCall(
     // native below only walks $Objects, so a struct receiver always answered
     // `undefined` — test262 15.2.3.3-2-*). See builtin-static-gopd.ts.
     if (
-      ctx.standalone &&
       propLiteral === undefined &&
       structName &&
       !standaloneProtoObjectReceiver &&
@@ -3551,16 +3500,6 @@ export function compileBuiltinStaticCall(
         compileStringLiteral(ctx, fctx, builtinName);
       }
       fctx.body.push({ op: "call", funcIdx: getBuiltinFuncIdx });
-      objType = { kind: "externref" };
-    } else if (isScriptGlobalThisReceiver) {
-      ensureLateImport(ctx, "__get_globalThis", [], [{ kind: "externref" }]);
-      flushLateImportShifts(ctx, fctx);
-      const globalThisIdx = ctx.funcMap.get("__get_globalThis");
-      if (globalThisIdx === undefined) {
-        fctx.body.push({ op: "ref.null.extern" });
-        return { kind: "externref" };
-      }
-      fctx.body.push({ op: "call", funcIdx: globalThisIdx });
       objType = { kind: "externref" };
     } else {
       objType = compileExpression(ctx, fctx, arg0, { kind: "externref" });
@@ -3698,12 +3637,10 @@ export function compileBuiltinStaticCall(
     // that lane the guard only changed the emitted BYTES — and this
     // change-set's contract, stated in the focused test's header, is that every
     // arm it adds is standalone-only.
-    const isUndefIdx = ctx.standalone
-      ? ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }])
-      : undefined;
-    const throwNotCoercible = ctx.standalone
-      ? buildThrowJsErrorInstrs(ctx, "TypeError", "Cannot convert undefined or null to object", { flush: fctx })
-      : [];
+    const isUndefIdx = ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
+    const throwNotCoercible = buildThrowJsErrorInstrs(ctx, "TypeError", "Cannot convert undefined or null to object", {
+      flush: fctx,
+    });
     flushLateImportShifts(ctx, fctx);
     if (funcIdx !== undefined && isUndefIdx !== undefined) {
       const gopsLocal = allocTempLocal(fctx, { kind: "externref" });
@@ -3775,7 +3712,7 @@ export function compileBuiltinStaticCall(
     if (argType && argType.kind !== "externref") coerceType(ctx, fctx, argType, { kind: "externref" });
     // Use the predicate for the host undefined value or the standalone
     // singleton; legacy null externrefs retain the ref.is_null fallback.
-    if (undefinedSingletonActive(ctx) || (!ctx.standalone && !ctx.wasi && !ctx.nativeStrings)) {
+    if (undefinedSingletonActive(ctx)) {
       if (undefinedSingletonActive(ctx)) ensureObjectRuntime(ctx);
       const isUndefIdx = ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
       flushLateImportShifts(ctx, fctx);
@@ -3914,7 +3851,7 @@ export function compileBuiltinStaticCall(
     // has the four wrapper arms. Nullish is deliberately NOT routed here:
     // ToObject THROWS for it, while `Object()` answers a fresh plain object, so
     // that case stays with the native's own guard.
-    const targetTag = ctx.standalone ? ctx.oracle.staticJsTypeOf(targetArg) : "mixed";
+    const targetTag = ctx.oracle.staticJsTypeOf(targetArg);
     // (#6651 SY1) `symbol` is Table 13's FIFTH wrapper row — `emitObjectCoercion` grew its Symbol arm in slice I4, this gate did not.
     const targetIsPrimitive = ["number", "string", "boolean", "bigint", "symbol"].includes(targetTag);
     if (targetIsPrimitive) {
@@ -3983,7 +3920,6 @@ export function compileBuiltinStaticCall(
     // ordinary-externref path; their native iterator-protocol consumption is a
     // larger #2190 follow-up.)
     if (
-      ctx.standalone &&
       ts.isArrayLiteralExpression(entriesArg) &&
       entriesArg.elements.length > 0 &&
       entriesArg.elements.every(
@@ -4059,19 +3995,17 @@ export function compileBuiltinStaticCall(
     // `{}` — a silent wrong answer, which is exactly the failure this slice
     // exists to remove. Native iterator-protocol consumption is the #2190
     // follow-up; until then the loud compile error is the correct answer.
-    if (ctx.standalone) {
-      const entriesFact = ctx.oracle.typeFactOf(entriesArg);
-      if (entriesFact.kind === "array" || entriesFact.kind === "tuple") {
-        ensureObjectRuntime(ctx);
-        const feNativeIdx = ctx.funcMap.get("__object_fromEntries");
-        if (feNativeIdx !== undefined) {
-          const nativeArgType = compileExpression(ctx, fctx, entriesArg, { kind: "externref" });
-          if (nativeArgType && nativeArgType.kind !== "externref")
-            coerceType(ctx, fctx, nativeArgType, { kind: "externref" });
-          if (nativeArgType === null) fctx.body.push({ op: "ref.null.extern" });
-          fctx.body.push({ op: "call", funcIdx: feNativeIdx });
-          return { kind: "externref" };
-        }
+    const entriesFact = ctx.oracle.typeFactOf(entriesArg);
+    if (entriesFact.kind === "array" || entriesFact.kind === "tuple") {
+      ensureObjectRuntime(ctx);
+      const feNativeIdx = ctx.funcMap.get("__object_fromEntries");
+      if (feNativeIdx !== undefined) {
+        const nativeArgType = compileExpression(ctx, fctx, entriesArg, { kind: "externref" });
+        if (nativeArgType && nativeArgType.kind !== "externref")
+          coerceType(ctx, fctx, nativeArgType, { kind: "externref" });
+        if (nativeArgType === null) fctx.body.push({ op: "ref.null.extern" });
+        fctx.body.push({ op: "call", funcIdx: feNativeIdx });
+        return { kind: "externref" };
       }
     }
     const argType = compileExpression(ctx, fctx, entriesArg, { kind: "externref" });
@@ -4124,7 +4058,6 @@ export function compileBuiltinStaticCall(
   // Object.groupBy arm below (indexable-items gate; raw-GC-closure callback so
   // no `__make_callback` env import leaks) but returns a `ref $Map`.
   if (
-    (ctx.standalone || ctx.nativeStrings) &&
     ts.isIdentifier(propAccess.expression) &&
     propAccess.expression.text === "Map" &&
     propAccess.name.text === "groupBy" &&
@@ -4188,7 +4121,7 @@ export function compileBuiltinStaticCall(
     const gbItemsType = ctx.checker.getTypeAtLocation(expr.arguments[0]!);
     const gbItemsIndexable =
       ts.isArrayLiteralExpression(expr.arguments[0]!) || gbItemsType.getNumberIndexType() !== undefined;
-    if (ctx.standalone && gbItemsIndexable) {
+    if (gbItemsIndexable) {
       const groupByIdx = ensureObjectGroupBy(ctx);
       const iterTypeS = compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "externref" });
       if (iterTypeS && iterTypeS.kind !== "externref") coerceType(ctx, fctx, iterTypeS, { kind: "externref" });

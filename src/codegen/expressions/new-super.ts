@@ -172,12 +172,7 @@ import { compileStringLiteral } from "../string-ops.js";
 import { canStructurallyProjectRef, coerceType as coerceTypeImpl, pushDefaultValue } from "../type-coercion.js";
 import { ensureDateDaysFromCivilHelper, ensureDateStruct } from "./builtins.js";
 import { emitNativeDateParse } from "../date-parse-native.js"; // (#2164) pure-Wasm new Date(str)
-import {
-  compileSpreadCallArgs,
-  emitLazyClassObjectGet,
-  emitLazyProtoGet,
-  emitRegisterDynamicClassParent,
-} from "./extern.js";
+import { compileSpreadCallArgs, emitLazyClassObjectGet, emitLazyProtoGet } from "./extern.js";
 import { standaloneClassProtoObjectApplies } from "../class-proto-object.js"; // (#5350 step 1) class [[HomeObject]] gate
 import { emitStandaloneHeritageCheck } from "../class-heritage-check.js"; // (#5195 r3-5)
 import { emitStandaloneCommaHeritageEffects } from "../classes/class-heritage-comma.js"; // (#6772 S6)
@@ -298,7 +293,6 @@ function compileCtorArgument(
   const shouldForceVec =
     forceArrayLiteralVec &&
     (expected?.kind === "externref" || expected?.kind === "ref" || expected?.kind === "ref_null") &&
-    (ctx.standalone || ctx.wasi) &&
     ts.isArrayLiteralExpression(carrier);
   const previousForceVec = (ctx as unknown as { _arrayLiteralForceVec?: boolean })._arrayLiteralForceVec;
   const previousCollectionForceVec = (ctx as unknown as { _arrayLiteralForceCollectionVec?: boolean })
@@ -1056,7 +1050,6 @@ function compileStandaloneObjectLiteralSuperMethodCall(
   expr: ts.CallExpression,
   key: SuperReadKey,
 ): ValType | null | undefined {
-  if (!ctx.standalone) return undefined;
   if (expr.arguments.some((arg) => ts.isSpreadElement(arg))) return undefined;
   const externref: ValType = { kind: "externref" };
   ensureObjectRuntime(ctx);
@@ -1405,8 +1398,6 @@ function compileStandaloneSuperPropertyRead(
   emitHomeObject: () => boolean | "base",
   emitReceiver: () => void,
 ): ValType | undefined {
-  if (!ctx.standalone) return undefined;
-
   ensureObjectRuntime(ctx);
   if (key.kind === "name") addStringConstantGlobal(ctx, key.name);
   flushLateImportShifts(ctx, fctx);
@@ -1496,7 +1487,6 @@ function emitSuperExtendsNullThrow(
   expr: ts.Node,
   accessType: ts.Type,
 ): ValType | undefined {
-  if (!ctx.standalone) return undefined;
   if (!enclosingClassExtendsNull(expr)) return undefined;
   emitThrowTypeError(ctx, fctx, "Cannot read properties of null (super base)");
   const wasmType = resolveWasmType(ctx, accessType);
@@ -1600,7 +1590,6 @@ function compileStandaloneObjectLiteralSuperPropertyRead(
   accessType: ts.Type | "externref",
   anchor: ts.Node,
 ): ValType | undefined {
-  if (!ctx.standalone) return undefined;
   const refs = objectLiteralSuperRefEmitters(ctx, fctx, anchor);
   return compileStandaloneSuperPropertyRead(ctx, fctx, key, accessType, refs.emitHomeObject, refs.emitReceiver);
 }
@@ -1647,7 +1636,6 @@ function compileStandaloneClassSuperPropertyRead(
   currentClassName: string,
   parentClassName: string | undefined,
 ): ValType | undefined {
-  if (!ctx.standalone) return undefined;
   if (parentClassName === undefined) return undefined;
   if (!standaloneClassProtoObjectApplies(ctx, currentClassName)) return undefined;
   // (#5350 step 1, corrected in step 4) The PARENT must own a `$Object`
@@ -1959,7 +1947,7 @@ export function compileSuperElementAccess(
     // (#5350 step 2) Standalone: the VALUE is a runtime read, not a default.
     // GetSuperBase runs first, then ToPropertyKey on the evaluated key, then
     // the receiver-aware [[Get]] — see compileStandaloneSuperPropertyRead.
-    if (argExpr && ctx.standalone) {
+    if (argExpr) {
       const dynamicKey: SuperReadKey = {
         kind: "dynamic",
         emit: () => {
@@ -2333,158 +2321,6 @@ function compileFnctorNewAsObject(ctx: CodegenContext, fctx: FunctionContext, fn
   return { kind: "externref" };
 }
 
-/**
- * Compile `new FuncDecl(args)` where FuncDecl is a function declaration used
- * as a constructor (e.g. `function Foo() { this.x = 1; }; new Foo()`).
- *
- * Strategy:
- * 1. Analyze the function body for `this.prop = value` assignments to determine struct fields.
- * 2. Create a WasmGC struct type with those fields.
- * 3. Create a constructor function that allocates the struct, binds `this`, runs the body, returns the struct.
- * 4. Cache the struct type and constructor so subsequent `new Foo()` calls reuse them.
- */
-/**
- * (#3138) Call-site instance→ctor registration for FUNCTION-SCOPE fnctors.
- *
- * The #1712 registration (`__register_fnctor_instance`, ctor PROLOGUE) reads
- * the ctor closure from a module GLOBAL (`moduleGlobals`/`funcClosureGlobals`)
- * — which does not exist when the fnctor is a function-local binding
- * (`export function test() { var Ctor = function(){}; … new Ctor(); }`, the
- * test262 wrap shape). The prologue (inside the synthesized
- * `__fnctor_<Name>_new`) cannot see the caller's local, so for that case the
- * link is registered at the CALL SITE, where the closure local IS in scope.
- * Without the link, `_fnctorProtoLookup` misses and every INHERITED read off
- * the instance — including ToPropertyDescriptor's prototype-inclusive Get
- * (#2680) when the instance is used as a property DESCRIPTOR — silently drops
- * (the `15.2.3.6-3-129` inherited-attribute family).
- *
- * Emitted with the ctor-call result (`(ref null $__fnctor_<Name>)`) on the
- * stack; restores that exact value/type, so downstream consumers are
- * unaffected:
- *
- *   local.tee $__fnctor_reg_tmp      ;; keep the typed instance
- *   extern.convert_any               ;; instance → externref
- *   local.get $<funcName>            ;; closure value (+ convert if a GC ref)
- *   call $__register_fnctor_instance
- *   local.get $__fnctor_reg_tmp      ;; restore
- *
- * Gates (all must hold; any miss = status quo, no emission):
- *  - host lane only (`!ctx.standalone && !ctx.wasi`) — the sidecar/proto-walk
- *    machinery is JS-host; standalone stays byte-identical;
- *  - the module-global gate MISSED (module-global fnctors keep the prologue
- *    registration — byte-identical for them);
- *  - `fctx.localMap` has a slot for `funcName` holding the closure VALUE
- *    (externref or a GC ref). Ref-cell boxed captures are skipped — the raw
- *    local is the CELL, not the closure, and registering the cell identity
- *    would poison the WeakMap;
- *  - runtime handlers are null-tolerant, so a hoisted `new` before the
- *    assignment registers nothing (status quo) instead of trapping.
- *
- * Late-import discipline: `ensureLateImport` + ONE `flushLateImportShifts`
- * AFTER the ctor call is already emitted, then a FRESH `funcMap` lookup for
- * the register import (the #2608 "one terminal flush, never mid-emission"
- * rule; the flush repairs the just-emitted ctor-call index if the import
- * insertion shifted defined functions).
- */
-function emitCallSiteFnctorRegistration(
-  ctx: CodegenContext,
-  fctx: FunctionContext,
-  funcName: string,
-  instanceTypeIdx: number,
-): void {
-  if (ctx.standalone || ctx.wasi) return;
-  if (ctx.moduleGlobals.get(funcName) !== undefined || ctx.funcClosureGlobals.get(funcName) !== undefined) {
-    return; // module-global fnctor — the ctor-prologue registration (#1712) owns it
-  }
-  const slot = fctx.localMap.get(funcName);
-  if (slot === undefined) return;
-  if (fctx.boxedCaptures?.has(funcName)) return; // slot holds a ref CELL, not the closure
-  const slotType = getLocalType(fctx, slot);
-  if (!slotType) return;
-  const isExtern = slotType.kind === "externref" || slotType.kind === "ref_extern";
-  const isGcRef =
-    slotType.kind === "ref" || slotType.kind === "ref_null" || slotType.kind === "anyref" || slotType.kind === "eqref";
-  if (!isExtern && !isGcRef) return; // numeric/funcref slot — not a closure value
-  ensureLateImport(ctx, "__register_fnctor_instance", [{ kind: "externref" }, { kind: "externref" }], []);
-  flushLateImportShifts(ctx, fctx);
-  const regIdx = ctx.funcMap.get("__register_fnctor_instance");
-  if (regIdx === undefined) return;
-  const tmp = allocLocal(fctx, `__fnctor_reg_tmp_${fctx.locals.length}`, {
-    kind: "ref_null",
-    typeIdx: instanceTypeIdx,
-  });
-  fctx.body.push({ op: "local.tee", index: tmp });
-  fctx.body.push({ op: "extern.convert_any" });
-  fctx.body.push({ op: "local.get", index: slot });
-  if (!isExtern) fctx.body.push({ op: "extern.convert_any" });
-  fctx.body.push({ op: "call", funcIdx: regIdx });
-  fctx.body.push({ op: "local.get", index: tmp });
-}
-
-/**
- * (#1712 / #3486) Ctor-PROLOGUE instance→ctor-closure registration for a
- * MODULE-scope fnctor. Sibling of `emitCallSiteFnctorRegistration` above, which
- * covers the function-LOCAL case (#3138).
- *
- * Emitted in the prologue — before the user body compiles — because
- * acorn-style ctors call prototype methods on `this` inside the ctor itself
- * (`this.context = this.initialContext()`); an end-of-ctor registration left
- * those in-ctor dispatches unresolvable. JS-host mode only: standalone/WASI
- * construction stays pure Wasm (the native equivalent rides on the #1888
- * open-object runtime in a later dogfood lap).
- *
- * **(#3486) Why the operand is the identifier's own cached-closure ACCESS, not
- * a pre-existing global.** The original #1712 form required
- * `moduleGlobals`/`funcClosureGlobals` to already hold an entry, and BOTH are
- * populated lazily by an earlier identifier-as-VALUE read of `funcName`. So
- * whether the link got emitted at all depended on COMPILE ORDER — and in the
- * shape test262 actually uses,
- *
- *     function DummyError() {}
- *     var prop = function () { throw new DummyError(); };
- *     assert.throws(DummyError, function () { base[prop()] *= expr(); });
- *
- * the `new DummyError()` compiles BEFORE the `DummyError` argument does, so no
- * global existed, the gate missed, and — because the synthesized ctor is built
- * exactly once and cached in `funcConstructorMap` — the link was PERMANENTLY
- * absent. Instances then had no `.constructor` back-pointer at all.
- *
- * `emitCachedFuncClosureAccess` is the same helper identifiers.ts uses for a
- * bare `DummyError` mention, with the same `constructible` flag (unconditionally
- * false in the host lane — see `isOrdinaryFunctionDecl`'s `noJsHost` gate), so
- * the registered value is reference-identical to the one every later mention
- * yields. It fixes both failure modes at once: the singleton is created on
- * demand (no compile-order dependency) AND the lazy cache is evaluated here, so
- * the registered value is never the `null` the global holds before its own
- * first value read.
- *
- * Buffer-reach note: the flush below walks `ctx.currentFunc` (still the OUTER
- * call-site fctx at this point) plus `ctorFctx.body` explicitly; once the body
- * compile switches `ctx.currentFunc` to `ctorFctx`, later shifts reach these
- * prologue instrs through `currentFunc.body`, and after attachment through
- * `ctx.mod.functions`.
- */
-function emitCtorPrologueFnctorRegistration(
-  ctx: CodegenContext,
-  ctorFctx: FunctionContext,
-  constructorIdentityParamIdx: number,
-  selfLocal: number,
-): void {
-  if (ctx.standalone || ctx.wasi) return;
-  ensureLateImport(ctx, "__register_fnctor_instance", [{ kind: "externref" }, { kind: "externref" }], []);
-  flushLateImportShifts(ctx, ctorFctx);
-  const regIdx = ctx.funcMap.get("__register_fnctor_instance");
-  if (regIdx === undefined) return;
-  ctorFctx.body.push({ op: "local.get", index: selfLocal });
-  ctorFctx.body.push({ op: "extern.convert_any" });
-  // The caller evaluated the real constructor value before its arguments and
-  // passed that exact closure identity. A synthesized cached closure is not
-  // equivalent for capturing nested constructors: prototype writes land on
-  // the live closure while the cache owns a different, empty sidecar.
-  ctorFctx.body.push({ op: "local.get", index: constructorIdentityParamIdx });
-  ctorFctx.body.push({ op: "call", funcIdx: regIdx });
-}
-
 function compileNewFunctionDeclaration(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -2612,7 +2448,7 @@ function compileNewFunctionDeclaration(
   // and standalone/WASI-gated, so every other ctor keeps the historical
   // `(ref $Struct)` ABI byte-identically — including the host lane, whose
   // #1712 call-site registration tees the result into a struct-typed temp.
-  const resultIsExtern = (ctx.standalone || ctx.wasi) && fnctorBodyMayReturnForeignObject(funcDecl);
+  const resultIsExtern = fnctorBodyMayReturnForeignObject(funcDecl);
   const ctorResults: ValType[] = resultIsExtern ? [{ kind: "externref" }] : [{ kind: "ref", typeIdx: structTypeIdx }];
   const ctorTypeIdx = addFuncType(ctx, ctorParams, ctorResults, `${ctorName}_type`);
   const ctorFuncIdx = mintDefinedFunc(ctx);
@@ -2688,7 +2524,7 @@ function compileNewFunctionDeclaration(
     // exports are available. Standalone keeps the historical dynamic `this`
     // representation: forcing the struct fact there bypasses prototype
     // overrides used by generic String methods on custom constructors.
-    ...(!ctx.standalone && !ctx.wasi ? { thisStructName: structName } : {}),
+    ...{},
   };
   // The synthesized fnctor body is still the source function's activation for
   // legacy Function#caller. Register it before any prologue/body emission so
@@ -2756,7 +2592,6 @@ function compileNewFunctionDeclaration(
   // compile switches ctx.currentFunc to ctorFctx, later shifts reach these
   // prologue instrs through currentFunc.body, and after attachment through
   // ctx.mod.functions.
-  emitCtorPrologueFnctorRegistration(ctx, ctorFctx, ctorIdentityParamIdx, selfLocal);
 
   // Compile the function body
   const savedFunc = ctx.currentFunc;
@@ -2769,11 +2604,9 @@ function compileNewFunctionDeclaration(
   // frame locals named after the captures BEFORE the body compiles, so
   // sibling-call prepends and direct reads resolve in-frame instead of
   // addressing the declaring frame's dead slots.
-  if (ctx.standalone) {
-    const closureRecord = ctx.closureStructByNode?.get(funcDecl);
-    if (closureRecord) {
-      materializeFnctorTwinCaptures(ctx, ctorFctx, closureRecord.structTypeIdx, ctorIdentityParamIdx);
-    }
+  const closureRecord = ctx.closureStructByNode?.get(funcDecl);
+  if (closureRecord) {
+    materializeFnctorTwinCaptures(ctx, ctorFctx, closureRecord.structTypeIdx, ctorIdentityParamIdx);
   }
   // (fnctor-ctor-arguments.ts) Materialize `arguments` — the one prologue step
   // this synthesized body was missing relative to `function-body.ts`, which is
@@ -2871,7 +2704,6 @@ function compileNewFunctionDeclaration(
   // module-global fnctors / standalone / non-closure slots — and the widened
   // (#2071) regime is standalone-only, so the struct-typed tee inside the
   // registration never meets an externref result.
-  emitCallSiteFnctorRegistration(ctx, fctx, funcName, structTypeIdx);
   return resultIsExtern ? { kind: "externref" } : { kind: "ref", typeIdx: structTypeIdx };
 }
 
@@ -3429,42 +3261,6 @@ function emitClassCtorValue(ctx: CodegenContext, fctx: FunctionContext, ctorName
   return { kind: "funcref" };
 }
 
-/**
- * (#4616) §10.2.9 SetFunctionName for a NAMED class-expression VALUE (jest's
- * convertDescriptorToString over `class Named {}` in a test table): stamp
- * `.name` into the ctor value's sidecar once at the value-read site, so
- * dynamic `.name` reads in other modules answer the declared name. Host lane
- * only; a nameless class expression is a no-op.
- */
-function stampClassExprName(
-  ctx: CodegenContext,
-  fctx: FunctionContext,
-  vt: ValType | null,
-  displayName: string | undefined,
-): void {
-  if (vt === null || ctx.standalone || ctx.wasi) return;
-  if (displayName === undefined || displayName.length === 0) return;
-  if (vt.kind !== "externref" && vt.kind !== "ref" && vt.kind !== "ref_null") return;
-  const setIdx = ensureLateImport(
-    ctx,
-    "__extern_set",
-    [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
-    [],
-  );
-  flushLateImportShifts(ctx, fctx);
-  if (setIdx === undefined) return;
-  addStringConstantGlobal(ctx, "name");
-  addStringConstantGlobal(ctx, displayName);
-  const tmp = allocTempLocal(fctx, vt);
-  fctx.body.push({ op: "local.tee", index: tmp });
-  if (vt.kind !== "externref") fctx.body.push({ op: "extern.convert_any" });
-  fctx.body.push(...stringConstantExternrefInstrs(ctx, "name"));
-  fctx.body.push(...stringConstantExternrefInstrs(ctx, displayName));
-  fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__extern_set") ?? setIdx });
-  fctx.body.push({ op: "local.get", index: tmp });
-  releaseTempLocal(fctx, tmp);
-}
-
 function assignmentContainingClassExpression(expr: ts.ClassExpression): ts.BinaryExpression | undefined {
   let value: ts.Expression = expr;
   while (
@@ -3550,19 +3346,15 @@ function compileClassExpression(ctx: CodegenContext, fctx: FunctionContext, expr
   // singleton carries the prototype edge; native dispatch constructs it the
   // same way it constructs `const C = class {}` values. The host lane keeps
   // the assignment-only gate — its inline class values must stay host-callable.
-  if (
-    syntheticName !== undefined &&
-    (assignment !== undefined || ctx.standalone || ctx.wasi) &&
-    ctx.classObjectGlobals?.has(syntheticName)
-  ) {
+  if (syntheticName !== undefined && ctx.classObjectGlobals?.has(syntheticName)) {
     // Heritage evaluation belongs at ClassDefinitionEvaluation, before the
     // class value is produced. The singleton registration deliberately keeps
     // dynamic parents lazy, so registering it here remains valid even when a
     // mirror was cached while initializing the singleton.
-    if (!needsInScopeBody) emitRegisterDynamicClassParent(ctx, fctx, expr, syntheticName);
-    if (emitLazyClassObjectGet(ctx, fctx, syntheticName)) {
-      return emitClassExpressionStaticsBeforeValue(ctx, fctx, expr, { kind: "externref" });
-    }
+    if (!needsInScopeBody)
+      if (emitLazyClassObjectGet(ctx, fctx, syntheticName)) {
+        return emitClassExpressionStaticsBeforeValue(ctx, fctx, expr, { kind: "externref" });
+      }
   }
 
   if (syntheticName) {
@@ -3573,7 +3365,6 @@ function compileClassExpression(ctx: CodegenContext, fctx: FunctionContext, expr
       // (#4616) §10.2.9 — same name stamp as the named-collection arm below;
       // a NAMED class expression routinely lands here under its synthetic
       // collection name, but its display name is the SOURCE name.
-      stampClassExprName(ctx, fctx, vt, expr.name?.text);
       return emitClassExpressionStaticsBeforeValue(ctx, fctx, expr, vt);
     }
   }
@@ -3586,7 +3377,6 @@ function compileClassExpression(ctx: CodegenContext, fctx: FunctionContext, expr
       const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, ctorName)); // (#1983)
       if (funcIdx !== undefined) {
         const vt = emitClassCtorValue(ctx, fctx, ctorName, funcIdx);
-        stampClassExprName(ctx, fctx, vt, className);
         return emitClassExpressionStaticsBeforeValue(ctx, fctx, expr, vt);
       }
     }
@@ -3796,9 +3586,7 @@ function tryCompileNativeConstructFromValue(
   // (the corpus then reports `Cannot access property on null or undefined`
   // from the harness's `duration.years`). Resolve the static arity first;
   // genuinely runtime-length spreads still decline.
-  const args =
-    flattenCallArgs(rawArgs) ??
-    (ctx.standalone || ctx.wasi ? (resolveStaticSpreadArgs(ctx, rawArgs) ?? rawArgs) : rawArgs);
+  const args = flattenCallArgs(rawArgs) ?? resolveStaticSpreadArgs(ctx, rawArgs) ?? rawArgs;
   if (args.some((a) => ts.isSpreadElement(a))) {
     // (#5383 S34) A genuinely runtime-length spread (`new construct(...args)`
     // where `args` is a parameter, not a literal or a resolvable local) used to
@@ -4343,7 +4131,7 @@ function emitUserClosureConstructOnNullAfterFunctionArm(
   argLocals: readonly number[],
 ): void {
   const fact = ts.isIdentifier(callee) ? ctx.oracle.typeFactOf(callee) : undefined;
-  if (ctx.standalone && fact?.kind === "builtin" && fact.name === "Function") return;
+  if (fact?.kind === "builtin" && fact.name === "Function") return;
   const driverIdx = prepareUserClosureConstructOnNull(ctx, fctx, argLocals.length);
   if (driverIdx !== undefined) emitUserClosureConstructOnNull(ctx, fctx, driverIdx, calleeAnyLocal, argLocals);
 }
@@ -4423,8 +4211,7 @@ function emitDynamicNewFallback(
     // runtime-argv arm below cannot serve a callee the module does not own —
     // the construct drivers are minted per ARITY. Resolve the static arity
     // first; only the genuinely runtime-length spreads fall through.
-    const flat =
-      flattenCallArgs(rawArgs) ?? (ctx.standalone || ctx.wasi ? (resolveStaticSpreadArgs(ctx, rawArgs) ?? null) : null);
+    const flat = flattenCallArgs(rawArgs) ?? resolveStaticSpreadArgs(ctx, rawArgs) ?? null;
     if (flat !== null) {
       args = flat; // all spreads had a statically-known element list
     } else {
@@ -5288,36 +5075,24 @@ function wrapWithIteratorClose(ctx: CodegenContext, fctx: FunctionContext, body:
     { op: "local.get", index: iterLocal },
     { op: "call", funcIdx: returnIdx },
   ];
-  if (ctx.wasi || ctx.standalone) {
-    const tagIdx = ensureExnTag(ctx);
-    const exnLocal = allocLocal(fctx, `__collctor_exn_${fctx.locals.length}`, { kind: "externref" });
-    const innerClose = buildStandardTryTable({ kind: "empty" }, closeBody, [
-      { kind: "catch", tagIdx, payloadType: { kind: "externref" }, body: [{ op: "drop" }] },
-    ]);
-    return buildStandardTryTable({ kind: "empty" }, body, [
-      {
-        kind: "catch",
-        tagIdx,
-        payloadType: { kind: "externref" },
-        body: [
-          { op: "local.set", index: exnLocal },
-          innerClose,
-          { op: "local.get", index: exnLocal },
-          { op: "throw", tagIdx },
-        ],
-      },
-    ]);
-  }
-  return {
-    op: "try",
-    blockType: { kind: "empty" },
-    body,
-    catches: [],
-    catchAll: [
-      { op: "try", blockType: { kind: "empty" }, body: closeBody, catches: [], catchAll: [] },
-      { op: "rethrow", depth: 0 },
-    ],
-  };
+  const tagIdx = ensureExnTag(ctx);
+  const exnLocal = allocLocal(fctx, `__collctor_exn_${fctx.locals.length}`, { kind: "externref" });
+  const innerClose = buildStandardTryTable({ kind: "empty" }, closeBody, [
+    { kind: "catch", tagIdx, payloadType: { kind: "externref" }, body: [{ op: "drop" }] },
+  ]);
+  return buildStandardTryTable({ kind: "empty" }, body, [
+    {
+      kind: "catch",
+      tagIdx,
+      payloadType: { kind: "externref" },
+      body: [
+        { op: "local.set", index: exnLocal },
+        innerClose,
+        { op: "local.get", index: exnLocal },
+        { op: "throw", tagIdx },
+      ],
+    },
+  ]);
 }
 
 /**
@@ -6319,7 +6094,7 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
         fctx.body.push({ op: "call", funcIdx });
         // (#5197 r3 Step 1d) a standalone Promise-rooted class's `<C>_new` answers the
         // `$Promise` carrier as externref (D4), not the class struct: report what it returns.
-        const promiseRooted = ctx.standalone && resolvePromiseSubclassName(ctx, syntheticName) !== undefined;
+        const promiseRooted = resolvePromiseSubclassName(ctx, syntheticName) !== undefined;
         const ctorResult = promiseRooted ? funcSignatureOf(ctx, funcIdx)?.results[0] : undefined;
         if (ctorResult?.kind === "externref") {
           markPromiseSubclassValueRead(ctx);
@@ -6797,7 +6572,6 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
         fctx.body.push({ op: "call", funcIdx: finalIdx });
         // (#3138) Function-scope fnctor: call-site instance→ctor link (the
         // cached arm bypasses compileNewFunctionDeclaration's emission).
-        emitCallSiteFnctorRegistration(ctx, fctx, fnName, cachedFnCtor.structTypeIdx);
         // (#2071) A widened ctor returns externref — report it, never the struct.
         return cachedFnCtor.resultIsExtern
           ? { kind: "externref" }
@@ -7459,8 +7233,7 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
     // (#838 gate — fable-dev-5) BigInt views take the native i64-vec ctor path
     // only in standalone/wasi; js-host keeps the host-global BigInt64Array so
     // SharedArrayBuffer/Atomics interop works (see new-builtin-globals.ts note).
-    const isBigIntCtor838 = className === "BigInt64Array" || className === "BigUint64Array";
-    if (className && TYPED_ARRAY_CTORS.has(className) && (!isBigIntCtor838 || ctx.wasi || ctx.standalone)) {
+    if (className && TYPED_ARRAY_CTORS.has(className)) {
       // (#2593) packed integer storage standalone/WASI — see the matching
       // count-ctor handler above. `typedArrayVecStorage` keeps host/gc on f64
       // and packs Int8/Uint8/Uint8Clamped→i8, Int16/Uint16→i16, Int32/Uint32→i32.

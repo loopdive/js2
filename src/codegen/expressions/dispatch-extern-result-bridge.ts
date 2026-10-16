@@ -34,7 +34,6 @@ export function guardedExternRefResultBridge(
   from: ValType,
   to: ValType,
 ): Instr[] | null {
-  if (!(ctx.standalone || ctx.wasi)) return null;
   if (from.kind !== "externref" && from.kind !== "ref_extern") return null;
   if (to.kind !== "ref_null" && to.kind !== "ref") return null;
   // `ref.test` from `anyref` is valid only against struct/array heap types.

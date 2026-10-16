@@ -25,7 +25,7 @@ import { buildVecFromExternMaterializer, getVecInfo, vecFromExternFuncIdx } from
 import { flushLateImportShifts } from "./late-imports.js";
 
 function noHostVecTarget(ctx: CodegenContext, to: ValType | null): number | undefined {
-  if (!(ctx.standalone || ctx.wasi) || to === null || to.kind !== "ref_null") return undefined;
+  if (to === null || to.kind !== "ref_null") return undefined;
   return getVecInfo(ctx, to.typeIdx) === null ? undefined : to.typeIdx;
 }
 

@@ -31,7 +31,7 @@
 import { ts } from "../../ts-api.js";
 import type { ValType } from "../../ir/types.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
-import { emitAnnexBUnboundReferenceError, emitThrowReferenceError } from "../js-errors.js";
+import { emitThrowReferenceError } from "../js-errors.js";
 import { noJsHost } from "./helpers.js";
 
 export interface UndeclaredCalleeFacts {
@@ -56,7 +56,7 @@ export function tryEmitUndeclaredCalleeReferenceError(
 ): ValType | undefined {
   if (facts.implicitCallee || !facts.declarationIsUndefined) return undefined;
 
-  if ((ctx.standalone || ctx.wasi) && noJsHost(ctx)) {
+  if (noJsHost(ctx)) {
     if (facts.isRuntimeEvalGlobal) return undefined;
     emitThrowReferenceError(ctx, fctx, `${funcName} is not defined`);
     fctx.body.push({ op: "unreachable" });
@@ -64,7 +64,5 @@ export function tryEmitUndeclaredCalleeReferenceError(
   }
 
   // (#4650) JS-host lane.
-  if (ctx.standalone || ctx.wasi || noJsHost(ctx)) return undefined;
-  if (!ts.isIdentifier(expr.expression) || !ctx.oracle.isUnresolvableIdentifier(expr.expression)) return undefined;
-  return emitAnnexBUnboundReferenceError(ctx, fctx, funcName);
+  return undefined;
 }

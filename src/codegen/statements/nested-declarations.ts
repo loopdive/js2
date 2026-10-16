@@ -55,7 +55,7 @@ import {
 } from "../generators-native.js";
 import { emitThrowReferenceError, emitThrowTypeError } from "../expressions/helpers.js";
 import { emitToPropertyKeyOnce } from "../expressions/computed-member-reference.js";
-import { emitLazyProtoGet, emitRegisterDynamicClassParent } from "../expressions/extern.js";
+import { emitLazyProtoGet } from "../expressions/extern.js";
 import { emitStandaloneHeritageCheck } from "../class-heritage-check.js"; // (#5195 r3-5)
 import { emitStandaloneCommaHeritageEffects } from "../classes/class-heritage-comma.js"; // (#6772 S6)
 import { emitStandaloneHeritagePrototypeGet } from "../classes/class-heritage-runtime-get.js"; // (#6772 S11)
@@ -537,13 +537,6 @@ export function compileNestedClassDeclaration(
     emitThrowReferenceError(ctx, fctx, `Cannot access '${decl.name.text}' before initialization`);
     return;
   }
-
-  // (#4618) Dynamic `extends <value>` parent (react's
-  // `class Foo extends React.Component`): evaluate the heritage expression
-  // here — the spec's ClassDefinitionEvaluation point, where its bindings are
-  // in scope — and register the live parent with the runtime so the host-side
-  // constructible class mirror can chain prototype misses through it.
-  emitRegisterDynamicClassParent(ctx, fctx, decl, className);
 
   // (#5195 r3-5) §15.7.14 step 5f: the superclass value is evaluated and
   // IsConstructor-checked before the class object exists. Standalone only, and

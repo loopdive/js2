@@ -50,12 +50,7 @@ import {
 import { addHostStringConstantGlobal, deferrableStringConstantGlobalGet } from "../registry/imports.js";
 import { emitCapturedBoxGlobalRead, emitNullGuardedStructGet, getCapturedBoxGlobal } from "../property-access.js";
 import { coerceType, compileExpression, isAnyValue } from "../shared.js";
-import {
-  fnShadowSlot,
-  isShadowedTopLevelFn,
-  isShadowStaticArmFor,
-  withShadowReadSuppressed,
-} from "../fn-global-shadow.js"; // (#4630 / #4648)
+import { fnShadowSlot, isShadowedTopLevelFn, withShadowReadSuppressed } from "../fn-global-shadow.js"; // (#4630 / #4648)
 import { emitTdzCheckAtGlobal } from "../statements.js";
 import { emitUndefined, ensureLateImport, flushLateImportShifts, shiftLateImportIndices } from "./late-imports.js";
 import { emitStringBuilderRead, getBuilderInfo } from "../string-builder.js";
@@ -98,7 +93,6 @@ import {
   emitLiveIdentifierGlobalRead,
   moduleTdzGlobalIndexForIdentifier,
   tryEmitAmbientRegistryCollisionRead,
-  tryEmitExplicitHostAmbientValueRead,
 } from "./identifier-module-storage.js";
 import {
   emitCaptureRuntimeEvalBindingValueCell,
@@ -111,7 +105,7 @@ import {
 } from "../global-environment.js";
 import { runtimeEvalStateMayShadowBinding } from "../direct-eval-environment.js";
 import { emitStandaloneIntrinsicEvalValue } from "./eval-inline.js";
-import { emitHostEvalGlobalBindingSeed, runtimeEvalProviderLinkable } from "./runtime-eval-provider.js";
+import { runtimeEvalProviderLinkable } from "./runtime-eval-provider.js";
 import { emitStandaloneFunctionIntrinsicValue } from "../function-intrinsic-carrier.js"; // (#4442) THE `%Function%` emitter
 import { definedFuncAt } from "../func-space.js";
 import { emitHostOrNativeBuiltinInstanceOf } from "../host-native-instanceof.js";
@@ -916,12 +910,7 @@ function shouldUseRuntimeEvalGlobalLexicalRead(
   skipRuntimeEvalState: boolean,
   unresolvedInModuleGoal: boolean,
 ): boolean {
-  return (
-    !skipRuntimeEvalState &&
-    !unresolvedInModuleGoal &&
-    (ctx.standalone || ctx.wasi) &&
-    ctx.runtimeEvalGlobalFunctionBindings === true
-  );
+  return !skipRuntimeEvalState && !unresolvedInModuleGoal && ctx.runtimeEvalGlobalFunctionBindings === true;
 }
 
 function emitModuleTdzReadCheck(ctx: CodegenContext, fctx: FunctionContext, id: ts.Identifier): void {
@@ -1059,8 +1048,6 @@ function compileIdentifierCore(
   const name = id.text;
 
   const runtimeEvalMayShadow = !skipRuntimeEvalState && runtimeEvalStateMayShadowBinding(ctx, fctx, name);
-  const foldedEvalActivationOwnsBinding =
-    fctx.directEvalActivationBindingNames?.has(name) === true && fctx.localMap.has(name);
 
   // A typed source-level `declare const/let/var` is a promise that the host
   // environment owns the value; it does not allocate a Wasm local. Resolve it
@@ -1072,10 +1059,6 @@ function compileIdentifierCore(
   // declarations are not ambient-only. A provider-created binding must select
   // before this fallback, and a successfully folded sloppy eval can create the
   // same activation binding statically; both shadows therefore take priority.
-  if (!runtimeEvalMayShadow && !foldedEvalActivationOwnsBinding) {
-    const explicitAmbientType = tryEmitExplicitHostAmbientValueRead(ctx, fctx, id);
-    if (explicitAmbientType !== undefined) return explicitAmbientType;
-  }
 
   // A direct CaseBlock lexical declaration is visible only while evaluating
   // that switch's clauses.  Keep an outside reference from falling through to
@@ -1585,28 +1568,6 @@ function compileIdentifierCore(
     return { kind: "externref" };
   }
 
-  // Node's `process` is a host-owned global rather than a module binding.
-  // Keep a bare read on the same live host object used by the dedicated
-  // `process.*` property readers. This matters for code such as
-  // `Object.prototype.toString.call(process)`: synthesizing a Wasm object in
-  // the test shim makes callback-valued members (stdout.on/removeListener)
-  // opaque GC closures, while the real host process exposes ordinary JS
-  // functions. Lexical/module/captured shadows have already returned above.
-  if (
-    name === "process" &&
-    !ctx.standalone &&
-    !ctx.wasi &&
-    !fctx.localMap.has(name) &&
-    !(fctx.boxedCaptures?.has(name) ?? false) &&
-    !unresolvedInModuleGoal
-  ) {
-    const processIdx = ensureLateImport(ctx, "__get_process", [], [{ kind: "externref" }]);
-    flushLateImportShifts(ctx, fctx);
-    if (processIdx !== undefined) fctx.body.push({ op: "call", funcIdx: processIdx });
-    else fctx.body.push({ op: "ref.null.extern" });
-    return { kind: "externref" };
-  }
-
   // A first-class read of the unshadowed global `%eval%` (`var indirect =
   // eval`) must produce the provider's callable, realm-stable intrinsic
   // marker. Syntactic direct/sequence calls are intercepted in calls.ts before
@@ -1620,40 +1581,14 @@ function compileIdentifierCore(
       if (valueType !== undefined) return valueType;
     }
   }
-  // Host/gc: expose the sandbox realm's genuine, non-constructible `%eval%`.
-  // Seed compiled script globals first so an alias performs indirect eval in
-  // the same GlobalEnvironmentRecord as the AOT module.
-  if (!ctx.standalone && !ctx.wasi && name === "eval") {
-    const declaration = ctx.oracle.valueDeclarationOf(id);
-    const isGlobalIntrinsic = declaration === undefined || declaration.getSourceFile().isDeclarationFile;
-    if (isGlobalIntrinsic) {
-      emitHostEvalGlobalBindingSeed(ctx, fctx);
-      const gtFuncIdx = ensureLateImport(ctx, "__get_globalThis", [], [{ kind: "externref" }]);
-      const getIdx = ensureLateImport(
-        ctx,
-        "__extern_get",
-        [{ kind: "externref" }, { kind: "externref" }],
-        [{ kind: "externref" }],
-      );
-      flushLateImportShifts(ctx, fctx);
-      if (gtFuncIdx !== undefined && getIdx !== undefined) {
-        fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__get_globalThis") ?? gtFuncIdx });
-        const strGlobalIdx = addHostStringConstantGlobal(ctx, name);
-        fctx.body.push(
-          strGlobalIdx !== undefined ? { op: "global.get", index: strGlobalIdx } : { op: "ref.null.extern" },
-        );
-        fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__extern_get") ?? getIdx });
-        return { kind: "externref" };
-      }
-    }
-  }
+
   // `%Function%` is a genuine realm-owned callable in runtime-eval builds.
   // Direct `Function(...)` / `new Function(...)` syntax is intercepted before
   // identifier lowering; this branch preserves first-class aliases and the
   // constructor identity inherited by provider-owned interpreted functions.
   // (#4442) Through the SHARED emitter, so this read and the `<fn>.constructor`
   // arm cannot disagree — behaviour here is unchanged (function-intrinsic-carrier.ts).
-  if (ctx.standalone && name === "Function") {
+  if (name === "Function") {
     const declaration = ctx.oracle.valueDeclarationOf(id);
     const isGlobalIntrinsic = declaration === undefined || declaration.getSourceFile().isDeclarationFile;
     if (isGlobalIntrinsic) {
@@ -1668,13 +1603,13 @@ function compileIdentifierCore(
   // function, and round-tripping it through the host global object loses the
   // WasmGC closure representation the call path needs. Host lane only, so the
   // standalone lowering stays byte-identical.
-  if (ctx.sloppyImplicitGlobals?.has(name) && !(!ctx.standalone && !ctx.wasi && isShadowStaticArmFor(name))) {
+  if (ctx.sloppyImplicitGlobals?.has(name)) {
     return emitImplicitGlobalRead(ctx, fctx, name);
   }
   // Standalone built-in namespace values (Array/Object) materialize as lazy
   // open-object singletons before ambient lib declarations can route them to
   // host globals.
-  if (ctx.standalone && isSupportedBuiltinNamespace(name)) {
+  if (isSupportedBuiltinNamespace(name)) {
     const builtinObject = emitBuiltinNamespaceObject(ctx, fctx, name);
     if (builtinObject) return builtinObject;
   }
@@ -1698,107 +1633,6 @@ function compileIdentifierCore(
   // (#6986) `intl` accelerator: the global `Intl` read as a VALUE.
   if (emitHostIntlGlobal(ctx, fctx, name, resolvedValueDeclaration === undefined || readsAmbientDeclaration)) {
     return { kind: "externref" };
-  }
-  if (
-    !ctx.standalone &&
-    !ctx.wasi &&
-    ctx.externClasses.has(name) &&
-    (resolvedValueDeclaration === undefined || readsAmbientDeclaration) &&
-    fctx.localMap.get(name) === undefined &&
-    !(fctx.boxedCaptures?.has(name) ?? false) &&
-    !ctx.classSet.has(name)
-  ) {
-    const gtFuncIdx = ensureLateImport(ctx, "__get_globalThis", [], [{ kind: "externref" }]);
-    const getIdx = ensureLateImport(
-      ctx,
-      "__extern_get",
-      [{ kind: "externref" }, { kind: "externref" }],
-      [{ kind: "externref" }],
-    );
-    flushLateImportShifts(ctx, fctx);
-    if (gtFuncIdx !== undefined && getIdx !== undefined) {
-      fctx.body.push({ op: "call", funcIdx: gtFuncIdx });
-      const strGlobalIdx = addHostStringConstantGlobal(ctx, name);
-      fctx.body.push(
-        strGlobalIdx !== undefined ? { op: "global.get", index: strGlobalIdx } : { op: "ref.null.extern" },
-      );
-      fctx.body.push({ op: "call", funcIdx: getIdx });
-      return { kind: "externref" };
-    }
-  }
-
-  // (#3087) Host/gc lane: a bare TypedArray constructor name used as a VALUE
-  // (not `new TA()` / type position) resolves to the REAL host constructor
-  // externref via `__extern_get(__get_globalThis(), name)` — mirroring the #820h
-  // ERM-global-as-value pattern above. Placed BEFORE the ambient `declaredGlobals`
-  // route (which maps a bare `Int8Array` to a stub host import that returns
-  // `undefined` — so `constructors = [Int8Array, …]` degraded to a null carrier
-  // and a dynamic `new TA(...)` through the `__construct_closure` bridge saw
-  // "undefined is not a constructor"). This materializes the genuine host
-  // constructor so `fn(constructors[i])` and dynamic `new TA(...)` (#3087, the
-  // dominant #3074 downstream honest-fail) execute and pass. Covers the BigInt
-  // views too (not in the standalone `taCtorKindOf` list). Standalone/WASI keeps
-  // the native `$__ta_ctor` value below (host-free). Gated so a real
-  // local/captured/module/class binding — already returned above — wins.
-  if (
-    !ctx.standalone &&
-    !ctx.wasi &&
-    // (#4616-adjacent) `Buffer` rides the same host-global materialization:
-    // jest-util's deepCyclicCopy suite reads the bare Node global (`new
-    // Buffer/Buffer.from`), which otherwise fell to the null-extern default
-    // ("Buffer is not defined").
-    // (#4616) `process` too: jest-core's globals suite reads the bare Node
-    // global (`Object.prototype.toString.call(process)`), which otherwise fell
-    // to the graceful-null default and stringified as "[object Null]".
-    (taCtorKindOf(name) >= 0 ||
-      name === "BigInt64Array" ||
-      name === "BigUint64Array" ||
-      name === "Buffer" ||
-      name === "process" ||
-      // Web Crypto is also a genuine host-global VALUE. Direct
-      // `crypto.randomUUID()` / `crypto.getRandomValues()` calls have typed
-      // builtin lowerings, but a guard such as `if (crypto.randomUUID)` reads
-      // the namespace first. Multi-module JS projects do not necessarily
-      // retain the lib.dom ambient declaration for that dependency, so the
-      // read used to fall through to the unresolvable-name path even though
-      // the host supplies globalThis.crypto.
-      name === "crypto" ||
-      // (#5206) `Intl` is an ambient NAMESPACE (`declare namespace Intl` in
-      // lib.es5.d.ts), not a `declare var`, so none of the value-shaped arms
-      // above claim it and every read fell to the `ref.null.extern` graceful
-      // default — `Intl.DateTimeFormat` then threw "Cannot access property on
-      // null or undefined". That is the eighth @js-temporal/polyfill
-      // module-init blocker (#4628): the bundle's very first Intl statement is
-      // a top-level `ct = Intl.DateTimeFormat`. The JS host owns a full,
-      // ICU-backed `Intl`, and `__get_globalThis`/`__extern_get` are IMPORTS
-      // (unlike the module's own exports), so this resolves inside the wasm
-      // `start` section as well as after it. Standalone/WASI keep the null
-      // default: there is no host Intl there, and a compiled shim for it is a
-      // separate, much larger gap.
-      name === "Intl") &&
-    fctx.localMap.get(name) === undefined &&
-    !(fctx.boxedCaptures?.has(name) ?? false) &&
-    !ctx.classSet.has(name)
-  ) {
-    const gtFuncIdx = ensureLateImport(ctx, "__get_globalThis", [], [{ kind: "externref" }]);
-    const getIdx = ensureLateImport(
-      ctx,
-      "__extern_get",
-      [{ kind: "externref" }, { kind: "externref" }],
-      [{ kind: "externref" }],
-    );
-    flushLateImportShifts(ctx, fctx);
-    if (gtFuncIdx !== undefined && getIdx !== undefined) {
-      fctx.body.push({ op: "call", funcIdx: gtFuncIdx });
-      const strGlobalIdx = addHostStringConstantGlobal(ctx, name);
-      if (strGlobalIdx !== undefined) {
-        fctx.body.push({ op: "global.get", index: strGlobalIdx });
-      } else {
-        fctx.body.push({ op: "ref.null.extern" });
-      }
-      fctx.body.push({ op: "call", funcIdx: getIdx });
-      return { kind: "externref" };
-    }
   }
 
   // Check declared globals (e.g. document, window)
@@ -1988,7 +1822,7 @@ function compileIdentifierCore(
   // `x instanceof ArrayBuffer` at the instanceof lowering, `typeof ArrayBuffer`
   // at the typeof fold. Only the bare-value read changes, and only from a value
   // no conforming program can observe as the constructor.
-  if ((ctx.standalone || (noJsHost(ctx) && name === "ArrayBuffer")) && isBuiltinConstructorIdentityName(name)) {
+  if (isBuiltinConstructorIdentityName(name)) {
     return emitBuiltinConstructorIdentity(ctx, fctx, name);
   }
 
@@ -2049,11 +1883,8 @@ function compileIdentifierCore(
     // (47 tests) — READ-value substrate only; `globalThis.prop` reflective reads
     // are the deferred #2988 MOP work and keep their existing path. Host/gc mode
     // is byte-identical (falls through to the host import below).
-    if (ctx.standalone || ctx.wasi) {
-      const nativeVt = emitNativeGlobalThisObject(ctx, fctx);
-      if (nativeVt) return nativeVt;
-      // Native runtime unavailable — fall through to the host-import path.
-    }
+    const nativeVt = emitNativeGlobalThisObject(ctx, fctx);
+    if (nativeVt) return nativeVt;
     let funcIdx = ctx.funcMap.get("__get_globalThis");
     if (funcIdx === undefined) {
       const importsBefore = ctx.numImportFuncs;
@@ -2064,64 +1895,6 @@ function compileIdentifierCore(
     }
     fctx.body.push({ op: "call", funcIdx });
     return { kind: "externref" };
-  }
-
-  // (#820h) Explicit Resource Management constructors referenced as *values*
-  // (not in `new`/method position) — e.g. `DisposableStack.prototype`,
-  // `Reflect.construct(DisposableStack, …)`, `Object.getOwnPropertyDescriptor`.
-  // The extern-class machinery only models `new X()` / `x.method()`; a bare
-  // identifier falls through to the null-externref fallback below, so reflective
-  // test262 cases see `null` instead of the host constructor. Resolve them to
-  // the real host global via `__extern_get(__get_globalThis(), name)` so the
-  // native constructor object (with its prototype + accessor descriptors) is
-  // visible. Scope strictly to these host-delegated ERM globals and only when
-  // the name is not shadowed by a local/captured binding.
-  //
-  // (#2029) HOST-ONLY: this whole fast path uses the `__get_globalThis` /
-  // `__extern_get` host imports (absent in no-JS-host targets) AND pushes the
-  // ctor-name string key via a string-constant global — which under
-  // standalone/nativeStrings is the `-1` sentinel, baking `global.get -1`
-  // ("global index out of range — -1") at serialize time. It also leaks two
-  // host imports that an empty import object can't satisfy. The reflective
-  // `Object.getPrototypeOf(SuppressedError)` / `isConstructor(DisposableStack)`
-  // shapes (built-ins/{SuppressedError,DisposableStack,AsyncDisposableStack}/
-  // {proto,is-a-constructor}.js) hit this. Gate to gc/host; standalone falls
-  // through to the clean located refusal (the #1888 dual-mode invariant).
-  if (
-    !ctx.standalone &&
-    !ctx.wasi &&
-    // (#4618) `console` referenced as a VALUE (not `console.m(...)` call
-    // position, which has its own intrinsic path): react's upstream tests do
-    // `spyOnDevAndProd(console, 'log')` — the null-externref fallback made
-    // `target[key]` throw inside the spy helper for all 7 StrictMode
-    // console-logs-logging tests. Same host-only resolution as the ERM ctors.
-    (name === "DisposableStack" ||
-      name === "AsyncDisposableStack" ||
-      name === "SuppressedError" ||
-      name === "console") &&
-    !fctx.localMap.has(name) &&
-    !(fctx.boxedCaptures?.has(name) ?? false) &&
-    !ctx.classSet.has(name)
-  ) {
-    const gtFuncIdx = ensureLateImport(ctx, "__get_globalThis", [], [{ kind: "externref" }]);
-    const getIdx = ensureLateImport(
-      ctx,
-      "__extern_get",
-      [{ kind: "externref" }, { kind: "externref" }],
-      [{ kind: "externref" }],
-    );
-    flushLateImportShifts(ctx, fctx);
-    if (gtFuncIdx !== undefined && getIdx !== undefined) {
-      fctx.body.push({ op: "call", funcIdx: gtFuncIdx });
-      const strGlobalIdx = addHostStringConstantGlobal(ctx, name);
-      if (strGlobalIdx !== undefined) {
-        fctx.body.push({ op: "global.get", index: strGlobalIdx });
-      } else {
-        fctx.body.push({ op: "ref.null.extern" });
-      }
-      fctx.body.push({ op: "call", funcIdx: getIdx });
-      return { kind: "externref" };
-    }
   }
 
   // Built-in numeric constants: NaN, Infinity
@@ -2342,7 +2115,7 @@ function compileIdentifierCore(
       }
       if (globalType !== null) fctx.body.push({ op: "drop" });
     }
-    if (!unresolvedInModuleGoal && (ctx.standalone || ctx.wasi) && ctx.runtimeEvalGlobalFunctionBindings) {
+    if (!unresolvedInModuleGoal && ctx.runtimeEvalGlobalFunctionBindings) {
       const dynamicGlobal = skipRuntimeEvalState
         ? emitRuntimeEvalGlobalRead(ctx, fctx, name, false)
         : emitRuntimeEvalBindingRead(ctx, fctx, name, false);
@@ -3305,7 +3078,7 @@ function compileHostInstanceOf(ctx: CodegenContext, fctx: FunctionContext, expr:
   if (noJsHost(ctx)) {
     const vecLinked = tryEmitVecLinkedInstanceOf(ctx, fctx, expr, ctorName); // (#2917) `extends Array` link
     if (vecLinked) return vecLinked;
-    if (ctx.standalone && isStandaloneWrapperConstructorName(ctorName)) {
+    if (isStandaloneWrapperConstructorName(ctorName)) {
       return emitNativeWrapperInstanceOf(ctx, fctx, expr, ctorName);
     }
     const typeIdxs = nativeBuiltinInstanceOfTypeIdxs(ctx, ctorName);

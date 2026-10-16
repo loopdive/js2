@@ -43,7 +43,6 @@ import {
   ensureNativeSuppressedErrorCtor,
   isWasiErrorName,
 } from "../registry/error-types.js";
-import { emitTest262ErrorWithModuleCtor } from "./test262-error-ctor.js";
 import { errorCtorNameIsUserFunctionShadowed, errorCtorNameIsUserShadowed } from "./shadowed-error-ctor.js"; // (#4394) intrinsic-name shadow guard
 import { coerceType, compileArrowAsClosure, compileExpression } from "../shared.js";
 import type { InnerResult } from "../shared.js";
@@ -64,7 +63,6 @@ import {
 } from "./eval-inline.js";
 import { buildThrowJsErrorInstrs, emitThrowTypeError, noJsHost } from "./helpers.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
-import { emitNewBooleanToBooleanArg } from "../new-boolean-tobooleanarg.js"; // (#4619)
 import { emitSymbolOperandCoercionThrow } from "../tonumber-symbol-throw.js"; // (#3481)
 import { emitHostTypedArrayCarrierRegistration } from "./typed-array-host-carrier.js";
 import { isStringTypedArg, resolvesToAmbientGlobal } from "./new-super.js";
@@ -119,19 +117,6 @@ function builtinNewClaimIsShadowed(
   if (!ts.isIdentifier(callee)) return false;
   if (SHADOW_GUARD_EXEMPT_CTORS.has(callee.text)) return false;
   return !resolvesToAmbientGlobal(ctx, callee);
-}
-
-/**
- * (#4616) Is the single `new Date(arg)` argument DYNAMIC — statically able to
- * hold a String at runtime without being string-typed (any/unknown/
- * unresolvable, or a union with a string part)? Such an arg needs the runtime
- * string-vs-ToNumber dispatch below; statically-typed number/Date args keep
- * the plain ToNumber(ms) path.
- */
-function isDynamicMaybeStringArg(ctx: CodegenContext, arg: ts.Expression): boolean {
-  const fact = ctx.oracle.typeFactOf(arg);
-  if (fact.kind === "any" || fact.kind === "unknown" || fact.kind === "unresolvable") return true;
-  return fact.kind === "union" && fact.parts.some((p) => p.kind === "string");
 }
 
 /**
@@ -683,7 +668,7 @@ export function tryCompileBuiltinGlobalNew(
     // earlier function over a later non-inline-executor promise) now throws a
     // catchable TypeError instead of host-chaining, and can only occur in
     // modules that were irreducibly host-import-leaky anyway.
-    if (ctx.standalone === true && ctx.wasi !== true) {
+    if (ctx.wasi !== true) {
       ctx.moduleHasHostPromiseSource = true;
     }
     let funcIdx =
@@ -759,22 +744,7 @@ export function tryCompileBuiltinGlobalNew(
       if (ctorName === "Boolean") {
         // new Boolean(x) → JS Boolean wrapper object via __new_Boolean (typeof is "object").
         // Standalone uses shared ToBoolean so object and Symbol arguments remain truthy.
-        if (ctx.standalone) {
-          emitStandaloneBooleanConstructorValue(ctx, fctx, args);
-        } else if (args.length >= 1) {
-          // Host's f64 ABI preserves the existing Symbol-truthy special case.
-          if (ctx.oracle.staticJsTypeOf(args[0]!) === "symbol") {
-            const t = compileExpression(ctx, fctx, args[0]!);
-            if (t !== null) fctx.body.push({ op: "drop" });
-            fctx.body.push({ op: "f64.const", value: 1 });
-          } else if (!emitNewBooleanToBooleanArg(ctx, fctx, args[0]!)) {
-            // (#4619) …and an object/string argument needs §7.1.2 ToBoolean,
-            // not this f64 coercion, which INVERTS it. See the module.
-            compileExpression(ctx, fctx, args[0]!, { kind: "f64" });
-          }
-        } else {
-          fctx.body.push({ op: "f64.const", value: 0 });
-        }
+        emitStandaloneBooleanConstructorValue(ctx, fctx, args);
         const newBoolIdx = ensureLateImport(ctx, "__new_Boolean", [{ kind: "f64" }], [{ kind: "externref" }]);
         flushLateImportShifts(ctx, fctx);
         const finalBoolIdx = ctx.funcMap.get("__new_Boolean") ?? newBoolIdx;
@@ -813,10 +783,7 @@ export function tryCompileBuiltinGlobalNew(
     // ordinary user-fnctor lowering constructs it; the wrapped-harness `class
     // Test262Error extends Error` injection (#2902) keeps the interception.
     // Host mode is reconciled by emitTest262ErrorWithModuleCtor instead.
-    const test262StandaloneUserFn =
-      ctorName === "Test262Error" &&
-      (ctx.wasi || ctx.standalone) &&
-      errorCtorNameIsUserFunctionShadowed(expr, ctorName);
+    const test262StandaloneUserFn = ctorName === "Test262Error" && errorCtorNameIsUserFunctionShadowed(expr, ctorName);
     // (#4394) A declined instance is an ordinary user struct — tell the #2962
     // exception renderer, or a thrown one renders "[object Object]" and the
     // merged report loses the "Test262Error: …" signature (the #4484 park).
@@ -882,8 +849,7 @@ export function tryCompileBuiltinGlobalNew(
       // capturing there would move bytes in every standalone Error module for no
       // behavioural gain. Option-less constructions (`args.length < 2`) allocate
       // nothing and emit nothing new, so their bytes are unchanged.
-      const hostErrorCtorPath =
-        !isWasiErrorName(ctorName) && !((ctx.wasi || ctx.standalone) && ctorName === "Test262Error");
+      const hostErrorCtorPath = !isWasiErrorName(ctorName) && !(ctorName === "Test262Error");
       const optionsTmp =
         hostErrorCtorPath && args.length >= 2 ? allocTempLocal(fctx, { kind: "externref" }) : undefined;
       for (let i = 1; i < args.length; i++) {
@@ -992,17 +958,12 @@ export function tryCompileBuiltinGlobalNew(
       // untaken failure path of a passing test. Build it natively as an
       // $Error_struct (tagged Error, name "Test262Error") so ~2,779 such tests
       // become host-free. JS-host mode keeps the host import (real Error).
-      if ((ctx.wasi || ctx.standalone) && ctorName === "Test262Error") {
+      if (ctorName === "Test262Error") {
         emitStandaloneTest262Error(ctx, 1);
         const internalFuncIdx = ctx.funcMap.get(importName);
         if (internalFuncIdx !== undefined) {
           fctx.body.push({ op: "call", funcIdx: internalFuncIdx });
         }
-        return { kind: "externref" };
-      }
-      // (#4394) JS-host `new Test262Error(msg)` in a module that declares its
-      // own `function Test262Error` — see test262-error-ctor.ts.
-      if (emitTest262ErrorWithModuleCtor(ctx, fctx, expr, ctorName)) {
         return { kind: "externref" };
       }
       // (#5161) In the `nativeStrings` / `fast` lanes the message about to be
@@ -1409,7 +1370,7 @@ export function tryCompileBuiltinGlobalNew(
       // breaking unrelated Date tests). See the matching Date.now() fallback in
       // expressions/calls.ts.
       // (#6708) a JS environment owns a clock capability even under the regime
-      if (ctx.standalone === true && hostFreeEnvironment(ctx)) {
+      if (hostFreeEnvironment(ctx)) {
         emitStandaloneDateTimestamp(ctx, fctx);
         fctx.body.push({ op: "struct.new", typeIdx: dateTypeIdx });
         return { kind: "ref", typeIdx: dateTypeIdx };
@@ -1444,71 +1405,20 @@ export function tryCompileBuiltinGlobalNew(
       // through the same TimeClip path below. Gated to standalone / WASI for the
       // same reason as Date.parse (host strings + lazy helper wiring trip the
       // late-import shift class #2043); host keeps the prior ToNumber(str)→NaN.
-      if (ctx.standalone && emitAcceleratedDateParse(ctx, fctx, [args[0]!], isStringTypedArg(ctx, args[0]!))) {
+      if (emitAcceleratedDateParse(ctx, fctx, [args[0]!], isStringTypedArg(ctx, args[0]!))) {
         // (#6978) Native regime + `date` host accelerator: parsed by host Date.parse.
-      } else if ((ctx.standalone || ctx.wasi) && isStringTypedArg(ctx, args[0]!)) {
+      } else if (isStringTypedArg(ctx, args[0]!)) {
         emitNativeDateParse(ctx);
         const argType = compileExpression(ctx, fctx, args[0]!, { kind: "externref" });
         if (argType && argType.kind !== "externref") coerceType(ctx, fctx, argType, { kind: "externref" });
         flushLateImportShifts(ctx, fctx);
         fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__date_parse")! });
-      } else if (
-        !ctx.standalone &&
-        !ctx.wasi &&
-        isStringTypedArg(ctx, args[0]!) &&
-        ctx.funcMap.has("__date_parse_host")
-      ) {
-        // (#2678) HOST mode: a String arg is parsed as if by Date.parse
-        // (§21.4.2.1) — delegate to the JS `Date.parse` host import (registered
-        // up-front by collectDateParseHostImports, no #2043 late-import shift).
-        const argType = compileExpression(ctx, fctx, args[0]!, { kind: "externref" });
-        if (argType && argType.kind !== "externref") coerceType(ctx, fctx, argType, { kind: "externref" });
-        fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__date_parse_host")! });
-      } else if (
-        !ctx.standalone &&
-        !ctx.wasi &&
-        isDynamicMaybeStringArg(ctx, args[0]!) &&
-        ctx.funcMap.has("__date_parse_host")
-      ) {
-        // (#4616) §21.4.2.1 for a DYNAMIC single arg (any/unknown/union-with-
-        // string): ToPrimitive yields a String → parse as if by Date.parse;
-        // anything else → ToNumber(ms). The static-type arms above can't see
-        // this (an `any` holding "Wed, 21 Oct 2015 …" ToNumbered to NaN, which
-        // silently dropped cookie's `expires` on every parsed Set-Cookie).
-        // Branch at runtime on `__typeof_string`; both callees are registered
-        // up-front (collector / addUnionImports), so no late-import shift can
-        // strand the arm indices.
-        const argType = compileExpression(ctx, fctx, args[0]!, { kind: "externref" });
-        if (argType && argType.kind !== "externref") coerceType(ctx, fctx, argType, { kind: "externref" });
-        addUnionImports(ctx);
-        flushLateImportShifts(ctx, fctx);
-        const typeofStringIdx = ctx.funcMap.get("__typeof_string");
-        const unboxNumberIdx = ctx.funcMap.get("__unbox_number");
-        const parseHostIdx = ctx.funcMap.get("__date_parse_host")!;
-        if (typeofStringIdx === undefined || unboxNumberIdx === undefined) {
-          coerceType(ctx, fctx, { kind: "externref" }, { kind: "f64" });
-        } else {
-          const extLocal = allocTempLocal(fctx, { kind: "externref" });
-          fctx.body.push({ op: "local.tee", index: extLocal });
-          fctx.body.push({ op: "call", funcIdx: typeofStringIdx });
-          fctx.body.push({
-            op: "if",
-            blockType: { kind: "val", type: { kind: "f64" } },
-            then: [
-              { op: "local.get", index: extLocal },
-              { op: "call", funcIdx: parseHostIdx },
-            ],
-            else: [
-              { op: "local.get", index: extLocal },
-              { op: "call", funcIdx: unboxNumberIdx },
-            ],
-          });
-          releaseTempLocal(fctx, extLocal);
-        }
-      } else if (tryEmitStandaloneDateCtorValueArg(ctx, fctx, args[0]!, dateTypeIdx)) {
-        // (#5156) §21.4.2.2 step 4 — [[DateValue]] fast path + ToPrimitive.
       } else {
-        compileExpression(ctx, fctx, args[0]!, { kind: "f64" });
+        if (tryEmitStandaloneDateCtorValueArg(ctx, fctx, args[0]!, dateTypeIdx)) {
+          // (#5156) §21.4.2.2 step 4 — [[DateValue]] fast path + ToPrimitive.
+        } else {
+          compileExpression(ctx, fctx, args[0]!, { kind: "f64" });
+        }
       }
       const msLocal = allocTempLocal(fctx, { kind: "f64" });
       fctx.body.push({ op: "local.tee", index: msLocal });
@@ -1724,8 +1634,7 @@ export function tryCompileBuiltinGlobalNew(
     // Numeric views ride native f64/packed vecs in js-host and DO pass Atomics
     // because the bridge handles those element kinds; extending it to i64 is the
     // follow-up. Mirrors the dual-mode principle (host lane → host paths).
-    const isBigIntView838 = typedArrayName === "BigInt64Array" || typedArrayName === "BigUint64Array";
-    if (TYPED_ARRAY_NAMES.has(typedArrayName) && (!isBigIntView838 || ctx.wasi || ctx.standalone)) {
+    if (TYPED_ARRAY_NAMES.has(typedArrayName)) {
       // (#2593) Standalone/WASI packs integer views into i8/i16/i32 storage
       // (Int8/Uint8/Uint8Clamped→i8_byte, Int16/Uint16→i16_byte,
       // Int32/Uint32→i32_byte); host/gc and the float views keep f64.
@@ -2267,17 +2176,8 @@ export function tryCompileDateCallWithoutNew(
   if (ctx.wasi && ctx.funcMap.has("__wasi_date_now")) {
     fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__wasi_date_now")! });
     fctx.body.push({ op: "i64.trunc_sat_f64_s" });
-  } else if (ctx.standalone === true) {
-    emitStandaloneDateTimestamp(ctx, fctx);
   } else {
-    const dateNowIdx = ensureLateImport(ctx, "__date_now", [], [{ kind: "f64" }]);
-    if (dateNowIdx === undefined) {
-      fctx.body.push({ op: "i64.const", value: 0n });
-    } else {
-      flushLateImportShifts(ctx, fctx);
-      fctx.body.push({ op: "call", funcIdx: dateNowIdx });
-      fctx.body.push({ op: "i64.trunc_sat_f64_s" });
-    }
+    emitStandaloneDateTimestamp(ctx, fctx);
   }
   fctx.body.push({ op: "i32.const", value: DATE_FORMAT_MODE_TO_STRING });
   fctx.body.push({ op: "call", funcIdx: fmtIdx });

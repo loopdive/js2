@@ -20,34 +20,6 @@
 import { ts } from "../../ts-api.js";
 import type { CodegenContext } from "../context/types.js";
 
-function unwrapTransparent(expression: ts.Expression): ts.Expression {
-  let current = expression;
-  while (
-    ts.isParenthesizedExpression(current) ||
-    ts.isAsExpression(current) ||
-    ts.isSatisfiesExpression(current) ||
-    ts.isNonNullExpression(current) ||
-    ts.isTypeAssertionExpression(current)
-  ) {
-    current = current.expression;
-  }
-  return current;
-}
-
-/**
- * True when `.apply`'s second operand is a runtime list whose elements the
- * static arms cannot enumerate. A bare array literal (still spread statically
- * by the existing arms) and a syntactic `null`/`undefined`/`void` (an empty
- * argument list, §20.2.3.1 step 3) are excluded.
- */
-export function isDynamicApplyArgList(expression: ts.Expression): boolean {
-  if (ts.isArrayLiteralExpression(expression)) return false;
-  const inner = unwrapTransparent(expression);
-  if (inner.kind === ts.SyntaxKind.NullKeyword || ts.isVoidExpression(inner)) return false;
-  if (ts.isIdentifier(inner) && inner.text === "undefined") return false;
-  return true;
-}
-
 /**
  * True when the graph-wide `funcMap`/`closureMap` entry for `name` belongs to a
  * function declaration other than the one this identifier actually binds.

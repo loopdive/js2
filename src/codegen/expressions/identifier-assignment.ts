@@ -337,7 +337,7 @@ function mirrorImplicitGlobalWrite(
   id: ts.Identifier,
   localIdx: number,
 ): void {
-  if (!ctx.standalone || !ctx.sloppyImplicitGlobals?.has(id.text) || !ctx.oracle.isUnresolvableIdentifier(id)) return;
+  if (!ctx.sloppyImplicitGlobals?.has(id.text) || !ctx.oracle.isUnresolvableIdentifier(id)) return;
   if (!emitGlobalEnvironmentObject(ctx, fctx)) return;
   const setIdx = ensureGlobalEnvironmentOperation(ctx, fctx, "__extern_set");
   if (setIdx === undefined) {

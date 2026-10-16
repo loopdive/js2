@@ -67,7 +67,6 @@ function classDynamicMemberCallApplies(
   fctx: FunctionContext,
   elemAccess: ts.ElementAccessExpression,
 ): boolean {
-  if (!ctx.standalone) return false;
   // (#5195 R2-1) `super[k](...)` is a DIFFERENT operation and must not be
   // lowered as an ordinary member call. §13.3.7.1 reads the member off the HOME
   // OBJECT's [[Prototype]] and invokes it with the CURRENT `this`; compiling

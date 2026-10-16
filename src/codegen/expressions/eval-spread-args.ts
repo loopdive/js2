@@ -25,7 +25,7 @@ export function tryCompileStandaloneEvalSpread(
   fctx: FunctionContext,
   call: ts.CallExpression,
 ): ValType | undefined {
-  if (!ctx.standalone || !call.arguments.some((a) => ts.isSpreadElement(a))) return undefined;
+  if (!call.arguments.some((a) => ts.isSpreadElement(a))) return undefined;
   const ext: ValType = { kind: "externref" };
   const toArray = ensureNativeArrayFromIterN(ctx);
   const { newIdx, pushIdx } = ensureObjVecBuilders(ctx);

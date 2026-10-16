@@ -50,7 +50,7 @@ import { initializeFunctionPoisonPillContext } from "../function-poison-pill.js"
 import { expectedArgumentCountOfParams } from "../function-expected-argument-count.js";
 import { reshapeFunctionCtorReflectiveCall } from "../function-ctor-reflective-call.js"; // (#4483) Function.call/apply → Function(…)
 import { tryEmitApplyArgArrayTypeError } from "../apply-arglist-typeerror.js"; // (#4483) §20.2.3.1 step 4 primitive argArray
-import { isDynamicApplyArgList, mappedFunctionIsForeign } from "./apply-dynamic-arglist.js"; // (#4526)
+import { mappedFunctionIsForeign } from "./apply-dynamic-arglist.js"; // (#4526)
 import { tryEmitClassConstructorCallWithoutNew } from "../class-call-without-new.js"; // (#4483) §10.2.1 step 2
 import { tryEmitClassCtorCallApply } from "../classes/class-ctor-call-apply.js"; // (#6772 S3)
 import { buildClosureResultBoxing } from "../closures/result-boxing.js"; // (#4082) the single closure-result→externref decision
@@ -127,7 +127,7 @@ import {
   buildArgcExtrasSetupFromLocals,
   buildArgcResetNoLazyExtras,
 } from "./argc-extras.js";
-import { emitMaterializedArgumentsVector, prepareCompiledApplyBridge, tryBindApply } from "./apply-arguments-vector.js";
+import { emitMaterializedArgumentsVector, tryBindApply } from "./apply-arguments-vector.js";
 import { allocLocal, allocTempLocal, getLocalType, releaseTempLocal } from "../context/locals.js";
 import { snapshotSpeculative, rollbackSpeculative } from "../context/speculative.js";
 import { emitVirtualMethodDispatchByTag } from "./virtual-dispatch.js";
@@ -173,10 +173,9 @@ export function emitBareCallReceiverReset(
   const resultLocal =
     resultType === null ? undefined : allocLocal(fctx, `__bare_result_${fctx.locals.length}`, resultType);
   const restoreOnException = (fctx.tryCatchDepth ?? 0) > 0;
-  const exceptionLocal =
-    restoreOnException && (ctx.standalone || ctx.wasi)
-      ? allocLocal(fctx, `__bare_exception_${fctx.locals.length}`, { kind: "externref" })
-      : undefined;
+  const exceptionLocal = restoreOnException
+    ? allocLocal(fctx, `__bare_exception_${fctx.locals.length}`, { kind: "externref" })
+    : undefined;
 
   const restore: Instr[] = [
     { op: "local.get", index: previousThisLocal },
@@ -486,7 +485,6 @@ import {
   getFuncParamTypes,
   getWasmFuncReturnType,
   isEffectivelyVoidReturn,
-  maybeStampCompiledFunctionArgName,
   noJsHost,
   wasmFuncReturnsVoid,
 } from "./helpers.js";
@@ -766,11 +764,6 @@ export function compileObjectAssignArg(ctx: CodegenContext, fctx: FunctionContex
  */
 export function compileProtoArg(ctx: CodegenContext, fctx: FunctionContext, arg: ts.Expression): void {
   if (
-    ctx.standalone &&
-    // (#6770 S4) an EMPTY `{}` too: compiled as anything but a `$Object` the
-    // writers coerce it to null, the encoding of the `%Object.prototype%`
-    // terminal, so `Reflect.setPrototypeOf(nonExtensible, {})` read as a
-    // same-prototype no-op and answered `true`.
     ts.isObjectLiteralExpression(arg) &&
     arg.properties.every(
       (p) => ts.isPropertyAssignment(p) || ts.isShorthandPropertyAssignment(p) || ts.isSpreadAssignment(p),
@@ -943,12 +936,12 @@ export function coerceNumberMethodArgToF64(ctx: CodegenContext, fctx: FunctionCo
  * (`TypeFlags.Object` whose symbol is `Number`), so `new Number(3.14).toFixed(2)`
  * never entered the numeric lowering and fell through to a generic/host path that
  * trapped in standalone ("null pointer" / wrong value). Mirror of the #1878
- * String-wrapper fix. Gated on `ctx.standalone` for the wrapper case — the native
+ * String-wrapper fix. Gated on the regime flag for the wrapper case — the native
  * `__to_primitive` recovery (see `emitNumberMethodReceiverF64`) is standalone-only;
  * WASI/host keep the existing object machinery.
  */
 export function isNumberMethodReceiver(ctx: CodegenContext, receiverType: ts.Type): boolean {
-  return isNumberType(receiverType) || (ctx.standalone && isNumberWrapperType(receiverType));
+  return isNumberType(receiverType) || isNumberWrapperType(receiverType);
 }
 
 /**
@@ -1114,7 +1107,7 @@ export function emitNumberMethodReceiverF64(
     fctx.body.push({ op: "f64.const", value: 0 });
     return;
   }
-  if (ctx.standalone && isNumberWrapperType(receiverType)) {
+  if (isNumberWrapperType(receiverType)) {
     ensureObjectRuntime(ctx);
     const toPrimIdx = ctx.funcMap.get("__to_primitive");
     if (toPrimIdx !== undefined) {
@@ -1240,7 +1233,6 @@ function tryEmitNativeProtoReflectiveCall(
   receiver: ts.Expression,
   isCall: boolean,
 ): ValType | undefined {
-  if (!ctx.standalone) return undefined;
   if (expr.arguments.length === 0) return undefined; // need at least a thisArg
   // (#6770 S5) `Object.prototype.toLocaleString.call(<primitive>)` — Invoke(O, "toString").
   if (isCall && ts.isPropertyAccessExpression(expr.expression)) {
@@ -1422,7 +1414,7 @@ function tryEmitNativeProtoReflectiveCall(
   }
   // (#6775 S18) `Function.prototype.toString.call(x)` — §20.2.3.5's own body
   // (TypeError for a non-callable `this`, incl. a Proxy over a plain object).
-  else if (brand === undefined && ifaceName === "Function" && member === "toString" && ctx.standalone) {
+  else if (brand === undefined && ifaceName === "Function" && member === "toString") {
     brand = ensureFunctionNativeProtoGlue(ctx);
   }
   if (brand === undefined) return undefined;
@@ -1573,12 +1565,11 @@ export function emitReflectiveNativeProtoClosureCall(
   // form (and written `undefined`) from explicit `null`: only the former
   // defaults to NFC. Keep this padding local to the one native String member;
   // every other reflective ABI retains its existing null/undefined policy.
-  const nativeStringNormalize =
-    (ctx.standalone || ctx.wasi) && getNativeProtoBuiltinGlue(ctx, brand)?.name === "String" && member === "normalize";
+  const nativeStringNormalize = getNativeProtoBuiltinGlue(ctx, brand)?.name === "String" && member === "normalize";
   // (#6701) `Array.prototype.slice.call(o, k)`: an omitted `end` is
   // `undefined` (⇒ len), not `null` (⇒ 0), so pad it with the canonical
   // undefined — `[].slice.call(arguments, 1)` answered an empty array.
-  const arraySliceEnd = ctx.standalone && member === "slice" && getNativeProtoBuiltinGlue(ctx, brand)?.name === "Array";
+  const arraySliceEnd = member === "slice" && getNativeProtoBuiltinGlue(ctx, brand)?.name === "Array";
   for (let i = 0; i < paramTypes.length; i++) {
     const pType = paramTypes[i]!;
     if (nativeProtoVariadic && i === 1) {
@@ -1709,7 +1700,6 @@ function tryEmitGeneratorProtoReflectiveCall(
   innerExpr: ts.Expression,
   isCall: boolean,
 ): ValType | undefined {
-  if (!(ctx.standalone || ctx.wasi)) return undefined;
   const recv = unwrapTransparent(innerExpr);
   if (!ts.isPropertyAccessExpression(recv)) return undefined;
   const member = recv.name.text;
@@ -1981,7 +1971,6 @@ function tryEmitNativeProtoDescriptorAccessorCall(
   recv: ts.Expression,
   isCall: boolean,
 ): ValType | undefined {
-  if (!ctx.standalone) return undefined;
   if (expr.arguments.length === 0) return undefined; // need at least a thisArg
 
   const resolved = resolveDescriptorAccessorSource(ctx, recv);
@@ -2152,7 +2141,7 @@ export function tryEmitJsonStringifyPrimitive(
     // exactly when `ctx.nativeStrings`; the `then` arm is `number_toString`,
     // whose externref wraps a native string exactly when the formatter is native
     // — which, since #3912's gate change, is also `ctx.nativeStrings`. The old
-    // `ctx.standalone || ctx.wasi` predicate therefore disagreed with the
+    // `the regime flag || ctx.wasi` predicate therefore disagreed with the
     // literal under `fast` (nativeStrings without either target): the arms had
     // different types and `JSON.stringify(<number>)` emitted an INVALID MODULE
     // — a validation failure, not merely a trap — across the whole gc-native
@@ -2200,7 +2189,7 @@ export function tryEmitJsonStringifyPrimitive(
   // JSON-quoted $NativeString per §25.5.4.3 QuoteJSONString. In JS-host mode
   // we fall through to the JSON_stringify import (it observes replacer/space
   // and toJSON, which the helper does not).
-  if ((ctx.standalone || ctx.wasi) && flags & ts.TypeFlags.StringLike) {
+  if (flags & ts.TypeFlags.StringLike) {
     const argResult = compileExpression(ctx, fctx, arg, { kind: "externref" });
     if (argResult === null) return undefined;
     if (argResult.kind !== "externref") {
@@ -2241,7 +2230,6 @@ export function tryEmitJsonParsePrimitive(
   call: ts.CallExpression,
   arg: ts.Expression,
 ): ValType | undefined {
-  if (!(ctx.standalone || ctx.wasi)) return undefined;
   // A property/element read on the result — `JSON.parse(s).x` / `JSON.parse(s)[i]`
   // — means the parsed value is consumed as an object/array, which the primitive
   // slice does not produce. Leave those to the #1599 refusal (full Phase 2 codec).
@@ -3942,10 +3930,7 @@ export function tryEmitInlineDynamicCall(
   // shape. Armed only when a `$__ta_ctor` value can exist in the module
   // (byte-inert otherwise). Standalone/WASI lane; the host lane's callee is a
   // real host constructor whose [[Call]] already throws.
-  const wantTaCtorArm =
-    (ctx.standalone === true || ctx.wasi === true) &&
-    (ctx.taCtorTypeIdx >= 0 || ctx.builtinObjectGlobals.has("ctor:Int8Array"));
-  const wantApplyFallback = ctx.standalone === true || ctx.wasi === true;
+  const wantTaCtorArm = ctx.taCtorTypeIdx >= 0 || ctx.builtinObjectGlobals.has("ctor:Int8Array");
   // (#6420) The generic host-free dynamic-call path used to fall through to
   // `__apply_closure` for every carrier it did not understand. That is wrong
   // for a class VALUE: it intentionally has `typeof === "function"` and
@@ -3958,7 +3943,6 @@ export function tryEmitInlineDynamicCall(
     ensureLateImport(ctx, "__is_callable", [{ kind: "externref" }], [{ kind: "i32" }]);
     prepareBuiltinCtorValueInvoke(ctx, fctx, expr.expression); // (#6713) RegExp/Error carrier [[Call]]
   }
-  if (allCandidates.length === 0 && !wantProxyArm && !wantBoundArm && !wantTaCtorArm && !wantApplyFallback) return null;
 
   // Dedupe by funcTypeIdx — concrete subtypes share funcTypeIdx with their
   // base wrapper; one dispatch arm per unique funcref type is enough.
@@ -4055,23 +4039,8 @@ export function tryEmitInlineDynamicCall(
   if (needsHostFacadeUnwrap) {
     ensureLateImport(ctx, "__unwrap_for_wasm", [{ kind: "externref" }], [{ kind: "externref" }]);
   }
-
-  // (#820/#1543) `undefined` externref source for padding missing trailing
-  // args (call arity < a candidate's formal count), and (#3031) for the Proxy
-  // arm's `thisArgument` (a bare `p(...)` call has `this = undefined`). Host
-  // mode pulls it from `__get_undefined`; standalone / native-strings MUST NOT
-  // add that env import (it made the module un-instantiable host-free — the
-  // #3031 leak): `ensureGetUndefined` gates the import exactly like
-  // `emitUndefined`, and the standalone representation is the (#2106 S1)
-  // $undefined singleton when active, else `ref.null.extern` (a wasm method's
-  // `__extern_is_undefined` default-param guard treats host `undefined` and a
-  // null externref alike).
-  const maxFormals = candidates.reduce((m, c) => Math.max(m, c.info.paramTypes.length), 0);
-  const needsUndefinedPad = maxFormals > arity;
-  const needsUndefined =
-    needsUndefinedPad || wantProxyArm || wantApplyFallback || (jsValueBoundary(ctx) && allowHostBoundaryFallback);
-  const undefinedIdx = needsUndefined ? ensureGetUndefined(ctx) : undefined;
-  const undefinedSingletonPad = needsUndefined && undefinedIdx === undefined ? undefinedExternInstrs(ctx) : undefined;
+  const undefinedIdx = ensureGetUndefined(ctx);
+  const undefinedSingletonPad = undefinedIdx === undefined ? undefinedExternInstrs(ctx) : undefined;
   // (#2611) Flush the deferred late-import shift NOW — every other late-import
   // call site in this file flushes after the add, but this one historically did
   // not, leaving `ctx.pendingLateImportShift` dangling. `ensureLateImport`
@@ -4136,14 +4105,14 @@ export function tryEmitInlineDynamicCall(
       vecPushIdx: vecBuilders.pushIdx,
     };
   }
-  let applyFallback = wantApplyFallback ? reserveDynamicApplyFallback(ctx) : undefined;
+  let applyFallback = reserveDynamicApplyFallback(ctx);
   // (#2933) Variadic builtin value-closure arm pieces. Set at Math.max/Math.min
   // value-read time (all of its types + the closure func are then already
   // registered — DEFINED funcs only, no import, no index shift). One lifted
   // func type `(self, (ref null $vec_externref)) -> externref` serves BOTH
   // methods and EVERY call-site arity (the arm packs the saved arg locals into
   // a fresh vec). Modules without such a value read are byte-identical.
-  const variadicArm = ctx.standalone || ctx.wasi ? ctx.variadicBuiltinClosure : undefined;
+  const variadicArm = ctx.variadicBuiltinClosure;
   if (variadicArm !== undefined) {
     // The variadic closure registers in `closureInfoByTypeIdx` like any other
     // wrapper signature, so the generic candidate scan can pick it up — but its
@@ -4837,7 +4806,6 @@ function standaloneDynamicFunctionCtorArgs(
   ctx: CodegenContext,
   expression: ts.Expression,
 ): readonly ts.Expression[] | undefined {
-  if (!ctx.standalone) return undefined;
   let value = expression;
   while (
     ts.isParenthesizedExpression(value) ||
@@ -4993,7 +4961,7 @@ export function compileStandalonePromiseThenCallback(
       // `__then_dyn_*` settle-time wrapper invokes it via `__apply_closure`.
       // Dropping it here (the pre-#4394 behaviour) silently treated the handler
       // as absent, leaving e.g. asyncHelpers' `resSettlementP` pending forever.
-      if (opts?.allowDynamic === true && (ctx.standalone === true || ctx.wasi === true) && type !== null) {
+      if (opts?.allowDynamic === true && type !== null) {
         if (type.kind !== "externref") {
           coerceType(ctx, fctx, type, { kind: "externref" });
         }
@@ -5127,7 +5095,7 @@ export function tryEmitAsyncGenReturnThrowDispatch(
   argExpr: ts.Expression | undefined,
 ): ValType | null {
   const producers = ctx.asyncGenProducers;
-  if (ctx.standalone !== true && ctx.wasi !== true) return null;
+
   if (producers === undefined || producers.size === 0) return null;
   // (#3389 slice 2a — correct-or-legacy) `.return(v)` AWAITS its value under a
   // return completion (§27.6.3.8): a thenable/Promise return value must be
@@ -5254,7 +5222,7 @@ const HOST_PROMISE_PRODUCER_IMPORTS = [
  * never CALLED at runtime).
  */
 export function standaloneThenMissArmCanBeNative(ctx: CodegenContext): boolean {
-  if (ctx.standalone !== true || ctx.wasi === true) return false;
+  if (ctx.wasi === true) return false;
   if (ctx.moduleHasHostPromiseSource === true) return false;
   for (const name of HOST_PROMISE_PRODUCER_IMPORTS) {
     if (ctx.funcMap.has(name)) return false;
@@ -5316,7 +5284,7 @@ export function emitStandaloneThenWithNativeFallback(
       // catchable §27.2.5.4 TypeError — the bare null result swallowed both
       // (asyncHelpers `asyncTest`/`throwsAsync` stalls). All-native pieces, no
       // host import; wasi keeps its zero-import null contract.
-      if (ctx.standalone === true && ctx.wasi !== true && method === "then") {
+      if (ctx.wasi !== true && method === "then") {
         const missArgs: (ts.Expression | undefined)[] = [onFulfilledArg, onRejectedArg];
         while (missArgs.length > 0 && missArgs[missArgs.length - 1] === undefined) missArgs.pop();
         ctx.liveBodies.add(hostArm);
@@ -6031,7 +5999,6 @@ function tryIteratorStaticsIntrinsicCall(
   fctx: FunctionContext,
   expr: ts.CallExpression,
 ): InnerResult | undefined {
-  if (!ctx.standalone && !ctx.wasi) return undefined;
   if (!ts.isIdentifier(expr.expression)) return undefined;
   const name = expr.expression.text;
   if (
@@ -6086,7 +6053,6 @@ function tryRuntimeIsProxyIntrinsic(
   expr: ts.CallExpression,
 ): InnerResult | undefined {
   if (
-    (!ctx.standalone && !ctx.wasi) ||
     !ts.isIdentifier(expr.expression) ||
     expr.expression.text !== "__runtime_is_proxy" ||
     expr.arguments.length !== 1
@@ -6126,7 +6092,6 @@ function tryRuntimeEvalApplyCallableIntrinsic(
   });
   if (rebound !== undefined) return rebound;
   if (
-    (!ctx.standalone && !ctx.wasi) ||
     ctx.runtimeEvalCallableBoundaryEnabled !== true ||
     !ts.isIdentifier(expr.expression) ||
     expr.expression.text !== "__runtime_eval_apply_callable" ||
@@ -6523,7 +6488,6 @@ function tryRuntimeEvalInterpretedBoundaryIntrinsic(
   const unwrapsResult = calleeName === "__runtime_eval_unwrap_result";
   const testsAotCallable = calleeName === "__runtime_eval_is_aot_callable";
   if (
-    (!ctx.standalone && !ctx.wasi) ||
     ctx.runtimeEvalCallableBoundaryEnabled !== true ||
     (!wraps &&
       !unwraps &&
@@ -7046,11 +7010,7 @@ function compileCallExpression(
   }
 
   const globalScriptEvalCallee = unwrapTransparent(expr.expression);
-  if (
-    ctx.standalone &&
-    ts.isIdentifier(globalScriptEvalCallee) &&
-    globalScriptEvalCallee.text === "__js2wasm_global_script_eval"
-  ) {
+  if (ts.isIdentifier(globalScriptEvalCallee) && globalScriptEvalCallee.text === "__js2wasm_global_script_eval") {
     const runtimeScriptEval = emitStandaloneGlobalScriptEvalRuntime(ctx, fctx, expr.arguments);
     if (runtimeScriptEval !== undefined) return runtimeScriptEval;
   }
@@ -7059,7 +7019,6 @@ function compileCallExpression(
   // native `$Object` method dispatch would try to recover a closure from the
   // harness object. Aliased reads still execute the shim's intrinsic helper.
   if (
-    ctx.standalone &&
     ts.isPropertyAccessExpression(expr.expression) &&
     expr.expression.name.text === "evalScript" &&
     ts.isIdentifier(expr.expression.expression) &&
@@ -7188,48 +7147,7 @@ function compileCallExpression(
   // #3494 — standalone has no host loader: resolve an evaluated module of the
   // compiled graph to its namespace, reject everything else with a TypeError.
   if (expr.expression.kind === ts.SyntaxKind.ImportKeyword) {
-    if (ctx.standalone) return compileStandaloneDynamicImport(ctx, fctx, expr);
-    // Ensure __dynamic_import is registered
-    let dynIdx = ctx.funcMap.get("__dynamic_import");
-    if (dynIdx === undefined) {
-      const importsBefore = ctx.numImportFuncs;
-      const dynType = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "externref" }]);
-      addImport(ctx, "env", "__dynamic_import", { kind: "func", typeIdx: dynType });
-      shiftLateImportIndices(ctx, fctx, importsBefore, ctx.numImportFuncs - importsBefore);
-      dynIdx = ctx.funcMap.get("__dynamic_import");
-    }
-    if (dynIdx === undefined) {
-      fctx.body.push({ op: "unreachable" });
-      return null;
-    }
-    // Compile the specifier argument
-    const specArg = expr.arguments[0];
-    if (specArg) {
-      const specResult = compileExpression(ctx, fctx, specArg);
-      // Coerce to externref if needed
-      if (specResult && specResult.kind !== "externref") {
-        coerceType(ctx, fctx, specResult, { kind: "externref" });
-      }
-    } else {
-      // No argument — pass undefined (null externref)
-      fctx.body.push({ op: "ref.null.extern" });
-    }
-
-    // Evaluate remaining arguments (e.g. import attributes/options) for side effects.
-    // Per spec, the second argument (optionsExpression) is evaluated before the
-    // host import is performed. If it throws, the throw propagates synchronously.
-    // We evaluate and drop the result since __dynamic_import only takes the specifier.
-    for (let ai = 1; ai < expr.arguments.length; ai++) {
-      const extraArg = expr.arguments[ai];
-      const extraResult = compileExpression(ctx, fctx, extraArg);
-      // Drop the value from the stack if the expression produced one
-      if (extraResult) {
-        fctx.body.push({ op: "drop" });
-      }
-    }
-
-    fctx.body.push({ op: "call", funcIdx: dynIdx });
-    return { kind: "externref" };
+    return compileStandaloneDynamicImport(ctx, fctx, expr);
   }
 
   // Unwrap parenthesized callee: (fn)(...), ((obj.method))(...) etc.
@@ -7346,7 +7264,7 @@ function compileCallExpression(
   // site owns that sequencing, and this arm only replaces a no-op.
   // (#6774 S8) An arrow created AFTER the constructor's own top-level `super()`
   // re-runs the parent on the captured instance, then BindThisValue throws.
-  if (expr.expression.kind === ts.SyntaxKind.SuperKeyword && fctx.isConstructor !== true && ctx.standalone) {
+  if (expr.expression.kind === ts.SyntaxKind.SuperKeyword && fctx.isConstructor !== true) {
     const lateArrowSuper = emitLateArrowSuperCall(ctx, fctx, expr);
     if (lateArrowSuper !== undefined) return lateArrowSuper;
   }
@@ -7357,7 +7275,7 @@ function compileCallExpression(
       compileSuperCall(ctx, fctx, enclosingClass, thisLocal, expr, []);
       emitSuperCallBindThis(ctx, fctx); // (#5350 r3 / #6772 S1b) BindThisValue
       emitSaveParentOverride(ctx, fctx, enclosingClass); // (#6772 S2)
-      return ctx.standalone ? emitSuperCallValue(ctx, fctx, thisLocal) : VOID_RESULT; // (#6774 S22) the bound `this`
+      return emitSuperCallValue(ctx, fctx, thisLocal); // (#6774 S22) the bound `this`
     }
   }
 
@@ -7503,8 +7421,7 @@ function compileCallExpression(
     if (
       !ts.isPrivateIdentifier(propAccess.name) &&
       (isIrWithOpenObjectTargetReceiver(ctx, propAccess.expression) ||
-        (ctx.standalone &&
-          ts.isIdentifier(propAccess.expression) &&
+        (ts.isIdentifier(propAccess.expression) &&
           ctx.sloppyImplicitGlobals?.has(propAccess.expression.text) === true &&
           chainRootIsGrowable(ctx, propAccess.expression)))
     ) {
@@ -7679,7 +7596,7 @@ function compileCallExpression(
       // TARGET's: the typed lowerings below would cast the proxy to the
       // target's closure (or native-proto glue) shape and trap. The bridge's
       // `$Proxy` guard routes it to `__proxy_apply_dispatch` (§10.5.12).
-      const proxyReceiver = ctx.standalone && tracesToProxyValue(ctx, innerExpr);
+      const proxyReceiver = tracesToProxyValue(ctx, innerExpr);
       if (dynamicFunctionCtorArgs !== undefined || proxyReceiver) {
         const applyArgsExpr = !isCall && expr.arguments.length >= 2 ? expr.arguments[1]! : undefined;
         const applyVector = applyArgsExpr === undefined ? undefined : materializedArgumentsVector(fctx, applyArgsExpr);
@@ -7922,7 +7839,6 @@ function compileCallExpression(
           ctx.closureMap.has(calleeName) ||
           ctx.funcMap.has(calleeName);
         if (argumentsVector !== undefined && knownCompiledCallee) {
-          prepareCompiledApplyBridge(ctx, fctx);
           reserveApplyClosure(ctx);
 
           const calleeType = compileExpression(ctx, fctx, innerExpr, { kind: "externref" });
@@ -8032,12 +7948,6 @@ function compileCallExpression(
       // Case 1: identifier.call(thisArg, args...) — standalone function
       if (ts.isIdentifier(innerExpr)) {
         const funcName = innerExpr.text;
-        const innerFact = ctx.oracle.typeFactOf(innerExpr);
-        const innerCanBeHostCallable =
-          ctx.oracle.signatureOf(innerExpr) !== undefined ||
-          innerFact.kind === "function" ||
-          innerFact.kind === "any" ||
-          innerFact.kind === "unknown";
         const valueDeclaration = ctx.oracle.valueDeclarationOf(innerExpr);
         const aliasedImportTarget =
           valueDeclaration && (ts.isImportClause(valueDeclaration) || ts.isImportSpecifier(valueDeclaration))
@@ -8061,18 +7971,11 @@ function compileCallExpression(
         // A runtime `.apply` list cannot be spread by the static arms below
         // (they would call with ZERO arguments); on the JS host the reflective
         // host-call tail applies the real list and receiver instead.
-        const hostDynamicApply =
-          !isCall &&
-          expr.arguments.length >= 2 &&
-          !ctx.standalone &&
-          !ctx.wasi &&
-          isDynamicApplyArgList(expr.arguments[1]!);
-        const registryIsForeign =
-          moduleValueOwnsName || hostDynamicApply || mappedFunctionIsForeign(ctx, funcName, valueDeclaration);
+        const registryIsForeign = moduleValueOwnsName || mappedFunctionIsForeign(ctx, funcName, valueDeclaration);
         let closureInfo = registryIsForeign ? undefined : ctx.closureMap.get(funcName);
         const funcIdx = registryIsForeign ? undefined : ctx.funcMap.get(funcName);
 
-        if (!closureInfo && funcIdx === undefined && !hostDynamicApply) {
+        if (!closureInfo && funcIdx === undefined) {
           closureInfo = resolveClosureInfoFromLocal(ctx, fctx, funcName);
         }
 
@@ -8412,37 +8315,6 @@ function compileCallExpression(
             return getWasmFuncReturnType(ctx, finalFuncIdx) ?? VOID_RESULT;
           }
         }
-
-        // A declared identifier can hold a genuine host callable without a
-        // Wasm function/closure identity (for example
-        // `const { toString } = Object.prototype; toString.call(value)`). The
-        // legacy identifier `.call` tail only handled compiler-owned
-        // callables; for a host function it evaluated the receiver and then
-        // returned the graceful undefined fallback. Preserve the real
-        // Function.prototype.call/apply semantics through the existing dynamic
-        // host method boundary. Undeclared identifiers remain on the ordinary
-        // ReferenceError path, and standalone/WASI retain their native lanes.
-        if (
-          !ctx.standalone &&
-          !ctx.wasi &&
-          !noJsHost(ctx) &&
-          closureInfo === undefined &&
-          funcIdx === undefined &&
-          innerCanBeHostCallable &&
-          (ctx.oracle.valueDeclarationOf(innerExpr) !== undefined ||
-            fctx.localMap.has(funcName) ||
-            (fctx.boxedCaptures?.has(funcName) ?? false) ||
-            ctx.moduleGlobals.has(funcName))
-        ) {
-          const hostReflectiveCall = emitFnctorSubclassDynamicMethodCall(
-            ctx,
-            fctx,
-            expr,
-            propAccess,
-            propAccess.name.text,
-          );
-          if (hostReflectiveCall !== undefined) return hostReflectiveCall;
-        }
       }
 
       // Case 2: obj.method.call/apply — method call with different receiver
@@ -8493,7 +8365,7 @@ function compileCallExpression(
               // "declined, keep the existing arms below".
               const symbolTagged = emitObjectProtoToStringWithSymbolTag(ctx, fctx, receiverExpr, tag, proof);
               if (symbolTagged !== undefined) return symbolTagged;
-              if (ctx.standalone && proof.unprovenDefault && receiverExpr !== undefined) {
+              if (proof.unprovenDefault && receiverExpr !== undefined) {
                 // Flush against the CALLER's fctx before minting: the classifier
                 // adds late imports, and only this body needs its own funcIdx
                 // operands shifted (the minted helper starts from an empty body).
@@ -8532,19 +8404,17 @@ function compileCallExpression(
             // but call the classifier directly: the generic Function#call
             // adapter boxes the native ArrayBuffer/DataView/TA carrier and loses
             // the RTT needed to distinguish it from an ordinary Array/Object.
-            if (ctx.standalone || ctx.wasi) {
-              const helperReady = ensureObjectProtoToStringRuntimeHelper(ctx);
-              if (helperReady !== undefined) {
-                fctx.body.push({ op: "ref.null.extern" }); // unused closure-self slot
-                const valueType = compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "externref" });
-                if (valueType && valueType.kind !== "externref") {
-                  coerceType(ctx, fctx, valueType, { kind: "externref" });
-                }
-                const helperIdx = ensureObjectProtoToStringRuntimeHelper(ctx);
-                if (helperIdx !== undefined) {
-                  fctx.body.push({ op: "call", funcIdx: helperIdx });
-                  return { kind: "externref" };
-                }
+            const helperReady = ensureObjectProtoToStringRuntimeHelper(ctx);
+            if (helperReady !== undefined) {
+              fctx.body.push({ op: "ref.null.extern" }); // unused closure-self slot
+              const valueType = compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "externref" });
+              if (valueType && valueType.kind !== "externref") {
+                coerceType(ctx, fctx, valueType, { kind: "externref" });
+              }
+              const helperIdx = ensureObjectProtoToStringRuntimeHelper(ctx);
+              if (helperIdx !== undefined) {
+                fctx.body.push({ op: "call", funcIdx: helperIdx });
+                return { kind: "externref" };
               }
             }
           }
@@ -8602,7 +8472,6 @@ function compileCallExpression(
           // by the class-method arm below. Refusing it here was silently
           // rolled back to a default value (0 / ref.null → trap).
           if (
-            ctx.standalone &&
             expr.arguments.length >= 1 &&
             !isBuiltinRegExpPrototype &&
             !isUserClassPrototypeMethod(ctx, objType, methodName)
@@ -9114,7 +8983,6 @@ export function emitFnctorSubclassDynamicMethodCall(
       fctx.body.push({ op: "ref.null.extern" });
     }
     // (#3429) See maybeStampCompiledFunctionArgName — no-ops outside JS-host.
-    maybeStampCompiledFunctionArgName(ctx, fctx, arg);
     fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get(arrPushName) ?? arrPushIdx });
   }
   fctx.body.push({ op: "local.get", index: recvLocal });
@@ -9635,12 +9503,11 @@ function compileIIFE(ctx: CodegenContext, fctx: FunctionContext, expr: ts.CallEx
   }
   const funcExpr = callee as ts.FunctionExpression | ts.ArrowFunction;
   // (#6774 S4) A lexical `new.target` needs the closure path's snapshot capture.
-  if (ctx.standalone && ts.isArrowFunction(funcExpr) && referencesOwnNewTarget(funcExpr)) return undefined;
+  if (ts.isArrowFunction(funcExpr) && referencesOwnNewTarget(funcExpr)) return undefined;
   // (#6774 S8) `(_ => super(…))()` in a derived constructor: the arrow's
   // `super()` IS the constructor's (§13.3.7.1 walks past arrows). An
   // argument-free expression-bodied arrow evaluates its body in this frame.
   if (
-    ctx.standalone &&
     fctx.isConstructor === true &&
     ts.isArrowFunction(funcExpr) &&
     !ts.isBlock(funcExpr.body) &&

@@ -189,7 +189,6 @@ export function tryEmitNullishIdentifierCalleeTypeError(
   fctx: FunctionContext,
   expr: ts.CallExpression,
 ): ValType | undefined {
-  if (!ctx.standalone && !ctx.wasi) return undefined;
   if (expr.questionDotToken !== undefined || ts.isOptionalChain(expr)) return undefined;
   const callee = expr.expression;
   if (!ts.isIdentifier(callee)) return undefined;
@@ -293,9 +292,6 @@ export function tryEmitStoredMemberClosureCall(
   fctx: FunctionContext,
   expr: ts.CallExpression,
 ): ValType | undefined {
-  // Host-free lanes only — the JS-host lane already dispatches these correctly.
-  if (!ctx.standalone && !ctx.wasi) return undefined;
-
   const callee = expr.expression;
   // (#4482) `o["exec"](…)` is the SAME shape as `o.exec(…)` — §12.3.2 computes
   // the property key from a string literal, and the element READ already
@@ -440,7 +436,7 @@ export function tryEmitStoredMemberClosureCall(
   //    Guarded on the nullish read, so every shape that resolves a callee today
   //    keeps the exact `__apply_closure` sequence; and on `protoNamedDirty`, a
   //    pre-scan flag, so a module with no such write emits byte-identically.
-  const methodCallIdx = ctx.standalone && ctx.protoNamedDirty ? ctx.funcMap.get("__extern_method_call") : undefined;
+  const methodCallIdx = ctx.protoNamedDirty ? ctx.funcMap.get("__extern_method_call") : undefined;
   const applyCall: Instr[] = [
     { op: "local.get", index: fnLocal },
     { op: "local.get", index: thisLocal },
@@ -535,7 +531,7 @@ function tryEmitProtoInheritedMethodCall(
   fctx: FunctionContext,
   expr: ts.CallExpression,
 ): ValType | undefined {
-  if (!ctx.standalone || !ctx.protoNamedDirty) return undefined;
+  if (!ctx.protoNamedDirty) return undefined;
   const callee = expr.expression;
   if (!ts.isPropertyAccessExpression(callee)) return undefined;
   if (callee.questionDotToken !== undefined || expr.questionDotToken !== undefined) return undefined;

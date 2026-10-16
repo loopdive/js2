@@ -22,12 +22,7 @@ import { compileStringConversionArgument } from "../string-conversion-argument.j
 import { emitBigIntCtorCarrier } from "../bigint-wide-parse.js";
 import { emitI64ToStringCall } from "../bigint-string-context.js";
 import { materializeHoistedFunctionValueBinding } from "../closures/funcref-as-closure.js";
-import {
-  candidateFixedFormalCount,
-  collectRestDispatchPlans,
-  restShapedWrapperCandidates,
-  restSlotMarshalInstrs,
-} from "./callable-rest-bridge.js"; // (#5334)
+import { candidateFixedFormalCount, collectRestDispatchPlans, restSlotMarshalInstrs } from "./callable-rest-bridge.js"; // (#5334)
 import { isBooleanType, isPromiseType, isStringType, isVoidType } from "../../checker/type-mapper.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import { resolveArrayInfo } from "../array-methods.js";
@@ -60,7 +55,6 @@ import { emitSymbolOperandCoercionThrow } from "../tonumber-symbol-throw.js"; //
 import { boundFunctionTargetIsDefinitelyCompiled, calleeIsBoundFunctionVar } from "../object-builtin-effects.js";
 import { tracesToProxyValue } from "../proxy-value-provenance.js";
 import { ensureObjVecBuilders, reserveApplyClosure } from "../object-runtime.js";
-import { hostFnctorCallableFallbackImportName, reserveHostFnctorMethodDriver } from "../host-fnctor-method-driver.js"; // (#4648)
 import { emitNullCheckThrow, typeErrorThrowInstrs } from "../property-access.js";
 import { emitRuntimeEvalInterpretedCallableAdapter } from "../runtime-eval-callable.js";
 import { emitStandaloneRegExpToStringFromExpr } from "../regexp-standalone.js";
@@ -93,11 +87,9 @@ import {
   emitAssertedStructExtension,
   emitGuardedFuncRefCast,
   emitGuardedRefCast,
-  buildVecFromExternMaterializer,
   getVecInfo,
   pushDefaultValue,
   pushParamSentinel,
-  vecFromExternFuncIdx,
 } from "../type-coercion.js";
 import { compileAnnexBEscapeCall } from "../annexb-escape-call.js"; // (#3064 / #4556)
 import { annexBDeclaringRange } from "../annexb-cancel.js";
@@ -105,7 +97,7 @@ import { URI_DECODE_MASK, URI_ENCODE_MASK } from "../uri-encoding-native.js";
 import { ensureWasiWriteFileStringsHelper } from "../wasi.js";
 import { wasiAllocStringData } from "./builtins.js";
 import { compileClosureCall, runtimeSignatureParameters } from "./calls-closures.js";
-import { tryCompileStoredObjectBuiltinCall, uncurriedBuiltinAliasArmActive } from "./call-object-builtins.js";
+import { tryCompileStoredObjectBuiltinCall } from "./call-object-builtins.js";
 import { compileSpreadCallArgs } from "./extern.js";
 import { compileSpreadCallArgsWithArguments } from "./spread-arguments-call.js";
 import {
@@ -404,35 +396,6 @@ function tryCompileImmutablePropertyCallableAlias(
     else if (valueType.kind !== "externref") coerceType(ctx, fctx, valueType, { kind: "externref" });
   };
 
-  if (!ctx.standalone && !ctx.wasi) {
-    const arity = expr.arguments.length;
-    reserveHostFnctorMethodDriver(ctx, arity);
-    const undefinedIdx = ensureLateImport(ctx, "__get_undefined", [], [{ kind: "externref" }]);
-    ensureLateImport(
-      ctx,
-      hostFnctorCallableFallbackImportName(arity),
-      Array.from({ length: arity + 2 }, () => ({ kind: "externref" }) as ValType),
-      [{ kind: "externref" }],
-    );
-    flushLateImportShifts(ctx, fctx);
-    reserveHostFnctorMethodDriver(ctx, arity);
-
-    // A bare identifier call has no Reference base: `this` is undefined.
-    if (undefinedIdx !== undefined) {
-      const liveUndefinedIdx = ctx.funcMap.get("__get_undefined") ?? undefinedIdx;
-      fctx.body.push({ op: "call", funcIdx: liveUndefinedIdx });
-    } else {
-      fctx.body.push({ op: "ref.null.extern" });
-    }
-    emitExternValue(expr.expression);
-    for (const argument of expr.arguments) emitExternValue(argument);
-    // Callee/argument compilation can add a late import and shift every
-    // defined function. Re-read the driver's stable handle only after all
-    // operands have been materialized.
-    fctx.body.push({ op: "call", funcIdx: reserveHostFnctorMethodDriver(ctx, arity) });
-    return { kind: "externref" };
-  }
-
   // Host-free targets use the matching finalize-filled closure application
   // bridge and an ObjVec containing the true source argument count.
   reserveApplyClosure(ctx);
@@ -527,11 +490,11 @@ function tryCompileStoredStandaloneCarrierCall(
   // the typed closure lowering would cast the proxy and trap (bound target:
   // null deref; builtin target: illegal cast). Route it to the dynamic [[Call]]
   // ladder, whose `$Proxy` arm reaches `__proxy_apply_dispatch` (§10.5.12).
-  if (ctx.standalone && tracesToProxyValue(ctx, expr.expression)) {
+  if (tracesToProxyValue(ctx, expr.expression)) {
     const proxyCall = tryEmitInlineDynamicCall(ctx, fctx, expr, true);
     if (proxyCall !== null) return proxyCall;
   }
-  if (!uncurriedBuiltinAliasArmActive(ctx)) return undefined;
+
   const storedObjectCall = tryCompileStoredObjectBuiltinCall(ctx, fctx, expr);
   if (storedObjectCall !== undefined) return storedObjectCall;
   if (!calleeIsBoundFunctionVar(ctx.oracle, expr.expression)) return undefined;
@@ -712,46 +675,11 @@ function compileBoundIdentifierCall(
     isShadowedTopLevelFn(ctx, expr.expression.text) &&
     fctx.localMap.get(expr.expression.text) === undefined &&
     !(fctx.boxedCaptures?.has(expr.expression.text) ?? false) &&
-    !expr.arguments.some((a) => ts.isSpreadElement(a)) &&
-    // (#4648) JS-host lane: the private fnctor driver below is only reserved
-    // for arities the canonical closure-method surface covers. Above the cap
-    // the static lowering stays (a reassignment there is not observed — the
-    // same limit the host `this.m(...)` fast path carries).
-    (ctx.standalone || ctx.wasi || expr.arguments.length <= 8)
+    !expr.arguments.some((a) => ts.isSpreadElement(a))
   ) {
     const name = expr.expression.text;
     const slot = fnShadowSlot(ctx, name);
-    if (!ctx.standalone && !ctx.wasi) {
-      // (#4648) JS-host lane. The standalone arm below packs the arguments into
-      // an `$ObjVec` for `__apply_closure`, and `ensureObjVecBuilders` pulls in
-      // the whole native object runtime — which, in host mode (wasm:js-string,
-      // not native strings), aborts as soon as a string-family selfhost builtin
-      // is emitted. Use the fixed-arity host driver instead: it dispatches a
-      // WasmGC closure through `__call_fn_method_N` and falls back to the
-      // `__extern_call_raw_callable_N` import when the slot holds a genuine JS
-      // callable, so a host function assigned to `globalThis.<name>` also works.
-      const argc = expr.arguments.length;
-      const driverIdx = reserveHostFnctorMethodDriver(ctx, argc);
-      const undefIdx = ensureLateImport(ctx, "__get_undefined", [], [{ kind: "externref" }]);
-      ensureLateImport(
-        ctx,
-        hostFnctorCallableFallbackImportName(argc),
-        Array.from({ length: argc + 2 }, () => ({ kind: "externref" }) as ValType),
-        [{ kind: "externref" }],
-      );
-      flushLateImportShifts(ctx, fctx);
-      // `this` for a bare call is undefined (§13.3.6.1 — no reference base).
-      if (undefIdx !== undefined) fctx.body.push({ op: "call", funcIdx: undefIdx });
-      else fctx.body.push({ op: "ref.null.extern" });
-      emitShadowCalleeSelect(ctx, fctx, expr.expression, slot);
-      for (const arg of expr.arguments) {
-        const at = compileExpression(ctx, fctx, arg, { kind: "externref" });
-        if (at && at.kind !== "externref") coerceType(ctx, fctx, at, { kind: "externref" });
-        else if (!at) fctx.body.push({ op: "ref.null.extern" });
-      }
-      fctx.body.push({ op: "call", funcIdx: driverIdx });
-      return { kind: "externref" };
-    }
+
     const applyIdx = reserveApplyClosure(ctx);
     const { newIdx: vecNewIdx, pushIdx: vecPushIdx } = ensureObjVecBuilders(ctx);
     flushLateImportShifts(ctx, fctx);
@@ -1577,15 +1505,9 @@ function compileBoundIdentifierCall(
         // value structs (number/boolean/bigint/string, wrapper objects → truthy,
         // null → false) but has a real Wasm body, so `Boolean(x)` no longer
         // leaks the bodyless `env::__to_boolean` host import. Gated on
-        // `ctx.standalone` so the GC/host lane stays byte-identical.
-        const useNativeTruthy = ctx.standalone;
-        if (useNativeTruthy) addUnionImports(ctx);
-        const toBoolIdx = ensureLateImport(
-          ctx,
-          useNativeTruthy ? "__is_truthy" : "__to_boolean",
-          [{ kind: "externref" }],
-          [{ kind: "i32" }],
-        );
+        // the regime flag so the GC/host lane stays byte-identical.
+        addUnionImports(ctx);
+        const toBoolIdx = ensureLateImport(ctx, "__is_truthy", [{ kind: "externref" }], [{ kind: "i32" }]);
         flushLateImportShifts(ctx, fctx);
         if (toBoolIdx !== undefined) {
           fctx.body.push({ op: "call", funcIdx: toBoolIdx });
@@ -1745,7 +1667,7 @@ function compileBoundIdentifierCall(
     // bind provider otherwise routes the `$__bound_fn` through the stored
     // `Function.prototype.call` VALUE, whose standalone body is the #2984
     // degrade throw. The resolver only matches the immutable harness idiom.
-    if (!isLocallyShadowed && uncurriedBuiltinAliasArmActive(ctx)) {
+    if (!isLocallyShadowed) {
       // Native Function.prototype invokers now execute stored bind.bind(call)
       // and bind.bind(apply) helpers directly. Rewriting them to the outer
       // call/apply identifier invents a free variable absent from a nested
@@ -1911,7 +1833,6 @@ function compileBoundIdentifierCall(
       // the live binding and arguments are still evaluated exactly once.
       if (
         isKnownVariable &&
-        ctx.standalone &&
         ctx.runtimeEvalCallableBoundaryEnabled === true &&
         resolvesToGlobalFunctionAlias(expr.expression, ctx.oracle)
       ) {
@@ -1957,15 +1878,8 @@ function compileBoundIdentifierCall(
             ? callSigs.find((candidate) => candidate.declaration === resolvedSig.declaration)
             : undefined) ?? callSigs[0]!;
         const builtinAlias =
-          ctx.standalone || ctx.wasi
-            ? // (#4491 wave-5 T6) The destructuring spelling (`const { max } = Math`)
-              // first — unchanged — then the plain single-name form
-              // (`var f = String.fromCharCode`), which is restricted to the
-              // variadic-convention statics whose lib rest signature actively
-              // destroys call-site argument 0.
-              (resolveBuiltinStaticBindingAlias(ctx, expr.expression) ??
-              resolveVariadicBuiltinStaticPlainAlias(ctx, expr.expression))
-            : undefined;
+          resolveBuiltinStaticBindingAlias(ctx, expr.expression) ??
+          resolveVariadicBuiltinStaticPlainAlias(ctx, expr.expression);
         const builtinAliasClosure = builtinAlias
           ? ensureStandaloneBuiltinStaticMethodClosure(ctx, builtinAlias.builtinName, builtinAlias.propName)
           : null;
@@ -2301,9 +2215,6 @@ function compileBoundIdentifierCall(
           };
           const vecArgumentBridge = (from: ValType, to: ValType): Instr[] | null =>
             canProjectVecArgument(from, to) ? coercionInstrs(ctx, from, to, fctx) : null;
-          const tupleTypeIdxs = new Set(ctx.tupleTypeMap.values());
-          const isErasedGenericRefCarrier = (typeIdx: number): boolean =>
-            tupleTypeIdxs.has(typeIdx) || getVecInfo(ctx, typeIdx) !== null;
           const scalarBridgePlan = (
             from: ValType,
             to: ValType,
@@ -2317,116 +2228,6 @@ function compileBoundIdentifierCall(
             allowGeneralRefExport: boolean,
           ): Instr[] | null => {
             if (scalarAbiTypesMatch(from, to)) return [];
-            if (ctx.standalone || ctx.wasi) return null;
-
-            // A generic callback commonly erases its type parameter to
-            // externref while the concrete closure compiled at the call site
-            // keeps a closed WasmGC struct ABI. TypeScript's `mapIterator<T,
-            // U>` is the production witness: its `(x: T) => U` parameter is
-            // planned as externref -> externref, but a later tuple-mapping
-            // arrow is ref(tuple) -> ref(tuple). The wrapper-root cast still
-            // succeeds; only the funcref ladder omitted the concrete type and
-            // ended in its TypeError terminal.
-            //
-            // Keep this bridge to compiler-owned aggregate carriers. The
-            // candidate scan below is module-wide, so admitting every closed
-            // object/class signature with arguments would multiply each erased
-            // generic call by the whole module's same-arity closure population.
-            // Tuples and vecs cover those argument-bearing iterator/reducer
-            // callbacks. A zero-formal callback cannot hit the unsafe
-            // over-arity argument path, so it may also export any concrete GC
-            // result; TypeScript's `parseListElement<T>(() => T)` calling its
-            // later-compiled captured `parseStatement` is the witness. These
-            // conversions are pure Wasm reference casts and need no late import.
-            if (
-              isHostExtern(from) &&
-              (to.kind === "ref" || to.kind === "ref_null") &&
-              (isErasedGenericRefCarrier(to.typeIdx) || sigParamWasmTypes.length === 0)
-            ) {
-              // An erased argument may hold a vec of a DIFFERENT element
-              // representation than the candidate's formal (the parser's
-              // `factoryCreateNodeArray(elements)`), so a bare cast traps with
-              // `illegal cast`. Prefer the materializer reserved below.
-              const vecMaterializerIdx = vecFromExternFuncIdx(ctx, to.typeIdx);
-              if (vecMaterializerIdx !== undefined) {
-                return to.kind === "ref"
-                  ? [{ op: "call", funcIdx: vecMaterializerIdx }, { op: "ref.as_non_null" }]
-                  : [{ op: "call", funcIdx: vecMaterializerIdx }];
-              }
-              return [
-                { op: "any.convert_extern" },
-                {
-                  op: to.kind === "ref_null" ? "ref.cast_null" : "ref.cast",
-                  typeIdx: to.typeIdx,
-                },
-              ];
-            }
-            if (
-              (from.kind === "ref" || from.kind === "ref_null") &&
-              ((allowGeneralRefExport && from.typeIdx !== ctx.anyValueTypeIdx) ||
-                isErasedGenericRefCarrier(from.typeIdx) ||
-                sigParamWasmTypes.length === 0) &&
-              isHostExtern(to)
-            ) {
-              // `$AnyValue` is deliberately excluded from the new general
-              // argument widening: its tagged GC struct needs semantic
-              // projection rather than raw reference export.
-              // Widening a concrete WasmGC reference to externref is always
-              // lossless.  Keep the tuple/vec restriction on the reverse
-              // direction above, where an erased value would need a guarded
-              // downcast, but do not apply it here.  TypeScript's parent-fixup
-              // traversal is the production witness: visitNode supplies a
-              // concrete Node while its captured addWorkItem callback accepts
-              // Node | NodeArray<Node>.  The latter lowers to externref, and
-              // excluding that wrapper type made the callable dispatch end in
-              // its TypeError arm even though the callback was present.
-              return [{ op: "extern.convert_any" }];
-            }
-
-            // A plain f64 is a proven JavaScript Number. Boxing it preserves
-            // both value and brand. A sentinel-branded f64 may mean undefined,
-            // so the ordinary number boxer is not valid for that carrier.
-            if (from.kind === "f64" && from.undefSentinel !== true && isHostExtern(to)) {
-              return helpers.boxNumberIdx === null ? null : [{ op: "call", funcIdx: helpers.boxNumberIdx }];
-            }
-
-            // Boolean-branded i32 values must stay JavaScript booleans when a
-            // generic callback signature erases its result to externref.
-            // Number-boxing 0/1 here would make truthiness work accidentally
-            // while breaking typeof/equality at the callback boundary.
-            if (sigParamWasmTypes.length === 0 && from.kind === "i32" && from.boolean === true && isHostExtern(to)) {
-              return helpers.boxBooleanIdx === null ? null : [{ op: "call", funcIdx: helpers.boxBooleanIdx }];
-            }
-
-            // The reverse bridge is allowed only when this CALL SITE proves
-            // that the actual expression is a Number (or the argument is
-            // omitted and the dedicated default sentinel path below owns it).
-            // A declared `any` alone is not proof: Boolean/Symbol/BigInt must
-            // not be silently converted to a numeric ABI.
-            if (allowProvenNumberUnbox && isHostExtern(from) && to.kind === "f64" && to.undefSentinel !== true) {
-              return helpers.unboxNumberIdx === null ? null : [{ op: "call", funcIdx: helpers.unboxNumberIdx }];
-            }
-
-            // (#6415) An untyped module's `return f(x)` — where `f` was read as
-            // a first-class VALUE from a host builtin (`const f =
-            // ArrayBuffer.isView`) — leaves the callee returning the boxed host
-            // result as externref, while a typed caller that cast the import to
-            // `=> boolean` expects the boolean-branded i32 this lane lowers
-            // `boolean` to. Without a bridge the live arm fell into the
-            // dead-arm placeholder below, which DROPS the result and answers
-            // `i32.const 0` — so `const f = ArrayBuffer.isView; f(bytes)`
-            // answered false where the direct `ArrayBuffer.isView(bytes)` call
-            // answered true, for every predicate (`Array.isArray`, `Object.is`
-            // measured the same way).
-            //
-            // `__is_truthy` is ToBoolean of the boxed result: exact for a real
-            // boolean, and spec-correct if the callee hands back a non-boolean
-            // that the caller's declared type says to read as one. Deliberately
-            // NOT widened to plain `i32`: that carrier also spells native ints
-            // and symbol ids, whose values are not a truthiness question.
-            if (isHostExtern(from) && to.kind === "i32" && to.boolean === true) {
-              return helpers.isTruthyIdx === null ? null : [{ op: "call", funcIdx: helpers.isTruthyIdx }];
-            }
             return null;
           };
           const argumentHasNumberBridgeProof = (index: number): boolean =>
@@ -2441,10 +2242,9 @@ function compileBoundIdentifierCall(
           // marshalled by the runtime-disambiguating bridge (see
           // callable-rest-bridge.ts), so its candidate is admitted and bridged
           // on its FIXED formals only. Standalone keeps the flag-driven reading.
-          const hostLane = !ctx.standalone && !ctx.wasi;
           let needsScalarBridge = false;
           for (const [, info] of ctx.closureInfoByTypeIdx) {
-            const fixedCount = candidateFixedFormalCount(ctx, info, hostLane);
+            const fixedCount = candidateFixedFormalCount(ctx, info, false);
             if (fixedCount > sigParamWasmTypes.length) {
               continue;
             }
@@ -2527,24 +2327,7 @@ function compileBoundIdentifierCall(
           // ending in TypeError.
           const omittedSlotFuncTypes = new Set<number>();
           let omittedSlotTmp: number | undefined;
-          if (omittedSlots.size > 0 && !ctx.standalone && !ctx.wasi) {
-            const restoredParams = sigParamWasmTypes.map((type, i) => omittedSlots.get(i) ?? type);
-            const alt = getOrCreateFuncRefWrapperTypes(ctx, restoredParams, resultTypes);
-            if (alt && !seenFuncTypeIdx.has(alt.closureInfo.funcTypeIdx)) {
-              ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
-              addUnionImports(ctx);
-              flushLateImportShifts(ctx, fctx);
-              seenFuncTypeIdx.add(alt.closureInfo.funcTypeIdx);
-              omittedSlotFuncTypes.add(alt.closureInfo.funcTypeIdx);
-              funcCandidates.push({
-                funcTypeIdx: alt.closureInfo.funcTypeIdx,
-                structTypeIdx: alt.closureInfo.structTypeIdx,
-                returnType: alt.closureInfo.returnType,
-                paramTypes: alt.closureInfo.paramTypes,
-                hasRestParam: alt.closureInfo.hasRestParam,
-              });
-            }
-          }
+
           const omittedSlotArgumentBridge = (
             candidate: { funcTypeIdx: number },
             paramIndex: number,
@@ -2594,7 +2377,7 @@ function compileBoundIdentifierCall(
             // declares one (Test262's typed-array harness does exactly this),
             // so retain shorter runtime signatures and marshal only their
             // formal prefix in the dispatch arm below.
-            const fixedParamCount = candidateFixedFormalCount(ctx, info, hostLane);
+            const fixedParamCount = candidateFixedFormalCount(ctx, info, false);
             const hasRestParam = fixedParamCount < info.paramTypes.length;
             // A runtime function may declare optional parameters that are not
             // present in the callable's public signature. JavaScript still
@@ -2712,33 +2495,6 @@ function compileBoundIdentifierCall(
             }
           }
 
-          // (#5334) The pure-rest shape `(...args) -> R` too, so a rest closure
-          // compiled AFTER this site (jest's `vi.fn()` spy) has an arm; its vec
-          // slot is decided at runtime by the bridge.
-          if (hostLane) {
-            for (const info of restShapedWrapperCandidates(ctx, expr.getSourceFile(), [
-              resultTypes,
-              [{ kind: "externref" }],
-              [],
-            ])) {
-              if (seenFuncTypeIdx.has(info.funcTypeIdx)) continue;
-              seenFuncTypeIdx.add(info.funcTypeIdx);
-              funcCandidates.push(info);
-            }
-            // Reserve the cross-rep vec materializer for every vec formal fed
-            // from an erased argument, before any arm captures an index.
-            let reservedVecMaterializer = false;
-            for (const candidate of funcCandidates) {
-              for (let pi = 0; pi < Math.min(candidate.paramTypes.length, sigParamWasmTypes.length); pi++) {
-                const to = candidate.paramTypes[pi]!;
-                if (!isHostExtern(sigParamWasmTypes[pi]!) || (to.kind !== "ref" && to.kind !== "ref_null")) continue;
-                if (getVecInfo(ctx, to.typeIdx) === null || vecFromExternFuncIdx(ctx, to.typeIdx) !== undefined)
-                  continue;
-                if (buildVecFromExternMaterializer(ctx, to.typeIdx) !== undefined) reservedVecMaterializer = true;
-              }
-            }
-            if (reservedVecMaterializer) flushLateImportShifts(ctx, fctx);
-          }
           const unmatchedClosureHostCall =
             funcCandidates.length > 1 ? reserveUnmatchedClosureHostCall(ctx, fctx, expr) : undefined;
           // Preserve the JavaScript distinction between an omitted argument
@@ -2954,7 +2710,6 @@ function compileBoundIdentifierCall(
             t.kind === "ref_null";
           const runtimeApplyFallback =
             rawCalleeLocal !== undefined &&
-            (ctx.standalone || ctx.wasi) &&
             ctx.runtimeEvalCallableBoundaryEnabled === true &&
             boxableKind(expectedReturn) &&
             matchedClosureInfo.paramTypes.every((t) => boxableKind(t));
@@ -3033,10 +2788,7 @@ function compileBoundIdentifierCall(
           // are then already registered, so the arm emits NO first-registrations
           // mid-body, #2704) AND the callee arrived as externref (closureLocal
           // is root-cast). Modules without such a value read are byte-identical.
-          const variadic =
-            (ctx.standalone || ctx.wasi) && innerResultType?.kind === "externref"
-              ? ctx.variadicBuiltinClosure
-              : undefined;
+          const variadic = innerResultType?.kind === "externref" ? ctx.variadicBuiltinClosure : undefined;
 
           if (funcCandidates.length <= 1 && variadic === undefined) {
             // Single func type — push self+args back onto stack then call
@@ -3221,7 +2973,7 @@ function compileBoundIdentifierCall(
 
             // (#5334) Every registered rest closure struct whose identity an arm
             // can trust, per funcref type (host lane; see the bridge module).
-            const restPlans = collectRestDispatchPlans(ctx, hostLane);
+            const restPlans = collectRestDispatchPlans(ctx, false);
             for (const fc of [...funcCandidates].reverse()) {
               // (#4491 wave-5 T6) On a statically-known variadic-alias call the
               // MATCHED candidate carries the variadic func type itself — its
@@ -3236,7 +2988,7 @@ function compileBoundIdentifierCall(
               const fcCallBody: Instr[] = [];
               // (#5334) A trailing rest formal is marshalled by the runtime-
               // disambiguating bridge below; positional formals stop before it.
-              const fcFixedParamCount = candidateFixedFormalCount(ctx, fc, hostLane);
+              const fcFixedParamCount = candidateFixedFormalCount(ctx, fc, false);
               setCandidateArgc(ctx, fctx, fcCallBody, fcFixedParamCount, actualArgExternLocals, expr.arguments.length);
               appendForwardedOptionalArgcOverride(ctx, fctx, fcCallBody, expr.arguments, fcFixedParamCount);
               // Shared func types use canonical-root self. A private/named
@@ -3439,8 +3191,7 @@ function compileBoundIdentifierCall(
       // candidates when the callee is a known variable of externref/any type
       // that may wrap a closure at runtime.
       const declaration = ctx.oracle.valueDeclarationOf(expr.expression);
-      const isRuntimeEvalGlobal =
-        (ctx.standalone || ctx.wasi) && ctx.runtimeEvalGlobalFunctionBindings === true && declaration === undefined;
+      const isRuntimeEvalGlobal = ctx.runtimeEvalGlobalFunctionBindings === true && declaration === undefined;
       const isLinkedRealmGlobal = ctx.standaloneGlobalThisImport !== undefined && declaration === undefined;
       // (#3966) A callee whose only binding is a realm-global property the
       // program created (`this.beep = fn` / bare `getRight = fn`) is legitimate —
@@ -3455,89 +3206,6 @@ function compileBoundIdentifierCall(
             isKnownVariable || isRuntimeEvalGlobal || isLinkedRealmGlobal || implicitCallee,
           );
       if (dyn !== null) return dyn;
-
-      // (#4527) Reference-preserving dynamic-call bridge. A call on a KNOWN
-      // variable of `any` type (a JS callback parameter) whose closure wrapper
-      // candidates were not registered when THIS body compiled — the
-      // cross-module case: `cb.mjs`'s `callIt(cb) { return cb(2, 3); }`
-      // compiles before `main.ts`'s arrow argument exists — used to fall to
-      // the graceful `ref.null.extern` below and the callee was silently
-      // never invoked (diff-sequences' isCommon/foundSubsequence, jest-util's
-      // each-callbacks). Route it through the host `__call_dyn_<n>` bridge:
-      // the callee and every argument cross as externref (numbers boxed,
-      // refs converted), the host wraps the closure exactly like the numeric
-      // `__call_N_f64` bridges, and reference arguments stay LIVE. Host lane
-      // only — standalone keeps its existing lowering (the ReferenceError /
-      // graceful arms below).
-      if (
-        !noJsHost(ctx) &&
-        !ctx.standalone &&
-        !ctx.wasi &&
-        isKnownVariable &&
-        expr.arguments.length <= 10 &&
-        !expr.arguments.some((a) => ts.isSpreadElement(a))
-      ) {
-        addUnionImports(ctx);
-        const calleeType = compileExpression(ctx, fctx, expr.expression);
-        if (calleeType !== null) {
-          const toExtern = (t: ValType | null): void => {
-            if (t === null) {
-              fctx.body.push({ op: "ref.null.extern" });
-            } else if (t.kind === "f64") {
-              const boxIdx = ctx.funcMap.get("__box_number");
-              if (boxIdx !== undefined) fctx.body.push({ op: "call", funcIdx: boxIdx });
-              else {
-                fctx.body.push({ op: "drop" });
-                fctx.body.push({ op: "ref.null.extern" });
-              }
-            } else if (t.kind === "i32") {
-              // Same convention as the sig-dispatch extras loop: a plain i32 is
-              // a NUMBER (loop counters, int literals) — only a symbol-tagged
-              // i32 boxes as a symbol. Boxing untagged i32 as boolean turned
-              // diff-sequences' index arguments into `false`/`true`.
-              if (t.symbol === true) {
-                const boxIdx = ctx.funcMap.get("__box_symbol");
-                if (boxIdx !== undefined) fctx.body.push({ op: "call", funcIdx: boxIdx });
-                else {
-                  fctx.body.push({ op: "drop" });
-                  fctx.body.push({ op: "ref.null.extern" });
-                }
-              } else {
-                fctx.body.push({ op: "f64.convert_i32_s" });
-                const boxIdx = ctx.funcMap.get("__box_number");
-                if (boxIdx !== undefined) fctx.body.push({ op: "call", funcIdx: boxIdx });
-                else {
-                  fctx.body.push({ op: "drop" });
-                  fctx.body.push({ op: "ref.null.extern" });
-                }
-              }
-            } else if (t.kind === "ref" || t.kind === "ref_null") {
-              fctx.body.push({ op: "extern.convert_any" });
-            }
-          };
-          toExtern(calleeType);
-          for (const arg of expr.arguments) {
-            toExtern(compileExpression(ctx, fctx, arg));
-          }
-          const bridgeName = `__call_dyn_${expr.arguments.length}`;
-          const params: ValType[] = Array.from({ length: expr.arguments.length + 1 }, () => ({
-            kind: "externref",
-          }));
-          const bridgeIdx = ensureLateImport(ctx, bridgeName, params, [{ kind: "externref" }]);
-          flushLateImportShifts(ctx, fctx);
-          const resolvedBridgeIdx = ctx.funcMap.get(bridgeName) ?? bridgeIdx;
-          if (resolvedBridgeIdx === undefined) {
-            // Import registration refused (strict no-host mode) — drop the
-            // already-pushed callee+args and degrade like the graceful
-            // null-callee fallback instead of calling an unresolved index.
-            for (let di = 0; di < expr.arguments.length + 1; di++) fctx.body.push({ op: "drop" });
-            fctx.body.push({ op: "ref.null.extern" });
-            return { kind: "externref" };
-          }
-          fctx.body.push({ op: "call", funcIdx: resolvedBridgeIdx });
-          return { kind: "externref" };
-        }
-      }
 
       // §6.2.5.5 GetValue on an unresolvable Reference — both lanes. See
       // undeclared-callee.ts for the rule and for why the two lanes prove

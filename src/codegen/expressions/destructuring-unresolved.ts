@@ -5,7 +5,7 @@ import { buildStandardTryTable } from "../../ir/try-table.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { allocLocal } from "../context/locals.js";
 import { ensureExnTag } from "../registry/imports.js";
-import { ensureHostStrictSpreadDispatch, ensureNativeStrictSpreadRuntime } from "../iterator-native.js";
+import { ensureNativeStrictSpreadRuntime } from "../iterator-native.js";
 import { isStrictContext } from "../helpers/is-strict-function.js";
 import { findUnresolvableInArrayPattern } from "./unresolvable-assign.js";
 import { coerceType } from "../shared.js";
@@ -26,8 +26,7 @@ export function prepareStrictSingleArrayWrite(
     Boolean(findUnresolvableInArrayPattern(ctx, fctx, target));
   if (singleUnresolved) {
     // Register literal dispatch before compiling the RHS allocations.
-    if (ctx.standalone || ctx.wasi) ensureNativeStrictSpreadRuntime(ctx);
-    else ensureHostStrictSpreadDispatch(ctx);
+    ensureNativeStrictSpreadRuntime(ctx);
   }
   return singleUnresolved;
 }
@@ -52,17 +51,14 @@ export function emitStrictSingleArrayWrite(ctx: CodegenContext, fctx: FunctionCo
     { op: "local.get", index: iterLocal },
     { op: "call", funcIdx: ctx.funcMap.get("__iterator_return")! },
   ];
-  const closeOnThrow: Instr =
-    ctx.standalone || ctx.wasi
-      ? buildStandardTryTable({ kind: "empty" }, closeBody, [
-          {
-            kind: "catch",
-            tagIdx: ensureExnTag(ctx),
-            payloadType: { kind: "externref" },
-            body: [{ op: "drop" }],
-          },
-        ])
-      : { op: "try", blockType: { kind: "empty" }, body: closeBody, catches: [], catchAll: [] };
+  const closeOnThrow: Instr = buildStandardTryTable({ kind: "empty" }, closeBody, [
+    {
+      kind: "catch",
+      tagIdx: ensureExnTag(ctx),
+      payloadType: { kind: "externref" },
+      body: [{ op: "drop" }],
+    },
+  ]);
   fctx.body.push({
     op: "if",
     blockType: { kind: "empty" },

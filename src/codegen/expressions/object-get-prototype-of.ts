@@ -171,7 +171,7 @@ function isTopLevelThis(expr: ts.Expression): boolean {
  * `Object.getPrototypeOf(g)` read.
  */
 function isNativeGeneratorInstance(ctx: CodegenContext, expr: ts.Expression): boolean {
-  if (!(ctx.standalone || ctx.wasi) || ctx.nativeGenerators.size === 0) return false;
+  if (ctx.nativeGenerators.size === 0) return false;
   try {
     return ctx.checker.getTypeAtLocation(expr).getSymbol()?.name === "Generator";
   } catch {
@@ -186,7 +186,6 @@ export function tryNativeCollectionGpo(
   arg: ts.Expression,
   argTsType: ts.Type,
 ): boolean {
-  if (!ctx.standalone && !ctx.wasi) return false;
   const collectionName = argTsType.getSymbol()?.name;
   if (collectionName === undefined || !NATIVE_COLLECTION_NAMES.has(collectionName)) return false;
 
@@ -312,7 +311,6 @@ function tryEmitStandaloneDerivedClassGetPrototypeOf(
   fctx: FunctionContext,
   arg0: ts.Expression,
 ): InnerResult | null {
-  if (!ctx.standalone) return null;
   let bare = arg0;
   while (ts.isParenthesizedExpression(bare)) bare = bare.expression;
   const className = classIdentityFromExpression(ctx, bare);
@@ -378,7 +376,6 @@ export function tryCompileEs5GetPrototypeOfEarly(
   // An integrity call marks the identifier, so preserve the argument read and
   // answer this exact query with the compiler-owned singleton.
   if (
-    ctx.standalone &&
     ts.isIdentifier(arg0) &&
     ctx.nonExtensibleVars.has(integrityVarKey(ctx, arg0)) &&
     !isNativeGeneratorInstance(ctx, arg0) &&
@@ -497,63 +494,61 @@ export function tryCompileEs5GetPrototypeOfValue(
   // both routes land on the same lazily-materialized glue singleton, so the
   // identity `getPrototypeOf(new Uint8Array(0)) === Uint8Array.prototype` holds
   // by `ref.eq` either way.
-  if (ctx.standalone || ctx.wasi) {
-    const protoOfName =
-      ts.isPropertyAccessExpression(arg0) && arg0.name.text === "prototype" && ts.isIdentifier(arg0.expression)
-        ? arg0.expression.text
-        : undefined;
-    // (#5194 review F1) `<View>.prototype` only denotes the intrinsic when the
-    // identifier IS the global builtin. Without this gate a program with its own
-    // `class Uint8Array { … }` had `Object.getPrototypeOf(Uint8Array.prototype)`
-    // answer `%TypedArray%.prototype`. Same guard the NativeError arm above uses.
-    if (
-      protoOfName !== undefined &&
-      isTypedArrayViewProtoName(protoOfName) &&
-      ts.isPropertyAccessExpression(arg0) &&
-      ts.isIdentifier(arg0.expression) &&
-      isGlobalBuiltinIdentifier(ctx, fctx, arg0.expression)
-    ) {
-      const argType = compileExpression(ctx, fctx, arg0);
-      if (argType) fctx.body.push({ op: "drop" });
-      const intrinsicBrand = ensureTypedArrayIntrinsicNativeProtoGlue(ctx);
-      if (intrinsicBrand !== undefined && emitLazyNativeProtoGet(ctx, fctx, intrinsicBrand)) {
-        return { kind: "externref" };
-      }
-      fctx.body.push({ op: "ref.null.extern" });
+  const protoOfName =
+    ts.isPropertyAccessExpression(arg0) && arg0.name.text === "prototype" && ts.isIdentifier(arg0.expression)
+      ? arg0.expression.text
+      : undefined;
+  // (#5194 review F1) `<View>.prototype` only denotes the intrinsic when the
+  // identifier IS the global builtin. Without this gate a program with its own
+  // `class Uint8Array { … }` had `Object.getPrototypeOf(Uint8Array.prototype)`
+  // answer `%TypedArray%.prototype`. Same guard the NativeError arm above uses.
+  if (
+    protoOfName !== undefined &&
+    isTypedArrayViewProtoName(protoOfName) &&
+    ts.isPropertyAccessExpression(arg0) &&
+    ts.isIdentifier(arg0.expression) &&
+    isGlobalBuiltinIdentifier(ctx, fctx, arg0.expression)
+  ) {
+    const argType = compileExpression(ctx, fctx, arg0);
+    if (argType) fctx.body.push({ op: "drop" });
+    const intrinsicBrand = ensureTypedArrayIntrinsicNativeProtoGlue(ctx);
+    if (intrinsicBrand !== undefined && emitLazyNativeProtoGet(ctx, fctx, intrinsicBrand)) {
       return { kind: "externref" };
     }
-    // (#5194 review F1) The INSTANCE arm keys on the declared TYPE NAME, and a
-    // user `class Uint8Array { … }` produces exactly the same name — there is no
-    // identifier here to run `isGlobalBuiltinIdentifier` against, so the file's
-    // module-level bindings are the check. Base answered the user class's
-    // prototype correctly; the name-only test regressed it (and minted the whole
-    // TypedArray proto graph into such a program: 405,180 -> 478,540 bytes).
-    const viewName = ctx.oracle.declaredNameOf(arg0) ?? "";
-    if (
-      protoOfName === undefined &&
-      isTypedArrayViewProtoName(viewName) &&
-      !sourceShadowsGlobalName(expr.getSourceFile(), viewName)
-    ) {
-      // (#5194 review F3, DOCUMENTED RESIDUAL — measured, not assumed.) This
-      // fold answers the DECLARED type's prototype, so a SUBCLASS instance in a
-      // base-typed binding (`class Bytes extends Uint8Array {}`;
-      // `const b: Uint8Array = new Bytes(2)`) reports `Uint8Array.prototype`
-      // where the spec says `Bytes.prototype`. Declining the fold for any file
-      // that subclasses the view was tried and REVERTED: it does not move the
-      // work to a better answer, it moves it to a different wrong one — the
-      // runtime arm cannot recover the kind from a statically typed carrier
-      // (`i8_byte` serves Int8/Uint8/Uint8Clamped), so the ORDINARY
-      // `Object.getPrototypeOf(new Uint8Array(1))` in the same file then
-      // answered wrong too (measured: the focused control returned 2). Fixing
-      // this needs a per-binding subclass fact, not a per-file one.
-      const brand = ensureTypedArrayViewNativeProtoGlue(ctx, viewName);
-      if (brand !== undefined) {
-        const argType = compileExpression(ctx, fctx, arg0);
-        if (argType) fctx.body.push({ op: "drop" });
-        if (emitLazyNativeProtoGet(ctx, fctx, brand)) return { kind: "externref" };
-        fctx.body.push({ op: "ref.null.extern" });
-        return { kind: "externref" };
-      }
+    fctx.body.push({ op: "ref.null.extern" });
+    return { kind: "externref" };
+  }
+  // (#5194 review F1) The INSTANCE arm keys on the declared TYPE NAME, and a
+  // user `class Uint8Array { … }` produces exactly the same name — there is no
+  // identifier here to run `isGlobalBuiltinIdentifier` against, so the file's
+  // module-level bindings are the check. Base answered the user class's
+  // prototype correctly; the name-only test regressed it (and minted the whole
+  // TypedArray proto graph into such a program: 405,180 -> 478,540 bytes).
+  const viewName = ctx.oracle.declaredNameOf(arg0) ?? "";
+  if (
+    protoOfName === undefined &&
+    isTypedArrayViewProtoName(viewName) &&
+    !sourceShadowsGlobalName(expr.getSourceFile(), viewName)
+  ) {
+    // (#5194 review F3, DOCUMENTED RESIDUAL — measured, not assumed.) This
+    // fold answers the DECLARED type's prototype, so a SUBCLASS instance in a
+    // base-typed binding (`class Bytes extends Uint8Array {}`;
+    // `const b: Uint8Array = new Bytes(2)`) reports `Uint8Array.prototype`
+    // where the spec says `Bytes.prototype`. Declining the fold for any file
+    // that subclasses the view was tried and REVERTED: it does not move the
+    // work to a better answer, it moves it to a different wrong one — the
+    // runtime arm cannot recover the kind from a statically typed carrier
+    // (`i8_byte` serves Int8/Uint8/Uint8Clamped), so the ORDINARY
+    // `Object.getPrototypeOf(new Uint8Array(1))` in the same file then
+    // answered wrong too (measured: the focused control returned 2). Fixing
+    // this needs a per-binding subclass fact, not a per-file one.
+    const brand = ensureTypedArrayViewNativeProtoGlue(ctx, viewName);
+    if (brand !== undefined) {
+      const argType = compileExpression(ctx, fctx, arg0);
+      if (argType) fctx.body.push({ op: "drop" });
+      if (emitLazyNativeProtoGet(ctx, fctx, brand)) return { kind: "externref" };
+      fctx.body.push({ op: "ref.null.extern" });
+      return { kind: "externref" };
     }
   }
 
@@ -661,7 +656,6 @@ export function tryEmitDynamicCallableGetPrototypeOf(
   fctx: FunctionContext,
   anchor: ts.Node,
 ): boolean {
-  if (!ctx.standalone && !ctx.wasi) return false;
   if (ensureLateImport(ctx, "__is_callable", [{ kind: "externref" }], [{ kind: "i32" }]) === undefined) return false;
   if (ensureLateImport(ctx, "__is_class_object", [{ kind: "externref" }], [{ kind: "i32" }]) === undefined) {
     return false;
@@ -958,7 +952,7 @@ function tryEmitDynamicProtoRuntimeRead(
   fctx: FunctionContext,
   arg0: ts.Expression,
 ): InnerResult | null {
-  if (!(ctx.standalone || ctx.wasi) || !ts.isIdentifier(arg0)) return null;
+  if (!ts.isIdentifier(arg0)) return null;
   // Narrow on purpose: only a binding whose declaration is a plain object
   // literal. That is the one carrier whose runtime `__getPrototypeOf` answer is
   // verified equivalent to the fold it replaces (an unset `$proto` reads back
@@ -1070,7 +1064,6 @@ export function tryCompileGetPrototypeOfIsPrototypeOf(
  * consulted for this carrier).
  */
 export function fillArrayBufferGetPrototypeOfArm(ctx: CodegenContext): void {
-  if (!ctx.standalone) return;
   const byteVecIdx = ctx.vecTypeMap.get("i32_byte");
   const fn = ctx.mod.functions.find((f) => f.name === "__getPrototypeOf");
   if (byteVecIdx === undefined || !fn) return;
