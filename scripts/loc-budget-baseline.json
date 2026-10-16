@@ -1,7 +1,7 @@
 {
   "generated": "2026-10-16",
   "threshold": 1500,
-  "totalCeiling": 1027032,
+  "totalCeiling": 1027282,
   "files": {
     "src/codegen-linear/index.ts": 5791,
     "src/codegen-linear/runtime.ts": 4448,
@@ -33,7 +33,7 @@
     "src/codegen/expressions/assignment.ts": 6653,
     "src/codegen/expressions/builtins.ts": 3884,
     "src/codegen/expressions/call-builtin-static.ts": 4761,
-    "src/codegen/expressions/call-identifier.ts": 4450,
+    "src/codegen/expressions/call-identifier.ts": 4453,
     "src/codegen/expressions/call-namespace-static.ts": 4554,
     "src/codegen/expressions/call-receiver-method.ts": 4983,
     "src/codegen/expressions/call-tail-dispatch.ts": 2388,
@@ -50,7 +50,7 @@
     "src/codegen/generators-native-consumer.ts": 2023,
     "src/codegen/generators-native.ts": 7269,
     "src/codegen/generic-struct-factory.ts": 1865,
-    "src/codegen/index.ts": 15388,
+    "src/codegen/index.ts": 15402,
     "src/codegen/ir-inline.ts": 1571,
     "src/codegen/ir-prepared-free-functions.ts": 2332,
     "src/codegen/iterator-native.ts": 6555,

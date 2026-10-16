@@ -3,36 +3,36 @@
   "compilerPathVerified": false,
   "executionCompilerPath": "unknown",
   "configuredCompilerPath": "hybrid",
-  "timestamp": "2026-10-16T14:11:09.993Z",
-  "baseline_generated_at": "2026-10-16T14:11:09.993Z",
-  "baseline_sha": "b967d59f36884d6934fd3faef8cfea6edcc609b5",
+  "timestamp": "2026-10-16T15:00:00.134Z",
+  "baseline_generated_at": "2026-10-16T15:00:00.134Z",
+  "baseline_sha": "c6d125dd322e2121b9b2f9fcbed3c49c0533eadd",
   "oracle_version": 15,
   "mode": {
     "target": "standalone",
     "semantic_providers": "auto",
-    "include_proposals": 1,
-    "label": "official test262 + proposals"
+    "include_proposals": 0,
+    "label": "official test262 (default scope)"
   },
   "summary": {
     "total": 48232,
-    "pass": 42133,
-    "fail": 4475,
-    "compile_error": 1581,
-    "compile_timeout": 25,
+    "pass": 42139,
+    "fail": 4478,
+    "compile_error": 1576,
+    "compile_timeout": 21,
     "skip": 18,
-    "compilable": 46608,
-    "host_free_pass": 42133,
+    "compilable": 46617,
+    "host_free_pass": 42139,
     "stale": 0,
     "by_category": {
       "standard": {
         "total": 47146,
-        "pass": 41090,
-        "fail": 4446,
-        "compile_error": 1567,
-        "compile_timeout": 25,
+        "pass": 41096,
+        "fail": 4449,
+        "compile_error": 1562,
+        "compile_timeout": 21,
         "skip": 18,
-        "compilable": 45536,
-        "host_free_pass": 41090,
+        "compilable": 45545,
+        "host_free_pass": 41096,
         "stale": 0,
         "label": "ECMAScript current standard"
       },
@@ -62,25 +62,25 @@
       },
       "official": {
         "total": 48232,
-        "pass": 42133,
-        "fail": 4475,
-        "compile_error": 1581,
-        "compile_timeout": 25,
+        "pass": 42139,
+        "fail": 4478,
+        "compile_error": 1576,
+        "compile_timeout": 21,
         "skip": 18,
-        "compilable": 46608,
-        "host_free_pass": 42133,
+        "compilable": 46617,
+        "host_free_pass": 42139,
         "stale": 0,
         "label": "standard + annex_b (default)"
       },
       "full": {
         "total": 48735,
-        "pass": 42369,
-        "fail": 4491,
-        "compile_error": 1736,
-        "compile_timeout": 25,
+        "pass": 42375,
+        "fail": 4494,
+        "compile_error": 1731,
+        "compile_timeout": 21,
         "skip": 114,
-        "compilable": 46860,
-        "host_free_pass": 42369,
+        "compilable": 46869,
+        "host_free_pass": 42375,
         "stale": 0,
         "label": "standard + annex_b + proposals"
       }
@@ -88,35 +88,35 @@
   },
   "official_summary": {
     "total": 48232,
-    "pass": 42133,
-    "fail": 4475,
-    "compile_error": 1581,
-    "compile_timeout": 25,
+    "pass": 42139,
+    "fail": 4478,
+    "compile_error": 1576,
+    "compile_timeout": 21,
     "skip": 18,
-    "compilable": 46608,
-    "host_free_pass": 42133,
+    "compilable": 46617,
+    "host_free_pass": 42139,
     "stale": 0
   },
   "full_summary": {
     "total": 48735,
-    "pass": 42369,
-    "fail": 4491,
-    "compile_error": 1736,
-    "compile_timeout": 25,
+    "pass": 42375,
+    "fail": 4494,
+    "compile_error": 1731,
+    "compile_timeout": 21,
     "skip": 114,
-    "compilable": 46860,
-    "host_free_pass": 42369,
+    "compilable": 46869,
+    "host_free_pass": 42375,
     "stale": 0
   },
   "strict_summary": {
     "total": 45721,
-    "pass": 39764,
-    "fail": 4382,
-    "compile_error": 1532,
-    "compile_timeout": 25,
+    "pass": 39770,
+    "fail": 4385,
+    "compile_error": 1527,
+    "compile_timeout": 21,
     "skip": 18,
-    "compilable": 44146,
-    "host_free_pass": 39764,
+    "compilable": 44155,
+    "host_free_pass": 39770,
     "stale": 0
   },
   "scope_summaries": {
@@ -144,13 +144,13 @@
     },
     "standard": {
       "total": 47146,
-      "pass": 41090,
-      "fail": 4446,
-      "compile_error": 1567,
-      "compile_timeout": 25,
+      "pass": 41096,
+      "fail": 4449,
+      "compile_error": 1562,
+      "compile_timeout": 21,
       "skip": 18,
-      "compilable": 45536,
-      "host_free_pass": 41090,
+      "compilable": 45545,
+      "host_free_pass": 41096,
       "stale": 0
     }
   },
@@ -204,8 +204,8 @@
       "path": "built-ins/Array",
       "pass": 2457,
       "fail": 533,
-      "compile_error": 90,
-      "compile_timeout": 2,
+      "compile_error": 88,
+      "compile_timeout": 4,
       "skip": 0,
       "total": 3082,
       "host_free_pass": 2457
@@ -643,8 +643,8 @@
       "name": "built-ins/Promise",
       "path": "built-ins/Promise",
       "pass": 537,
-      "fail": 139,
-      "compile_error": 53,
+      "fail": 142,
+      "compile_error": 50,
       "compile_timeout": 0,
       "skip": 0,
       "total": 729,
@@ -785,13 +785,13 @@
     {
       "name": "built-ins/Temporal",
       "path": "built-ins/Temporal",
-      "pass": 4479,
+      "pass": 4485,
       "fail": 101,
       "compile_error": 0,
-      "compile_timeout": 23,
+      "compile_timeout": 17,
       "skip": 0,
       "total": 4603,
-      "host_free_pass": 4479
+      "host_free_pass": 4485
     },
     {
       "name": "built-ins/ThrowTypeError",
@@ -1209,9 +1209,9 @@
     "negative_test_fail": 4,
     "null_deref": 7,
     "oob": 7,
-    "other": 1194,
+    "other": 1192,
     "promise_error": 51,
-    "range_error": 30,
+    "range_error": 29,
     "runtime_error": 353,
     "syntax_error": 14,
     "type_error": 621,
@@ -1225,9 +1225,9 @@
   },
   "root_cause_map": {
     "target": "standalone",
-    "total_non_pass_non_skip": 6252,
-    "classified": 6252,
-    "unclassified_threshold": 0,
+    "total_non_pass_non_skip": 6246,
+    "classified": 6246,
+    "unclassified_threshold": null,
     "has_edition_breakdown": true,
     "buckets": [
       {
@@ -1257,8 +1257,8 @@
         },
         "sample_files": [
           "test/language/expressions/dynamic-import/syntax/valid/top-level-import-source-empty-str-is-valid-assign-expr.js",
-          "test/language/expressions/dynamic-import/catch/nested-async-function-import-source-specifier-tostring-abrupt-rejects.js",
           "test/language/expressions/dynamic-import/syntax/valid/nested-async-gen-await-import-source-empty-str-is-valid-assign-expr.js",
+          "test/language/expressions/dynamic-import/catch/nested-async-function-import-source-specifier-tostring-abrupt-rejects.js",
           "test/language/expressions/dynamic-import/catch/nested-async-arrow-function-await-import-source-specifier-tostring-abrupt-rejects.js",
           "test/language/expressions/dynamic-import/syntax/valid/nested-async-function-import-source-script-code-valid.js"
         ],
@@ -1276,14 +1276,14 @@
           "#661"
         ],
         "label": "Temporal proposal/polyfill gap",
-        "count": 124,
+        "count": 118,
         "statuses": {
           "pass": 0,
           "fail": 101,
           "compile_error": 0,
-          "compile_timeout": 23,
+          "compile_timeout": 17,
           "skip": 0,
-          "total": 124,
+          "total": 118,
           "host_free_pass": 0
         },
         "error_categories": {
@@ -1294,21 +1294,21 @@
           "illegal_cast": 1
         },
         "by_edition": {
-          "ES2026": 124
+          "ES2026": 118
         },
         "sample_files": [
           "test/built-ins/Temporal/Duration/prototype/round/roundingincrement-days-large.js",
           "test/built-ins/Temporal/PlainMonthDay/from/argument-string-calendar-case-insensitive.js",
-          "test/built-ins/Temporal/Duration/prototype/round/valid-increments.js",
           "test/built-ins/Temporal/Duration/prototype/subtract/precision-no-floating-point-loss.js",
-          "test/built-ins/Temporal/ZonedDateTime/prototype/since/roundingmode-ceil.js"
+          "test/built-ins/Temporal/PlainDate/prototype/toLocaleString/return-string.js",
+          "test/built-ins/Temporal/PlainYearMonth/from/argument-string-calendar-case-insensitive.js"
         ],
         "sample_signatures": [
           "assertion_fail:Test262Error: round to 1e8-# days with plain relativeTo: days result: Expected SameValue(«#», «#») to be true",
           "range_error:RangeError: MM-DD format is only valid with iso8601 calendar",
-          "compile_timeout:timeout (10s)",
           "assertion_fail:Test262Error: duration1.subtract(duration2): days result: Expected SameValue(«#», «#») to be true",
-          "range_error:RangeError: Intl.DateTimeFormat is unavailable under --target standalone (no ICU data in pure Wasm) (option dateStyle)"
+          "range_error:RangeError: Intl.DateTimeFormat is unavailable under --target standalone (no ICU data in pure Wasm) (option dateStyle)",
+          "range_error:RangeError: YYYY-MM format is only valid with iso8601 calendar"
         ]
       },
       {
@@ -1347,8 +1347,8 @@
         "sample_signatures": [
           "host_import_leak:standalone target emitted host imports: env::AsyncDisposableStack_disposeAsync, env::AsyncDisposableStack_new, env::AsyncDisposableStack_use (##)",
           "assertion_fail:Test262Error: Symbol(Symbol.asyncDispose) should be an own property",
-          "assertion_fail:Test262Error: Expected SameValue(«null», «[object Object]») to be true",
           "assertion_fail:Test262Error: Expected SameValue(«undefined», «function () { [native code] }») to be true",
+          "assertion_fail:Test262Error: Expected SameValue(«null», «[object Object]») to be true",
           "assertion_fail:Test262Error: Expected stack2 to be an instance of AsyncDisposableStack"
         ]
       },
@@ -1386,15 +1386,15 @@
           "test/language/expressions/dynamic-import/namespace/promise-then-ns-has-property-str-found-init.js",
           "test/language/expressions/dynamic-import/import-attributes/2nd-param-yield-expr.js",
           "test/language/module-code/top-level-await/dynamic-import-resolution.js",
-          "test/language/expressions/dynamic-import/import-attributes/2nd-param-with-undefined.js",
-          "test/language/expressions/dynamic-import/catch/nested-arrow-import-catch-specifier-tostring-abrupt-rejects.js"
+          "test/language/expressions/dynamic-import/catch/nested-arrow-import-catch-specifier-tostring-abrupt-rejects.js",
+          "test/language/expressions/dynamic-import/import-attributes/2nd-param-with-undefined.js"
         ],
         "sample_signatures": [
           "runtime_error:Test262:AsyncTestFailure:Test262Error: TypeError: import() failed: Cannot find module './module-code_FIXTURE.js' in the standalone module graph",
           "host_import_leak:standalone target emitted host imports: env::__create_generator, env::__gen_create_buffer, env::__gen_next, env::__gen_push_ref, env::__gen_result_done, env::__gen_result_value, env::__gen_return, env::__gen_throw (##)",
           "runtime_error:Test262:AsyncTestFailure:Test262Error: TypeError: import() failed: Cannot find module './module-import-resolution_FIXTURE.js' in the standalone module graph",
-          "other:Test262:AsyncTestFailure:Test262Error: TypeError: import() failed: import options are not supported by the standalone module graph",
-          "runtime_error:Test262:AsyncTestFailure:Test262Error: Test262Error: Expected SameValue(«TypeError: import() failed: a non-literal specifier cannot be resolved in the standalone module graph», «\"custom error\"») to be true"
+          "runtime_error:Test262:AsyncTestFailure:Test262Error: Test262Error: Expected SameValue(«TypeError: import() failed: a non-literal specifier cannot be resolved in the standalone module graph», «\"custom error\"») to be true",
+          "other:Test262:AsyncTestFailure:Test262Error: TypeError: import() failed: import options are not supported by the standalone module graph"
         ]
       },
       {
@@ -1965,8 +1965,8 @@
         "statuses": {
           "pass": 0,
           "fail": 1091,
-          "compile_error": 191,
-          "compile_timeout": 2,
+          "compile_error": 189,
+          "compile_timeout": 4,
           "skip": 0,
           "total": 1284,
           "host_free_pass": 0
@@ -1976,7 +1976,7 @@
           "illegal_cast": 171,
           "host_import_leak": 179,
           "type_error": 85,
-          "other": 15,
+          "other": 13,
           "oob": 5,
           "null_deref": 2,
           "range_error": 2,
@@ -2514,7 +2514,6 @@
           "other": 114,
           "runtime_error": 4,
           "host_import_leak": 1,
-          "range_error": 1,
           "negative_test_fail": 1,
           "wasm_compile": 1
         },
@@ -2692,8 +2691,8 @@
         "count": 193,
         "statuses": {
           "pass": 0,
-          "fail": 110,
-          "compile_error": 83,
+          "fail": 113,
+          "compile_error": 80,
           "compile_timeout": 0,
           "skip": 0,
           "total": 193,
@@ -2725,14 +2724,14 @@
           "test/built-ins/Atomics/waitAsync/bad-range.js",
           "test/language/expressions/await/await-non-promise.js",
           "test/built-ins/Promise/allSettled/invoke-then-get-error-reject.js",
-          "test/built-ins/Atomics/waitAsync/false-for-timeout-agent.js"
+          "test/built-ins/Promise/any/invoke-resolve-error-close.js"
         ],
         "sample_signatures": [
           "assertion_fail:Test262Error: Expected a Test262Error but got a TypeError",
           "host_import_leak:standalone target emitted host imports: env::SharedArrayBuffer_new (##)",
           "illegal_cast:illegal cast [in __module_init()]",
           "other:async completion marker not observed",
-          "host_import_leak:standalone target emitted host imports: env::SharedArrayBuffer_new, env::__timer_set_timeout (##)"
+          "other:requested new array is too large"
         ]
       },
       {
@@ -3012,7 +3011,7 @@
           "test/built-ins/Atomics/or/good-views.js",
           "test/built-ins/Atomics/wait/was-woken-before-timeout.js",
           "test/built-ins/SharedArrayBuffer/prototype/prop-desc.js",
-          "test/built-ins/SharedArrayBuffer/prototype/grow/grow-same-size.js"
+          "test/built-ins/SharedArrayBuffer/prototype/slice/end-exceeds-length.js"
         ],
         "sample_signatures": [
           "host_import_leak:standalone target emitted host imports: env::SharedArrayBuffer_new (##)",
