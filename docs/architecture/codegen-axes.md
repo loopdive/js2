@@ -353,6 +353,26 @@ flat-dir-budget-allow:
   - src/codegen/foo-helper.ts # 2026-10-02 (#NNNN): why it cannot go in a sub-directory
 ```
 
+## Host accelerators (#6978)
+
+Under the native semantic regime every ECMAScript family has a native
+provider. A JS environment may opt single families back onto the host with
+`hostAccelerators` (CLI `--host-accelerator <name>`): `regexp` runs the
+regime's RegExp matches on the host engine (the `$NativeRegExp` object model
+stays native; only `__regex_search` is wrapped, and an unregistered program
+falls back to the native VM), and `date` parses `Date.parse` /
+`new Date(string)` arguments with the host parser. `intl` (#6986) binds the
+host `Intl` with every argument and result marshalled through the JS value
+boundary; without it the regime has no Intl (only the `Intl.ListFormat`
+prelude), so a global `Intl` reference is a compile error naming the
+accelerator. `js-string` is classified but refuses selection until its host
+path exists. A selected
+family's imports classify as `host-accelerator` in
+`src/host-import-policy.ts`; selecting one for standalone/WASI, a strict
+no-host build, or the host-assisted profile is a compile error. New host
+imports belong to one of these families or to a platform capability, never to
+a new semantic fallback.
+
 ## See also
 
 - [`target-architecture.md`](target-architecture.md) — the **end-state

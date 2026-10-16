@@ -60,6 +60,11 @@ export type IrFallbackReason =
   // body-shape rejections that apply to top-level FunctionDeclarations too.
   | "class-method"
   | "string-builder-candidate" // (#3740/#3744) kill-switch-forced legacy — see ./string-builder-shape.ts
+  // (#7000) An instance method/accessor reached through a base-typed receiver
+  // that a subclass overrides. The IR binds `class.call` statically to the
+  // declared class's member and has no `__tag` virtual dispatch yet (#1299 is
+  // legacy-only), so the unit keeps its legacy body until it does.
+  | "class-method-virtual"
   // (#4457) The unit references an ambient HOST surface (`document`, `console`,
   // `window`, …) in a target whose capability policy has no ambient JS host:
   // standalone / wasi / strictNoHostImports, i.e. `hostExternCapability` →

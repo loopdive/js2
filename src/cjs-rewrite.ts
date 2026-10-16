@@ -46,6 +46,12 @@ export function rewriteCjsRequire(source: string, opts?: CjsRewriteOptions): str
 export interface CjsRewriteOptions {
   /** Set `false` to force the AST pass even when the source has no CJS token. */
   prefilter?: boolean;
+  /**
+   * #6751 — observe `module.exports` writes made through an alias of `module`
+   * (lodash's `freeModule = … && module; freeModule.exports = _`). Host-free
+   * targets only: the JS-host output stays byte-identical.
+   */
+  aliasedModuleExports?: boolean;
 }
 
 /**
@@ -148,18 +154,28 @@ export function rewriteCjsRequireWithMap(
     return { source, positionMap: PositionMap.identity() };
   }
 
+  // #6751 — only the literal `module.exports` spelling is rewritten to the
+  // export cell above. A write through an alias of `module` lands on the
+  // `module` object instead, so seed its `exports` slot and adopt the slot when
+  // the body replaced it.
+  const observeAlias = wrapModuleExports && opts?.aliasedModuleExports === true && moduleIsAliased(sf);
   const modulePrelude =
     hoistedImports +
     (wrapModuleExports
       ? "/** @type {any} */ let __cjs_default_export = Object.create(Object.prototype);\n" +
         "/** @type {any} */ const exports = __cjs_default_export;\n" +
-        "/** @type {any} */ const module = {};\n"
+        (observeAlias
+          ? "/** @type {any} */ const module = { exports: __cjs_default_export };\n"
+          : "/** @type {any} */ const module = {};\n")
       : "");
   // Export the binding, not an `export default <expression>` snapshot. CommonJS
   // is allowed to replace `module.exports` while the module executes; importers
   // must observe that final/live cell rather than the empty object seeded by the
   // prelude before the assignment runs.
-  const moduleFooter = wrapModuleExports ? "\nexport { __cjs_default_export as default };\n" : "";
+  const moduleFooter = wrapModuleExports
+    ? (observeAlias ? "\nif (module.exports !== exports) __cjs_default_export = module.exports;" : "") +
+      "\nexport { __cjs_default_export as default };\n"
+    : "";
 
   const positionMap = new PositionMap([
     ...(modulePrelude ? [{ origStart: 0, origEnd: 0, newLength: modulePrelude.length }] : []),
@@ -287,6 +303,33 @@ function shouldWrapModuleExports(sf: ts.SourceFile): boolean {
   };
   visit(sf);
   return found;
+}
+
+/**
+ * #6751 — true when `module` is read as a value anywhere other than the
+ * literal `module.exports` spelling (e.g. `var freeModule = … && module`), so a
+ * `module.exports` write can reach the module object through an alias. A
+ * shadowing local named `module` over-approximates, which only costs the
+ * footer's identity check.
+ */
+function moduleIsAliased(sf: ts.SourceFile): boolean {
+  let aliased = false;
+  const visit = (node: ts.Node): void => {
+    if (aliased) return;
+    if (ts.isIdentifier(node) && node.text === "module") {
+      const parent = node.parent;
+      const isExportsAccess =
+        ts.isPropertyAccessExpression(parent) && parent.expression === node && parent.name.text === "exports";
+      const isNameSlot =
+        (ts.isPropertyAccessExpression(parent) && parent.name === node) ||
+        (ts.isPropertyAssignment(parent) && parent.name === node);
+      if (!isExportsAccess && !isNameSlot) aliased = true;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return aliased;
 }
 
 /**

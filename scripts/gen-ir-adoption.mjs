@@ -385,6 +385,10 @@ const BUCKETS = {
     "#1370/#3000 B-C-E — corpus bucket **0** (#3000-E); NOT yet strict (still covers computed/generator/abstract names, static super, subclass-of-builtin)",
   ],
   "destructuring-param-complex": ["unintended", "Complex destructuring params lowered (subset of param-shape)"],
+  "class-method-virtual": [
+    "unintended",
+    "`class.call` on a base-typed receiver lowers through a `__tag` virtual-dispatch intent instead of a static call to the declared class's member (#7000 step a; legacy has it, #1299)",
+  ],
   "string-builder-candidate": [
     "deferred",
     "Kill-switch only (`JS2WASM_IR_STRING_BUILDER=0`): builder loops are IR-claimed by default via the owned-append fast path (#3740/#3744)",
@@ -521,6 +525,10 @@ const POSTCLAIM = {
   "body-shape-rejected": [
     "capability gap",
     "One post-claim arm fires when `dynamicForInPlan` is absent — real on the LINEAR backend, whose resolver does not supply it.",
+  ],
+  "class-method-virtual": [
+    "capability gap",
+    "#7000 builder backstop: an overridden member on a class-typed receiver the selector could not attribute; needs IR virtual dispatch.",
   ],
   "compound-assign-unsupported": ["capability gap", "#3565 restored demote-to-legacy contract."],
   "constructor-arity-unsupported": [

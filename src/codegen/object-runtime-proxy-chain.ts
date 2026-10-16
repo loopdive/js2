@@ -94,7 +94,7 @@ export function withProtoLinkNull(body: Instr[], objectTypeIdx: number): Instr[]
 }
 
 /** `cursor.protoLink` (anyref) for a `(ref null $Object)` cursor local known non-null. */
-function linkOf(objectTypeIdx: number, cursor: number): Instr[] {
+export function linkOf(objectTypeIdx: number, cursor: number): Instr[] {
   return [
     { op: "local.get", index: cursor },
     { op: "ref.as_non_null" },
@@ -102,12 +102,25 @@ function linkOf(objectTypeIdx: number, cursor: number): Instr[] {
   ];
 }
 
-/** `if (cursor is a link) { then }` — `then` must leave the stack empty (it returns). */
-function ifLink(objectTypeIdx: number, cursor: number, then: Instr[]): Instr[] {
+/** `if (cursor is a link of either kind) { then }` — `then` must leave the stack empty (it returns). */
+export function ifAnyLink(objectTypeIdx: number, cursor: number, then: Instr[]): Instr[] {
   return [
     ...linkOf(objectTypeIdx, cursor),
     { op: "ref.is_null" },
     { op: "i32.eqz" },
+    { op: "if", blockType: { kind: "empty" }, then },
+  ];
+}
+
+/**
+ * `if (cursor links a Proxy) { then }` — `then` must leave the stack empty (it
+ * returns). A test, not a null check: a #7009 fnctor-struct link takes its own
+ * arms (`object-model/struct-proto-link.ts`), never a Proxy operation.
+ */
+function ifLink(t: { objectTypeIdx: number; proxyTypeIdx: number }, cursor: number, then: Instr[]): Instr[] {
+  return [
+    ...linkOf(t.objectTypeIdx, cursor),
+    { op: "ref.test", typeIdx: t.proxyTypeIdx },
     { op: "if", blockType: { kind: "empty" }, then },
   ];
 }
@@ -152,58 +165,65 @@ function identityOf(a: number, b: number): Instr[] {
 }
 
 export interface ProtoLinkNatives {
-  /** `__proto_link_wrap(externref) -> externref`: a `$Proxy` → a fresh link; anything else unchanged. */
+  /** `__proto_link_wrap(externref) -> externref`: a `$Proxy` / fnctor struct → a fresh link; else unchanged. */
   wrapIdx: number;
-  /** `__proto_link_same(current, requested) -> i32`: both links, same Proxy. */
+  /** `__proto_link_same(current, requested) -> i32`: both links, same linked object. */
   sameIdx: number;
+  /** Proxies are linked (not unwrapped to their target): the #6766 regime. */
+  proxyLinks: boolean;
 }
 
 /**
  * Register the two natives the prototype WRITERS need, before
- * `buildObjectPrototypeHelpers` bakes their calls. `undefined` off the link regime.
+ * `buildObjectPrototypeHelpers` bakes their calls. `undefined` off both link
+ * regimes: #6766 (a Proxy) and #7009 (a fnctor STRUCT, `object-model/struct-proto-link.ts`).
  */
 export function registerProtoLinkNatives(
   ctx: CodegenContext,
   registerNative: RegisterNative,
-  t: { objectTypeIdx: number; propMapTypeIdx: number; proxyTypeIdx: number; initialCapacity: number },
+  t: {
+    objectTypeIdx: number;
+    propMapTypeIdx: number;
+    proxyTypeIdx: number | undefined;
+    initialCapacity: number;
+    /** (#7009) `__fnctor_struct_proto_ok` when fnctor-struct links are live (`structProtoLinkOk`). */
+    structOk: number | undefined;
+  },
 ): ProtoLinkNatives | undefined {
-  if (!protoLinkActive(ctx)) return undefined;
   const { objectTypeIdx, propMapTypeIdx, proxyTypeIdx } = t;
-  const wrapIdx = registerNative(
-    PROTO_LINK_WRAP,
-    [externref()],
-    [externref()],
-    [],
-    [
-      { op: "local.get", index: 0 },
-      { op: "any.convert_extern" },
-      { op: "ref.test", typeIdx: proxyTypeIdx },
-      {
-        op: "if",
-        blockType: { kind: "val", type: externref() },
-        then: [
-          // new $Object { proto: null, props: $PropMap[cap], 0, 0, flags 0, 0, protoLink: proxy }
-          { op: "ref.null", typeIdx: objectTypeIdx },
-          { op: "i32.const", value: t.initialCapacity },
-          { op: "array.new_default", typeIdx: propMapTypeIdx },
-          { op: "i32.const", value: 0 },
-          { op: "i32.const", value: 0 },
-          { op: "i32.const", value: 0 },
-          { op: "i32.const", value: 0 },
-          { op: "local.get", index: 0 },
-          { op: "any.convert_extern" },
-          { op: "struct.new", typeIdx: objectTypeIdx },
-          { op: "extern.convert_any" },
-        ],
-        else: [{ op: "local.get", index: 0 }],
-      },
-    ],
-  );
+  const proxyLinks = protoLinkActive(ctx) && proxyTypeIdx !== undefined;
+  const { structOk } = t;
+  if (!proxyLinks && structOk === undefined) return undefined;
+  // new $Object { proto: null, props: $PropMap[cap], 0, 0, flags 0, 0, protoLink: arg }
+  const newLink = (): Instr[] => [
+    { op: "ref.null", typeIdx: objectTypeIdx },
+    { op: "i32.const", value: t.initialCapacity },
+    { op: "array.new_default", typeIdx: propMapTypeIdx },
+    { op: "i32.const", value: 0 },
+    { op: "i32.const", value: 0 },
+    { op: "i32.const", value: 0 },
+    { op: "i32.const", value: 0 },
+    { op: "local.get", index: 0 },
+    { op: "any.convert_extern" },
+    { op: "struct.new", typeIdx: objectTypeIdx },
+    { op: "extern.convert_any" },
+  ];
+  const ifThen = (test: Instr[], otherwise: Instr[]): Instr[] => [
+    { op: "local.get", index: 0 },
+    ...test,
+    { op: "if", blockType: { kind: "val", type: externref() }, then: newLink(), else: otherwise },
+  ];
+  const unchanged: Instr[] = [{ op: "local.get", index: 0 }];
+  const structArm = structOk === undefined ? unchanged : ifThen([{ op: "call", funcIdx: structOk }], unchanged);
+  const wrapBody = proxyLinks
+    ? ifThen([{ op: "any.convert_extern" }, { op: "ref.test", typeIdx: proxyTypeIdx! }], structArm)
+    : structArm;
+  const wrapIdx = registerNative(PROTO_LINK_WRAP, [externref()], [externref()], [], wrapBody);
   const objRefNull = (): ValType => ({ kind: "ref_null", typeIdx: objectTypeIdx });
-  const proxyOfParam = (p: number): Instr[] => [
+  const linkedOfParam = (p: number): Instr[] => [
     { op: "local.get", index: p },
     { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: PROTO_LINK_FIELD },
-    { op: "ref.cast_null", typeIdx: proxyTypeIdx },
+    { op: "ref.cast", typeIdx: EQ_HEAP },
   ];
   const zeroIfNotLink = (p: number): Instr[] => [
     { op: "local.get", index: p },
@@ -215,15 +235,16 @@ export function registerProtoLinkNatives(
     { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 0 }, { op: "return" }] },
   ];
   // §10.1.2.1 step 2 SameValue(V, current): a link is minted per write, so two
-  // links for ONE proxy must compare equal by the proxy they hold.
+  // links for ONE object must compare equal by the object they hold. Both kinds
+  // (a `$Proxy`, a fnctor struct) are `eq`, so identity is `ref.eq`.
   const sameIdx = registerNative(
     PROTO_LINK_SAME,
     [objRefNull(), objRefNull()],
     [i32()],
     [],
-    [...zeroIfNotLink(0), ...zeroIfNotLink(1), ...proxyOfParam(0), ...proxyOfParam(1), { op: "ref.eq" }],
+    [...zeroIfNotLink(0), ...zeroIfNotLink(1), ...linkedOfParam(0), ...linkedOfParam(1), { op: "ref.eq" }],
   );
-  return { wrapIdx, sameIdx };
+  return { wrapIdx, sameIdx, proxyLinks };
 }
 
 /**
@@ -422,7 +443,7 @@ function isProtoWalkLoop(body: Instr[], objectTypeIdx: number, cursor: number): 
 }
 
 /** Splice `arm()` after the cursor null check of every prototype walk loop in `body`. */
-function spliceIntoWalkLoops(body: Instr[], objectTypeIdx: number, cursor: number, arm: () => Instr[]): number {
+export function spliceIntoWalkLoops(body: Instr[], objectTypeIdx: number, cursor: number, arm: () => Instr[]): number {
   let spliced = 0;
   const visit = (list: Instr[]): void => {
     for (const ins of list) {
@@ -444,13 +465,13 @@ function spliceIntoWalkLoops(body: Instr[], objectTypeIdx: number, cursor: numbe
   return spliced;
 }
 
-function namedFunction(ctx: CodegenContext, name: string) {
+export function namedFunction(ctx: CodegenContext, name: string) {
   const idx = ctx.funcMap.get(name);
   return idx === undefined ? undefined : definedFuncAt(ctx, idx);
 }
 
 /** Absolute local index of the named local of `fn` (params first). */
-function localIndexOf(ctx: CodegenContext, name: string, localName: string, paramCount: number): number {
+export function localIndexOf(ctx: CodegenContext, name: string, localName: string, paramCount: number): number {
   const fn = namedFunction(ctx, name);
   const at = fn?.locals.findIndex((l) => l.name === localName) ?? -1;
   if (at < 0) throw new Error(`#6766: ${name} has no local ${localName}`);
@@ -458,7 +479,13 @@ function localIndexOf(ctx: CodegenContext, name: string, localName: string, para
 }
 
 /** A walker that must exist in the link regime: fail loudly rather than cut the chain silently. */
-function spliceRequired(ctx: CodegenContext, name: string, objectTypeIdx: number, cursor: number, arm: () => Instr[]) {
+export function spliceRequired(
+  ctx: CodegenContext,
+  name: string,
+  objectTypeIdx: number,
+  cursor: number,
+  arm: () => Instr[],
+) {
   const fn = namedFunction(ctx, name);
   if (!fn) throw new Error(`#6766: prototype walker ${name} is not registered`);
   if (spliceIntoWalkLoops(fn.body, objectTypeIdx, cursor, arm) === 0) {
@@ -503,7 +530,7 @@ export function fillProtoLinkArms(
   // [[Get]]: §10.1.8.1 step 3.c `parent.[[Get]](P, Receiver)`.
   const getRecv = localIndexOf(ctx, "__extern_get", "explicitReceiver", 2);
   spliceRequired(ctx, "__extern_get", objectTypeIdx, 2, () =>
-    ifLink(objectTypeIdx, 2, [
+    ifLink(types, 2, [
       ...proxyOf(objectTypeIdx, 2),
       ...key(1),
       { op: "local.get", index: getRecv },
@@ -514,18 +541,13 @@ export function fillProtoLinkArms(
 
   // [[HasProperty]]: §10.1.7.1 step 4 `parent.[[HasProperty]](P)`.
   spliceRequired(ctx, "__extern_has", objectTypeIdx, 2, () =>
-    ifLink(objectTypeIdx, 2, [
-      ...proxyOf(objectTypeIdx, 2),
-      ...key(1),
-      { op: "call", funcIdx: externHas },
-      { op: "return" },
-    ]),
+    ifLink(types, 2, [...proxyOf(objectTypeIdx, 2), ...key(1), { op: "call", funcIdx: externHas }, { op: "return" }]),
   );
 
   // A chain that ends in a link has no implicit Object.prototype terminal: the
   // Proxy already answered for everything past it.
   spliceRequired(ctx, "__object_terminal_allows_implicit_proto", objectTypeIdx, 1, () =>
-    ifLink(objectTypeIdx, 1, [{ op: "i32.const", value: 0 }, { op: "return" }]),
+    ifAnyLink(objectTypeIdx, 1, [{ op: "i32.const", value: 0 }, { op: "return" }]),
   );
 
   // [[Set]]: §10.1.9.2 step 2.b `parent.[[Set]](P, V, Receiver)`, answered as
@@ -533,7 +555,7 @@ export function fillProtoLinkArms(
   const decide = namedFunction(ctx, "__extern_set_decide");
   if (decide && setWithReceiver !== undefined) {
     const spliced = spliceIntoWalkLoops(decide.body, objectTypeIdx, 9, () =>
-      ifLink(objectTypeIdx, 9, [
+      ifLink(types, 9, [
         ...proxyOf(objectTypeIdx, 9),
         ...key(2),
         { op: "local.get", index: 3 },
@@ -550,54 +572,16 @@ export function fillProtoLinkArms(
     );
     if (spliced === 0) throw new Error("#6766: no prototype walk loop in __extern_set_decide");
   }
-  fillSetWalk(ctx, objectTypeIdx, setWithReceiver, objFind, key);
+  fillSetWalk(ctx, types, setWithReceiver, objFind, key);
 
   // §20.1.3.3 Object.prototype.isPrototypeOf: a link hop continues through the
   // Proxy's own [[GetPrototypeOf]] (its trap), comparing the PROXY identity.
   const isProto = namedFunction(ctx, "__isPrototypeOf");
   if (isProto && getProto !== undefined) {
-    const isUndefined = fm("__extern_is_undefined");
-    const chainFrom = registerNative(
-      PROTO_LINK_CHAIN_FROM,
-      [externref(), externref()],
-      [i32()],
-      [],
-      [
-        {
-          op: "block",
-          blockType: { kind: "empty" },
-          body: [
-            {
-              op: "loop",
-              blockType: { kind: "empty" },
-              body: [
-                { op: "local.get", index: 1 },
-                { op: "ref.is_null" },
-                { op: "br_if", depth: 1 },
-                ...(isUndefined === undefined
-                  ? []
-                  : ([
-                      { op: "local.get", index: 1 },
-                      { op: "call", funcIdx: isUndefined },
-                      { op: "br_if", depth: 1 },
-                    ] satisfies Instr[])),
-                // SameValue(O, V) on two Objects is identity: both `eq`, `ref.eq`.
-                ...identityOf(0, 1),
-                { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 1 }, { op: "return" }] },
-                { op: "local.get", index: 1 },
-                { op: "call", funcIdx: getProto },
-                { op: "local.set", index: 1 },
-                { op: "br", depth: 0 },
-              ],
-            },
-          ],
-        },
-        { op: "i32.const", value: 0 },
-      ],
-    );
+    const chainFrom = ensureProtoLinkChainFrom(ctx, registerNative, getProto);
     // Walk arm: V's chain reached a link → is O that Proxy, or in its chain?
     const spliced = spliceIntoWalkLoops(isProto.body, objectTypeIdx, 3, () =>
-      ifLink(objectTypeIdx, 3, [
+      ifLink(types, 3, [
         { op: "local.get", index: 0 },
         ...proxyOf(objectTypeIdx, 3),
         { op: "call", funcIdx: chainFrom },
@@ -634,7 +618,7 @@ export function fillProtoLinkArms(
  */
 function fillSetWalk(
   ctx: CodegenContext,
-  objectTypeIdx: number,
+  types: ObjectRuntimeTypes,
   setWithReceiver: number | undefined,
   objFind: number,
   key: (local: number) => Instr[],
@@ -643,6 +627,7 @@ function fillSetWalk(
   // reservable) the placeholder's "no link" answer stands.
   const fn = namedFunction(ctx, PROTO_LINK_SET_WALK);
   if (!fn || setWithReceiver === undefined) return;
+  const { objectTypeIdx } = types;
   const CUR = 3;
   fn.locals = [{ name: "cursor", type: { kind: "ref_null", typeIdx: objectTypeIdx } }];
   fn.body = [
@@ -667,7 +652,7 @@ function fillSetWalk(
             { op: "local.get", index: CUR },
             { op: "ref.is_null" },
             { op: "br_if", depth: 1 },
-            ...ifLink(objectTypeIdx, CUR, [
+            ...ifLink(types, CUR, [
               ...proxyOf(objectTypeIdx, CUR),
               ...key(1),
               { op: "local.get", index: 2 },
@@ -699,4 +684,58 @@ function fillSetWalk(
     },
     { op: "i32.const", value: 0 },
   ];
+}
+
+/**
+ * `__proto_link_chain_from(O, V) -> i32`: is O in the chain that STARTS at V
+ * (V itself included), walked through `__getPrototypeOf` so every link kind and
+ * carrier answers its own [[GetPrototypeOf]]. Shared by the #6766 Proxy arms and
+ * the #7009 fnctor-struct arms; registered once.
+ */
+export function ensureProtoLinkChainFrom(
+  ctx: CodegenContext,
+  registerNative: RegisterNative,
+  getProto: number,
+): number {
+  const existing = ctx.funcMap.get(PROTO_LINK_CHAIN_FROM);
+  if (existing !== undefined) return existing;
+  const isUndefined = ctx.funcMap.get("__extern_is_undefined");
+  return registerNative(
+    PROTO_LINK_CHAIN_FROM,
+    [externref(), externref()],
+    [i32()],
+    [],
+    [
+      {
+        op: "block",
+        blockType: { kind: "empty" },
+        body: [
+          {
+            op: "loop",
+            blockType: { kind: "empty" },
+            body: [
+              { op: "local.get", index: 1 },
+              { op: "ref.is_null" },
+              { op: "br_if", depth: 1 },
+              ...(isUndefined === undefined
+                ? []
+                : ([
+                    { op: "local.get", index: 1 },
+                    { op: "call", funcIdx: isUndefined },
+                    { op: "br_if", depth: 1 },
+                  ] satisfies Instr[])),
+              // SameValue(O, V) on two Objects is identity: both `eq`, `ref.eq`.
+              ...identityOf(0, 1),
+              { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 1 }, { op: "return" }] },
+              { op: "local.get", index: 1 },
+              { op: "call", funcIdx: getProto },
+              { op: "local.set", index: 1 },
+              { op: "br", depth: 0 },
+            ],
+          },
+        ],
+      },
+      { op: "i32.const", value: 0 },
+    ],
+  );
 }

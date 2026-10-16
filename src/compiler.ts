@@ -78,6 +78,7 @@ import {
   rewriteEvalSuperCallWithMap,
   validateHardenedMode,
   validateSafeMode,
+  withEngineRejectedIrOutcomes,
 } from "./compiler/validation.js";
 import { emitBinary, emitBinaryWithSourceMap, emitSourceMappingURLSection } from "./emit/binary.js";
 import {
@@ -874,6 +875,7 @@ function buildCodegenOptions(
     nativeStrings: options.nativeStrings,
     hostBridge: options.hostBridge,
     semanticProviders: options.semanticProviders,
+    hostAccelerators: options.hostAccelerators,
     utf8Storage: options.utf8Storage,
     testRuntime: options.testRuntime,
     wasi: targetProfile.target === "wasi",
@@ -1018,8 +1020,9 @@ function validatePipelineSource(input: PipelineInput): CompileResult | undefined
     // (#6491 r3) Script goal is an EXPLICIT opt-in, never `!moduleGoal` — see
     // the `scriptGoal` doc comment in index.ts for why the negation is unsafe.
     const scriptGoal = options.scriptGoal === true;
+    const scriptTopLevel = options.inferModuleStrictArguments === false; // (#6988) synthetic-`export` Script
     for (const sf of userSourceFiles) {
-      earlyErrors.push(...detectEarlyErrors(sf, { moduleGoal, scriptGoal }));
+      earlyErrors.push(...detectEarlyErrors(sf, { moduleGoal, scriptGoal, scriptTopLevel }));
     }
     errors.push(...earlyErrors);
     if (hasNewError(earlyErrors)) {
@@ -1358,7 +1361,14 @@ function finalizePipelineModule(
   // warning-first compatibility lanes (#2961/#2980/#3164) are not an explicit
   // native-first opt-in, while WASI's strict import gate remains authoritative.
   const imports = buildImportManifest(mod);
-  const hostImportInventory = buildHostImportInventory(mod, imports, input.codegenOptions.link, targetEnvironment);
+  // (#6978) Selected host-accelerator families classify as `host-accelerator`.
+  const hostImportInventory = buildHostImportInventory(
+    mod,
+    imports,
+    input.codegenOptions.link,
+    targetEnvironment,
+    targetProfile.accelerators,
+  );
   if (options.semanticProviders === "native-first") {
     const forbidden = hostImportInventory.filter(
       (entry) => entry.classification === "legacy-semantic" || entry.classification === "unknown",
@@ -1560,7 +1570,7 @@ function finalizePipelineModule(
       capabilityDiagnostics: capabilityProviderDiagnostics,
       exportBoundaries: exportBoundaryPolicies,
     }),
-    ...telemetry,
+    ...withEngineRejectedIrOutcomes(telemetry, emittedBinaryAccepted, errors), // (#7001)
   };
 }
 
@@ -1751,7 +1761,7 @@ export function compileSourceSync(
       ? injectIteratorStaticsPrelude(stdinInjectedSource)
       : { source: stdinInjectedSource, positionMap: PositionMap.identity(), injected: false };
   // Step 0a.46: #6839 — Wasm-native `Intl.ListFormat` prelude (host-free targets only).
-  const listFormatResult = applyIntlListFormatPrelude(targetProfile.environment, iterStaticsResult.source, options);
+  const listFormatResult = applyIntlListFormatPrelude(targetProfile, iterStaticsResult.source, options);
   const iterStaticsSource = listFormatResult.source;
 
   // Step 0a.5: Rewrite CommonJS `const X = require('Y')` patterns to ESM `import`
@@ -2016,7 +2026,7 @@ export async function compileMultiSource(
     ),
   );
   // #6839 — per-file Wasm-native `Intl.ListFormat` prelude (host-free targets only).
-  const listFormatFiles = applyIntlListFormatPreludeToFiles(multiTargetProfile.environment, timerShimmedFiles);
+  const listFormatFiles = applyIntlListFormatPreludeToFiles(multiTargetProfile, timerShimmedFiles);
   const processedFiles = profilePhase("ground-call-fold", () =>
     foldGroundCallsInMulti(listFormatFiles, entryFile, options.optimize),
   );

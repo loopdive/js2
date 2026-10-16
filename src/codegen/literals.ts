@@ -6369,13 +6369,11 @@ export function compileArrayLiteral(
         const genElemKind = genInfo.elemValType.kind === "externref" ? "externref" : "f64";
         const genVecTypeIdx = getOrRegisterVecType(ctx, genElemKind);
         const genArrTypeIdx = getArrTypeIdxFromVec(ctx, genVecTypeIdx);
-        if (vecTypeIdx !== genVecTypeIdx) {
-          // Result element type doesn't match the generator's carrier (mixed
-          // literal whose first-element heuristic picked another type) — copying
-          // into that array would be invalid Wasm. Conservative skip.
-          fctx.body.push({ op: "drop" });
-          continue;
-        }
+        // (#6984) A carrier that differs from the result element type (a boxed
+        // externref carrier — e.g. a `yield*`-delegating generator — spread into
+        // a `number[]`) used to be DROPPED here, silently yielding `[]`. Drain
+        // into the carrier's own vec instead; the Step 3 fill loop coerces each
+        // element to the result type (same contract as the #42 Set arm).
         // Stack: [running-length(i32), genState]. emitNativeGeneratorToVec
         // consumes genState and leaves (ref $vec_f64).
         emitNativeGeneratorToVec(ctx, fctx, genInfo, srcType, genVecTypeIdx, genArrTypeIdx);

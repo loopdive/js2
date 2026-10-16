@@ -746,6 +746,7 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
       externGetIdx: objArrayLikeArms ? ctx.funcMap.get("__extern_get")! : -1,
       proxyTypeIdx: objArrayLikeArms ? proxyArrayLikeTypeIdx(ctx) : undefined, // (#6651 H6)
       vecArms: [],
+      foreignIndexedGet: ctx.funcMap.has("__boundary_object_get"),
       // (#2106 S1) OOB / non-indexable miss = undefined under the singleton
       // regime (`arr[oob] === undefined`), consistent with the `$Object` arm
       // which delegates to the (flipped) `__extern_get`. Legacy: null.

@@ -299,6 +299,67 @@ if (!compatibility.success || compatibilityDebt === 0) {
   );
 }
 
+// #6978 — per-family host-accelerator probes: a family's host imports appear
+// only when that accelerator is selected, classify as `host-accelerator`, and
+// never smuggle in legacy/unknown imports. Families whose host path is not
+// implemented yet (js-string) must refuse selection instead of compiling as a no-op.
+const acceleratorProbes = {
+  regexp: probes.stringProtocols,
+  date: `export function run(value: string): number { return Date.parse(value) + new Date(value).getTime(); }`,
+  // #6986: Intl constructors, a locale-sensitive method and a namespace function.
+  intl: `export function run(value: number): string {
+    const fmt = new Intl.NumberFormat("de-DE", { style: "currency", currency: "EUR" });
+    return fmt.format(value) + value.toLocaleString("en-US") + Intl.getCanonicalLocales("en")[0];
+  }`,
+} as const;
+type ProbedAccelerator = keyof typeof acceleratorProbes;
+const acceleratorImports: Record<string, number> = Object.create(null);
+for (const [family, source] of Object.entries(acceleratorProbes)) {
+  const compileProbe = (hostAccelerators?: readonly ProbedAccelerator[]) =>
+    compile(source, {
+      fileName: `host-import-policy-accelerator-${family}${hostAccelerators ? "-selected" : ""}.ts`,
+      semanticProviders: "native-first",
+      ...(hostAccelerators ? { hostAccelerators } : {}),
+    });
+  const [plain, selected] = await Promise.all([compileProbe(), compileProbe([family as ProbedAccelerator])]);
+  // #6986: there is no native Intl, so without the accelerator the intl probe is a
+  // compile error naming it (no import at all) rather than a native build.
+  const plainRefusedIntl =
+    family === "intl" &&
+    !plain.success &&
+    plain.errors.some((error) => error.message.includes("--host-accelerator intl"));
+  if ((!plain.success && !plainRefusedIntl) || !selected.success) {
+    throw new Error(`host-accelerator ${family} probe did not compile`);
+  }
+  const accelerated = (selected.hostImportInventory ?? []).filter(
+    (entry) => entry.classification === "host-accelerator" && entry.family === family,
+  );
+  if (accelerated.length === 0) throw new Error(`host-accelerator ${family} probe selected no ${family} imports`);
+  const debt = (selected.hostImportInventory ?? []).filter(
+    (entry) => entry.classification === "legacy-semantic" || entry.classification === "unknown",
+  );
+  if (debt.length > 0) {
+    throw new Error(`host-accelerator ${family} probe carries ${debt.map((entry) => entry.name).join(", ")}`);
+  }
+  const plainNames = new Set((plain.hostImportInventory ?? []).map((entry) => `${entry.module}::${entry.name}`));
+  const leaked = accelerated.filter((entry) => plainNames.has(`${entry.module}::${entry.name}`));
+  if (leaked.length > 0) {
+    throw new Error(`${family} accelerator imports present without selection: ${leaked.map((e) => e.name).join(", ")}`);
+  }
+  acceleratorImports[family] = accelerated.length;
+}
+for (const family of ["js-string"] as const) {
+  const refused = await compile(probes.core, {
+    fileName: `host-import-policy-accelerator-${family}.ts`,
+    semanticProviders: "native-first",
+    hostAccelerators: [family],
+  }).then(
+    () => false,
+    (error: unknown) => String(error).includes("not available yet"),
+  );
+  if (!refused) throw new Error(`host-accelerator ${family} must refuse selection until its host path exists`);
+}
+
 const runtimeSource = readRepoFile("src/runtime.ts");
 const resolveStart = runtimeSource.indexOf("function resolveImport(");
 const resolveEnd = runtimeSource.indexOf("\n/** Check a manifest", resolveStart);
@@ -389,6 +450,7 @@ console.log(
       unknownImports: nativeUnknownTotal,
     },
     compatibilityLegacySemanticImports: compatibilityDebt,
+    hostAcceleratorImports: acceleratorImports,
     migrationMetrics,
   }),
 );

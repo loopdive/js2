@@ -46,6 +46,7 @@ import { isLinearU8RepresentableNew } from "./linear-uint8-signatures.js";
 import { definedFuncAt, isImportFuncIdx, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2) positional-read chokepoint
 import { wrapHostFacingExportsForThrow } from "./export-throw-boundary.js"; // (#5247) export-boundary throw unwrapping
 import { promoteTrampolineTailCalls } from "./closures/funcref-as-closure.js"; // (#5270 step 1.3) finalize-time return_call promotion
+import { funnelRepeatedReturnTails } from "./helpers/return-tail-funnel.js";
 import { fillHostFnctorMethodDrivers, maxHostFnctorMethodArity } from "./host-fnctor-method-driver.js";
 import { fillNativeConstructDrivers, maxReservedNativeConstructArity } from "./native-construct.js";
 import { fillConstructBoundDriver } from "./construct-bound.js"; // (#4196)
@@ -753,6 +754,7 @@ import {
   rejectTimersUnderWasi,
   collectEnumDeclarations,
 } from "./extern-declarations.js"; // (#3272) extracted verbatim
+import { rejectIntlWithoutHost } from "./helpers/host-intl-classes.js"; // (#6986)
 import { buildLibDeclIndex } from "./lib-decl-index.js"; // (#4218) syntactic lib walk
 import { typeIsForeignReturnFnctorInstance } from "./fnctor-foreign-return.js"; // (#2071)
 import { typeIsRuntimeKeyedObjectLiteral } from "./object-model/runtime-key-open-object.js"; // (#4526)
@@ -5566,6 +5568,7 @@ export function generateModule(
       checkWasiDomUsage(ctx, ast.sourceFile);
       rejectTimersUnderWasi(ctx, ast.sourceFile);
     }
+    rejectIntlWithoutHost(ctx, ast.sourceFile); // (#6986) no host Intl ⇒ compile error, never a run-time failure
 
     // Scan lib files for DOM extern classes + globals (only if user code uses DOM)
     // After lib.d.ts refactoring, TS loads individual lib files (lib.es5.d.ts, etc.)
@@ -7213,8 +7216,9 @@ export function generateModule(
       fixupExternConvertAny(ctx, repairSharing.shared.size === 0 ? repairSharing : undefined),
     );
     // (#5270 step 1.3) Last: trampoline `call` → `return_call` against final
-    // types. Nothing after this retypes a function or edits a body.
+    // types. Nothing after this retypes a function; only the exit funnel edits bodies.
     promoteTrampolineTailCalls(ctx);
+    funnelRepeatedReturnTails(mod); // (#6983) after every positional body edit
     verifyFunctionSweep(mod); // #6768 no-op unless JS2WASM_FUNC_SWEEP_VERIFY=1
   } catch (e) {
     recordWholeSourceFailure(ctx, ast.sourceFile, classifyIrFailure(e, "build"), irPlanningIdentityContext);
@@ -10815,6 +10819,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
         rejectTimersUnderWasi(ctx, sf);
       }
     }
+    for (const sf of multiAst.sourceFiles) rejectIntlWithoutHost(ctx, sf); // (#6986)
 
     // Scan lib files for DOM extern classes + globals (only if any user code uses DOM)
     // After lib.d.ts refactoring, TS loads individual lib files (lib.es5.d.ts, etc.)
@@ -11930,6 +11935,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     profilePhase("fixup-extern-convert-any", () =>
       fixupExternConvertAny(ctx, repairSharing.shared.size === 0 ? repairSharing : undefined),
     );
+    funnelRepeatedReturnTails(mod); // (#6983) after every positional body edit
     verifyFunctionSweep(mod); // #6768 no-op unless JS2WASM_FUNC_SWEEP_VERIFY=1
   } catch (e) {
     const failure = classifyIrFailure(e, "build");

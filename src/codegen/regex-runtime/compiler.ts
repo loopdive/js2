@@ -34,6 +34,7 @@
 import type { Instr } from "../../ir/types.js";
 import type { CodegenContext } from "../context/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "../func-space.js";
+import { hostRegExpRegisterInstrs } from "../helpers/host-regexp-search.js";
 import { noJsHost } from "../js-errors.js";
 import { nativeStringType } from "../native-strings.js";
 import { ReOp, RE_FLAG_I, RE_FLAG_M, RE_FLAG_S, RE_FLAG_U, RE_FLAG_V } from "../regex/bytecode.js";
@@ -322,6 +323,7 @@ function defineDriver(E: RxEnv, fnIdx: number, opts: FullCompilerOptions): void 
     ...c(0),
     ...c(0),
     { op: "struct.new", typeIdx: opts.regexpStruct },
+    ...hostRegExpRegisterInstrs(ctx, opts.regexpStruct), // (#6978)
   ];
   pushDefinedFunc(ctx, fnIdx, {
     name: FULL_COMPILER,

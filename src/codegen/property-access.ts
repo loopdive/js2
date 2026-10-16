@@ -822,40 +822,23 @@ export function runtimeAccessorDescriptorKey(
     return bareKey;
   }
   if (ctx.standalone) {
-    let installedOnFnctorPrototype = false;
-    const visitPrototypeDescriptors = (node: ts.Node): void => {
-      if (installedOnFnctorPrototype) return;
-      if (
-        ts.isCallExpression(node) &&
-        ts.isPropertyAccessExpression(node.expression) &&
-        ts.isIdentifier(node.expression.expression) &&
-        node.expression.expression.text === "Object" &&
-        node.expression.name.text === "defineProperties" &&
-        ts.isPropertyAccessExpression(node.arguments[0]) &&
-        node.arguments[0].name.text === "prototype"
-      ) {
-        const descriptors = node.arguments[1];
-        if (descriptors && ts.isIdentifier(descriptors)) {
-          const declaration = ctx.oracle.variableDeclarationOf(descriptors);
-          const initializer = declaration?.initializer;
-          if (
-            initializer &&
-            ts.isObjectLiteralExpression(initializer) &&
-            initializer.properties.some(
-              (property) =>
-                ts.isPropertyAssignment(property) &&
-                (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name)) &&
-                property.name.text === propName,
-            )
-          ) {
-            installedOnFnctorPrototype = true;
-            return;
-          }
-        }
-      }
-      ts.forEachChild(node, visitPrototypeDescriptors);
-    };
-    visitPrototypeDescriptors(receiver.getSourceFile());
+    const installedOnFnctorPrototype = objectDefineCalls(receiver.getSourceFile(), "defineProperties").some((node) => {
+      if (!ts.isPropertyAccessExpression(node.arguments[0]) || node.arguments[0].name.text !== "prototype")
+        return false;
+      const descriptors = node.arguments[1];
+      if (!descriptors || !ts.isIdentifier(descriptors)) return false;
+      const initializer = ctx.oracle.variableDeclarationOf(descriptors)?.initializer;
+      return (
+        !!initializer &&
+        ts.isObjectLiteralExpression(initializer) &&
+        initializer.properties.some(
+          (property) =>
+            ts.isPropertyAssignment(property) &&
+            (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name)) &&
+            property.name.text === propName,
+        )
+      );
+    });
     if (installedOnFnctorPrototype) return bareKey;
   }
 
@@ -872,45 +855,62 @@ export function runtimeAccessorDescriptorKey(
   // rejected strict write still invokes the installed getter instead of reading
   // the widened struct's placeholder slot.
   const receiverSymbol = ctx.checker.getSymbolAtLocation(receiver);
-  let found = false;
-  const visit = (node: ts.Node): void => {
-    if (found) return;
-    if (
-      ts.isCallExpression(node) &&
-      ts.isPropertyAccessExpression(node.expression) &&
-      ts.isIdentifier(node.expression.expression) &&
-      node.expression.expression.text === "Object" &&
-      node.expression.name.text === "defineProperty" &&
-      node.arguments.length >= 3
-    ) {
-      const objectArg = skipTransparentExpressions(node.arguments[0]!);
-      const keyArg = skipTransparentExpressions(node.arguments[1]!);
-      const descriptorArg = skipTransparentExpressions(node.arguments[2]!);
-      const sameReceiver =
-        ts.isIdentifier(objectArg) &&
-        (receiverSymbol
-          ? ctx.checker.getSymbolAtLocation(objectArg) === receiverSymbol
-          : objectArg.text === receiver.text);
-      const definedKey =
-        ts.isStringLiteral(keyArg) || ts.isNumericLiteral(keyArg)
-          ? keyArg.text
-          : resolveComputedKeyExpression(ctx, keyArg);
-      const isAccessor =
-        ts.isObjectLiteralExpression(descriptorArg) &&
-        descriptorArg.properties.some((property) => {
-          if (!property.name) return false;
-          if (!ts.isIdentifier(property.name) && !ts.isStringLiteral(property.name)) return false;
-          return property.name.text === "get" || property.name.text === "set";
-        });
-      if (sameReceiver && definedKey === propName && isAccessor) {
-        found = true;
-        return;
-      }
-    }
-    ts.forEachChild(node, visit);
-  };
-  visit(receiver.getSourceFile());
+  const found = objectDefineCalls(receiver.getSourceFile(), "defineProperty").some((node) => {
+    if (node.arguments.length < 3) return false;
+    const objectArg = skipTransparentExpressions(node.arguments[0]!);
+    const keyArg = skipTransparentExpressions(node.arguments[1]!);
+    const descriptorArg = skipTransparentExpressions(node.arguments[2]!);
+    const sameReceiver =
+      ts.isIdentifier(objectArg) &&
+      (receiverSymbol
+        ? ctx.checker.getSymbolAtLocation(objectArg) === receiverSymbol
+        : objectArg.text === receiver.text);
+    const definedKey =
+      ts.isStringLiteral(keyArg) || ts.isNumericLiteral(keyArg)
+        ? keyArg.text
+        : resolveComputedKeyExpression(ctx, keyArg);
+    const isAccessor =
+      ts.isObjectLiteralExpression(descriptorArg) &&
+      descriptorArg.properties.some((property) => {
+        if (!property.name) return false;
+        if (!ts.isIdentifier(property.name) && !ts.isStringLiteral(property.name)) return false;
+        return property.name.text === "get" || property.name.text === "set";
+      });
+    return sameReceiver && definedKey === propName && isAccessor;
+  });
   return found ? bareKey : undefined;
+}
+
+/**
+ * (#6988) Every `Object.<method>(…)` call in the file, in source order, indexed
+ * once per file. `runtimeAccessorDescriptorKey` runs per property read; walking
+ * the whole file there was quadratic (the 5 MB Octane mandreel driver).
+ */
+const objectDefineCallsBySourceFile = new WeakMap<ts.SourceFile, Map<string, ts.CallExpression[]>>();
+
+function objectDefineCalls(sourceFile: ts.SourceFile, method: string): readonly ts.CallExpression[] {
+  let byMethod = objectDefineCallsBySourceFile.get(sourceFile);
+  if (!byMethod) {
+    const index = new Map<string, ts.CallExpression[]>();
+    const visit = (node: ts.Node): void => {
+      if (
+        ts.isCallExpression(node) &&
+        ts.isPropertyAccessExpression(node.expression) &&
+        ts.isIdentifier(node.expression.expression) &&
+        node.expression.expression.text === "Object"
+      ) {
+        const name = node.expression.name.text;
+        const list = index.get(name);
+        if (list) list.push(node);
+        else index.set(name, [node]);
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(sourceFile);
+    objectDefineCallsBySourceFile.set(sourceFile, index);
+    byMethod = index;
+  }
+  return byMethod.get(method) ?? [];
 }
 
 export function emitRuntimeDescriptorGet(

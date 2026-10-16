@@ -20,9 +20,9 @@
 // On failure, returns a list of `IrVerifyError`s rather than throwing, so
 // callers can decide whether to bail or fall back to the legacy path.
 
-import type { IrBlock, IrInstr, IrLabelId, IrModuleDeclarations, IrValueId } from "../core/nodes.js";
+import type { IrBlock, IrInstr, IrInstrClassCall, IrLabelId, IrModuleDeclarations, IrValueId } from "../core/nodes.js";
 import type { PreparedIrFunction as IrFunction } from "./contracts/prepared.js";
-import type { IrType } from "../core/types.js";
+import type { IrClassShape, IrType } from "../core/types.js";
 import { forEachInstrDeep, forEachNestedBuffer } from "../core/nodes.js";
 import { asVal, irTypeEquals } from "../core/types.js";
 import { irSupportRef, closureSignatureEquals } from "../core/types.js";
@@ -346,6 +346,13 @@ function verifySymbolicReferences(func: IrFunction, errors: IrVerifyError[]): vo
 
 export interface IrVerificationOptions {
   readonly verifyDominanceNaive: boolean;
+  /**
+   * (#7001) Lane fact: does the `string` IrType lower to externref (host
+   * strings)? `false` makes a dynamic/externref value returned into a declared
+   * `string` result non-assignable (native strings lower to
+   * `(ref null $AnyString)`). Absent ⇒ the historical lenient answer.
+   */
+  readonly stringIsExternref?: boolean;
 }
 
 /**
@@ -517,7 +524,7 @@ export function verifyIrFunction(
       const declared = func.resultTypes[i]!;
       const actual = operandIrType(func, block, t.values[i]!, new Set());
       if (!actual) continue; // not locally visible — SSA-scope check reports it
-      if (!returnTypeAssignable(actual, declared)) {
+      if (!returnTypeAssignable(actual, declared, options?.stringIsExternref)) {
         errors.push({
           message:
             `return[${i}] type ${describeKind(actual)} not assignable to declared ` +
@@ -551,7 +558,7 @@ export function verifyIrFunction(
         if (i.value === null) return;
         const actual = operandIrType(func, block, i.value, new Set());
         if (!actual) return; // not locally visible — SSA-scope check reports it
-        if (!returnTypeAssignable(actual, func.resultTypes[0]!)) {
+        if (!returnTypeAssignable(actual, func.resultTypes[0]!, options?.stringIsExternref)) {
           errors.push({
             message:
               `early.return value type ${describeKind(actual)} not assignable to declared ` +
@@ -578,7 +585,7 @@ export function verifyIrFunction(
  * silently demote working IR functions to legacy, so the check only fires on
  * an unambiguous mismatch.
  */
-function returnTypeAssignable(actual: IrType, declared: IrType): boolean {
+function returnTypeAssignable(actual: IrType, declared: IrType, stringIsExternref?: boolean): boolean {
   if (actual.kind === "support-ref" || declared.kind === "support-ref") return irTypeEquals(actual, declared);
   // Fnctor values are nominal source-qualified instances, never arbitrary
   // reference-shaped carriers. An exact shape match is required in either
@@ -617,6 +624,16 @@ function returnTypeAssignable(actual: IrType, declared: IrType): boolean {
   // needs a box the IR doesn't emit; this is the #1798 numeric-`any` case the
   // from-ast layer defers to legacy. Flag it so a future regression demotes.
   if (isScalar(a)) {
+    return false;
+  }
+  // (#7001) A dynamic/externref value into a native-string result: string
+  // lowers to `(ref null $AnyString)` there, so the flow needs a checked
+  // conversion the IR does not emit. Only the host lane has string ≡ externref.
+  if (
+    declared.kind === "string" &&
+    stringIsExternref === false &&
+    (actual.kind === "dynamic" || a?.kind === "externref")
+  ) {
     return false;
   }
   // Both reference-shaped (or externref): treat as assignable. The lowerer's
@@ -1883,7 +1900,8 @@ export const TYPE_RULE_STATUS: Record<IrInstr["kind"], TypeRuleStatus> = {
   "class.super_call": { skip: "resolver-typed: method signature resolved from parentShape + methodName at lowering" },
   "class.get": { skip: "resolver-typed: field type comes from the receiver's class shape at lowering" },
   "class.set": { skip: "resolver-typed: field type comes from the receiver's class shape at lowering" },
-  "class.call": { skip: "resolver-typed: method signature resolved from the receiver's shape at lowering" },
+  // (#7000) Target identity is checked; the signature stays resolver-typed.
+  "class.call": "checked",
   "class.static_call": { skip: "resolver-typed: static method signature resolved from shape + methodName at lowering" },
   "iter.new": { skip: "resolver-typed: iterator carrier chosen by the iteration-protocol lowering" },
   "iter.next": { skip: "resolver-typed: result object carrier chosen by the iteration-protocol lowering" },
@@ -2044,8 +2062,39 @@ function checkRoadmapRule(instr: IrInstr, blockId: number, ctx: RoadmapRuleCtx):
     case "global.set":
       checkSymbolicRefCoherence(instr, blockId, ctx);
       return true;
+    case "class.call":
+      checkClassCallTarget(instr, blockId, ctx);
+      return true;
     default:
       return false;
+  }
+}
+
+/**
+ * (#7000) `class.call` is a STATIC call of the member resolved on the
+ * receiver's class-shape chain (from-ast `findClassMember`). An exact `target`
+ * must be that member's own target: one bound to any other class's member is a
+ * wrong-body call (the devirtualisation drift #7000 fixed in the selector). A
+ * receiver that is not class-shaped, or a member the walk cannot see, stays
+ * resolver-typed and is not judged here.
+ */
+function checkClassCallTarget(instr: IrInstrClassCall, blockId: number, ctx: RoadmapRuleCtx): void {
+  const receiver = ctx.typeOf.get(instr.receiver);
+  if (!instr.target || receiver?.kind !== "class") return;
+  for (let shape: IrClassShape | undefined = receiver.shape; shape; shape = shape.parent) {
+    const member = shape.methods.find(
+      (candidate) => candidate.name === instr.methodName && (candidate.memberKind ?? "method") === instr.memberKind,
+    );
+    if (!member) continue;
+    const want = member.target ? bindingKey(member.target.binding) : null;
+    const got = bindingKey(instr.target.binding);
+    if (want !== null && got !== null && want !== got)
+      roadmapError(
+        ctx,
+        blockId,
+        `class.call ${instr.methodName} target ${got} is not ${receiver.shape.className}'s ${want}`,
+      );
+    return;
   }
 }
 

@@ -79,7 +79,7 @@ import {
 import { reportError } from "./context/errors.js";
 import { allocLocal, getLocalType } from "./context/locals.js";
 import { emitScopedClassLocalRebinds, liveBoxedCaptureSpillType } from "./async-frame-binding-continuity.js";
-import type { CodegenContext, FunctionContext } from "./context/types.js";
+import { type CodegenContext, type FunctionContext, hostFreeEnvironment } from "./context/types.js";
 import { closureBagInitInstr } from "./closures/closure-header-layout.js";
 import {
   ERROR_FIELD,
@@ -991,7 +991,7 @@ export function asyncFnNeedsDrive(ctx: CodegenContext, fn: ts.FunctionLikeDeclar
       !awaitProvablyCannotSuspend(ctx, a) &&
       !awaitedLocalIsProvablySettled(ctx, a),
   );
-  if (!anyRealSuspension) return false; // fully await-elidable → sync + resolved promise
+  if (!anyRealSuspension && hostFreeEnvironment(ctx)) return false; // host-free: elide (#6982: a JS env yields)
   // (#2906 3c-ii) The native gate admits return-in-try (return-through-finally
   // via the return hook's finalizer replay); the host gate does not.
   const linear = planLinearAwaits(fn, plan, {
