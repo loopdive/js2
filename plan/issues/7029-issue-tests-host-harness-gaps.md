@@ -44,6 +44,14 @@ upstream/main `0727e2985b`, the 44 files had **163 failing tests**.
 | reconcile-tasklist JSON split `mergedPrFixed` into done/unknown/rejected (d31db7888d, #3969) | 2147 | assert the new contract |
 | `wrapTest(src, {})` skipped frontmatter, so the propertyHelper shim never rewrote `verifyProperty` | 1567 | let wrapTest parse the frontmatter |
 
+## Regression probes
+
+The fixed files are the permanent probes, e.g. `tests/issue-257.test.ts`,
+`tests/ts-scanner-test.test.ts`, `tests/issue-4200.test.ts`,
+`tests/issue-1326.test.ts`, `tests/issue-5385-test262-native-lane.test.ts`,
+`tests/issue-2147.test.ts` (full list in the table above, each as
+`tests/<name>.test.ts`).
+
 ## Acceptance criteria
 
 - [x] every file above green locally on upstream/main + this change, run one file at a time
