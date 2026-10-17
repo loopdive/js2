@@ -6,6 +6,7 @@ import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { runtimeEvalStateMayShadowBinding } from "./direct-eval-environment.js";
 import { resolvesToAmbientGlobal } from "./expressions/non-constructable.js";
 import { emitThrowReferenceError } from "./js-errors.js";
+import { reportError } from "./context/errors.js";
 import { BUILTIN_CLASS_NAMES } from "./expressions/builtin-class-names.js";
 import { BUILTIN_STATIC_METHOD_ARITY } from "./builtin-fn-meta.js";
 
@@ -265,4 +266,22 @@ export function tryEmitStandalonePerformanceNow(
   if (!resolvesToAmbientGlobal(ctx, receiver)) return undefined;
   fctx.body.push({ op: "f64.const", value: 0 });
   return { kind: "f64" };
+}
+
+/**
+ * (#6843) A `declare function` / `declare class` in a package's declaration
+ * file (a `.d.ts` module under `node_modules/`) is a module export whose body
+ * is not in the program, not a free host global. On a host-free standalone
+ * module it must not become an `env.<name>` import or an `env.<Class>_*`
+ * extern class: a use throws instead. Reports a warning and
+ * returns true when the caller must skip the stub's registration.
+ */
+export function skipStandalonePackageStub(ctx: CodegenContext, sourceFile: ts.SourceFile, id: ts.Identifier): boolean {
+  if (!ctx.standalone || !sourceFile.isDeclarationFile || !ts.isExternalModule(sourceFile)) return false;
+  if (!/(^|[\\/])node_modules[\\/]/.test(sourceFile.fileName) || ctx.linkedPackageBindings.has(id.text)) return false;
+  const message =
+    `standalone (#6843): "${id.text}" is declared only by the package declaration file ${sourceFile.fileName}; ` +
+    `its implementation is not part of the program, so a use throws instead of importing it from env`;
+  reportError(ctx, id, message, "warning");
+  return true;
 }
