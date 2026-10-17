@@ -3,9 +3,9 @@
   "compilerPathVerified": false,
   "executionCompilerPath": "unknown",
   "configuredCompilerPath": "hybrid",
-  "timestamp": "2026-10-17T10:41:25.797Z",
-  "baseline_generated_at": "2026-10-17T10:41:25.798Z",
-  "baseline_sha": "2aaf4b81e44ac91c47278c779150a5eb381794d8",
+  "timestamp": "2026-10-17T11:10:27.992Z",
+  "baseline_generated_at": "2026-10-17T11:10:27.992Z",
+  "baseline_sha": "b0d248abd899bf327b33b3abf300056aa8a3b7e8",
   "oracle_version": 15,
   "mode": {
     "target": "standalone",
@@ -15,24 +15,24 @@
   },
   "summary": {
     "total": 48232,
-    "pass": 42138,
+    "pass": 42127,
     "fail": 4475,
     "compile_error": 1581,
-    "compile_timeout": 20,
+    "compile_timeout": 31,
     "skip": 18,
-    "compilable": 46613,
-    "host_free_pass": 42138,
+    "compilable": 46602,
+    "host_free_pass": 42127,
     "stale": 0,
     "by_category": {
       "standard": {
         "total": 47146,
-        "pass": 41095,
+        "pass": 41084,
         "fail": 4446,
         "compile_error": 1567,
-        "compile_timeout": 20,
+        "compile_timeout": 31,
         "skip": 18,
-        "compilable": 45541,
-        "host_free_pass": 41095,
+        "compilable": 45530,
+        "host_free_pass": 41084,
         "stale": 0,
         "label": "ECMAScript current standard"
       },
@@ -62,25 +62,25 @@
       },
       "official": {
         "total": 48232,
-        "pass": 42138,
+        "pass": 42127,
         "fail": 4475,
         "compile_error": 1581,
-        "compile_timeout": 20,
+        "compile_timeout": 31,
         "skip": 18,
-        "compilable": 46613,
-        "host_free_pass": 42138,
+        "compilable": 46602,
+        "host_free_pass": 42127,
         "stale": 0,
         "label": "standard + annex_b (default)"
       },
       "full": {
         "total": 48735,
-        "pass": 42374,
+        "pass": 42363,
         "fail": 4491,
         "compile_error": 1736,
-        "compile_timeout": 20,
+        "compile_timeout": 31,
         "skip": 114,
-        "compilable": 46865,
-        "host_free_pass": 42374,
+        "compilable": 46854,
+        "host_free_pass": 42363,
         "stale": 0,
         "label": "standard + annex_b + proposals"
       }
@@ -88,35 +88,35 @@
   },
   "official_summary": {
     "total": 48232,
-    "pass": 42138,
+    "pass": 42127,
     "fail": 4475,
     "compile_error": 1581,
-    "compile_timeout": 20,
+    "compile_timeout": 31,
     "skip": 18,
-    "compilable": 46613,
-    "host_free_pass": 42138,
+    "compilable": 46602,
+    "host_free_pass": 42127,
     "stale": 0
   },
   "full_summary": {
     "total": 48735,
-    "pass": 42374,
+    "pass": 42363,
     "fail": 4491,
     "compile_error": 1736,
-    "compile_timeout": 20,
+    "compile_timeout": 31,
     "skip": 114,
-    "compilable": 46865,
-    "host_free_pass": 42374,
+    "compilable": 46854,
+    "host_free_pass": 42363,
     "stale": 0
   },
   "strict_summary": {
     "total": 45721,
-    "pass": 39769,
+    "pass": 39758,
     "fail": 4382,
     "compile_error": 1532,
-    "compile_timeout": 20,
+    "compile_timeout": 31,
     "skip": 18,
-    "compilable": 44151,
-    "host_free_pass": 39769,
+    "compilable": 44140,
+    "host_free_pass": 39758,
     "stale": 0
   },
   "scope_summaries": {
@@ -144,13 +144,13 @@
     },
     "standard": {
       "total": 47146,
-      "pass": 41095,
+      "pass": 41084,
       "fail": 4446,
       "compile_error": 1567,
-      "compile_timeout": 20,
+      "compile_timeout": 31,
       "skip": 18,
-      "compilable": 45541,
-      "host_free_pass": 41095,
+      "compilable": 45530,
+      "host_free_pass": 41084,
       "stale": 0
     }
   },
@@ -785,13 +785,13 @@
     {
       "name": "built-ins/Temporal",
       "path": "built-ins/Temporal",
-      "pass": 4484,
+      "pass": 4473,
       "fail": 101,
       "compile_error": 0,
-      "compile_timeout": 18,
+      "compile_timeout": 29,
       "skip": 0,
       "total": 4603,
-      "host_free_pass": 4484
+      "host_free_pass": 4473
     },
     {
       "name": "built-ins/ThrowTypeError",
@@ -1225,8 +1225,8 @@
   },
   "root_cause_map": {
     "target": "standalone",
-    "total_non_pass_non_skip": 6247,
-    "classified": 6247,
+    "total_non_pass_non_skip": 6258,
+    "classified": 6258,
     "unclassified_threshold": 0,
     "has_edition_breakdown": true,
     "buckets": [
@@ -1276,14 +1276,14 @@
           "#661"
         ],
         "label": "Temporal proposal/polyfill gap",
-        "count": 119,
+        "count": 130,
         "statuses": {
           "pass": 0,
           "fail": 101,
           "compile_error": 0,
-          "compile_timeout": 18,
+          "compile_timeout": 29,
           "skip": 0,
-          "total": 119,
+          "total": 130,
           "host_free_pass": 0
         },
         "error_categories": {
@@ -1294,7 +1294,7 @@
           "illegal_cast": 1
         },
         "by_edition": {
-          "ES2026": 119
+          "ES2026": 130
         },
         "sample_files": [
           "test/built-ins/Temporal/Duration/prototype/round/roundingincrement-days-large.js",
@@ -1347,8 +1347,8 @@
         "sample_signatures": [
           "host_import_leak:standalone target emitted host imports: env::AsyncDisposableStack_disposeAsync, env::AsyncDisposableStack_new, env::AsyncDisposableStack_use (##)",
           "assertion_fail:Test262Error: Symbol(Symbol.asyncDispose) should be an own property",
-          "assertion_fail:Test262Error: Expected SameValue(«undefined», «function () { [native code] }») to be true",
           "assertion_fail:Test262Error: Expected SameValue(«null», «[object Object]») to be true",
+          "assertion_fail:Test262Error: Expected SameValue(«undefined», «function () { [native code] }») to be true",
           "assertion_fail:Test262Error: Expected stack2 to be an instance of AsyncDisposableStack"
         ]
       },
@@ -1998,8 +1998,8 @@
           "ES5": 1
         },
         "sample_files": [
-          "test/built-ins/TypedArray/prototype/forEach/BigInt/return-abrupt-from-this-out-of-bounds.js",
           "test/built-ins/TypedArray/prototype/findIndex/BigInt/return-abrupt-from-this-out-of-bounds.js",
+          "test/built-ins/TypedArray/prototype/forEach/BigInt/return-abrupt-from-this-out-of-bounds.js",
           "test/built-ins/TypedArray/prototype/findLastIndex/BigInt/get-length-ignores-length-prop.js",
           "test/built-ins/TypedArray/prototype/includes/detached-buffer-during-fromIndex-returns-true-for-undefined.js",
           "test/built-ins/TypedArray/prototype/lastIndexOf/resizable-buffer-special-float-values.js"
