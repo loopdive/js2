@@ -48,7 +48,7 @@ import {
 } from "./any-helpers.js";
 import { collectClosureBaseWrapperTypeIdxs } from "./closure-classifier.js"; // (#3125) IsCallable arms
 import type { CodegenContext, OptionalParamInfo, RestParamInfo } from "./context/types.js";
-import { restDispatchInfo, restVecArgInstrs } from "./closed-dispatch-rest-arm.js"; // (#7021)
+import { restDispatchInfo, restVecArgInstrs } from "./object-model/closed-dispatch-rest-arm.js"; // (#7021)
 import { classMemberFuncKey } from "./class-member-keys.js";
 import {
   DYN_ARRAY_PRODUCER_METHODS,

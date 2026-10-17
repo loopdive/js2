@@ -113,7 +113,7 @@ import {
   valTypesMatch,
   VOID_RESULT,
 } from "./shared.js";
-import { taSpreadGetOp } from "./ta-int-elem-coercion.js"; // (#7018)
+import { taSpreadGetOp } from "./array/ta-int-elem-coercion.js"; // (#7018)
 import { buildVecFromExternref, getVecInfo, pushDefaultValue } from "./type-coercion.js";
 import { emitDrainCustomIterableToVec, isCustomIterable } from "./custom-iterable.js";
 import { compileOneElementArray, widenDenseArrayElementType } from "./expressions/array-constructor-carrier.js";

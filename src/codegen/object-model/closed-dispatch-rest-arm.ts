@@ -18,9 +18,9 @@
  * Standalone / WASI only. The JS-host lane keeps its previous arms byte for
  * byte (see `restDispatchInfo`).
  */
-import type { Instr } from "../ir/types.js";
-import type { CodegenContext, RestParamInfo } from "./context/types.js";
-import type { ValType } from "../ir/types.js";
+import type { Instr } from "../../ir/types.js";
+import type { CodegenContext, RestParamInfo } from "../context/types.js";
+import type { ValType } from "../../ir/types.js";
 
 /**
  * The rest ABI of `<Struct>_<method>` when the fixed-arity dispatcher must pack

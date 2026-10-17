@@ -15,7 +15,7 @@ import { emitProxyAwareOwnKeysCall } from "../object-model/proxy-own-keys-surfac
 import { isBooleanType, isNumberType, isStringType } from "../../checker/type-mapper.js";
 import { ensureIntegrityPredicate } from "../object-integrity-carrier.js"; // (#4032)
 import { emitToInt32 } from "../binary-ops.js";
-import { emitTaIntElemConversion, tryEmitPackedTaOfWithSpread } from "../ta-int-elem-coercion.js"; // (#7018)
+import { emitTaIntElemConversion, tryEmitPackedTaOfWithSpread } from "../array/ta-int-elem-coercion.js"; // (#7018)
 import { integrityVarKey, widenedVarKeyFromDecl } from "../widened-var-key.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import { isPristineEs5IntrinsicIsFrozenCall } from "../../ir/object-integrity.js";

@@ -30,7 +30,7 @@ func-budget-allow:
   - src/codegen/expressions/new-builtin-globals.ts::tryCompileBuiltinGlobalNew
   - src/codegen/literals.ts::compileArrayLiteral
 import-cycles-allow:
-  - largestSccSize: 711 # 2026-10-17 (#7018): the new `src/codegen/ta-int-elem-coercion.ts` calls `compileExpression` and is called from the TypedArray arms, so it joins the existing codegen SCC (+1 file); its int32 lowering imports backend/wasmgc directly, so no codegen->ir edge is added.
+  - largestSccSize: 711 # 2026-10-17 (#7018): the new `src/codegen/array/ta-int-elem-coercion.ts` calls `compileExpression` and is called from the TypedArray arms, so it joins the existing codegen SCC (+1 file); its int32 lowering imports backend/wasmgc directly, so no codegen->ir edge is added.
 ---
 
 # TypedArray construction: ToUint8 saturation and packed-array spread
@@ -111,7 +111,7 @@ byte-identical.
 
 ## Resolution
 
-New module `src/codegen/ta-int-elem-coercion.ts`:
+New module `src/codegen/array/ta-int-elem-coercion.ts`:
 
 - `emitTaIntElemConversion` / `taIntElemConversionInstrs`: f64 → exact ToInt32
   bit pattern via the existing `emitToInt32` (the packed `array.set` keeps the

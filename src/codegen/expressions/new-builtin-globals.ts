@@ -18,7 +18,7 @@ import type { TypeFact } from "../../checker/oracle.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { allocLocal, allocTempLocal, releaseTempLocal } from "../context/locals.js";
 import { addUnionImports, getArrTypeIdxFromVec, getOrRegisterVecType, typedArrayVecStorage } from "../index.js";
-import { taIntElemConversionInstrs, taSourceGetOp } from "../ta-int-elem-coercion.js"; // (#7018)
+import { taIntElemConversionInstrs, taSourceGetOp } from "../array/ta-int-elem-coercion.js"; // (#7018)
 import { coercionPlan } from "../coercion-plan.js";
 import { emitToString, getExternrefToStringProvider } from "../coercion-engine.js";
 import {

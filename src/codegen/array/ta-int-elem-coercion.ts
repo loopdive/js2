@@ -22,18 +22,18 @@
  * and WASI. The JS-host lane stores every numeric view as `f64` and never calls
  * in here, so its output is unchanged.
  */
-import type { Instr, ValType } from "../ir/types.js";
-import type { CodegenContext, FunctionContext } from "./context/types.js";
-import { ts } from "../ts-api.js";
-import { allocLocal } from "./context/locals.js";
-import { snapshotSpeculative, rollbackSpeculative } from "./context/speculative.js";
-import { emitToInt32, emitToUint8Clamp } from "./binary-ops.js";
-import { emitWasmInt32Coercion } from "../backend/wasmgc/lowering/wasm-int32-coercion.js";
-import { coerceType, compileExpression, elemGetOp, unpackedElemType } from "./shared.js";
-import { getArrTypeIdxFromVec, typedArrayPackedSignedness } from "./index.js";
-import { getVecInfo } from "./type-coercion.js";
-import { typedArraySearchSignedness } from "./array-methods.js";
-import { collectInstrs } from "./statements/shared.js";
+import type { Instr, ValType } from "../../ir/types.js";
+import type { CodegenContext, FunctionContext } from "../context/types.js";
+import { ts } from "../../ts-api.js";
+import { allocLocal } from "../context/locals.js";
+import { snapshotSpeculative, rollbackSpeculative } from "../context/speculative.js";
+import { emitToInt32, emitToUint8Clamp } from "../binary-ops.js";
+import { emitWasmInt32Coercion } from "../../backend/wasmgc/lowering/wasm-int32-coercion.js";
+import { coerceType, compileExpression, elemGetOp, unpackedElemType } from "../shared.js";
+import { getArrTypeIdxFromVec, typedArrayPackedSignedness } from "../index.js";
+import { getVecInfo } from "../type-coercion.js";
+import { typedArraySearchSignedness } from "../array-methods.js";
+import { collectInstrs } from "../statements/shared.js";
 
 /** The three element-load ops a (possibly packed) vec read can take. */
 type ElemGetOp = ReturnType<typeof elemGetOp>;

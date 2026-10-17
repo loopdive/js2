@@ -44,7 +44,7 @@ import { addFuncType, getArrTypeIdxFromVec, getOrRegisterTaDynViewType } from ".
 import { ensureObjectRuntime, reserveApplyClosure } from "./object-runtime.js";
 import { ensureLateImport, flushLateImportShifts } from "./shared.js";
 import { ensureTaDynMopElemHelpers } from "./ta-dyn-mop.js";
-import { WRAP_F64_TO_INT32_LOCALS, wrapF64ToInt32Instrs } from "./ta-int-elem-coercion.js"; // (#7018)
+import { WRAP_F64_TO_INT32_LOCALS, wrapF64ToInt32Instrs } from "./array/ta-int-elem-coercion.js"; // (#7018)
 
 /**
  * Ensure the native `map`/`filter` helper for the packed vec struct `vecTypeIdx`

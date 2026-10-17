@@ -11000,7 +11000,7 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
-      "path": "src/codegen/closed-dispatch-rest-arm.ts",
+      "path": "src/codegen/object-model/closed-dispatch-rest-arm.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
@@ -11008,7 +11008,7 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
-      "path": "src/codegen/ta-int-elem-coercion.ts",
+      "path": "src/codegen/array/ta-int-elem-coercion.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
