@@ -1,9 +1,11 @@
 ---
 id: 6708
 title: "S6: `semanticProviders` defaults to native-first in every environment; host semantics only as named opt-in accelerators"
-status: ready
+status: done
+completed: 2026-10-16
+assignee: ttraenkler/opus-6708-a
 created: 2026-09-27
-updated: 2026-09-27
+updated: 2026-10-16
 priority: high
 horizon: l
 feasibility: hard
@@ -16,6 +18,24 @@ sprint: current
 parent: 5385
 depends_on: [6706, 6707]
 related: [679, 682, 1535, 4396, 4397, 4401, 6191]
+# 2026-10-14 (S6-A): the default flip needs the regime to keep the JS
+# environment's platform capabilities — DOM globals + their string/closure
+# arguments, and the wall clock (playground default example regressed without
+# them); plus the publication-contract call, the CLI/API doc comments. Each
+# site grows by a guard line or two; the runtime marshal lives in its own
+# module (src/runtime/platform-arg-marshal.ts).
+loc-budget-allow:
+  - src/runtime.ts
+  - src/codegen/extern-declarations.ts
+  - src/codegen/declarations.ts
+  - src/codegen/expressions/call-namespace-static.ts
+  - src/codegen/expressions/new-builtin-globals.ts
+  - src/index.ts
+  - src/compiler.ts
+func-budget-allow:
+  - src/codegen/declarations.ts::collectDeclarations
+  - src/codegen/expressions/call-namespace-static.ts::compileNamespaceStaticCall
+  - src/codegen/expressions/new-builtin-globals.ts::tryCompileBuiltinGlobalNew
 ---
 
 # #6708 — S6: flip the default policy to native-first
@@ -129,3 +149,173 @@ semantic column with an "accelerator" note.
 - [ ] Nightly after merge: host lane number equals the previous native-first
       lane number ± flake; standalone floor unchanged; edition ratchet green.
 - [ ] npm-compat dashboard: no `measured → error` on the js-host lane.
+
+### 2026-10-14 — evidence verdict and S6-A
+
+**Verdict: the evidence bar for the default flip (slice A) is taken as met.**
+The bar was written when two CI lanes measured the JS environment — the
+host-assisted lane and the `test262-native-first` regime lane. On 2026-10-12
+both were retired on main: `test262-native-first` in
+`.github/workflows/test262-sharded.yml` carries `if: false`, all 102 shard
+runners measure standalone, and the host baseline is frozen by
+`scripts/preserve-frozen-host-baseline.mjs`. Items 1–2 can therefore no longer
+be re-measured by a nightly; they rest on the last measurements and on an
+architectural fact:
+
+| item | verdict | evidence |
+| --- | --- | --- |
+| 1. regime ≥ host on two nightlies | **met** | 09-27 35,384 vs 34,099; 09-28 36,327 vs 34,099; 10-07 (run 37596924980) **41,816 vs 39,700**; 10-09 regime 42,014 |
+| 2. per-edition ratchet on the regime | **met (by the fixing slices + the standalone ratchet)** | the 10-09 run left ES5 −41 / ES2016 −3 / ES2023 −5; all three were owned by #6880 / #6912 / #6881, which merged after that run. The regime arms are `ctx.standalone` ≡ `targetProfile.nativeRegime`, i.e. exactly the code the standalone edition ratchet guards on every merge (42,067 / 48,232 on main today) |
+| 3. npm-compat regime-lane parity | **pending, not this slice** | the refresh workflow has failed on every run since 10-06; fixed by loopdive/js2#6664 |
+| 4. perf (Node ≥ 24) | **still unmeasured** | carried forward to #5385 program acceptance; not a blocker for A per the lead's 10-14 decision |
+
+**Slice split.** A (this PR, `issue-6708-a-default-native-first`): default
+and spellings, lanes, docs, rollback proof. B (#6978, branch
+`issue-6978-host-accelerator-opt-ins`): the `js-string`/`regexp`/`date`/`intl`
+host accelerators. A keeps its `src/target-profile.ts` edits inside the
+selection/default logic; B only adds fields.
+
+#### S6-A implementation notes (2026-10-14)
+
+**Rollback proof (byte identity).** Before any source change, at upstream
+main `45f6c9db15`, three programs were compiled under the then-default and
+hashed (sha256 of the binary); after the flip the same sources were compiled
+with `{ semanticProviders: "host-assisted" }` at the same base:
+
+| program | pre-S6 default | post-S6 `host-assisted` |
+| --- | --- | --- |
+| `add` (from `tests/issue-4396-target-profile.test.ts`) | `8ef3e1e32716f9b15f995ab46af36870623b7e8b11ccb228d88ae8b6931509fe` | identical |
+| strings (template literal + `split`/`join`/`replace`) | `529adf60457bdab34b431b017da8a42ee0a3c3c7f07f6b43e622bcb036ccb0bb` | identical |
+| `RegExp` + `Date.parse` + `JSON.stringify` | `94650ebe14d26f5064e00ff69df8cb843b535e7612534e92dec1fa1571b680fb` | identical |
+
+Verdict: the rollback is byte-identical for all three. Cross-check: the
+post-flip `{}` hashes equal the pre-flip explicit `native-first` hashes
+(`25acec86…`, `23f0d772…`, `64ec6a08…`) — measured before the DOM/clock fixes
+below, which do not touch these three programs' import sets. The re-pinned
+`tests/issue-4396-target-profile.test.ts` asserts `{}` ≡ `native-first`
+byte-for-byte, `host-assisted` ≡ the pre-S6 profile fields with ≥ 1
+`legacy-semantic` import, the default with 0, and the once-per-process
+`"auto"` warning; no binary fixtures are committed.
+
+**The #4401 publication contract stays an explicit-only opt-in.** An explicit
+`semanticProviders: "native-first"` still refuses to publish a module with a
+`legacy-semantic`/`unknown` host import; the default does not. A first cut
+applied the contract to the default too, and the equivalence suite showed why
+that is wrong: user-declared host functions (`declare function
+updateCamera(...)` → `env::updateCamera`, classified `unknown`) are explicit
+embedder capabilities, not semantic fallbacks, and the default must keep
+compiling them. So `{}` and `"native-first"` produce byte-identical binaries
+whenever both compile and differ only in that refusal. Nothing the compiler
+itself emits needs the gate: `check:host-import-policy` measures the default
+probes at 0 legacy / 0 unknown imports.
+
+**Why `"auto"` resolves like an omitted option.** Before S6 `"auto"` meant
+"the default", and the standalone test262 lane passes it explicitly. Had it
+become an explicit native-first spelling, the standalone lane would have
+gained the #4401 contract. So `"auto"` warns once and then is exactly `{}`.
+
+**Equivalence harness.** The regime's JS value boundary lives in the compiled
+export adapter (`wrapCompiledExports`), not in raw `instance.exports` — a raw
+string result is a Wasm string carrier. `tests/equivalence/helpers.ts` now
+reads exports the way an embedder does (adapter for native-first, raw for
+host-assisted); before that change 272 equivalence tests "regressed" on
+`expected {} to be 'hello world'`.
+
+**Lane identity.** `scripts/test262-lane.mjs` keeps `"auto"` as the default
+lane token (spellings `""`, `auto`, `native-first`) and adds
+`host-assisted`. The compile option is derived by
+`test262CompileSemanticProviders` (default → no option, control →
+`"host-assisted"`), so standalone compiles get exactly what they got before.
+
+**Two regime defects the flip exposed (fixed here, found by
+`tests/playground-example.test.ts`).** The regime had only ever been measured
+by test262, which has no DOM and no wall clock:
+
+1. DOM globals (`document`, …) were dropped under `ctx.standalone` even in a
+   JS environment, and their string/closure arguments reached the host as Wasm
+   carriers. Fix: `extern-declarations.ts` keeps `global_<DOM name>` when the
+   environment is JavaScript; `declarations.ts` exports the native-string
+   bridge for such modules; `src/runtime/platform-arg-marshal.ts` converts
+   carrier arguments of `extern_class` imports (a no-op for modules without
+   the bridge, i.e. every host-assisted module).
+   `runtime.ts` grows by exactly two lines (one import, one call; the marshal
+   body lives in its own module), so `plan/audit/host-import-policy-baseline.json`
+   `maximumRuntimeTsLines` moves 20222 → 20223 (granted here, 2026-10-14); after merging main with #6978 (20225) the measured ceiling is 20227 (2026-10-15).
+2. `Date.now()` / `new Date()` returned the epoch (0) under the regime in a JS
+   environment. Fix: the epoch fallback now applies only host-free; a JS
+   environment uses the `__date_now` clock capability (classified
+   `platform-capability`).
+
+**Open — the equivalence gate is RED; this PR must not merge as is.** After
+the harness fixes above, `node scripts/equivalence-gate.mjs` reports
+`70 failing, 1700 passing, 22 known-failures in baseline` and `50 NEW
+equivalence regression(s)` (floor 1700 < 1740). These are defects of the
+native regime *in a JavaScript environment* that the test262 measurements
+never exercised: custom iterables / `[Symbol.iterator]` in spread and
+destructuring ("value is not iterable"), IR-path `Error.message` reads
+returning `""`, Map/Set IR capability violations, generator `.return()`
+values, `Symbol.toPrimitive` in arithmetic, `await null` interleaving,
+`indexOf(undefined)`, `import.meta.url`, five compile failures, and nine
+`issue-1197` WAT-shape assertions that pin the host-assisted element
+specialisation. The equivalence baseline was NOT touched.
+
+**Decision (lead, 2026-10-14): fix, not pin.** The rows reproduce today with an
+explicit `semanticProviders: "native-first"`, so they are fixed on main by
+#6980 (iterators/generators), #6981 (IR path + compile failures) and #6982
+(toPrimitive/indexOf/await/import.meta); this PR re-merges main once they land.
+The one exception: the nine `issue-1197` structure rows pin the host-assisted
+element specialisation that S7 deletes, so they are re-pinned to
+`semanticProviders: "host-assisted"` (#6979). 41 rows remain. Status stays
+`in-progress` until the gate is green.
+
+The original 50 rows (file :: test):
+
+- array-indexof-no-arg :: indexOf / lastIndexOf finds an element that IS undefined; finds the LAST element that is undefined
+- await-settled-operand-yields :: `await null` in an async arrow returns to the caller first; sibling async functions interleave like JS
+- binding-null-guard :: class method with destructured param — a harness defect: `tests/equivalence/helpers.ts` `buildImports` stubbed env lacked the `__boundary_object_*` hooks and the string bridge (LinkError); it now fills missing imports from the runtime (fixed here, found by opus-6981-ir)
+- destructuring-require-object-coercible :: `let {} = 5` is coercible (compile failure)
+- element-assignment-externref :: numeric key assignment on any-typed parameter
+- generator-return-method :: return() propagates the supplied value
+- gradual-typing :: typeof any boolean runtime tag check; typeof any number comparison (compile failures)
+- import-meta :: import.meta.url stored in a variable; reflects the loader-injected value
+- ir-slice10-error :: (a)(b)(c)(e) were a harness defect — `tests/helpers/compile.ts` never called `setInstance`, so the string bridge memory was unbound (fixed here, found by opus-6981-ir); (d) `new Error().message` is a real regime defect (#6981)
+- ir-slice10-map-set :: (d) `new Set().size === 0`; (e) Set add + size + has
+- issue-1197 :: nine "structure: WAT contains __vec_i32 …" assertions — re-pinned to host-assisted (#6979)
+- issue-1388 :: static async generator method, detached + iterator
+- issue-1454 :: plain-array fast path; Map destructure; null/undefined throws; rest element
+- issue-2033 :: all eight custom-iterable spread / destructure rows
+- issue-6798 :: resolve-stage-catch; string-bool-union; yield-star-return
+- iterator-protocol-custom :: generator returned from [Symbol.iterator]() is itself
+- symbol-iterator-class :: bracket-access [Symbol.iterator]; object-literal computed key
+- symbol-toPrimitive :: comparison operators; arithmetic
+- yield-as-expression :: yield in template literal
+
+**2026-10-15 — after merging upstream/main (#6978 accelerators, #6983).**
+`node scripts/equivalence-gate.mjs` on merge `823403f532`: `56 failing, 1714
+passing, 22 known-failures in baseline` / `FLOOR: 1714 passing tests <
+committed passingFloor 1740 (26 fewer)` / `36 NEW equivalence regression(s)`.
+The 36 = the 41 above minus the five harness rows (ir-slice10-error a/b/c/e,
+binding-null-guard). Every one is owned by a fix PR that has not merged yet
+(the row → PR assignment is mine, by symptom; owners may re-home a row):
+
+| fix | PR | rows |
+| --- | --- | --- |
+| #6980 iterators/generators | 6678 | issue-1454 ×4, issue-2033 ×8, iterator-protocol-custom, symbol-iterator-class ×2, generator-return-method, issue-1388 |
+| #6981 IR path + compile failures | 6673 | ir-slice10-error (d), ir-slice10-map-set ×2, destructuring-require-object-coercible, gradual-typing ×2, yield-as-expression, issue-6798 resolve-stage-catch |
+| #6982 toPrimitive/indexOf/await/import.meta | 6676 | symbol-toPrimitive ×2, array-indexof-no-arg ×2, await-settled-operand-yields ×2, import-meta ×2, element-assignment-externref, issue-6798 string-bool-union |
+| #6984 yield* return value | 6683 | issue-6798 yield-star-return |
+
+**2026-10-16 — final state (S6-A done).** #6980, #6981, #6982, #6984 and
+#6986 are on main and merged into this branch (merge `1d20eeee45`; the
+runtime.ts conflict resolved like the S7-a branch: an Intl-accelerated import
+takes the #6986 marshal, every other import the #6708 platform marshal).
+`node scripts/equivalence-gate.mjs`: `equivalence-gate: 20 failing, 1787
+passing, 22 known-failures in baseline.` / `✓ No new equivalence regressions.`
+(passing 1787 ≥ floor 1740; the nine `issue-1197` rows stay pinned to
+host-assisted, #6979). `pnpm run check:host-import-policy`: default probes 33
+probes / 452 imports / 0 legacy / 0 unknown; host-assisted control 23 legacy;
+`runtimeTsLines` 20240 under main's ceiling 20243. Focused suites on the
+merged tree: 4396 18/18, 6686 5/5, 6978 9/9, 6986 17/17, playground 1/1,
+4401 7/7, 4397 29/30 (the known `assignmentRest` row, red on main too).
+Evidence item 3 (npm-compat parity, #6664) and item 4 (perf) remain open in
+#5385; the accelerators are #6978 (done).

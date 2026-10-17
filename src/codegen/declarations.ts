@@ -90,6 +90,7 @@ import { addFunctionOwnLocals } from "../ir/analysis/binding-info.js"; // (#2103
 import { dedupeDiagnosticsFrom, reportError } from "./context/errors.js";
 import type { CodegenContext, FunctionContext, OptionalParamInfo } from "./context/types.js";
 import { jsValueBoundary } from "./context/types.js";
+import { usesJsEnvironmentPlatformGlobal } from "./extern-declarations.js";
 import { compileFunctionBody, dumpFrameBreach, registerInlinableFunction } from "./audited-function-body.js";
 import { _hasRuntimeComputedKey, objectLiteralForcesHostPath } from "./literals.js"; // (#3024/#4638) module-global externref routing in lockstep with the literal's own host-path gate
 import { prepareIntlAcceleratorBoundary } from "./helpers/host-intl-locale.js"; // (#6986)
@@ -2651,6 +2652,11 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
   // restores #4931's unconditional module-Proxy widening for same-tree A/B.
   const proxyModuleEscapeGateEnabled = readEnv("JS2WASM_PROXY_MODULE_ESCAPE_GATE") !== "0";
   const runtimeModuleGroups = runtimeModuleDeclarationGroups(sourceFile);
+  // (#6708) A JS-environment regime module that binds a DOM platform global
+  // hands it Wasm-owned strings; export the bridge the runtime marshal reads.
+  if (isEntryFile && ctx.nativeStrings && jsValueBoundary(ctx) && usesJsEnvironmentPlatformGlobal(ctx)) {
+    ensureNativeStringBoundaryBridge(ctx);
+  }
 
   // First: collect enum declarations (so enum values are available)
   collectEnumDeclarations(ctx, sourceFile);

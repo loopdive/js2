@@ -10,6 +10,7 @@
 import { ts, forEachChild } from "../ts-api.js";
 import type { ValType } from "../ir/types.js";
 import type { CodegenContext, ExternClassInfo } from "./context/types.js";
+import { hostFreeEnvironment } from "./context/types.js";
 import {
   applyLibExternScanEffects,
   captureLibExternScanEffects,
@@ -1547,7 +1548,11 @@ export function collectDeclaredGlobals(
       // or the `ref.null.extern` graceful default. Host/gc mode is unchanged.
       const certifiedStandaloneDocument =
         ctx.standalone && ctx.requiresStandaloneDomCapability === true && name === "document";
-      if (ctx.strictNoHostImports || (ctx.standalone && !certifiedStandaloneDocument)) continue;
+      // (#6708) The regime in a JS environment keeps DOM globals: they are
+      // platform capabilities of the embedder, not ECMAScript semantics.
+      const jsEnvironmentPlatformGlobal = !hostFreeEnvironment(ctx) && DOM_ONLY_GLOBALS.has(name);
+      if (ctx.strictNoHostImports || (ctx.standalone && !certifiedStandaloneDocument && !jsEnvironmentPlatformGlobal))
+        continue;
       const importName = `global_${name}`;
       const typeIdx = addFuncType(ctx, [], [{ kind: "externref" }]);
       addImport(ctx, "env", importName, { kind: "func", typeIdx });
@@ -1698,6 +1703,13 @@ export function collectDeclaredGlobals(
       ctx.declaredGlobals.set(name, { type: { kind: "externref" }, funcIdx });
     }
   }
+}
+
+/** (#6708) Did a JS-environment regime module bind a DOM platform global? */
+export function usesJsEnvironmentPlatformGlobal(ctx: CodegenContext): boolean {
+  if (!ctx.standalone || hostFreeEnvironment(ctx)) return false;
+  for (const name of DOM_ONLY_GLOBALS) if (ctx.declaredGlobals.has(name)) return true;
+  return false;
 }
 
 /**

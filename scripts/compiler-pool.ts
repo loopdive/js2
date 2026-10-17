@@ -230,7 +230,7 @@ export class CompilerPool {
     target?: "gc" | "linear" | "wasi" | "standalone",
     // (#2119) false ⇒ keep mapped arguments for script tests; see runTest.
     inferModuleStrictArguments?: boolean,
-    semanticProviders?: "auto" | "native-first",
+    semanticProviders?: "auto" | "native-first" | "host-assisted",
   ): Promise<PoolResult> {
     return this.enqueue(
       {
@@ -269,7 +269,7 @@ export class CompilerPool {
       metaPath?: string;
       label?: string;
       target?: "gc" | "linear" | "wasi" | "standalone";
-      semanticProviders?: "auto" | "native-first";
+      semanticProviders?: "auto" | "native-first" | "host-assisted";
       // (#2119) false ⇒ do not infer module-strictness (→ keep mapped
       // arguments) despite the synthetic `export function test()` wrapper.
       inferModuleStrictArguments?: boolean;

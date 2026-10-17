@@ -637,12 +637,14 @@ export interface CompileOptions {
    * Semantic implementation policy, independent of the execution environment,
    * platform capabilities, and the JS value bridge (#4397).
    *
-   * `"auto"` (default) preserves the current target-specific providers.
-   * `"native-first"` selects each migrated Wasm-native provider family even
-   * when JavaScript instantiates the module. Today this includes the complete
-   * native-string family; additional families join this policy as they pass
-   * their differential gates. JS boundary wrappers remain enabled according
-   * to `hostBridge`, and explicit platform APIs remain available.
+   * `"native-first"` (default since #6708 S6, in every environment) lowers
+   * with the Wasm-native semantic core even when JavaScript instantiates the
+   * module; JS boundary wrappers remain enabled according to `hostBridge`,
+   * and explicit platform APIs remain available. `"host-assisted"` is the
+   * compatibility profile — byte-identical to the pre-S6 JS-host default —
+   * scheduled for removal in S7. `"auto"` is a deprecated alias of the
+   * default (warns once per process). Omitting the option while passing
+   * `nativeStrings: false` keeps the pre-S6 host-assisted profile (deprecated).
    */
   semanticProviders?: import("./target-profile.js").SemanticProviderSelection;
   /** (#6978) Families that use the JS host's provider under native-first (JS target only). */

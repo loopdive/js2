@@ -37,6 +37,7 @@ import { reportError } from "../context/errors.js";
 import { allocLocal, allocTempLocal, releaseTempLocal } from "../context/locals.js";
 import { rollbackSpeculative, snapshotSpeculative } from "../context/speculative.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
+import { hostFreeEnvironment } from "../context/types.js";
 import { isViewRefTestInstrs } from "../dataview-native.js";
 import { arrayBufferIsViewStaticDecision } from "./arraybuffer-isview-static-decision.js";
 import { ensureReflectIsConstructor } from "../reflect-construct-native.js";
@@ -4169,7 +4170,8 @@ export function compileNamespaceStaticCall(
       // only tests asserting a *real* current time (which standalone WasmGC
       // cannot provide) stay failing — and those need a clock source, not a
       // host import.
-      if (ctx.standalone === true) {
+      // (#6708) a JS environment owns a clock capability even under the regime
+      if (ctx.standalone === true && hostFreeEnvironment(ctx)) {
         emitStandaloneDateNowValue(ctx, fctx);
         return { kind: "f64" };
       }

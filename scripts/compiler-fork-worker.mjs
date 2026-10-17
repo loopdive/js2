@@ -1,4 +1,4 @@
-import { parseTest262SemanticProviders } from "./test262-lane.mjs";
+import { test262CompileSemanticProviders } from "./test262-lane.mjs";
 import { requireTest262CompilerPath } from "./test262-compiler-path.mjs";
 /**
  * Compiler fork worker — runs as a child process (not worker thread).
@@ -69,7 +69,7 @@ process.on("message", async (msg) => {
       // so the synthetic `export function test()` wrapper does not unmap sloppy
       // `arguments`. Undefined ⇒ default true (module input is strict).
       const inferModuleStrictArguments = msg.inferModuleStrictArguments;
-      const semanticProviders = parseTest262SemanticProviders(
+      const semanticProviders = test262CompileSemanticProviders(
         msg.semanticProviders ?? process.env.TEST262_SEMANTIC_PROVIDERS,
       );
       const result = incrementalCompiler

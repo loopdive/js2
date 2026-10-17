@@ -14,6 +14,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseTest262SemanticProviders, test262CompileSemanticProviders } from "./test262-lane.mjs";
 
 const SCRIPTS_DIR = dirname(fileURLToPath(import.meta.url));
 
@@ -69,8 +70,8 @@ export function test262HarnessProviderCacheDir({ root, env = process.env, script
  * policy: a native-first body is in the native regime and imports the #6723 D4
  * Error-family carrier cells, which only a regime provider exports, so a
  * host-assisted prefix linked to a regime body fails every row at instantiate.
- * `semanticProviders` is set only when it is not `auto`, so the host lane's
- * options (and therefore its provider key and bytes) are unchanged.
+ * `semanticProviders` is set only when it is not `auto`: the default lane
+ * (native-first since #6708) passes nothing, the control lane `host-assisted`.
  *
  * @param {string | undefined} target
  * @param {string} [semanticProviders]
@@ -82,7 +83,7 @@ export function harnessProviderCompileOptions(target, semanticProviders = "auto"
     emitWat: false,
     skipSemanticDiagnostics: true,
     ...(target ? { target } : {}),
-    ...(semanticProviders && semanticProviders !== "auto" ? { semanticProviders } : {}),
+    ...(test262CompileSemanticProviders(semanticProviders) ? { semanticProviders: "host-assisted" } : {}),
   };
 }
 
@@ -99,7 +100,10 @@ export function harnessProviderCompileOptions(target, semanticProviders = "auto"
  * @param {Record<string, string | undefined>} [env]
  */
 export function harnessProviderRegimeTag(semanticProviders = "auto", env = process.env) {
-  return semanticProviders === "native-first" && env.JS2WASM_NATIVE_REGIME_JS === "0" ? "native-first-regime-off" : "";
+  // (#6708) The default lane is native-first since S6, so the kill switch tags it.
+  return parseTest262SemanticProviders(semanticProviders) === "auto" && env.JS2WASM_NATIVE_REGIME_JS === "0"
+    ? "native-first-regime-off"
+    : "";
 }
 
 /**
@@ -125,7 +129,7 @@ export function test262HarnessProviderLaneCacheDir({ root, semanticProviders = "
  * @param {Record<string, string | undefined>} [env]
  */
 export function harnessProviderMemoKey(harnessPrefix, target, semanticProviders = "auto", env = process.env) {
-  const policy = semanticProviders ?? "auto";
+  const policy = parseTest262SemanticProviders(semanticProviders);
   return [target ?? "host", policy, harnessProviderRegimeTag(policy, env), harnessPrefix.length, harnessPrefix].join(
     "\u0000",
   );
