@@ -1,11 +1,10 @@
 {
   "id": "6995",
   "assignee": "ttraenkler/codex-pr6700-async-repair",
-  "requested_by": "git@thomas.traenkler.com",
-  "status": "released",
+  "requested_by": "ttraenkler/codex-pr6700-async-repair",
+  "status": "in-progress",
   "branch": "codex/6995-pr6700-async-boundary-repair",
-  "claimed_at": "2026-10-17T23:46:03Z",
-  "updated_at": "2026-10-17T23:57:15Z",
-  "write_id": "3547-7dpy37yt",
-  "released_at": "2026-10-17T23:57:15Z"
+  "claimed_at": "2026-10-17T23:57:35Z",
+  "updated_at": "2026-10-17T23:57:35Z",
+  "write_id": "3817-3a6z9rz1"
 }
