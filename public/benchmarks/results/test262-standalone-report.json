@@ -3,9 +3,9 @@
   "compilerPathVerified": false,
   "executionCompilerPath": "unknown",
   "configuredCompilerPath": "hybrid",
-  "timestamp": "2026-10-17T12:39:40.240Z",
-  "baseline_generated_at": "2026-10-17T12:39:40.240Z",
-  "baseline_sha": "690b6e869d36af5c5421aa9d4b710a1487728621",
+  "timestamp": "2026-10-17T14:28:49.755Z",
+  "baseline_generated_at": "2026-10-17T14:28:49.756Z",
+  "baseline_sha": "e383fca38f4bd001f505ea2dc4f99945bd0a7491",
   "oracle_version": 15,
   "mode": {
     "target": "standalone",
@@ -15,24 +15,24 @@
   },
   "summary": {
     "total": 48232,
-    "pass": 42098,
-    "fail": 4473,
-    "compile_error": 1580,
-    "compile_timeout": 63,
+    "pass": 42133,
+    "fail": 4475,
+    "compile_error": 1581,
+    "compile_timeout": 25,
     "skip": 18,
-    "compilable": 46571,
-    "host_free_pass": 42098,
+    "compilable": 46608,
+    "host_free_pass": 42133,
     "stale": 0,
     "by_category": {
       "standard": {
         "total": 47146,
-        "pass": 41055,
-        "fail": 4444,
-        "compile_error": 1566,
-        "compile_timeout": 63,
+        "pass": 41090,
+        "fail": 4446,
+        "compile_error": 1567,
+        "compile_timeout": 25,
         "skip": 18,
-        "compilable": 45499,
-        "host_free_pass": 41055,
+        "compilable": 45536,
+        "host_free_pass": 41090,
         "stale": 0,
         "label": "ECMAScript current standard"
       },
@@ -62,25 +62,25 @@
       },
       "official": {
         "total": 48232,
-        "pass": 42098,
-        "fail": 4473,
-        "compile_error": 1580,
-        "compile_timeout": 63,
+        "pass": 42133,
+        "fail": 4475,
+        "compile_error": 1581,
+        "compile_timeout": 25,
         "skip": 18,
-        "compilable": 46571,
-        "host_free_pass": 42098,
+        "compilable": 46608,
+        "host_free_pass": 42133,
         "stale": 0,
         "label": "standard + annex_b (default)"
       },
       "full": {
         "total": 48735,
-        "pass": 42334,
-        "fail": 4489,
-        "compile_error": 1735,
-        "compile_timeout": 63,
+        "pass": 42369,
+        "fail": 4491,
+        "compile_error": 1736,
+        "compile_timeout": 25,
         "skip": 114,
-        "compilable": 46823,
-        "host_free_pass": 42334,
+        "compilable": 46860,
+        "host_free_pass": 42369,
         "stale": 0,
         "label": "standard + annex_b + proposals"
       }
@@ -88,35 +88,35 @@
   },
   "official_summary": {
     "total": 48232,
-    "pass": 42098,
-    "fail": 4473,
-    "compile_error": 1580,
-    "compile_timeout": 63,
+    "pass": 42133,
+    "fail": 4475,
+    "compile_error": 1581,
+    "compile_timeout": 25,
     "skip": 18,
-    "compilable": 46571,
-    "host_free_pass": 42098,
+    "compilable": 46608,
+    "host_free_pass": 42133,
     "stale": 0
   },
   "full_summary": {
     "total": 48735,
-    "pass": 42334,
-    "fail": 4489,
-    "compile_error": 1735,
-    "compile_timeout": 63,
+    "pass": 42369,
+    "fail": 4491,
+    "compile_error": 1736,
+    "compile_timeout": 25,
     "skip": 114,
-    "compilable": 46823,
-    "host_free_pass": 42334,
+    "compilable": 46860,
+    "host_free_pass": 42369,
     "stale": 0
   },
   "strict_summary": {
     "total": 45721,
-    "pass": 39729,
-    "fail": 4380,
-    "compile_error": 1531,
-    "compile_timeout": 63,
+    "pass": 39764,
+    "fail": 4382,
+    "compile_error": 1532,
+    "compile_timeout": 25,
     "skip": 18,
-    "compilable": 44109,
-    "host_free_pass": 39729,
+    "compilable": 44146,
+    "host_free_pass": 39764,
     "stale": 0
   },
   "scope_summaries": {
@@ -144,13 +144,13 @@
     },
     "standard": {
       "total": 47146,
-      "pass": 41055,
-      "fail": 4444,
-      "compile_error": 1566,
-      "compile_timeout": 63,
+      "pass": 41090,
+      "fail": 4446,
+      "compile_error": 1567,
+      "compile_timeout": 25,
       "skip": 18,
-      "compilable": 45499,
-      "host_free_pass": 41055,
+      "compilable": 45536,
+      "host_free_pass": 41090,
       "stale": 0
     }
   },
@@ -204,8 +204,8 @@
       "path": "built-ins/Array",
       "pass": 2457,
       "fail": 533,
-      "compile_error": 89,
-      "compile_timeout": 3,
+      "compile_error": 90,
+      "compile_timeout": 2,
       "skip": 0,
       "total": 3082,
       "host_free_pass": 2457
@@ -785,13 +785,13 @@
     {
       "name": "built-ins/Temporal",
       "path": "built-ins/Temporal",
-      "pass": 4444,
-      "fail": 99,
+      "pass": 4479,
+      "fail": 101,
       "compile_error": 0,
-      "compile_timeout": 60,
+      "compile_timeout": 23,
       "skip": 0,
       "total": 4603,
-      "host_free_pass": 4444
+      "host_free_pass": 4479
     },
     {
       "name": "built-ins/ThrowTypeError",
@@ -1202,16 +1202,16 @@
     }
   ],
   "error_categories": {
-    "assertion_fail": 2613,
+    "assertion_fail": 2614,
     "host_import_leak": 979,
     "illegal_cast": 212,
     "missing_builtin": 48,
     "negative_test_fail": 4,
     "null_deref": 7,
     "oob": 7,
-    "other": 1193,
+    "other": 1194,
     "promise_error": 51,
-    "range_error": 29,
+    "range_error": 30,
     "runtime_error": 353,
     "syntax_error": 14,
     "type_error": 621,
@@ -1225,8 +1225,8 @@
   },
   "root_cause_map": {
     "target": "standalone",
-    "total_non_pass_non_skip": 6287,
-    "classified": 6287,
+    "total_non_pass_non_skip": 6252,
+    "classified": 6252,
     "unclassified_threshold": 0,
     "has_edition_breakdown": true,
     "buckets": [
@@ -1276,32 +1276,32 @@
           "#661"
         ],
         "label": "Temporal proposal/polyfill gap",
-        "count": 159,
+        "count": 124,
         "statuses": {
           "pass": 0,
-          "fail": 99,
+          "fail": 101,
           "compile_error": 0,
-          "compile_timeout": 60,
+          "compile_timeout": 23,
           "skip": 0,
-          "total": 159,
+          "total": 124,
           "host_free_pass": 0
         },
         "error_categories": {
-          "assertion_fail": 67,
-          "range_error": 16,
+          "assertion_fail": 68,
+          "range_error": 17,
           "unreachable": 5,
           "type_error": 10,
           "illegal_cast": 1
         },
         "by_edition": {
-          "ES2026": 159
+          "ES2026": 124
         },
         "sample_files": [
           "test/built-ins/Temporal/Duration/prototype/round/roundingincrement-days-large.js",
           "test/built-ins/Temporal/PlainMonthDay/from/argument-string-calendar-case-insensitive.js",
+          "test/built-ins/Temporal/ZonedDateTime/prototype/since/roundingmode-expand.js",
           "test/built-ins/Temporal/Duration/prototype/round/valid-increments.js",
-          "test/built-ins/Temporal/Duration/prototype/subtract/precision-no-floating-point-loss.js",
-          "test/built-ins/Temporal/PlainDate/prototype/toLocaleString/return-string.js"
+          "test/built-ins/Temporal/Duration/prototype/subtract/precision-no-floating-point-loss.js"
         ],
         "sample_signatures": [
           "assertion_fail:Test262Error: round to 1e8-# days with plain relativeTo: days result: Expected SameValue(«#», «#») to be true",
@@ -1386,15 +1386,15 @@
           "test/language/expressions/dynamic-import/namespace/promise-then-ns-has-property-str-found-init.js",
           "test/language/expressions/dynamic-import/import-attributes/2nd-param-yield-expr.js",
           "test/language/module-code/top-level-await/dynamic-import-resolution.js",
-          "test/language/expressions/dynamic-import/catch/nested-arrow-import-catch-specifier-tostring-abrupt-rejects.js",
-          "test/language/expressions/dynamic-import/import-attributes/2nd-param-with-undefined.js"
+          "test/language/expressions/dynamic-import/import-attributes/2nd-param-with-undefined.js",
+          "test/language/expressions/dynamic-import/catch/nested-arrow-import-catch-specifier-tostring-abrupt-rejects.js"
         ],
         "sample_signatures": [
           "runtime_error:Test262:AsyncTestFailure:Test262Error: TypeError: import() failed: Cannot find module './module-code_FIXTURE.js' in the standalone module graph",
           "host_import_leak:standalone target emitted host imports: env::__create_generator, env::__gen_create_buffer, env::__gen_next, env::__gen_push_ref, env::__gen_result_done, env::__gen_result_value, env::__gen_return, env::__gen_throw (##)",
           "runtime_error:Test262:AsyncTestFailure:Test262Error: TypeError: import() failed: Cannot find module './module-import-resolution_FIXTURE.js' in the standalone module graph",
-          "runtime_error:Test262:AsyncTestFailure:Test262Error: Test262Error: Expected SameValue(«TypeError: import() failed: a non-literal specifier cannot be resolved in the standalone module graph», «\"custom error\"») to be true",
-          "other:Test262:AsyncTestFailure:Test262Error: TypeError: import() failed: import options are not supported by the standalone module graph"
+          "other:Test262:AsyncTestFailure:Test262Error: TypeError: import() failed: import options are not supported by the standalone module graph",
+          "runtime_error:Test262:AsyncTestFailure:Test262Error: Test262Error: Expected SameValue(«TypeError: import() failed: a non-literal specifier cannot be resolved in the standalone module graph», «\"custom error\"») to be true"
         ]
       },
       {
@@ -1965,8 +1965,8 @@
         "statuses": {
           "pass": 0,
           "fail": 1091,
-          "compile_error": 190,
-          "compile_timeout": 3,
+          "compile_error": 191,
+          "compile_timeout": 2,
           "skip": 0,
           "total": 1284,
           "host_free_pass": 0
@@ -1976,7 +1976,7 @@
           "illegal_cast": 171,
           "host_import_leak": 179,
           "type_error": 85,
-          "other": 14,
+          "other": 15,
           "oob": 5,
           "null_deref": 2,
           "range_error": 2,
@@ -1998,8 +1998,8 @@
           "ES5": 1
         },
         "sample_files": [
-          "test/built-ins/TypedArray/prototype/forEach/BigInt/return-abrupt-from-this-out-of-bounds.js",
           "test/built-ins/TypedArray/prototype/findIndex/BigInt/return-abrupt-from-this-out-of-bounds.js",
+          "test/built-ins/TypedArray/prototype/forEach/BigInt/return-abrupt-from-this-out-of-bounds.js",
           "test/built-ins/TypedArray/prototype/findLastIndex/BigInt/get-length-ignores-length-prop.js",
           "test/built-ins/TypedArray/prototype/includes/detached-buffer-during-fromIndex-returns-true-for-undefined.js",
           "test/built-ins/TypedArray/prototype/lastIndexOf/resizable-buffer-special-float-values.js"
