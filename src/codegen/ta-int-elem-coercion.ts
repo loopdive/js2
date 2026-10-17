@@ -35,6 +35,9 @@ import { getVecInfo } from "./type-coercion.js";
 import { typedArraySearchSignedness } from "./array-methods.js";
 import { collectInstrs } from "./statements/shared.js";
 
+/** The three element-load ops a (possibly packed) vec read can take. */
+type ElemGetOp = ReturnType<typeof elemGetOp>;
+
 /**
  * Convert the value on the operand stack (of stack type `from`) to the i32 that
  * an integer TypedArray's packed / `i32_elem` `array.set` stores for `taName`.
@@ -115,7 +118,7 @@ export function tryEmitPackedTaOfWithSpread(
   const snap = snapshotSpeculative(ctx, fctx);
   type Part =
     | { kind: "elem"; local: number }
-    | { kind: "spread"; local: number; vecIdx: number; srcArrIdx: number; getOp: Instr["op"]; conv: Instr[] };
+    | { kind: "spread"; local: number; vecIdx: number; srcArrIdx: number; getOp: ElemGetOp; conv: Instr[] };
   const parts: Part[] = [];
   const decline = (): null => {
     rollbackSpeculative(ctx, fctx, snap);
@@ -222,7 +225,7 @@ export function tryEmitPackedTaOfWithSpread(
 }
 
 /** Read op for a (possibly packed) spread operand's source vec, keyed on the operand's view. */
-export function taSpreadGetOp(ctx: CodegenContext, elemType: ValType, el: ts.Expression): Instr["op"] {
+export function taSpreadGetOp(ctx: CodegenContext, elemType: ValType, el: ts.Expression): ElemGetOp {
   if (elemType.kind !== "i8" && elemType.kind !== "i16") return "array.get";
   return elemGetOp(elemType, typedArraySearchSignedness(ctx, ts.isSpreadElement(el) ? el.expression : el));
 }
@@ -232,6 +235,6 @@ export function taSpreadGetOp(ctx: CodegenContext, elemType: ValType, el: ts.Exp
  * `Uint*` → `get_u` (signed and unsigned views share i8/i16 storage). Without a
  * view name it keeps the storage-kind default (i8 → `get_u`, i16 → `get_s`).
  */
-export function taSourceGetOp(elemType: ValType, viewName: string | undefined): Instr["op"] {
+export function taSourceGetOp(elemType: ValType, viewName: string | undefined): ElemGetOp {
   return elemGetOp(elemType, viewName ? typedArrayPackedSignedness(viewName) : undefined);
 }
