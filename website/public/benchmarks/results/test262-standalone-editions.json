@@ -1924,8 +1924,8 @@
   {
     "edition": "ES2021",
     "pass": 336,
-    "fail": 86,
-    "ce": 50,
+    "fail": 83,
+    "ce": 53,
     "skip": 0,
     "total": 472,
     "pct": 71,
@@ -1942,8 +1942,8 @@
       {
         "name": "Promise.any",
         "pass": 49,
-        "fail": 25,
-        "ce": 18,
+        "fail": 22,
+        "ce": 21,
         "skip": 0,
         "total": 92,
         "pct": 53
@@ -1978,8 +1978,8 @@
       {
         "name": "arrow-function",
         "pass": 17,
-        "fail": 15,
-        "ce": 8,
+        "fail": 12,
+        "ce": 11,
         "skip": 0,
         "total": 40,
         "pct": 43
@@ -1996,8 +1996,8 @@
       {
         "name": "Symbol",
         "pass": 13,
-        "fail": 21,
-        "ce": 5,
+        "fail": 18,
+        "ce": 8,
         "skip": 0,
         "total": 39,
         "pct": 33
@@ -2023,8 +2023,8 @@
       {
         "name": "Symbol.iterator",
         "pass": 10,
-        "fail": 19,
-        "ce": 1,
+        "fail": 16,
+        "ce": 4,
         "skip": 0,
         "total": 30,
         "pct": 33
@@ -2032,8 +2032,8 @@
       {
         "name": "computed-property-names",
         "pass": 22,
-        "fail": 5,
-        "ce": 0,
+        "fail": 2,
+        "ce": 3,
         "skip": 0,
         "total": 27,
         "pct": 81
@@ -3571,18 +3571,18 @@
   },
   {
     "edition": "ES2026",
-    "pass": 4594,
+    "pass": 4585,
     "fail": 193,
-    "ce": 134,
+    "ce": 143,
     "skip": 0,
     "total": 4921,
     "pct": 93,
     "features": [
       {
         "name": "Temporal",
-        "pass": 4491,
+        "pass": 4482,
         "fail": 106,
-        "ce": 14,
+        "ce": 23,
         "skip": 0,
         "total": 4611,
         "pct": 97
