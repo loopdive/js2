@@ -47,7 +47,8 @@ import {
   undefinedExternInstrs,
 } from "./any-helpers.js";
 import { collectClosureBaseWrapperTypeIdxs } from "./closure-classifier.js"; // (#3125) IsCallable arms
-import type { CodegenContext, OptionalParamInfo } from "./context/types.js";
+import type { CodegenContext, OptionalParamInfo, RestParamInfo } from "./context/types.js";
+import { restDispatchInfo, restVecArgInstrs } from "./object-model/closed-dispatch-rest-arm.js"; // (#7021)
 import { classMemberFuncKey } from "./class-member-keys.js";
 import {
   DYN_ARRAY_PRODUCER_METHODS,
@@ -602,6 +603,8 @@ type MethodEntry = {
   hostDynamic: boolean;
   /** (#6693) Standalone stand-ins for omitted formals, by param index. */
   absentPads: Map<number, Instr[]> | null;
+  /** (#7021) Rest ABI the fixed-arity arm packs extra arguments into. */
+  restAbi?: RestParamInfo;
 };
 
 /**
@@ -657,17 +660,21 @@ function collectMethodEntries(ctx: CodegenContext, methodName: string, exactArit
       return type?.kind === "f64"; // the one lane with an absence sentinel
     };
     let absentPads: Map<number, Instr[]> | null = null;
+    // (#7021) With a rest formal only the formals before it are positional; `buildEntryArm` packs the rest.
+    const rest = exactArity !== null ? restDispatchInfo(ctx, fullName, paramTypes) : null;
+    const positional = rest ? paramTypes.slice(0, rest.restIndex) : paramTypes;
     if (exactArity !== null) {
       const covered =
-        paramTypes.length >= exactArity &&
-        (hostDynamic || paramTypes.slice(exactArity).every((type, i) => canSynthesizeOmitted(exactArity + i, type)));
+        (rest !== null || paramTypes.length >= exactArity) &&
+        (hostDynamic || positional.slice(exactArity).every((type, i) => canSynthesizeOmitted(exactArity + i, type)));
       // (#6693) Standalone JS call arity: pad omitted formals, drop extras.
-      if (!covered) absentPads = standaloneDispatchArityPads(ctx, fullName, paramTypes, optionalParams, exactArity);
+      if (!covered) absentPads = standaloneDispatchArityPads(ctx, fullName, positional, optionalParams, exactArity);
       if (!covered && !absentPads) continue;
     }
     if (funcType.params.length < 1) continue;
     const resultType: ValType = funcType.results.length > 0 ? funcType.results[0]! : { kind: "externref" };
     entries.push({ structName, typeIdx, funcIdx, paramTypes, resultType, optionalParams, hostDynamic, absentPads });
+    if (rest) entries[entries.length - 1]!.restAbi = rest; // (#7021)
   }
   return entries;
 }
@@ -737,6 +744,11 @@ function buildEntryArm(
   ];
   for (let a = 0; a < entry.paramTypes.length; a++) {
     const want = entry.paramTypes[a] ?? { kind: "externref" };
+    if (entry.restAbi?.restIndex === a && providedArity !== null) {
+      const coerce = (elem: ValType) => externArgCoercionInstrs(ci, elem, false, allowObjectCoercion);
+      arm.push(...restVecArgInstrs(entry.restAbi, providedArity, pushArg, coerce));
+      continue;
+    }
     const missing = providedArity !== null && a >= providedArity;
     if (missing) {
       const opt = entry.optionalParams.find((candidate) => candidate.index === a);

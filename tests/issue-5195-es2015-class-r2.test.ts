@@ -37,9 +37,13 @@ const STEP_9K_ROWS = [
  * loudly — and this table shrinks — when that lane closes it.
  */
 const STANDALONE_LEAK_OWNED_ELSEWHERE: Readonly<Record<string, RegExp>> = {
-  // generator method body → native generator carrier (#680 / #2864)
-  "language/computed-property-names/class/method/constructor-can-be-generator.js":
-    /standalone target emitted host imports: env::__create_generator/,
+  // (#7014) Empty by design now. `constructor-can-be-generator.js` used to be
+  // pinned here as `compile_error` (`env::__create_generator` host-import leak,
+  // owned by the native generator carrier #680 / #2864). That lane closed it:
+  // the row compiles host-free and PASSES in standalone on upstream main
+  // 0727e2985b (issue-tests run 38851065732 reported `expected 'pass' to be
+  // 'compile_error'`), so per this table's contract the row moved to the
+  // ordinary "passes in host and standalone" pin.
 };
 
 async function runStandalone(source: string, exportName: string, fileName: string): Promise<unknown> {
