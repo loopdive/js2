@@ -509,8 +509,12 @@ function moduleImportMetadata(moduleImports) {
 
 function firstCompileDiagnostic(result) {
   const errors = result?.errors ?? [];
+  const reportable = (entry) => typeof entry?.message === "string" && !isJsGrammarNoiseDiagnostic(entry.message);
+  // (#6843) A failed compile failed on an error; a warning recorded earlier
+  // (a host-import leak, a #6843 package-declaration note) must not stand in for it.
   const error =
-    errors.find((entry) => typeof entry?.message === "string" && !isJsGrammarNoiseDiagnostic(entry.message)) ??
+    errors.find((entry) => entry?.severity === "error" && reportable(entry)) ??
+    errors.find(reportable) ??
     errors[0] ??
     result?.diagnostics?.[0];
   const value = error?.messageText ?? error?.message ?? error;
