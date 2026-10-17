@@ -20,6 +20,7 @@ import { buildIrUnitInventory, type IrUnitId } from "../src/ir/identity.js";
 import { buildIrPlanningIdentityContext, type IrPlanningIdentityContext } from "../src/ir/planning-identity.js";
 import { buildIrUnitTypeMap } from "../src/ir/propagate.js";
 import { ts } from "../src/ts-api.js";
+import { resetDerivationFlagCache } from "../src/derivation-flags.js";
 
 function fixture(source: string): {
   checker: ts.TypeChecker;
@@ -80,8 +81,11 @@ const TWO_HOP = `
 `;
 
 const saved = process.env.JS2WASM_FNCTOR_CTOR_PARAM_TYPES;
+// (#4415, 0be07b6077) Flag reads are memoised per compile; these tests call the
+// propagation pass directly (no compile resets the memo), so reset it here.
 beforeEach(() => {
   process.env.JS2WASM_FNCTOR_CTOR_PARAM_TYPES = "1";
+  resetDerivationFlagCache();
 });
 afterEach(() => {
   // biome-ignore lint/performance/noDelete: only `delete` truly unsets an env var
@@ -120,6 +124,7 @@ describe("#743 — new-expression sites in the propagation fixpoint", () => {
     // (#743 defaults flip, 2026-08-08) OFF is a SPELLING now — unset is ON, so
     // deleting the variable here would silently test the flag-ON path.
     process.env.JS2WASM_FNCTOR_CTOR_PARAM_TYPES = "0";
+    resetDerivationFlagCache();
     const { checker, file, context } = fixture(TWO_HOP);
     const map = buildIrUnitTypeMap([file], checker, context);
     // mk still narrows (plain call). P must NOT — its only inflow is `new`.
