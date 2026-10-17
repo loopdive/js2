@@ -26,7 +26,8 @@ async function compileAndCall<T>(src: string, fnName = "test"): Promise<T> {
   }
   const env = buildImports(r.imports, undefined, r.stringPool);
   const { instance } = await WebAssembly.instantiate(r.binary, env);
-  if (env.setExports) env.setExports(instance.exports as Record<string, Function>);
+  // (#7014) setInstance: raw setExports(instance.exports) lost data-struct authority in 708ebbd56d (#5337).
+  if (env.setInstance) env.setInstance(instance);
   const fn = (instance.exports as Record<string, () => T>)[fnName]!;
   return fn();
 }

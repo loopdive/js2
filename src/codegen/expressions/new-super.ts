@@ -7915,7 +7915,15 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
     // ONE terminal `flushLateImportShifts` (after the call) — never mid-emission
     // (the PR #608/#794 index-corruption hazard). JS-host only; standalone keeps
     // the existing path (a Wasm-native dynamic Construct is a separate effort).
-    if (ts.isIdentifier(s1Callee) && !noJsHost(ctx) && resolvesToConstructableFunctionValue(ctx, s1Callee)) {
+    // (#7014) The argv loop pushes each argument whole, so `new K(...[4, 5])` passed
+    // one array argument; spread calls stay on the #2026 path, which flattens them.
+    const noSpreadArg = !args.some(ts.isSpreadElement);
+    if (
+      ts.isIdentifier(s1Callee) &&
+      !noJsHost(ctx) &&
+      noSpreadArg &&
+      resolvesToConstructableFunctionValue(ctx, s1Callee)
+    ) {
       // Evaluate the callee value to externref.
       const calleeTy = compileExpression(ctx, fctx, s1Callee, { kind: "externref" });
       if (calleeTy && calleeTy.kind !== "externref") {
