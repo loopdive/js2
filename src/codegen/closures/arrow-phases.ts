@@ -756,16 +756,16 @@ export function planClosureCaptures(
         const outerBody = ts.isSourceFile(enclosing) ? enclosing : (enclosing as any).body;
         if (outerBody) {
           // Writes in the outer body, excluding the closure body itself.
-          const writesCapturedBinding = capturedBindingWriteTest(
-            ctx,
-            name,
-            referencedBindingDeclaration(ctx, arrow, name, true),
-          );
+          // (#6992) The index holds every write form (`isLexicalBindingWrite`
+          // plus `var` re-declarations); the captured binding's own declarator
+          // is not a write.
+          const capturedDeclaration = referencedBindingDeclaration(ctx, arrow, name, true);
+          const writesCapturedBinding = capturedBindingWriteTest(ctx, name, capturedDeclaration);
           const outsideArrow = (id: ts.Identifier): boolean => !isWithinNode(id, arrow);
           if (
             writeTargetsByName(outerBody)
               .get(name)
-              ?.some((id) => outsideArrow(id) && writesCapturedBinding(id))
+              ?.some((id) => id.parent !== capturedDeclaration && outsideArrow(id) && writesCapturedBinding(id))
           ) {
             writtenInOuter.add(name);
           }
