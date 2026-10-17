@@ -5669,6 +5669,9 @@ export function compileArrayLiteral(
       // element is a single-code-point string. Must match the element type
       // `__str_to_char_vec` produces (same key as `__str_split`'s string[]).
       elemWasm = { kind: "ref_null", typeIdx: ctx.anyStrTypeIdx };
+    } else if ((ctx.standalone || ctx.wasi) && /^(?:Readonly)?Map$/.test(spreadType.symbol?.name ?? "")) {
+      // (#7057) A Map yields `[key, value]` ENTRIES, not its first type argument.
+      elemWasm = { kind: "externref" };
     } else {
       const typeArgs = ctx.checker.getTypeArguments(spreadType as ts.TypeReference);
       const innerType = typeArgs[0];
