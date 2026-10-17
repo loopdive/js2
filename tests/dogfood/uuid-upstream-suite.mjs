@@ -19,6 +19,13 @@ import { wrapExports } from "../../src/runtime.ts";
 import { setupNpmCompatCatalogPackage } from "./npm-compat-catalog.mjs";
 import { setupUuidUpstreamSuite } from "./setup-uuid-upstream-suite.mjs";
 import { createHarnessLogger, withHostConsole } from "./upstream-suite-runner.mjs";
+import {
+  STANDALONE_COMPILE_OVERRIDES,
+  StandaloneHostImportError,
+  isStandaloneUpstreamLane,
+  runStandaloneUpstreamTestsIsolated,
+  standaloneHarnessExports,
+} from "./upstream-standalone-lane.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPORT_PATH = join(HERE, "report", "uuid-upstream-suite.json");
@@ -267,8 +274,53 @@ function wasmModuleSource(source, filePath, packageRoot, generatedDirectory) {
 export function uuidCount(): number { return __uuidTests.length; }
 export function uuidErrors(): string[] { return __uuidErrors; }
 `,
+    ...(isStandaloneUpstreamLane() ? [UUID_STANDALONE_EXPORTS] : []),
   ].join("\n");
 }
+
+// (#7013) Standalone lane: the host mock context cannot cross a zero-import
+// module, so the identical node:test `t.mock` surface (see makeMockContext)
+// is compiled into the module and each test gets a fresh one, as natively.
+const UUID_STANDALONE_EXPORTS = `
+let __uuidStandaloneError = "";
+function __uuidStandaloneMockContext(): any {
+  const restores: any[] = [];
+  return {
+    mock: {
+      method(target: any, name: any, replacement: any) {
+        const original = target[name];
+        let calls = 0;
+        target[name] = function (...args: any[]) {
+          calls++;
+          return replacement.apply(this, args);
+        };
+        restores.push(() => {
+          target[name] = original;
+        });
+        return { mock: { callCount: () => calls } };
+      },
+      reset() {
+        while (restores.length > 0) restores.pop()();
+      },
+    },
+  };
+}
+function __uuidStandaloneRunOne(index: number): number {
+  __uuidStandaloneError = "";
+  try {
+    __uuidTests[index].body(__uuidStandaloneMockContext());
+    return 1;
+  } catch (error) {
+    __uuidStandaloneError = error && error.message !== undefined ? String(error.message) : String(error);
+    return 0;
+  }
+}
+${standaloneHarnessExports({
+  count: "__uuidTests.length",
+  run: "__uuidStandaloneRunOne(index)",
+  name: "__uuidTests[index].name",
+  error: "__uuidStandaloneError",
+})}`;
 
 function transpileNative(source) {
   return ts.transpileModule(source, {
@@ -371,6 +423,7 @@ async function runWasmFile({ source, filePath, packageRoot, generatedDirectory, 
       target: "gc",
       platform: "node",
       deferTopLevelInit: true,
+      ...(isStandaloneUpstreamLane() ? STANDALONE_COMPILE_OVERRIDES : {}),
     });
   } catch (error) {
     result = { success: false, errors: [{ message: recordNativeError(error) }] };
@@ -420,15 +473,19 @@ async function runWasmFile({ source, filePath, packageRoot, generatedDirectory, 
   let wasmResults;
   let wasmErrors;
   try {
-    const imports = result.importObject ?? {};
-    const { instance } = await WebAssembly.instantiate(result.binary, imports);
-    imports.setInstance?.(instance);
-    imports.__setInstance?.(instance);
-    instance.exports.__module_init?.();
-    const exports = wrapExports(instance, { signatures: result.exportSignatures });
-    const statuses = exports.uuidRun(makeMockContext());
-    wasmResults = Array.from(statuses, (value) => value === 1);
-    wasmErrors = Array.from(exports.uuidErrors(), String);
+    if (isStandaloneUpstreamLane()) {
+      ({ statuses: wasmResults, errors: wasmErrors } = await runUuidStandalone(result));
+    } else {
+      const imports = result.importObject ?? {};
+      const { instance } = await WebAssembly.instantiate(result.binary, imports);
+      imports.setInstance?.(instance);
+      imports.__setInstance?.(instance);
+      instance.exports.__module_init?.();
+      const exports = wrapExports(instance, { signatures: result.exportSignatures });
+      const statuses = exports.uuidRun(makeMockContext());
+      wasmResults = Array.from(statuses, (value) => value === 1);
+      wasmErrors = Array.from(exports.uuidErrors(), String);
+    }
   } catch (error) {
     const message = recordNativeError(error);
     return {
@@ -469,9 +526,22 @@ async function runWasmFile({ source, filePath, packageRoot, generatedDirectory, 
   };
 }
 
+/** (#7013) Zero-import instantiation + the numeric boundary; throws on a retained host import. */
+async function runUuidStandalone(result) {
+  try {
+    return await runStandaloneUpstreamTestsIsolated(result);
+  } catch (error) {
+    if (error instanceof StandaloneHostImportError) throw new Error(`host-import: ${error.message}`);
+    throw error;
+  }
+}
+
 function finalize(report, log) {
-  mkdirSync(dirname(REPORT_PATH), { recursive: true });
-  writeFileSync(REPORT_PATH, `${JSON.stringify(report, null, 2)}\n`);
+  // (#7013) The standalone lane writes beside, never over, the JS-host report.
+  const reportPath = isStandaloneUpstreamLane() ? REPORT_PATH.replace(/\.json$/, ".standalone.json") : REPORT_PATH;
+  if (isStandaloneUpstreamLane()) report.target = "standalone";
+  mkdirSync(dirname(reportPath), { recursive: true });
+  writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`);
   // The headline used to exist only inside the JSON. A suite that prints
   // per-file lines but no total invites readers to add the lines up by hand,
   // which is how a partial run gets reported as a score (see #5326).
@@ -484,7 +554,7 @@ function finalize(report, log) {
           .map((entry) => `${entry.file} (${entry.reason})`)
           .join("; ")}`,
   );
-  log(`[dogfood] full report → ${REPORT_PATH}`);
+  log(`[dogfood] full report → ${reportPath}`);
   return report;
 }
 
@@ -576,7 +646,7 @@ export async function runHarness({ quiet = false } = {}) {
   }
 
   report.summary = {
-    headline: `${report.results.passed}/${report.results.scored} admitted upstream tests passed in Wasm (${report.results.harnessIncompatible} native-incompatible; ${report.extraction.upstreamTestsSeen} total)`,
+    headline: `${report.results.passed}/${report.results.scored} admitted upstream tests passed in ${isStandaloneUpstreamLane() ? "standalone " : ""}Wasm (${report.results.harnessIncompatible} native-incompatible; ${report.extraction.upstreamTestsSeen} total)`,
     exactDenominator: report.results.scored,
     selectedFilesRun: testPaths.length,
     filesWithoutResult: filesWithoutResult.length,
