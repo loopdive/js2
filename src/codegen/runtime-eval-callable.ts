@@ -33,6 +33,7 @@ import { FNINST_BAG_OWNS } from "./function-instance-props.js";
 import { carrierFnMetaEnabled, fillRuntimeEvalCarrierFnMeta } from "./runtime-eval-carrier-fn-meta.js";
 import {
   buildRuntimeEvalCallResultWrap,
+  fillRuntimeEvalLiveCallTrampolines,
   ensureRuntimeEvalCallResultUnwrapHelper,
   ensureRuntimeEvalInterpretedCallbackType,
   ensureRuntimeEvalProviderActiveGlobal,
@@ -944,6 +945,7 @@ export function emitRuntimeEvalAotCallableAdapter(ctx: CodegenContext, fctx: Fun
  * module's nominal struct table.
  */
 export function fillRuntimeEvalCallablePropertyGetArm(ctx: CodegenContext): void {
+  fillRuntimeEvalLiveCallTrampolines(ctx); // (#6990) same finalize point, before any early return
   if (!ctx.standalone && !ctx.wasi) return;
   const carrier = ctx.runtimeEvalAotCallableCarrier;
   if (carrier === undefined) return;
