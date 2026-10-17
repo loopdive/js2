@@ -9,7 +9,7 @@
  * boxed externref carrier.
  */
 import { ts, forEachChild } from "../../ts-api.js";
-import type { JsTag } from "../../checker/oracle.js";
+import { jsTagOfFact, type JsTag } from "../../checker/oracle.js";
 import type { WidenedCarrierOracle } from "../../checker/usage-inference.js";
 import type { ValType } from "../../ir/types.js";
 import { annexBExistingVarUpdateNames } from "../annexb-cancel.js";
@@ -249,6 +249,22 @@ function crossesUntypedObjectReturns(ctx: CodegenContext, initializer: ts.Expres
 }
 
 /**
+ * (#7032) `T | null` with a single object-domain `T` is the object domain:
+ * `typeof null` is "object" and a nullable struct ref represents `null` as
+ * `ref.null`. The oracle answers "mixed" for every union, so without this the
+ * linked-list walk `let cur: Node | null = head; cur = cur.next;` was demoted
+ * to the boxed externref carrier (34c865498a, #3961) and every hop went through
+ * the dynamic host bridge. Deliberately narrow: exactly one non-null part, no
+ * `undefined` (a ref slot cannot hold it), object domain only.
+ */
+function nullableSingleObjectAssignment(ctx: CodegenContext, value: ts.Expression): boolean {
+  const fact = ctx.oracle.typeFactOf(value);
+  return (
+    fact.kind === "union" && !fact.undefinable && fact.parts.length === 1 && jsTagOfFact(fact.parts[0]!) === "object"
+  );
+}
+
+/**
  * Decide whether the initialized binding must use a carrier that can represent
  * assignments from more than one JavaScript domain. The scope index preserves
  * exact declaration identity; only oracle-unresolved targets inside a `with`
@@ -310,7 +326,11 @@ export function bindingHasMixedAssignmentCarrier(ctx: CodegenContext, decl: ts.V
         ? resolvedFacts[resolvedIndex++]!
         : unresolvedWithFacts[unresolvedIndex++]!;
     if (fact.target === decl.name) continue;
-    const assignedTag = ctx.oracle.staticJsTypeOf(fact.value);
+    const rawTag = ctx.oracle.staticJsTypeOf(fact.value);
+    const assignedTag =
+      rawTag === "mixed" && initialDomain === "object" && nullableSingleObjectAssignment(ctx, fact.value)
+        ? "object"
+        : rawTag;
     const unresolvable = assignedTag === "mixed";
     if (unresolvable ? !provenNumeric : carrierDomain(assignedTag) !== initialDomain) {
       mixed = true;

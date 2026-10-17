@@ -4,6 +4,10 @@ import { instantiateTest262Module } from "../scripts/test262-import-object.mjs";
 import { createCrossModuleStructOwners } from "../src/runtime/cross-module-struct-owners.js";
 
 const empty = new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0]);
+// (fec95636bd, #6723) The seam now reads each linked provider artifact's import
+// list (`new WebAssembly.Module(artifact.binary)`) to decide whether it needs
+// the runtime-eval namespace, so a fake provider must carry a real binary.
+const provider = { binary: empty };
 
 it("does not load the source runtime for a never-linked invocation", async () => {
   const load = vi.fn(() => {
@@ -33,7 +37,7 @@ for (const target of ["gc", "standalone"]) {
       instantiateLinkedProviders: () => registry.registerModule(stale),
       wireCompiledInstance: () => registry.registerModule({}),
     };
-    await instantiateTest262Module(empty, {}, { linkedModules: [{}], linkedRuntime: runtime });
+    await instantiateTest262Module(empty, {}, { linkedModules: [provider], linkedRuntime: runtime });
     expect(registry.decoderFor(object, undefined)).toBe(stale);
     expect(registry.decoderFor(object, current)).toBe(stale);
     const marker = Symbol("@@Temporal__GetSlots");
@@ -57,8 +61,8 @@ it("keeps linked reset-before-registration order and uses only the supplied runt
     instantiateLinkedProviders: () => calls.push("providers"),
     wireCompiledInstance: () => calls.push("consumer"),
   };
-  await instantiateTest262Module(empty, {}, { linkedModules: [{}], linkedRuntime: runtime });
-  await instantiateTest262Module(empty, {}, { linkedModules: [{}], linkedRuntime: runtime });
+  await instantiateTest262Module(empty, {}, { linkedModules: [provider], linkedRuntime: runtime });
+  await instantiateTest262Module(empty, {}, { linkedModules: [provider], linkedRuntime: runtime });
   expect(calls).toEqual(["reset", "providers", "consumer", "reset", "providers", "consumer"]);
   const other: string[] = [];
   await instantiateTest262Module(
@@ -97,7 +101,7 @@ it("retains the lazily loaded source runtime identity for the next unlinked invo
   };
   vi.doMock("../src/linked-provider-runtime.js", () => runtime);
   try {
-    await instantiateTest262Module(empty, {}, { linkedModules: [{}] });
+    await instantiateTest262Module(empty, {}, { linkedModules: [provider] });
     await instantiateTest262Module(empty, {});
     expect(calls).toEqual(["reset", "providers", "consumer", "reset"]);
   } finally {

@@ -13,6 +13,7 @@ import { widenUndefinedDefaultParamSlot } from "./destructuring-params.js";
 import { expressionHasWidenedPropertyType } from "./strict-eq-stale-type.js";
 import { bindingHoldsStandaloneClassProto } from "./class-proto-object.js"; // (#7053)
 import { functionReturnsWidenedProperty } from "./declarations/widened-property-return.js";
+import { isCjsModuleExportsObject } from "./declarations/cjs-module-exports.js"; // (#7032)
 import { ts, forEachChild } from "../ts-api.js";
 import {
   isBigIntType,
@@ -3253,20 +3254,13 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
   // This runs after the ESM export-default block so CJS and ESM don't conflict.
   if (isEntryFile) {
     // Helper: check if expression is `module.exports`
-    function isModuleExports(e: ts.Expression): boolean {
-      return (
-        ts.isPropertyAccessExpression(e) &&
-        ts.isIdentifier(e.expression) &&
-        e.expression.text === "module" &&
-        e.name.text === "exports"
-      );
-    }
+    const isModuleExports = isCjsModuleExportsObject;
 
     // Helper: extract export name from `module.exports.foo` or `exports.foo`
     function getCjsNamedExportName(e: ts.Expression): string | undefined {
       if (!ts.isPropertyAccessExpression(e)) return undefined;
-      // module.exports.foo
-      if (isModuleExports(e.expression)) return e.name.text;
+      // module.exports.foo (or its rewritten export-cell spelling)
+      if (isCjsModuleExportsObject(e.expression)) return e.name.text;
       // exports.foo
       if (ts.isIdentifier(e.expression) && e.expression.text === "exports") return e.name.text;
       return undefined;
@@ -6554,13 +6548,8 @@ export function compileDeclarations(
       } else if (ts.isPropertyAccessExpression(left)) {
         // module.exports.foo or exports.foo
         const inner = left.expression;
-        const isModExports =
-          ts.isPropertyAccessExpression(inner) &&
-          ts.isIdentifier(inner.expression) &&
-          inner.expression.text === "module" &&
-          inner.name.text === "exports";
         const isExports = ts.isIdentifier(inner) && inner.text === "exports";
-        if (isModExports || isExports) {
+        if (isCjsModuleExportsObject(inner) || isExports) {
           fnExpr = expr.right;
           funcName = left.name.text;
         }
