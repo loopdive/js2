@@ -32,7 +32,8 @@ async function run(src: string): Promise<any> {
     imports.string_constants16,
   );
   const ex: any = instance.exports;
-  if (imports.setExports) imports.setExports(ex);
+  // (#7014) setInstance: raw setExports(instance.exports) lost data-struct authority in 708ebbd56d (#5337).
+  if (imports.setInstance) imports.setInstance(instance);
   const mi = ex.__module_init;
   if (typeof mi === "function") mi();
   return ex.test();

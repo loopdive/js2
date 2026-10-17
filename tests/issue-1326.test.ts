@@ -40,21 +40,27 @@ describe("#1326 — async-scheduler module constants and gates", () => {
     expect(MICROTASK_QUEUE_INITIAL_SLOTS).toBe(8192);
   });
 
+  // (dbccc693f6) The gate also reads `ctx.targetProfile.semanticProviders`
+  // ("native-first" turns it on), so a fake ctx must carry a profile. Use the
+  // JS-host profile's value; the `wasi` axis under test is unchanged.
+  const fakeCtx = (wasi: boolean) =>
+    ({ wasi, targetProfile: { semanticProviders: "host-assisted" } }) as unknown as Parameters<
+      typeof isStandalonePromiseActive
+    >[0];
+
   it("isStandalonePromiseActive returns false in JS-host mode", () => {
     // Default mode (`ctx.wasi === false`). The existing JS-host Promise
     // path stays bit-identical; non-WASI test262 baseline must not move.
-    const fakeCtx = { wasi: false } as unknown as Parameters<typeof isStandalonePromiseActive>[0];
-    expect(isStandalonePromiseActive(fakeCtx)).toBe(false);
+    expect(isStandalonePromiseActive(fakeCtx(false))).toBe(false);
   });
 
   it("isStandalonePromiseActive returns true in WASI target mode", () => {
     // WASI mode auto-enables the standalone Promise codegen (1B).
-    const wasiCtx = { wasi: true } as unknown as Parameters<typeof isStandalonePromiseActive>[0];
-    expect(isStandalonePromiseActive(wasiCtx)).toBe(true);
+    expect(isStandalonePromiseActive(fakeCtx(true))).toBe(true);
   });
 
   it("keeps the standalone Promise gate tied to WASI mode", () => {
-    expect(isStandalonePromiseActive({ wasi: true } as Parameters<typeof isStandalonePromiseActive>[0])).toBe(true);
+    expect(isStandalonePromiseActive(fakeCtx(true))).toBe(true);
   });
 });
 
@@ -97,8 +103,10 @@ describe("#1326 Phase 1B — JS-host mode (default) is unchanged", () => {
     // The legacy import path remains for non-WASI builds.
     expect(r.wat).toContain("Promise_resolve");
     // No standalone Promise struct should be registered when wasi=false.
-    // The struct's `$state: i32` field is unique to the standalone path.
-    expect(r.wat).not.toContain("(field $state");
+    // (393e42bd96, #2895 PATH B) `$state` is no longer unique to the
+    // standalone Promise: the async function's own `$AsyncFrame_<fn>` resume
+    // struct carries one on every lane. Assert on the `$Promise` type itself.
+    expect(r.wat).not.toMatch(/\(type \$\$Promise \(struct/);
   });
 });
 

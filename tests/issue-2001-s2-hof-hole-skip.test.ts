@@ -29,7 +29,8 @@ async function run(source: string, fn = "run"): Promise<unknown> {
   expect(result.success, result.errors.map((e) => e.message).join("\n")).toBe(true);
   const imports = buildImports(result.imports, undefined, result.stringPool);
   const { instance } = await WebAssembly.instantiate(result.binary, imports);
-  imports.setExports?.(instance.exports as Record<string, Function>);
+  // (#7014) setInstance: raw setExports(instance.exports) lost data-struct authority in 708ebbd56d (#5337).
+  imports.setInstance?.(instance);
   return (instance.exports as Record<string, (...a: unknown[]) => unknown>)[fn]();
 }
 
@@ -131,11 +132,14 @@ describe("#2001 S2 — HOF hole visit-skip (any[] / externref vecs)", () => {
         await run(`export function run(): number { const a: any[] = [1,,3]; return a.lastIndexOf(undefined); }`),
       ).toBe(1);
     });
-    it("reduce with an initial value folds the hole as undefined (deferred → NaN)", async () => {
-      // 0 + 1 + undefined + 3: `undefined` numeric-coerces to NaN.
+    it("reduce with an initial value skips the hole (§23.1.3.24 HasProperty)", async () => {
+      // (#4491, 68a3747e9a — hole-skipping HOFs) The deferral this test pinned
+      // has landed: reduce now skips an absent index, so the fold is 0 + 1 + 3
+      // = 4 exactly as in JS. It used to pin the interim NaN (hole read as
+      // undefined).
       expect(
         await run(`export function run(): number { const a: any[] = [1,,3]; return a.reduce((x,y)=>x+y, 0); }`),
-      ).toBeNaN();
+      ).toBe(4);
     });
   });
 
@@ -153,12 +157,15 @@ describe("#2001 S2 — HOF hole visit-skip (any[] / externref vecs)", () => {
   });
 
   describe("typed number[] guard — accepted divergence, byte path unchanged", () => {
-    it("number[] forEach still visits the (materialized) hole ([1,,3] → 3 calls)", async () => {
+    it("number[] forEach skips the hole ([1,,3] → 2 calls, as in JS)", async () => {
+      // (#4491, 68a3747e9a) f64 holes gained presence (the absence marker), so
+      // the typed lane now skips the hole like JS does. This test used to pin
+      // the accepted divergence (3 calls, hole materialized).
       expect(
         await run(
           `export function run(): number { const a: number[] = [1,,3]; let c=0; a.forEach(()=>{c++;}); return c; }`,
         ),
-      ).toBe(3);
+      ).toBe(2);
     });
     it("number[] indexOf of a present value is unaffected (byte-identical typed path)", async () => {
       // The typed f64 hole is the sNaN default sentinel (not 0), and the gate is
