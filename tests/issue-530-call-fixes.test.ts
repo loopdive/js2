@@ -12,6 +12,10 @@ async function compileAndRun(code: string) {
   }
   const imports = buildImports(result.imports ?? [], {}, result.stringPool ?? []);
   const { instance } = await WebAssembly.instantiate(result.binary, imports);
+  // A union-receiver method call (`(A | B).value()`) dispatches through a host
+  // import that resolves the method off the instance's exported class bridges;
+  // like every production caller of buildImports, hand the exports back.
+  imports.setExports?.(instance.exports as Record<string, Function>);
   const main = instance.exports.main as Function;
   return main();
 }

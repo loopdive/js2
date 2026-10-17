@@ -27,22 +27,25 @@ async function score(name: string, body: string): Promise<{ status: string; vacu
 
 describe("#2940 runner vacuity scorer", () => {
   it("dead harness callback (asserts inside, never runs) → fail + vacuous", async () => {
-    // The nested-scope harness-wrapper callback is dropped by the inline dynamic
-    // dispatch, so the assertion never runs and the test would vacuously "pass".
-    // The scorer must catch it.
-    //
-    // NOTE (post-#2939): the #2939 dispatch fix now rescues all-externref-param
-    // callbacks (e.g. `function(TA)` → any/externref), so that shape EXECUTES and
-    // is no longer a dead callback. To keep exercising a genuinely-dropped
-    // callback, this fixture uses a numeric-typed param — a shape #2939 does NOT
-    // register as a dispatch candidate (its restriction is all-externref params +
-    // externref/void return). It stays dropped → vacuous, so the scorer is still
-    // validated. Verified 2026-07-02: `function(TA: number)` → fail + vacuous on
-    // the merged tree, while `function(TA)` → genuine pass (executes).
+    // The scorer flags a harness-wrapper callback that is invoked but runs ZERO
+    // assertions (__harness_cb_dead === __harness_cb_expected). Historically the
+    // fixture produced that state with a compiler bug: `function(TA: number)`
+    // was not a #2939 dispatch candidate, so the callback was silently dropped.
+    // That bug is fixed — re-measured 2026-10-17 on upstream main 0727e2985b,
+    // the numeric-param callback now RUNS and its assert executes (genuine
+    // pass), so the old fixture no longer exercised the scorer (#7014 wave 15).
+    // The fixture now makes the callback's only assertion unreachable in plain
+    // JS (every TA is a function), which is the exact runtime state the scorer
+    // must catch regardless of WHY the assertions never ran. The top-level
+    // assert runs, so the general (#3086) gate stays silent and this exercises
+    // the harness (partial-vacuity) gate specifically.
     const { status, vacuous } = await score(
       "dead-callback",
-      `testWithTypedArrayConstructors(function(TA: number) {
-         assert.sameValue(1, 1, "this assert never runs when the callback is dropped");
+      `assert.sameValue(1, 1, "setup assertion that does run");
+       testWithTypedArrayConstructors(function(TA) {
+         if (typeof TA !== "function") {
+           assert.sameValue(1, 1, "this assert never runs");
+         }
        });`,
     );
     expect(status).toBe("fail");

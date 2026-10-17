@@ -56,6 +56,9 @@ regressions-allow:
     expect(parseFrontmatterCountReason(text, "regressions-allow")).toEqual({
       count: 2700,
       reason: "#3285 assert_throws error-type tightening, see #3286",
+      // (#3596, ed10645f2e) The parser now also returns the optional nested
+      // `tests:` list — `[]` when the declaration has none.
+      tests: [],
     });
   });
 
@@ -69,6 +72,7 @@ regressions-allow:
     expect(parseFrontmatterCountReason(text, "regressions-allow")).toEqual({
       count: 2700,
       reason: "plain declaration, no comments",
+      tests: [], // (#3596) absent nested `tests:` list parses as []
     });
   });
 });
