@@ -15,10 +15,11 @@ import { emitProxyAwareOwnKeysCall } from "../object-model/proxy-own-keys-surfac
 import { isBooleanType, isNumberType, isStringType } from "../../checker/type-mapper.js";
 import { ensureIntegrityPredicate } from "../object-integrity-carrier.js"; // (#4032)
 import { emitToInt32 } from "../binary-ops.js";
+import { emitTaIntElemConversion, tryEmitPackedTaOfWithSpread } from "../ta-int-elem-coercion.js"; // (#7018)
 import { integrityVarKey, widenedVarKeyFromDecl } from "../widened-var-key.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import { isPristineEs5IntrinsicIsFrozenCall } from "../../ir/object-integrity.js";
-import { resolveArrayInfo } from "../array-methods.js";
+import { resolveArrayInfo, typedArraySearchSignedness } from "../array-methods.js";
 import { admitArrayFromVecCarrier } from "../array-from-vec-carrier.js";
 import { numberIsPredicateOps } from "../number-is-predicate-ops.js";
 import { sameValueNumberOps } from "../same-value-number-ops.js";
@@ -131,7 +132,7 @@ import {
 } from "../property-access.js";
 import { isGlobalRegExpIdentifier, isStaticallyUndefinedExpr } from "../regexp-standalone.js";
 import type { InnerResult } from "../shared.js";
-import { coerceType, compileExpression, valTypesMatch, VOID_RESULT } from "../shared.js";
+import { coerceType, compileExpression, elemGetOp, valTypesMatch, VOID_RESULT } from "../shared.js";
 import { compileStringLiteral } from "../string-ops.js";
 import { ensureStringRawHelper } from "../string-raw.js";
 import { defaultValueInstrs, pushDefaultValue } from "../type-coercion.js";
@@ -1203,8 +1204,8 @@ export function compileBuiltinStaticCall(
     const elemWasm = storage.type; // {kind:"f64"} or {kind:"i8"}
     const taVecTypeIdx = getOrRegisterVecType(ctx, storage.key, elemWasm);
     const taArrTypeIdx = getArrTypeIdxFromVec(ctx, taVecTypeIdx);
-    // The store ValType for an i8 packed array is i32 on the operand stack.
-    const storeWasm: ValType = elemWasm.kind === "i8" ? { kind: "i32" } : elemWasm;
+    // The store ValType for a packed i8/i16 (#7018) array is i32 on the operand stack.
+    const storeWasm: ValType = elemWasm.kind === "i8" || elemWasm.kind === "i16" ? { kind: "i32" } : elemWasm;
 
     if (taArrTypeIdx >= 0) {
       // --- TA.of(a, b, c) — every arg is an element (§23.2.2.2). ---
@@ -1219,8 +1220,10 @@ export function compileBuiltinStaticCall(
             return { kind: "ref_null", typeIdx: taVecTypeIdx };
           }
           for (const arg of expr.arguments) {
-            const at = compileExpression(ctx, fctx, arg, storeWasm);
-            if (at && !valTypesMatch(at, storeWasm)) coerceType(ctx, fctx, at, storeWasm);
+            // (#7018) Packed/i32 storage: compile as a number, then wrap — ToIntN is modulo 2ⁿ (an i32 hint saturates).
+            const at = compileExpression(ctx, fctx, arg, storeWasm.kind === "i32" ? { kind: "f64" } : storeWasm);
+            if (at && storeWasm.kind === "i32") emitTaIntElemConversion(ctx, fctx, at, taName);
+            else if (at && !valTypesMatch(at, storeWasm)) coerceType(ctx, fctx, at, storeWasm);
             // Host/gc keeps Uint8Array elements in an f64 vec, so the packed
             // array store cannot perform the view's ToUint8 conversion for us.
             // Apply it at the factory boundary just like an indexed
@@ -1251,6 +1254,11 @@ export function compileBuiltinStaticCall(
         // runtime spread loop while forcing the typed-array storage type, so a
         // vec spread contributes each element instead of being passed as one
         // opaque argument (uuid builds its 16-byte v1 fixture this way).
+        // (#7018) Packed/i32 storage: the literal route builds a vec<i32> and plain-`array.get`s a packed spread.
+        const packed =
+          storeWasm.kind === "i32" &&
+          tryEmitPackedTaOfWithSpread(ctx, fctx, expr.arguments, taName, taVecTypeIdx, taArrTypeIdx);
+        if (packed) return packed;
         const synthetic = ts.factory.createArrayLiteralExpression(expr.arguments);
         (synthetic as unknown as { parent: ts.Node }).parent = expr.parent;
         const spreadResult = compileArrayLiteral(ctx, fctx, synthetic, storeWasm);
@@ -1327,10 +1335,9 @@ export function compileBuiltinStaticCall(
               fctx.body.push({ op: "local.get", index: srcData });
               fctx.body.push({ op: "local.get", index: iTmp });
               if (srcElemIsPacked) {
-                fctx.body.push({
-                  op: srcElemIsSigned ? "array.get_s" : "array.get_u",
-                  typeIdx: srcArrIdx,
-                });
+                const viewSign = typedArraySearchSignedness(ctx, expr.arguments[0]!); // (#7018) source view's extension
+                const op = viewSign ? elemGetOp(srcElem, viewSign) : srcElemIsSigned ? "array.get_s" : "array.get_u";
+                fctx.body.push({ op, typeIdx: srcArrIdx } as Instr);
               } else {
                 fctx.body.push({ op: "array.get", typeIdx: srcArrIdx });
               }
@@ -1342,7 +1349,9 @@ export function compileBuiltinStaticCall(
                 coerceType(ctx, fctx, srcStore, { kind: "f64" });
                 elemT = { kind: "f64" };
               }
-              if (!valTypesMatch(elemT, storeWasm)) coerceType(ctx, fctx, elemT, storeWasm);
+              if (storeWasm.kind === "i32")
+                emitTaIntElemConversion(ctx, fctx, elemT, taName); // (#7018)
+              else if (!valTypesMatch(elemT, storeWasm)) coerceType(ctx, fctx, elemT, storeWasm);
               fctx.body.push({ op: "array.set", typeIdx: taArrTypeIdx });
               // i++
               fctx.body.push({ op: "local.get", index: iTmp });

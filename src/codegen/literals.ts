@@ -109,9 +109,11 @@ import {
   isAnyValue,
   registerMaterializeStructAsObject,
   registerResolveComputedKeyExpression,
+  unpackedElemType,
   valTypesMatch,
   VOID_RESULT,
 } from "./shared.js";
+import { taSpreadGetOp } from "./ta-int-elem-coercion.js"; // (#7018)
 import { buildVecFromExternref, getVecInfo, pushDefaultValue } from "./type-coercion.js";
 import { emitDrainCustomIterableToVec, isCustomIterable } from "./custom-iterable.js";
 import { compileOneElementArray, widenDenseArrayElementType } from "./expressions/array-constructor-carrier.js";
@@ -6706,9 +6708,12 @@ export function compileArrayLiteral(
       const srcVecInfo = getVecInfo(ctx, spreadInfo.srcVecTypeIdx);
       const dstVecInfo = getVecInfo(ctx, vecTypeIdx);
       let elemCoerce: Instr[] = [];
-      if (srcVecInfo && dstVecInfo && !valTypesMatch(srcVecInfo.elemType, dstVecInfo.elemType)) {
+      // (#7018) A packed i8/i16 source reads with the source VIEW's `get_s`/`_u` and widens to i32.
+      const srcGetOp = srcVecInfo ? taSpreadGetOp(ctx, srcVecInfo.elemType, el) : "array.get";
+      const [srcRead, dstStore] = [srcVecInfo, dstVecInfo].map((info) => info && unpackedElemType(info.elemType));
+      if (srcRead && dstStore && !valTypesMatch(srcRead, dstStore)) {
         elemCoerce = collectInstrs(fctx, () => {
-          coerceType(ctx, fctx, srcVecInfo.elemType, dstVecInfo.elemType);
+          coerceType(ctx, fctx, srcRead, dstStore);
         });
       }
 
@@ -6726,7 +6731,7 @@ export function compileArrayLiteral(
       loopBody.push({ op: "local.get", index: spreadInfo.local });
       loopBody.push({ op: "struct.get", typeIdx: spreadInfo.srcVecTypeIdx, fieldIdx: 1 }); // get data from vec
       loopBody.push({ op: "local.get", index: readIdx });
-      loopBody.push({ op: "array.get", typeIdx: srcArrTypeIdx });
+      loopBody.push({ op: srcGetOp, typeIdx: srcArrTypeIdx } as Instr);
       for (const instr of elemCoerce) loopBody.push(instr);
       loopBody.push({ op: "array.set", typeIdx: arrTypeIdx });
       // writeIdx++; readIdx++
