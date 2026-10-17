@@ -4964,7 +4964,10 @@ export function pushDefaultValue(fctx: FunctionContext, type: ValType, ctx?: Cod
       // contexts typically don't reach non-null ref params with null values.
       // For if/else branches, callers should widen to ref_null first.
       fctx.body.push({ op: "ref.null", typeIdx: type.typeIdx });
-      fctx.body.push({ op: "ref.as_non_null" });
+      // (#7019) Host-free, every `ref` slot is widened nullable before emission
+      // (`widenNonDefaultableTypes`), so the assertion could only trap — e.g. an
+      // omitted JSDoc `{string}` argument (axios `toObjectSet(arr)`).
+      if (!(ctx?.standalone || ctx?.wasi)) fctx.body.push({ op: "ref.as_non_null" });
       break;
     default:
       fctx.body.push({ op: "i32.const", value: 0 });

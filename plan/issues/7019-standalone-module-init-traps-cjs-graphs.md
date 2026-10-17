@@ -1,10 +1,10 @@
 ---
 id: 7019
 title: "standalone: package module initialisation traps before any test runs — axios `utils.toObjectSet([...])` derefs null (and its 12-line reduction fails codegen with `dynamic array length fill requires a pre-reserved Hole global`), hono `helper/dev` throws `Array method called on null or undefined`, stylelint utils trap `illegal cast` in `__module_init`"
-status: ready
+status: in-progress
 sprint: current
 created: 2026-10-16
-updated: 2026-10-16
+updated: 2026-10-17
 priority: high
 horizon: m
 feasibility: medium
@@ -13,7 +13,12 @@ task_type: bugfix
 area: compiler
 language_feature: module-init, closures, arrays
 goal: standalone-gap
-related: [7013]
+related: [7013, 7052, 7053, 7054, 7057, 7058, 7059, 7060, 7061]
+# 2026-10-17 — the omitted-argument pad is emitted by pushDefaultValue in
+# type-coercion.ts, the one helper every call path uses; the fix is a guard on
+# its existing `ref` arm, not a new code path.
+loc-budget-allow:
+  - src/codegen/type-coercion.ts
 ---
 
 # Module initialisation fails on standalone in package graphs
