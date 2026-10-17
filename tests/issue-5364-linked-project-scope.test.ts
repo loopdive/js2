@@ -146,7 +146,9 @@ describe("#5364 — the cross-module decoder registry is scoped to one live proj
         empty,
         {},
         {
-          linkedModules: [{}],
+          // (fec95636bd, #6723) the seam reads each provider artifact's import
+          // list, so the fake provider must carry a real binary.
+          linkedModules: [{ binary: empty }],
           linkedRuntime: {
             instantiateLinkedProviders: () => {},
             wireCompiledInstance: () => {},

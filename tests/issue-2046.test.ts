@@ -4,8 +4,8 @@
 //
 // PR-A (restore fail-loud):
 //   - Reflect.get with an explicit receiver now threads that receiver through
-//     the native accessor path. Reflect.set remains fail-loud until its
-//     separate receiver/write semantics are implemented.
+//     the native accessor path. (Reflect.set with a receiver was fail-loud
+//     here; the native-first provider implements it now — see below, #7014.)
 //   - Reflect.deleteProperty(primitive, k) returned true; §28.1.4 requires a
 //     TypeError. Guarded at the call site (ref.test $Object) so the SHARED
 //     __delete_property (also backing sloppy `delete`, a no-op success on
@@ -27,13 +27,6 @@ async function runStandalone(source: string): Promise<number> {
   const stub = new Proxy({}, { get: () => () => 0 });
   const { instance } = await WebAssembly.instantiate(r.binary, { env: stub } as unknown as WebAssembly.Imports);
   return (instance.exports as Record<string, () => number>).test();
-}
-
-async function expectCompileRefusal(source: string, needle: string): Promise<void> {
-  const r = await compile(source, { target: "standalone", skipSemanticDiagnostics: true });
-  expect(r.success, "expected a compile refusal but the module compiled").toBe(false);
-  const joined = r.errors.map((e) => e.message).join("\n");
-  expect(joined).toContain(needle);
 }
 
 async function expectThrows(source: string): Promise<void> {
@@ -59,15 +52,33 @@ describe("#2046 standalone Reflect spec gaps", () => {
     ).toBe(42);
   });
 
-  it("Reflect.set with an explicit receiver is refused at compile time", async () => {
-    await expectCompileRefusal(
-      `export function test(): boolean {
+  // (#7014) Was "refused at compile time". Standalone resolves Reflect through
+  // the native-first semantic provider since dbccc693f6 ("feat(runtime): make
+  // host semantics explicit and native-first", 2026-08-13), which lowers an
+  // explicit receiver to the native `__reflect_set_receiver` (§10.1.9.2
+  // OrdinarySetWithOwnDescriptor) — so the refusal is gone by design and the
+  // test now pins the receiver semantics the refusal was guarding.
+  it("Reflect.set with an explicit receiver writes the RECEIVER, not the target (§28.1.12)", async () => {
+    expect(
+      await runStandalone(`export function test(): number {
         const o: any = { x: 1 };
         const recv: any = {};
-        return Reflect.set(o, "x", 2, recv);
-      }`,
-      "Reflect.set with an explicit receiver",
-    );
+        const ok = Reflect.set(o, "x", 2, recv);
+        return (ok ? 1 : 0) * 100 + o.x * 10 + (recv.x === 2 ? 1 : 0);
+      }`),
+    ).toBe(111);
+  });
+
+  it("Reflect.set with an explicit receiver runs an accessor setter with `this` = receiver", async () => {
+    expect(
+      await runStandalone(`export function test(): number {
+        const o: any = {};
+        Object.defineProperty(o, "x", { set: function (v: number) { (this as any).seen = v; } });
+        const recv: any = {};
+        Reflect.set(o, "x", 7, recv);
+        return (recv.seen === 7 ? 1 : 0) + ((o as any).seen === undefined ? 10 : 0);
+      }`),
+    ).toBe(11);
   });
 
   it("Reflect.get/set WITHOUT a receiver still compile and work", async () => {
@@ -408,14 +419,16 @@ describe("#2046 standalone Reflect spec gaps", () => {
     ).toBe(1);
   });
 
-  // ── PR-C: Reflect.apply stays out of scope (no native call/spread analog) ──
-  it("Reflect.apply is still refused at compile time in standalone (out of PR-C scope)", async () => {
-    await expectCompileRefusal(
-      `function add(a: number, b: number): number { return a + b; }
+  // ── PR-C left Reflect.apply out of scope; the native-first provider ──────
+  // (#7014) Was "still refused at compile time". The same native-first Reflect
+  // provider (dbccc693f6) lowers Reflect.apply natively, so the refusal is gone
+  // by design; pin the call result instead.
+  it("Reflect.apply calls the target with the argument list in standalone", async () => {
+    expect(
+      await runStandalone(`function add(a: number, b: number): number { return a + b; }
        export function test(): number {
          return Reflect.apply(add, undefined, [2, 3]);
-       }`,
-      "Reflect.apply not supported in standalone mode",
-    );
+       }`),
+    ).toBe(5);
   });
 });

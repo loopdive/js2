@@ -19,7 +19,8 @@
  *   3. Validity — the emitted binary instantiates.
  */
 import { describe, expect, it } from "vitest";
-import binaryen from "binaryen";
+// (#7014) binaryen 132 reads with MVP features unless told otherwise — see the helper.
+import { readBinaryAllFeatures } from "./helpers/binaryen-read.js";
 import { compile } from "../src/index.js";
 import { pinPerfFlags } from "./helpers/pin-perf-flags.js";
 
@@ -34,7 +35,7 @@ pinPerfFlags({ JS2WASM_IR_INLINE: "0" });
 async function compileNative(source: string): Promise<{ wat: string; emittedWat: string; binary: Uint8Array }> {
   const result = await compile(source, { fileName: "t.js", target: "wasi", nativeStrings: true, emitWat: true });
   expect(result.success, `Compile failed: ${result.errors?.map((e) => e.message).join("; ")}`).toBe(true);
-  const mod = binaryen.readBinary(result.binary);
+  const mod = readBinaryAllFeatures(result.binary);
   const wat = mod.emitText();
   mod.dispose();
   return { wat, emittedWat: result.wat ?? "", binary: result.binary };

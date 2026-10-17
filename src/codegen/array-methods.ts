@@ -6177,6 +6177,11 @@ function compileArrayJoin(
     { op: "local.get", index: dataTmp },
     { op: "local.get", index: iTmp },
     { op: getOp, typeIdx: arrTypeIdx },
+    // (#4491 T11) Read-boundary canonicalization: a literal hole is stored as the
+    // absence marker, which must render "" like `undefined` — without this the
+    // host lane rendered `[1,,3].join()` as "1,NaN,3". No-op unless the module
+    // can produce the marker, so hole-free output is byte-identical.
+    ...f64HoleToUndefFor(ctx, fctx, elemType),
   ];
   if (elemType.kind === "f64" && toStrIdx !== undefined) {
     // #1998: substitute "" for the undefined/hole sNaN sentinel; otherwise
