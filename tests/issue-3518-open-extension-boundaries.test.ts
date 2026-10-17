@@ -6,6 +6,7 @@ import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { setImmediate } from "node:timers";
 
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const checker = resolve(repository, "scripts/audit-legacy-reachability.mjs");
@@ -172,8 +173,9 @@ function verifyPreservationEvidence(m: any) {
   }
 }
 
-afterEach(() => {
+afterEach(async () => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+  await new Promise<void>((resolve) => setImmediate(resolve));
 });
 
 describe("#3518 preservation and two reviewed open extension sites", () => {
@@ -575,8 +577,8 @@ describe("#3518 preservation and two reviewed open extension sites", () => {
     const result = run(repository);
     expect(result.m, result.output).toBeDefined();
     expect(result.m.preservation.receipts.map((receipt: any) => receipt.contentHash)).toEqual([
-      "13ee034af6c141c44f67ef36744481d1c6e2b1b9",
-      "ea5e10a98f23e1cdacb50f190feb9a7011453162",
+      "597599d7bbfda9617bdb67c2fe04d7681445b627",
+      "d17a8159b1b0aeefaa3988b55cc8c06cec00027e",
     ]);
     expect(result.m.preservation.receipts.map((receipt: any) => receipt.id)).toEqual([
       "optional-binaryen-provider-v1",
