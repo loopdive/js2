@@ -16,7 +16,15 @@ import { compile } from "../src/index.js";
 
 /** Compile `body` as a standalone module and run its exported `f()`. */
 async function runStandalone(body: string): Promise<number> {
-  const result = await compile(`export function f(): number {\n${body}\n}`, { target: "standalone" });
+  // (88d8444b72, #6676) A reified `Function` VALUE may be called with a dynamic
+  // source, so by default the module imports the linked `js2wasm:runtime-eval`
+  // provider and cannot instantiate against `{}`. This suite runs import-free,
+  // so it opts out: with no provider linked, dynamic `Function(src)` throws an
+  // in-module EvalError instead — irrelevant to the descriptor reads under test.
+  const result = await compile(`export function f(): number {\n${body}\n}`, {
+    target: "standalone",
+    runtimeEvalProvider: false,
+  });
   if (!result.success) {
     throw new Error(`compile failed: ${result.errors.map((e) => e.message).join(" | ")}`);
   }
@@ -110,12 +118,19 @@ describe("#4200 standalone <Builtin>.prototype.constructor", () => {
     });
   });
 
-  describe("scope guards — shapes that must keep declining", () => {
-    // No identity-stable carrier exists for these, and minting one would change
-    // what the BARE identifier reads. They keep today's `undefined`.
+  describe("builtins that gained a carrier after #4200", () => {
+    // These were scope guards here ("no identity-stable carrier exists, so they
+    // keep declining with `undefined`"). Measured on upstream/main 0727e2985b,
+    // standalone now answers all five with the spec descriptor, and the BARE
+    // identifier still reads the same object (`C.prototype.constructor === C`),
+    // which is what the guard existed to protect. Assert the correct JS answer
+    // (node prints the same 13 / true for each) instead of the old decline.
     for (const ctor of ["Date", "String", "Number", "Boolean", "Function"]) {
-      it(`gOPD(${ctor}.prototype, "constructor") still declines (no carrier)`, async () => {
-        expect(await runStandalone(descriptorProbe(ctor))).toBe(-1);
+      it(`gOPD(${ctor}.prototype, "constructor") is the spec descriptor`, async () => {
+        expect(await runStandalone(descriptorProbe(ctor))).toBe(SPEC_CONSTRUCTOR_DESCRIPTOR);
+      });
+      it(`${ctor}.prototype.constructor === ${ctor} (bare identifier unchanged)`, async () => {
+        expect(await runStandalone(`return (${ctor}.prototype as any).constructor === ${ctor} ? 1 : 0;`)).toBe(1);
       });
     }
 
