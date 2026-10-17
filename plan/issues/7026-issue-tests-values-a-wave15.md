@@ -82,6 +82,13 @@ their edit). 3 files already passed (`issue-1672`, `issue-3201`,
    `for (const x of xs) x++` silently performed the write. Both now demote
    to the legacy lowering, which throws the TypeError.
 
+## Probes
+
+- `tests/issue-1998.test.ts`, `tests/issue-1997.test.ts` — host hole join.
+- `tests/issue-2026-dynamic-new-varspread.test.ts`,
+  `tests/issue-2026-dynamic-new-spread.test.ts` — dynamic-new spread.
+- `tests/issue-846.test.ts` — const writes under the IR.
+
 ## Residuals
 
 Recorded in the PR body; the ones too large for this wave have their own
