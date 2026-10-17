@@ -28,7 +28,7 @@ import { ts } from "../ts-api.js";
 import { allocLocal } from "./context/locals.js";
 import { snapshotSpeculative, rollbackSpeculative } from "./context/speculative.js";
 import { emitToInt32, emitToUint8Clamp } from "./binary-ops.js";
-import { emitWasmInt32Coercion } from "../ir/backend/wasm-int32-coercion.js";
+import { emitWasmInt32Coercion } from "../backend/wasmgc/lowering/wasm-int32-coercion.js";
 import { coerceType, compileExpression, elemGetOp, unpackedElemType } from "./shared.js";
 import { getArrTypeIdxFromVec, typedArrayPackedSignedness } from "./index.js";
 import { getVecInfo } from "./type-coercion.js";
