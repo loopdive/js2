@@ -267,6 +267,28 @@ export function observesOnlyHoistedFunctionValue(
   return observesHoistedFunctionValueBinding(fctx, stmt, name) && !functionDeclarationInvokesBinding(stmt, name);
 }
 
+/**
+ * (#6994) Whether the call site's callee resolves lexically to a block-scoped
+ * `let`/`const` binding rather than to `nestedDecl`, a same-named nested
+ * function declaration of an enclosing body. The inner binding is the one in
+ * scope (`{ let f = () => 2; f(); }` beside `function f(){ return 1 }`), so the
+ * nested declaration must not claim the call.
+ */
+export function blockBindingShadowsNestedDeclaration(
+  ctx: CodegenContext,
+  callee: ts.Identifier,
+  nestedDecl: ts.Declaration,
+): boolean {
+  const declaration = ctx.oracle.valueDeclarationOf(callee);
+  return (
+    declaration !== undefined &&
+    declaration !== nestedDecl &&
+    ts.isVariableDeclaration(declaration) &&
+    ts.isVariableDeclarationList(declaration.parent) &&
+    (declaration.parent.flags & ts.NodeFlags.BlockScoped) !== 0
+  );
+}
+
 /** Whether a source local shadows a same-named lifted capturing function. */
 export function localBindingShadowsCapturingFunction(
   ctx: CodegenContext,
