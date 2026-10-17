@@ -41,7 +41,7 @@ import {
   typeRefName,
   type LibDeclIndex,
 } from "./lib-decl-index.js";
-import { isStandaloneUnprovidedExternClass } from "./standalone-unavailable-globals.js";
+import { isStandaloneUnprovidedExternClass, skipStandalonePackageStub } from "./standalone-unavailable-globals.js";
 // ── Built-in extern class registration ───────────────────────────────
 
 /** Helper to create an extern method signature with externref params and results */
@@ -756,6 +756,7 @@ function collectExternDeclarationsImpl(
     }
     // Top-level declare class (e.g. user-defined or import-resolver stubs)
     if (!skipExternClasses && ts.isClassDeclaration(stmt) && stmt.name && hasDeclareModifier(stmt)) {
+      if (skipStandalonePackageStub(ctx, sourceFile, stmt.name)) continue; // #6843: not a host class
       collectExternClass(ctx, stmt, [], libIndex);
     }
     // Top-level declare function stubs — registered as Wasm imports so that calls
@@ -850,6 +851,7 @@ function collectExternDeclarationsImpl(
       // microtask queue (standalone-queue-microtask.ts), never on the host.
       if (ctx.standalone && name === "queueMicrotask") continue;
       if (isStandaloneUnavailableTimerGlobal(ctx, name)) continue; // #6675: no event loop, no env.<timer>
+      if (skipStandalonePackageStub(ctx, sourceFile, stmt.name)) continue; // #6843: not a host global
       if (!ctx.funcMap.has(name)) {
         // (#4238) Under `externNativeTypes` an explicit native annotation
         // (`type i32 = number` & friends) wins over the default mapping, so

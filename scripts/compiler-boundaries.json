@@ -4864,6 +4864,14 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/declarations/cjs-module-exports.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
       "path": "src/codegen/declarations/declared-nested-write.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -11000,6 +11008,22 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/object-model/closed-dispatch-rest-arm.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/array/ta-int-elem-coercion.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
       "path": "src/compile-explain.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -16153,6 +16177,14 @@
       "destination": "frontend-ts",
       "owner": "3518-coordinator",
       "nextBoundary": "Pure TS-AST class-override scan feeding the IR selector and builder (#7000); retire with the IR virtual-dispatch intent or move behind the frontend-ts boundary."
+    },
+    {
+      "path": "src/ir/const-binding-writes.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Pure TS-AST write-to-const scan feeding the IR lowerer's legacy demotion (#7014 wave 15); move behind the frontend-ts boundary with the mutation pre-pass."
     }
   ]
 }

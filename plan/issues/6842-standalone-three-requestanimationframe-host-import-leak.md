@@ -1,10 +1,11 @@
 ---
 id: 6842
 title: "standalone: three's requestAnimationFrame leaks as host import env.requestAnimationFrame (npm-compat standalone-dynamic compile-error)"
-status: ready
+status: done
 sprint: current
 created: 2026-10-05
-updated: 2026-10-05
+updated: 2026-10-16
+completed: 2026-10-16
 priority: medium
 horizon: s
 feasibility: medium
@@ -13,7 +14,7 @@ task_type: bug
 area: npm-compat, standalone, host-imports
 goal: standalone
 requested_by: ttraenkler/wave9-6288-refresh
-related: [6742, 6675, 6659, 6664, 6691, 2961]
+related: [6742, 6675, 6659, 6664, 6691, 2961, 6841, 7015]
 ---
 
 # #6842 — three: `requestAnimationFrame` leaks into the standalone binary
@@ -71,3 +72,44 @@ capability throws a documented error at the call.
 - The three standalone-dynamic lane no longer reports the
   `env.requestAnimationFrame` leak.
 - JS-host binaries for three are byte-identical before and after.
+
+## Resolution
+
+The fix came in through #6841 (`28df1536b3`, 2026-10-05). That change added
+`requestAnimationFrame` / `cancelAnimationFrame` to the
+`STANDALONE_UNAVAILABLE_TIMER_GLOBALS` table in
+`src/codegen/standalone-timers.ts`, which is exactly what step 1 of the plan
+asks for. This issue was measured on `b6324ee6d1`, which does not contain
+#6841, so the leak it recorded was already fixed when the issue was filed.
+
+- `tests/issue-6842-standalone-three-raf.test.ts` pins three's exact
+  `yieldToMain` source shape. On standalone it compiles with zero imports;
+  `typeof requestAnimationFrame` and `typeof cancelAnimationFrame` are
+  `"undefined"`; a direct call throws `ReferenceError`; and in the
+  Promise-executor fallback the error rejects the promise instead of escaping.
+  The gc control still imports `env.requestAnimationFrame`.
+  - With the pre-#6841 `standalone-timers.ts`: 1 fail / 1 pass.
+  - On main: 2/2 pass.
+- Lane re-measure, upstream/main `ee58c1aa26`:
+  `npx tsx scripts/generate-npm-compat-report.mjs --only three --no-write --perf-only --lane standalone-dynamic`.
+  It runs in-process with no budget. Codegen took 213.9 s at load ~160–190
+  on 8 cores, so it would overrun the 180 s CI lane budget (#4287). The first
+  diagnostic is now `env.createImageBitmap`. `requestAnimationFrame` is gone.
+- The same driver compiled directly with `compileProject` gives the full
+  picture: codegen 325.8 s, then `success: false`.
+  - 57 host-import leaks: `createImageBitmap`, `fetch`, and browser
+    extern-class members of `WebGL2RenderingContext`, `PannerNode`,
+    `AudioParam`, `AnalyserNode`, `GainNode`, `AudioNode`, `VideoFrame`,
+    `OffscreenCanvas`, `DOMParser`, `ReadableStream*`, `AbortController`,
+    `ProgressEvent` and `CustomEvent`.
+  - A Wasm validation error:
+    `ObjectLoader_loadAsync: extern.convert_any[0] expected type anyref, found call of type externref`.
+
+  These are the next blockers, filed as #7015, and are not part of
+  this issue.
+- Residual found while writing the test: on standalone, three's guard
+  `typeof self !== 'undefined' && typeof self.scheduler !== 'undefined'`
+  throws `TypeError`. `typeof self` is not `"undefined"`, but the member read
+  fails, so `yieldToMain()` throws before it reaches the
+  `requestAnimationFrame` fallback. Filed in #7015 with the other three residuals.
+
