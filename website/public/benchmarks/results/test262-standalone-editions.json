@@ -3571,57 +3571,57 @@
   },
   {
     "edition": "ES2026",
-    "pass": 4584,
-    "fail": 193,
-    "ce": 144,
+    "pass": 4550,
+    "fail": 191,
+    "ce": 180,
     "skip": 0,
     "total": 4921,
-    "pct": 93,
+    "pct": 92,
     "features": [
       {
         "name": "Temporal",
-        "pass": 4481,
-        "fail": 106,
-        "ce": 24,
+        "pass": 4447,
+        "fail": 104,
+        "ce": 60,
         "skip": 0,
         "total": 4611,
-        "pct": 97
+        "pct": 96
       },
       {
         "name": "Symbol",
-        "pass": 386,
+        "pass": 378,
         "fail": 6,
-        "ce": 2,
+        "ce": 10,
         "skip": 0,
         "total": 394,
-        "pct": 98
+        "pct": 96
       },
       {
         "name": "BigInt",
-        "pass": 170,
+        "pass": 167,
         "fail": 7,
-        "ce": 2,
+        "ce": 5,
         "skip": 0,
         "total": 179,
-        "pct": 95
+        "pct": 93
       },
       {
         "name": "arrow-function",
-        "pass": 173,
+        "pass": 172,
         "fail": 5,
-        "ce": 0,
+        "ce": 1,
         "skip": 0,
         "total": 178,
         "pct": 97
       },
       {
         "name": "Reflect.construct",
-        "pass": 133,
+        "pass": 130,
         "fail": 6,
-        "ce": 0,
+        "ce": 3,
         "skip": 0,
         "total": 139,
-        "pct": 96
+        "pct": 94
       },
       {
         "name": "Array.fromAsync",
