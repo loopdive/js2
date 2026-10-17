@@ -45,7 +45,11 @@ export function frozenWrite(): number { return chk(() => { "use strict"; const o
 `;
 
 async function results(target?: "standalone"): Promise<Record<string, number>> {
-  const opts = target ? { target } : {};
+  // (88d8444b72, #6676) The fixture's bare `eval;` reads the eval VALUE, which
+  // under standalone imports the linked `js2wasm:runtime-eval` provider by
+  // default. This lane asserts "no host imports" and instantiates against `{}`,
+  // so it opts out of the provider; the TypeError sites under test are unchanged.
+  const opts = target ? { target, runtimeEvalProvider: false } : {};
   const r = await compile(MODULE, opts);
   expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
   const importObject = (r as unknown as { importObject?: WebAssembly.Imports }).importObject ?? {};
