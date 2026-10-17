@@ -453,6 +453,8 @@ export interface AsyncFrameInfo {
    * materialization from the frame-captured `__self` param field.
    */
   selfCaptureLayout?: FunctionContext["selfCaptureLayout"];
+  /** Alternate names of param slots (alias → param name); see paramAliasesOf. */
+  paramAliases?: [string, string][];
 }
 
 /**
@@ -744,7 +746,25 @@ export function buildAsyncFrameInfo(
     promiseTypeIdx,
     host: hostImports !== undefined,
     hostImports,
+    paramAliases: paramAliasesOf(activatingFctx, paramNames),
   };
+}
+
+/**
+ * Names the activating body resolves to one of its PARAM slots under a name
+ * other than the param's own — closures.ts binds a self-recursive
+ * `const run = async (…) => { … run(…) … }` to `__self` (local 0). The resume
+ * fn rebuilds params under their own names only, so without the alias the
+ * recursive call resolves elsewhere and runs with the wrong `__self` (#6860).
+ */
+function paramAliasesOf(fctx: FunctionContext | undefined, paramNames: string[]): [string, string][] | undefined {
+  if (!fctx) return undefined;
+  const aliases: [string, string][] = [];
+  for (const [name, idx] of fctx.localMap) {
+    const owner = paramNames[idx];
+    if (owner !== undefined && owner !== name) aliases.push([name, owner]);
+  }
+  return aliases.length > 0 ? aliases : undefined;
 }
 
 // ── internal ────────────────────────────────────────────────────────────────
@@ -1892,6 +1912,10 @@ export function ensureAsyncResumeFunction(
       fieldIdx: info.paramFieldOffset + i,
     });
     resumeFctx.body.push({ op: "local.set", index: idx });
+  }
+  for (const [alias, owner] of info.paramAliases ?? []) {
+    const idx = resumeFctx.localMap.get(owner);
+    if (idx !== undefined && !resumeFctx.localMap.has(alias)) resumeFctx.localMap.set(alias, idx);
   }
   // Prepared plans restore exact live subsets at state entry. AST plans keep
   // eager hydration; frame-core also preserves force-boxed capture aliases.

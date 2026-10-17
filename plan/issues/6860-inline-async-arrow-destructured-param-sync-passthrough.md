@@ -1,10 +1,11 @@
 ---
 id: 6860
 title: "hono `concurrent.test.ts` 0/6: an INLINE async arrow with a destructured parameter, passed to `test.each`, runs on the synchronous pass-through — `await Promise.all(…)` answers immediately"
-status: ready
+status: done
 sprint: current
 created: 2026-10-05
-updated: 2026-10-05
+updated: 2026-10-09
+completed: 2026-10-07
 priority: medium
 horizon: m
 feasibility: medium
@@ -12,6 +13,12 @@ reasoning_effort: high
 task_type: bug
 area: codegen
 goal: dogfood
+loc-budget-allow:
+  # 2026-10-09 (#6860): resume prologue re-maps param aliases (`const run = async ...` -> `__self`); +24 LOC, +4 in the resume builder
+  - src/codegen/async-frame.ts
+func-budget-allow:
+  # 2026-10-09 (#6860): resume prologue re-maps param aliases (`const run = async ...` -> `__self`); +24 LOC, +4 in the resume builder
+  - src/codegen/async-frame.ts::ensureAsyncResumeFunction
 ---
 
 ## Problem
@@ -55,3 +62,32 @@ is not yet identified.
    `const`-bound registration (anti-vacuity: the latter must keep passing).
 
 Expected: hono `concurrent.test.ts` 0/6 → 6/6.
+
+## Resolution
+
+Two defects, neither in the async planner (the planner accepted the body —
+`asyncFnNeedsHostDrive` answered `true` for the inline arrow too):
+
+1. **The inline arrow never reached the async engine.** `test.each\`…\`(name, body)`
+   is a call whose callee is a TAGGED TEMPLATE. `isHostCallbackArgument`'s #4616
+   call-of-call carve-out (`factory(cases)(name, body)` → closure path) tested
+   `ts.isCallExpression(callee)` only, so the arrow was classified as a HOST
+   callback and compiled through `compileArrowAsCallback`, which has no async
+   activation — every `await` became an identity (`each:NaN`). A const-bound
+   body is an identifier argument and took the closure path, which is why the
+   bisect table split on inline vs bound, not on the destructured parameter.
+   Fix: the carve-out also accepts `ts.isTaggedTemplateExpression(callee)`
+   (`closures/callback-classification.ts`).
+2. **Once driven, hono's `createPool` hung at concurrency 1.** Its
+   `const run = async (fn, promise, resolve) => { … setTimeout(() => run(…)) … }`
+   is self-recursive; closures.ts binds the self name to `__self` (local 0). The
+   async resume function rebuilds params under their OWN names only, so `run`
+   lost the alias and the recursive call ran on the wrong closure (captures
+   reset, arguments dropped) — the retry loop never drained. Fix:
+   `buildAsyncFrameInfo` records every alternate name of a param slot
+   (`paramAliases`) and the resume prologue re-maps them (`async-frame.ts`).
+
+hono `concurrent.test.ts` 0/6 → 6/6. Regression:
+`tests/issue-6900-hono-accepts-concurrent-client.test.ts` (inline tagged body,
+const-bound control, concurrency-1 pool).
+
