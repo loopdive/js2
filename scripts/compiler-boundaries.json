@@ -11809,6 +11809,14 @@
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
     },
     {
+      "path": "src/ir/backend/vector-representation.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "3518-coordinator",
+      "nextBoundary": "#6920 A-C1 vector representation policy with type-only imports; consumed by generic lowering, the linear overlay and frontend joins. Certify as pure contract once IR-node and backend-handle type dependencies move to ir-core."
+    },
+    {
       "path": "src/ir/backend/wasm-int32-coercion.ts",
       "state": "compatibility-adapter",
       "layer": "mixed-needs-split",

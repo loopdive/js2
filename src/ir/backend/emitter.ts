@@ -48,16 +48,17 @@ import type {
   IrObjectStructLowering,
   IrRefCellLowering,
   IrUnionLowering,
-  IrVecLowering,
-  LinearVecLowering,
+  IrVecBackendLowering,
 } from "./handles.js";
 import type { StringBackendEmitter } from "./string-contract.js";
 
 // #1714: the vec primitives accept either backend's vec-layout handle. WasmGc
 // uses IrVecLowering (typeIdx-based); Linear uses LinearVecLowering
 // (offset-based). Each emitter narrows to its own shape. This is the
-// "widen to a handle union" option from the #1713 spec section 7.
-type VecLayout = IrVecLowering | LinearVecLowering;
+// "widen to a handle union" option from the #1713 spec section 7; #6920 names
+// the union once (`IrVecBackendLowering`) and generic lowering passes the
+// handle of the representation it resolved for the active backend.
+type VecLayout = IrVecBackendLowering;
 
 /**
  * Backend-neutral scalar operations used while expanding composite JS
@@ -131,8 +132,10 @@ export interface BackendEmitter<S = Instr[]> extends StringBackendEmitter<S> {
    * an empty vec with greater reserved capacity uses `array.new_default`.
    * Logical length remains N in both cases. Linear uses
    * `[header][len=N][cap=capacity][e0…eN]`.
-   * `dataScratchLocal` is a function-local index of the array's ValType,
-   * allocated lazily by `lower.ts`.
+   * `dataScratchLocal` is a function-local index already declared with the
+   * resolved representation's `newFixedScratchType` (WasmGC `ref_null $arr`,
+   * linear `i32`), allocated lazily by generic lowering before emission; no
+   * caller retypes it after lowering (#6920).
    */
   emitVecNewFixed(layout: VecLayout, count: number, capacity: number, dataScratchLocal: number, out: S): void;
 

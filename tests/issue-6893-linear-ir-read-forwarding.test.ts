@@ -66,6 +66,7 @@ function vectorLayout(): LinearVecLowering {
   const layout = planLinearVectorLayout(F64),
     ops = defaultOperationsForLayout(layout);
   return {
+    valueType: { kind: "i32" },
     elementValType: { kind: "f64" },
     linearMemory: {
       layout,

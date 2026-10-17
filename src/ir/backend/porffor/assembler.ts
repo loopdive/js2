@@ -31,7 +31,7 @@ import { compareIrIdentity, type IrUnitId } from "../../identity.js";
 import { IR_VEC_ELEM_SET_PREFIX, parseIrVectorRuntimeElement } from "../../vector-runtime.js";
 import type { FuncHandle, FuncTypeDef, GlobalHandle, TypeHandle, ValType } from "../../types.js";
 import type { ModuleAssembler } from "../contract.js";
-import type { IrVecLowering, LinearMemoryFieldLowering, LinearVecLowering, PlannedObjectLowering } from "../handles.js";
+import type { LinearMemoryFieldLowering, LinearVecLowering, PlannedObjectLowering } from "../handles.js";
 import {
   PORFFOR_EFFECT_ENTRIES,
   PORFFOR_KIND_NAMES,
@@ -103,7 +103,11 @@ type ControlFrame = { readonly kind: "block" | "loop" | "if"; readonly label: st
 
 const TYPE_ORDINAL = new Map<string, number>(PORFFOR_TYPE_ENTRIES);
 const EFFECT_ORDINAL = new Map<string, number>(PORFFOR_EFFECT_ENTRIES);
-/** Linear lowering deliberately exposes its sole supported f64 vec as type 0. */
+/**
+ * Legacy `__vec_elem_set_<n>` compatibility suffix for the sole supported f64
+ * vec. #6920: vector handles no longer carry a GC type index; frontend linear
+ * physical stores use the abstract element-type symbol instead.
+ */
 const PORFFOR_LINEAR_F64_VEC_TYPE_INDEX = 0;
 
 /**
@@ -519,11 +523,11 @@ export class PorfforModuleAssembler
     return lowering;
   }
 
-  resolveVec(valType: ValType): IrVecLowering | null {
+  resolveVec(valType: ValType): LinearVecLowering | null {
     return valType.kind === "i32" ? this.f64VecHandle() : null;
   }
 
-  resolveVecForElement(elementValType: ValType, alloc?: AllocSiteId): IrVecLowering | null {
+  resolveVecForElement(elementValType: ValType, alloc?: AllocSiteId): LinearVecLowering | null {
     return elementValType.kind === "f64" ? this.f64VecHandle(alloc) : null;
   }
 
@@ -1288,7 +1292,7 @@ export class PorfforModuleAssembler
     return allocation;
   }
 
-  private f64VecHandle(alloc?: AllocSiteId): IrVecLowering & LinearVecLowering {
+  private f64VecHandle(alloc?: AllocSiteId): LinearVecLowering {
     const plan = this.requireMemoryPlan();
     const layout = plan.layoutForVector(irVal({ kind: "f64" }));
     if (!layout) throw new Error("porffor assembler: f64 vector layout is absent from the shared memory plan");
@@ -1305,10 +1309,6 @@ export class PorfforModuleAssembler
     );
     return {
       valueType: { kind: "i32" },
-      vecStructTypeIdx: PORFFOR_LINEAR_F64_VEC_TYPE_INDEX,
-      lengthFieldIdx: 0,
-      dataFieldIdx: 0,
-      arrayTypeIdx: 0,
       elementValType: { kind: "f64" },
       linearMemory: { allocation, layout, allocate, initializeElement },
     };
