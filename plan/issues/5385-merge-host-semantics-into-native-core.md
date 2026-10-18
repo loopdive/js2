@@ -901,3 +901,20 @@ Handoff after #6672 lands: observe the post-merge lane/npm refresh, then take
 the measured S7 deletion plan in #6979. The migration is not complete until
 that deletion removes the compatibility semantic providers; the JS value,
 object, callback, exception and lifecycle adapters remain required interop.
+
+### 2026-10-18 — S6 npm-compat product bar verified on the candidate
+
+Main's fresh `npm-compat.json` exposed one stale blocker rather than hiding it:
+Lit was host-measured but `jsHostNative` still reported a runtime exception.
+The exact #6672 head, after merging main through `50a1734711`, was run through
+the focused O4 JS-host perf lane for every currently host-measured workload.
+All eleven measured and matched their native-oracle checksum: acorn 422,
+clsx 7, cookie 1, hono 9, Lit 7, marked 75, Moment 10, Prettier 49, React 8,
+Redux 7 and UUID 2. The expected and actual value was identical in every row.
+Moment ran through the repository's keyed, canary-verified QuickJS provider.
+
+This closes the pre-merge S6 product-bar question without broadening the
+architecture: the packages use the native semantic core plus the existing JS
+boundary/capability adapters. It does not yet satisfy S7's post-merge entry
+condition. The CI npm refresh must publish the same no-`measured → error`
+result after #6672 lands; only then may #6979 delete the compatibility policy.

@@ -326,7 +326,8 @@ accelerators are #6978 (done).
 PR [#6672](https://github.com/loopdive/js2/pull/6672) was refreshed from its
 stale 2026-10-16 head onto `upstream/main` `1990d67b28` (merge
 `338d62e16b`), then through the baseline-only main tip `5495eb6102` (merge
-`430b2254fa`). The original S6 implementation is unchanged: omitted
+`430b2254fa`), and finally through the npm-compat refresh tip `50a1734711`
+(merge `7ea774fd6c`). The original S6 implementation is unchanged: omitted
 `semanticProviders` selects native-first, `host-assisted` is the named
 compatibility profile, and JS values/objects still cross through the boundary
 adapter rather than becoming host-backed core representations.
@@ -372,6 +373,19 @@ Validation on the refreshed tree:
   baseline-known failures, 2 baseline rows newly fixed, **0 new
   regressions** (floor 1,740). The baseline was deliberately not ratcheted in
   this refactor.
+
+The 2026-10-18 npm-compat refresh on main made the last S6 product-bar row
+directly auditable: Lit was still `measured` under host-assisted but the stale
+`jsHostNative` record was `runtime-error`. The exact S6 head was therefore
+remeasured instead of accepting the aggregate at face value. All eleven
+currently host-measured workloads are `measured` under the new default at O4,
+with matching expected/actual checksums: acorn 422/422, clsx 7/7, cookie 1/1,
+hono 9/9, Lit 7/7, marked 75/75, Moment 10/10, Prettier 49/49, React 8/8,
+Redux 7/7 and UUID 2/2. Moment used the keyed QuickJS pair built and
+canary-verified by `scripts/build-quickjs-eval-provider.mjs`; the other ten
+ran without a linked eval provider. Focused fragments were written outside
+the repository and no dashboard artifact was hand-edited. The post-merge CI
+refresh remains the publication proof required before S7 opens.
 
 Landing handoff: merge #6672, then observe the post-merge native-first lane
 and npm-compat refresh already required by the acceptance list. S7 deletion
