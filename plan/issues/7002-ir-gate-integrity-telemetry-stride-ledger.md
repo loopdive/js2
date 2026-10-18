@@ -1,7 +1,8 @@
 ---
 id: 7002
 title: "ir gates: `trackIrOutcomes` is not observation-only (it flips real test262 files from success to failure) and the only detector of production compile-twice (`duplicate-direct-function-body-receipt`, 24 of 25 invariants in a test262 stride) exists only under telemetry; the IR ledger is measured on a 5-file corpus (38/38 READY) while a test262 stride shows 3% IR bodies / 90% legacy — add a stride ledger and make telemetry side-effect free"
-status: in-progress
+status: done
+completed: 2026-10-18
 sprint: current
 created: 2026-10-15
 updated: 2026-10-18
@@ -124,8 +125,9 @@ cores − 1). Writes `benchmarks/results/ir-claim-ledger-standalone.json`
 (seed committed). Advisory workflow `.github/workflows/ir-claim-ledger.yml`:
 nightly 03:41 UTC + dispatch, uploads the JSON; not required.
 
-Stride 40, standalone, `--jobs 3`: **8 m 35 s** wall (509 s measured) on the
-loaded container. Numbers:
+Stride 40, standalone, `--jobs 3`: **8 m 35 s** wall on the container at load
+7–9, **5 m 01 s** for the committed seed (measured at commit `32b22526`, load
+~3). Both runs gave identical tallies. Numbers:
 
 | Population | Units | IR | both | legacy | neither | invariant | no telemetry |
 | --- | --- | --- | --- | --- | --- | --- | --- |
