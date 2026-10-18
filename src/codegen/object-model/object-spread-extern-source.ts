@@ -16,9 +16,9 @@
  * LAST property and no earlier source already took the runtime route, so the
  * runtime sources stay a suffix (`emitRuntimeSpreadCopy` refuses anything else).
  */
-import { ts } from "../ts-api.js";
-import { getLocalType } from "./context/locals.js";
-import type { FunctionContext } from "./context/types.js";
+import { ts } from "../../ts-api.js";
+import { getLocalType } from "../context/locals.js";
+import type { FunctionContext } from "../context/types.js";
 
 export function spreadSourceNeedsRuntimeCopy(
   fctx: FunctionContext,

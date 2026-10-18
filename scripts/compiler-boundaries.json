@@ -10224,7 +10224,7 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
-      "path": "src/codegen/object-spread-extern-source.ts",
+      "path": "src/codegen/object-model/object-spread-extern-source.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
