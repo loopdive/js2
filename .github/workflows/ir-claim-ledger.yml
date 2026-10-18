@@ -1,0 +1,66 @@
+name: IR claim ledger (advisory)
+
+# (#7002) Measures how much of a test262-scale corpus actually takes the IR
+# body route. `check:ir-only` / `check:ir-fallbacks` measure the playground
+# corpus only (five / ~13 files), which reads READY while a test262 stride is
+# mostly legacy bodies. This job refreshes the wide number nightly and uploads
+# it as an artifact.
+#
+# NOT a required check and never a gate: the script exits 0 whatever the
+# numbers are. A red run means the measurement itself broke (missing corpus,
+# vacuous stride, a crash), not that the claim rate moved.
+
+on:
+  schedule:
+    # Nightly 03:41 UTC — offset off the hour to avoid the scheduler rush.
+    - cron: "41 3 * * *"
+  workflow_dispatch:
+    inputs:
+      stride:
+        description: "Every Nth test262 file (sorted path order)"
+        required: false
+        default: "40"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ir-claim-ledger
+  cancel-in-progress: false
+
+jobs:
+  ledger:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: false
+
+      - name: Check out the test262 corpus
+        run: git submodule update --init --checkout test262
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+
+      - name: Setup pnpm via Corepack
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.30.2 --activate
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Measure the standalone IR claim ledger
+        env:
+          STRIDE: ${{ github.event.inputs.stride || '40' }}
+        run: |
+          npx tsx scripts/ir-claim-ledger.mts --stride "$STRIDE" --target standalone \
+            --out benchmarks/results/ir-claim-ledger-standalone.json
+
+      - name: Upload the ledger
+        uses: actions/upload-artifact@v6
+        with:
+          name: ir-claim-ledger-standalone
+          path: benchmarks/results/ir-claim-ledger-standalone.json
+          retention-days: 30

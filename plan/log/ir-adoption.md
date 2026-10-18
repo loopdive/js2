@@ -172,6 +172,15 @@ and Algorithms' top-level generic Map initializer are both IR-owned.
 | `non-export-modifier`                    | deferred   | `async` / declare-only — narrow                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | `unnamed`                                | deferred   | Anonymous default exports                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 
+**Which corpus these counts describe (#7002).** `scripts/ir-fallback-baseline.json`
+and `check:ir-only` measure the playground corpus only
+(`website/playground/examples/`, five entries for `check:ir-only`), so a
+bucket at **0** here says nothing about test262-scale code. The wide number is
+the IR claim ledger — `npx tsx scripts/ir-claim-ledger.mts --stride 40`
+(playground + every 40th test262 file, `trackIrOutcomes` on), committed as
+[`benchmarks/results/ir-claim-ledger-standalone.json`](../../benchmarks/results/ir-claim-ledger-standalone.json)
+and refreshed nightly by the advisory `IR claim ledger` workflow.
+
 ## Post-claim codes (#3341 Slice C — after the claim, not before)
 
 The buckets above are decided BEFORE the IR claims a unit. A unit the
