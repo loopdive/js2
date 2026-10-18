@@ -333,6 +333,7 @@ import type {
   ToPrimitiveMethodLiterals,
   ToPrimitiveSymbolBindings,
 } from "../runtime/wasmgc/values/to-primitive-method-bodies.js";
+import { collectTupleArrayCarrierTypeIdxs } from "./array/tuple-array-carrier.js"; // (#7020)
 
 const restOnlyApplyServices = {
   get classifyClosureDispatchRest() {
@@ -7330,7 +7331,8 @@ export function fillExternIsArray(ctx: CodegenContext): void {
   const fn = definedFuncAt(ctx, funcIdx);
   if (!fn) return;
 
-  const carrierTypeIdxs = collectStandaloneArrayCarrierTypeIdxs(ctx);
+  // (#7020) + tuple structs: a TS tuple is a JS array (host-free lane only).
+  const carrierTypeIdxs = [...collectStandaloneArrayCarrierTypeIdxs(ctx), ...collectTupleArrayCarrierTypeIdxs(ctx)];
   const anyLocal = 1;
   const body: Instr[] = [
     { op: "local.get", index: 0 },

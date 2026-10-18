@@ -136,6 +136,7 @@ import { tagAccessorObjectLiteralReceiver } from "./accessor-object-literal.js";
 import { widenUndefinedDefaultParamSlot } from "./destructuring-params.js";
 import { widenAsyncThenableResults } from "./async-thenable-return.js"; // (#5371)
 import { readEnv } from "../env.js";
+import { recordObjectLiteralCarrier } from "./object-model/anon-expando-bag-slot.js";
 /**
  * Check if a TS expression is "undefined-like" — OmittedExpression (array hole),
  * undefined keyword, identifier `undefined`, void expression, or any of the
@@ -3508,6 +3509,7 @@ export function compileObjectLiteralForStruct(
     reportError(ctx, expr, `Unknown struct type: ${typeName}`);
     return null;
   }
+  recordObjectLiteralCarrier(ctx, expr, structTypeIdx); // (#7020) expando-receiver $bag slot
   const mayHaveModuleHostSpreadField = isModuleGlobalObjectLiteral(expr);
 
   // Check if there are any spread assignments — if so, compile spread sources into locals.
