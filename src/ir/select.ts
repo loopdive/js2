@@ -9856,6 +9856,14 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
         }
         return capabilityNo("regexp-constructor-unsupported", "expr-regexp-method-target", expr);
       }
+      // (#7014) Every OTHER host-free RegExp method (`(/a/g).toString()`) keeps
+      // that refusal; claimed, it hit from-ast's capability-violation assert.
+      if (
+        currentSelectionOptions?.isRegExpExpression?.(expr.expression.expression) === true &&
+        currentSelectionOptions.supportsBackendCapability?.("host-regexp-constructor") === false
+      ) {
+        return capabilityNo("regexp-constructor-unsupported", "expr-regexp-method-target", expr);
+      }
       if (currentSelectionOptions?.preparedAsyncDateNowCall?.(expr) === true) return true;
       // (#1371) Whitelist f64 Math ops; the ambient receiver is not in scope, so the
       // generic receiver check below would reject these. Recognise the shape
