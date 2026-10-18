@@ -152,8 +152,6 @@ import {
   valTypesMatch,
 } from "./shared.js";
 import { readEnv } from "../env.js";
-import { emitExternrefBackedFieldInitializers, type ExternrefFieldOps } from "./classes/externref-class-fields.js"; // (#6844)
-import { stringConstantExternrefInstrs } from "./native-strings.js";
 
 /**
  * (#846h / #1682) Returns true if `body` lexically contains a `super(...)` call
@@ -596,18 +594,6 @@ function evaluateArgumentForSideEffects(ctx: CodegenContext, fctx: FunctionConte
   if (argResult !== null) {
     fctx.body.push({ op: "drop" });
   }
-}
-
-/** (#6844) Externref-backed field initializers, with the codegen entry points the leaf needs injected. */
-function emitExternrefFields(ctx: CodegenContext, fctx: FunctionContext, decl: ts.ClassLikeDeclaration, self: number) {
-  const ops: ExternrefFieldOps = {
-    ...{ compileExpression, coerceType, ensureLateImport, flushLateImportShifts },
-    pushStringKey: (key) => {
-      addStringConstantGlobal(ctx, key);
-      fctx.body.push(...stringConstantExternrefInstrs(ctx, key));
-    },
-  };
-  emitExternrefBackedFieldInitializers(ctx, fctx, decl, self, ops);
 }
 
 /**
@@ -2920,13 +2906,12 @@ function compileClassBodiesInner(
     let ownFieldInitializersEmitted = false;
     const emitOwnInstanceFieldInitializers = (): void => {
       // Compile field initializers from property declarations
-      // (e.g., x: number = 42, #x: number = 42). (#6844) Externref-backed: DEFINEd on the host instance.
+      // (e.g., x: number = 42, #x: number = 42). (#6844, #6979) An externref-backed
+      // instance keeps no struct fields; its host `__defineProperty_value`
+      // DefineField lane only ever ran without the native regime and is retired.
       if (ownFieldInitializersEmitted) return;
       ownFieldInitializersEmitted = true;
-      if (isExternrefBacked && !isCollectionCarrierClass(ctx, className)) {
-        emitExternrefFields(ctx, fctx, decl, selfLocal);
-        return;
-      }
+      if (isExternrefBacked && !isCollectionCarrierClass(ctx, className)) return;
       for (const member of decl.members) {
         if (ts.isPropertyDeclaration(member) && member.name && member.initializer && !hasStaticModifier(member)) {
           const fieldName = resolveClassMemberName(ctx, member.name);

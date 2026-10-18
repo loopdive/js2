@@ -328,40 +328,24 @@ function compileOptionalPropertyValueCall(
   fctx.body.push({ op: "local.set", index: receiverLocal });
 
   const methodName = ts.isPrivateIdentifier(propAccess.name) ? propAccess.name.text.slice(1) : propAccess.name.text;
-  // (#5383 / #2961) `recv.m?.(args)` used to build its argument list and invoke
-  // the callee through the JS-host trio `__js_array_new` / `__js_array_push` /
-  // `__call_function` (plus `__get_undefined` for the short-circuit result)
-  // unconditionally. Under `--target standalone` those four have no provider,
-  // so the shape leaked FOUR unsatisfiable `env::*` imports — the entire `env`
-  // import set of the compiled `@js-temporal/polyfill` (one call site, the
-  // polyfill's `hr`). The native lane owns exact equivalents already:
-  // `__objvec_new` / `__objvec_push` (object-runtime vec builders) and
-  // `__apply_closure`, which has the SAME `(callee, thisArg, args) -> result`
-  // signature as `__call_function`; `canonicalUndefinedExternInstrs` supplies
-  // the lane's real `undefined` (the #2106 tag-1 singleton standalone, the host
-  // `__get_undefined` otherwise). Split exactly the way
-  // `tryCompileCallableStaticField` already does. The HOST lane keeps its four
-  // `ensureLateImport` registrations in the same order and emits the same
-  // instructions, so its bytes are unchanged.
-  const hostLane = !ctx.standalone && !ctx.wasi;
+  // (#5383 / #2961, #6979) `recv.m?.(args)` builds its argument list with the
+  // object-runtime vec builders (`__objvec_new` / `__objvec_push`) and invokes
+  // the callee through `__apply_closure`, which has the `(callee, thisArg,
+  // args) -> result` signature of the retired host `__call_function`;
+  // `canonicalUndefinedExternInstrs` supplies the lane's real `undefined`.
   const getIdx = ensureLateImport(ctx, "__extern_get", [externref, externref], [externref]);
   const isUndefinedIdx = ensureExternIsUndefinedImport(ctx);
-  const applyIdx = hostLane ? undefined : reserveApplyClosure(ctx);
-  const vecBuilders = hostLane ? undefined : ensureObjVecBuilders(ctx);
-  const arrayNewIdx = hostLane ? ensureLateImport(ctx, "__js_array_new", [], [externref]) : vecBuilders?.newIdx;
-  const arrayPushIdx = hostLane
-    ? ensureLateImport(ctx, "__js_array_push", [externref, externref], [])
-    : vecBuilders?.pushIdx;
-  const callIdx = hostLane
-    ? ensureLateImport(ctx, "__call_function", [externref, externref, externref], [externref])
-    : applyIdx;
-  if (hostLane) ensureLateImport(ctx, "__get_undefined", [], [externref]);
+  const applyIdx = reserveApplyClosure(ctx);
+  const vecBuilders = ensureObjVecBuilders(ctx);
+  const arrayNewIdx = vecBuilders?.newIdx;
+  const arrayPushIdx = vecBuilders?.pushIdx;
+  const callIdx = applyIdx;
   addStringConstantGlobal(ctx, methodName);
   flushLateImportShifts(ctx, fctx);
   const resolvedGetIdx = ctx.funcMap.get("__extern_get") ?? getIdx;
-  const resolvedNewIdx = ctx.funcMap.get(hostLane ? "__js_array_new" : "__objvec_new") ?? arrayNewIdx;
-  const resolvedPushIdx = ctx.funcMap.get(hostLane ? "__js_array_push" : "__objvec_push") ?? arrayPushIdx;
-  const resolvedCallIdx = ctx.funcMap.get(hostLane ? "__call_function" : "__apply_closure") ?? callIdx;
+  const resolvedNewIdx = ctx.funcMap.get("__objvec_new") ?? arrayNewIdx;
+  const resolvedPushIdx = ctx.funcMap.get("__objvec_push") ?? arrayPushIdx;
+  const resolvedCallIdx = ctx.funcMap.get("__apply_closure") ?? callIdx;
   if (
     resolvedGetIdx === undefined ||
     resolvedNewIdx === undefined ||

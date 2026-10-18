@@ -1769,56 +1769,16 @@ export function compileTaggedTemplateExpression(
       }
 
       // If the tag expression compiled but didn't return a recognizable closure,
-      // use __tagged_template host import to call it dynamically.
-      // Signature: __tagged_template(tag: externref, strings: externref, subs: externref) -> externref
+      // call it through the host-free dynamic tag call (#6774 S17). The host
+      // `__tagged_template` bridge is retired (#6979).
       if (tagResult) {
         // Coerce tag to externref if needed
         if (tagResult.kind !== "externref") {
           coerceType(ctx, fctx, tagResult, { kind: "externref" });
         }
-        if (noJsHost(ctx)) {
-          // (#6774 S17) host-free dynamic tag call
-          if (ttRecvBind) emitObjectLiteralMethodThisInstall(ctx, fctx, ttRecvBind);
-          const r = emitStandaloneDynamicTagCall(ctx, fctx, stringsLocal, substitutions);
-          return finishObjectLiteralMethodCall(ctx, fctx, ttRecvBind, r);
-        }
-        const tagLocal = allocLocal(fctx, `__tt_dyn_tag_${fctx.locals.length}`, { kind: "externref" });
-        fctx.body.push({ op: "local.set", index: tagLocal });
-
-        // Ensure __tagged_template, __js_array_new, __js_array_push imports exist
-        const ext: ValType = { kind: "externref" };
-        ensureLateImport(ctx, "__tagged_template", [ext, ext, ext], [ext]);
-        ensureLateImport(ctx, "__js_array_new", [], [ext]);
-        ensureLateImport(ctx, "__js_array_push", [ext, ext], []);
-        flushLateImportShifts(ctx, fctx);
-
-        const ttIdx = ctx.funcMap.get("__tagged_template")!;
-        const arrNewIdx = ctx.funcMap.get("__js_array_new")!;
-        const arrPushIdx = ctx.funcMap.get("__js_array_push")!;
-
-        // Build JS array of substitutions
-        fctx.body.push({ op: "call", funcIdx: arrNewIdx }); // -> externref (empty array)
-        const subsArrLocal = allocLocal(fctx, `__tt_subs_arr_${fctx.locals.length}`, ext);
-        fctx.body.push({ op: "local.set", index: subsArrLocal });
-
-        for (const sub of substitutions) {
-          fctx.body.push({ op: "local.get", index: subsArrLocal });
-          const subResult = compileExpression(ctx, fctx, sub);
-          if (subResult && subResult.kind !== "externref") {
-            coerceType(ctx, fctx, subResult, ext);
-          }
-          fctx.body.push({ op: "call", funcIdx: arrPushIdx });
-        }
-
-        // Call __tagged_template(tag, strings, subs)
         if (ttRecvBind) emitObjectLiteralMethodThisInstall(ctx, fctx, ttRecvBind);
-        fctx.body.push({ op: "local.get", index: tagLocal });
-        fctx.body.push({ op: "local.get", index: stringsLocal });
-        fctx.body.push({ op: "extern.convert_any" }); // template vec struct -> externref
-        fctx.body.push({ op: "local.get", index: subsArrLocal });
-        fctx.body.push({ op: "call", funcIdx: ttIdx });
-
-        return finishObjectLiteralMethodCall(ctx, fctx, ttRecvBind, { kind: "externref" } as ValType);
+        const r = emitStandaloneDynamicTagCall(ctx, fctx, stringsLocal, substitutions);
+        return finishObjectLiteralMethodCall(ctx, fctx, ttRecvBind, r);
       }
     }
   }

@@ -69,7 +69,6 @@ import { reportError } from "../context/errors.js";
 import { allocLocal, allocTempLocal, releaseTempLocal } from "../context/locals.js";
 import { rollbackSpeculative, snapshotSpeculative } from "../context/speculative.js";
 import { tryEmitArrayOfSpreadVec } from "../array-of-spread.js";
-import { tryEmitSpreadHostArgs } from "../host-method-args.js";
 import { hasSpreadArgument } from "../spread-arg-list.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { emitRefElemArraySnapshot } from "../dataview-native.js"; // (#6651 U2) drain-before-ToNumber
@@ -1797,37 +1796,12 @@ export function compileBuiltinStaticCall(
         fctx.body.push({ op: "struct.new", typeIdx: ofVecTypeIdx });
         return { kind: "ref_null", typeIdx: ofVecTypeIdx };
       }
-      // vec type unavailable — fall through to the host path below.
+      // vec type unavailable — no native lowering.
     }
-    // Build a JS array of the arguments and delegate to host
-    const arrNewIdx = ensureLateImport(ctx, "__js_array_new", [], [{ kind: "externref" }]);
-    const arrPushIdx = ensureLateImport(ctx, "__js_array_push", [{ kind: "externref" }, { kind: "externref" }], []);
-    const ofIdx = ensureLateImport(ctx, "__array_of", [{ kind: "externref" }], [{ kind: "externref" }]);
-    flushLateImportShifts(ctx, fctx);
-    if (ofIdx !== undefined && arrNewIdx !== undefined && arrPushIdx !== undefined) {
-      fctx.body.push({ op: "call", funcIdx: arrNewIdx });
-      const itemsLocal = allocLocal(fctx, `__arrof_items_${fctx.locals.length}`, { kind: "externref" });
-      fctx.body.push({ op: "local.set", index: itemsLocal });
-      // (#6421) With a spread present the whole list goes through the shared
-      // expanding builder — one `__js_array_push` per AST node handed
-      // `Array.of` the SOURCE array as a single element. Without one the
-      // unrolled loop is exact and stays byte-identical.
-      if (!tryEmitSpreadHostArgs(ctx, fctx, expr.arguments, itemsLocal, "__js_array_push", arrPushIdx)) {
-        for (const arg of expr.arguments) {
-          fctx.body.push({ op: "local.get", index: itemsLocal });
-          const argType = compileExpression(ctx, fctx, arg, { kind: "externref" });
-          if (argType && argType.kind !== "externref") coerceType(ctx, fctx, argType, { kind: "externref" });
-          fctx.body.push({ op: "call", funcIdx: arrPushIdx });
-        }
-      }
-      fctx.body.push({ op: "local.get", index: itemsLocal });
-      // Expanding a spread can register late imports, which shifts every
-      // defined-function index captured before them — re-read by name.
-      fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__array_of") ?? ofIdx });
-      return { kind: "externref" };
-    }
-    fctx.body.push({ op: "ref.null.extern" });
-    return { kind: "externref" };
+    // (#6979) The host `__array_of` bridge is retired: a shape the native vec
+    // builder declines is a compile error, not a host call.
+    reportError(ctx, expr, "Array.of: argument list has no native lowering (#6979)");
+    return null;
   }
 
   // Handle Object.keys(obj), Object.values(obj), and Object.entries(obj)

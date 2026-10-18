@@ -574,5 +574,19 @@ export function createCodegenContext(
     }
   }
 
+  return assertNativeRegimeOrWasi(ctx, targetProfile);
+}
+
+/**
+ * (#6979 S7-b) The host-semantic lane is gone: WasmGC codegen runs either the
+ * native semantic regime (`standalone`) or WASI, never neither. Every
+ * `!(ctx.standalone || ctx.wasi)` arm is therefore dead, and S7-b deletes the
+ * retired host imports those arms emitted. Fail loudly if a new profile breaks
+ * the invariant instead of silently reviving them.
+ */
+function assertNativeRegimeOrWasi(ctx: CodegenContext, targetProfile: CompileTargetProfile): CodegenContext {
+  if (targetProfile.backend === "wasmgc" && !ctx.standalone && !ctx.wasi) {
+    throw new Error(`#6979: WasmGC target '${targetProfile.target}' must lower with the native regime or WASI`);
+  }
   return ctx;
 }

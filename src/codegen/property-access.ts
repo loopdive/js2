@@ -191,7 +191,6 @@ import {
   localGlobalIdx,
   recordInModuleInitFlagRead,
 } from "./registry/imports.js";
-import { tryCompileArrayMethodValue } from "./array-method-value.js";
 import { realmGlobalModuleGlobalReadApplies } from "./helpers/sloppy-this-global.js"; // (#4500 Slice A) realm-global receiver; (#5342) self-referential probe
 import { dvDetachedThrowInstrs, getOrRegisterDvWindowType } from "./dataview-native.js"; // (#2159/#38) DataView windowing; (#3173) detached TypeError
 import {
@@ -3998,12 +3997,6 @@ export function compilePropertyAccess(
     return compileOptionalPropertyAccess(ctx, fctx, expr);
   }
 
-  // (#4765 slice 1) `[].includes` as a VALUE — the host intrinsic, so
-  // `[].includes.call(obj, …)` runs the generic algorithm instead of dying on a
-  // null. Non-call position and an array receiver only; see the module comment.
-  const arrayMethodValue = tryCompileArrayMethodValue(ctx, fctx, expr);
-  if (arrayMethodValue !== undefined) return arrayMethodValue;
-
   // Static field initializers can contain a folded direct eval. Its AST is
   // foreign, but `this.<name>` still denotes the surrounding class constructor
   // and must see compiler-owned static-field storage. Handle that one receiver
@@ -6622,29 +6615,6 @@ export function compileElementAccessBody(
       if (dynamic) return dynamic;
     }
 
-    // (#2743 b) `vec[Symbol.iterator]` is %Array.prototype.values%
-    // (§10.4.4.6/§10.4.4.7 + the Array iterator), NOT a numeric index. This
-    // covers BOTH `[][Symbol.iterator]` and `arguments[Symbol.iterator]` — both
-    // are vec-typed receivers reaching this path. The default vec lowering
-    // coerces the key to an i32 index, which ToNumber-throws on a Symbol
-    // ("Cannot convert a Symbol value to a number"). Intercept the
-    // statically-known `Symbol.iterator` key and return the host intrinsic, so
-    // both sites get the SAME identity (`[][Symbol.iterator] ===
-    // Array.prototype.values`). Host-mode only: in standalone `Symbol.iterator`
-    // lowers to an i32 well-known id and the index path is harmless. The
-    // receiver vec ref is on the stack here (nothing emitted since entry), so
-    // drop it — `Array.prototype.values` is the shared intrinsic.
-    if (!noJsHost(ctx) && isSymbolIteratorKey(expr.argumentExpression)) {
-      fctx.body.push({ op: "drop" });
-      const valuesIdx = ensureLateImport(ctx, "__array_proto_values", [], [{ kind: "externref" }]);
-      flushLateImportShifts(ctx, fctx);
-      if (valuesIdx !== undefined) {
-        fctx.body.push({ op: "call", funcIdx: valuesIdx });
-      } else {
-        fctx.body.push({ op: "ref.null.extern" });
-      }
-      return { kind: "externref" };
-    }
     if (emitDynamicStringVecElementGet(ctx, fctx, expr.argumentExpression)) return { kind: "externref" };
     // (#2593) Signedness of a packed i8/i16 typed-array element is driven by the
     // VIEW NAME (Int8/Int16 → sign-extend; Uint8/Uint8Clamped/Uint16 →

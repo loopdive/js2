@@ -53,7 +53,7 @@ import {
   registerNativeGenerator,
   type NativeGeneratorCaptureParam,
 } from "../generators-native.js";
-import { emitThrowReferenceError, emitThrowTypeError, noJsHost } from "../expressions/helpers.js";
+import { emitThrowReferenceError, emitThrowTypeError } from "../expressions/helpers.js";
 import { emitToPropertyKeyOnce } from "../expressions/computed-member-reference.js";
 import { emitLazyProtoGet, emitRegisterDynamicClassParent } from "../expressions/extern.js";
 import { emitStandaloneHeritageCheck } from "../class-heritage-check.js"; // (#5195 r3-5)
@@ -3976,17 +3976,6 @@ export function emitSetExtrasArgv(
       lenFn = ctx.funcMap.get("__extern_length");
       getFn = ctx.funcMap.get("__extern_get_idx");
       iterFn = ctx.funcMap.get("__array_from_iter_n");
-    } else if (!noJsHost(ctx)) {
-      lenFn = ensureLateImport(ctx, "__extern_length", [{ kind: "externref" }], [{ kind: "f64" }]);
-      getFn = ensureLateImport(
-        ctx,
-        "__extern_get_idx",
-        [{ kind: "externref" }, { kind: "f64" }],
-        [{ kind: "externref" }],
-      );
-      // ArgumentListEvaluation uses GetIterator, so a non-callable or missing
-      // @@iterator is a TypeError rather than Array.from's array-like fallback.
-      iterFn = ensureLateImport(ctx, "__array_from_iter_strict", [{ kind: "externref" }], [{ kind: "externref" }]);
     }
     flushLateImportShifts(ctx, fctx);
     if (lenFn !== undefined && getFn !== undefined && iterFn !== undefined) {

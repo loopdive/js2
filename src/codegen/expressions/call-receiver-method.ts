@@ -95,7 +95,6 @@ import { ensureIteratorNextCallableHandle } from "../iter-hof-native.js";
 import { isLazyIterForm, LAZY_ITER_METHODS } from "../iter-lazy-native.js";
 import { stringConstantExternrefInstrs } from "../native-strings.js";
 import { staticHostPropertyKeyInstrs } from "../host-property-key.js";
-import { usesNativeNumberFormat } from "../number-format-native.js";
 import { ensureStandaloneRegExpCarrierTestHelper } from "../regexp-standalone.js";
 import { ensureStandaloneRegExpCarrierExecHelper } from "../regexp-exec-carrier.js";
 import {
@@ -182,11 +181,6 @@ import {
 } from "./object-method-rest-abi.js";
 import { objectLiteralMethodNeedsCallReceiver } from "../object-literal-method-receiver.js";
 import { emitHostMethodCallArgs } from "../host-method-args.js"; // (#5361)
-import {
-  noteOwnShadowDispatchCandidate,
-  ownShadowFuncIdx,
-  ownShadowGuardedMethodName,
-} from "./own-property-method-shadow.js";
 import {
   buildThrowJsErrorInstrs,
   canonicalClassExpressionName,
@@ -2103,7 +2097,6 @@ export function compileReceiverMethodCall(
       // guard wrapper — same signature, so nothing below changes — which
       // consults the receiver's own slot before running the static body.
       // Undefined (the common case) keeps the direct call byte-identical.
-      const ownShadowName0 = ownShadowGuardedMethodName(ctx, expr, receiverClassName, methodName, funcIdx);
       // Push self (the receiver) as first argument, with type hint from method's first param
       const methodParamTypes0 = getFuncParamTypes(ctx, funcIdx);
       // (#2132) A method call on a statically-nullable receiver (`C | null`,
@@ -2240,10 +2233,7 @@ export function compileReceiverMethodCall(
         }
         // Set __argc before the call so the callee knows the actual arg count
         maybeSetArgcForKnownCall(ctx, fctx, fullName, expr.arguments.length, ngParamCount);
-        const finalMethodIdx =
-          ownShadowFuncIdx(ctx, ownShadowName0) ??
-          ctx.funcMap.get(classMemberFuncKey(ctx, fullName, receiverMemberKind)) ??
-          funcIdx; // (#1983, #6772 S4)
+        const finalMethodIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName, receiverMemberKind)) ?? funcIdx; // (#1983, #6772 S4)
         fctx.body.push({ op: "call", funcIdx: finalMethodIdx });
         const elseInstrs = fctx.body;
         fctx.body = savedBody;
@@ -2332,10 +2322,7 @@ export function compileReceiverMethodCall(
       // would clobber it back to the un-flattened argument-node count (#5093).
       if (!handledArgvSpreadNn) maybeSetArgcForKnownCall(ctx, fctx, fullName, expr.arguments.length, methodParamCount);
       // Re-lookup funcIdx: argument compilation may trigger addUnionImports
-      const finalMethodIdx =
-        ownShadowFuncIdx(ctx, ownShadowName0) ??
-        ctx.funcMap.get(classMemberFuncKey(ctx, fullName, receiverMemberKind)) ??
-        funcIdx; // (#1983, #6772 S4)
+      const finalMethodIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName, receiverMemberKind)) ?? funcIdx; // (#1983, #6772 S4)
       fctx.body.push({ op: "call", funcIdx: finalMethodIdx });
 
       // Determine return type
@@ -2437,7 +2424,6 @@ export function compileReceiverMethodCall(
         // carrier — and it is the arm that actually claims `h.pre("a")` for a
         // `const h = new H()` binding. Object-literal structs are declined by
         // the helper's `ctx.classSet` test, so they stay byte-identical.
-        const ownShadowNameS = ownShadowGuardedMethodName(ctx, expr, structTypeName, methodName, funcIdx);
         // Push self (the receiver) as first argument, with type hint from method's first param
         const structMethodPTypes = getFuncParamTypes(ctx, funcIdx);
         const recvType = compileExpression(ctx, fctx, propAccess.expression, structMethodPTypes?.[0]);
@@ -2515,9 +2501,7 @@ export function compileReceiverMethodCall(
           // (#5093: not over a flattened spread, which published a runtime one).
           if (!handledArgvSpreadSm)
             maybeSetArgcForKnownCall(ctx, fctx, fullName, expr.arguments.length, smMethodParamCount);
-          const finalStructMethodIdx =
-            ownShadowFuncIdx(ctx, ownShadowNameS) ??
-            (hasLiteralMethodOverride ? funcIdx : (ctx.funcMap.get(fullName) ?? funcIdx));
+          const finalStructMethodIdx = hasLiteralMethodOverride ? funcIdx : (ctx.funcMap.get(fullName) ?? funcIdx);
           fctx.body.push({ op: "call", funcIdx: finalStructMethodIdx });
           const elseInstrs = fctx.body;
           fctx.body = savedBody;
@@ -2596,9 +2580,7 @@ export function compileReceiverMethodCall(
         if (!handledArgvSpreadNns)
           maybeSetArgcForKnownCall(ctx, fctx, fullName, expr.arguments.length, nnMethodParamCount);
         // Re-lookup funcIdx: argument compilation may trigger addUnionImports
-        const finalStructMethodIdx =
-          ownShadowFuncIdx(ctx, ownShadowNameS) ??
-          (hasLiteralMethodOverride ? funcIdx : (ctx.funcMap.get(fullName) ?? funcIdx));
+        const finalStructMethodIdx = hasLiteralMethodOverride ? funcIdx : (ctx.funcMap.get(fullName) ?? funcIdx);
         fctx.body.push({ op: "call", funcIdx: finalStructMethodIdx });
 
         const sig = ctx.checker.getResolvedSignature(expr);
@@ -2859,10 +2841,9 @@ export function compileReceiverMethodCall(
     // `$AnyString`. Consumers then had to re-discover the representation
     // dynamically (`ref.test $AnyString`), and any consumer that could NOT —
     // notably a JS-host import argument like `parseInt` — silently received an
-    // opaque WasmGC struct. Since #3912 makes the formatter native whenever
-    // `usesNativeNumberFormat`, "are strings native here?" is the whole
-    // question, so the target-specific conjunct is gone.
-    const unwrapToNative = ctx.nativeStrings && ctx.nativeStrTypeIdx >= 0 && usesNativeNumberFormat(ctx);
+    // opaque WasmGC struct. The formatter is always native (#3912, #6979), so
+    // "are strings native here?" is the whole question.
+    const unwrapToNative = ctx.nativeStrings && ctx.nativeStrTypeIdx >= 0;
     if (radixLocalIdx !== undefined) {
       const radixFuncIdx = ctx.funcMap.get("number_toString_radix");
       if (radixFuncIdx !== undefined) {
@@ -4189,11 +4170,6 @@ export function compileReceiverMethodCall(
         !recvIsBuiltinClass
       ) {
         const arity = dispatchArgs.length;
-        // The dispatcher's fill runs at finalize with no AST in hand, so record
-        // HERE whether this call's file could install an own callable member of
-        // this name — the fill then guards its user-class arms with an own-slot
-        // check. Registers `__hasOwnProperty` while imports are still index-safe.
-        noteOwnShadowDispatchCandidate(ctx, expr, methodName);
         const dispatchIdx = reserveClosedMethodDispatch(ctx, methodName, arity);
         // #3507 — reserve the native RegExp carrier helper while function
         // indices are still append-safe. The dispatcher fill only reads it.

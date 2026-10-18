@@ -29,7 +29,6 @@ import { HOLE_F64_BITS, UNDEF_F64_BITS } from "./value-tags.js"; // (#4638) conc
 import { buildJoinBoxedElementToString, isAnyStringSubtype } from "./array-join-element.js"; // (#4560)
 import type { ClosureInfo, CodegenContext, FunctionContext } from "./context/types.js";
 import {
-  addArrayIteratorImports,
   addStringImports,
   addUnionImports,
   resolveWasmType,
@@ -121,7 +120,6 @@ import {
 import { staticIntegerRange } from "../ir/analysis/static-numeric-range.js";
 import { tryEmitStaticI32Expression } from "./i32-static-range-expr.js";
 import { countedPushIndexOfUnroll, emitArrayIndexOfScan } from "./array-indexof-scan.js";
-import { compileArrayConcatExternHost, compileArrayMethodExtern } from "./array-method-host.js";
 import { isHostTypedArrayCarrierExpression } from "./expressions/typed-array-host-carrier.js";
 // (#4446) The §23.1.3.1 host-free concat loop for dynamic operands.
 import { compileArrayConcatNativeSpec } from "./array-concat-spec.js";
@@ -2047,10 +2045,6 @@ function emitDynViewMethodTwoArm(
   return { kind: "externref" };
 }
 
-function shouldUseHostArrayMethod(ctx: CodegenContext, receiverIsExternref: boolean): boolean {
-  return receiverIsExternref && !ctx.standalone && !ctx.wasi;
-}
-
 /**
  * Compile array method calls to inline Wasm instructions.
  * Returns undefined if the call is not an array method (caller should continue).
@@ -2459,20 +2453,12 @@ export function compileArrayMethodCall(
       break;
     }
     case "includes":
-      // Host lane: an externref receiver (a callback capture, a host proxy) may
-      // not be the inferred vec type, so it takes the host method bridge. (#6881)
-      // The regime has no host array: that bridge's `__js_array_*` builders fail
-      // the native-first gate (eval-widened script vars land here), so it takes
-      // the native vec loop, as `at`/`indexOf` already do.
-      result =
-        receiverIsExternref && !ctx.standalone
-          ? compileArrayMethodExtern(ctx, fctx, methodAccess, callExpr, "includes")
-          : compileArrayIncludes(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
+      // (#6881, #6979) An externref receiver takes the native vec loop, as
+      // `at`/`indexOf` do; the host `__js_array_*` method bridge is retired.
+      result = compileArrayIncludes(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
       break;
     case "reverse":
-      result = shouldUseHostArrayMethod(ctx, receiverIsExternref)
-        ? compileArrayMethodExtern(ctx, fctx, methodAccess, callExpr, "reverse")
-        : compileArrayReverse(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
+      result = compileArrayReverse(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
       break;
     case "push":
       result = tryCompileArrayPushDynamicSpread(
@@ -2510,9 +2496,7 @@ export function compileArrayMethodCall(
       result = compileArrayUnshift(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
       break;
     case "slice":
-      result = shouldUseHostArrayMethod(ctx, receiverIsExternref)
-        ? compileArrayMethodExtern(ctx, fctx, methodAccess, callExpr, "slice")
-        : compileArraySlice(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
+      result = compileArraySlice(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
       break;
     case "concat":
       // Host methods such as String.prototype.split return ordinary JavaScript
@@ -2549,9 +2533,7 @@ export function compileArrayMethodCall(
       result = compileArraySplice(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
       break;
     case "at":
-      result = shouldUseHostArrayMethod(ctx, receiverIsExternref)
-        ? compileArrayMethodExtern(ctx, fctx, methodAccess, callExpr, "at")
-        : compileArrayAt(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
+      result = compileArrayAt(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
       break;
     case "fill":
       result = compileArrayFill(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
@@ -2563,17 +2545,15 @@ export function compileArrayMethodCall(
       result = compileArrayLastIndexOf(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
       break;
     case "sort":
-      // Host arrays use the ordinary host boundary; Wasm vecs keep native sort.
+      // Wasm vecs keep native sort (the host-array boundary is retired, #6979).
       result =
-        receiverIsExternref && !ctx.standalone && !ctx.wasi
-          ? compileArrayMethodExtern(ctx, fctx, methodAccess, callExpr, "sort")
-          : elemType.kind === "f64" ||
-              elemType.kind === "i32" ||
-              elemType.kind === "externref" ||
-              elemType.kind === "ref" ||
-              elemType.kind === "ref_null"
-            ? compileArraySort(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType)
-            : undefined;
+        elemType.kind === "f64" ||
+        elemType.kind === "i32" ||
+        elemType.kind === "externref" ||
+        elemType.kind === "ref" ||
+        elemType.kind === "ref_null"
+          ? compileArraySort(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType)
+          : undefined;
       break;
     // Functional array methods -- numeric (f64, i32) / externref element types,
     // plus ref/ref_null elements when the callback is a provable closure (#3126).
@@ -3177,8 +3157,8 @@ function compileArrayWith(
 }
 
 /**
- * Compile Array.prototype.entries/keys/values — delegates to host import
- * that creates a proper JS iterator over the WasmGC vec struct.
+ * Compile Array.prototype.entries/keys/values over the native iterator bridge
+ * (the host `__array_entries/keys/values` import is retired, #6979).
  */
 function compileArrayIteratorMethod(
   ctx: CodegenContext,
@@ -3186,39 +3166,14 @@ function compileArrayIteratorMethod(
   propAccess: ts.PropertyAccessExpression | ts.ElementAccessExpression,
   methodName: string,
 ): ValType | null {
-  if (ctx.standalone || ctx.wasi) {
-    // #1320 Slice 1: native iterator bridge. Build a canonical externref `$Vec`
-    // (box each element here, where we have an fctx), wrap it in an `$IterRec`
-    // via the native `__iterator`. `.values()` boxes each element, `.keys()`
-    // boxes the index, and `.entries()` boxes a 2-element `[i, value]` pair vec
-    // per slot — all over the SAME canonical-externref-`$Vec` runtime (no
-    // `$GenStateBase` substrate). The consumer destructures each yielded pair
-    // externref via the existing array-access path.
-    return compileNativeArrayIterator(ctx, fctx, propAccess, methodName);
-  }
-
-  addArrayIteratorImports(ctx);
-  const importName = `__array_${methodName}`;
-  const funcIdx = ctx.funcMap.get(importName);
-  if (funcIdx === undefined) return null;
-
-  // Compile receiver and validate a branded TypedArray before the host iterator
-  // adapter observes its logical length. Native %TypedArray% iterator methods
-  // throw at call time when the receiver is detached.
-  const receiverType = compileExpression(ctx, fctx, propAccess.expression);
-  if (
-    receiverType &&
-    (receiverType.kind === "ref" || receiverType.kind === "ref_null" || receiverType.kind === "anyref")
-  ) {
-    const receiverLocal = allocLocal(fctx, `__arr_${methodName}_recv_${fctx.locals.length}`, receiverType);
-    fctx.body.push({ op: "local.tee", index: receiverLocal });
-    emitReceiverNullGuard(ctx, fctx, receiverLocal, propAccess.expression);
-  }
-  fctx.body.push({ op: "extern.convert_any" });
-
-  // Call the host import: (externref) → externref
-  fctx.body.push({ op: "call", funcIdx });
-  return { kind: "externref" };
+  // #1320 Slice 1: native iterator bridge. Build a canonical externref `$Vec`
+  // (box each element here, where we have an fctx), wrap it in an `$IterRec`
+  // via the native `__iterator`. `.values()` boxes each element, `.keys()`
+  // boxes the index, and `.entries()` boxes a 2-element `[i, value]` pair vec
+  // per slot — all over the SAME canonical-externref-`$Vec` runtime (no
+  // `$GenStateBase` substrate). The consumer destructures each yielded pair
+  // externref via the existing array-access path.
+  return compileNativeArrayIterator(ctx, fctx, propAccess, methodName);
 }
 
 /**
@@ -5437,12 +5392,9 @@ function compileArrayConcat(
  * Fallback for arr.concat(arg...) when any arg is not a known WasmGC array type
  * (e.g. `any`, array-like with Symbol.isConcatSpreadable, or plain objects).
  *
- * (#4446) Per-target switch. `native-first` (`--target standalone` /
- * `--target wasi`) takes the Wasm-native §23.1.3.1 loop
- * ({@link compileArrayConcatNativeSpec}); everything else keeps the unchanged
- * `env::__array_concat_any` host bridge (`compileArrayConcatExternHost` in
- * array-method-host.ts), whose `env::*` imports the #2961 leak guard rejects
- * host-free.
+ * (#4446, #6979) Every WasmGC profile takes the Wasm-native §23.1.3.1 loop
+ * ({@link compileArrayConcatNativeSpec}); the `env::__array_concat_any` host
+ * bridge is retired.
  */
 function compileArrayConcatExtern(
   ctx: CodegenContext,
@@ -5450,9 +5402,9 @@ function compileArrayConcatExtern(
   propAccess: ts.PropertyAccessExpression,
   callExpr: ts.CallExpression,
 ): ValType | null {
-  const native = compileArrayConcatNativeSpec(ctx, fctx, propAccess, callExpr);
-  if (native !== undefined) return native;
-  return compileArrayConcatExternHost(ctx, fctx, propAccess, callExpr);
+  // (#6979) The `env::__array_concat_any` host bridge is retired; a shape the
+  // native §23.1.3.1 loop declines is a compile failure.
+  return compileArrayConcatNativeSpec(ctx, fctx, propAccess, callExpr) ?? null;
 }
 
 /**
@@ -9058,7 +9010,7 @@ function compileArrayDefaultToStringSort(
   // `illegal cast` trap on every numeric `arr.sort()`.
   //
   // #3912 removed the mismatch at its source: `number_toString` is now native
-  // wherever strings are native (`usesNativeNumberFormat`), so
+  // wherever strings are native (always since #6979), so
   // `numToStrIsHostImport` can no longer be true while `ctx.nativeStrings` is —
   // the probe was dead code. Removed here, together with #3902's temporary
   // `coercion-sites-allow` for this file, exactly as #3902's frontmatter

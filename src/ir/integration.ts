@@ -78,7 +78,6 @@ import { ensureLateImport, flushLateImportShifts } from "../codegen/shared.js"; 
 import { getOrRegisterPromiseType, createPromiseRejectionEmissionBindings } from "../codegen/async-scheduler.js";
 import {
   addGeneratorImports,
-  addForInImports,
   addStringImports,
   addUnionImports, // (#2949 slice 3) host-mode dynamic op imports (__box_number/__typeof_* family)
   TYPED_ARRAY_NAMES,
@@ -8704,11 +8703,7 @@ function preregisterForInSupport(ctx: CodegenContext, fns: readonly BuiltFnRef[]
     if (used) break;
   }
   if (!used) return;
-  if (ctx.standalone || ctx.wasi) {
-    ensureObjectRuntime(ctx);
-  } else {
-    addForInImports(ctx);
-  }
+  ensureObjectRuntime(ctx);
 }
 
 /**
