@@ -808,21 +808,21 @@
   },
   {
     "edition": "ES2017",
-    "pass": 387,
-    "fail": 64,
+    "pass": 401,
+    "fail": 50,
     "ce": 239,
     "skip": 0,
     "total": 690,
-    "pct": 56,
+    "pct": 58,
     "features": [
       {
         "name": "async-functions",
-        "pass": 322,
-        "fail": 26,
+        "pass": 336,
+        "fail": 12,
         "ce": 0,
         "skip": 0,
         "total": 348,
-        "pct": 93
+        "pct": 97
       },
       {
         "name": "SharedArrayBuffer",
@@ -2186,12 +2186,12 @@
   },
   {
     "edition": "ES2022",
-    "pass": 4315,
-    "fail": 1249,
+    "pass": 4323,
+    "fail": 1241,
     "ce": 228,
     "skip": 0,
     "total": 5792,
-    "pct": 74,
+    "pct": 75,
     "features": [
       {
         "name": "class",
@@ -2213,8 +2213,8 @@
       },
       {
         "name": "class-methods-private",
-        "pass": 1484,
-        "fail": 191,
+        "pass": 1488,
+        "fail": 187,
         "ce": 34,
         "skip": 0,
         "total": 1709,
@@ -2222,8 +2222,8 @@
       },
       {
         "name": "class-static-methods-private",
-        "pass": 1193,
-        "fail": 218,
+        "pass": 1197,
+        "fail": 214,
         "ce": 102,
         "skip": 0,
         "total": 1513,
@@ -2312,12 +2312,12 @@
       },
       {
         "name": "async-functions",
-        "pass": 144,
-        "fail": 102,
+        "pass": 152,
+        "fail": 94,
         "ce": 8,
         "skip": 0,
         "total": 254,
-        "pct": 57
+        "pct": 60
       },
       {
         "name": "computed-property-names",
@@ -3571,18 +3571,18 @@
   },
   {
     "edition": "ES2026",
-    "pass": 4588,
+    "pass": 4580,
     "fail": 197,
-    "ce": 136,
+    "ce": 144,
     "skip": 0,
     "total": 4921,
     "pct": 93,
     "features": [
       {
         "name": "Temporal",
-        "pass": 4489,
+        "pass": 4481,
         "fail": 106,
-        "ce": 16,
+        "ce": 24,
         "skip": 0,
         "total": 4611,
         "pct": 97
