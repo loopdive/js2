@@ -1,5 +1,4 @@
 import { reserveBuiltinConstructorIdentityGlobal } from "../builtin-static-globals.js";
-import { isStandalonePromiseActive } from "../async-scheduler.js";
 import type { FieldDef, Instr, ValType } from "../../ir/types.js";
 import { compileCollectionSuperMethodCall } from "../classes/standalone-collection-carrier.js"; // (#6754)
 import { widenJsDefaultGuessSlot } from "../js-default-param-type-guess.js";
@@ -241,9 +240,6 @@ const builtinNativeConstructServices = {
   },
   get emitStandalonePromiseFromExecutorValue() {
     return emitStandalonePromiseFromExecutorValue;
-  },
-  get isStandalonePromiseActive() {
-    return isStandalonePromiseActive;
   },
   get reserveBuiltinConstructorIdentityGlobal() {
     return reserveBuiltinConstructorIdentityGlobal;
@@ -3955,7 +3951,6 @@ function tryCompileNativeConstructFromValue(
   /** (#6954) The caller proved the callee is an ordinary user `function` value (see `isOrdinaryFunctionValueSigs`). */
   ordinaryFunctionValue = false,
 ): ValType | undefined {
-  if (!noJsHost(ctx) && ctx.targetProfile.semanticProviders !== "native-first") return undefined;
   const runtimeEvalCallableResult = isRuntimeEvalCallableResultExpression(ctx, calleeExpr);
   // (#5383 S2g) A MEMBER callee holding a genuinely-dynamic ctor value —
   // `new NS.PlainDate(…)`, the shape EVERY linked-provider namespace has. The
@@ -6799,10 +6794,7 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
   // literal patterns. Keep this before the non-constructable guards so the
   // ambient `Function` type of `RegExp.prototype.constructor` cannot reject
   // the direct prototype spelling before identity-aware lowering sees it.
-  if (
-    ctx.targetProfile.semanticProviders === "native-first" &&
-    isGlobalRegExpConstructorExpression(ctx, unwrappedLiteralCtor)
-  ) {
+  if (isGlobalRegExpConstructorExpression(ctx, unwrappedLiteralCtor)) {
     return compileStandaloneRegExpConstructor(ctx, fctx, expr.arguments ?? [], expr);
   }
   // (#5141, §27.3.4) A generator function object is created by

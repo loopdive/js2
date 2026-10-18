@@ -1092,48 +1092,6 @@ function emitAnyEquality(
 }
 
 /**
- * #1917 equality finale, slice E6 — the standalone externref-vs-externref
- * loose-equality tail.
- *
- * For two opaque `any` externref operands that were NOT eqref-identical, the
- * standalone/WASI lane (no JS host) routes through the NATIVE §7.2.15
- * IsLooselyEqual instead of the unsatisfiable `__host_loose_eq` import (#2081):
- * box both externrefs to `$AnyValue` via `__any_from_extern` (tag5 string / tag3
- * number / tag4 bool / tag1 null) and call the keystone `__any_eq` helper (whose
- * tag-5 field-4 classifier owns the String⇄Number / proto-identity arms). This
- * is the SAME tag-5-sensitive boxing E3 does for the any/any case, just sourced
- * from two pre-computed externref temps instead of freshly-compiled operands.
- *
- * Returns the instruction SEQUENCE (this caller builds an `Instr[]` for an
- * `if`-arm, it does not emit live), or `null` when the helpers are unavailable so
- * the caller can fall through to its host-import path exactly as before. WRAPPER,
- * not a re-derivation: the classifier stays in `__any_eq`'s body (any-helpers.ts).
- *
- * @param tmpLeft  local index holding the left externref operand.
- * @param tmpRight local index holding the right externref operand.
- * @param negate   append `i32.eqz` for the `!=` form.
- */
-export function emitAnyEqFromExternTemps(
-  ctx: CodegenContext,
-  tmpLeft: number,
-  tmpRight: number,
-  negate: boolean,
-): Instr[] | null {
-  ensureAnyHelpers(ctx);
-  const fromExternIdx = ensureAnyFromExternHelper(ctx);
-  const anyEqIdx = ctx.funcMap.get("__any_eq");
-  if (fromExternIdx === undefined || anyEqIdx === undefined) return null;
-  return [
-    { op: "local.get", index: tmpLeft },
-    { op: "call", funcIdx: fromExternIdx },
-    { op: "local.get", index: tmpRight },
-    { op: "call", funcIdx: fromExternIdx },
-    { op: "call", funcIdx: anyEqIdx },
-    ...(negate ? ([{ op: "i32.eqz" }] satisfies Instr[]) : []),
-  ];
-}
-
-/**
  * Emit a string literal in the active mode. `compileStringLiteral` is already
  * mode-agnostic (a native `$AnyString` constant in native/standalone mode, an
  * externref string-constant in js-host mode) — exactly what every migrated

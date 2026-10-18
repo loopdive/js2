@@ -4,7 +4,7 @@ title: "S7: delete the host-semantic implementation — one native semantic core
 status: in-progress
 assignee: ttraenkler/codex
 created: 2026-10-14
-updated: 2026-10-18
+updated: 2026-10-19
 priority: high
 horizon: xl
 feasibility: hard
@@ -248,48 +248,156 @@ dashboard. `plan/issues/5385-…` gets its program-acceptance checklist closed.
   before every commit; deletions should make them easier, so any growth
   allowance in this program is a smell to explain in the PR.
 
-## Recovery handoff (2026-10-18, Codex)
+## Recovery and landing handoff (2026-10-19, Codex)
 
-The abandoned S7 claim was recovered after repeated checks found no remote
-branch, PR, or active owner task for `issue-6979-s7c-collapse-standalone-arms`.
-The authoritative assignment now names `ttraenkler/codex` on
-`codex/6979-s7-recovery`. That recovery branch starts at current `main`,
-`4df0306bd1fa4776335f2115b6d3f7d847fafe87` (the merge of the npm-compat
-publication fix), and is published on the fork.
+S7-a was recovered onto current `main` rather than rewritten. The recovery
+keeps `main` as the first parent and merges the ten original S7-a commits
+through `917fbbca96549e71d6e70f4c877e0bc4a80ef777`. Twelve drift conflicts were
+resolved by retaining current-main async/error fixes while deleting the
+rollback policy and its semantic host branches. PR `#6701` remains the landing
+vehicle; its published branch can be fast-forwarded to this recovery without
+rewriting history. S7-b PR `#6705` remains deferred until S7-a lands.
 
-Existing work is being recovered rather than rewritten:
+All entry conditions are now satisfied. npm-compat refresh run `39170921043`
+measured the exact source `4df0306bd1fa4776335f2115b6d3f7d847fafe87` for
+clsx, cookie, moment, hono, redux, acorn, react, marked, lit and uuid; every
+`jsHost` row stayed `measured`. The React artifact completed successfully, and
+the resulting dashboard promotion PR `#6761` merged into current `main` at
+`ae913d622f3c`. The recovery branch then merged that current mainline before
+adopting S7-a.
 
-- S7-a PR `#6701`, branch `issue-6979-s7a-remove-host-assisted`, contains ten
-  focused commits through `917fbbca96549e71d6e70f4c877e0bc4a80ef777`.
-- S7-b PR `#6705`, branch `issue-6979-s7b-legacy-semantic-removal`, contains
-  eight focused commits stacked on S7-a. It remains deferred until the
-  recovered S7-a slice lands.
-- The safe adoption is a merge of the old S7-a head into the recovery branch,
-  keeping current `main` as first parent. A dry-run found 13 conflict files;
-  the rest of the roughly 7,300-line deletion applies cleanly. Because the old
-  S7-a head is a parent of the recovery merge, updating PR `#6701` is a
-  fast-forward and does not rewrite the published branch.
+### Boundary contract after S7-a
 
-Entry conditions 1, 2, 3 and 5 are satisfied on current `main`: the S6
-native-first default and named accelerators have landed, the post-merge
-standalone baseline is 42,159 passing with ES5 9,029/9,029, and the README
-keeps the host figure explicitly labelled retired. Entry condition 4 is in its
-final publication step:
+There is one in-module semantic implementation: native WasmGC values and
+objects. JS-host machinery is retained only at an explicit JS↔Wasm boundary.
+Callers opt into it with `wrapExports(instance, { signatures,
+boundaryPolicies })` (or `wrapCompiledExports`), using the compiler-produced
+`exportSignatures` and `exportBoundaryPolicies`. The adapter converts only the
+declared wire shapes: booleans, strings, symbols, promises, dynamic values,
+typed arrays, closures and object results. Object policies choose a detached
+copy, an identity-cached live view backed by the native object, or an opaque
+WasmGC handle. No second semantic object implementation is selected.
 
-- npm-compat refresh run `39170921043` targets the exact current-main revision
-  above and was triggered immediately after PR `#6760` fixed focused-worker
-  publication after package suites mutate `console.log`.
-- Fresh partials for clsx, cookie, moment, hono, redux, acorn, react, marked,
-  lit and uuid all report `perf.lanes.jsHost.status = "measured"`; none moved
-  from measured to error. The React worker completed successfully and uploaded
-  `npm-compat-partial-fast-react`, closing #7088's last acceptance item.
-- At this checkpoint the TypeScript fast worker is still running. The fast
-  coordinator and its dashboard promotion PR have therefore not run yet;
-  React DOM is a separate slow lane and does not gate fast promotion.
+The retained normalization is boundary ABI normalization, not host execution
+of language semantics. It canonicalizes values such as Boolean `0`/`1`,
+string/symbol/dynamic carriers, native exception payloads and wrapper identity
+as values cross the edge. Keeping it is necessary for host interop and does
+not reintroduce the removed `host-assisted` policy. In particular, the live
+object mode is the non-copying design: JavaScript receives a cached façade and
+the same native object identity is recovered when the value crosses back into
+Wasm. `tests/issue-3520-closure-host-bridge-abi.test.ts` now exercises that
+metadata-driven contract directly.
 
-Resume by verifying the fast dashboard promotion contains source revision
-`4df0306bd1fa4776335f2115b6d3f7d847fafe87` and preserves those ten measured
-rows. Once it merges, merge the S7-a branch into the recovery branch, resolve
-the 13 recorded drift conflicts in favour of both current-main fixes and the
-S7 policy deletion, run the scoped/full gates, push the recovery head to
-`issue-6979-s7a-remove-host-assisted`, update PR `#6701`, and mark it ready.
+Obsolete rollback-only Promise suites and their changed-test selector entry
+were deleted. Active quality scripts no longer request `host-assisted`, while
+explicit rejection tests still prove that removed spellings fail with the S7
+diagnostic. The final host-import-policy measurement is 33 probes / 452
+imports, with zero `legacy-semantic` and zero `unknown` imports. The migration
+ratchets are `src/runtime.ts` 20,240 lines, `resolveImport` 7,868 lines / 15
+cases, owned adapters 989 lines and explicit capabilities 1,194 lines.
+
+Landing evidence:
+
+- Typecheck and lint pass.
+- The host-import-policy, IR-fallback, LOC, function-budget, coercion-site,
+  oracle, import-cycle and flat-directory ratchets pass.
+- The focused #3520 boundary suite passes 20/20; the changed-issue selector
+  suite passes 54/54.
+- The equivalence gate reports 20 failing, 2,008 passing and 22 known failures,
+  with no new regressions and two baseline failures now passing.
+- The dead-export audit's core node/type and preservation gates pass. Its
+  strict modeled closure remains open only on the two pre-existing nonliteral
+  dynamic-import witnesses in `src/optimize.ts` and
+  `src/runtime/platform-capability-adapter.ts`.
+- `check:compiler-boundaries` retains the repository-wide
+  `inventory-valid-architecture-incomplete` result (`errors: []`, graph not
+  complete); S7-a introduces no new architecture error.
+
+One migration gap remains explicit: #6996's native-gc console string boundary
+ordering rows are expected failures after removal of the host rollback. Fix
+the native boundary instead of reinstating a semantic host path. S7-c must
+also continue classifying `ctx.standalone` sites individually; do not replace
+them wholesale with `nativeRegime = backend === "wasmgc"`.
+
+### S7-a checkpoint (2026-10-15, opus-6979-s7a)
+
+Branch `issue-6979-s7a-remove-host-assisted`, stacked on the S6 flip
+(`issue-6708-a-default-native-first` @ `731cfae193`) plus a merge of
+`upstream/main` (#6982, #6984, #6986). The one conflict was in
+`src/runtime.ts` import binding: an Intl-accelerated import takes the #6986
+marshal, every other `extern_class` the #6708 platform marshal. S7 stays
+`in-progress` until every slice lands.
+
+Re-measured state-table rows. "Before" is the merged base `728bdced5b`,
+measured by this slice:
+
+| Fact | Before | After S7-a |
+| --- | --- | --- |
+| `grep -rF semanticProviders src` | 231 hits / 93 files | 39 / 19 (types, the linear `backend-defined` arm, the S7 rejection, the explicit-native-first #4401 publication gate, adapter-manifest validation) |
+| `grep -rF '"host-assisted"' src` | 17 hits / 5 files | 5 / 2 (the rejection branch and its doc comments) |
+| host-import-policy ratchet | 33 probes, ≤ 446 imports, 0 legacy/unknown; compatibility control 1-23 legacy | 33 probes, 446 imports, hard zero legacy/unknown in code; compatibility probe deleted; `maximumRuntimeTsLines` 20227 → 20224, `maximumResolveImportLines` 7909 → 7862 |
+
+What changed:
+- **Spellings:** `semanticProviders: "host-assisted"`, `"auto"`, and
+  `nativeStrings: false` on the JS target are compile errors naming #6979
+  and js2wasm 0.71.0 (`REMOVED_SEMANTIC_PROVIDER_RELEASE`).
+- **Removed:** `--semantic-providers`, `JS2WASM_NATIVE_REGIME_JS`, the
+  `TEST262_SEMANTIC_PROVIDERS` axis, and the npm-compat `js-host-native` and
+  `js-host-assisted` lanes.
+- **Codegen/IR:** every `=== "native-first"` is folded away and every
+  `!== "native-first"` arm is deleted. This also removed the predicates that
+  collapsed to constants, for example `isStandalonePromiseActive`,
+  `usesNativeJsErrors`, `usesNativeSymbolProvider`, `usesHostBigIntCarrier`,
+  `tryEmitFixedHostMethodCall`, and the host Reflect/JSON/BigInt/array-carrier
+  providers. Net about -5,700 src LOC.
+- **Byte-neutral:** 1,694 programs (equivalence-suite sources, playground
+  examples, a test262 sample) produce identical binaries before and after on
+  gc, strict gc, wasi and standalone (6,776 hashes, 0 differences).
+- **Equivalence gate:** `47 failing, 1714 passing, 22 known-failures`, with
+  the same 27 NEW rows as the merged base (`47 failing, 1723 passing`; all 27
+  belong to the open #6980/#6981 PRs). The -9 passing is the nine deleted
+  `issue-1197` host-assisted structure rows.
+
+**Deliberately NOT done: `nativeRegime = backend === "wasmgc"`.** The spec
+asked for it, but it is not a dead-arm removal. It flips `ctx.standalone` on
+for WASI and strict gc. Measured on the same corpus, it changes 1,044 of
+1,694 WASI binaries and 1,663 strict-gc binaries, turns 14 WASI compiles into
+errors (and 36 strict-gc errors into successes), and moved 10 gc/standalone
+hashes. `nativeRegime` keeps its S6 domain (standalone + JS environment with
+ambient imports). The flip belongs to S7-c, where the `ctx.standalone` arms
+are classified site by site. Until then, compounds like
+`ctx.standalone || ctx.wasi || native-first` were folded to `true` (their
+value under native-first), not to `ctx.standalone`.
+
+GAPs found (kept, not deleted):
+- Construct: a generator over `Map.entries()` feeding `new Map(...)` throws
+  during module init on the regime.
+  Exposing test: `tests/issue-1058-exported-generic-generator-callback.test.ts`
+  "maps entries into a host Map during module initialization" (`it.fails`).
+- Construct: `new Set([...a, ...a.map(f), ...b]).size` reads 0 on the regime.
+  Exposing test: `tests/issue-1058-host-map-object-entries.test.ts`
+  "constructs a top-level Set from an unaliased spread-array temporary"
+  (`it.fails`).
+- Both passed only through the host-strings profile (`nativeStrings: false`
+  on gc). No codegen `!== "native-first"` arm was the only implementation of
+  a construct: the flip had already made the regime the default, so every
+  deleted arm was unreachable by default.
+
+Left for later slices:
+- `tests/issue-6685`, `issue-6913`, and the 6687/6689 probe fixtures still
+  set `JS2WASM_NATIVE_REGIME_JS` as lane labels (no-ops).
+- The retired `test262-native-first` workflow job (`if: false`) still spells
+  `--semantic-providers native-first` / `TEST262_SEMANTIC_PROVIDERS`. These
+  are untouched CI files.
+- The `issue-5807` replay scripts pin the env var for historical commits, by
+  design.
+- The #4401 publication gate still keys on an explicit `"native-first"`
+  spelling. Making it universal is S7-b.
+- `tests/issue-3518-*` exact-source provenance suite: already 3,751 red on
+  the base, and +71 with this slice. The failures are span/hash pins of the
+  codegen files edited here (bigint-carrier-port, resume-main-composition,
+  delivery-main-refresh-port, c1-current-source, descriptor-adapter-relocation,
+  …). They need new provenance receipts, not code changes.
+- Six `issue-2949` "gc runtime ($AnyValue)" execution describes are deleted.
+  They only validated with host strings outside the production finalize
+  pipeline; the round-trip is covered structurally.

@@ -55,7 +55,6 @@ export function compileInternalCallArgument(
   // a captured `Object.assign(target, source)` unable to enumerate the source.
   if (
     expectedType?.kind === "externref" &&
-    (ctx.targetProfile.semanticProviders === "native-first" || ctx.standalone || ctx.wasi) &&
     ts.isObjectLiteralExpression(expression) &&
     expression.properties.every(
       (property) =>

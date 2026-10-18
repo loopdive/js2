@@ -825,15 +825,14 @@ function collectExternDeclarationsImpl(
       // green on its own probes. Skip the stub here so the finalize owns the
       // native emit, exactly as parseInt/parseFloat do.
       if (
-        (ctx.targetProfile.semanticProviders === "native-first" || ctx.wasi || ctx.standalone) &&
-        (name === "parseInt" ||
-          name === "parseFloat" ||
-          name === "decodeURI" ||
-          name === "decodeURIComponent" ||
-          name === "encodeURI" ||
-          name === "encodeURIComponent" ||
-          name === "escape" ||
-          name === "unescape")
+        name === "parseInt" ||
+        name === "parseFloat" ||
+        name === "decodeURI" ||
+        name === "decodeURIComponent" ||
+        name === "encodeURI" ||
+        name === "encodeURIComponent" ||
+        name === "escape" ||
+        name === "unescape"
       ) {
         continue;
       }

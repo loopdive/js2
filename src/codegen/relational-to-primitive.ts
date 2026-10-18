@@ -96,7 +96,6 @@ export function isObjectOperandType(t: ts.Type): boolean {
 
 /** Should a relational with these operand types take the standalone cascade? */
 export function admitsObjectRelational(ctx: CodegenContext, left: ts.Type, right: ts.Type): boolean {
-  if (ctx.targetProfile.semanticProviders !== "native-first") return false;
   if (!ctx.nativeStrings || ctx.anyStrTypeIdx < 0) return false;
   if ((left.flags & EXCLUDED) !== 0 || (right.flags & EXCLUDED) !== 0) return false;
   return isObjectOperandType(left) || isObjectOperandType(right);

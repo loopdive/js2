@@ -164,7 +164,7 @@ import { emitSymbolProtoToStringBody } from "./symbol-proto-tostring.js"; // (#4
 import { emitNumberProtoFormatBody } from "./number-proto-format.js";
 import { emitDateProtoToPrimitiveBody } from "./date-proto-to-primitive.js"; // (#5156)
 import { emitDateProtoToJsonBody } from "./date-proto-to-json.js"; // (#6775 S8)
-import { ensureSymbolCarrier, usesNativeSymbolProvider } from "./symbol-native.js";
+import { ensureSymbolCarrier } from "./symbol-native.js";
 import { primitiveCarrierTestInstrs } from "./object-model/primitive-carrier-test.js"; // (#6651 V10a)
 import {
   emitStandalonePromiseFinally,
@@ -2231,7 +2231,7 @@ function emitErrorProtoToStringBody(ctx: CodegenContext, fctx: FunctionContext):
   // The reflective callee can be compiled before its argument expression. Make
   // the native carrier available at body-mint time so the later `Symbol()`
   // argument is still recognized by this already-emitted `ref.test` arm.
-  const symbolTypeIdx = usesNativeSymbolProvider(ctx) ? ensureSymbolCarrier(ctx) : -1;
+  const symbolTypeIdx = ensureSymbolCarrier(ctx);
   ensureLateImport(ctx, "__typeof_object", [{ kind: "externref" }], [{ kind: "i32" }]);
   ensureLateImport(ctx, "__typeof_function", [{ kind: "externref" }], [{ kind: "i32" }]);
   flushLateImportShifts(ctx, fctx);
@@ -2490,7 +2490,7 @@ function emitPromiseProtoCatchBody(ctx: CodegenContext, fctx: FunctionContext): 
   ) {
     return null;
   }
-  if (usesNativeSymbolProvider(ctx)) ensureSymbolCarrier(ctx); // (#6651 V10a) the primitive-`this` test below
+  ensureSymbolCarrier(ctx); // (#6651 V10a) the primitive-`this` test below
   const promiseTypeIdx = getOrRegisterPromiseType(ctx);
   const argsLocal = allocLocal(fctx, `__pcatch_args_${fctx.locals.length}`, { kind: "externref" });
 

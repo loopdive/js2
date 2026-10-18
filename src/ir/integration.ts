@@ -75,15 +75,10 @@ import {
   type IrDynamicRuntimeNeed,
 } from "../codegen/dyn-ops.js";
 import { ensureLateImport, flushLateImportShifts } from "../codegen/shared.js"; // (#2949 S5.2) host __host_eq / __host_loose_eq registration; (#3143) flush the __extern_is_undefined batch pre-Phase-3
-import {
-  getOrRegisterPromiseType,
-  isStandalonePromiseActive,
-  createPromiseRejectionEmissionBindings,
-} from "../codegen/async-scheduler.js";
+import { getOrRegisterPromiseType, createPromiseRejectionEmissionBindings } from "../codegen/async-scheduler.js";
 import {
   addGeneratorImports,
   addForInImports,
-  addIteratorImports,
   addStringImports,
   addUnionImports, // (#2949 slice 3) host-mode dynamic op imports (__box_number/__typeof_* family)
   TYPED_ARRAY_NAMES,
@@ -1095,11 +1090,7 @@ function integrationNumberBoundaryPolicy(ctx: IrProgramRuntimePolicyContext): Nu
   const hostNumberBoundary = !ctx.nativeStrings;
   return Object.freeze({
     box: hostNumberBoundary ? ("host" as const) : ("unsupported" as const),
-    unbox: hostNumberBoundary
-      ? ("host" as const)
-      : ctx.targetProfile.semanticProviders === "native-first"
-        ? ("native" as const)
-        : ("unsupported" as const),
+    unbox: hostNumberBoundary ? ("host" as const) : ("native" as const),
   });
 }
 
@@ -1276,8 +1267,7 @@ function integrationHostCallbackWrapPolicy(ctx: IrProgramRuntimePolicyContext): 
     ctx.standalone &&
     !ctx.wasi &&
     ctx.nativeStrings &&
-    ctx.targetProfile.environment === "none" &&
-    ctx.targetProfile.semanticProviders === "native-first"
+    ctx.targetProfile.environment === "none"
   ) {
     return Object.freeze({ wrap: "native-dispatch" as const });
   }
@@ -2339,8 +2329,7 @@ export function compileIrPathFunctions(
     ctx.standalone &&
     !ctx.wasi &&
     ctx.nativeStrings &&
-    ctx.targetProfile.environment === "none" &&
-    ctx.targetProfile.semanticProviders === "native-first"
+    ctx.targetProfile.environment === "none"
       ? makeIrStandaloneDomCapabilityPlan(ctx.checker, sourceFile)
       : undefined;
   const supportsBackendCapability = (capability: IrBackendTargetCapability): boolean =>
@@ -7216,19 +7205,12 @@ function makeFromAstResolver(
     // supplies imports; standalone/WASI supplies the #2964 native object
     // runtime. Both variants snapshot keys and perform per-visit liveness.
     dynamicForInPlan() {
-      return ctx.standalone || ctx.wasi || ctx.targetProfile.semanticProviders === "native-first"
-        ? {
-            keys: "__object_keys_forin",
-            len: "__extern_length",
-            get: "__extern_get_idx",
-            has: "__extern_has",
-          }
-        : {
-            keys: "__for_in_keys",
-            len: "__for_in_len",
-            get: "__for_in_get",
-            has: "__for_in_has",
-          };
+      return {
+        keys: "__object_keys_forin",
+        len: "__extern_length",
+        get: "__extern_get_idx",
+        has: "__extern_has",
+      };
     },
     // (#2856 C2) TypedArray-view receiver detection for element STORES —
     // the same checker walk as the legacy `elementAccessTypedArrayName`
@@ -8176,7 +8158,7 @@ function makeResolver(
     // (#1373b C-1) Lane discriminator for the `await` lowering: native
     // `$Promise` carrier (wasi) → one-level unwrap; JS-host → identity.
     nativePromiseCarrierActive(): boolean {
-      return isStandalonePromiseActive(ctx);
+      return true;
     },
   };
   return resolver;
@@ -8637,31 +8619,17 @@ function preregisterIteratorSupport(
       legacyName: entry.ownerName,
     });
   }
-  if (ctx.standalone || ctx.wasi || ctx.targetProfile.semanticProviders === "native-first") {
-    for (const owner of owners.values()) {
-      failures.set(owner.unitId, {
-        owner,
-        outcome: {
-          kind: "unsupported",
-          code: "late-preparation-unsupported",
-          stage: "resolve",
-          detail:
-            "standalone/WASI generic iteration requires the JS-host iterator protocol; a pure-Wasm Iterator Record path is not available",
-        },
-      });
-    }
-    return failures;
-  }
-  try {
-    if (readEnv("JS2WASM_TEST_INJECT_IR_ITERATOR_REGISTRATION_THROW") === "1") {
-      throw new Error("injected iterator registration failure");
-    }
-    addIteratorImports(ctx);
-  } catch (error) {
-    const failure = classifyIrFailure(error, "resolve");
-    for (const owner of owners.values()) {
-      failures.set(owner.unitId, { owner, outcome: failure });
-    }
+  for (const owner of owners.values()) {
+    failures.set(owner.unitId, {
+      owner,
+      outcome: {
+        kind: "unsupported",
+        code: "late-preparation-unsupported",
+        stage: "resolve",
+        detail:
+          "standalone/WASI generic iteration requires the JS-host iterator protocol; a pure-Wasm Iterator Record path is not available",
+      },
+    });
   }
   return failures;
 }
@@ -9048,7 +9016,6 @@ function preregisterDynamicSupport(
   // (#3526 F3-S3) The frozen `%Function.prototype%` call arm, read ONCE.
   const functionPrototypeCallArm = preparedFunctionPrototypeCallProvider(prepared);
   let usesFunctionPrototypeCall = false;
-  const nativeSemanticProviders = ctx.targetProfile.semanticProviders === "native-first";
   let usesDynamicOps = false;
   let usesEq = false;
   let usesToNumber = false;
@@ -9201,14 +9168,7 @@ function preregisterDynamicSupport(
     }
   }
   if (usesOrdinaryToPrimitiveObjectRuntime) {
-    if (nativeSemanticProviders) {
-      ensureObjectRuntime(ctx);
-    } else {
-      ensureLateImport(ctx, "__new_plain_object", [], [{ kind: "externref" }]);
-      ensureLateImport(ctx, "__extern_set", [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }], []);
-      ensureLateImport(ctx, "__to_primitive", [{ kind: "externref" }, { kind: "externref" }], [{ kind: "externref" }]);
-      flushLateImportShifts(ctx, null);
-    }
+    ensureObjectRuntime(ctx);
   }
   if (primitiveWrapperConstructors.size > 0) {
     // #4208 S4 — explicit runtime refs for the focused primitive-wrapper
@@ -9300,17 +9260,8 @@ function preregisterDynamicSupport(
     // (#329/#2078), exactly like `addUnionImports` above. Both are idempotent;
     // only fired when a host module actually carries a dyn.eq.
     if (usesEq) {
-      if (nativeSemanticProviders) {
-        ensureExternStrictEqHelper(ctx);
-        ensureExternLooseEqHelper(ctx);
-      } else {
-        ensureLateImport(ctx, "__host_eq", [{ kind: "externref" }, { kind: "externref" }], [{ kind: "i32" }]);
-        ensureLateImport(ctx, "__host_loose_eq", [{ kind: "externref" }, { kind: "externref" }], [{ kind: "i32" }]);
-        // Settle the batch before Phase 3 captures patch-slot and call-target
-        // indices. Leaving these two imports pending can shift the eventual IR
-        // replacement onto a sibling legacy slot.
-        flushLateImportShifts(ctx, null);
-      }
+      ensureExternStrictEqHelper(ctx);
+      ensureExternLooseEqHelper(ctx);
     }
   }
   // #3053 U1 — a `dyn.member_get` present in any IR body needs the unified
@@ -9327,22 +9278,12 @@ function preregisterDynamicSupport(
   // `dyn.member_get` in a claimed function today, so `usesMemberGet` is never
   // set in a production compile.
   if (usesMemberGet) {
-    if (nativeSemanticProviders) ensureObjectRuntime(ctx);
+    ensureObjectRuntime(ctx);
     ctx.usesDynMemberGet = true;
     ensureDynMemberGet(ctx);
   }
   if (usesMemberSet) {
-    if (nativeSemanticProviders) {
-      ensureObjectRuntime(ctx);
-    } else {
-      ensureLateImport(
-        ctx,
-        "__extern_set_strict",
-        [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
-        [],
-      );
-      flushLateImportShifts(ctx, null);
-    }
+    ensureObjectRuntime(ctx);
     ensureDynMemberSet(ctx);
   }
 }
@@ -9377,7 +9318,6 @@ function preregisterDynamicSupport(
  *     plumbed through — a later producer slice.
  */
 export function makeDynamicLowering(ctx: CodegenContext): IrDynamicLowering | null {
-  const nativeSemanticProviders = ctx.targetProfile.semanticProviders === "native-first";
   if (ctx.fast) {
     ensureAnyValueType(ctx);
     const anyTypeIdx = ctx.anyValueTypeIdx;
@@ -9650,13 +9590,13 @@ export function makeDynamicLowering(ctx: CodegenContext): IrDynamicLowering | nu
     emitStrictEq(negate: boolean): readonly Instr[] {
       // Compatibility semantics delegate to JS. Native-first semantics use the
       // externref classifier + AnyValue comparison helper even with a JS host.
-      const helper = nativeSemanticProviders ? "__extern_strict_eq" : "__host_eq";
+      const helper = "__extern_strict_eq";
       return negate ? [callImport(helper), { op: "i32.eqz" }] : [callImport(helper)];
     },
     emitLooseEq(negate: boolean): readonly Instr[] {
       // Compatibility semantics delegate to JS. Native-first classifies both
       // externref carriers and routes through the native `__any_eq` engine.
-      const helper = nativeSemanticProviders ? "__extern_loose_eq" : "__host_loose_eq";
+      const helper = "__extern_loose_eq";
       return negate ? [callImport(helper), { op: "i32.eqz" }] : [callImport(helper)];
     },
     emitMemberGet(): readonly Instr[] {

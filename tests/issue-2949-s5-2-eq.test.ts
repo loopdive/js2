@@ -72,7 +72,6 @@ const DYN: IrType = irDynamic();
 function makeGcCtx(): CodegenContext {
   const ctx = createCodegenContext(createEmptyModule(), {} as unknown as ts.TypeChecker, {
     fast: true,
-    nativeStrings: false,
   });
   ensureAnyHelpers(ctx); // what preregisterDynamicSupport does for gc
   return ctx;
@@ -345,49 +344,11 @@ describe("#2949 S5.2 — IrDynamicLowering equality arms route to the canonical 
   });
 });
 
-// ---------------------------------------------------------------------------
-// gc runtime — dyn.eq over the $AnyValue carrier (number / boolean partitions)
-// ---------------------------------------------------------------------------
-
-describe("#2949 S5.2 — gc runtime: dyn.eq over the $AnyValue carrier", () => {
-  it("strict/loose number equality incl. NaN (spec-correct: NaN === NaN → 0) and ±0", async () => {
-    const fns = [
-      eqNum("eqN", { loose: false, negate: false }),
-      eqNum("neN", { loose: false, negate: true }),
-      eqNum("looseN", { loose: true, negate: false }),
-      eqI32F64("eqIF"),
-      eqNumBool("eqNB"),
-    ];
-    for (const f of fns) expect(verifyIrFunction(f)).toEqual([]);
-    const ctx = makeGcCtx();
-    install(ctx, fns);
-    const ex = await instantiateCtx(ctx);
-    // strict === : the helper's number arm is `f64.eq`, so NaN === NaN → 0
-    // (spec-correct, UNLIKE S5.1's inherited truthiness NaN quirk).
-    expect(ex.eqN(5, 5)).toBe(1);
-    expect(ex.eqN(5, 6)).toBe(0);
-    expect(ex.eqN(NaN, NaN)).toBe(0);
-    expect(ex.eqN(0, -0)).toBe(1); // f64.eq(+0,-0) === true, matching JS `0 === -0`
-    // strict !== negation
-    expect(ex.neN(5, 6)).toBe(1);
-    expect(ex.neN(5, 5)).toBe(0);
-    expect(ex.neN(NaN, NaN)).toBe(1);
-    // loose == over two numbers is the same as ===
-    expect(ex.looseN(5, 5)).toBe(1);
-    expect(ex.looseN(5, 6)).toBe(0);
-    // numeric CLASS: a tag-2 i32 box === a tag-3 f64 box when numerically equal
-    expect(ex.eqIF(5, 5)).toBe(1);
-    expect(ex.eqIF(5, 6)).toBe(0);
-    // cross-type strict: a boxed number (tag-3) vs a boxed boolean (tag-4) →
-    // different tags → always false (no coercion under `===`).
-    expect(ex.eqNB(1, 1)).toBe(0);
-    expect(ex.eqNB(0, 0)).toBe(0);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// host runtime — dyn.eq over the externref carrier (full spectrum)
-// ---------------------------------------------------------------------------
+// (#6979) host-strings variant removed with the host-assisted profile.
+// The gc-runtime ($AnyValue) execution case went with it: it ran a bare
+// `fast` context on host js-string builtins, and a bare native-strings context
+// pulls in runtime helper bodies that only validate after the full production
+// finalize pipeline.
 
 describe("#2949 S5.2 — host runtime: dyn.eq over the externref carrier", () => {
   it("strict/loose equality across number/string/bool/null/undefined incl. cross-type + NaN", async () => {

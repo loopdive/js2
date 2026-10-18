@@ -1,4 +1,3 @@
-import { parseTest262SemanticProviders, test262CompileSemanticProviders } from "../scripts/test262-lane.mjs";
 /**
  * Test262 runner — compiles a filtered subset of the official ECMAScript
  * conformance suite through js2wasm and validates the results.
@@ -3889,7 +3888,6 @@ export async function handleNegativeTest(
       fileName: "test.ts",
       emitWat: false,
       ...(target ? { target } : {}),
-      semanticProviders: test262CompileSemanticProviders(process.env.TEST262_SEMANTIC_PROVIDERS),
       // #6776: the runner validates itself with source-mapped reporting; the library default would turn the negative-test arm's compile failure into an incidental pass (see #2920).
       validate: false,
     };
@@ -4405,18 +4403,15 @@ export function test262NeedsTemporalGlobal(filePath: string, meta: Test262Meta):
  * lane must state whether the provider was a cache hit or a cold build — the
  * one line below is what makes that recoverable from a run log.
  */
-async function getTest262TemporalProvider(
-  target?: "standalone",
-  semanticProviders = parseTest262SemanticProviders(process.env.TEST262_SEMANTIC_PROVIDERS),
-): Promise<TemporalProvider | null> {
-  const memoKey = `${target ?? "host"}/${semanticProviders}`;
+async function getTest262TemporalProvider(target?: "standalone"): Promise<TemporalProvider | null> {
+  const memoKey = target ?? "host";
   const memoised = temporalProviderPromises.get(memoKey);
   if (memoised) return memoised;
   const promise = (async () => {
     const { setupTemporalPolyfill, linkPolyfillSource } = await import("./dogfood/setup-temporal-polyfill.mjs");
     const linked = linkPolyfillSource(setupTemporalPolyfill());
     const cacheDir = temporalCacheDir();
-    const compileOptions = temporalProviderCompileOptions(target, semanticProviders);
+    const compileOptions = temporalProviderCompileOptions(target);
     const provider = await buildTemporalProvider({ polyfillSource: linked.source, cacheDir, compileOptions });
     console.error(
       `[test262] Temporal provider (${memoKey}) ${provider.namespace} (${provider.artifact.binary.length} B) ` +
@@ -4483,7 +4478,6 @@ async function runOriginalHarnessVariant(
         // opaque "wasm exception during module init" label. The exec path
         // below already calls the exported __module_init after setInstance.
         ...(target ? { target } : {}),
-        semanticProviders: test262CompileSemanticProviders(process.env.TEST262_SEMANTIC_PROVIDERS),
         ...(target === undefined || target === "standalone" ? { deferTopLevelInit: true } : {}),
         // (#4035) The harness INSPECTS the module from JS — it renders native
         // exception payloads via `__exn_render_*` (#2962) and drains the
@@ -4634,7 +4628,6 @@ async function runOriginalHarnessVariant(
       const instantiateStarted = performance.now();
       instance = await instantiateTest262Module(result.binary, imports, {
         target,
-        semanticProviders: parseTest262SemanticProviders(process.env.TEST262_SEMANTIC_PROVIDERS),
         providerLabel: RUNTIME_EVAL_PROVIDER_LABEL,
         // (#5248) Empty on every non-Temporal row, so the shared finaliser takes
         // its existing path byte-for-byte.
@@ -4779,11 +4772,8 @@ export async function runTest262File(
   // (#5248) Resolved BEFORE the primary variant so the strict rerun links the
   // identical artifact — two provider instances for one test would give the
   // rerun a different `Temporal` object identity than the sloppy run saw.
-  // (#6708) The provider is compiled under the lane's own policy (regime for
-  // the default lane, host-assisted for the control), never borrowed across.
-  const temporalLane = parseTest262SemanticProviders(process.env.TEST262_SEMANTIC_PROVIDERS);
   const temporal =
-    test262TemporalLaneEnabled(target, temporalCacheDir(), temporalLane) && test262NeedsTemporalGlobal(filePath, meta)
+    test262TemporalLaneEnabled(target, temporalCacheDir()) && test262NeedsTemporalGlobal(filePath, meta)
       ? await getTest262TemporalProvider(target)
       : null;
   const primary = await runOriginalHarnessVariant(
@@ -4992,7 +4982,6 @@ export async function runSyntheticTest262File(
       // which is exactly the 6-file `language/module-code/*` regression that
       // parked the stack PR #2835/#2839 in the merge queue.
       ...(target ? { target } : {}),
-      semanticProviders: test262CompileSemanticProviders(process.env.TEST262_SEMANTIC_PROVIDERS),
       ...(moduleGoal || (target !== undefined && target !== "standalone") ? {} : { deferTopLevelInit: true }),
       // #1251: align with the sharded runner — both `scripts/compiler-fork-worker.mjs`
       // (the production path that records the committed JSONL) and `tests/test262-vitest.test.ts`

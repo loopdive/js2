@@ -637,7 +637,8 @@ describe("#3526 F3-S1 the demand scan", () => {
     const projection = INTEGRATION_SOURCE.slice(start, INTEGRATION_SOURCE.indexOf("\n}", start));
     expect(projection).toContain("ctx.requiresStandaloneDomInteractionCapability === true");
     expect(projection).toContain('ctx.targetProfile.environment === "none"');
-    expect(projection).toContain('ctx.targetProfile.semanticProviders === "native-first"');
+    // (#6979) The semantic-provider leg folded away: native-first is the only policy.
+    expect(projection).not.toContain("semanticProviders");
     expect(projection).toContain('ctx.targetProfile.capabilityPolicy === "ambient-js"');
     // No live manifest read, and no third arm invented here.
     expect(projection).not.toContain("prepared");

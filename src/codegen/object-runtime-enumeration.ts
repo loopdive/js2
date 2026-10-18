@@ -1161,20 +1161,17 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
     const nullishPredicateIdx = ctx.funcMap.get("__extern_is_nullish");
     const targetNullishCheck: Instr =
       nullishPredicateIdx !== undefined ? { op: "call", funcIdx: nullishPredicateIdx } : { op: "ref.is_null" };
-    const nativeTargetGuard: Instr[] =
-      ctx.standalone || ctx.wasi || ctx.targetProfile.semanticProviders === "native-first"
-        ? [
-            { op: "local.get", index: 0 },
-            targetNullishCheck,
-            {
-              op: "if",
-              blockType: { kind: "empty" },
-              then: buildThrowJsErrorInstrs(ctx, "TypeError", "Cannot convert undefined or null to object", {
-                forceInModuleCtor: true,
-              }),
-            },
-          ]
-        : [];
+    const nativeTargetGuard: Instr[] = [
+      { op: "local.get", index: 0 },
+      targetNullishCheck,
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: buildThrowJsErrorInstrs(ctx, "TypeError", "Cannot convert undefined or null to object", {
+          forceInModuleCtor: true,
+        }),
+      },
+    ];
     // The `$Object` table walk remains the fast path. A stored builtin function
     // value can receive a closed compiler struct through its uniform externref
     // ABI, though: Deno reflectively copies `Object.assign` into primordials,

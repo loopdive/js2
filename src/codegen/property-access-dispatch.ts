@@ -40,7 +40,7 @@ import { emitDynGet, widenBooleanDynamicAccess } from "./dyn-read.js";
 import { expectedArgumentCountOfSignature } from "./function-expected-argument-count.js"; // (#4436) §15.1.5
 import { functionPrototypeMemberSpecLength } from "./function-prototype-callable.js"; // (§20.2.3)
 import { promiseProtoMemberSpecLength } from "./promise-dynamic-member-read.js"; // (#6651 D5)
-import { emitSymbolDescLoad, ensureNativeSymbolBoundaryBridge, usesNativeSymbolProvider } from "./symbol-native.js";
+import { emitSymbolDescLoad, ensureNativeSymbolBoundaryBridge } from "./symbol-native.js";
 import { ensureObjectRuntime, ensureWrapperStringValueHelper } from "./object-runtime.js";
 import { rollbackSpeculative, snapshotSpeculative } from "./context/speculative.js";
 import {
@@ -136,7 +136,6 @@ import {
   emitTaViewDynamicByteLength,
   getOrRegisterDvWindowType,
   pushTaViewEffectiveLen,
-  usesNativeDataViewProvider,
 } from "./dataview-native.js";
 import { staticConstStringValues } from "./analysis/static-string-values.js";
 import { staticUniformDerivedLength, tryEmitNativeTrimLength } from "./native-strings-derived-length.js";
@@ -240,7 +239,6 @@ import {
 import { tryEmitBuiltinStaticExpandoRead } from "./builtin-static-expando.js"; // (#4639 C2) ordinary [[Get]] tail
 import { emitRuntimeEvalSharedValueUnwrap, runtimeEvalSharedValueUnwrapInstrs } from "./global-environment.js";
 import { isInlineTaggedTemplateParameter } from "./tagged-template-parameter.js";
-import { linkBrandRoleOf } from "./shape-brand.js";
 import { emitDynamicTemplateRawRead, isDynamicTemplateRawRead } from "./template-raw-dynamic.js";
 import { emitLinkedStaticMemberRead, linkedStaticParentHeritage } from "./standalone-linked-static-inheritance.js"; // (#6644) §15.7.14 step 6 across the link
 import { tryEmitPromiseSubclassCellRead } from "./promise-subclass-cell-read.js";
@@ -1037,7 +1035,7 @@ export function tryBufferViewAttributeReads(
     // a bare `$__vec_i32_byte` (offset-0 default-length view). For the wrapper,
     // read its byteOffset / byteLength fields; for the bare vec, byteOffset = 0
     // and byteLength = vec.length (one i32 per byte ⇒ length IS the byte count).
-    if (isDataView && usesNativeDataViewProvider(ctx) && propName !== "BYTES_PER_ELEMENT") {
+    if (isDataView && propName !== "BYTES_PER_ELEMENT") {
       const vecTypeIdx = getOrRegisterVecType(ctx, "i32_byte", { kind: "i8" });
       const dvWinTypeIdx = getOrRegisterDvWindowType(ctx);
       const fieldIdx = propName === "byteOffset" ? 1 : 2;
@@ -1093,28 +1091,7 @@ export function tryBufferViewAttributeReads(
     // through to `__extern_get(struct, "byteLength")` → undefined → NaN. Recover
     // the window via the `__dv_view_byte_attr(view, sel)` host helper:
     //   sel 0 → byteOffset, sel 1 → byteLength (windowed; sentinel handled host-side).
-    if (isDataView && !usesNativeDataViewProvider(ctx) && propName !== "BYTES_PER_ELEMENT") {
-      const attrIdx = ensureLateImport(
-        ctx,
-        "__dv_view_byte_attr",
-        [{ kind: "externref" }, { kind: "i32" }],
-        [{ kind: "i32" }],
-      );
-      flushLateImportShifts(ctx, fctx);
-      if (attrIdx !== undefined) {
-        const recvType = compileExpression(ctx, fctx, expr.expression);
-        // The helper takes an externref. DataView locals are already externref;
-        // an inline `new DataView(...)` receiver may hand back a GC ref
-        // (`ref`/`ref_null`) — recover it to externref before the call.
-        if (recvType && recvType.kind !== "externref") {
-          fctx.body.push({ op: "extern.convert_any" });
-        }
-        fctx.body.push({ op: "i32.const", value: propName === "byteOffset" ? 0 : 1 });
-        fctx.body.push({ op: "call", funcIdx: attrIdx });
-        if (!ctx.fast) fctx.body.push({ op: "f64.convert_i32_s" });
-        return ctx.fast ? { kind: "i32" } : { kind: "f64" };
-      }
-    }
+
     if (isBuffer || isTypedArr) {
       // byteOffset on a fresh-backing view is always 0.
       if (propName === "byteOffset") {
@@ -1219,9 +1196,7 @@ export function tryBufferViewAttributeReads(
   // is the non-trapping floor. Host/gc mode keeps its host-import `.buffer`.
   if (
     propName === "buffer" &&
-    (noJsHost(ctx) ||
-      (usesNativeDataViewProvider(ctx) &&
-        ctx.checker.getTypeAtLocation(expr.expression).getSymbol()?.name === "DataView"))
+    (noJsHost(ctx) || ctx.checker.getTypeAtLocation(expr.expression).getSymbol()?.name === "DataView")
   ) {
     const bufRecvName =
       objType.getSymbol()?.name ??
@@ -1441,10 +1416,7 @@ export function tryNativeErrorMemberRead(
   // $Error_struct) + struct.get`. If the receiver is already null at
   // runtime, `ref.cast` traps — but native JS has the same behaviour
   // (`null.message` throws), so the trap is acceptable Phase 1/2 semantics.
-  if (
-    ctx.targetProfile.semanticProviders === "native-first" &&
-    (propName === "message" || propName === "name" || propName === "stack")
-  ) {
+  if (propName === "message" || propName === "name" || propName === "stack") {
     const lhsTsName = objType.getSymbol()?.name;
     // (#1536c) A user subclass of a built-in Error (`class MyError extends
     // Error {}`) is externref-backed; its instance is the parent's
@@ -3819,8 +3791,8 @@ export function tryNamespaceConstantAndSymbolReads(
       // `__box_number`, so `new WeakSet([Symbol.hasInstance])` stores the
       // symbol rather than the NUMBER 2 (its well-known id). The js-host lane
       // stays unbranded for the #4626 index-shift reason recorded there.
-      const branded = usesNativeSymbolProvider(ctx) || linkBrandRoleOf(ctx) !== undefined; // (#6482 r2)
-      return branded ? { kind: "i32", symbol: true } : { kind: "i32" };
+      // (#6482 r2)
+      return { kind: "i32", symbol: true };
     }
   }
 
@@ -3838,28 +3810,16 @@ export function tryNamespaceConstantAndSymbolReads(
     // accessor — read the description from the native id→string side table
     // (populated by `compileSymbolCall`). A null slot / out-of-range id reads as
     // `undefined`, matching `Symbol().description === undefined`.
-    if (usesNativeSymbolProvider(ctx)) {
-      ensureNativeSymbolBoundaryBridge(ctx);
-      // A narrowed any receiver still occupies the boxed symbol plane.
-      const symbolId: ValType = { kind: "i32", symbol: true };
-      const recvType = compileExpression(ctx, fctx, expr.expression, symbolId);
-      if (recvType && recvType.kind !== "i32") {
-        coerceType(ctx, fctx, recvType, symbolId);
-      }
-      emitSymbolDescLoad(ctx, fctx);
-      // Result is `ref_null $AnyString` — a native string (or null⇒undefined).
-      return { kind: "ref_null", typeIdx: ctx.anyStrTypeIdx };
+    ensureNativeSymbolBoundaryBridge(ctx);
+    // A narrowed any receiver still occupies the boxed symbol plane.
+    const symbolId: ValType = { kind: "i32", symbol: true };
+    const recvType = compileExpression(ctx, fctx, expr.expression, symbolId);
+    if (recvType && recvType.kind !== "i32") {
+      coerceType(ctx, fctx, recvType, symbolId);
     }
-    const symDescIdx = ensureLateImport(ctx, "__symbol_description", [{ kind: "externref" }], [{ kind: "externref" }]);
-    if (symDescIdx !== undefined) {
-      const recvType = compileExpression(ctx, fctx, expr.expression, { kind: "externref" });
-      if (recvType && recvType.kind !== "externref") {
-        coerceType(ctx, fctx, recvType, { kind: "externref" });
-      }
-      flushLateImportShifts(ctx, fctx);
-      fctx.body.push({ op: "call", funcIdx: symDescIdx });
-      return { kind: "externref" };
-    }
+    emitSymbolDescLoad(ctx, fctx);
+    // Result is `ref_null $AnyString` — a native string (or null⇒undefined).
+    return { kind: "ref_null", typeIdx: ctx.anyStrTypeIdx };
   }
 
   // (#5269 B-d) Any OTHER property read on a symbol PRIMITIVE. §6.2.5.5

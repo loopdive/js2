@@ -30,7 +30,6 @@ import { reserveObjLitToPrimitive } from "./objlit-to-primitive.js"; // (#3481 s
 import { buildRecordFromExternref } from "./record-from-host-object.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { addFuncType } from "./registry/types.js";
-import { emitHostCarrierToStringTail, isHostArrayCarrier } from "./host-carrier-to-primitive.js"; // (#6788)
 import { ensureCanonicalUndefinedExtern } from "./undefined-extern-import.js"; // (#6419/#6492 r6)
 import { f64HoleToExternrefInstrs } from "./vec-f64-hole-coercion.js";
 import {
@@ -935,8 +934,7 @@ export function buildVecFromExternref(
   // broader iterable set through the native materializer before indexed reads;
   // the historical standalone/WASI sites already prove their source is an
   // `$ObjVec` and keep the cheaper direct path.
-  const useNativeMaterializer =
-    ctx.targetProfile.semanticProviders === "native-first" && ctx.targetProfile.environment === "javascript";
+  const useNativeMaterializer = ctx.targetProfile.environment === "javascript";
   const useNativeObjVec = useNativeMaterializer || ctx.standalone || ctx.wasi;
   if (useNativeMaterializer) ensureNativeArrayFromIterN(ctx);
   // #2696 — register EVERY late import (helper) FIRST, flush ONCE, then read the
@@ -1312,24 +1310,13 @@ export function buildVecFromExternMaterializer(ctx: CodegenContext, vecTypeIdx: 
   // imports. Read its funcIdx only after that flush: any import registered by
   // buildVecFromExternref can shift defined helper indices.
   ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
-  if (!ctx.standalone && !ctx.wasi && ctx.targetProfile.semanticProviders !== "native-first") {
-    // A cross-representation source may still be a compiled vec carrying
-    // ordinary Array properties in its runtime sidecar (notably TypeScript's
-    // NodeArray pos/end/hasTrailingComma metadata). The materializer creates a
-    // fresh target vec, so reserve the same sidecar bridge used by the typed
-    // vec-to-vec projector before buildVecFromExternref freezes import indices.
-    ensureLateImport(ctx, "__copy_wasm_struct_sidecar", [{ kind: "externref" }, { kind: "externref" }], []);
-  }
 
   // The cross-rep / host-array conversion (registers its late imports + flushes
   // against fctx; produces ref_null $vec). Built first so its locals are
   // allocated before the short-circuit temp below.
   const matInstrs = buildVecFromExternref(ctx, fctx, 0, vecTypeIdx, vecInfo);
   const isUndefinedIdx = ctx.funcMap.get("__extern_is_undefined");
-  const copySidecarIdx =
-    !ctx.standalone && !ctx.wasi && ctx.targetProfile.semanticProviders !== "native-first"
-      ? ctx.funcMap.get("__copy_wasm_struct_sidecar")
-      : undefined;
+  const copySidecarIdx = undefined;
   const tmpAny = allocLocal(fctx, `__vfe_any_${fctx.locals.length}`, { kind: "anyref" } as ValType);
   const crossRepInstrs: Instr[] = matInstrs;
   if (copySidecarIdx !== undefined) {
@@ -1427,20 +1414,17 @@ function buildTupleFromIterableFallback(
   // `__extern_get_idx`). Host mode keeps the JS-host `__array_from_iter` path
   // unchanged (byte-inert). Mirrors the native ObjVec steering in
   // `buildVecFromExternref`.
-  const useNativeFromIter = ctx.targetProfile.semanticProviders === "native-first" || ctx.standalone || ctx.wasi;
-  if (useNativeFromIter) ensureNativeArrayFromIterN(ctx);
+  ensureNativeArrayFromIterN(ctx);
   // Register all helpers first so every ensureLateImport shift completes
   // before we freeze funcIdx values — otherwise a later ensureLateImport
   // could shift a previously-captured funcIdx and produce the wrong call.
-  if (!useNativeFromIter) {
-    ensureLateImport(ctx, "__array_from_iter", [{ kind: "externref" }], [{ kind: "externref" }]);
-  }
+
   ensureLateImport(ctx, "__extern_get_idx", [{ kind: "externref" }, { kind: "f64" }], [{ kind: "externref" }]);
   ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
   ensureLateImport(ctx, "__unbox_number", [{ kind: "externref" }], [{ kind: "f64" }]);
   ensureLateImport(ctx, "__box_number", [{ kind: "f64" }], [{ kind: "externref" }]);
   flushLateImportShifts(ctx, fctx);
-  const iterIdx = useNativeFromIter ? ctx.funcMap.get("__array_from_iter_n") : ctx.funcMap.get("__array_from_iter");
+  const iterIdx = ctx.funcMap.get("__array_from_iter_n");
   const getIdxFn = ctx.funcMap.get("__extern_get_idx");
   const isUndefFn = ctx.funcMap.get("__extern_is_undefined");
   const unboxIdx = ctx.funcMap.get("__unbox_number");
@@ -1487,7 +1471,7 @@ function buildTupleFromIterableFallback(
   // (unbounded drain, byte-semantics-equivalent to the host `__array_from_iter`).
   const buildTupleInstrs: Instr[] = [
     { op: "local.get", index: externLocal },
-    ...(useNativeFromIter ? ([{ op: "f64.const", value: -1 }] satisfies Instr[]) : []),
+    ...([{ op: "f64.const", value: -1 }] satisfies Instr[]),
     { op: "call", funcIdx: iterIdx },
     { op: "local.set", index: matLocal },
     ...fieldExtracts,
@@ -2098,11 +2082,6 @@ function emitVecToVecBody(
   // sidecar after its indexed elements are projected. Resolve the funcIdx only
   // after the late-import flush to avoid retaining a shifted defined index.
   let copySidecarIdx: number | undefined;
-  if (!ctx.standalone && !ctx.wasi && ctx.targetProfile.semanticProviders !== "native-first") {
-    ensureLateImport(ctx, "__copy_wasm_struct_sidecar", [{ kind: "externref" }, { kind: "externref" }], []);
-    flushLateImportShifts(ctx, fctx);
-    copySidecarIdx = ctx.funcMap.get("__copy_wasm_struct_sidecar");
-  }
 
   // Save the source vec ref to a temp local
   const srcRefType: ValType = { kind: "ref_null", typeIdx: fromTypeIdx };
@@ -3205,22 +3184,13 @@ export function coerceType(
       if (to.kind === "ref_null" && !materializeUndefinedVec) {
         ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
       }
-      if (!ctx.standalone && !ctx.wasi && ctx.targetProfile.semanticProviders !== "native-first") {
-        // This direct coercion path is separate from the reserved
-        // __vec_from_extern helper used by generated field setters. It also
-        // materializes a fresh vec from a host Array mirror, so preserve the
-        // source vec's ordinary-property sidecar here as well.
-        ensureLateImport(ctx, "__copy_wasm_struct_sidecar", [{ kind: "externref" }, { kind: "externref" }], []);
-      }
+
       const materializeVec = buildVecFromExternref(ctx, fctx, tmpExternLocal, toIdx, vecInfo);
       // buildVecFromExternref flushes every late-import shift. Resolve the
       // helpers afterwards so these calls cannot retain stale defined funcIdxs.
       const isUndefinedIdx =
         to.kind === "ref_null" && !materializeUndefinedVec ? ctx.funcMap.get("__extern_is_undefined") : undefined;
-      const copySidecarIdx =
-        !ctx.standalone && !ctx.wasi && ctx.targetProfile.semanticProviders !== "native-first"
-          ? ctx.funcMap.get("__copy_wasm_struct_sidecar")
-          : undefined;
+      const copySidecarIdx = undefined;
       const materializeWithSidecar: Instr[] = materializeVec;
       if (copySidecarIdx !== undefined) {
         const resultLocal = allocLocal(fctx, `__coerce_vec_result_${fctx.locals.length}`, {
@@ -3613,7 +3583,7 @@ export function coerceType(
     fctx.body.push({ op: "extern.convert_any" });
     // (#6788) No in-Wasm `@@toPrimitive`/`toString` reduced the carrier above;
     // a string-hint consumer needs its ToString, not the object itself.
-    if (toPrimitiveHint === "string" && emitHostCarrierToStringTail(ctx, fctx, typeIdx)) return;
+
     // Vec structs (arrays) need Symbol.iterator to be iterable by JS APIs (#854).
     // After extern.convert_any, call __make_iterable to attach Symbol.iterator via sidecar.
     // Skip i32_byte vec structs (ArrayBuffer/DataView backing) — neither is
@@ -3626,13 +3596,7 @@ export function coerceType(
     // JS boundary exposes the identity-cached live array view. Materializing a
     // detached JS array merely because an internal type widens to externref
     // would make the embedder a semantic provider again and lose ownership.
-    if (isHostArrayCarrier(ctx, typeIdx)) {
-      const makeIterIdx = ensureLateImport(ctx, "__make_iterable", [{ kind: "externref" }], [{ kind: "externref" }]);
-      if (makeIterIdx !== undefined) {
-        flushLateImportShifts(ctx, fctx);
-        fctx.body.push({ op: "call", funcIdx: makeIterIdx });
-      }
-    }
+
     return;
   }
   // ref/ref_null → eqref: no-op (GC struct refs are subtypes of eqref)

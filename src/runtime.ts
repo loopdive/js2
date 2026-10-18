@@ -4840,7 +4840,7 @@ export function buildCompiledAdapterImports(
   return buildImports(imports, deps, frozenManifest.stringPool, {
     ...options,
     ...authority,
-    ambientCompatibility: options.ambientCompatibility ?? targetProfile.semanticProviders !== "native-first",
+    ambientCompatibility: options.ambientCompatibility ?? targetProfile.semanticProviders === "backend-defined",
     hostAccelerators: options.hostAccelerators ?? targetProfile.accelerators,
   });
 }
