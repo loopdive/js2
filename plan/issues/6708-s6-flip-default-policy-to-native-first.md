@@ -325,7 +325,8 @@ accelerators are #6978 (done).
 
 PR [#6672](https://github.com/loopdive/js2/pull/6672) was refreshed from its
 stale 2026-10-16 head onto `upstream/main` `1990d67b28` (merge
-`338d62e16b`). The original S6 implementation is unchanged: omitted
+`338d62e16b`), then through the baseline-only main tip `5495eb6102` (merge
+`430b2254fa`). The original S6 implementation is unchanged: omitted
 `semanticProviders` selects native-first, `host-assisted` is the named
 compatibility profile, and JS values/objects still cross through the boundary
 adapter rather than becoming host-backed core representations.
