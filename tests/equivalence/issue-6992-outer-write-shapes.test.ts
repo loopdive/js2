@@ -82,3 +82,48 @@ describe("#6992 closure captures see every outer write form", () => {
     });
   }
 });
+
+// test262 ES5 language/arguments-object/10.6-6-3,4: an outer `var arguments`
+// declarator is not a write of a nested function expression's OWN `arguments`
+// (its declaration is unknown to the planner); counting it boxed that
+// `arguments` and the read hit `illegal cast`. `var arguments` is a strict-mode
+// SyntaxError, so the expected values are pinned rather than evaluated as JS.
+const argumentsCases: [string, string, number][] = [
+  [
+    "outer var arguments, inner 0-param function expression",
+    `var arguments: any = undefined; return (function () { return arguments.length; })();`,
+    0,
+  ],
+  [
+    "outer var arguments, inner 3-param function expression",
+    `var arguments: any = undefined; return (function (a?: any, b?: any, c?: any) { return arguments.length; })();`,
+    0,
+  ],
+  [
+    "outer var arguments, inner function expression called with extra args",
+    `var arguments: any = undefined; return (function (a?: any) { return arguments.length; })(1, 2);`,
+    2,
+  ],
+  // Control: with the captured declaration KNOWN, a later `var` re-declaration
+  // is still a write and the function expression's capture stays boxed.
+  [
+    "function expression sees a later var re-declaration",
+    `var v: any = 1; const f = function () { return v; }; var v: any = 5; return f();`,
+    5,
+  ],
+];
+
+describe("#6992 an outer var declarator does not box a function expression's own arguments", () => {
+  for (const [name, body, expected] of argumentsCases) {
+    it(name, async () => {
+      const src = `export function test(): number { ${body} }`;
+      for (const target of [undefined, "standalone"] as const) {
+        const lane = target ?? "gc";
+        const result = await compile(src, { fileName: "probe.ts", ...(target ? { target } : {}) });
+        expect(result.success, `${lane}: ${result.errors.map((e) => e.message).join("\n")}`).toBe(true);
+        const instance = await instantiateWithRuntime(result);
+        expect((instance.exports.test as () => unknown)(), lane).toBe(expected);
+      }
+    });
+  }
+});

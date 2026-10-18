@@ -120,3 +120,13 @@ Every case except the negative control and "destructuring before the closure exi
   - Same on base. It is unrelated to capture boxing.
 - `ir-layering` reports 87 import lines against a baseline of 90 ("improved"). The baseline was not touched: main is its only writer.
 
+
+## Merge-group regression fix (2026-10-18)
+
+The merge-group run parked this PR: ES5 `language/arguments-object/10.6-6-3.js` and `10.6-6-4.js` went pass → fail on standalone (`illegal cast in __closure_47`).
+
+- **Shape:** `var arguments = undefined; (function () { arguments.length })();`
+- **Why:** a nested function expression's `arguments` is its own implicit binding. The planner cannot find its declaration (`referencedBindingDeclaration` returns `undefined`), and an unknown identity counted every same-spelled write. Once `var` declarators became write targets, the outer `var arguments = undefined` counted as a write. The inner `arguments` was then lowered through a ref cell.
+- **Fix:** in `capturedBindingWriteTest` (`closure-binding-identity.ts`), a `var` declarator is a write only when it re-declares a KNOWN captured declaration. It is never the binding's own declarator, and it never counts when the declaration is unknown. That is the pre-#6992 answer for the unknown case. Explicit `x = …` writes are unaffected. The own-declarator check moved out of `arrow-phases.ts` into this helper.
+- **IR side:** `collectOuterWrites` (`src/ir/closure-captures.ts`) counts a declarator only when the name was already declared, so a first `var arguments` is not a write there. Nothing changed.
+- **Left out (pre-existing, same at 61a64992bc without this fix):** an ARROW that reads an outer `var arguments` does not see a later `arguments = 5` (it returns 1, sloppy JS returns 5). This fix does not cause it, and its cause has not been investigated.
