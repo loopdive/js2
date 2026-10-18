@@ -48,6 +48,11 @@ function makeSyncResponse(opts: { status?: number; ok?: boolean; jsonBody?: unkn
   };
 }
 
+// Every export below is an `async function`, so it returns a Promise. These
+// pins were written while async functions still completed synchronously and
+// read the result straight off the call; they now await it (an un-awaited
+// Promise made the `.ok` truthiness pin pass vacuously), and the missing-fetch
+// case is a REJECTION, as in JS.
 describe("#1500 fetch() host import", () => {
   let originalFetch: unknown;
 
@@ -69,7 +74,7 @@ describe("#1500 fetch() host import", () => {
       }
     `;
     const ex = await compileAndInstantiate(src);
-    expect(ex.getStatus("/x")).toBe(200);
+    expect(await ex.getStatus("/x")).toBe(200);
   });
 
   it("reads .ok flag from awaited Response (true)", async () => {
@@ -82,7 +87,7 @@ describe("#1500 fetch() host import", () => {
       }
     `;
     const ex = await compileAndInstantiate(src);
-    expect(ex.isOk("/x")).toBeTruthy();
+    expect(await ex.isOk("/x")).toBeTruthy();
   });
 
   it("reads .ok flag from awaited Response (false)", async () => {
@@ -95,7 +100,7 @@ describe("#1500 fetch() host import", () => {
       }
     `;
     const ex = await compileAndInstantiate(src);
-    expect(ex.isOk("/x")).toBeFalsy();
+    expect(await ex.isOk("/x")).toBeFalsy();
   });
 
   it("reads parsed JSON body via .json()", async () => {
@@ -109,7 +114,7 @@ describe("#1500 fetch() host import", () => {
       }
     `;
     const ex = await compileAndInstantiate(src);
-    expect(ex.getName("/x")).toBe("Alice");
+    expect(await ex.getName("/x")).toBe("Alice");
   });
 
   it("reads response text via .text()", async () => {
@@ -122,7 +127,7 @@ describe("#1500 fetch() host import", () => {
       }
     `;
     const ex = await compileAndInstantiate(src);
-    expect(ex.getText("/x")).toBe("hello world");
+    expect(await ex.getText("/x")).toBe("hello world");
   });
 
   it("throws when globalThis.fetch is unavailable", async () => {
@@ -135,7 +140,7 @@ describe("#1500 fetch() host import", () => {
       }
     `;
     const ex = await compileAndInstantiate(src);
-    expect(() => ex.getStatus("/x")).toThrow(/js2wasm: fetch is not available/);
+    await expect(ex.getStatus("/x")).rejects.toThrow(/js2wasm: fetch is not available/);
   });
 
   it("forwards URL string to host fetch", async () => {
@@ -149,7 +154,7 @@ describe("#1500 fetch() host import", () => {
       }
     `;
     const ex = await compileAndInstantiate(src);
-    expect(ex.hit("/api/users/42")).toBe(204);
+    expect(await ex.hit("/api/users/42")).toBe(204);
     expect(spy).toHaveBeenCalledTimes(1);
     expect(spy.mock.calls[0]![0]).toBe("/api/users/42");
   });
