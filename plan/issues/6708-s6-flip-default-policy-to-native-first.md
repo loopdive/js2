@@ -393,6 +393,18 @@ compile-work ratchet update, not a semantic waiver; future per-file growth
 still fails against the native-first default that users and test262 now
 exercise.
 
+The next required `quality` ratchet was also default-sensitive. The fixed
+#1918 playground corpus reproduces its old baseline exactly under explicit
+host-assisted (`drop-excess=0`, `default-value-lossy=43`,
+`call-arg-coerce=1`) and reports the already-existing native-provider floor
+under explicit native-first (`11`, `57`, `1248` respectively; every other
+bucket remains zero). S6 did not add those repairs; it made the lane that
+already contained them the omitted-option lane. The baseline was refreshed
+with `check:stack-balance -- --update` so CI now rejects growth from the
+native-first floor instead of comparing two different provider families.
+This is recorded as inherited emitter debt in #1918 Phase 2, not described as
+clean codegen or erased by the equivalence result.
+
 The 2026-10-18 npm-compat refresh on main made the last S6 product-bar row
 directly auditable: Lit was still `measured` under host-assisted but the stale
 `jsHostNative` record was `runtime-error`. The exact S6 head was therefore

@@ -918,3 +918,13 @@ architecture: the packages use the native semantic core plus the existing JS
 boundary/capability adapters. It does not yet satisfy S7's post-merge entry
 condition. The CI npm refresh must publish the same no-`measured → error`
 result after #6672 lands; only then may #6979 delete the compatibility policy.
+
+The landing CI also exposed two default-profile quality ratchets. #3437 now
+meters the steady per-file native-first harness path after an unmetered
+one-time provider warm-up and is banked at 231,951 traversals. #1918's fixed
+playground corpus reproduces the old `0/43/1` fixup floor under explicit
+host-assisted and the inherited native-provider `11/57/1248` floor under
+explicit native-first (`drop-excess` / `default-value-lossy` /
+`call-arg-coerce`). Both baselines now gate the new default. The stack-balance
+numbers remain explicit Phase 2 emitter debt; the rebank prevents S6 from
+comparing different provider families and does not declare the repairs clean.
