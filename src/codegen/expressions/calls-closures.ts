@@ -30,6 +30,10 @@ import {
 } from "../closures.js";
 import { ARRAY_METHODS, compileArrayJoinExtern, emitBoundsCheckedArrayGet } from "../array-methods.js";
 import { tryCompileNativeDisposableStackAnyMethodCall } from "../disposable-runtime.js";
+import {
+  disposableStackShortcutSuppressed,
+  tryEmitDisposableStackAnyTwoArm,
+} from "./disposable-any-receiver-two-arm.js"; // (#7060)
 import { noJsHost } from "../js-errors.js";
 import { stringConstantExternrefInstrs } from "../native-strings.js";
 import { ensureObjVecBuilders, reserveApplyClosure } from "../object-runtime.js";
@@ -2708,7 +2712,15 @@ export function tryExternClassMethodOnAny(
   // the import). The helper handles `dispose` (Slice 1) + `defer`/`adopt`/`use`
   // (Slice 2); other methods fall through to the loop unchanged. Host lane
   // (`!nativeStrings`) is untouched.
-  if (ctx.nativeStrings && ctx.externClasses.get("DisposableStack")?.methods.has(methodName)) {
+  // (#7060) Host-free: brand-guard the shortcut so a non-stack receiver calls its
+  // own member instead of throwing; the generic arm re-dispatches with it off.
+  if (
+    ctx.nativeStrings &&
+    !disposableStackShortcutSuppressed(expr) &&
+    ctx.externClasses.get("DisposableStack")?.methods.has(methodName)
+  ) {
+    const twoArm = tryEmitDisposableStackAnyTwoArm(ctx, fctx, propAccess, expr, methodName);
+    if (twoArm !== undefined) return twoArm;
     const dsAny = tryCompileNativeDisposableStackAnyMethodCall(ctx, fctx, propAccess, expr, methodName);
     if (dsAny !== undefined) return dsAny;
   }

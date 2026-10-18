@@ -103,6 +103,7 @@ import {
   vecFromExternFuncIdx,
 } from "../type-coercion.js";
 import { compileAnnexBEscapeCall } from "../annexb-escape-call.js"; // (#3064 / #4556)
+import { ensureHostFreeCallableResultHelper, hostFreeCallableResultBridge } from "./callable-result-unbox.js"; // (#7080)
 import { annexBDeclaringRange } from "../annexb-cancel.js";
 import { URI_DECODE_MASK, URI_ENCODE_MASK } from "../uri-encoding-native.js";
 import { ensureWasiWriteFileStringsHelper } from "../wasi.js";
@@ -2555,6 +2556,7 @@ function compileBoundIdentifierCall(
             addUnionImports(ctx);
             flushLateImportShifts(ctx, fctx);
           }
+          ensureHostFreeCallableResultHelper(ctx, fctx, expectedReturn); // (#7080)
           const dispatchBridgePlan = (
             from: ValType,
             to: ValType,
@@ -3497,7 +3499,10 @@ function compileBoundIdentifierCall(
                     true,
                     canExportCandidateReferenceResult(fc.funcTypeIdx),
                   );
-                  const guardedRefBridge = bridge ?? liveResultBridge(ctx, fctx, fc.returnType!, expectedReturn!);
+                  const guardedRefBridge =
+                    bridge ??
+                    liveResultBridge(ctx, fctx, fc.returnType!, expectedReturn!) ??
+                    hostFreeCallableResultBridge(ctx, fc.returnType!, expectedReturn!); // (#7080)
                   if (guardedRefBridge !== null) {
                     fcCallBody.push(...guardedRefBridge);
                   } else {

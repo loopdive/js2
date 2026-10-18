@@ -94,6 +94,7 @@ import {
   stringConstantExternrefInstrs,
 } from "./native-strings.js";
 import { emitNativeNumberFormat } from "./number-format-native.js";
+import { emitNativeBigIntFormat } from "./bigint-format-native.js"; // (#7078)
 import { ensureNativeArrayHof } from "./hof-native.js";
 import { emitTaDynProducerCall, ensureTaDynProtoMethodHelper } from "./ta-dyn-proto-methods.js"; // (#6769 S4)
 import { flatMapReturnIsDynamic, flatMapSpeciesResult } from "./array-flatmap.js";
@@ -424,9 +425,16 @@ function refElemHofCallbackIsClosure(ctx: CodegenContext, fctx: FunctionContext,
   if (isKnownNonCallable(ctx, cbArg)) return true; // typed impl emits the spec TypeError
   if (ts.isArrowFunction(cbArg) || ts.isFunctionExpression(cbArg)) return true;
   const probed = probeCompiledType(ctx, fctx, () => compileExpression(ctx, fctx, cbArg));
+  if (probed === null || probed === undefined) return false;
+  // (#7059) Standalone: an opaque-externref callback VALUE (`Boolean`, a
+  // `var`-bound function, an object member) is admitted too. `setupArrayCallback`
+  // recovers a native `call_ref` for it through the #3015/#6690 dynamic
+  // closure path (standalone-gated there, never the host bridge), so the
+  // element-kind hazard this gate guards against cannot arise. Declining it
+  // fell through to a generic fallback that answered `null` —
+  // `["a", "", "b"].filter(Boolean)` evaluated to `[]`.
+  if (ctx.standalone && probed.kind === "externref") return true;
   return (
-    probed !== null &&
-    probed !== undefined &&
     (probed.kind === "ref" || probed.kind === "ref_null") &&
     ctx.closureInfoByTypeIdx.has((probed as { typeIdx: number }).typeIdx)
   );
@@ -5979,6 +5987,18 @@ function compileArrayJoinNative(
         needsRefToString,
         elementToLocaleStringTail(ctx, anyStrTypeIdx, localizedArm),
       ),
+    );
+  } else if (elemType.kind === "i64") {
+    // (#7078) A BigInt element (a `[]` that only ever receives bigints lowers
+    // to an i64 vec) stringifies through the native exact formatter. The string
+    // arm below emitted `ref.as_non_null` on the i64 — invalid Wasm, so hono's
+    // whole `utils/ipaddr` module failed validation (`convertIPv4BinaryToString`
+    // joins `ipV4 >> BigInt(8 * (3 - i)) & 0xffn` sections).
+    emitNativeBigIntFormat(ctx, new Set(["bigint_toString"]));
+    elemToStr.push(
+      { op: "call", funcIdx: ctx.funcMap.get("bigint_toString")! },
+      { op: "any.convert_extern" },
+      { op: "ref.cast", typeIdx: anyStrTypeIdx },
     );
   } else {
     // String element: a (ref null $NativeString) — non-null cast up to $AnyString.
