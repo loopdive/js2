@@ -206,7 +206,7 @@ import { emitElementStoreKeyOnce } from "./computed-member-reference.js";
 import { inheritedSetAffectsKey } from "../inherited-set-gate.js"; // (#4602) per-key #4504 gate
 import { compileRuntimeEvalShadowedAssignment } from "./runtime-eval-assignment.js";
 import { hostTypedArrayCarrierNameForExpression } from "./typed-array-host-carrier.js";
-import { noteStaticExpandoWrite } from "../anon-expando-bag-slot.js";
+import { noteStaticExpandoWrite } from "../object-model/anon-expando-bag-slot.js";
 
 /** Numeric and BigInt TypedArray view name for the native vec element lane. */
 function vecElementTypedArrayName(ctx: CodegenContext, receiver: ts.Expression): string | undefined {

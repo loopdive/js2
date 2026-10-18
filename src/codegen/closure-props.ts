@@ -85,7 +85,7 @@ import { INSTANCE_BAG_FIELD } from "./closures/closure-header-layout.js"; // (#4
 import { BUILTIN_INSTANCE_CARRIER_STRUCT_NAMES } from "./builtin-instance-key-presence.js";
 import { addFuncType } from "./registry/types.js";
 import { bagOwnDataHitInstrs } from "./fnctor-fast-get.js"; // (#6973 stage 2)
-import { commitAnonExpandoBagRoots } from "./anon-expando-bag-slot.js"; // (#7020)
+import { commitAnonExpandoBagRoots } from "./object-model/anon-expando-bag-slot.js"; // (#7020)
 
 /** WasmGC `eq` abstract heap type (used for `ref.cast`/`ref.null` to eqref). */
 const EQ_HEAP_TYPE = -19;

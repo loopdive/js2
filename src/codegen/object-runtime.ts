@@ -333,7 +333,7 @@ import type {
   ToPrimitiveMethodLiterals,
   ToPrimitiveSymbolBindings,
 } from "../runtime/wasmgc/values/to-primitive-method-bodies.js";
-import { collectTupleArrayCarrierTypeIdxs } from "./tuple-array-carrier.js"; // (#7020)
+import { collectTupleArrayCarrierTypeIdxs } from "./array/tuple-array-carrier.js"; // (#7020)
 
 const restOnlyApplyServices = {
   get classifyClosureDispatchRest() {

@@ -57,12 +57,12 @@
  * A type that fails the screen simply keeps the registry route — slower, never
  * wrong.
  */
-import type { Instr, StructTypeDef } from "../ir/types.js";
-import { ts } from "../ts-api.js";
-import { closureBagField } from "./closures/closure-header-layout.js";
-import type { CodegenContext } from "./context/types.js";
-import { linkBrandRoleOf } from "./shape-brand.js";
-import { walkChildren } from "./walk-instructions.js";
+import type { Instr, StructTypeDef } from "../../ir/types.js";
+import { ts } from "../../ts-api.js";
+import { closureBagField } from "../closures/closure-header-layout.js";
+import type { CodegenContext } from "../context/types.js";
+import { linkBrandRoleOf } from "../shape-brand.js";
+import { walkChildren } from "../walk-instructions.js";
 
 interface AnonBagSlotState {
   /** Object literal → the struct type it was compiled to (latest compile wins). */

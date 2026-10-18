@@ -26,8 +26,8 @@
  * `mut`, so the guard practically never declines a tuple against a user shape;
  * it exists for the compiler's immutable runtime records.
  */
-import type { StructTypeDef } from "../ir/types.js";
-import type { CodegenContext } from "./context/types.js";
+import type { StructTypeDef } from "../../ir/types.js";
+import type { CodegenContext } from "../context/types.js";
 
 function shallowLayoutKey(def: StructTypeDef): string {
   return def.fields.map((f) => `${f.mutable ? "m" : ""}${f.type.kind}`).join(",");

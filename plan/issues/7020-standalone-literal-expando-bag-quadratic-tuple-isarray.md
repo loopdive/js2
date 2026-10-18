@@ -16,7 +16,7 @@ language_feature: expando-properties, performance, tuples, Array.isArray
 goal: standalone-gap
 related: [4241, 7013]
 # 2026-10-18 (#7020): one import + one call per file; the mechanism lives in the
-# new modules anon-expando-bag-slot.ts / tuple-array-carrier.ts. The four hooks
+# new modules object-model/anon-expando-bag-slot.ts / array/tuple-array-carrier.ts. The four hooks
 # must sit at their existing seams (literal lowering, dynamic member write,
 # finalize branding order, the `__extern_is_array` fill).
 loc-budget-allow:
@@ -129,8 +129,8 @@ deadline and its BMP rows pass; gc binaries byte-identical.
 
 ## Resolution
 
-Both findings fixed as revised above (`src/codegen/anon-expando-bag-slot.ts`,
-`src/codegen/tuple-array-carrier.ts`; one hook line each in `literals.ts`,
+Both findings fixed as revised above (`src/codegen/object-model/anon-expando-bag-slot.ts`,
+`src/codegen/array/tuple-array-carrier.ts`; one hook line each in `literals.ts`,
 `expressions/assignment.ts`, `closure-props.ts`, `index.ts`,
 `object-runtime.ts`).
 
