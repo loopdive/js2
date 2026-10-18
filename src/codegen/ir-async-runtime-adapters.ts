@@ -84,7 +84,16 @@ function collectPreparedAsyncRuntimeRequests(
   const requested = new Map<PreparedAsyncHostCapabilityId, PreparedAsyncHostAdapter>();
   const requirements = new Set<RuntimeBackendRequirement>();
   for (const fn of functions) {
-    if (!fn.asyncPlan && !fn.asyncRuntime && fn.funcKind !== "async") continue;
+    // (#7014) An `async` function with neither a plan nor a runtime is not a
+    // PREPARED async owner: it keeps the direct async lowering and requests no
+    // prepared host adapter. This census used to run only when the module froze
+    // a runtime manifest for some other reason; since #5482 (3bcad2e9b2) any
+    // string literal freezes one, so the await-free
+    // `async function inner(): Promise<string> { return "x"; }` beside a literal
+    // hard-failed the compile with "has no valid async plan owner". A HALF
+    // attachment (plan without runtime, or a plan on a non-async body) is still
+    // the invariant below.
+    if (!fn.asyncPlan && !fn.asyncRuntime) continue;
     if (!fn.asyncPlan || !fn.asyncRuntime || fn.funcKind !== "async") {
       throw new Error(`IR async runtime attachment for ${fn.name} has no valid async plan owner`);
     }
