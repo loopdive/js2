@@ -59,6 +59,8 @@ import {
 } from "./shared.js";
 import { coerceType, tryStructToString } from "./type-coercion.js";
 import { symbolWrapperToStringThrowArm } from "./symbol-to-primitive-arms.js"; // (#6651 H1)
+import { ensureObjectRuntime } from "./object-runtime.js";
+import { anyValuePayloadToNumberBody } from "./helpers/anyvalue-to-number.js"; // (#6998)
 
 /**
  * The three coercion modes the backend dispatches over. Derived once from the
@@ -102,6 +104,39 @@ export function runtimeToPrimitiveInstrs(ctx: CodegenContext, hint: "string" | "
 export function runtimeToNumberInstrs(ctx: CodegenContext): Instr[] | null {
   const funcIdx = ctx.funcMap.get("__unbox_number");
   return funcIdx === undefined ? null : [{ op: "call", funcIdx }];
+}
+
+/**
+ * (#6998) The out-of-line ToNumber helper for an `$AnyValue` string (tag 5) or
+ * object (tag 6) payload, one per hint, or `null` on a js-host target (or if
+ * ToNumber is missing). Mirrors coerceType's externref → f64 arm: ToPrimitive
+ * runs natively on `--target standalone` (the object runtime owns
+ * `__to_primitive`, as for `emitAnyRelational`); WASI keeps that arm's bare
+ * ToNumber. Call BEFORE building the dispatch: it may flush late-import shifts.
+ */
+export function ensureAnyValuePayloadToNumber(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  hint: "number" | "string" | "default" | undefined,
+): number | null {
+  if (coercionMode(ctx) !== "standalone") return null;
+  const name = `__anyvalue_payload_to_number_${hint ?? "number"}`;
+  const existing = ctx.funcMap.get(name);
+  if (existing !== undefined) return existing;
+  addUnionImports(ctx);
+  const nativeToPrimitive = ctx.standalone && ctx.targetProfile.semanticProviders === "native-first";
+  if (nativeToPrimitive) ensureObjectRuntime(ctx);
+  flushLateImportShifts(ctx, fctx);
+  const toPrimitive = (nativeToPrimitive ? runtimeToPrimitiveInstrs(ctx, hint ?? "number") : null) ?? [];
+  const toNumber = runtimeToNumberInstrs(ctx);
+  if (toNumber === null) return null;
+  const anyTypeIdx = ctx.anyValueTypeIdx;
+  const body = anyValuePayloadToNumberBody(anyTypeIdx, [...toPrimitive, ...toNumber]);
+  const typeIdx = addFuncType(ctx, [{ kind: "ref_null", typeIdx: anyTypeIdx }], [{ kind: "f64" }], name);
+  const funcIdx = mintDefinedFunc(ctx);
+  pushDefinedFunc(ctx, funcIdx, { name, typeIdx, locals: [], body, exported: false });
+  ctx.funcMap.set(name, funcIdx);
+  return funcIdx;
 }
 
 /** True when the active mode represents strings as a native `$AnyString` GC ref. */
