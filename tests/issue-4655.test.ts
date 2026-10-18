@@ -366,7 +366,8 @@ describe("#4655 — measured residuals, each with the control that pins its root
   // reachable in isolation (`String(child.valueOf())` answers 2, `child * 1`
   // answers 2), so the miss is specific to the array-like `length` read.
   // test262 `forEach/15.4.4.18-3-23.js`. Owner: unclaimed — see the issue.
-  failSource(
+  // PROMOTED from a residual pin (#7014 follow-up): measured passing on main 2026-10-18.
+  pinSource(
     "R5-array-like-length-with-inherited-valueOf",
     `${LOOP_CARRIED}
      var proto = { valueOf: function () { return 2; } };
@@ -398,7 +399,8 @@ describe("#4655 — measured residuals, each with the control that pins its root
   // `filter/15.4.4.20-9-b-*`, not the descriptor MOP: measured with NO
   // `Object.defineProperty` anywhere, `[0,1,2,"last"].filter(() => true)`
   // answers `[0,1,[object Object],[object Object]]`.
-  failSource(
+  // PROMOTED from a residual pin (#7014 follow-up): measured passing on main 2026-10-18.
+  pinSource(
     "R6-heterogeneous-element-tag",
     `${LOOP_CARRIED}
      var arr = [0, 1, 2, "last"];
@@ -446,7 +448,8 @@ describe("#4655 — measured residuals, each with the control that pins its root
   //   plain getter + a later Array.prototype.filter.call(obj)      pass
   //   getter writes obj[2]  AND  a later filter borrow             FAIL
   // Owner: array-like borrow carrier selection (value-rep), NOT #4491.
-  failSource(
+  // PROMOTED from a residual pin (#7014 follow-up): measured passing on main 2026-10-18.
+  pinSource(
     "R7-length-accessor-on-a-borrowed-array-like",
     `${LOOP_CARRIED}
      var obj = {};
@@ -556,7 +559,8 @@ describe("#4655 — measured residuals, each with the control that pins its root
   // must fall back to `valueOf` (§7.1.19 → §7.1.1.1 step 3). Through `String()`
   // it does (the control); in KEY position the write lands nowhere.
   // Owner: computed-member key coercion (core-semantics), not this issue.
-  failSource(
+  // PROMOTED from a residual pin (#7014 follow-up): measured passing on main 2026-10-18.
+  pinSource(
     "R9-property-key-toprimitive-fallback",
     `${LOOP_CARRIED}
      var o = { valueOf: function () { return __n - 2; }, toString: function () { return {}; } };
