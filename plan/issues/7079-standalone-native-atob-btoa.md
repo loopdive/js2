@@ -59,3 +59,5 @@ standalone/wasi). hono `utils/encode` now instantiates (0/44 → 2/44); its
 remaining 42 are TypedArray representation gaps (`view.buffer` of a native
 TypedArray is a zero-filled copy, a function returning a buffer-backed view
 through a `Uint8Array`-typed slot loses its contents) — recorded as residuals.
+
+Regression: `tests/issue-7059-hono-standalone-residuals.test.ts` (the `#7079` block).

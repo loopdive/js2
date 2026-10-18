@@ -46,3 +46,5 @@ so every caller of `__extern_get_idx` sees string elements.
 ## Resolution
 
 Implemented; hono `mergePath` tests pass.
+
+Regression: `tests/issue-7059-hono-standalone-residuals.test.ts` (the `#7082` block).

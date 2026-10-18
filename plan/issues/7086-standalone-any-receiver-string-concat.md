@@ -45,3 +45,5 @@ Add a `concat` arm to `__extern_method_call`'s native-string fast path:
 
 Implemented; hono `getFilePath` passes. Array `concat` on `any` keeps its arm
 (control in the regression test).
+
+Regression: `tests/issue-7059-hono-standalone-residuals.test.ts` (the `#7086` block).

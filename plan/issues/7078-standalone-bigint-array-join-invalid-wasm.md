@@ -40,3 +40,5 @@ casts its native-string result to `$AnyString`.
 Implemented. `utils/ipaddr` now compiles and runs: 0/16 → 7/16. The remaining
 9 need values above 2^64 (IPv6 128-bit arithmetic on the i64 BigInt carrier,
 `ipV6 >> 112n` wraps) — recorded as a residual, not attempted here.
+
+Regression: `tests/issue-7059-hono-standalone-residuals.test.ts` (the `#7078` block).

@@ -54,3 +54,5 @@ Implemented. Not covered (recorded): when the CALLEE closure's parameter types
 differ from the declared callable type (`eachAny((x: number) => x + 1)` with
 `fn: (a: any) => any`), the argument is not admitted at all and the call throws
 — the argument bridges stay host-lane-only.
+
+Regression: `tests/issue-7059-hono-standalone-residuals.test.ts` (the `#7080` block).

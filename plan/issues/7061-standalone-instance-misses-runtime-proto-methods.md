@@ -95,3 +95,5 @@ attributes (`writable/enumerable false`, `configurable` as given).
 
 Not covered (recorded): a prototype aliased first (`const p = C.prototype;
 Object.defineProperty(p, …)`) does not record the demand.
+
+Regression: `tests/issue-7059-hono-standalone-residuals.test.ts` (the `#7061` block).

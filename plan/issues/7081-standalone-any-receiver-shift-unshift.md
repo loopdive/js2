@@ -36,3 +36,5 @@ in `DYN_ARRAY_PRODUCER_METHODS` so the dispatcher's producer arm claims them.
 ## Resolution
 
 Implemented; hono `utils/url` `splitPath`/`splitRoutingPath` pass.
+
+Regression: `tests/issue-7059-hono-standalone-residuals.test.ts` (the `#7081` block).

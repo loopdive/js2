@@ -43,3 +43,5 @@ eager computation is unobservable; `null` stays 0.
 
 Implemented; hono `getQueryParam` tests progress (the remaining failure needs
 `URLSearchParams`).
+
+Regression: `tests/issue-7059-hono-standalone-residuals.test.ts` (the `#7083` block).

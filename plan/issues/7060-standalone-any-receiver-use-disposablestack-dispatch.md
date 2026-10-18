@@ -85,3 +85,5 @@ Not covered (recorded): a real DisposableStack receiver in a module that ALSO
 declares a function member of the same name still hits the older #3033
 refusal and throws "called value is not a function" (pre-existing; the
 two-arm would allow relaxing that refusal for these four names).
+
+Regression: `tests/issue-7059-hono-standalone-residuals.test.ts` (the `#7060` block).

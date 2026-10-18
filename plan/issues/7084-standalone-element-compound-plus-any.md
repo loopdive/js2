@@ -40,3 +40,5 @@ leaf `expressions/element-compound-any-add.ts`.
 ## Resolution
 
 Implemented; hono `utils/html` `escapeToBuffer` passes.
+
+Regression: `tests/issue-7059-hono-standalone-residuals.test.ts` (the `#7084` block).

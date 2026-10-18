@@ -22,6 +22,8 @@ loc-budget-allow:
   #   arm of `compileArrayJoinNative` (#7078, +11) — both sit inside the two
   #   functions they change; no new subsystem.
   - src/codegen/array-methods.ts
+import-cycles-allow:
+  - largestSccSize: 716 # 2026-10-18 (#7060/#7061/#7080/#7081/#7084): five of the six new leaf modules are called from SCC members (calls-closures, property-access-dispatch, call-identifier, dyn-array-producers, operator-assignment) and reuse shared.js / object-runtime helpers that are already in the SCC; extracting them keeps the god-files from growing
 ---
 
 # Builtin callbacks over reference elements are dropped standalone
