@@ -847,6 +847,10 @@ function collectExternDeclarationsImpl(
       // (correct semantics — standalone has no structuredClone). Host mode still
       // registers the import so a real host can satisfy it.
       if ((ctx.wasi || ctx.standalone) && name === "structuredClone") continue;
+      // (#7079) `atob`/`btoa` have pure-Wasm lowerings on the host-free targets
+      // (base64-native.ts, emitted by the import-collector finalize): never
+      // retain an unsatisfiable `env.atob`/`env.btoa`.
+      if ((ctx.wasi || ctx.standalone) && (name === "atob" || name === "btoa")) continue;
       // (#6664) standalone `queueMicrotask(cb)` enqueues on the module's own
       // microtask queue (standalone-queue-microtask.ts), never on the host.
       if (ctx.standalone && name === "queueMicrotask") continue;
