@@ -85,6 +85,7 @@ import { INSTANCE_BAG_FIELD } from "./closures/closure-header-layout.js"; // (#4
 import { BUILTIN_INSTANCE_CARRIER_STRUCT_NAMES } from "./builtin-instance-key-presence.js";
 import { addFuncType } from "./registry/types.js";
 import { bagOwnDataHitInstrs } from "./fnctor-fast-get.js"; // (#6973 stage 2)
+import { commitAnonExpandoBagRoots } from "./anon-expando-bag-slot.js"; // (#7020)
 
 /** WasmGC `eq` abstract heap type (used for `ref.cast`/`ref.null` to eqref). */
 const EQ_HEAP_TYPE = -19;
@@ -957,6 +958,7 @@ export function fillClosurePropHelpers(ctx: CodegenContext): void {
     // cold-tailed fnctor, any class hierarchy) is automatically routed to the
     // registry instead of being mis-read at a wrong index.
     ...slottedInstanceCarrierRoots(ctx),
+    ...commitAnonExpandoBagRoots(ctx), // (#7020) literal expando receivers; `$bag` appended post-emission
   ];
 
   // ── __is_closure_prop_carrier(externref value) -> i32 ──

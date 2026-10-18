@@ -206,6 +206,7 @@ import { emitElementStoreKeyOnce } from "./computed-member-reference.js";
 import { inheritedSetAffectsKey } from "../inherited-set-gate.js"; // (#4602) per-key #4504 gate
 import { compileRuntimeEvalShadowedAssignment } from "./runtime-eval-assignment.js";
 import { hostTypedArrayCarrierNameForExpression } from "./typed-array-host-carrier.js";
+import { noteStaticExpandoWrite } from "../anon-expando-bag-slot.js";
 
 /** Numeric and BigInt TypedArray view name for the native vec element lane. */
 function vecElementTypedArrayName(ctx: CodegenContext, receiver: ts.Expression): string | undefined {
@@ -5342,6 +5343,7 @@ function compilePropertyAssignmentExternSet(
   }
   const objLocal = allocLocal(fctx, `__paset_obj_${fctx.locals.length}`, { kind: "externref" });
   fctx.body.push({ op: "local.set", index: objLocal });
+  noteStaticExpandoWrite(ctx, target.expression, propName); // (#7020) slot the literal's bag
 
   // Compile value as externref and save
   const valResult = compileExpression(ctx, fctx, value);

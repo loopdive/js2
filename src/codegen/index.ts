@@ -500,6 +500,7 @@ import { inlineMemberSetCallSites } from "./member-set-inline-ic.js"; // (#4157)
 import { inlineCallDispatchSites } from "./call-dispatch-ic.js"; // (#4157) __call_m_* devirtualization
 import { inlineFlatStrCallSites } from "./flat-str-ic.js"; // (#4157) __str_flatten/__str_equals call-site fast paths
 import { brandCollidingShapeTypes, linkBrandRoleOf } from "./shape-brand.js";
+import { appendAnonExpandoBagSlots } from "./anon-expando-bag-slot.js"; // (#7020)
 import {
   addImport,
   addStringConstantGlobal,
@@ -5225,6 +5226,7 @@ function resolveAndRecordShapeStamping(ctx: CodegenContext): void {
 }
 
 function resolveAndRecordShapeBranding(ctx: CodegenContext): void {
+  appendAnonExpandoBagSlots(ctx); // (#7020) after all emission, before branding sees the layouts
   const affected = brandCollidingShapeTypes(ctx.mod, ctx.noBrandShapeTypes, linkBrandRoleOf(ctx));
   ctx.programAbiSession?.recordShapeBranding(affected);
 }

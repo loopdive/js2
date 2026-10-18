@@ -1,7 +1,7 @@
 ---
 id: 7020
 title: "standalone: cookie's 63,528-test stringify file times out — expando writes on closed object literals (`positive.not = {…}` in every expect()) land in the slotless `$ClosurePropEntry` registry, a never-pruned list walked by `ref.eq` (≈60% of runtime, quadratic); and once it runs, `Array.isArray` is false for tuple-typed rows read through `any`, so `it.each(Array<[string,string,string]>)` passes the whole tuple as `%s`"
-status: ready
+status: in-progress
 sprint: current
 created: 2026-10-16
 updated: 2026-10-16
@@ -14,6 +14,21 @@ area: compiler
 language_feature: expando-properties, performance, tuples, Array.isArray
 goal: standalone-gap
 related: [4241, 7013]
+# 2026-10-18 (#7020): one import + one call per file; the mechanism lives in the
+# new modules anon-expando-bag-slot.ts / tuple-array-carrier.ts. The four hooks
+# must sit at their existing seams (literal lowering, dynamic member write,
+# finalize branding order, the `__extern_is_array` fill).
+loc-budget-allow:
+  - src/codegen/expressions/assignment.ts
+  - src/codegen/index.ts
+  - src/codegen/literals.ts
+  - src/codegen/object-runtime.ts
+# 2026-10-18 (#7020): +1 line each — the literal->struct record call and the
+# slotted-roots spread entry; both are the single seam the helper NAME routes
+# through (#4241), so splitting would move one line, not shrink anything.
+func-budget-allow:
+  - src/codegen/closure-props.ts::fillClosurePropHelpers
+  - src/codegen/literals.ts::compileObjectLiteralForStruct
 ---
 
 # cookie stringify: quadratic expando registry + tuple `Array.isArray`
@@ -77,6 +92,34 @@ value })` receives `undefined` → `toEqual` mismatch (measured on the first
    (assert the second half takes < 3× the first half); the tuple repro; an
    `it.each` over tuple rows through the upstream shim.
 5. Re-measure cookie with the #7013 lane.
+
+### Plan revision (2026-10-18, implementation)
+
+Measured before choosing between "slot every literal" and "fold same-function
+writes": slotting EVERY `__anon_` struct changes the layout of every standalone
+object literal (dozens of allocation sites, reflection, spread, record rebuilds)
+for a defect that only literals receiving expando writes have. Taken instead:
+
+1. **Record** (codegen): `compileObjectLiteralForStruct` maps each literal to
+   its struct type; `compilePropertyAssignmentExternSet` (the dynamic write a
+   non-field `o.k = v` reaches) marks the type when `o` is a binding initialised
+   by such a literal (`ctx.oracle.variableDeclarationOf`, no raw checker).
+2. **Commit** (`fillClosurePropHelpers`): eligible marked types join the #4241
+   SLOTTED arm list with a future field index = current field count.
+   Eligibility = `collectAnonymousExpandoDeleteCandidates`' screen (bare,
+   not a supertype, single alias, above the brand anchor, not `noBrand`, not
+   linked).
+3. **Append** (first thing in `resolveAndRecordShapeBranding`, i.e. after ALL
+   emission, before branding): append `$bag` to a CLONED field array (the
+   `$shapeBrand` idiom — `ctx.structFields` never sees it, so no reflective
+   surface can list it) and insert `ref.null extern` before every `struct.new`
+   of the type (functions + global inits). Branding then sees the slotted
+   layout and separates any new collision.
+4. **Tuples**: `fillExternIsArray` (standalone only — the host carrier list is
+   untouched) also tests `__tuple_N` types whose shallow layout collides with
+   no non-tuple struct (a `[boolean]` tuple is canonically the boolean box).
+5. gc byte-identity by construction (all three hooks are host-free gated),
+   verified by hashing.
 
 ## Acceptance
 
