@@ -29,6 +29,11 @@ func-budget-allow:
   - src/codegen/async-frame.ts::buildStateBody
   - src/ir/lower-generic.ts::lowerIrFunctionBody
   - src/ir/lower-generic.ts::emitInstrTree
+# 2026-10-18 (#6995): the closure-boundary try (f32837fc) imports `buildTargetTaggedTry`
+# from `src/ir/try-table.ts` in `src/codegen/closures.ts` — the same shared try-table
+# edge nine codegen files already carry; one more codegen->ir two-way edge, no new SCC member.
+import-cycles-allow:
+  - codegen->ir: 298 # 2026-10-18 (#6995): closures.ts joins the existing codegen->ir try-table edge for the native void-closure rejection boundary
 ---
 
 # Standalone async: declined shapes fall to a lane that cannot see rejection
