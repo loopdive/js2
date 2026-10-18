@@ -49,3 +49,14 @@ answer, the new one asserts the spec answer (checked under node).
 | issue-2984 | "KNOWN GAP" pinned a non-writable write LANDING; the store path now honours `writable:false` (strict module → TypeError) | TypeError, `WeakRef.length` stays 1 |
 | issue-4165 | same strict-mode write to a non-writable `name` now throws at module init | the throw is caught; the pinned properties unchanged |
 | issue-3119 | non-callable `@@iterator` now throws the §7.4.3 TypeError instead of degrading | the TypeError |
+
+## Regression proof (the re-pinned suites)
+
+`tests/emit-encodeinstr-failloud.test.ts`, `tests/es5-standalone-array-nonindex-keys.test.ts`,
+`tests/issue-1058-multifile-generic-callback-registration.test.ts`, `tests/issue-1355d.test.ts`,
+`tests/issue-1500.test.ts`, `tests/issue-1501.test.ts`, `tests/issue-1536.test.ts`,
+`tests/issue-1644.test.ts`, `tests/issue-1751.test.ts`, `tests/issue-1778.test.ts`,
+`tests/issue-1933.test.ts`, `tests/issue-2098.test.ts`, `tests/issue-2984-ctor-carrier-own-props.test.ts`,
+`tests/issue-2998.test.ts`, `tests/issue-3119.test.ts`, `tests/issue-3994.test.ts`,
+`tests/issue-4165-bfn-name-writable-gate.test.ts`, `tests/issue-6706-native-first-lane-providers.test.ts`,
+`tests/report-standalone-category-edition-scope.test.ts`, `tests/typed-export-signatures.test.ts`.
