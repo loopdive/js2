@@ -4,7 +4,7 @@ title: "Merge JS-host and standalone modes: one native semantic core, host seman
 status: in-progress
 assignee: ttraenkler/codex-5385
 created: 2026-09-07
-updated: 2026-10-15
+updated: 2026-10-18
 priority: high
 horizon: xl
 feasibility: hard
@@ -700,8 +700,9 @@ a missing feature.
 
 - [ ] A native-first test262 lane and npm-compat lane exist, run in CI on
       dispatch/nightly, and their baselines are committed (Phase 1).
-- [ ] Host-vs-native-first runtime performance is measured and recorded here
-      (Phase 1).
+- [x] Host-vs-native-first runtime performance is measured and recorded here
+      (Phase 1). The evidence is complete; the string-kernel result remains an
+      S6 blocker tracked by #7087.
 - [ ] Native-first official pass ≥ host official pass minus the explicitly
       deferred set; standalone floor unchanged (Phase 2).
 - [ ] `semanticProviders` defaults to `native-first` in every environment;
@@ -800,3 +801,45 @@ measured since 10-06; uuid waits on the next refresh. S6 (#6708) evidence
 items: (1) test262 ≥ host — **met**; (2) per-edition ratchet — three
 editions pending the slices above; (3) npm-compat parity — prettier `-O4`
 and uuid pending the refresh; (4) perf — still needs Node ≥ 24.
+
+### 2026-10-18 — host vs native-first performance evidence (Node 24)
+
+Measured sequentially on macOS arm64, Node 24.4.1 / V8
+13.6.233.10-node.17, at main commit `730b984168`, using the exact kernel and
+npm-compat lanes required by #6708. The checked-in machine-readable record is
+`plan/audit/5385-native-first-perf-evidence-20261018.json`.
+
+Kernel medians are Wasm microseconds; ratio is native-first / host-assisted:
+
+| kernel | host-assisted | native-first | ratio | verdict |
+| --- | ---: | ---: | ---: | --- |
+| fib | 2342.666 | 2335.806 | 0.997x | pass |
+| loop | 86.170 | 86.853 | 1.008x | pass |
+| string | 0.05975 | 1.21779 | **20.380x** | **blocker: #7087** |
+| array | 10.5546 | 10.5752 | 1.002x | pass |
+
+The string row is a narrow profile delta, not a broad claim that native
+strings are slow: native-first still beats its plain-JS control (1.218 us vs
+2.099 us), while host-assisted produces an unusually small 0.060 us row.
+#7087 owns the required optimized-IR/Wasm comparison to distinguish a legal
+provider-specific fold from a benchmark that stopped measuring equivalent
+work. Under #6708's stated rule, this >2x row blocks the performance bar until
+investigated.
+
+The real-package rows all measured, matched their native-oracle checksums and
+favoured native-first runtime execution:
+
+| npm workload | host-assisted | native-first | native-first / host | reading |
+| --- | ---: | ---: | ---: | --- |
+| acorn | 1,826,638.750 us | 66,317.675 us | 0.0363x | 27.54x faster |
+| cookie | 178.681 us | 17.928 us | 0.1003x | 9.97x faster |
+| redux | 37.589 us | 1.830 us | 0.0487x | 20.54x faster |
+| hono | 98.738 us | 2.388 us | 0.0242x | 41.34x faster |
+
+**Architecture verdict:** these runtime measurements do not justify retaining
+host-assisted semantics as the general model. They support the one-native-core
+direction and the existing separation of boundary interop from semantics. The
+measured string exception is exactly the kind of narrow case for which a named
+`js-string` accelerator can remain available while #7087 closes or explains
+the native-provider gap. This evidence does not erase the compile-time and
+binary-size costs already recorded elsewhere; it answers the runtime row only.
