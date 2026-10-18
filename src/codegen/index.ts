@@ -190,6 +190,7 @@ import {
 } from "./multi-prepared-callable-orchestration.js";
 import { createCodegenContext } from "./context/create-context.js";
 import { expressionHasWidenedPropertyType, markIndexedPropertyStale } from "./strict-eq-stale-type.js";
+import { bindingHoldsStandaloneClassProto } from "./class-proto-object.js"; // (#7053)
 import { ProgramAbiSession, type PublishedProgramAbi } from "./program-abi-session.js";
 import { sourceFunctionHandleForDeclaration } from "./program-abi-source-callable-planning.js";
 import { stripHostBridgeExports } from "./host-bridge-exports.js";
@@ -14305,6 +14306,7 @@ function hoistVarDecl(
       realmStructuralCarrier ||
       forInTargetForcesExternref ||
       transferredArrayLikeResult ||
+      bindingHoldsStandaloneClassProto(ctx, decl) || // (#7053)
       (!!decl.initializer && !decl.type && expressionHasWidenedPropertyType(ctx, decl.initializer));
     const usageF64 = hardForcesExternref
       ? null
@@ -15068,6 +15070,7 @@ function walkStmtForLetConst(
           initForcesExternref ||
           realmStructuralCarrier ||
           (mixedAssignmentCarrier && !mixedCarrierProvenF64) ||
+          bindingHoldsStandaloneClassProto(ctx, decl) || // (#7053)
           (!!decl.initializer && !decl.type && expressionHasWidenedPropertyType(ctx, decl.initializer));
         // (#4616) Empty-array (or Array<any>) initializer: use the SAME
         // usage-based vec inference `compileVariableStatement` applies

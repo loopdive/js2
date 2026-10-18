@@ -1,10 +1,11 @@
 ---
 id: 7017
 title: "standalone: `x.length` on an `any` receiver that is a closed literal struct reads a NUMBER (0) instead of `undefined`, so `typeof obj.length === \"number\"` is true for plain objects and every deep-equality helper takes its array-like branch (expect().toEqual / assert.deepEqual false negatives across redux, hono, jest, styled-components, stylelint)"
-status: ready
+status: done
 sprint: current
 created: 2026-10-16
-updated: 2026-10-16
+updated: 2026-10-18
+completed: 2026-10-17
 priority: high
 horizon: m
 feasibility: medium
@@ -68,8 +69,71 @@ for a closed literal struct without one: §7.3.2 Get of a missing property is
 5. Re-measure redux, hono, jest, styled-components, stylelint with the #7013
    lane.
 
+### Plan revision (2026-10-17, before implementing)
+
+Measured on the parent (`70f2a4e801`): a "no `length` field" screen is not
+enough. Structs that DO carry `length` were also wrong on arm 6, because
+`__extern_length` is ToLength(Get): `{ length: -2.5 }.length` read 0 and
+`{ length: "abc" }.length` read 0, and a class `get length()` read 0 (the
+getter is not a field). So the new arm covers every user-declared struct and
+reads through the finalize-filled `__get_member_length` dispatcher (#2674)
+instead of a bare `__extern_get`:
+
+- gate: `__is_instance_expando_carrier(recv)` — the existing finalize-filled
+  `ref.test` chain over `isUserDeclaredStruct` shapes (`instance-props.ts`),
+  so structs registered after the read site are still covered; tuples, vecs,
+  TypedArrays and rest arrays are not carriers and stay on arm 6;
+- value: `__get_member_length(recv)` — field arms (the raw value, boxed),
+  class getter arms (#3041), method arms, else `__extern_get` (expando,
+  prototype chain, `undefined`). A bare `__extern_get` misses class getters
+  unless some computed read elsewhere in the program demanded them.
+
 ## Acceptance
 
 - Repros match node on standalone; gc binaries byte-identical.
 - redux standalone `toEqual mismatch` failures (10 on 2026-10-16) drop to 0
   where the JS-host lane passes them.
+
+## Resolution
+
+Landed in PR #6729 (merged 2026-10-17), stacked on #6718 (#7013 lane).
+
+- **Mechanism.** `emitStandaloneAnyLengthGet` gained arm 5b, which applies
+  when `__is_instance_expando_carrier(recv)` is true. It reads through
+  `__get_member_length(recv)`, giving the shape's own field value or class
+  getter, else `__extern_get` (expando, prototype chain, `undefined`).
+  Vecs, TypedArrays, tuples and rest arrays are not carriers and stay on
+  `__extern_length`. No host imports. The gc binaries of four fixtures are
+  byte-identical (sha256), and the redux JS-host lane stays at 76/82.
+- **Test.** `tests/issue-7017-standalone-any-length-struct.test.ts` fails on
+  the parent and passes with the fix. Anti-vacuity: `toEqual` over
+  differing literals still fails.
+- **Upstream unit suites (standalone).** Base and fix were both measured on
+  `70f2a4e801`, with a per-test diff and 0 pass→fail transitions:
+
+  | suite | base | fix |
+  | --- | --- | --- |
+  | redux | 58/82 | 66/82 |
+  | hono | 32/324 | 41/324 |
+  | jest | 185/356 | 190/356 |
+  | stylelint | 100/108 | 102/108 |
+  | cookie | 114/63740 | 148/63740 |
+
+  The other 14 suites are unchanged.
+- **Scoped standalone test262.** The sample was one row in three of
+  `built-ins/{Array,Object,TypedArray,TypedArrayConstructors}` plus all of
+  `language/expressions/typeof`: 2,909 rows. Base and fix gave 2,403 vs
+  2,404 passes. All 28 rows that differed were compile timeouts on the
+  shared box. Re-run alone with a 480 s budget, they gave identical
+  verdicts on both sides (23 pass, 5 fail), so there is no real change.
+  `Array/prototype/unshift/clamps-to-integer-limit.js` never returns
+  in-process on either side.
+- **Acceptance.** The redux `toEqual mismatch` rows dropped from 10 to 3.
+  The 3 left have other causes:
+  - `bindActionCreators` ×2: `fn.apply(thisArg, array)` called directly
+    leaves `[...arguments]` empty.
+  - the thunk-middleware row: not diagnosed.
+
+  styled-components `escape` ×3 was misattributed to #7017: on standalone,
+  `"foo-bar".replace(/(^-|-$)/g, "")` returns a string of length 8.
+
