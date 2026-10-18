@@ -72,6 +72,22 @@ not already in the July `issue-tests` baseline.
 
 Scoped standalone test262 (base vs fix): see the PR.
 
+## Probes
+
+The measured test files are the permanent repros:
+
+- `tests/issue-305.test.ts`
+- `tests/issue-2853.test.ts`
+- `tests/issue-2201.test.ts`
+- `tests/issue-2598-2599-string-arg-tostring.test.ts`
+- `tests/issue-2161-regex-tostring.test.ts`
+- `tests/issue-1313.test.ts`
+- `tests/issue-1727.test.ts`
+- `tests/issue-5165-tail-control-flow.test.ts`
+- `tests/issue-3214-imported-hof.test.ts`
+- `tests/issue-4178.test.ts`
+- `tests/issue-2900.test.ts`
+
 ## Residuals (left red, not in this change)
 
 - `issue-4178` "exact mixed primitive ternary … #5092 IR owner": the IR now
