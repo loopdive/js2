@@ -2,10 +2,10 @@
 id: 6708
 title: "S6: `semanticProviders` defaults to native-first in every environment; host semantics only as named opt-in accelerators"
 status: done
-completed: 2026-10-16
-assignee: ttraenkler/opus-6708-a
+completed: 2026-10-18
+assignee: ttraenkler/codex
 created: 2026-09-27
-updated: 2026-10-16
+updated: 2026-10-18
 priority: high
 horizon: l
 feasibility: hard
@@ -137,13 +137,13 @@ semantic column with an "accelerator" note.
 ## Acceptance
 
 - [ ] Evidence bar items 1–4 recorded in #5385 with run ids.
-- [ ] `tests/issue-4396-target-profile.test.ts`: `{}` ≡ `native-first`;
+- [x] `tests/issue-4396-target-profile.test.ts`: `{}` ≡ `native-first`;
       `host-assisted` ≡ pre-S6 default byte-for-byte; `"auto"` warns once.
-- [ ] Accelerator opt-ins: `js-string` and `regexp` each have a focused test
+- [x] Accelerator opt-ins: `js-string` and `regexp` each have a focused test
       proving the host provider is used only when selected, the native
       provider otherwise, and that selecting one for `standalone`/`wasi` is a
       compile error.
-- [ ] `pnpm run check:host-import-policy`: the compatibility control probe
+- [x] `pnpm run check:host-import-policy`: the compatibility control probe
       now spells `host-assisted` explicitly and still reports ≥ 1 legacy
       import (non-vacuity); the default probe reports zero.
 - [ ] Nightly after merge: host lane number equals the previous native-first
@@ -317,5 +317,60 @@ probes / 452 imports / 0 legacy / 0 unknown; host-assisted control 23 legacy;
 `runtimeTsLines` 20240 under main's ceiling 20243. Focused suites on the
 merged tree: 4396 18/18, 6686 5/5, 6978 9/9, 6986 17/17, playground 1/1,
 4401 7/7, 4397 29/30 (the known `assignmentRest` row, red on main too).
-Evidence item 3 (npm-compat parity, #6664) and item 4 (perf) remain open in
-#5385; the accelerators are #6978 (done).
+Evidence item 3 (npm-compat parity, #6664) remains open in #5385. Item 4
+(performance) is now met by #7087's 2026-10-18 evidence in #5385; the
+accelerators are #6978 (done).
+
+### 2026-10-18 — current-main landing refresh and handoff
+
+PR [#6672](https://github.com/loopdive/js2/pull/6672) was refreshed from its
+stale 2026-10-16 head onto `upstream/main` `1990d67b28` (merge
+`338d62e16b`). The original S6 implementation is unchanged: omitted
+`semanticProviders` selects native-first, `host-assisted` is the named
+compatibility profile, and JS values/objects still cross through the boundary
+adapter rather than becoming host-backed core representations.
+
+The refresh exposed implicit uses of the old default in tests and quality
+ledgers added after the S6 branch was cut. They now name their intended lane:
+
+- legacy closure/constructor bridge suites (#1528, #1712, #3520 and #6419)
+  compile with `semanticProviders: "host-assisted"`;
+- the test262 worker extraction test receives the production
+  `test262CompileSemanticProviders` free variable instead of accidentally
+  capturing no provider selection;
+- `check-ir-fallbacks` and the `check-ir-only` `single-host` lane explicitly
+  use `host-assisted`, matching their existing `jsHostExterns: true` planning
+  contract; the native/standalone lanes remain native;
+- the #6995/#6996 async reference lanes and #7002/#7003 host-IR controls added
+  on main explicitly use `host-assisted`. The rest of the equivalence corpus
+  continues to exercise the new native-first default.
+
+No baseline was widened. Exact-main control at `1990d67b28` also reproduced
+the two unrelated focused reds seen during the refresh: #4397 object-rest
+`CopyDataProperties` traps with `illegal cast`, and #5383's named static
+method call on a dynamic class-value receiver returns `-1` instead of `8`.
+They are not S6 regressions. The #5383 Temporal smoke child also needs Node's
+exnref support enabled when run under local Node 24.
+
+Validation on the refreshed tree:
+
+- `pnpm run typecheck` — pass;
+- `node --experimental-wasm-exnref --import tsx scripts/check-host-import-policy.ts`
+  — 33 native-first probes / 452 imports / **0 legacy / 0 unknown**;
+  host-assisted control remains non-vacuous at 23 legacy imports;
+- `node --experimental-wasm-exnref --import tsx scripts/check-ir-fallbacks.ts`
+  — pass, no unintended, post-claim or module-level increases;
+- `node --experimental-wasm-exnref --import tsx scripts/check-ir-only.ts`
+  — READY in both lanes (38 emitted, 3 non-executable, 0 unsupported or
+  invariants per lane);
+- focused provider/bridge/Temporal/Intl suites — 138 passed, 2 skipped;
+- refreshed #6995/#6996/#7002/#7003 controls — 92 passed;
+- Node 25.9.0 `node scripts/equivalence-gate.mjs` — 2,020 passing, 20
+  baseline-known failures, 2 baseline rows newly fixed, **0 new
+  regressions** (floor 1,740). The baseline was deliberately not ratcheted in
+  this refactor.
+
+Landing handoff: merge #6672, then observe the post-merge native-first lane
+and npm-compat refresh already required by the acceptance list. S7 deletion
+remains #6979; it must remove host semantics without weakening the boundary
+object/value adapter or the named accelerator contract.

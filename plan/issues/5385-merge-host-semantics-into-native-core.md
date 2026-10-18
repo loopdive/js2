@@ -880,3 +880,24 @@ the result strengthens the existing verdict: keep one native semantic core,
 retain JS-host interop as a boundary adapter, and reserve `js-string` or other
 host machinery for explicit accelerators rather than object representation in
 the core.
+
+### 2026-10-18 — S6 current-main landing handoff
+
+#6708 / PR [#6672](https://github.com/loopdive/js2/pull/6672) is refreshed on
+current main and locally green. The refresh did not move JS machinery into the
+semantic core: the default is native-first, JS-backed objects remain confined
+to the boundary adapter, and `host-assisted` is now explicit wherever a
+legacy control genuinely needs it. The detailed conflict resolution, control
+repins and command-level evidence are recorded in #6708.
+
+The decisive refreshed acceptance result is Node 25.9.0's full equivalence
+gate: 2,020 passing, 20 baseline-known failures and zero new regressions.
+Host-import policy remains 0 legacy / 0 unknown across 33 native-first probe
+families, while the explicit compatibility control still observes 23 legacy
+imports. IR fallback and IR-only readiness gates are green after their
+pre-existing JS-host control lanes were made explicit.
+
+Handoff after #6672 lands: observe the post-merge lane/npm refresh, then take
+the measured S7 deletion plan in #6979. The migration is not complete until
+that deletion removes the compatibility semantic providers; the JS value,
+object, callback, exception and lifecycle adapters remain required interop.

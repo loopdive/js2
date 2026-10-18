@@ -97,6 +97,7 @@ describe("#5385 worker compile branches", () => {
       "compilerBundle",
       "WORKER_SELF_VALIDATES",
       "HARNESS_HOST_BRIDGE",
+      "test262CompileSemanticProviders",
       `${worker.slice(start, end)}; return doCompile;`,
     )(
       () => ({ recycle: false }),
@@ -106,6 +107,7 @@ describe("#5385 worker compile branches", () => {
       { compileWithTemporalGlobal: linked },
       { validate: false },
       { hostBridge: "always" },
+      test262CompileSemanticProviders,
     );
     // The parameter list keeps growing in the middle (f1ad427b98 inserted
     // `moduleGraph`, 668d3cf93b `linkedHarness`, 06dbc8d88f `scriptGoal`), which

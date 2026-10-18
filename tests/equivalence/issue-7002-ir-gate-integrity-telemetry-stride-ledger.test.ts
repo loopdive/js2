@@ -90,7 +90,7 @@ const KNOWN_BYTE_DIVERGENCE: ReadonlyMap<string, string> = new Map([
 
 const TARGETS: { name: string; options: CompileOptions }[] = [
   { name: "standalone", options: { target: "standalone" } },
-  { name: "gc", options: {} },
+  { name: "gc", options: { semanticProviders: "host-assisted" } },
 ];
 
 describe("#7002 trackIrOutcomes is observation-only", () => {

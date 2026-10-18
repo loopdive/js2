@@ -19,7 +19,7 @@ async function runWasm(src: string, target: "standalone" | "gc"): Promise<string
     skipSemanticDiagnostics: true,
     deferTopLevelInit: true,
     hostBridge: "always",
-    ...(target === "standalone" ? { target: "standalone" as const } : {}),
+    ...(target === "standalone" ? { target: "standalone" as const } : { semanticProviders: "host-assisted" as const }),
   });
   expect(result.success, result.errors.map((e) => e.message).join("\n")).toBe(true);
   const out: string[] = [];
@@ -84,7 +84,7 @@ describe("#6996 await of a settled operand yields a microtask turn", () => {
       expect(await runNode(LOG + src)).toEqual(expected);
     });
 
-    it(`gc lane matches node: ${name}`, async () => {
+    it(`host-assisted gc control matches node: ${name}`, async () => {
       expect(await runWasm(LOG + src, "gc")).toEqual(expected);
     });
 

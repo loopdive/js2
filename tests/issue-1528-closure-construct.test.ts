@@ -13,13 +13,13 @@ import { buildImports } from "../src/runtime.js";
  * `__construct_closure` host helper, whose `_wrapCallableForHost` construct
  * trap runs the compiled closure body as ECMA-262 §10.2.2.
  *
- * JS-host only (the default compile mode). The non-constructable throw cases
+ * JS-host only (the explicit `host-assisted` compatibility profile). The non-constructable throw cases
  * (arrow / bound / prototype method) remain on the throwing `__construct`
  * brand-check path (#1921) and are covered by issue-1528.test.ts.
  */
 
 async function runHost(source: string): Promise<unknown> {
-  const r = await compile(source, {});
+  const r = await compile(source, { semanticProviders: "host-assisted" });
   expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
   const imports = buildImports(r.imports, undefined, r.stringPool);
   const { instance } = await WebAssembly.instantiate(r.binary, imports as WebAssembly.Imports);
@@ -99,7 +99,7 @@ describe("#1632b-2 closure-as-dynamic-constructor bridge", () => {
   // them WORSE by routing them to a constructing path. We assert the
   // construct-closure import is NOT emitted for these shapes.
   async function constructClosureImportEmitted(source: string): Promise<boolean> {
-    const r = await compile(source, {});
+    const r = await compile(source, { semanticProviders: "host-assisted" });
     expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
     return (r.imports ?? []).some((i: { name?: string; intent?: { name?: string } }) => {
       const n = i.name ?? i.intent?.name;
@@ -162,7 +162,7 @@ describe("#1632b-2 closure-as-dynamic-constructor bridge", () => {
   // the call through the host helper (the deliverable), not the end-to-end
   // capturing-closure run.
   async function importEmitted(source: string, importName: string): Promise<boolean> {
-    const r = await compile(source, {});
+    const r = await compile(source, { semanticProviders: "host-assisted" });
     expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
     return (r.imports ?? []).some((i: { name?: string; intent?: { name?: string } }) => {
       const n = i.name ?? i.intent?.name;
