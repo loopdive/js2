@@ -335,7 +335,8 @@ adapter rather than becoming host-backed core representations.
 The refresh exposed implicit uses of the old default in tests and quality
 ledgers added after the S6 branch was cut. They now name their intended lane:
 
-- legacy closure/constructor bridge suites (#1528, #1712, #2637 B2, #3520 and #6419)
+- legacy closure/constructor bridge suites (#1116b, #1528, #1712, #2623,
+  #2637 B2, #3520, #6419 and the #6651 D4 host-constructor control)
   compile with `semanticProviders: "host-assisted"`; #2637 B2 specifically
   asserts the JS-synthesized Promise-subclass registration path, so S7 must
   delete or replace that implementation-specific guard when the path goes;
@@ -349,8 +350,9 @@ ledgers added after the S6 branch was cut. They now name their intended lane:
   on main explicitly use `host-assisted`. The rest of the equivalence corpus
   continues to exercise the new native-first default.
 
-No baseline was widened. Exact-main control at `1990d67b28` also reproduced
-the two unrelated focused reds seen during the refresh: #4397 object-rest
+No semantic-equivalence or host-import baseline was widened. Exact-main
+control at `1990d67b28` also reproduced the two unrelated focused reds seen
+during the refresh: #4397 object-rest
 `CopyDataProperties` traps with `illegal cast`, and #5383's named static
 method call on a dynamic class-value receiver returns `-1` instead of `8`.
 They are not S6 regressions. The #5383 Temporal smoke child also needs Node's
@@ -373,6 +375,23 @@ Validation on the refreshed tree:
   baseline-known failures, 2 baseline rows newly fixed, **0 new
   regressions** (floor 1,740). The baseline was deliberately not ratcheted in
   this refactor.
+
+The required `quality` job then made one intentional cost of the default flip
+visible: the deterministic #3437 harness compile-work probe measures the
+default profile, so its shared-`forEachChild` count moved from the committed
+142,936 to 260,711 on a cold native-first compile. The unit guard also exposed
+that 28,760 of those walks are one-time provider initialization, not per-file
+harness work. The production probe and its test now warm that initialization
+outside the meter, matching the thousands-of-files-per-worker test262 path.
+On the same tree, the steady explicit host-assisted control measures 158,639
+and explicit native-first measures 231,951, confirming that the remaining
+increase is the selected provider family rather than a de-memoized scan or
+runner variance. The #3437 contract allows an explicit rebank for a justified
+default-path change, so `scripts/harness-compile-budget.json` was refreshed
+with its documented `--update` flow to 231,951 (15% margin). This is a
+compile-work ratchet update, not a semantic waiver; future per-file growth
+still fails against the native-first default that users and test262 now
+exercise.
 
 The 2026-10-18 npm-compat refresh on main made the last S6 product-bar row
 directly auditable: Lit was still `measured` under host-assisted but the stale
