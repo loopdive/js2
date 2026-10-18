@@ -1,10 +1,10 @@
 ---
 id: 7003
 title: "ir: `closure.call` trusts the TS callable annotation as the exact Wasm func type — `apply(f: (x: number) => number)` called with `function h(x: number, y: number = 5)` / `(x, y?) => …` (legal TS assignments) hits `ref.cast` → `RuntimeError: illegal cast`; legacy is correct; verify skips `closure.call`"
-status: ready
+status: in-progress
 sprint: current
 created: 2026-10-15
-updated: 2026-10-15
+updated: 2026-10-18
 priority: medium
 horizon: m
 feasibility: medium
@@ -14,6 +14,15 @@ area: ir
 language_feature: closures, function-types, arity
 goal: ir-full-coverage
 related: [7000, 7001]
+loc-budget-allow:
+  # 2026-10-18 (impl): +16 lines — the `closure-signature-mismatch` refusal in
+  # the parameter loop and the selector-owned hooks object; the scan itself
+  # lives in the new src/ir/closure-signature-flow.ts.
+  - src/ir/select.ts
+func-budget-allow:
+  # 2026-10-18 (impl): +3 lines — the refusal sits beside the existing
+  # function-typed-parameter arm of the parameter loop.
+  - src/ir/select.ts::whyNotIrClaimable
 ---
 
 # IR closure call casts to the annotation's func type

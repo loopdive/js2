@@ -389,6 +389,10 @@ const BUCKETS = {
     "unintended",
     "`class.call` on a base-typed receiver lowers through a `__tag` virtual-dispatch intent instead of a static call to the declared class's member (#7000 step a; legacy has it, #1299)",
   ],
+  "closure-signature-mismatch": [
+    "unintended",
+    "A function-typed parameter a caller may fill with a function of another Wasm signature: IR `closure.call` casts to the annotation's exact func type. Retires with an arity-adapting IR closure call or adapter thunks at the call site (#7003 step 2; legacy uses a `ref.test` arity cascade)",
+  ],
   "string-builder-candidate": [
     "deferred",
     "Kill-switch only (`JS2WASM_IR_STRING_BUILDER=0`): builder loops are IR-claimed by default via the owned-append fast path (#3740/#3744)",
