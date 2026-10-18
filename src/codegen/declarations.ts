@@ -11,6 +11,7 @@ import { collectScopeLocalDeclNames } from "./scope-local-decl-names.js";
 import { registerResolvedRestParam, restPatternParamVecType } from "./resolved-rest-param.js"; // (#1058)
 import { widenUndefinedDefaultParamSlot } from "./destructuring-params.js";
 import { expressionHasWidenedPropertyType } from "./strict-eq-stale-type.js";
+import { bindingHoldsStandaloneClassProto } from "./class-proto-object.js"; // (#7053)
 import { functionReturnsWidenedProperty } from "./declarations/widened-property-return.js";
 import { isCjsModuleExportsObject } from "./declarations/cjs-module-exports.js"; // (#7032)
 import { ts, forEachChild } from "../ts-api.js";
@@ -3595,6 +3596,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
       return { kind: "externref" };
     }
     if (proxyOrTransferredResultNeedsExternref(ctx, decl)) return { kind: "externref" };
+    if (bindingHoldsStandaloneClassProto(ctx, decl)) return { kind: "externref" }; // (#7053)
     // A host builtin static read (`Date.now`, `Object.hasOwn`, …) is a genuine
     // JS function, not a Wasm closure struct.  Conditional/short-circuit
     // initializers can select either that externref or a compiled closure, so
