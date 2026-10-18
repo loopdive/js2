@@ -1,10 +1,11 @@
 {
   "id": "6979",
   "assignee": "ttraenkler/opus-6979-s7c",
-  "requested_by": "ttraenkler/opus-6979-s7c",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "issue-6979-s7c-collapse-standalone-arms",
   "claimed_at": "2026-10-15T21:38:10Z",
-  "updated_at": "2026-10-15T21:38:10Z",
-  "write_id": "41087-ha6kkm2h"
+  "updated_at": "2026-10-18T22:16:17Z",
+  "write_id": "7111-g6lilqoa",
+  "released_at": "2026-10-18T22:16:17Z"
 }
