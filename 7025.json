@@ -1,11 +1,10 @@
 {
   "id": "7025",
-  "assignee": "",
-  "requested_by": "ttraenkler/wave14-standalone-unit-lane",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-10-17T08:23:52Z",
-  "updated_at": "2026-10-17T08:23:52Z",
-  "write_id": "85702-cu1o1h79",
-  "pr_scan": "ok"
+  "assignee": "ttraenkler/wave17-react-7025",
+  "requested_by": "ttraenkler/wave17-react-7025",
+  "status": "in-progress",
+  "branch": "issue-7025-standalone-react-harness",
+  "claimed_at": "2026-10-18T00:42:20Z",
+  "updated_at": "2026-10-18T00:42:20Z",
+  "write_id": "47947-tg2gb8f9"
 }
