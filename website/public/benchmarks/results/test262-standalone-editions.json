@@ -1062,8 +1062,8 @@
   },
   {
     "edition": "ES2018",
-    "pass": 3899,
-    "fail": 534,
+    "pass": 3901,
+    "fail": 532,
     "ce": 390,
     "skip": 0,
     "total": 4823,
@@ -1071,8 +1071,8 @@
     "features": [
       {
         "name": "async-iteration",
-        "pass": 2970,
-        "fail": 465,
+        "pass": 2972,
+        "fail": 463,
         "ce": 375,
         "skip": 0,
         "total": 3810,
@@ -1507,9 +1507,9 @@
   },
   {
     "edition": "ES2020",
-    "pass": 1179,
-    "fail": 686,
-    "ce": 152,
+    "pass": 1175,
+    "fail": 689,
+    "ce": 153,
     "skip": 18,
     "total": 2035,
     "pct": 58,
@@ -1534,12 +1534,12 @@
       },
       {
         "name": "dynamic-import",
-        "pass": 246,
-        "fail": 262,
-        "ce": 31,
+        "pass": 242,
+        "fail": 265,
+        "ce": 32,
         "skip": 18,
         "total": 557,
-        "pct": 44
+        "pct": 43
       },
       {
         "name": "Symbol",
@@ -1670,8 +1670,8 @@
       {
         "name": "async-iteration",
         "pass": 13,
-        "fail": 2,
-        "ce": 28,
+        "fail": 1,
+        "ce": 29,
         "skip": 2,
         "total": 45,
         "pct": 29
@@ -2186,8 +2186,8 @@
   },
   {
     "edition": "ES2022",
-    "pass": 4313,
-    "fail": 1251,
+    "pass": 4315,
+    "fail": 1249,
     "ce": 228,
     "skip": 0,
     "total": 5792,
@@ -2303,12 +2303,12 @@
       },
       {
         "name": "top-level-await",
-        "pass": 181,
-        "fail": 45,
+        "pass": 183,
+        "fail": 43,
         "ce": 31,
         "skip": 0,
         "total": 257,
-        "pct": 70
+        "pct": 71
       },
       {
         "name": "async-functions",
@@ -3571,18 +3571,18 @@
   },
   {
     "edition": "ES2026",
-    "pass": 4588,
-    "fail": 193,
-    "ce": 140,
+    "pass": 4585,
+    "fail": 197,
+    "ce": 139,
     "skip": 0,
     "total": 4921,
     "pct": 93,
     "features": [
       {
         "name": "Temporal",
-        "pass": 4485,
+        "pass": 4486,
         "fail": 106,
-        "ce": 20,
+        "ce": 19,
         "skip": 0,
         "total": 4611,
         "pct": 97
@@ -3625,12 +3625,12 @@
       },
       {
         "name": "Array.fromAsync",
-        "pass": 9,
-        "fail": 6,
+        "pass": 5,
+        "fail": 10,
         "ce": 80,
         "skip": 0,
         "total": 95,
-        "pct": 9
+        "pct": 5
       },
       {
         "name": "upsert",
@@ -3789,8 +3789,8 @@
   },
   {
     "edition": "ES2027",
-    "pass": 390,
-    "fail": 355,
+    "pass": 387,
+    "fail": 358,
     "ce": 152,
     "skip": 0,
     "total": 897,
@@ -3798,8 +3798,8 @@
     "features": [
       {
         "name": "explicit-resource-management",
-        "pass": 246,
-        "fail": 96,
+        "pass": 243,
+        "fail": 99,
         "ce": 88,
         "skip": 0,
         "total": 430,
@@ -4304,9 +4304,9 @@
   },
   {
     "edition": "Unclassified (untagged)",
-    "pass": 4723,
-    "fail": 660,
-    "ce": 62,
+    "pass": 4729,
+    "fail": 653,
+    "ce": 63,
     "skip": 0,
     "total": 5445,
     "pct": 87
