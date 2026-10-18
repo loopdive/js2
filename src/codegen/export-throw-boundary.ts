@@ -143,9 +143,17 @@ export function wrapHostFacingExportsForThrow(ctx: CodegenContext): void {
   // such a pair would give the same function two different exception contracts
   // depending on which name the host reached it through, so the target handle —
   // not the spelling — decides.
+  // (#7014) A compiler helper can lose its `_` spelling entirely: when a user
+  // export takes `__is_ctor_closure`, the helper is published only under
+  // physical aliases (`$ch$`, `$ch$$$`, the vec bridge's `$v0$`), so the
+  // helper's own `__` name is the remaining signal. Re-pointing those aliases
+  // broke the host-bridge descriptors (#3520 C31).
   const compilerOwnedTargets = new Set<FuncHandle>();
   for (const entry of ctx.mod.exports) {
-    if (entry.desc.kind === "func" && isCompilerOwnedExport(entry.name)) compilerOwnedTargets.add(entry.desc.index);
+    if (entry.desc.kind !== "func") continue;
+    if (isCompilerOwnedExport(entry.name) || definedFuncAt(ctx, entry.desc.index)?.name?.startsWith("__")) {
+      compilerOwnedTargets.add(entry.desc.index);
+    }
   }
 
   const plans: ExportWrapPlan[] = [];
@@ -172,6 +180,7 @@ export function wrapHostFacingExportsForThrow(ctx: CodegenContext): void {
   // every `catch` site bakes. Read directly rather than calling `ensureExnTag`,
   // which would close an import cycle with registry/imports.ts.
   const tags = { exnTagIdx: ctx.exnTagIdx, rethrowIdx };
+  const wrappers = new Map<FuncHandle, FuncHandle>();
   for (const plan of plans) {
     if (plan.entry.desc.kind !== "func") continue;
     const target = plan.entry.desc.index;
@@ -179,7 +188,12 @@ export function wrapHostFacingExportsForThrow(ctx: CodegenContext): void {
     if (!signature) continue;
 
     if (!plan.preplanted) {
-      const wrapper = buildUnwrappingWrapper(ctx, plan.entry.name, target, signature.params, signature.results, tags);
+      // One wrapper per target, so two names for one function stay one function.
+      let wrapper = wrappers.get(target);
+      if (wrapper === undefined) {
+        wrapper = buildUnwrappingWrapper(ctx, plan.entry.name, target, signature.params, signature.results, tags);
+        wrappers.set(target, wrapper);
+      }
       plan.entry.desc.index = wrapper;
       continue;
     }

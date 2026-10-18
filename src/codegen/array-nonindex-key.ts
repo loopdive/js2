@@ -60,8 +60,7 @@ import {
   skipTransparentExpressions,
 } from "./shared.js";
 import { resolveConstantExpression } from "./literals.js";
-import { tryEmitStaticI32Expression } from "./i32-static-range-expr.js";
-import { staticIntegerRange } from "../ir/analysis/static-numeric-range.js";
+import { isRangeProvenArrayIndex, tryEmitStaticI32Expression } from "./i32-static-range-expr.js";
 import { highArrayIndexLiteralI32 } from "./vec-sparse-index.js";
 import { TYPED_ARRAY_NAMES } from "./index.js";
 import { VEC_PROP_GET, VEC_PROP_SET } from "./vec-props.js";
@@ -130,8 +129,7 @@ export function isDynamicPropertyKeyExpression(
     // crossed the JS boundary on the host lane for a plain element read, and
     // without wired exports returned `undefined` ("illegal cast" in the
     // `string-derived-length-fast-path` host-string pin).
-    const range = staticIntegerRange(ctx, inner);
-    return !(range !== undefined && range.min >= 0 && range.max <= 0x7fffffff);
+    return !isRangeProvenArrayIndex(ctx, inner);
   }
   // A literal ordinary name (for example `"[object Object]"`) is also a
   // property key, not a numeric index. Numeric spellings and the historical
