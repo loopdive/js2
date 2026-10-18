@@ -16211,6 +16211,14 @@
       "nextBoundary": "Pure TS-AST class-override scan feeding the IR selector and builder (#7000); retire with the IR virtual-dispatch intent or move behind the frontend-ts boundary."
     },
     {
+      "path": "src/ir/closure-signature-flow.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Pure TS-AST callable-slot flow scan feeding the IR selector (#7003); retire with an arity-adapting IR closure call or move behind the frontend-ts boundary."
+    },
+    {
       "path": "src/ir/const-binding-writes.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",

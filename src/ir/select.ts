@@ -59,6 +59,7 @@ import { exactIndirectEvalStatement } from "../eval-call-shape.js";
 import { collectIrClassInstanceInitializers } from "./class-instance-initializers.js";
 import { literalComputedInstanceMethodKey } from "./class-method-names.js";
 import { classBindingNames, staticMemberBindingIsUnsound } from "./class-overrides.js";
+import { callableParameterMayReceiveForeignSignature } from "./closure-signature-flow.js";
 import { privateMemberMangledName, type IrClassId, type IrUnitId } from "./identity.js";
 import {
   isAsyncIrReady,
@@ -189,6 +190,15 @@ function probeShape(check: () => boolean): boolean {
   typedShapeRejectReason = savedReason;
   return false;
 }
+
+/** (#7003) Selector-owned hooks for `./closure-signature-flow.ts`. */
+const closureSignatureFlowHooks = {
+  slotSignature: (node: ts.FunctionTypeNode) => irClosureSignatureFromFunctionTypeNode(node),
+  get resolveValue() {
+    const resolver = currentModuleBindingResolver;
+    return resolver ? (node: ts.Identifier) => resolver.localValueDeclaration(node) : undefined;
+  },
+};
 
 /** Read and clear the recorded reject detail (used by `planIrCompilation`). */
 function takeShapeRejectDetail(): string | undefined {
@@ -1926,6 +1936,9 @@ function whyNotIrClaimable(
     if (className !== null) currentClassBindings.set(p.name.text, className);
     if (paramType && ts.isFunctionTypeNode(paramType)) {
       const signature = irClosureSignatureFromFunctionTypeNode(paramType);
+      // (#7003) A caller may pass a function of another Wasm signature.
+      if (signature && callableParameterMayReceiveForeignSignature(p, closureSignatureFlowHooks))
+        return "closure-signature-mismatch";
       if (signature) recordCallableProjection(p.name.text, signature.params.length, paramType.type);
     }
 
