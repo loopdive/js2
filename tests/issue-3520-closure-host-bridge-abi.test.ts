@@ -165,7 +165,11 @@ const COLLIDING_CLOSURE_SOURCE = `
 
 function trackedModule(source = ZERO_ARITY_SOURCE) {
   const ast = analyzeSource(source, "issue-3520-closure-host-bridge.ts");
-  return generateModule(ast, { experimentalIR: true, trackIrOutcomes: true });
+  return generateModule(ast, {
+    experimentalIR: true,
+    trackIrOutcomes: true,
+    semanticProviders: "host-assisted",
+  });
 }
 
 function entrySourceRecord(source = ZERO_ARITY_SOURCE) {
@@ -209,7 +213,11 @@ function generateWithCapturedRegistry(
       }
     `;
     const ast = analyzeSource(sourceWithRegistryProbe, fileName);
-    result = generateModule(ast, { experimentalIR: true, trackIrOutcomes: true });
+    result = generateModule(ast, {
+      experimentalIR: true,
+      trackIrOutcomes: true,
+      semanticProviders: "host-assisted",
+    });
   } finally {
     observe.mockRestore();
   }
@@ -270,6 +278,7 @@ async function instantiate(sourceOrResult: string | Awaited<ReturnType<typeof co
           fileName: "issue-3520-closure-host-runtime.ts",
           experimentalIR: true,
           trackIrOutcomes: true,
+          semanticProviders: "host-assisted",
         })
       : sourceOrResult;
   expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
@@ -339,6 +348,7 @@ describe("#3520 C31 closure host bridge Program ABI ownership", () => {
       const compiled = await compile(CONSTRUCTIBLE_CLOSURE_SOURCE, {
         fileName: `issue-3520-closure-ctor-${label}.ts`,
         experimentalIR: true,
+        semanticProviders: "host-assisted",
         ...options,
       });
       const { exports: rawExports } = await instantiate(compiled);
@@ -429,6 +439,7 @@ describe("#3520 C31 closure host bridge Program ABI ownership", () => {
       const compiled = await compile(CLOSURE_COLLISION_SOURCE, {
         fileName: `issue-3520-closure-collisions-${label}.ts`,
         experimentalIR: true,
+        semanticProviders: "host-assisted",
         ...options,
       });
       const { exports: rawExports } = await instantiate(compiled);
@@ -627,6 +638,7 @@ describe("#3520 C31 closure host bridge Program ABI ownership", () => {
     const baseOptions = {
       fileName: "issue-3520-closure-host-byte-parity.ts",
       experimentalIR: true,
+      semanticProviders: "host-assisted",
     } as const;
     const untracked = await compile(ZERO_ARITY_SOURCE, baseOptions);
     const tracked = await compile(ZERO_ARITY_SOURCE, { ...baseOptions, trackIrOutcomes: true });
@@ -650,8 +662,16 @@ describe("#3520 C31 closure host bridge Program ABI ownership", () => {
       const source = readFileSync(resolve(entry), "utf8");
       const trackedAst = analyzeSource(source, entry);
       const untrackedAst = analyzeSource(source, entry);
-      const tracked = generateModule(trackedAst, { experimentalIR: true, trackIrOutcomes: true });
-      const untracked = generateModule(untrackedAst, { experimentalIR: true, trackIrOutcomes: false });
+      const tracked = generateModule(trackedAst, {
+        experimentalIR: true,
+        trackIrOutcomes: true,
+        semanticProviders: "host-assisted",
+      });
+      const untracked = generateModule(untrackedAst, {
+        experimentalIR: true,
+        trackIrOutcomes: false,
+        semanticProviders: "host-assisted",
+      });
       const trackedErrors = hardErrors(tracked);
       const untrackedErrors = hardErrors(untracked);
       expect(trackedErrors, `${entry}\n${trackedErrors.map((error) => error.message).join("\n")}`).toEqual([]);

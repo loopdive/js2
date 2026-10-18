@@ -14,7 +14,10 @@ import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 
 async function instantiate(src: string): Promise<WebAssembly.Exports> {
-  const r = await compile(src);
+  // (#6708) This suite specifies the legacy JS-synthesized subclass bridge.
+  // Keep it as an explicit rollback control while native-first is the default;
+  // #6651 D4 covers the native constructor-aware Promise implementation.
+  const r = await compile(src, { semanticProviders: "host-assisted" });
   if (!r.success) throw new Error("compile failed: " + JSON.stringify(r.errors));
   const imports = buildImports(r.imports, undefined, r.stringPool);
   const m = await WebAssembly.instantiate(r.binary, imports);

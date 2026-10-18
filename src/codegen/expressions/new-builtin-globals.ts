@@ -16,6 +16,7 @@ import type { Instr, ValType } from "../../ir/types.js";
 import { ts } from "../../ts-api.js";
 import type { TypeFact } from "../../checker/oracle.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
+import { hostFreeEnvironment } from "../context/types.js";
 import { allocLocal, allocTempLocal, releaseTempLocal } from "../context/locals.js";
 import { addUnionImports, getArrTypeIdxFromVec, getOrRegisterVecType, typedArrayVecStorage } from "../index.js";
 import { taIntElemConversionInstrs, taSourceGetOp } from "../array/ta-int-elem-coercion.js"; // (#7018)
@@ -1688,7 +1689,8 @@ export function tryCompileBuiltinGlobalNew(
       // import (which made `new Date()` a hard instantiate failure standalone,
       // breaking unrelated Date tests). See the matching Date.now() fallback in
       // expressions/calls.ts.
-      if (ctx.standalone === true) {
+      // (#6708) a JS environment owns a clock capability even under the regime
+      if (ctx.standalone === true && hostFreeEnvironment(ctx)) {
         emitStandaloneDateTimestamp(ctx, fctx);
         fctx.body.push({ op: "struct.new", typeIdx: dateTypeIdx });
         return { kind: "ref", typeIdx: dateTypeIdx };

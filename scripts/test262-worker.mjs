@@ -1,4 +1,4 @@
-import { parseTest262SemanticProviders } from "./test262-lane.mjs";
+import { parseTest262SemanticProviders, test262CompileSemanticProviders } from "./test262-lane.mjs";
 import { requireTest262CompilerPath } from "./test262-compiler-path.mjs";
 /**
  * Unified test262 worker — compiles AND executes a test in one process.
@@ -1379,7 +1379,7 @@ function temporalWiringAvailable() {
  * host-semantics provider, which would label host results as regime results.
  */
 async function getWorkerTemporalProvider(target, semanticProviders = "auto") {
-  const memoKey = semanticProviders === "native-first" ? `${target ?? "host"}/native-first` : (target ?? "host");
+  const memoKey = `${target ?? "host"}/${parseTest262SemanticProviders(semanticProviders)}`;
   const memoised = temporalProviderPromises.get(memoKey);
   if (memoised) return memoised;
   const promise = (async () => {
@@ -1608,7 +1608,7 @@ async function doCompile(
       // before semantic analysis.
       skipSemanticDiagnostics: negativePhase !== "resolution",
       target,
-      semanticProviders,
+      semanticProviders: test262CompileSemanticProviders(semanticProviders),
       inferModuleStrictArguments,
       scriptGoal,
       ...deferOpt,
@@ -1653,7 +1653,7 @@ async function doCompile(
       emitWat: false,
       skipSemanticDiagnostics: true,
       target,
-      semanticProviders,
+      semanticProviders: test262CompileSemanticProviders(semanticProviders),
       inferModuleStrictArguments,
       scriptGoal,
       ...deferOpt,
@@ -1681,7 +1681,7 @@ async function doCompile(
       emitWat: false,
       skipSemanticDiagnostics: true,
       target,
-      semanticProviders,
+      semanticProviders: test262CompileSemanticProviders(semanticProviders),
       inferModuleStrictArguments,
       scriptGoal,
       // (#3451) A negative test's verdict IS the diagnostic, so the linked
@@ -1726,7 +1726,7 @@ async function doCompile(
       emitWat: false,
       skipSemanticDiagnostics: true,
       target,
-      semanticProviders,
+      semanticProviders: test262CompileSemanticProviders(semanticProviders),
       inferModuleStrictArguments,
       scriptGoal,
       ...deferOpt,
@@ -1739,7 +1739,7 @@ async function doCompile(
     emitWat: false,
     skipSemanticDiagnostics: true,
     target,
-    semanticProviders,
+    semanticProviders: test262CompileSemanticProviders(semanticProviders),
     inferModuleStrictArguments,
     scriptGoal,
     ...deferOpt,

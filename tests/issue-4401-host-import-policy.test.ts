@@ -63,6 +63,8 @@ describe("#4401 host import policy inventory", () => {
   it("reports the compatibility string provider as legacy semantics", async () => {
     const result = await compile(`export function size(): number { return " x ".trim().length; }`, {
       fileName: "issue-4401-legacy-string.ts",
+      // (#6708) the compatibility profile is no longer the default; spell it.
+      semanticProviders: "host-assisted",
     });
     expect(result.success, result.errors.map((error) => error.message).join("; ")).toBe(true);
     expect(result.hostImportInventory).toEqual(
@@ -118,6 +120,7 @@ describe("#4401 host import policy inventory", () => {
 
     const compatibility = await compile(source, {
       fileName: "issue-4401-compatibility-promise-subclass.ts",
+      semanticProviders: "host-assisted",
     });
     expect(compatibility.success, compatibility.errors.map((error) => error.message).join("; ")).toBe(true);
     expect(compatibility.hostImportInventory).toEqual(

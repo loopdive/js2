@@ -23,7 +23,7 @@ import type {
 import { compileMultiSource } from "./compiler.js";
 import type { ProjectModuleResolutions } from "./checker/index.js";
 import { getBarePackageName } from "./resolve.js";
-import { resolveCompileTargetProfile } from "./target-profile.js";
+import { resolveCompileTargetProfile, semanticProviderCacheKey } from "./target-profile.js";
 import { LINKED_IMPORT_GETTER_PREFIX, LINKED_IMPORT_REEXPORT_PREFIX } from "./linked-import-getter-names.js";
 import { defaultCacheDir, getDefaultEnvironment } from "./env.js";
 import { buildCompiledImports } from "./runtime.js";
@@ -159,7 +159,7 @@ function compilerOptionFingerprint(options: CompileOptions): string {
     fast: options.fast === true,
     nativeStrings: options.nativeStrings === true,
     utf8Storage: options.utf8Storage === true,
-    semanticProviders: options.semanticProviders ?? "auto",
+    semanticProviders: semanticProviderCacheKey(options),
     hostBridge: options.hostBridge ?? "auto",
     ...(options.hostAccelerators?.length ? { hostAccelerators: [...options.hostAccelerators].sort() } : {}),
     honestAnyBoxing: options.honestAnyBoxing === true,

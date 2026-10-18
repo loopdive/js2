@@ -880,3 +880,51 @@ the result strengthens the existing verdict: keep one native semantic core,
 retain JS-host interop as a boundary adapter, and reserve `js-string` or other
 host machinery for explicit accelerators rather than object representation in
 the core.
+
+### 2026-10-18 — S6 current-main landing handoff
+
+#6708 / PR [#6672](https://github.com/loopdive/js2/pull/6672) is refreshed on
+current main and locally green. The refresh did not move JS machinery into the
+semantic core: the default is native-first, JS-backed objects remain confined
+to the boundary adapter, and `host-assisted` is now explicit wherever a
+legacy control genuinely needs it. The detailed conflict resolution, control
+repins and command-level evidence are recorded in #6708.
+
+The decisive refreshed acceptance result is Node 25.9.0's full equivalence
+gate: 2,020 passing, 20 baseline-known failures and zero new regressions.
+Host-import policy remains 0 legacy / 0 unknown across 33 native-first probe
+families, while the explicit compatibility control still observes 23 legacy
+imports. IR fallback and IR-only readiness gates are green after their
+pre-existing JS-host control lanes were made explicit.
+
+Handoff after #6672 lands: observe the post-merge lane/npm refresh, then take
+the measured S7 deletion plan in #6979. The migration is not complete until
+that deletion removes the compatibility semantic providers; the JS value,
+object, callback, exception and lifecycle adapters remain required interop.
+
+### 2026-10-18 — S6 npm-compat product bar verified on the candidate
+
+Main's fresh `npm-compat.json` exposed one stale blocker rather than hiding it:
+Lit was host-measured but `jsHostNative` still reported a runtime exception.
+The exact #6672 head, after merging main through `50a1734711`, was run through
+the focused O4 JS-host perf lane for every currently host-measured workload.
+All eleven measured and matched their native-oracle checksum: acorn 422,
+clsx 7, cookie 1, hono 9, Lit 7, marked 75, Moment 10, Prettier 49, React 8,
+Redux 7 and UUID 2. The expected and actual value was identical in every row.
+Moment ran through the repository's keyed, canary-verified QuickJS provider.
+
+This closes the pre-merge S6 product-bar question without broadening the
+architecture: the packages use the native semantic core plus the existing JS
+boundary/capability adapters. It does not yet satisfy S7's post-merge entry
+condition. The CI npm refresh must publish the same no-`measured → error`
+result after #6672 lands; only then may #6979 delete the compatibility policy.
+
+The landing CI also exposed two default-profile quality ratchets. #3437 now
+meters the steady per-file native-first harness path after an unmetered
+one-time provider warm-up and is banked at 231,951 traversals. #1918's fixed
+playground corpus reproduces the old `0/43/1` fixup floor under explicit
+host-assisted and the inherited native-provider `11/57/1248` floor under
+explicit native-first (`drop-excess` / `default-value-lossy` /
+`call-arg-coerce`). Both baselines now gate the new default. The stack-balance
+numbers remain explicit Phase 2 emitter debt; the rebank prevents S6 from
+comparing different provider families and does not declare the repairs clean.

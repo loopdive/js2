@@ -28,7 +28,10 @@ import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 
 async function instantiate(src: string): Promise<WebAssembly.Exports> {
-  const r = await compile(src);
+  // (#6708) These identities are for the retired cached JS constructor path.
+  // Keep them on the explicit rollback profile; native Promise-subclass
+  // identity and capability construction are covered by #6651 D4.
+  const r = await compile(src, { semanticProviders: "host-assisted" });
   if (!r.success) throw new Error("compile failed: " + JSON.stringify(r.errors));
   const imports = buildImports(r.imports, undefined, r.stringPool);
   const m = await WebAssembly.instantiate(r.binary, imports);

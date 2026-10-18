@@ -15,8 +15,10 @@ import { evaluateAsJs, instantiateWithRuntime } from "./helpers.js";
 
 const LANES: { name: string; options: CompileOptions }[] = [
   { name: "standalone", options: { target: "standalone" } },
-  { name: "gc (default)", options: {} },
+  { name: "gc (host-assisted control)", options: { semanticProviders: "host-assisted" } },
 ];
+
+const HOST_ASSISTED_GC: CompileOptions = { semanticProviders: "host-assisted" };
 
 async function compileAndRun(source: string, options: CompileOptions) {
   const result = await compile(source, { fileName: "issue-7003.ts", trackIrOutcomes: true, ...options });
@@ -117,7 +119,7 @@ describe("#7003 IR closure calls never trust the annotation as the callee's exac
     const source = `${APPLY}function h(x: number): number { return x + 5; }
 const g = (x: number): number => x * 2;
 export function test(): number { return apply(h) * 100 + apply(g) + apply((x) => x + 1); }`;
-    const { result, value } = await compileAndRun(source, {});
+    const { result, value } = await compileAndRun(source, HOST_ASSISTED_GC);
     expect(value).toBe(evaluateAsJs(source).test!());
     expect(outcomeOf(result, "apply")?.kind).toBe("emitted");
   }, 120_000);
@@ -126,7 +128,7 @@ export function test(): number { return apply(h) * 100 + apply(g) + apply((x) =>
     const source = `${APPLY}function h(x: number): number { return x + 5; }
 const alias = apply;
 export function test(): number { return alias(h); }`;
-    const { result, value } = await compileAndRun(source, {});
+    const { result, value } = await compileAndRun(source, HOST_ASSISTED_GC);
     expect(value).toBe(evaluateAsJs(source).test!());
     expect(outcomeOf(result, "apply")).toMatchObject({ kind: "unsupported", code: "closure-signature-mismatch" });
   }, 120_000);

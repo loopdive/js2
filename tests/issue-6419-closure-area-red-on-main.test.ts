@@ -41,7 +41,10 @@ import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 
 async function runHost(source: string): Promise<unknown> {
-  const result = await compile(source, { skipSemanticDiagnostics: true });
+  const result = await compile(source, {
+    skipSemanticDiagnostics: true,
+    semanticProviders: "host-assisted",
+  });
   expect(result.success, result.errors.map((e) => e.message).join("\n")).toBe(true);
   const imports = buildImports(result.imports, undefined, result.stringPool);
   const { instance } = await WebAssembly.instantiate(result.binary, imports as WebAssembly.Imports);
@@ -51,7 +54,7 @@ async function runHost(source: string): Promise<unknown> {
 }
 
 async function emitsConstructClosure(source: string): Promise<boolean> {
-  const result = await compile(source, {});
+  const result = await compile(source, { semanticProviders: "host-assisted" });
   expect(result.success, result.errors.map((e) => e.message).join("\n")).toBe(true);
   return (result.imports ?? []).some((i: { name?: string; intent?: { name?: string } }) => {
     return (i.name ?? i.intent?.name) === "__construct_closure";

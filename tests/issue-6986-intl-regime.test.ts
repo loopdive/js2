@@ -176,7 +176,7 @@ describe("#6986 no host Intl: a compile error, never a silent run-time failure",
 
   it("leaves the host-assisted lane's Intl untouched", async () => {
     const source = `export function run(): string { return new Intl.NumberFormat("en-US").format(1234.5); }`;
-    const { result, value } = await run(source, {});
+    const { result, value } = await run(source, { semanticProviders: "host-assisted" }); // (#6708) no longer the default
     expect(value).toBe("1,234.5");
     expect(
       result.imports

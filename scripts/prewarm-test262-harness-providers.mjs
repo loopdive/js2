@@ -27,12 +27,14 @@
  *   JS2WASM_TEST262_HARNESS_CACHE=<dir> node --import tsx scripts/prewarm-test262-harness-providers.mjs
  *   node --import tsx scripts/prewarm-test262-harness-providers.mjs --cache-dir <dir> --target standalone
  *   node --import tsx scripts/prewarm-test262-harness-providers.mjs --limit 8   # smoke
- *   node --import tsx scripts/prewarm-test262-harness-providers.mjs --semantic-providers native-first
+ *   node --import tsx scripts/prewarm-test262-harness-providers.mjs --semantic-providers host-assisted
  *
- * (#6930) `--semantic-providers native-first` warms the regime providers the
- * native-first linked lane asks for. A regime provider is a several-fold larger
- * cold build than the host one, which under load can exceed a row's compile
- * budget on its own. Defaults to `TEST262_SEMANTIC_PROVIDERS`, as the worker does.
+ * (#6930, #6708) The default warms the regime providers the default JS-host
+ * linked lane asks for (native-first since S6; a regime provider is a
+ * several-fold larger cold build than a host-assisted one, which under load can
+ * exceed a row's compile budget on its own). `--semantic-providers
+ * host-assisted` warms the control lane's. Defaults to
+ * `TEST262_SEMANTIC_PROVIDERS`, as the worker does.
  */
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
@@ -65,7 +67,7 @@ function parseArgs(argv) {
     else if (flag === "--strict") args.strict = true;
     else if (flag === "--help" || flag === "-h") {
       console.log("usage: prewarm-test262-harness-providers.mjs [--cache-dir D] [--target host|standalone]");
-      console.log("                                            [--semantic-providers auto|native-first]");
+      console.log("                                            [--semantic-providers native-first|host-assisted]");
       console.log("                                            [--root DIR] [--limit N] [--strict]");
       process.exit(0);
     } else {

@@ -18,7 +18,7 @@ import { compile } from "../src/index.js";
 import { wrapExports } from "../src/runtime.js";
 
 async function run(src: string): Promise<any> {
-  const result: any = await compile(src, { fileName: "acorn.mjs" });
+  const result: any = await compile(src, { fileName: "acorn.mjs", semanticProviders: "host-assisted" });
   expect(result.success).toBe(true);
   const importObject: any = result.importObject ?? {};
   const { instance } = await WebAssembly.instantiate(result.binary, importObject);
@@ -81,7 +81,7 @@ describe("#1712 — fnctor-capturing closure dispatch through the host bridge", 
       Parser.prototype.parse = function parse() { return typeof Node; };
       export function parse(input) { return new Parser(input).parse(); }
       `,
-      { fileName: "acorn.mjs" },
+      { fileName: "acorn.mjs", semanticProviders: "host-assisted" },
     );
     const io: any = result.importObject ?? {};
     let savedClosure: any = null;

@@ -1,14 +1,35 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { compile } from "../src/index.js";
 import { projectIrBackendTargetProfile } from "../src/ir/backend/legality.js";
-import { resolveCompileTargetProfile, type TargetProfileInput } from "../src/target-profile.js";
+import {
+  resetSemanticProviderDeprecationWarnings,
+  resolveCompileTargetProfile,
+  type TargetProfileInput,
+} from "../src/target-profile.js";
 
 const cases: ReadonlyArray<readonly [string, TargetProfileInput, ReturnType<typeof resolveCompileTargetProfile>]> = [
   [
-    "default gc host",
+    // (#6708 S6) native-first is the default in every environment.
+    "default gc (native-first since S6)",
     {},
+    {
+      target: "gc",
+      backend: "wasmgc",
+      environment: "javascript",
+      capabilityPolicy: "ambient-js",
+      semanticProviders: "native-first",
+      hostValueInterop: "required",
+      strictEnvImportGate: false,
+      nativeRegime: true,
+      nativeStringsRequiredByPolicy: true,
+    },
+  ],
+  [
+    // (#6708 S6) The explicit rollback is exactly the pre-S6 gc default.
+    "host-assisted compatibility profile",
+    { semanticProviders: "host-assisted" },
     {
       target: "gc",
       backend: "wasmgc",
@@ -67,8 +88,23 @@ const cases: ReadonlyArray<readonly [string, TargetProfileInput, ReturnType<type
     },
   ],
   [
-    "wasi compatibility escape hatch",
+    "wasi compatibility escape hatch (native-first by default since S6)",
     { target: "wasi", strictNoHostImports: false },
+    {
+      target: "wasi",
+      backend: "wasmgc",
+      environment: "wasi",
+      capabilityPolicy: "ambient-js",
+      semanticProviders: "native-first",
+      hostValueInterop: "off",
+      strictEnvImportGate: false,
+      nativeRegime: false,
+      nativeStringsRequiredByPolicy: true,
+    },
+  ],
+  [
+    "wasi compatibility escape hatch with the host-assisted profile",
+    { target: "wasi", strictNoHostImports: false, semanticProviders: "host-assisted" },
     {
       target: "wasi",
       backend: "wasmgc",
@@ -142,6 +178,53 @@ describe("#4396 target policy normalization", () => {
     );
   });
 
+  it("keeps the pre-S6 host-assisted profile for an implicit selection with nativeStrings: false, warning once", () => {
+    resetSemanticProviderDeprecationWarnings();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const implicit = resolveCompileTargetProfile({ nativeStrings: false });
+      expect(implicit).toEqual(resolveCompileTargetProfile({ semanticProviders: "host-assisted" }));
+      resolveCompileTargetProfile({ nativeStrings: false });
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(String(warn.mock.calls[0]?.[0])).toContain('"host-assisted" compatibility profile');
+    } finally {
+      warn.mockRestore();
+      resetSemanticProviderDeprecationWarnings();
+    }
+  });
+
+  it('accepts "auto" as a deprecated alias of the default and warns exactly once per process', () => {
+    resetSemanticProviderDeprecationWarnings();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      expect(resolveCompileTargetProfile({ semanticProviders: "auto" })).toEqual(resolveCompileTargetProfile({}));
+      expect(resolveCompileTargetProfile({ semanticProviders: "auto" })).toEqual(
+        resolveCompileTargetProfile({ semanticProviders: "native-first" }),
+      );
+      // "auto" keeps meaning "the default": the target-derived standalone profile.
+      expect(resolveCompileTargetProfile({ target: "standalone", semanticProviders: "auto" })).toEqual(
+        resolveCompileTargetProfile({ target: "standalone" }),
+      );
+      const autoWarnings = warn.mock.calls.filter((call) => String(call[0]).includes('"auto" is a deprecated alias'));
+      expect(autoWarnings).toHaveLength(1);
+    } finally {
+      warn.mockRestore();
+      resetSemanticProviderDeprecationWarnings();
+    }
+  });
+
+  it("keeps the #4401 publication contract for an explicit native-first spelling only", async () => {
+    // A user-declared host function is an explicit embedder capability the
+    // classifier cannot name (`unknown`). The default compiles it; only the
+    // explicit native-first contract (#4401) refuses to publish it.
+    const source =
+      "declare function hostTick(n: number): number;\nexport function run(): number { return hostTick(1); }";
+    const implicit = await compile(source, {});
+    expect(implicit.success, implicit.errors.map((error) => error.message).join("; ")).toBe(true);
+    const explicit = await compile(source, { semanticProviders: "native-first" });
+    expect(explicit.success).toBe(false);
+  });
+
   it("normalizes the internal codegen boolean projection through the same resolver", () => {
     expect(resolveCompileTargetProfile({ wasi: true })).toEqual(resolveCompileTargetProfile({ target: "wasi" }));
     expect(resolveCompileTargetProfile({ standalone: true })).toEqual(
@@ -153,7 +236,7 @@ describe("#4396 target policy normalization", () => {
   });
 
   it("projects IR capability policy without conflating it with JS value interop", () => {
-    const host = resolveCompileTargetProfile();
+    const host = resolveCompileTargetProfile({ semanticProviders: "host-assisted" });
     expect(projectIrBackendTargetProfile(host)).toEqual({
       backend: "wasmgc",
       target: "gc",
@@ -176,7 +259,9 @@ describe("#4396 target policy normalization", () => {
     // (#5385) native-first in a JS environment lowers with the standalone
     // semantic regime: the IR sees the same provider facts as a standalone
     // build, while the profile itself keeps its JS environment and value bridge.
-    // (#5385 S5) The regime is the default for native-first in a JS environment.
+    // (#5385 S5) The regime is the default for native-first in a JS environment,
+    // and (#6708 S6) native-first is the default policy.
+    expect(resolveCompileTargetProfile()).toEqual(resolveCompileTargetProfile({ semanticProviders: "native-first" }));
     const nativeFirstJs = resolveCompileTargetProfile({ semanticProviders: "native-first" });
     expect(nativeFirstJs.environment).toBe("javascript");
     expect(nativeFirstJs.hostValueInterop).toBe("required");
@@ -188,13 +273,17 @@ describe("#4396 target policy normalization", () => {
       fast: undefined,
     });
 
-    // The one-release kill switch restores the pre-S5 per-family reroute.
+    // The one-release kill switch restores the pre-S5 per-family reroute —
+    // for the default too (#6708).
     const previous = process.env.JS2WASM_NATIVE_REGIME_JS;
     process.env.JS2WASM_NATIVE_REGIME_JS = "0";
     try {
       const killed = resolveCompileTargetProfile({ semanticProviders: "native-first" });
       expect(killed.nativeRegime).toBe(false);
       expect(projectIrBackendTargetProfile(killed).target).toBe("gc");
+      const killedDefault = resolveCompileTargetProfile();
+      expect(killedDefault.nativeRegime).toBe(false);
+      expect(killedDefault.semanticProviders).toBe("native-first");
     } finally {
       if (previous === undefined) Reflect.deleteProperty(process.env, "JS2WASM_NATIVE_REGIME_JS");
       else process.env.JS2WASM_NATIVE_REGIME_JS = previous;
@@ -215,6 +304,33 @@ describe("#4396 target policy normalization", () => {
       expect(left.success, left.errors.map((error) => error.message).join("; ")).toBe(true);
       expect(right.success, right.errors.map((error) => error.message).join("; ")).toBe(true);
       expect(left.binary).toEqual(right.binary);
+    }
+  });
+
+  it("(#6708) {} is byte-identical to native-first; host-assisted is the legacy-importing rollback", async () => {
+    // The pre-flip hashes of these programs under the pre-S6 default are
+    // recorded in plan/issues/6708-*.md; `host-assisted` reproduced all three.
+    const sources = [
+      "export function add(a: number, b: number): number { return a + b; }",
+      `export function greet(name: string, csv: string): string {
+  const parts = csv.split(",");
+  const msg = \`Hello, \${name}! You have \${parts.length} items: \${parts.join(" | ")}\`;
+  return msg.replace("Hello", "Hi");
+}`,
+    ];
+    for (const source of sources) {
+      const implicit = await compile(source, {});
+      const nativeFirst = await compile(source, { semanticProviders: "native-first" });
+      const hostAssisted = await compile(source, { semanticProviders: "host-assisted" });
+      for (const result of [implicit, nativeFirst, hostAssisted]) {
+        expect(result.success, result.errors.map((error) => error.message).join("; ")).toBe(true);
+      }
+      expect(implicit.binary).toEqual(nativeFirst.binary);
+      expect(hostAssisted.binary).not.toEqual(implicit.binary);
+      expect(implicit.hostImportSummary?.byClassification["legacy-semantic"]).toBe(0);
+      expect(implicit.hostImportSummary?.byClassification.unknown).toBe(0);
+      // Non-vacuity: the rollback really is the host-assisted profile.
+      expect(hostAssisted.hostImportSummary?.byClassification["legacy-semantic"]).toBeGreaterThanOrEqual(1);
     }
   });
 });
