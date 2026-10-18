@@ -701,8 +701,8 @@ a missing feature.
 - [ ] A native-first test262 lane and npm-compat lane exist, run in CI on
       dispatch/nightly, and their baselines are committed (Phase 1).
 - [x] Host-vs-native-first runtime performance is measured and recorded here
-      (Phase 1). The evidence is complete; the string-kernel result remains an
-      S6 blocker tracked by #7087.
+      (Phase 1). #7087 closed the one string-kernel blocker at 1.426x
+      native-first / host-assisted; the S6 runtime-performance bar is met.
 - [ ] Native-first official pass ≥ host official pass minus the explicitly
       deferred set; standalone floor unchanged (Phase 2).
 - [ ] `semanticProviders` defaults to `native-first` in every environment;
@@ -843,3 +843,40 @@ measured string exception is exactly the kind of narrow case for which a named
 `js-string` accelerator can remain available while #7087 closes or explains
 the native-provider gap. This evidence does not erase the compile-time and
 binary-size costs already recorded elsewhere; it answers the runtime row only.
+
+### 2026-10-18 — #7087 post-fix: S6 runtime-performance bar met
+
+Optimized-Wasm inspection proved the 20.38x row was not constant folding. The
+host path retained `repeat`/concat/length and let V8 keep a rope; the native
+`__str_repeat` path doubled to 5,120 code units and then flattened/copies via
+`substring(0, 5000)` before reading the length. #7087 changes the shared native
+kernel to binary decomposition, producing an exact 5,000-code-unit rope with
+no substring tail. Repeat-count normalization, RangeError handling, prepared
+provider provenance and the JS value/boundary adapter are unchanged.
+
+The exact #6708 kernel lanes were rerun sequentially at
+`5b36f318c5e9a5b1a9e11da6b924d64f5be8d1b2` on the same Node 24.4.1 / V8
+13.6 environment:
+
+| kernel | host-assisted | native-first | native-first / host | verdict |
+| --- | ---: | ---: | ---: | --- |
+| fib | 2347.651 us | 2340.268 us | 0.997x | pass |
+| loop | 86.057 us | 85.413 us | 0.993x | pass |
+| string | 0.06365 us | 0.09078 us | **1.426x** | **pass** |
+| array | 10.5734 us | 10.5358 us | 0.996x | pass |
+
+The string blocker falls from 20.38x to 1.426x, below the explicit 2.0x gate;
+`bench_string()` still returns 5000. Acorn, cookie, redux and hono were also
+remeasured under native-first from that commit, all with optimization verified
+and checksums 422/422, 1/1, 7/7 and 9/9 respectively. Their recorded host
+comparisons remain 27.24x, 9.09x, 18.18x and 36.53x in native-first's favour.
+The machine-readable pre/post record is
+`plan/audit/5385-native-first-perf-evidence-20261018.json`.
+
+**Handoff:** runtime performance no longer blocks S6. This does not by itself
+authorize the default flip or S7 deletion; the other #6708 correctness,
+ratchet and active-PR entry conditions still decide those steps. Architecturally
+the result strengthens the existing verdict: keep one native semantic core,
+retain JS-host interop as a boundary adapter, and reserve `js-string` or other
+host machinery for explicit accelerators rather than object representation in
+the core.
