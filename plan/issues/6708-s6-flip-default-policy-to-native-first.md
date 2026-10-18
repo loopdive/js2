@@ -414,6 +414,15 @@ and strict-mode checks continue to prove native JSON lowering. S7 should
 remove this compatibility-only import assertion when it deletes the
 host-assisted provider, not weaken the native/strict checks to preserve it.
 
+The changed-root gate then reached the already-recorded #4397
+`assignmentRest` residual: 29/30 native semantic JS-host cases pass, while the
+assignment-pattern object-rest case traps `illegal cast` identically on exact
+main and plain standalone. It is isolated as an `it.fails` correct-result pin
+in #4397 so S6 can land without pretending the native provider defect is new
+or weakening the other object-rest/boundary assertions. The #4397 handoff
+requires a native assignment-pattern carrier fix; host-backed copying is not
+an acceptable repair.
+
 The 2026-10-18 npm-compat refresh on main made the last S6 product-bar row
 directly auditable: Lit was still `measured` under host-assisted but the stale
 `jsHostNative` record was `runtime-error`. The exact S6 head was therefore
