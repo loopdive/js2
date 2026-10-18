@@ -1,11 +1,10 @@
 {
   "id": "6708",
-  "assignee": "ttraenkler/opus-6708-a",
-  "requested_by": "git@thomas.traenkler.com",
-  "status": "released",
+  "assignee": "ttraenkler/codex",
+  "requested_by": "ttraenkler/codex",
+  "status": "in-progress",
   "branch": "issue-6708-a-default-native-first",
-  "claimed_at": "2026-10-14T13:20:01Z",
-  "updated_at": "2026-10-18T15:38:12Z",
-  "write_id": "44309-k6961d3c",
-  "released_at": "2026-10-18T15:38:12Z"
+  "claimed_at": "2026-10-18T15:38:24Z",
+  "updated_at": "2026-10-18T15:38:24Z",
+  "write_id": "45256-274lv4zm"
 }
