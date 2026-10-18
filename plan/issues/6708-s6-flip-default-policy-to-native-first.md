@@ -405,6 +405,15 @@ native-first floor instead of comparing two different provider families.
 This is recorded as inherited emitter debt in #1918 Phase 2, not described as
 clean codegen or erased by the equivalence result.
 
+The #1524 host-import/strict-mode gate also contained one deliberate
+non-WASI JS-host control that asserted `JSON_stringify` was imported while
+calling `compile(src)` with no provider selection. That assertion described
+the old default rather than strict-mode policy. It now selects
+`semanticProviders: "host-assisted"` explicitly; the adjacent omitted-option
+and strict-mode checks continue to prove native JSON lowering. S7 should
+remove this compatibility-only import assertion when it deletes the
+host-assisted provider, not weaken the native/strict checks to preserve it.
+
 The 2026-10-18 npm-compat refresh on main made the last S6 product-bar row
 directly auditable: Lit was still `measured` under host-assisted but the stale
 `jsHostNative` record was `runtime-error`. The exact S6 head was therefore
