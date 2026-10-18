@@ -334,8 +334,10 @@ adapter rather than becoming host-backed core representations.
 The refresh exposed implicit uses of the old default in tests and quality
 ledgers added after the S6 branch was cut. They now name their intended lane:
 
-- legacy closure/constructor bridge suites (#1528, #1712, #3520 and #6419)
-  compile with `semanticProviders: "host-assisted"`;
+- legacy closure/constructor bridge suites (#1528, #1712, #2637 B2, #3520 and #6419)
+  compile with `semanticProviders: "host-assisted"`; #2637 B2 specifically
+  asserts the JS-synthesized Promise-subclass registration path, so S7 must
+  delete or replace that implementation-specific guard when the path goes;
 - the test262 worker extraction test receives the production
   `test262CompileSemanticProviders` free variable instead of accidentally
   capturing no provider selection;
