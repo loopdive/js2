@@ -44,6 +44,7 @@ import { emitStandaloneIterableMaterialize, recordStrictMethodLiteralAllocation 
 import { popBody, pushBody } from "./context/bodies.js";
 import { reportError } from "./context/errors.js";
 import { emptyBackingStoreInstrs } from "./empty-vec-store.js"; // (#3921) shared zero-length backing store
+import { spreadSourceNeedsRuntimeCopy } from "./object-spread-extern-source.js";
 import { allocLocal, allocTempLocal, releaseTempLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext, OptionalParamInfo } from "./context/types.js";
 import { isForeignEvalNode } from "./expressions/eval-source.js";
@@ -3552,6 +3553,11 @@ export function compileObjectLiteralForStruct(
         srcStructName = resolveStructName(ctx, srcType);
       }
       let resolved = false;
+      // (#7014) An externref-stored source (optional param) may hold any shape.
+      if (srcStructName && spreadSourceNeedsRuntimeCopy(fctx, expr, propIndex, runtimeSpreadSources.length)) {
+        runtimeSpreadSources.push({ expr: prop.expression, propIndex });
+        continue;
+      }
       if (srcStructName) {
         const srcStructTypeIdx = ctx.structMap.get(srcStructName);
         const srcFields = ctx.structFields.get(srcStructName);

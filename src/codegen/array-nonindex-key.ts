@@ -61,6 +61,7 @@ import {
 } from "./shared.js";
 import { resolveConstantExpression } from "./literals.js";
 import { tryEmitStaticI32Expression } from "./i32-static-range-expr.js";
+import { staticIntegerRange } from "../ir/analysis/static-numeric-range.js";
 import { highArrayIndexLiteralI32 } from "./vec-sparse-index.js";
 import { TYPED_ARRAY_NAMES } from "./index.js";
 import { VEC_PROP_GET, VEC_PROP_SET } from "./vec-props.js";
@@ -122,7 +123,15 @@ export function isDynamicPropertyKeyExpression(
   // Constant numeric expressions and simple variable indices stay on their
   // existing dense path.
   if (keyFact.kind === "number") {
-    return ts.isBinaryExpression(inner) && typeof resolveConstantExpression(ctx, inner) !== "number";
+    if (!ts.isBinaryExpression(inner) || typeof resolveConstantExpression(ctx, inner) === "number") return false;
+    // (#7014) A range-proven index (`arr[i % 2]`, `arr[i + 1]` over a counted
+    // loop) cannot leave i32 or be non-integral, so the exactness concern above
+    // does not apply. Routing it to the runtime property-key lane (11bbf2a791)
+    // crossed the JS boundary on the host lane for a plain element read, and
+    // without wired exports returned `undefined` ("illegal cast" in the
+    // `string-derived-length-fast-path` host-string pin).
+    const range = staticIntegerRange(ctx, inner);
+    return !(range !== undefined && range.min >= 0 && range.max <= 0x7fffffff);
   }
   // A literal ordinary name (for example `"[object Object]"`) is also a
   // property key, not a numeric index. Numeric spellings and the historical
