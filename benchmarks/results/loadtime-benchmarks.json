@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-10-18T03:16:56.564Z",
+  "timestamp": "2026-10-18T14:56:32.578Z",
   "benchmarks": [
     {
       "name": "fib",
@@ -258,6 +258,16 @@
             "type": "extern_class",
             "className": "TypeError",
             "action": "new"
+          },
+          "paramCount": 1
+        },
+        {
+          "module": "env",
+          "name": "__rethrow_host_exception",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__rethrow_host_exception"
           },
           "paramCount": 1
         },
@@ -627,6 +637,16 @@
         },
         {
           "module": "env",
+          "name": "__rethrow_host_exception",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__rethrow_host_exception"
+          },
+          "paramCount": 1
+        },
+        {
+          "module": "env",
           "name": "__extern_to_string_default",
           "kind": "func",
           "intent": {
@@ -985,6 +1005,16 @@
             "type": "extern_class",
             "className": "TypeError",
             "action": "new"
+          },
+          "paramCount": 1
+        },
+        {
+          "module": "env",
+          "name": "__rethrow_host_exception",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__rethrow_host_exception"
           },
           "paramCount": 1
         },
@@ -1365,6 +1395,16 @@
         },
         {
           "module": "env",
+          "name": "__rethrow_host_exception",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__rethrow_host_exception"
+          },
+          "paramCount": 1
+        },
+        {
+          "module": "env",
           "name": "__extern_to_string_default",
           "kind": "func",
           "intent": {
@@ -1735,6 +1775,16 @@
             "type": "extern_class",
             "className": "TypeError",
             "action": "new"
+          },
+          "paramCount": 1
+        },
+        {
+          "module": "env",
+          "name": "__rethrow_host_exception",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__rethrow_host_exception"
           },
           "paramCount": 1
         },
@@ -2124,6 +2174,16 @@
             "type": "extern_class",
             "className": "TypeError",
             "action": "new"
+          },
+          "paramCount": 1
+        },
+        {
+          "module": "env",
+          "name": "__rethrow_host_exception",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__rethrow_host_exception"
           },
           "paramCount": 1
         },
@@ -2532,6 +2592,16 @@
             "type": "extern_class",
             "className": "TypeError",
             "action": "new"
+          },
+          "paramCount": 1
+        },
+        {
+          "module": "env",
+          "name": "__rethrow_host_exception",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__rethrow_host_exception"
           },
           "paramCount": 1
         },
