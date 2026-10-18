@@ -183,7 +183,12 @@ export interface IrBodyRouteAudit {
 }
 
 function sourcePosition(node: Node): { file: string; line: number; column: number } {
-  const sourceFile = node.getSourceFile();
+  // (#7002) The recorder is observation-only: a synthesized node (no parent
+  // chain to a SourceFile, or no real position) must yield an unanchored
+  // position, never throw — a throw here turned a successful compile into a
+  // failed one only when `trackIrOutcomes` was on.
+  const sourceFile = node.getSourceFile() as ReturnType<Node["getSourceFile"]> | undefined;
+  if (sourceFile === undefined || node.pos < 0) return { file: sourceFile?.fileName ?? "", line: 0, column: 0 };
   const pos = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile, false));
   return { file: sourceFile.fileName, line: pos.line + 1, column: pos.character + 1 };
 }
