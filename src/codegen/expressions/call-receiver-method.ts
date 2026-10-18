@@ -1114,7 +1114,11 @@ export function compileReceiverMethodCall(
     }
   }
 
-  if (isExternalDeclaredClass(receiverType, ctx.checker) || hostMapCarrierClassName(ctx, receiverType) !== undefined) {
+  if (
+    isExternalDeclaredClass(receiverType, ctx.checker) ||
+    hostMapCarrierClassName(ctx, receiverType) !== undefined ||
+    (ctx.nativeStrings && /^Readonly(?:Map|Set)$/.test(receiverType.getSymbol()?.name ?? "")) // (#7058)
+  ) {
     const externResult = compileExternMethodCall(ctx, fctx, propAccess, expr);
     // undefined means method not found in extern class hierarchy — fall through to generic handlers
     if (externResult !== undefined) {
