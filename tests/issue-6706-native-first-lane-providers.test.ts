@@ -41,8 +41,10 @@ describe("#6706 A — eval provider on the native-first lane", () => {
   it("downloads and verifies the provider instead of building the refusal tier", () => {
     const job = jobBlock("test262-native-first");
     expect(job).toContain("needs: [runtime-eval-provider, temporal-provider]");
-    expect(job).toContain("!cancelled()");
-    expect(job).toContain("needs.runtime-eval-provider.result == 'success'");
+    // The lane is parked, not deleted: ae7991db21 retired JS-host Test262 and
+    // replaced the job's `!cancelled() && needs.runtime-eval-provider.result ==
+    // 'success'` condition with `if: false`. Its provider wiring is unchanged.
+    expect(job).toContain("if: false # JS-host Test262 is retired.");
     expect(job).toContain("name: runtime-eval-provider-${{ github.run_id }}");
     expect(job).toContain("node scripts/build-quickjs-eval-provider.mjs --require-cache");
     expect(job).toContain("JS2WASM_EVAL_ENGINE: ${{ inputs.eval_engine || 'quickjs' }}");

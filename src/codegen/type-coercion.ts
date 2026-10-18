@@ -50,6 +50,8 @@ import { pushZeroArgCallPad } from "./zero-arg-method-pad.js"; // (#4644) declar
 import { samePhysicalValType } from "./struct-hierarchy-layout.js";
 import { wrapArrayProtoVecAlias } from "./vec-proto-link.js"; // (#2917) stable Array.prototype in vec slots
 import { emitOptionalFieldWidening } from "./object-model/struct-optional-widen.js"; // (#6867)
+import { anyValueF64DefaultArm } from "./helpers/anyvalue-to-number.js"; // (#6998)
+import { ensureAnyValuePayloadToNumber } from "./coercion-engine.js"; // (#6998)
 
 /**
  * Emit a guarded ref.cast: use ref.test to check if the cast will succeed.
@@ -2927,6 +2929,7 @@ export function coerceType(
       //   tag 4 (boolean)   → should be f64(i32val), not 0.0
       const anyTypeIdx = ctx.anyValueTypeIdx;
       if (anyTypeIdx >= 0) {
+        const dynamicToNumber = ensureAnyValuePayloadToNumber(ctx, fctx, toPrimitiveHint); // (#6998)
         const tmpAny = allocTempLocal(fctx, from);
         const tmpTag = allocTempLocal(fctx, { kind: "i32" });
         fctx.body.push({ op: "local.tee", index: tmpAny });
@@ -2958,11 +2961,8 @@ export function coerceType(
               op: "if",
               blockType: { kind: "val", type: { kind: "f64" } },
               then: [{ op: "f64.const", value: NaN }],
-              else: [
-                // default: f64val (covers tag 0/null=0, tag 3/f64, tag 5/string, tag 6/object)
-                { op: "local.get", index: tmpAny },
-                { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 2 }, // f64val
-              ],
+              // default: f64val (tag 0/null=0, tag 3/f64); tags 5/6 → ToNumber (#6998)
+              else: anyValueF64DefaultArm(anyTypeIdx, tmpAny, tmpTag, dynamicToNumber),
             },
           ],
         });
@@ -4964,7 +4964,10 @@ export function pushDefaultValue(fctx: FunctionContext, type: ValType, ctx?: Cod
       // contexts typically don't reach non-null ref params with null values.
       // For if/else branches, callers should widen to ref_null first.
       fctx.body.push({ op: "ref.null", typeIdx: type.typeIdx });
-      fctx.body.push({ op: "ref.as_non_null" });
+      // (#7019) Host-free, every `ref` slot is widened nullable before emission
+      // (`widenNonDefaultableTypes`), so the assertion could only trap — e.g. an
+      // omitted JSDoc `{string}` argument (axios `toObjectSet(arr)`).
+      if (!(ctx?.standalone || ctx?.wasi)) fctx.body.push({ op: "ref.as_non_null" });
       break;
     default:
       fctx.body.push({ op: "i32.const", value: 0 });

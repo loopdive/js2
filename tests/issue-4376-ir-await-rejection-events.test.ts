@@ -53,6 +53,7 @@ it.each([
     resolveType: () => 0,
     internFuncType: () => 1,
     resolvePromiseType: () => 0,
+    ensureExnTag: () => 0,
     nativePromiseCarrierActive: () => true,
     resolvePromiseRejectionDispatcher: () => (enabled ? 0 : undefined),
     ...(enabled ? { buildPromiseRejectionEvent, buildPromiseReactionHandled } : {}),
@@ -78,7 +79,9 @@ it.each([
     },
     { kind: "func", params: [{ kind: "externref" }], results: [{ kind: "externref" }] },
     { kind: "func", params: [{ kind: "f64" }, { kind: "externref" }, { kind: "externref" }], results: [] },
+    { kind: "func", params: [{ kind: "externref" }], results: [] },
   );
+  module.tags.push({ name: "__exn", typeIdx: 3 });
   module.imports.push({ module: "events", name: "record", desc: { kind: "func", typeIdx: 2 } });
   module.functions.push(
     {
@@ -107,12 +110,17 @@ it.each([
   module.exports.push(
     { name: "consume", desc: { kind: "func", index: 1 } },
     { name: "rejected", desc: { kind: "func", index: 2 } },
+    { name: "exn", desc: { kind: "tag", index: 0 } },
   );
   const events: unknown[][] = [];
   const wasm = new WebAssembly.Instance(new WebAssembly.Module(new Uint8Array(emitBinary(module))), {
     events: { record: (...args: unknown[]) => events.push(args) },
   });
-  const e = wasm.exports as unknown as { consume(value: unknown): unknown; rejected(value: unknown): unknown };
+  const e = wasm.exports as unknown as {
+    consume(value: unknown): unknown;
+    rejected(value: unknown): unknown;
+    exn: WebAssembly.Tag;
+  };
   const reason = { marker: 42 };
   if (operation === "async.throw") {
     const rejected = e.consume(reason);
@@ -121,8 +129,19 @@ it.each([
     return;
   }
   const promise = e.rejected(reason);
-  expect(e.consume(promise)).toBe(reason);
-  expect(e.consume(promise)).toBe(reason);
+  // (#6995) A rejected `$Promise` THROWS its reason through the exception tag
+  // (it used to be returned as if it were the fulfilled value).
+  const thrownReason = (): unknown => {
+    try {
+      e.consume(promise);
+    } catch (err) {
+      expect(err).toBeInstanceOf(WebAssembly.Exception);
+      return (err as WebAssembly.Exception).getArg(e.exn, 0);
+    }
+    throw new Error("await of a rejected $Promise did not throw");
+  };
+  expect(thrownReason()).toBe(reason);
+  expect(thrownReason()).toBe(reason);
   expect(e.consume(reason)).toBe(reason);
   expect(events).toEqual(enabled ? [[1, promise, null]] : []);
 });

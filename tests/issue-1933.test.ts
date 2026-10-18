@@ -92,14 +92,17 @@ describe("#1933 — runtime multi-instance isolation", () => {
     // fields exist on InstanceState (the real store) by grepping the source.
     const fs = require("node:fs") as typeof import("node:fs");
     const runtime = fs.readFileSync(join(REPO_ROOT, "src/runtime.ts"), "utf-8");
+    // Optional OR required: `legacyRegExpState` became a required field when
+    // the instance state was made explicit (dbccc693f6) — still the
+    // per-instance store this guard looks for.
     for (const field of [
-      "symbolCache?:",
-      "symbolDescRegistry?:",
-      "legacyRegExpState?:",
-      "subclassCtors?:",
-      "userClassParents?:",
+      "symbolCache",
+      "symbolDescRegistry",
+      "legacyRegExpState",
+      "subclassCtors",
+      "userClassParents",
     ]) {
-      expect(runtime).toContain(field);
+      expect(runtime).toMatch(new RegExp(`\\b${field}\\??:`));
     }
   });
 });

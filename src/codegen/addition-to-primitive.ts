@@ -54,6 +54,8 @@ import { allocTempLocal, releaseTempLocal } from "./context/locals.js";
 import { ensureAnyToStringHelper, ensureNativeStringHelpers, stringConstantExternrefInstrs } from "./native-strings.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
+import { resolveStructName } from "./property-access.js";
+import { structHasUserToPrimitive } from "./struct-boundary-reify.js";
 import { compileExpression } from "./shared.js";
 import { coerceType } from "./type-coercion.js";
 import {
@@ -300,7 +302,47 @@ export function admitsObjectAddition(
   ) {
     return false;
   }
+  if (isThisReadingToPrimitiveLiteralStruct(ctx, left) || isThisReadingToPrimitiveLiteralStruct(ctx, right))
+    return false;
   return hasObjectOperandType(left) || hasObjectOperandType(right);
+}
+
+/**
+ * (#7014, #4429) An object-literal struct whose `valueOf` / `toString` /
+ * `@@toPrimitive` closure FIELD reads `this` keeps the typed `+` lowering it had
+ * before this arm existed. Routing it here coerces the operand to `externref`,
+ * which materialises the struct as a `$Object` copy (#2358); the runtime
+ * cascade then invokes the method with that copy as `this`, while the literal's
+ * method trampoline expects its own struct in `__current_this` — every `this.x`
+ * read trapped "dereferencing a null pointer" (`({ x: 7, toString() { return
+ * "v" + this.x; } }) + ""`). The typed path binds `this` to the struct itself
+ * (#2679 number hint, #4429 string hint). Regressed by 725e33c3e2, which
+ * admitted these operands; the trap on an `any`-typed receiver predates it.
+ * A `this`-free method keeps this arm's full §13.15.3 cascade (its Symbol
+ * TypeError and evaluation order — `addition/order-of-evaluation.js`).
+ */
+function isThisReadingToPrimitiveLiteralStruct(ctx: CodegenContext, t: ts.Type): boolean {
+  if (t.isUnion()) return false;
+  const name = resolveStructName(ctx, t);
+  if (name === undefined || ctx.classSet.has(name) || !structHasUserToPrimitive(ctx, name)) return false;
+  return ["valueOf", "toString"].some((key) => {
+    const decl = t.getProperty(key)?.valueDeclaration;
+    const fn =
+      decl &&
+      ts.isPropertyAssignment(decl) &&
+      (ts.isFunctionExpression(decl.initializer) || ts.isArrowFunction(decl.initializer))
+        ? decl.initializer
+        : decl;
+    return fn !== undefined && (ts.isMethodDeclaration(fn) || ts.isFunctionExpression(fn)) && readsOwnThis(fn.body);
+  });
+}
+
+/** Does `node` mention `this` outside nested non-arrow functions? */
+function readsOwnThis(node: ts.Node | undefined): boolean {
+  if (!node) return false;
+  if (node.kind === ts.SyntaxKind.ThisKeyword) return true;
+  if (ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node) || ts.isMethodDeclaration(node)) return false;
+  return ts.forEachChild(node, readsOwnThis) === true;
 }
 
 /**

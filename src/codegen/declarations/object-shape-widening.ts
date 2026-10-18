@@ -1672,6 +1672,43 @@ export function collectGrowableObjectLiterals(
   }
 
   scanStatements(sourceFile.statements);
+  pinNameMatchedGrowableLiteralTypes(ctx, checker, sourceFile);
+}
+
+/**
+ * `growableObjectLiteralVars` is keyed by NAME, and `compileObjectLiteral`
+ * builds every object-literal initializer of a declaration with that name as an
+ * open `$Object` — including an unrelated same-named binding in another scope
+ * (`var object = {…}` redeclared with diverging shapes at module level, then a
+ * fresh `var object = {…}` inside a function). That literal's checker type
+ * still resolved to its closed anonymous struct, so a consumer typed from it —
+ * `new Array(object)`, `[object]` — guard-cast the `$Object` to the struct and
+ * stored NULL: the element's own `toString`/`valueOf` were never consulted
+ * (test262 `Array/prototype/toString/S15.4.4.2_A1_T4.js`, #4655). Pin those
+ * literals' types to the open carrier as well, so type and value agree.
+ * Standalone only (host-lane bytes untouched).
+ */
+function pinNameMatchedGrowableLiteralTypes(
+  ctx: CodegenContext,
+  checker: ts.TypeChecker,
+  sourceFile: ts.SourceFile,
+): void {
+  if (!ctx.standalone || ctx.growableObjectLiteralVars.size === 0) return;
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      node.type === undefined &&
+      node.initializer !== undefined &&
+      ts.isObjectLiteralExpression(node.initializer) &&
+      node.initializer.properties.length > 0 &&
+      ctx.growableObjectLiteralVars.has(node.name.text)
+    ) {
+      recordOpenObjectConsumerTypes(ctx, checker, node, node.name.text, false);
+    }
+    forEachChild(node, visit);
+  };
+  visit(sourceFile);
 }
 
 /** (#2837) `V.field` (depth-1 property read) where the chain root is `varName`. */

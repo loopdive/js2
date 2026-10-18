@@ -28,7 +28,8 @@ async function run(source: string, fn = "run"): Promise<unknown> {
   expect(result.success, result.errors.map((e) => e.message).join("\n")).toBe(true);
   const imports = buildImports(result.imports, undefined, result.stringPool);
   const { instance } = await WebAssembly.instantiate(result.binary, imports);
-  imports.setExports?.(instance.exports as Record<string, Function>);
+  // (#7014) setInstance: raw setExports(instance.exports) lost data-struct authority in 708ebbd56d (#5337).
+  imports.setInstance?.(instance);
   return (instance.exports as Record<string, (...a: unknown[]) => unknown>)[fn]();
 }
 
@@ -239,14 +240,15 @@ describe("#2001 S1 — sparse-array literal holes ($Hole sentinel, any[] only)",
       ).toBe(1);
     });
 
-    it("reduce folds the hole as undefined (S1 — S2 skip DEFERRED for reduce)", async () => {
-      // reduce hole-skip is deferred alongside indexOf; it keeps folding the hole
-      // as `undefined` (the S1 read map).
+    it("reduce skips the hole (§23.1.3.24 HasProperty — the deferred S2 skip landed)", async () => {
+      // (#4491, 68a3747e9a — hole-skipping HOFs) reduce no longer folds the
+      // hole as `undefined`; it skips the absent index exactly as JS does.
+      // This test used to pin the interim S1 output "s,number,undefined,number".
       expect(
         await run(
           `export function run(): string { const a: any[] = [1, , 3]; return a.reduce((acc, x) => acc + "," + typeof x, "s"); }`,
         ),
-      ).toBe("s,number,undefined,number");
+      ).toBe("s,number,number");
     });
 
     it("at() of a hole is undefined", async () => {

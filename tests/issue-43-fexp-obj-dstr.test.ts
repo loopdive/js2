@@ -30,7 +30,8 @@ async function runWrappedJs(jsSource: string): Promise<unknown> {
   if (!r.success) throw new Error(`compile failed: ${r.errors[0]?.message ?? "?"}`);
   const importResult = buildImports(r.imports, undefined, r.stringPool, { globalSandbox: {} });
   const { instance } = await WebAssembly.instantiate(r.binary, importResult as any);
-  importResult.setExports?.(instance.exports as any);
+  // (#7014) setInstance: raw setExports(instance.exports) lost data-struct authority in 708ebbd56d (#5337).
+  importResult.setInstance?.(instance);
   return (instance.exports as any).test();
 }
 

@@ -29,12 +29,13 @@
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
 
-async function runModuleInit(src: string): Promise<number> {
+async function runModuleInit(src: string, extra: { inferModuleStrictArguments?: boolean } = {}): Promise<number> {
   const r = await compile(src, {
     fileName: "test.js",
     allowJs: true,
     skipSemanticDiagnostics: true,
     target: "standalone",
+    ...extra,
   });
   expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
   expect(WebAssembly.validate(r.binary), "module failed WebAssembly.validate").toBe(true);
@@ -148,7 +149,8 @@ describe("#4489 module-scope `var` seeds the undefined singleton", () => {
   // for `with`-body vars by WIDENING the slot to externref. Both remedies are
   // slot-type changes with their own corpus-wide blast radius, so they are out
   // of this issue's scope — see `## Residuals` in plan/issues/4489-*.md.
-  it.fails("residual: a primitive-slotted module `var` still reads as its zero-init", async () => {
+  // PROMOTED from a residual pin (#7014 follow-up): measured passing on main 2026-10-18.
+  it("residual: a primitive-slotted module `var` still reads as its zero-init", async () => {
     const bits = await runModuleInit(`
       var before = 0;
       before = (n === undefined) ? 1 : 0;
@@ -162,13 +164,25 @@ describe("#4489 module-scope `var` seeds the undefined singleton", () => {
     // §9.1.1.4.18 creates the `var` binding with `undefined` only when the name
     // is absent; GlobalDeclarationInstantiation then initialises the function
     // binding. The seed must therefore run BEFORE the function-binding seeds.
-    const bits = await runModuleInit(`
+    //
+    // This is SCRIPT-goal semantics. Since #6491 r2 (06dbc8d88f) the early-error
+    // pass correctly rejects `var f; function f(){}` at MODULE top level
+    // (§16.2.1.1: a module's top-level function is lexical, so it may not share
+    // a name with a `var` — node reports the same SyntaxError for this source
+    // as an `.mjs`). The `export` here is only the harness's hand-back, so the
+    // source is compiled as a synthetic-`export` Script
+    // (`inferModuleStrictArguments: false`, #6988), the goal the asserted
+    // §9.1.1.4.18 behaviour belongs to.
+    const bits = await runModuleInit(
+      `
       var isFunction = 0;
       isFunction = (typeof f === "function") ? 1 : 0;
       function f() { return 1; }
       export function test() { return isFunction; }
       var f;
-    `);
+    `,
+      { inferModuleStrictArguments: false },
+    );
     expect(bits).toBe(1);
   });
 

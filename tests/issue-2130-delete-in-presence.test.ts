@@ -20,7 +20,8 @@ async function run(source: string, fn: string): Promise<unknown> {
   }
   const imports = buildImports(result.imports, undefined, result.stringPool);
   const { instance } = await WebAssembly.instantiate(result.binary, imports);
-  if (imports.setExports) imports.setExports(instance.exports as Record<string, Function>);
+  // (#7014) setInstance: raw setExports(instance.exports) lost data-struct authority in 708ebbd56d (#5337).
+  if (imports.setInstance) imports.setInstance(instance);
   return (instance.exports as any)[fn]();
 }
 

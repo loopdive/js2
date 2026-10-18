@@ -245,6 +245,7 @@ import { emitDynamicTemplateRawRead, isDynamicTemplateRawRead } from "./template
 import { emitLinkedStaticMemberRead, linkedStaticParentHeritage } from "./standalone-linked-static-inheritance.js"; // (#6644) §15.7.14 step 6 across the link
 import { tryEmitPromiseSubclassCellRead } from "./promise-subclass-cell-read.js";
 import { tryEmitGuardedArrayConstructorRead } from "./array/array-ctor-this.js"; // (#6771 S7)
+import { recordRuntimeProtoInstallDemand } from "./classes/runtime-proto-install-demand.js"; // (#7061)
 
 /**
  * Sentinel returned by every dispatch helper to mean "this guard band did not
@@ -2199,6 +2200,7 @@ export function tryIdentifierNamespaceAndStaticReceiverRead(
       // produces `undefined` and makes class bootstrap code such as Axios'
       // static accessor installer dereference a null prototype.
       if (propName === "prototype" && emitLazyProtoGet(ctx, fctx, enclosingClass)) {
+        recordRuntimeProtoInstallDemand(ctx, expr, enclosingClass);
         return { kind: "externref" };
       }
       const fullName = `${enclosingClass}_${propName}`;
@@ -2381,6 +2383,7 @@ function emitClassStaticMemberRead(
   // so that Object.getPrototypeOf(instance) === ClassName.prototype holds.
   if (propName === "prototype") {
     if (emitLazyProtoGet(ctx, fctx, resolvedClass)) {
+      recordRuntimeProtoInstallDemand(ctx, receiver?.parent, resolvedClass);
       return { kind: "externref" };
     }
     // Fallback: return null externref

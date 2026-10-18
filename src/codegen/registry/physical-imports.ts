@@ -97,10 +97,29 @@ export function reserveLinkedExnTag(ctx: CodegenContext): void {
   ensureExnTag(ctx);
 }
 
+/**
+ * (#7014, #5247) Late-bound "the module now throws" hook. The export-boundary
+ * rethrow import must be registered the moment the module first needs its
+ * `__exn` tag, while bodies are still compiling — an import added at finalize
+ * would shift function indices already baked into tables and manifests (see
+ * `export-throw-boundary.ts`). It used to be called from here directly; that
+ * call was lost when `ensureExnTag` moved into this module (#5715,
+ * c4008d7cab), so no JS-host module minted the rethrow wrapper and an
+ * uncaught `throw new RangeError(…)` reached the host as a bare
+ * `WebAssembly.Exception` again. A registration hook keeps this narrow module
+ * free of the codegen import graph it deliberately avoids.
+ */
+let exnTagFirstUseHook: ((ctx: CodegenContext) => void) | undefined;
+
+export function registerExnTagFirstUseHook(hook: (ctx: CodegenContext) => void): void {
+  exnTagFirstUseHook = hook;
+}
+
 /** Lazily register the shared, peer-imported, or module-local exception tag. */
 export function ensureExnTag(ctx: CodegenContext): number {
   if (ctx.exnTagIdx >= 0) return ctx.exnTagIdx;
   const typeIdx = addFuncType(ctx, [{ kind: "externref" }], []);
+  exnTagFirstUseHook?.(ctx);
   if (ctx.sharedExnTag) {
     ctx.exnTagIdx = ctx.mod.imports.filter((imp) => imp.desc.kind === "tag").length;
     addImport(ctx, "env", "__exn", { kind: "tag", typeIdx });

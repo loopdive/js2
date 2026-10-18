@@ -63,6 +63,7 @@ import { typedArrayCtorArgIsArithmeticPrimitive } from "../expressions/typed-arr
 import { compileArrayDestructuring, compileObjectDestructuring } from "./destructuring.js";
 import { compileNestedClassDeclaration, emitUnresolvedComputedAccessorNameEffects } from "./nested-declarations.js";
 import { emitStandaloneHeritageCheck } from "../class-heritage-check.js"; // (#5195 r3-5)
+import { bindingHoldsStandaloneClassProto } from "../class-proto-object.js"; // (#7053)
 import { emitStandaloneCommaHeritageEffects } from "../classes/class-heritage-comma.js"; // (#6772 S6)
 import { emitStandaloneHeritagePrototypeGet } from "../classes/class-heritage-runtime-get.js"; // (#6772 S11)
 import { emitLocalTdzInit, emitTdzInit } from "./tdz.js";
@@ -898,6 +899,9 @@ function localTypeForDeclaration(ctx: CodegenContext, type: ts.Type, decl?: ts.V
   if (decl?.initializer && !decl.type && expressionHasWidenedPropertyType(ctx, decl.initializer)) {
     return { kind: "externref" };
   }
+  // (#7053) `C.prototype` is typed as the INSTANCE `C`, but standalone it is a
+  // `$Object`; a `$C` slot would guard-cast it to null (#6767's param twin).
+  if (decl && bindingHoldsStandaloneClassProto(ctx, decl)) return { kind: "externref" };
   // (#3673) Explicit native type annotation — `let x: i32` where
   // `type i32 = number`; the annotation node is the only surviving evidence.
   // It is a user assertion and outranks every inference below it.

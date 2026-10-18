@@ -103,6 +103,36 @@ function walk(dir, out = []) {
 const files = walk(SRC);
 const rel = (p) => path.relative(ROOT, p);
 
+const productionFiles = files.filter((file) => !/(?:^|\/)(?:tests|__tests__)\/|\.(?:test|spec)\.ts$/.test(rel(file)));
+const program = ts.createProgram(productionFiles, {
+  target: ts.ScriptTarget.ESNext,
+  module: ts.ModuleKind.ESNext,
+  moduleResolution: ts.ModuleResolutionKind.Bundler,
+  noEmit: true,
+  noLib: true,
+  types: [],
+});
+const checker = program.getTypeChecker();
+
+// Reuse only the already bound Program AST when the legacy parser's input
+// and syntax settings agree. Excluded roots and uncertain parse modes keep
+// the original fresh parse; raw source bytes are still read below.
+function legacySourceFile(file, text) {
+  const sf = productionFiles.includes(file) ? program.getSourceFile(file) : undefined;
+  const sameLegacyParse =
+    sf &&
+    sf.fileName === file &&
+    sf.text === text &&
+    sf.languageVersion === ts.ScriptTarget.Latest &&
+    sf.scriptKind === ts.ScriptKind.TS &&
+    sf.languageVariant === ts.LanguageVariant.Standard &&
+    sf.jsDocParsingMode === ts.JSDocParsingMode.ParseAll &&
+    sf.impliedNodeFormat === undefined &&
+    sf.externalModuleIndicator === ts.isFileProbablyExternalModule(sf) &&
+    sf.statements.every((stmt) => stmt.parent === sf && !(stmt.flags & ts.NodeFlags.AwaitContext));
+  return sameLegacyParse ? sf : ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
+}
+
 // ---------------------------------------------------------------------------
 // Parse each file: top-level callables, imports, re-exports
 // ---------------------------------------------------------------------------
@@ -125,7 +155,7 @@ function resolveModule(fromFile, spec) {
 for (const file of files) {
   const bytes = readFileSync(file);
   const text = bytes.toString("utf-8");
-  const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
+  const sf = legacySourceFile(file, text);
   const fns = new Map();
   const imports = new Map();
   const nsImports = new Map();
@@ -561,16 +591,6 @@ function movedRuntimeReport() {
   // Bind identifiers to declarations: spelling alone cannot distinguish a
   // renamed/shadowed local from a production reference. No diagnostics-based
   // forgiveness, test roots, or compatibility-export roots are admitted.
-  const productionFiles = files.filter((file) => !/(?:^|\/)(?:tests|__tests__)\/|\.(?:test|spec)\.ts$/.test(rel(file)));
-  const program = ts.createProgram(productionFiles, {
-    target: ts.ScriptTarget.ESNext,
-    module: ts.ModuleKind.ESNext,
-    moduleResolution: ts.ModuleResolutionKind.Bundler,
-    noEmit: true,
-    noLib: true,
-    types: [],
-  });
-  const checker = program.getTypeChecker();
   const graph = new Map();
   const coreGraph = new Map();
   const classOwners = new Set();
@@ -764,11 +784,11 @@ function movedRuntimeReport() {
     }
     return null;
   };
-  const reference = (id, node) => {
+  const reference = (id, node, rawSymbol) => {
     let symbol =
       ts.isShorthandPropertyAssignment(node.parent) && node.parent.name === node
         ? checker.getShorthandAssignmentValueSymbol(node.parent)
-        : checker.getSymbolAtLocation(node);
+        : rawSymbol;
     const imported = relativeImport(symbol);
     if (symbol && symbol.flags & ts.SymbolFlags.Alias) symbol = checker.getAliasedSymbol(symbol);
     const declarations = symbol?.declarations ?? [];
@@ -855,7 +875,7 @@ function movedRuntimeReport() {
         if (!ts.isIdentifier(p.expression)) return;
         const ns = checker.getSymbolAtLocation(p.expression);
         if (!ns?.declarations?.some((decl) => ts.isNamespaceImport(decl) || ts.isImportEqualsDeclaration(decl))) return;
-        reference(id, node);
+        reference(id, node, checker.getSymbolAtLocation(node));
         if (!checker.getSymbolAtLocation(node) && relativeImport(ns)) {
           error(id, "unresolved-namespace-edge", `unresolved namespace edge ${p.getText()}`, { subject: p.getStart() });
         }
@@ -864,7 +884,7 @@ function movedRuntimeReport() {
       // A namespace binding itself is not a callable edge; ns.member above
       // resolves the specific member rather than keeping an entire module live.
       const symbol = checker.getSymbolAtLocation(node);
-      if (!symbol?.declarations?.some(ts.isNamespaceImport)) reference(id, node);
+      if (!symbol?.declarations?.some(ts.isNamespaceImport)) reference(id, node, symbol);
     }
     ts.forEachChild(node, (child) => visit(id, child));
   };

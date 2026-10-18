@@ -197,6 +197,8 @@ interface DeferredAddOperand {
   readonly rawType: ValType;
   readonly targetLocal: number;
   readonly callableText?: string;
+  /** (#7014) Reduce through the typed STRING-hint dispatch (toString-only struct). */
+  readonly stringHint?: boolean;
 }
 
 function saveDeferredAddOperand(
@@ -204,12 +206,35 @@ function saveDeferredAddOperand(
   rawType: ValType,
   deferred: DeferredAddOperand[],
   callableText?: string,
+  stringHint?: boolean,
 ): number {
   const rawLocal = allocTempLocal(fctx, rawType);
   const targetLocal = allocTempLocal(fctx, { kind: "externref" });
   fctx.body.push({ op: "local.set", index: rawLocal });
-  deferred.push({ rawLocal, rawType, targetLocal, callableText });
+  deferred.push({ rawLocal, rawType, targetLocal, callableText, ...(stringHint ? { stringHint } : {}) });
   return targetLocal;
+}
+
+/**
+ * (#7014, #4429) An object-literal struct whose only user ToPrimitive method is
+ * a `toString` closure FIELD. Its §7.1.1 default-hint answer IS its string-hint
+ * answer: `valueOf` resolves to %Object.prototype.valueOf%, which returns the
+ * object, so OrdinaryToPrimitive proceeds to `toString`. Reducing it through the
+ * typed string-hint dispatch keeps `this` bound to the struct; the status-quo
+ * externref path materialised a `$Object` copy whose method trampoline then read
+ * a NULL `__current_this` and trapped ("dereferencing a null pointer").
+ */
+function structHasOnlyUserToString(ctx: CodegenContext, name: string | undefined): boolean {
+  if (name === undefined || ctx.classSet.has(name)) return false;
+  const fields = ctx.structFields.get(name);
+  if (!fields) return false;
+  const isClosure = (t: ValType): boolean => t.kind === "ref" || t.kind === "ref_null" || t.kind === "eqref";
+  let hasToString = false;
+  for (const f of fields) {
+    if ((f.name === "valueOf" || f.name === "@@toPrimitive") && isClosure(f.type)) return false;
+    if (f.name === "toString" && isClosure(f.type)) hasToString = true;
+  }
+  return hasToString;
 }
 
 function emitAddOperand(
@@ -313,6 +338,11 @@ function emitAddOperand(
     // expressions must finish before either operand's ToPrimitive runs.
     return saveDeferredAddOperand(fctx, opType, deferred);
   }
+  if (noJsHost && structHasOnlyUserToString(ctx, structName)) {
+    const opType = compileExpression(ctx, fctx, inner);
+    if (!opType) return null;
+    return saveDeferredAddOperand(fctx, opType, deferred, undefined, true);
+  }
 
   // Status-quo path: externref hint keeps runtime strings boxed for §13.15.3.
   const opType = compileExpression(ctx, fctx, expr, { kind: "externref" });
@@ -333,7 +363,9 @@ function finishDeferredAddOperand(ctx: CodegenContext, fctx: FunctionContext, op
     fctx.body.push(...stringConstantExternrefInstrs(ctx, operand.callableText));
   } else {
     fctx.body.push({ op: "local.get", index: rawLocal });
-    if (rawType.kind === "ref" || rawType.kind === "ref_null") {
+    if (operand.stringHint && (rawType.kind === "ref" || rawType.kind === "ref_null")) {
+      coerceType(ctx, fctx, rawType, { kind: "externref" }, "string");
+    } else if (rawType.kind === "ref" || rawType.kind === "ref_null") {
       coerceType(ctx, fctx, rawType, { kind: "f64" }, "default");
       addUnionImports(ctx);
       const boxIdx = ctx.funcMap.get("__box_number");
