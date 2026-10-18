@@ -2761,7 +2761,7 @@ function recordObservedIrOutcomes(
     existingOutcomes: ctx.irOutcomes,
   });
   if (nonExecutable) ctx.irOutcomes.push(nonExecutable);
-  for (const diagnostic of reconciled.diagnostics) reportErrorNoNode(ctx, diagnostic);
+  for (const diagnostic of reconciled.diagnostics) reportErrorNoNode(ctx, diagnostic, "warning"); // #7002 never fatal
 }
 
 const IR_IMPLICIT_PARAM_PROJECTION_BINARY_OPS = new Set<ts.SyntaxKind>([

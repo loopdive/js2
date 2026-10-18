@@ -468,6 +468,17 @@ per-file deletable (gate G3 in \`plan/log/3090-phase0-legacy-delete-list.md\`).
 The current corpus floor is **0** (#3517): Calendar's nine-statement initializer
 and Algorithms' top-level generic Map initializer are both IR-owned.`;
 
+// (#7002) The bucket counts are a playground-corpus measurement; say so under
+// the table and point at the wide-corpus ledger.
+const BUCKETS_CORPUS_NOTE = `**Which corpus these counts describe (#7002).** \`scripts/ir-fallback-baseline.json\`
+and \`check:ir-only\` measure the playground corpus only
+(\`website/playground/examples/\`, five entries for \`check:ir-only\`), so a
+bucket at **0** here says nothing about test262-scale code. The wide number is
+the IR claim ledger — \`npx tsx scripts/ir-claim-ledger.mts --stride 40\`
+(playground + every 40th test262 file, \`trackIrOutcomes\` on), committed as
+[\`benchmarks/results/ir-claim-ledger-standalone.json\`](../../benchmarks/results/ir-claim-ledger-standalone.json)
+and refreshed nightly by the advisory \`IR claim ledger\` workflow.`;
+
 // --- post-claim codes (#3341 Slice C; cross-checked against src/codegen/index.ts)
 //
 // Every `IrUnsupportedCode` with a LIVE throw site at a post-claim stage
@@ -613,6 +624,7 @@ function build() {
   }
   const bucketRows = Object.entries(BUCKETS).map(([reason, [cat, promotes]]) => [`\`${reason}\``, cat, promotes]);
   parts.push(BUCKETS_INTRO + "\n\n" + renderTable(["Bucket reason", "Category", "What promotes a row"], bucketRows));
+  parts.push(BUCKETS_CORPUS_NOTE);
   crossCheckPostClaim();
   const postClaimRows = Object.entries(POSTCLAIM)
     .sort(([a], [b]) => a.localeCompare(b))

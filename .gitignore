@@ -11,6 +11,7 @@ output/
 benchmarks/results/*.json
 !benchmarks/results/test262-ir-status.json
 !benchmarks/results/test262-standalone-ir-status.json
+!benchmarks/results/ir-claim-ledger-standalone.json
 !benchmarks/results/test262-report.json
 !benchmarks/results/wat-analysis-report.json
 !benchmarks/results/latest.json
