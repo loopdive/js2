@@ -423,6 +423,14 @@ or weakening the other object-rest/boundary assertions. The #4397 handoff
 requires a native assignment-pattern carrier fix; host-backed copying is not
 an acceptable repair.
 
+After that pin let the fail-fast gate continue, it reached the second
+exact-main red recorded above: #5383's named static method call on a dynamic
+class-value receiver answers `-1` rather than `8`. That single correct-result
+assertion is likewise an `it.fails` pin in the in-progress #5383 issue; its 80
+neighboring Temporal/provider checks remain normal passing tests. The repair
+belongs to native class-value dispatch, not to S6 policy selection or a new
+host-semantic fallback.
+
 The 2026-10-18 npm-compat refresh on main made the last S6 product-bar row
 directly auditable: Lit was still `measured` under host-assisted but the stale
 `jsHostNative` record was `runtime-error`. The exact S6 head was therefore
