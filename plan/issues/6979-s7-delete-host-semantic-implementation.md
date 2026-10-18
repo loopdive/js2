@@ -1,9 +1,10 @@
 ---
 id: 6979
 title: "S7: delete the host-semantic implementation — one native semantic core, host imports only as capabilities, adapters and named accelerators"
-status: ready
+status: in-progress
+assignee: ttraenkler/codex
 created: 2026-10-14
-updated: 2026-10-14
+updated: 2026-10-18
 priority: high
 horizon: xl
 feasibility: hard
@@ -246,3 +247,49 @@ dashboard. `plan/issues/5385-…` gets its program-acceptance checklist closed.
   `check-import-cycles`, flat-dir budget, compiler-boundaries inventory) run
   before every commit; deletions should make them easier, so any growth
   allowance in this program is a smell to explain in the PR.
+
+## Recovery handoff (2026-10-18, Codex)
+
+The abandoned S7 claim was recovered after repeated checks found no remote
+branch, PR, or active owner task for `issue-6979-s7c-collapse-standalone-arms`.
+The authoritative assignment now names `ttraenkler/codex` on
+`codex/6979-s7-recovery`. That recovery branch starts at current `main`,
+`4df0306bd1fa4776335f2115b6d3f7d847fafe87` (the merge of the npm-compat
+publication fix), and is published on the fork.
+
+Existing work is being recovered rather than rewritten:
+
+- S7-a PR `#6701`, branch `issue-6979-s7a-remove-host-assisted`, contains ten
+  focused commits through `917fbbca96549e71d6e70f4c877e0bc4a80ef777`.
+- S7-b PR `#6705`, branch `issue-6979-s7b-legacy-semantic-removal`, contains
+  eight focused commits stacked on S7-a. It remains deferred until the
+  recovered S7-a slice lands.
+- The safe adoption is a merge of the old S7-a head into the recovery branch,
+  keeping current `main` as first parent. A dry-run found 13 conflict files;
+  the rest of the roughly 7,300-line deletion applies cleanly. Because the old
+  S7-a head is a parent of the recovery merge, updating PR `#6701` is a
+  fast-forward and does not rewrite the published branch.
+
+Entry conditions 1, 2, 3 and 5 are satisfied on current `main`: the S6
+native-first default and named accelerators have landed, the post-merge
+standalone baseline is 42,159 passing with ES5 9,029/9,029, and the README
+keeps the host figure explicitly labelled retired. Entry condition 4 is in its
+final publication step:
+
+- npm-compat refresh run `39170921043` targets the exact current-main revision
+  above and was triggered immediately after PR `#6760` fixed focused-worker
+  publication after package suites mutate `console.log`.
+- Fresh partials for clsx, cookie, moment, hono, redux, acorn, react, marked,
+  lit and uuid all report `perf.lanes.jsHost.status = "measured"`; none moved
+  from measured to error. The React worker completed successfully and uploaded
+  `npm-compat-partial-fast-react`, closing #7088's last acceptance item.
+- At this checkpoint the TypeScript fast worker is still running. The fast
+  coordinator and its dashboard promotion PR have therefore not run yet;
+  React DOM is a separate slow lane and does not gate fast promotion.
+
+Resume by verifying the fast dashboard promotion contains source revision
+`4df0306bd1fa4776335f2115b6d3f7d847fafe87` and preserves those ten measured
+rows. Once it merges, merge the S7-a branch into the recovery branch, resolve
+the 13 recorded drift conflicts in favour of both current-main fixes and the
+S7 policy deletion, run the scoped/full gates, push the recovery head to
+`issue-6979-s7a-remove-host-assisted`, update PR `#6701`, and mark it ready.
