@@ -3422,7 +3422,11 @@ if (partialOutputPath) {
       2,
     ) + "\n",
   );
-  console.log(`[npm-compat] wrote partial report ${resolve(ROOT, partialOutputPath)}`);
+  // (#7088) Upstream suites run in this process and may replace console.log.
+  // The partial is already safely on disk; report completion through the
+  // generator-owned process stream so console pollution cannot turn a
+  // successful measurement into a failed matrix row before artifact upload.
+  process.stdout.write(`[npm-compat] wrote partial report ${resolve(ROOT, partialOutputPath)}\n`);
 }
 
 function assertMeasuredOptimizationReceipts(packageRows) {
@@ -3472,7 +3476,9 @@ if (writeArtifacts) {
   console.log(`[npm-compat] wrote ${HISTORY_RESULTS_PATH}`);
   console.log(`[npm-compat] wrote ${HISTORY_PUBLIC_PATH}`);
 } else if (partialOutputPath) {
-  console.log("[npm-compat] skipped aggregate artifact writes (partial report is ready for the coordinator)");
+  process.stdout.write(
+    "[npm-compat] skipped aggregate artifact writes (partial report is ready for the coordinator)\n",
+  );
 } else {
   console.log("[npm-compat] skipped aggregate artifact writes");
   console.log(JSON.stringify({ ...summary, perfRows, perfHistory }, null, 2));
