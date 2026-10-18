@@ -91,18 +91,6 @@ function pinSource(name: string, source: string, note: string): void {
   });
 }
 
-/** The inverse, for a MEASURED residual — it must STILL fail. */
-function pinResidualSource(name: string, source: string, why: string): void {
-  it(`still fails: ${name} (${why})`, { timeout: 60_000 }, async () => {
-    const dir = join(__dirname, "..", ".tmp", "issue-4643-pins");
-    mkdirSync(dir, { recursive: true });
-    const abs = join(dir, `${name}.js`);
-    writeFileSync(abs, source);
-    const r = await runTest262File(abs, "issue-4643", 30_000, "standalone");
-    expect(r.status).not.toBe("pass");
-  });
-}
-
 describe.skipIf(!TEST262)("#4643 — the three-row table (function-valued prototype, arg-only)", () => {
   // Row 1 (W). Base: `undefined`. The inherited read now resolves through the
   // callable's own-property bag, which IS the `$Object` the walk needs.
@@ -235,9 +223,11 @@ describe.skipIf(!TEST262)("#4643 — measured residuals", () => {
   // own-only predicates it sits next to carry the #4017 −684 warning in
   // `object-runtime.ts`. Measured false for BOTH the function-valued and the
   // object-valued prototype, so it is the same generic gap, not a callable one.
-  pinResidualSource(
+  // (#7009) Closed: the instance's `$proto` now links the struct prototype and
+  // `__extern_has` answers through the struct-link arm.
+  pinSource(
     "fn-proto-argonly-in-operator",
     `${FN_PRE}if (!("marker" in w)) throw new Test262Error("in");\n`,
-    "`in` has no fnctor chain-start arm (generic: fails for an object-valued prototype too)",
+    "`in` reaches the prototype through the #7009 struct link",
   );
 });

@@ -860,6 +860,7 @@ interface Prover {
   isNumeric(expr: ts.Expression): boolean;
   isString(expr: ts.Expression): boolean;
   isBooleanish(expr: ts.Expression): boolean;
+  mayBeBoolean(expr: ts.Expression): boolean;
   isOpaqueParamRead(expr: ts.Expression): boolean;
   withSelf<T>(name: string, run: () => T): T;
   withoutSelf<T>(name: string, run: () => T): T;
@@ -1168,10 +1169,42 @@ function makeProver(
     return false;
   };
 
+  /**
+   * (#6981) A value that MAY be a boolean on some path. `isBooleanish` asks
+   * "always boolean" (both `&&` operands); a local carrier needs the converse,
+   * because `false && f()` is numeric to {@link isNumeric} yet evaluates to
+   * `false`, and an f64 local would stringify it as "0" and type it "number".
+   */
+  const mayBeBoolean = (expr: ts.Expression, depth: number): boolean => {
+    if (depth > MAX_DEPTH) return true;
+    const value = unwrap(expr);
+    if (isBooleanish(value, depth)) return true;
+    if (host.oracle?.typeFactOf(value)?.kind === "boolean") return true;
+    if (ts.isBinaryExpression(value)) {
+      const op = value.operatorToken.kind;
+      if (
+        op === ts.SyntaxKind.AmpersandAmpersandToken ||
+        op === ts.SyntaxKind.BarBarToken ||
+        op === ts.SyntaxKind.QuestionQuestionToken
+      ) {
+        return mayBeBoolean(value.left, depth + 1) || mayBeBoolean(value.right, depth + 1);
+      }
+      if (op === ts.SyntaxKind.CommaToken || op === ts.SyntaxKind.EqualsToken) {
+        return mayBeBoolean(value.right, depth + 1);
+      }
+      return false;
+    }
+    if (ts.isConditionalExpression(value)) {
+      return mayBeBoolean(value.whenTrue, depth + 1) || mayBeBoolean(value.whenFalse, depth + 1);
+    }
+    return false;
+  };
+
   return {
     isNumeric: (expr) => isNumeric(expr, 0),
     isString: (expr) => isString(expr, 0),
     isBooleanish: (expr) => isBooleanish(expr, 0),
+    mayBeBoolean: (expr) => mayBeBoolean(expr, 0),
     // The documented trust boundary — see the module header. A bare identifier
     // resolving to a PARAMETER slot. Anything more structured (a property read,
     // a call, a literal) is NOT opaque and demotes its property.
@@ -1542,13 +1575,13 @@ export function analyzeNumericPropertyNames(
         const provesNumeric = (def: ValueDef): boolean =>
           def.forcedNumeric === true || (def.expr !== undefined && groundedProver.isNumeric(def.expr));
         const provesNumericCarrier = (def: ValueDef): boolean =>
-          provesNumeric(def) && (def.expr === undefined || !groundedProver.isBooleanish(def.expr));
+          provesNumeric(def) && (def.expr === undefined || !groundedProver.mayBeBoolean(def.expr));
         allNumeric =
           slot.defs.length > 0 &&
           (slot.isParam
             ? parameterDefinitionsAgree(slot, host, provesNumericCarrier)
             : slot.defs.every(provesNumeric)) &&
-          !slot.defs.some((def) => def.expr !== undefined && groundedProver.isBooleanish(def.expr));
+          !slot.defs.some((def) => def.expr !== undefined && groundedProver.mayBeBoolean(def.expr));
       } finally {
         groundedSlots.delete(slot);
       }

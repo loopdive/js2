@@ -43,6 +43,12 @@ import { extractReactUpstreamTests } from "./react-upstream-extract.mjs";
 import { installReactTestEnvironment } from "./react-test-environment.mjs";
 import { installReactUpstreamInfrastructure } from "./react-upstream-infrastructure.mjs";
 import { REACT_EXPECT_SHIM, LAST_ERROR_EXPORT, buildTestFunction, withTimeout } from "./react-upstream-shim.mjs";
+import {
+  STANDALONE_COMPILE_OVERRIDES,
+  isStandaloneUpstreamLane,
+  runStandaloneUpstreamTestsIsolated,
+  standaloneHarnessExports,
+} from "./upstream-standalone-lane.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPORT_PATH = join(HERE, "report", "react-upstream-suite.json");
@@ -65,6 +71,23 @@ function buildModuleSource(reactSource, tests) {
     REACT_EXPECT_SHIM,
     ...tests.map((test) => buildTestFunction(test)),
     LAST_ERROR_EXPORT,
+    ...(isStandaloneUpstreamLane() ? [reactStandaloneExports(tests)] : []),
+  ].join("\n");
+}
+
+// (#7013) Standalone lane: dispatch the lifted test functions by index behind
+// the shared numeric boundary; `__lastError` is the shim's own failure record.
+function reactStandaloneExports(tests) {
+  return [
+    // React's unit is plain JavaScript (`react.<build>.js`): JSDoc, not
+    // annotations, carries the export signatures.
+    `const __reactStandaloneTests = [${tests.map((test) => test.id).join(", ")}];`,
+    `/** @param {number} index */`,
+    `function __reactStandaloneRun(index) { __lastError = ""; return __reactStandaloneTests[index](); }`,
+    standaloneHarnessExports(
+      { count: "__reactStandaloneTests.length", run: "__reactStandaloneRun(index)", name: '""', error: "__lastError" },
+      { language: "js" },
+    ),
   ].join("\n");
 }
 
@@ -310,7 +333,11 @@ export async function runHarness({
       const started = performance.now();
       try {
         result = await withTimeout(
-          compile(moduleSource, { fileName: `react.${build}.js`, skipSemanticDiagnostics: true }),
+          compile(moduleSource, {
+            fileName: `react.${build}.js`,
+            skipSemanticDiagnostics: true,
+            ...(isStandaloneUpstreamLane() ? STANDALONE_COMPILE_OVERRIDES : {}),
+          }),
           compileTimeoutMs,
           `compile ${file}`,
         );
@@ -355,7 +382,22 @@ export async function runHarness({
     admitted = admitted.concat(batchTests);
 
     let compiled = null;
-    if (validates) {
+    if (validates && isStandaloneUpstreamLane()) {
+      try {
+        // The JS-host per-test budget (2 s) bounds an awaited promise; here it
+        // bounds a whole synchronous Wasm call on a loaded box, so floor it.
+        const run = await runStandaloneUpstreamTestsIsolated(result, {
+          testTimeoutMs: Math.max(testTimeoutMs, 30_000),
+        });
+        compiled = {
+          standaloneResults: new Map(
+            batchTests.map((test, index) => [test.id, { passed: run.statuses[index], error: run.errors[index] }]),
+          ),
+        };
+      } catch (error) {
+        firstError = `standalone: ${error instanceof Error ? error.message : String(error)}`;
+      }
+    } else if (validates) {
       try {
         const imports = result.importObject ?? {};
         const { instance } = await WebAssembly.instantiate(result.binary, imports);
@@ -448,6 +490,14 @@ export async function runHarness({
       tests.push(entry);
       continue;
     }
+    if (compiled.standaloneResults) {
+      const outcome = compiled.standaloneResults.get(test.id);
+      entry.compiledPassed = outcome?.passed === true;
+      entry.status = entry.compiledPassed ? "pass" : "fail";
+      if (!entry.compiledPassed) entry.compiledMessage = outcome?.error ?? "missing standalone result";
+      tests.push(entry);
+      continue;
+    }
     let value;
     try {
       hostInfrastructure.infrastructure.prepareReactValues = true;
@@ -510,10 +560,13 @@ export async function runHarness({
     binaryValidates: report.validation.validates,
   };
 
-  mkdirSync(dirname(REPORT_PATH), { recursive: true });
-  writeFileSync(REPORT_PATH, `${JSON.stringify(report, null, 2)}\n`);
+  // (#7013) The standalone lane writes beside, never over, the JS-host report.
+  const reportPath = isStandaloneUpstreamLane() ? REPORT_PATH.replace(/\.json$/, ".standalone.json") : REPORT_PATH;
+  if (isStandaloneUpstreamLane()) report.target = "standalone";
+  mkdirSync(dirname(reportPath), { recursive: true });
+  writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`);
   log(`[dogfood] ${report.summary.headline}`);
-  log(`[dogfood] full report → ${REPORT_PATH}`);
+  log(`[dogfood] full report → ${reportPath}`);
   hostInfrastructure.cleanup();
   return report;
 }

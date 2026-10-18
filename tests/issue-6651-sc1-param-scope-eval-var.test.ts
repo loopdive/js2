@@ -45,7 +45,8 @@
 //     to the OUTER declaration, whose type says nothing about the eval-created
 //     value, so a resume-state read must skip the checker-type unbox narrowing.
 //
-// NOT FIXED, recorded as a pinned residual below: a REST PARAMETER on a
+// (Since fixed by 22c5668c0b — see the last describe block, #7014.)
+// NOT FIXED at the time, recorded as a pinned residual below: a REST PARAMETER on a
 // generator (`function* g(...a){}`) bails native lowering outright
 // (`isNativeGeneratorCandidate`, the #2920/#3386 "separate follow-up" bail), so
 // `scope-gen-meth-param-rest-elem-var-close` stays a compile error. Measured: it
@@ -87,21 +88,6 @@ async function runTest262Shaped(body: string, target: "standalone" | "gc" = "sta
   const ex = instance.exports as Record<string, () => number>;
   ex.__module_init?.();
   return ex.run!();
-}
-
-/** Does `body` compile for `--target standalone` without leaking host imports? */
-async function standaloneCompiles(body: string): Promise<{ ok: boolean; error: string }> {
-  const source = `var __r = 0;\n${body}\nexport function run() { return __r; }\n`;
-  const r = await compile(source, {
-    fileName: "test.ts",
-    skipSemanticDiagnostics: true,
-    target: "standalone",
-    deferTopLevelInit: true,
-  });
-  if (!r.success) return { ok: false, error: r.errors.map((e) => e.message).join("\n") };
-  const leaked = r.imports.filter((i) => i.module === "env").map((i) => i.name);
-  if (leaked.length > 0) return { ok: false, error: `leaked env imports: ${leaked.join(", ")}` };
-  return { ok: true, error: "" };
 }
 
 describe("#6651 SC1 — a generator body sees a var a parameter-list direct eval introduced", () => {
@@ -338,7 +324,13 @@ export function run() { return got === 'inside' ? 1 : 0; }
   });
 });
 
-describe("#6651 SC1 — pinned residual: a REST PARAMETER on a generator bails native lowering", () => {
+// (#7014) The residual below is CLOSED. 22c5668c0b ("fix(#6651): A10 WIP —
+// rest-parameter generators lower natively in the no-JS-host lanes",
+// 2026-09-28) lifted the `param.dotDotDotToken` bail for host-free targets, so
+// both pins flipped exactly as their comment promised ("a later lane lifting the
+// bail gets a failing assertion here"). They now assert the lifted behaviour:
+// host-free compile AND the test262 row's own answers.
+describe("#6651 SC1 — formerly pinned residual: a REST PARAMETER on a generator lowers natively", () => {
   // The third standalone-only row of the family,
   // `expressions/object/scope-gen-meth-param-rest-elem-var-close.js`, is a
   // COMPILE ERROR, and the cause is neither eval nor destructuring: a rest
@@ -350,18 +342,22 @@ describe("#6651 SC1 — pinned residual: a REST PARAMETER on a generator bails n
   // Pinned in its CURRENT state, with the two probes that localise it: the bare
   // rest parameter alone fails, and the same shape WITHOUT `*` compiles. A later
   // lane lifting the bail gets a failing assertion here.
-  it("a bare generator rest parameter does not compile for standalone", async () => {
-    const r = await standaloneCompiles(`
+  it("a bare generator rest parameter compiles host-free and binds the rest array", async () => {
+    expect(
+      await runTest262Shaped(`
 var got;
 function* g(...a) { got = a.length; yield 1; }
 g(1, 2).next();
-`);
-    expect(r.ok, `expected the #2920/#3386 rest bail, got a clean compile`).toBe(false);
-    expect(r.error).toMatch(/native generator lowering|__create_generator/);
+if (got === 2) __r |= 1;
+`),
+    ).toBe(1);
   });
 
-  it("the row's own shape does not compile for standalone", async () => {
-    const r = await standaloneCompiles(`
+  it("the row's own shape compiles host-free and both probes see the eval var", async () => {
+    // expressions/object/scope-gen-meth-param-rest-elem-var-close.js asserts
+    // probeParam() and probeBody() are both 'inside'.
+    expect(
+      await runTest262Shaped(`
 var x = 'outside';
 var probeParam, probeBody;
 ({
@@ -369,9 +365,10 @@ var probeParam, probeBody;
     probeBody = function() { return x; }
   }
 }.m().next());
-`);
-    expect(r.ok).toBe(false);
-    expect(r.error).toMatch(/native generator lowering|__create_generator/);
+if (probeParam() === 'inside') __r |= 1;
+if (probeBody() === 'inside') __r |= 2;
+`),
+    ).toBe(3);
   });
 
   // The localising control: drop the `*` and the identical parameter list

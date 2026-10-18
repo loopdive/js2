@@ -459,6 +459,8 @@ export interface NativeGeneratorInfo {
   nativeDelegates?: boolean;
   /** Generic protocol callbacks must reject reentrant next/return/throw. */
   executingFieldIdx?: number;
+  /** (#6980) Numeric-carrier `.return(v)` provenance — see `frame-core.ts` RETURN_ORIGIN_*. */
+  returnOriginFieldIdx?: number;
   /** Source-level generator function name. */
   functionName: string;
   /**

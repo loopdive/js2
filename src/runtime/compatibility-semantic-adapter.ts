@@ -9,23 +9,36 @@ export interface CompatibilitySemanticAdapterContext {
   createProxy(target: unknown, handler: unknown): unknown;
 }
 
+const bigintBinaryOperations: ReadonlyArray<(left: any, right: any) => any> = [
+  (left, right) => left + right,
+  (left, right) => left - right,
+  (left, right) => left * right,
+  (left, right) => left / right,
+  (left, right) => left % right,
+  (left, right) => left ** right,
+  (left, right) => left & right,
+  (left, right) => left | right,
+  (left, right) => left ^ right,
+  (left, right) => left << right,
+  (left, right) => left >> right,
+  (left, right) => left >>> right,
+];
+
 export function isCompatibilitySemanticIntent(intent: ImportIntent): boolean {
-  switch (intent.type) {
-    case "string_literal":
-    case "await":
-    case "host_eq":
-    case "host_loose_eq":
-    case "host_add":
-    case "host_bigint_binop":
-    case "host_compare":
-    case "same_value_zero":
-    case "date_new":
-    case "date_method":
-    case "proxy_create":
-      return true;
-    default:
-      return false;
-  }
+  const type = intent.type;
+  return (
+    type === "string_literal" ||
+    type === "await" ||
+    type === "host_eq" ||
+    type === "host_loose_eq" ||
+    type === "host_add" ||
+    type === "host_bigint_binop" ||
+    type === "host_compare" ||
+    type === "same_value_zero" ||
+    type === "date_new" ||
+    type === "date_method" ||
+    type === "proxy_create"
+  );
 }
 
 /** Resolve semantic fallbacks retained solely by the compatibility profile. */
@@ -67,34 +80,10 @@ export function resolveCompatibilitySemanticImport(
         const hint = opcode === 0 ? "default" : "number";
         const leftValue = primitive(left, hint);
         const rightValue = primitive(right, hint);
-        switch (opcode) {
-          case 0:
-            return leftValue + rightValue;
-          case 1:
-            return leftValue - rightValue;
-          case 2:
-            return leftValue * rightValue;
-          case 3:
-            return leftValue / rightValue;
-          case 4:
-            return leftValue % rightValue;
-          case 5:
-            return leftValue ** rightValue;
-          case 6:
-            return leftValue & rightValue;
-          case 7:
-            return leftValue | rightValue;
-          case 8:
-            return leftValue ^ rightValue;
-          case 9:
-            return leftValue << rightValue;
-          case 10:
-            return leftValue >> rightValue;
-          case 11:
-            return leftValue >>> rightValue;
-          default:
-            throw new TypeError("Cannot mix BigInt and other types, use explicit conversions");
+        if (!(typeof opcode === "number" && opcode >= 0 && opcode <= 11 && opcode % 1 === 0)) {
+          throw new TypeError("Cannot mix BigInt and other types, use explicit conversions");
         }
+        return bigintBinaryOperations[opcode]!(leftValue, rightValue);
       };
     case "host_compare":
       return (left: any, right: any) => {

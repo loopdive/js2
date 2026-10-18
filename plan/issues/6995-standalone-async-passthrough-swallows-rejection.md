@@ -1,11 +1,10 @@
 ---
 id: 6995
 title: "standalone async: the legacy synchronous pass-through lane silently miscompiles every shape the drive engine declines — a rejected `await` inside nested try/catch/finally is swallowed (function fulfils), `await <thenable>` returns the thenable, `await <struct object>` traps `illegal cast`; the #3587 loud refusal returns early for standalone/wasi"
-status: done
-completed: 2026-10-15
+status: in-review
 sprint: current
 created: 2026-10-15
-updated: 2026-10-15
+updated: 2026-10-18
 priority: high
 horizon: m
 feasibility: medium
@@ -206,3 +205,71 @@ fail with identical messages). Every changed path is gated on
   The new test pins the single-handler form.
 - `harness/asyncHelpers-throwsAsync-custom-typeerror.js` (above): a
   pre-existing throwsAsync constructor-name collision bug, now visible.
+
+## Protected merge failure and finite repair (2026-10-18)
+
+The authored implementation was recorded complete on October 15, but PR6700
+has not delivered through the protected merge queue. Merge group
+`4d1a73feb0784e0b77378f04e2b20a6a4fe93366` (main parent
+`02229455308c7f3ddbba609658b0b8cde2f1d6c5`, authored parent
+`68d2e31e6035713c507dfe80c5ea4d1bbd3bf3ad`) failed the ES5 guard:
+9,028 to 9,026 passes in 48,735 standalone rows. Run `39074134855`,
+job `117520770966`, artifact `12117080466` retain the original failures:
+
+- `test/harness/asyncHelpers-throwsAsync-native.js`: expected Error to be
+  thrown asynchronously, but the function threw synchronously.
+- `test/harness/asyncHelpers-throwsAsync-custom-typeerror.js`: the same
+  synchronous escape for the matching custom TypeError.
+
+Both reproduce at the exact authored head through `runTest262File` with the
+untouched original upstream harness, standalone target, honest oracle and auto
+semantic providers. A positive `throwsAsync-incorrect-ctor.js` control passes:
+one of three. Restoring only the exact pre-PR legacy unwrap helper makes all
+three pass; this is a causal control, not a proposed rollback. The honest
+rejected-await throw exposed the missing abrupt-completion half of the
+existing native void async-closure Promise promotion.
+
+The repair in `async-eager-promise.ts` finishes that existing boundary:
+compiler-tagged JS-value exceptions reject a native Promise with their original
+payload. The existing closure completion helper applies it only to closures
+already selected for the native void Promise promotion. Normal completion and
+explicit return retain their existing settlement. Non-async functions stay
+synchronous; foreign traps are not caught. No function-declaration trampoline,
+async-method boundary, pending-await suspension or issue6996 ordering fix is
+claimed. No harness, expected-failure annotation, floor, baseline or budget
+allowance changes accompany this repair.
+
+Validation on the clean composition with actual main
+`2cc151665727833f614799e58a616860d03cc9bd`:
+
+- **64/64 Vitest cases** across the 34-case issue6995 file (original 28 plus six
+  additive call-boundary cases), 12-case issue6996 file, seven async-function
+  cases, seven async-iteration cases and four IR rejection-event cases. The
+  original issue6995 test bytes remain an unchanged prefix; issue6996 is
+  byte-identical, including its four standalone expected failures.
+- **14/14 original upstream throwsAsync harness files pass**, including both
+  protected failures and the cross-realm control. The canonical assembler
+  classifies all 14 files as strict-neutral: 14 primary executions, zero strict
+  reruns. This is bounded harness qualification, not an independent strict-mode
+  census, full Test262 census or protected merge-group verdict.
+- The first family run measured 13 passes and one missing-QuickJS resource
+  failure. The normal provider builder then verified the existing raw artifact
+  SHA256 `5a58689e1bc86f18c7cc1a8fa37355d4e924baf2621b35bc970d727e9f7c7a78`,
+  compiled adapter `77b3968811064d5d` for compiler bundle `7960e0f9deebe11f`,
+  and passed its canaries before the complete 14-file rerun. The earlier
+  resource-failure receipt is retained.
+- GC comparison against a separate same-composition control with only this
+  two-file repair removed: three valid binaries are byte-identical; a fourth
+  plain non-async probe has the same pre-existing stack-underflow diagnostic
+  on both sides. All four outcomes are retained; a compile failure is not
+  credited as a passing binary.
+- TypeScript `tsc --noEmit -p .` completes with zero diagnostics.
+- All **7,660 tracked production/test inputs** remained unchanged throughout
+  final behavioral qualification. Source LOC/function ratchets against the
+  actual main above, coercion vocabulary and oracle ratchets pass. The required
+  dead-export preservation command exits zero with 6/6 full and cut witnesses;
+  its stricter graph-retirement analysis remains explicitly uncertified.
+
+Raw receipts, source seals and original failed controls are retained under the
+repair worktree's `.tmp/pr6700-repair/`. Protected delivery and the original
+acceptance population remain required; this issue stays in review.

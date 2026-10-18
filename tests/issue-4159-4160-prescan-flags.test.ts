@@ -22,12 +22,17 @@ import type { CodegenContext } from "../src/codegen/context/types.js";
 /** Run the pre-scan over `src` and return just the four flags it sets. */
 function scan(src: string) {
   const sf = ts.createSourceFile("t.ts", src, ts.ScriptTarget.ES2022, true);
-  // The pass touches only these four fields.
+  // The pass reads these four flags; the two Sets are accumulators the scan
+  // grew later (`protoNamedWrittenMembers`, d47ae45835 #4492;
+  // `inheritedSetDirtyKeys`, 642978d67a #4602) and `.add()`s to, so a fake ctx
+  // without them throws before any flag is set.
   const ctx = {
     usesArrayHoles: false,
     protoIndexDirty: false,
     vecAccessorDescriptorDirty: false,
     dynamicCodeDirty: false,
+    protoNamedWrittenMembers: new Set<string>(),
+    inheritedSetDirtyKeys: new Set<string>(),
   } as unknown as CodegenContext;
   scanForArrayHoles(ctx, sf);
   return {

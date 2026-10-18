@@ -222,7 +222,7 @@ describe("#4656 F2 — calling a resolved callee that BRANDS as a primitive is a
   // RECEIVER instead of an opaque KEY. `box[i].call(...)` cannot see
   // `%Function.prototype%.call` because the #4481 fold needs a statically
   // branded receiver, and nothing answers it at runtime. Same owner as R1.
-  it.fails("RESIDUAL %Function.prototype%.call/.apply through an OPAQUE receiver", async () => {
+  it("%Function.prototype%.call/.apply through an OPAQUE receiver (was an it.fails residual, #7014)", async () => {
     expect(
       await run(`
         function add(this: any, a: number, b: number) { return a + b; }

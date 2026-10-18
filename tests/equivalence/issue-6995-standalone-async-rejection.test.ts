@@ -212,3 +212,75 @@ describe("#6995 standalone async: declined shapes never swallow a rejection", ()
     expect(node).toEqual(["c2"]);
   });
 });
+
+// A value call cannot rely on the caller knowing the async modifier.
+describe("#6995 native async closure completion boundary", () => {
+  const indirect = `function invoke(f) { return f(); }\n`;
+  const observe = `function observe(f, reason) {
+    try {
+      const p = invoke(f); log(p instanceof Promise);
+      p.then(() => log("fulfilled"), e => log(e === reason));
+    } catch (e) { log("synchronous throw"); }
+  }\n`;
+
+  it("an await-free async function value rejects with its original reason", async () => {
+    expect(
+      await expectSameAsNode(
+        indirect + observe + `const reason = { marker: 17 }; observe(async function () { throw reason; }, reason);`,
+      ),
+    ).toEqual(["true", "true"]);
+  });
+
+  it("a custom TypeError keeps its constructor identity through rejection", async () => {
+    expect(
+      await expectSameAsNode(
+        indirect +
+          `function TypeError() {} const reason = new TypeError();
+       const p = invoke(async function () { throw reason; });
+       log(p instanceof Promise);
+       p.then(() => log("fulfilled"), e => log((e === reason) && e.constructor === TypeError));`,
+      ),
+    ).toEqual(["true", "true"]);
+  });
+
+  it("an uncaught await rejection rejects the dynamically invoked void closure", async () => {
+    expect(
+      await expectSameAsNode(
+        indirect +
+          observe +
+          `const reason = { marker: 18 }; observe(async () => { await Promise.reject(reason); }, reason);`,
+      ),
+    ).toEqual(["true", "true"]);
+  });
+
+  it("finally overrides an abrupt completion before the boundary rejects", async () => {
+    expect(
+      await expectSameAsNode(
+        indirect +
+          observe +
+          `const first = { marker: 1 }; const reason = { marker: 2 };
+       observe(async function () { try { throw first; } finally { log("finally"); throw reason; } }, reason);`,
+      ),
+    ).toEqual(["finally", "true", "true"]);
+  });
+
+  it("normal void completion remains fulfilled after finally and explicit return", async () => {
+    expect(
+      await expectSameAsNode(
+        indirect +
+          `const p = invoke(async function () { try { return; } finally { log("finally"); } });
+       log(p instanceof Promise); p.then(v => log(v === undefined), () => log("rejected"));`,
+      ),
+    ).toEqual(["finally", "true", "true"]);
+  });
+
+  it("a non-async function value still throws synchronously", async () => {
+    expect(
+      await expectSameAsNode(
+        indirect +
+          `const reason = { marker: 19 }; try { invoke(function () { throw reason; }); log("returned"); }
+       catch (e) { log(e === reason); }`,
+      ),
+    ).toEqual(["true"]);
+  });
+});
