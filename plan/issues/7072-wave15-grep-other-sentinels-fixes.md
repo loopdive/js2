@@ -86,3 +86,14 @@ large for this wave are #7074–#7077.
 `issue-4489`'s and `issue-4491-wave4`'s other red tests were stale (strict
 module goal makes them early/runtime errors by spec); they now compile as a
 synthetic-`export` Script (`inferModuleStrictArguments: false`, #6988).
+
+## Regression proof (permanent tests)
+
+- `tests/issue-4492-wave5.test.ts` (R1 CONTROL; 4 promoted pins)
+- `tests/issue-4655.test.ts` (`test262/test/built-ins/Array/prototype/toString/S15.4.4.2_A1_T4.js`; 4 promoted pins)
+- `tests/issue-1277.test.ts`
+- `tests/issue-2176-template-literal-interp.test.ts`
+- `tests/issue-4076-borrowed-proto-this-brand.test.ts`
+- `tests/issue-2875-slice3-search.test.ts`, `tests/issue-2875-slice-b-undefined-roc.test.ts`,
+  `tests/issue-2742-standalone-carveout.test.ts`
+- `tests/issue-4489.test.ts`, `tests/issue-4491-wave4.test.ts` (sentinels)
