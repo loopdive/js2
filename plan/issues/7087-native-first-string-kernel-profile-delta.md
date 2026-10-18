@@ -1,7 +1,7 @@
 ---
 id: 7087
 title: "Native-first string kernel is 20x slower than host-assisted in the S6 performance gate"
-status: ready
+status: done
 created: 2026-10-18
 updated: 2026-10-18
 priority: high
@@ -53,7 +53,7 @@ The same run makes the scope narrow:
 Full measurements and reproduction commands are in
 `plan/audit/5385-native-first-perf-evidence-20261018.json`.
 
-## Working hypothesis, not yet a root-cause claim
+## Root cause — confirmed from optimized Wasm
 
 The source is the counted append loop optimized by #1004:
 
@@ -63,38 +63,87 @@ for (let i = 0; i < 1000; i++) str = str + "abcde";
 return str.length;
 ```
 
-#1004 lowers the loop to one `repeat` plus one concat. The measured host row is
-only ~60 ns, which strongly suggests the host-assisted provider and O4 pipeline
-remove or precompute more of the `repeat/concat/length` chain than the native
-string provider. That must be proven from the optimized Wasm/IR before choosing
-between a compiler fix and a benchmark-validity fix; the timing alone does not
-identify which stage owns the delta.
+#1004 lowers the loop to one `repeat` plus one concat. Neither profile
+constant-folded the function to `5000`:
 
-## Required investigation
+- Host-assisted O4 still calls `env.string_repeat("abcde", 1000)`, then
+  `wasm:js-string.concat` and `wasm:js-string.length`. V8 can retain the
+  repeated value as a rope and answer its UTF-16 length without copying it.
+- Native-first O4 still ran `__str_repeat`, concat and the native length-field
+  read. The old native repeat kernel doubled its rope until it reached 5,120
+  code units, then called `substring(0, 5000)`. Native substring flattened and
+  copied the rope, so every benchmark invocation performed O(result length)
+  work solely to discard the characters and read the stored length.
 
-1. Capture the pre- and post-`wasm-opt -O4` bodies for `bench_string` in both
-   profiles and count the remaining repeat, concat, allocation and length work.
-2. Prove whether both rows execute equivalent dynamic work. If host-assisted
-   folds the fixed result to `5000`, determine whether native-first can apply
-   the same legal fold. If the benchmark no longer measures string work in one
-   profile, repair the benchmark and remeasure both profiles instead of
-   optimizing toward an invalid control.
-3. Check the #1004 counted-append transform and the native `__str_repeat` /
-   concat / length lowering before changing generic string helpers.
-4. Re-run the exact #5385 kernel commands on Node >=24 and update the audit
-   evidence. Keep the npm package rows as controls so a microkernel win cannot
-   hide an application regression.
+The inputs, result and observable string operations were therefore equivalent;
+the 20.38x delta was real provider work, not measurement noise or a benchmark
+that had ceased to execute on one side.
+
+## Fix
+
+`src/stdlib/strings.ts` now builds an exact-length rope by binary decomposition:
+it halves the already-normalized integer count, doubles the current piece, and
+appends only the set-bit pieces. The result has the requested length directly,
+so no trailing substring or flatten/copy is needed. The algorithm remains
+O(log count) in concat nodes and preserves the existing empty/count-zero arms.
+
+This is deliberately a native semantic-core fix, not a boundary special case:
+
+- the generic JS `repeat` adapter still owns `ToIntegerOrInfinity`, negative /
+  infinity `RangeError`, empty-receiver handling and the result-size bound;
+- the #1004 counted path still carries its authenticated exact-trip-count
+  provenance and uses the same provider ABI;
+- host-assisted `wasm:js-string`, JS value wrapping/unwrapping and live
+  host-backed boundary objects are unchanged;
+- no JS machinery was moved into native objects and no boundary value is copied
+  merely to obtain this speedup.
+
+`tests/issue-7087-native-string-repeat-kernel.test.ts` pins the exact-rope
+shape (`f64.floor`, two concat sites, no substring call) and executes dynamic
+counts 0, 1, 2, 3, 7, 32 and 1000. The existing #1004 and typed-repeat suites
+continue to authenticate the prepared provider and error semantics.
+
+## Post-fix evidence
+
+Measured sequentially at implementation commit
+`5b36f318c5e9a5b1a9e11da6b924d64f5be8d1b2` with the same macOS arm64,
+Node 24.4.1 / V8 13.6.233.10-node.17, O4/TurboFan, two warmups and nine measured
+rounds:
+
+| kernel | host-assisted | native-first | native / host | verdict |
+| --- | ---: | ---: | ---: | --- |
+| fib | 2347.651 us | 2340.268 us | 0.997x | pass |
+| loop | 86.057 us | 85.413 us | 0.993x | pass |
+| string | 0.06365 us | 0.09078 us | **1.426x** | **pass** |
+| array | 10.5734 us | 10.5358 us | 0.996x | pass |
+
+The string result remains `5000`; native-first is now ~25.6x faster than its
+plain-JS control (0.09078 us versus 2.32584 us) and below #6708's 2.0x blocker
+threshold. The other kernels are unchanged within run variance.
+
+The four native-first npm controls were recompiled and remeasured from the same
+commit. Each requested and verified O4 and matched its native-oracle checksum:
+
+| workload | native-first | checksum | versus recorded host |
+| --- | ---: | ---: | ---: |
+| acorn | 67,060.692 us | 422 / 422 | 27.24x faster |
+| cookie | 19.651 us | 1 / 1 | 9.09x faster |
+| redux | 2.068 us | 7 / 7 | 18.18x faster |
+| hono | 2.703 us | 9 / 9 | 36.53x faster |
+
+Exact values, commands and environment are appended to
+`plan/audit/5385-native-first-perf-evidence-20261018.json`.
 
 ## Acceptance criteria
 
-- [ ] Optimized IR/Wasm proves the exact source of the profile delta; the issue
+- [x] Optimized IR/Wasm proves the exact source of the profile delta; the issue
       records whether it is real runtime work or benchmark constant folding.
-- [ ] The benchmark executes equivalent work in both profiles, or the compiler
+- [x] The benchmark executes equivalent work in both profiles, or the compiler
       gives native-first the same semantics-preserving optimization.
-- [ ] Native-first/host-assisted median runtime is <=2.0x in the repaired
+- [x] Native-first/host-assisted median runtime is <=2.0x in the repaired
       nine-round kernel harness on Node >=24.
-- [ ] `bench_string()` still returns `5000` in JS, host-assisted and
+- [x] `bench_string()` still returns `5000` in JS, host-assisted and
       native-first profiles.
-- [ ] The acorn, cookie, redux and hono native-first lanes remain measured with
+- [x] The acorn, cookie, redux and hono native-first lanes remain measured with
       matching checksums; no package lane regresses to an error state.
-- [ ] #5385 and its checked-in audit artifact carry the post-fix measurement.
+- [x] #5385 and its checked-in audit artifact carry the post-fix measurement.

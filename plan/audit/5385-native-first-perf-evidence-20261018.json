@@ -214,10 +214,146 @@
       "verdict": "native-first-faster"
     }
   ],
+  "postFix": {
+    "issue": 7087,
+    "implementationCommit": "5b36f318c5e9a5b1a9e11da6b924d64f5be8d1b2",
+    "measuredAt": "2026-10-18",
+    "rootCause": "The native __str_repeat kernel doubled its rope beyond the requested length and then substring-flattened/copies the complete 5,000-code-unit result. The host provider retained an engine rope and answered length without that copy. Neither profile constant-folded bench_string to 5000.",
+    "fix": "Build the shared native repeat result as an exact-length rope by binary decomposition, preserving the existing normalized-count provider ABI, throwing adapter, counted-loop provenance and JS boundary adapter.",
+    "methodology": {
+      "environment": {
+        "platform": "darwin-arm64",
+        "nodeVersion": "v24.4.1",
+        "v8Version": "13.6.233.10-node.17"
+      },
+      "execution": "Host and native-first kernel profiles, then each native-first npm control, were measured sequentially to avoid CPU contention.",
+      "optimizationLevel": 4,
+      "kernelWarmupRounds": 2,
+      "kernelMeasuredRounds": 9,
+      "commands": [
+        "node --experimental-wasm-stringref --experimental-wasm-custom-descriptors scripts/generate-playground-benchmark-sidebar.mjs --kernels-only --output=.tmp/issue-7087/host-post-fix.json",
+        "node --experimental-wasm-stringref --experimental-wasm-custom-descriptors scripts/generate-playground-benchmark-sidebar.mjs --semantic-providers=native-first --kernels-only --output=.tmp/issue-7087/native-first-post-fix.json",
+        "node --experimental-wasm-exnref --import tsx scripts/generate-npm-compat-report.mjs --only <acorn|cookie|redux|hono> --no-write --perf-only --lane js-host-native --partial-output .tmp/issue-7087/<package>-native-first-post-fix.json"
+      ]
+    },
+    "kernels": [
+      {
+        "name": "fib",
+        "host": {
+          "wasmUs": 2347.6508449612397,
+          "wasmStdUs": 7.672303240397353
+        },
+        "nativeFirst": {
+          "wasmUs": 2340.2684108527123,
+          "wasmStdUs": 5.565771469556822
+        },
+        "nativeFirstOverHost": 0.9968553952030932,
+        "verdict": "pass"
+      },
+      {
+        "name": "loop",
+        "host": {
+          "wasmUs": 86.0569466324201,
+          "wasmStdUs": 0.4657331125644833
+        },
+        "nativeFirst": {
+          "wasmUs": 85.4128626279863,
+          "wasmStdUs": 0.3916806477050364
+        },
+        "nativeFirstOverHost": 0.9925156070527937,
+        "verdict": "pass"
+      },
+      {
+        "name": "string",
+        "host": {
+          "wasmUs": 0.06364867124907446,
+          "wasmStdUs": 0.0010836704981144166,
+          "jsUs": 2.3185047636756457
+        },
+        "nativeFirst": {
+          "wasmUs": 0.09077879813237837,
+          "wasmStdUs": 0.0006993219253779632,
+          "jsUs": 2.325840104580524
+        },
+        "nativeFirstOverHost": 1.4262481266440958,
+        "nativeFirstOverJs": 0.03903054174121009,
+        "result": 5000,
+        "verdict": "pass"
+      },
+      {
+        "name": "array",
+        "host": {
+          "wasmUs": 10.573372388835148,
+          "wasmStdUs": 0.03585600739230677
+        },
+        "nativeFirst": {
+          "wasmUs": 10.53582026425391,
+          "wasmStdUs": 0.09307163519686382
+        },
+        "nativeFirstOverHost": 0.996448425043566,
+        "verdict": "pass"
+      }
+    ],
+    "npmCompatNativeFirstControls": [
+      {
+        "name": "acorn",
+        "wasmUs": 67060.69160000043,
+        "wasmStdUs": 1570.2623311194868,
+        "binaryBytes": 2079921,
+        "compileDurationMs": 52902.988958,
+        "expectedChecksum": 422,
+        "actualChecksum": 422,
+        "optimizationRequested": true,
+        "optimizationVerified": true,
+        "hostOverNativeFirst": 27.238590990015773,
+        "verdict": "measured-checksum-match"
+      },
+      {
+        "name": "cookie",
+        "wasmUs": 19.651354979444605,
+        "wasmStdUs": 2.255597142660782,
+        "binaryBytes": 177757,
+        "expectedChecksum": 1,
+        "actualChecksum": 1,
+        "optimizationRequested": true,
+        "optimizationVerified": true,
+        "hostOverNativeFirst": 9.092549880254385,
+        "verdict": "measured-checksum-match"
+      },
+      {
+        "name": "redux",
+        "wasmUs": 2.067997555733487,
+        "wasmStdUs": 0.04395894832184214,
+        "binaryBytes": 570993,
+        "compileDurationMs": 8883.397542,
+        "expectedChecksum": 7,
+        "actualChecksum": 7,
+        "optimizationRequested": true,
+        "optimizationVerified": true,
+        "hostOverNativeFirst": 18.176504019383476,
+        "verdict": "measured-checksum-match"
+      },
+      {
+        "name": "hono",
+        "wasmUs": 2.703103542415712,
+        "wasmStdUs": 0.34917620066477495,
+        "binaryBytes": 737975,
+        "compileDurationMs": 15815.973333000002,
+        "expectedChecksum": 9,
+        "actualChecksum": 9,
+        "optimizationRequested": true,
+        "optimizationVerified": true,
+        "hostOverNativeFirst": 36.527746970899244,
+        "verdict": "measured-checksum-match"
+      }
+    ],
+    "s6PerformanceBarMet": true,
+    "summary": "The exact-rope native repeat kernel reduces the string delta from 20.38x to 1.426x while all four kernels pass and all four npm controls remain optimized, measured and checksum-correct."
+  },
   "conclusion": {
     "performanceEvidenceComplete": true,
-    "s6PerformanceBarMet": false,
-    "summary": "Three kernels are at parity and all four measured npm workloads are substantially faster under native-first, but the isolated string kernel is 20.38x slower than host-assisted and therefore blocks the #6708 performance bar pending #7087.",
-    "architectureImplication": "The measurements do not support retaining host-assisted semantics as the general execution model. They support one native semantic core while preserving the already-planned js-string accelerator as an explicit, narrow opt-in until the string-profile delta is understood."
+    "s6PerformanceBarMet": true,
+    "summary": "The initial run found one 20.38x string blocker; #7087's post-fix run reduces it to 1.426x. All four kernels now pass the #6708 threshold and all four npm controls remain substantially faster, optimized and checksum-correct under native-first.",
+    "architectureImplication": "The measurements support one native semantic core with JS-host interop retained at the explicit value boundary. wasm:js-string remains useful as a named opt-in accelerator, not as justification for a second implicit semantic/object model."
   }
 }
