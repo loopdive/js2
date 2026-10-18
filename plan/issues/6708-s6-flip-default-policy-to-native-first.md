@@ -456,3 +456,15 @@ Landing handoff: merge #6672, then observe the post-merge native-first lane
 and npm-compat refresh already required by the acceptance list. S7 deletion
 remains #6979; it must remove host semantics without weakening the boundary
 object/value adapter or the named accelerator contract.
+
+The first #6672 merge-group run found one final pre-S6 implicit-default caller:
+the #1203/#2787 differential harness. That harness intentionally measures the
+Node-host compatibility lane and keeps a committed 116/120 host baseline, but
+its compile calls omitted `semanticProviders`. Under S6 they therefore ran the
+native-first family and the queue reported nine false delta regressions. The
+harness now selects `host-assisted` explicitly in both optimized and
+unoptimized modes; #2796's host-path regression helpers are pinned the same
+way. Local replay restored 116/120 with zero new regressions, identical `-O3`
+outcomes, and 7/7 focused #2787/#2796 tests. No baseline was widened. This is
+the intended boundary: host machinery remains available only when a host lane
+names it, while omitted/default product compilation stays native-first.
