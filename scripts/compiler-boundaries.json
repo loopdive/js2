@@ -10224,6 +10224,14 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/object-model/object-spread-extern-source.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Pure AST + function-local slot predicate for the object-literal spread lowering (#7051); move with the object-literal struct assembly."
+    },
+    {
       "path": "src/codegen/struct-carrier-growth.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",

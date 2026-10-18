@@ -5,6 +5,12 @@ import { getLocalType } from "./context/locals.js";
 import { staticIntegerRange } from "../ir/analysis/static-numeric-range.js";
 import { withSpeculativeCompile } from "./context/speculative.js";
 
+/** (#7014) Is `expression` a range-proven non-negative i32 (a dense array index)? */
+export function isRangeProvenArrayIndex(ctx: CodegenContext, expression: ts.Expression): boolean {
+  const range = staticIntegerRange(ctx, expression);
+  return range !== undefined && range.min >= 0 && range.max <= 0x7fffffff;
+}
+
 /** Emit a range-proven integer expression without f64 conversions/helpers. */
 export function tryEmitStaticI32Expression(
   ctx: CodegenContext,
