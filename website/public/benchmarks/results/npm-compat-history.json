@@ -30583,6 +30583,154 @@
           }
         }
       }
+    },
+    {
+      "generatedAt": "2026-10-18T19:43:58.910Z",
+      "sourceRevision": "99e6e8908d0ad9c0f58ae9585f38b7fd81c51e8f",
+      "optimizationLevels": {
+        "js-host": 4,
+        "js-host-native": 4,
+        "js-host-assisted": 4,
+        "standalone": 4
+      },
+      "packages": {
+        "uuid": {
+          "jsHostNative": {
+            "dynamic": 0.11177989611854997
+          },
+          "jsHost": {
+            "dynamic": 0.11177989611854997
+          },
+          "standalone": {
+            "static": 0.21037971050762946,
+            "dynamic": 0.20079291916293707
+          }
+        },
+        "acorn": {
+          "jsHostNative": {
+            "dynamic": 0.06524558116749468
+          },
+          "jsHost": {
+            "dynamic": 0.06524558116749468
+          },
+          "standalone": {
+            "static": 291815.85756891477,
+            "dynamic": 0.0766552879253772
+          }
+        },
+        "cookie": {
+          "jsHostNative": {
+            "dynamic": 0.012228256436276069
+          },
+          "jsHost": {
+            "dynamic": 0.012228256436276069
+          },
+          "standalone": {
+            "static": 648.0465459030053,
+            "dynamic": 0.09140503969125624
+          }
+        },
+        "lodash": {
+          "jsHostNative": {},
+          "jsHost": {},
+          "standalone": {
+            "static": 0.05129532070234277,
+            "dynamic": 0.03820674762158178
+          }
+        },
+        "prettier": {
+          "jsHostNative": {
+            "dynamic": 0.0169814370374783
+          },
+          "jsHost": {
+            "dynamic": 0.0169814370374783
+          },
+          "standalone": {
+            "static": 0.8701696705392208,
+            "dynamic": 0.035584771569574715
+          }
+        },
+        "clsx": {
+          "jsHostNative": {
+            "dynamic": 0.028213591946865246
+          },
+          "jsHost": {
+            "dynamic": 0.028213591946865246
+          },
+          "standalone": {
+            "static": 17.374025462769254,
+            "dynamic": 0.1668957828040689
+          }
+        },
+        "marked": {
+          "jsHostNative": {
+            "dynamic": 0.003993002736492609
+          },
+          "jsHost": {
+            "dynamic": 0.003993002736492609
+          },
+          "standalone": {
+            "static": 0.0017709421373784293,
+            "dynamic": 0.0020709997919301486
+          }
+        },
+        "hono": {
+          "jsHostNative": {
+            "dynamic": 0.11784988605696715
+          },
+          "jsHost": {
+            "dynamic": 0.11784988605696715
+          },
+          "standalone": {
+            "static": 0.10353547788063158,
+            "dynamic": 0.10669219356405789
+          }
+        },
+        "lodash-es": {
+          "jsHostNative": {
+            "dynamic": 0.027159353420512154
+          },
+          "jsHost": {
+            "dynamic": 0.027159353420512154
+          },
+          "standalone": {
+            "static": 0.07339887008089731,
+            "dynamic": 0.045128445168655835
+          }
+        },
+        "redux": {
+          "jsHostNative": {
+            "dynamic": 0.04451710352693045
+          },
+          "jsHost": {
+            "dynamic": 0.04451710352693045
+          },
+          "standalone": {
+            "static": 0.06223599173304215,
+            "dynamic": 0.06094756725568262
+          }
+        },
+        "moment": {
+          "jsHostNative": {
+            "dynamic": 0.002542000979762909
+          },
+          "jsHost": {
+            "dynamic": 0.002542000979762909
+          },
+          "standalone": {
+            "static": 0.0014870393526200142,
+            "dynamic": 0.0014265636470300257
+          }
+        },
+        "styled-components": {
+          "jsHostNative": {},
+          "jsHost": {},
+          "standalone": {
+            "static": 0.5354786123490225,
+            "dynamic": 0.021882524117551694
+          }
+        }
+      }
     }
   ]
 }
