@@ -431,6 +431,14 @@ neighboring Temporal/provider checks remain normal passing tests. The repair
 belongs to native class-value dispatch, not to S6 policy selection or a new
 host-semantic fallback.
 
+The required #3552 guard suite then exposed three untouched guards whose
+prose already scoped them to the JS host/legacy lane but whose compile calls
+still omitted provider selection: #3471 host-lane polymorphic inference,
+#3565 designed demote-to-legacy diagnostics, and #6789's JS-host trampoline
+matrix. They now select `host-assisted` explicitly (with #3565's standalone
+controls left native). Every behavior and diagnostic assertion is unchanged;
+this is lane normalization, not delisting or weakening the required guards.
+
 The 2026-10-18 npm-compat refresh on main made the last S6 product-bar row
 directly auditable: Lit was still `measured` under host-assisted but the stale
 `jsHostNative` record was `runtime-error`. The exact S6 head was therefore
