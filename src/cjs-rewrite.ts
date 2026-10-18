@@ -247,8 +247,71 @@ function tryRewriteSingleModuleExportsAssignment(sf: ts.SourceFile): RequireRewr
   return {
     start: candidate.statement.getStart(sf),
     end: candidate.statement.end,
-    text: `export default ${candidate.assignment.right.getText(sf)};`,
+    text: `export default ${candidate.assignment.right.getText(sf)};${namedExportsOf(sf, candidate.assignment.right)}`,
   };
+}
+
+/**
+ * (#1277) `module.exports = { inc, times2: _double }` names its exports. The
+ * CJS export walker in `declarations.ts` (pattern 1c) surfaced each
+ * function-valued property as its own Wasm export, but since the single-
+ * assignment rewrite above (ad543a660e) the walker only ever sees
+ * `export default { … }`, so `inc` / `times2` silently stopped being exported.
+ * Importers lost the names too: a multi-file `const { Config } =
+ * require("./config.js")` (rewritten to a named import) failed type-checking
+ * with TS2614 against a default-only module (eslint `lib/config/config.js`,
+ * `lib/shared/deep-merge-arrays.js`). Re-state the names as an ESM named-export
+ * clause — the names Node's CommonJS named-export detection gives importers —
+ * for every shorthand / `key: identifier` property whose identifier is a
+ * TOP-LEVEL declaration of this file (function, class or variable, including
+ * a destructured `const { Linter } = require(…)` — eslint's `lib/api.js`).
+ * The Wasm export walker still surfaces only the function-valued ones, as
+ * pattern 1c did. Anything else (computed keys, methods, other values,
+ * `default`) keeps the default-export-only rewrite.
+ */
+/** Every name a (possibly destructuring) binding introduces. */
+function addBindingNames(name: ts.BindingName, into: Set<string>): void {
+  if (ts.isIdentifier(name)) {
+    into.add(name.text);
+    return;
+  }
+  for (const element of name.elements) {
+    if (ts.isBindingElement(element)) addBindingNames(element.name, into);
+  }
+}
+
+function namedExportsOf(sf: ts.SourceFile, value: ts.Expression): string {
+  if (!ts.isObjectLiteralExpression(value)) return "";
+  const declared = new Set<string>();
+  for (const statement of sf.statements) {
+    if ((ts.isFunctionDeclaration(statement) || ts.isClassDeclaration(statement)) && statement.name) {
+      declared.add(statement.name.text);
+    } else if (ts.isVariableStatement(statement)) {
+      for (const declaration of statement.declarationList.declarations) {
+        addBindingNames(declaration.name, declared);
+      }
+    }
+  }
+  const specifiers: string[] = [];
+  const seen = new Set<string>();
+  for (const property of value.properties) {
+    let key: string | undefined;
+    let local: string | undefined;
+    if (ts.isShorthandPropertyAssignment(property) && property.objectAssignmentInitializer === undefined) {
+      key = local = property.name.text;
+    } else if (
+      ts.isPropertyAssignment(property) &&
+      ts.isIdentifier(property.name) &&
+      ts.isIdentifier(property.initializer)
+    ) {
+      key = property.name.text;
+      local = property.initializer.text;
+    }
+    if (!key || !local || key === "default" || seen.has(key) || !declared.has(local)) continue;
+    seen.add(key);
+    specifiers.push(key === local ? key : `${local} as ${key}`);
+  }
+  return specifiers.length === 0 ? "" : `\nexport { ${specifiers.join(", ")} };`;
 }
 
 /** True for a script that mutates the ambient CommonJS `module.exports`. */
