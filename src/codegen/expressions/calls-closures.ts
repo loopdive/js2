@@ -8,7 +8,7 @@
  * - tryExternClassMethodOnAny — resolve method call on any-typed receiver via extern classes
  */
 import { tryEmitDynamicToPrimitiveMethodCall } from "./to-primitive-method-call.js"; // (#6775 S5)
-import { guardedExternRefResultBridge } from "./dispatch-extern-result-bridge.js";
+import { liveResultBridge, reserveScalarResultBoxers } from "./dispatch-extern-result-bridge.js";
 import { standaloneMissingStringArgRead, standaloneRefToExternBridge } from "./dispatch-extern-arg-bridge.js";
 import { tryEmitFunctionTypedPropertyCall } from "./function-typed-property-call.js";
 import { dispatchVecResultBridge, reserveDispatchVecResultMaterializer } from "./dispatch-vec-result-bridge.js";
@@ -563,10 +563,10 @@ function emitRootFuncrefDispatch(
       coerceType(ctx, fctx, fc.returnType!, expectedReturn!);
       fctx.body = saved;
     } else if (matchedDispatch && !valTypesMatch(fc.returnType!, expectedReturn!)) {
-      // (#6684) A live externref result survives a guarded downcast (no-host).
+      // (#6684 / #7025) A live result survives on the no-host lanes: boxed or guarded-downcast.
       const guarded =
         dispatchVecResultBridge(ctx, fc.returnType!, expectedReturn!) ?? // (#6704) array carrier → expected vec
-        guardedExternRefResultBridge(ctx, fctx, fc.returnType!, expectedReturn!);
+        liveResultBridge(ctx, fctx, fc.returnType!, expectedReturn!);
       if (guarded !== null) fcCallBody.push(...guarded);
       else fcCallBody.push({ op: "drop" }, ...defaultValueInstrs(expectedReturn!));
     }
@@ -2366,6 +2366,7 @@ export function compileCallableElementAccessCall(
 
   const argLocals = collectPropertyCallArgLocals(ctx, fctx, expr, closureInfo.paramTypes);
   if (bind) emitObjectLiteralMethodThisInstall(ctx, fctx, bind);
+  reserveScalarResultBoxers(ctx, fctx, funcCandidates, expectedReturn); // (#7025)
   emitRootFuncrefDispatch(
     ctx,
     fctx,

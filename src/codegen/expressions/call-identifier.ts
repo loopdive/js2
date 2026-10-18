@@ -8,7 +8,7 @@
 // via funcMap. It returns `undefined` when the callee is not one of these
 // identifier cases, so the caller in calls.ts continues its dispatch chain.
 // Moved verbatim: the emitted Wasm is byte-identical.
-import { guardedExternRefResultBridge } from "./dispatch-extern-result-bridge.js";
+import { liveResultBridge, liveResultBridgeable } from "./dispatch-extern-result-bridge.js";
 import { ts } from "../../ts-api.js";
 import { widenJsDefaultGuessSlot } from "../js-default-param-type-guess.js";
 import {
@@ -2750,7 +2750,8 @@ function compileBoundIdentifierCall(
                 canExportCandidateReferenceResult(info.funcTypeIdx),
               ) === null &&
               !declaredRefSubtypeOf(info.returnType, expectedReturn) &&
-              !canProjectImplementationReturn(info.returnType, expectedReturn)
+              !canProjectImplementationReturn(info.returnType, expectedReturn) &&
+              !liveResultBridgeable(ctx, info.returnType, expectedReturn) // (#7025)
             ) {
               paramsMatch = false;
             }
@@ -3496,8 +3497,7 @@ function compileBoundIdentifierCall(
                     true,
                     canExportCandidateReferenceResult(fc.funcTypeIdx),
                   );
-                  const guardedRefBridge =
-                    bridge ?? guardedExternRefResultBridge(ctx, fctx, fc.returnType!, expectedReturn!);
+                  const guardedRefBridge = bridge ?? liveResultBridge(ctx, fctx, fc.returnType!, expectedReturn!);
                   if (guardedRefBridge !== null) {
                     fcCallBody.push(...guardedRefBridge);
                   } else {
