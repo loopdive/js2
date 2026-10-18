@@ -9,6 +9,7 @@
 // identifier cases, so the caller in calls.ts continues its dispatch chain.
 // Moved verbatim: the emitted Wasm is byte-identical.
 import { guardedExternRefResultBridge } from "./dispatch-extern-result-bridge.js";
+import { recordRuntimeEvalLiveCallSites, runtimeEvalLiveCallFastPathEligible } from "../runtime-eval-boundary.js";
 import { ts } from "../../ts-api.js";
 import { widenJsDefaultGuessSlot } from "../js-default-param-type-guess.js";
 import {
@@ -279,6 +280,20 @@ function emitStringBuiltinNumberResult(ctx: CodegenContext, fctx: FunctionContex
     return { kind: "ref", typeIdx: ctx.anyStrTypeIdx };
   }
   return { kind: "externref" };
+}
+
+/** (#6990) Live calls deferred to the direct-call + trampoline lowering. */
+const liveCallFastPath = new WeakSet<ts.CallExpression>();
+
+/**
+ * (#6990) Defer an eligible live call: it compiles as a plain direct call and is
+ * retargeted at finalize. A deferred call is never inlined — it needs a real
+ * `call` to retarget (the `inlinableFunctions` lookup skips it).
+ */
+function deferLiveCallToTrampoline(ctx: CodegenContext, fctx: FunctionContext, expr: ts.CallExpression): boolean {
+  if (!runtimeEvalLiveCallFastPathEligible(ctx, fctx, expr)) return false;
+  liveCallFastPath.add(expr);
+  return true;
 }
 
 function hasLiveFunctionBinding(ctx: CodegenContext, fctx: FunctionContext, name: string): boolean {
@@ -705,7 +720,21 @@ export function compileIdentifierCall(
 ): InnerResult | undefined {
   // (#1058) Resolve a same-named top-level function by declaration, not by the
   // graph-wide bare-name binding (see declaration-bound-callee.ts).
-  return withDeclarationBoundCallee(ctx, expr, () => compileBoundIdentifierCall(ctx, fctx, expr, expectedType));
+  return withDeclarationBoundCallee(ctx, expr, () => {
+    const body = fctx.body;
+    const start = body.length;
+    // The set is keyed by AST node, which an incremental compiler reuses across
+    // compiles: only a deferral made by THIS compile of the site may count.
+    liveCallFastPath.delete(expr);
+    const result = compileBoundIdentifierCall(ctx, fctx, expr, expectedType);
+    if (!liveCallFastPath.delete(expr)) return result;
+    // (#6990) Retarget the direct call to the live-call trampoline at finalize;
+    // if the plain path emitted no direct call, restore the inline live call.
+    const name = (expr.expression as ts.Identifier).text;
+    if (fctx.body === body && recordRuntimeEvalLiveCallSites(ctx, fctx, name, start) > 0) return result;
+    if (fctx.body === body) body.length = start;
+    return tryEmitInlineDynamicCall(ctx, fctx, expr, true) ?? result;
+  });
 }
 
 function compileBoundIdentifierCall(
@@ -1688,7 +1717,7 @@ function compileBoundIdentifierCall(
     // the flag-gated outer-binding local. A direct funcMap call would instead
     // pin whichever declaration happened to compile last, even when its branch
     // did not execute. Locally-shadowed names keep their local resolution.
-    if (hasLiveFunctionBinding(ctx, fctx, funcName)) {
+    if (hasLiveFunctionBinding(ctx, fctx, funcName) && !deferLiveCallToTrampoline(ctx, fctx, expr)) {
       const liveCall = tryEmitInlineDynamicCall(ctx, fctx, expr, true);
       if (liveCall !== null) return liveCall;
     }
@@ -3725,7 +3754,7 @@ function compileBoundIdentifierCall(
     }
 
     // Check if this function is eligible for call-site inlining
-    const inlineInfo = ctx.inlinableFunctions.get(funcName);
+    const inlineInfo = liveCallFastPath.has(expr) ? undefined : ctx.inlinableFunctions.get(funcName);
     if (
       inlineInfo &&
       !isModuleInitChunkFunctionContext(fctx) &&
