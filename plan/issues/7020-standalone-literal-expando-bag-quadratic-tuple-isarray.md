@@ -1,10 +1,11 @@
 ---
 id: 7020
 title: "standalone: cookie's 63,528-test stringify file times out — expando writes on closed object literals (`positive.not = {…}` in every expect()) land in the slotless `$ClosurePropEntry` registry, a never-pruned list walked by `ref.eq` (≈60% of runtime, quadratic); and once it runs, `Array.isArray` is false for tuple-typed rows read through `any`, so `it.each(Array<[string,string,string]>)` passes the whole tuple as `%s`"
-status: in-progress
+status: done
 sprint: current
 created: 2026-10-16
-updated: 2026-10-16
+updated: 2026-10-18
+completed: 2026-10-18
 priority: high
 horizon: m
 feasibility: medium
@@ -125,3 +126,46 @@ for a defect that only literals receiving expando writes have. Taken instead:
 
 cookie stringify-cookie.spec.ts produces a standalone result inside the
 deadline and its BMP rows pass; gc binaries byte-identical.
+
+## Resolution
+
+Both findings fixed as revised above (`src/codegen/anon-expando-bag-slot.ts`,
+`src/codegen/tuple-array-carrier.ts`; one hook line each in `literals.ts`,
+`expressions/assignment.ts`, `closure-props.ts`, `index.ts`,
+`object-runtime.ts`).
+
+Measured (2026-10-18, this box, load 15–35):
+
+| | before | after |
+| --- | ---: | ---: |
+| cookie standalone lane | 148 / 63,740 | **63,674 / 63,740** |
+| cookie standalone lane wall time (whole run) | 440 s | 96 s |
+| `stringify-cookie.spec.ts` | 0 / 63,528 (deadline) | 63,526 / 63,528 |
+| 2,000 → 4,000 `expect()`-shaped calls | 125 ms → 1,428 ms | 15 ms → 10 ms (20,000: 31 ms) |
+
+- gc (JS-host) binaries byte-identical: sha256 of four fixtures (expando
+  literal, expando semantics, tuple-through-any, JS array literals) identical
+  base vs fix. Standalone binaries of two test262 propertyHelper fixtures
+  (`Array.prototype.map` length/name) are also unchanged (its literals are
+  widened by the shape pre-pass, so they never reach the dynamic write).
+- Scoped standalone test262 (649 rows: every file whose source matches
+  `var|let|const X = {` … `X.p =`, plus `Array/isArray`, `Array/prototype/
+  concat`, `Array/prototype/flat`): fix 567 pass; all 82 non-pass rows re-run on
+  the parent with identical status and reason — 0 regressions.
+- Other lanes on the fix: cookie JS-host 63,740 / 63,740 (unchanged);
+  standalone uuid 50/75 and redux 66/82 (= the 2026-10-18 lane numbers),
+  lodash 59/62 (lane number 55/62; not A/B'd, so not attributed to this fix).
+- Tuple probe (through `any`): `Array.isArray` 0 → 1, `[].concat(t)` length 1 →
+  3, `[t, t].flat()` 2 → 6 (both now spec-correct); `length`, index reads,
+  `slice.call`, `join.call`, `map.call` unchanged.
+
+Residuals (pre-existing, unchanged by this fix, measured on the parent too):
+
+- cookie: 2 stringify + 1 parse + 1 stringify-set rows need Node's `Buffer`;
+  56 parse/parse-set snapshot mismatches; 6 stringify-set throw/equality rows.
+- `Object.keys` / `for…in` / `JSON.stringify` / spread of a literal do not list
+  its expando keys (`{a, f}` + `o.extra = 1` → `["a","f"]`), and
+  `Object.prototype.toString` / `JSON.stringify` / `String()` / `for…of` on a
+  tuple read through `any` still treat it as a plain object.
+- `tests/issue-4194-closed-struct-computed-write.test.ts`
+  (`computedWriteCtorField`) fails on the parent as well.
