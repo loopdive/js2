@@ -114,7 +114,15 @@ function compileExternMethodCall(
   callExpr: ts.CallExpression,
 ): InnerResult | undefined {
   const receiverType = ctx.checker.getTypeAtLocation(propAccess.expression);
-  const className = hostMapCarrierClassName(ctx, receiverType) ?? receiverType.getSymbol()?.name;
+  const declaredClassName = hostMapCarrierClassName(ctx, receiverType) ?? receiverType.getSymbol()?.name;
+  // (#7058) `ReadonlyMap` / `ReadonlySet` are type-only VIEWS of the same
+  // native `$Map` / `$Set` (JSDoc `@type {ReadonlyMap<…>}` on a `new Map(…)`,
+  // stylelint's reference/keywords.mjs). Without this the native dispatch
+  // below was skipped and `m.values()` threw "called value is not a function".
+  const className =
+    ctx.nativeStrings && (declaredClassName === "ReadonlyMap" || declaredClassName === "ReadonlySet")
+      ? declaredClassName.slice("Readonly".length)
+      : declaredClassName;
   const methodName = propAccess.name.text;
 
   // (#1103a) Native Map method dispatch in standalone / nativeStrings mode.

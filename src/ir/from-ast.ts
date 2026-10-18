@@ -39,6 +39,7 @@ import { IR_STRING_COMPARE_FN } from "./runtime-symbols.js";
 import { IR_ASYNC_CONSOLE_LOG_STRING_FN, IR_ASYNC_NUMBER_TO_STRING_FN } from "./async-semantic-runtime.js";
 import { ts, forEachChild } from "../ts-api.js";
 import { bodyWritesIdentifier, isWriteToConstDeclaration } from "./const-binding-writes.js"; // (#7014)
+import { isLogicalAssignmentFunctionTarget } from "./logical-assignment-name-targets.js";
 import { IR_CLOSURE_UNDEFINED } from "./core/closure-invocation-callables.js";
 import {
   fixedClosureParameters,
@@ -4350,10 +4351,13 @@ function lowerVariableDeclaration(d: ts.VariableDeclaration, isConst: boolean, c
       });
       return;
     }
-    // Fall through only for representations without a concrete ValType.
-    // A later assignment then remains an invariant: the mutation pre-pass
-    // promised that every mutable binding with a slot representation was
-    // materialized above.
+    // (#7014) No slot representation (`let a = { x: 1 }; a = { x: 2 }`): an
+    // SSA `local` here made the later write an untyped invariant that failed
+    // the compile once #5163 (7e0180ea63) claimed mutating statements. Demote.
+    demoteToLegacy(
+      "body-shape-rejected",
+      `ir/from-ast: mutable binding '${name}' (${describeIrType(inferred)}) has no slot representation in ${cx.funcName}`,
+    );
   }
   cx.scope.set(name, { kind: "local", value, type: inferred, ...(stringEncoding ? { stringEncoding } : {}) });
 }
@@ -6369,6 +6373,13 @@ function lowerPropertyAccess(expr: ts.PropertyAccessExpression, cx: LowerCtx): I
   // for a dynamic receiver, which — being a claim-then-demote the selector
   // never actually produces — was itself unreachable in a claimed function.
   if (recvType.kind === "dynamic") {
+    if (propName === "name" && isLogicalAssignmentFunctionTarget(expr.expression, cx.checker)) {
+      // (#7014) Legacy-only static `.name` fold — see logical-assignment-name-targets.ts.
+      demoteToLegacy(
+        "property-access-unsupported",
+        `ir/from-ast: .name of a logical-assignment NamedEvaluation target is a legacy static fold (${cx.funcName})`,
+      );
+    }
     const key = cx.builder.emitBox(cx.builder.emitStringConst(propName), irDynamic(JS_TAG_IDS.String));
     return cx.builder.emitDynMemberGet(recv, key);
   }
@@ -9943,6 +9954,14 @@ function lowerStringMethodCall(
         // String-style arg. Lower as IrType.string — resolver maps to
         // externref (host) or (ref $NativeString) (native) at lower time.
         argVal = lowerExpr(args[i]!, cx, { kind: "string" });
+        // (#7014) The hint does not convert: `"a1b".includes(1)` passed a raw
+        // f64 (invalid Wasm). ToString / IsRegExp are the legacy coercion's.
+        if (cx.builder.typeOf(argVal).kind !== "string") {
+          demoteToLegacy(
+            "method-call-unsupported",
+            `ir/from-ast: String.${methodName} arg ${i} is ${describeIrType(cx.builder.typeOf(argVal))}, needs ToString (${cx.funcName})`,
+          );
+        }
       }
     } else {
       demoteToLegacy(
