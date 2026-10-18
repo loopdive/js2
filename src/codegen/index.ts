@@ -190,6 +190,7 @@ import {
 } from "./multi-prepared-callable-orchestration.js";
 import { createCodegenContext } from "./context/create-context.js";
 import { expressionHasWidenedPropertyType, markIndexedPropertyStale } from "./strict-eq-stale-type.js";
+import { bindingHoldsStandaloneClassProto } from "./class-proto-object.js"; // (#7053)
 import { ProgramAbiSession, type PublishedProgramAbi } from "./program-abi-session.js";
 import { sourceFunctionHandleForDeclaration } from "./program-abi-source-callable-planning.js";
 import { stripHostBridgeExports } from "./host-bridge-exports.js";
@@ -500,6 +501,7 @@ import { inlineMemberSetCallSites } from "./member-set-inline-ic.js"; // (#4157)
 import { inlineCallDispatchSites } from "./call-dispatch-ic.js"; // (#4157) __call_m_* devirtualization
 import { inlineFlatStrCallSites } from "./flat-str-ic.js"; // (#4157) __str_flatten/__str_equals call-site fast paths
 import { brandCollidingShapeTypes, linkBrandRoleOf } from "./shape-brand.js";
+import { appendAnonExpandoBagSlots } from "./object-model/anon-expando-bag-slot.js"; // (#7020)
 import {
   addImport,
   addStringConstantGlobal,
@@ -2759,7 +2761,7 @@ function recordObservedIrOutcomes(
     existingOutcomes: ctx.irOutcomes,
   });
   if (nonExecutable) ctx.irOutcomes.push(nonExecutable);
-  for (const diagnostic of reconciled.diagnostics) reportErrorNoNode(ctx, diagnostic);
+  for (const diagnostic of reconciled.diagnostics) reportErrorNoNode(ctx, diagnostic, "warning"); // #7002 never fatal
 }
 
 const IR_IMPLICIT_PARAM_PROJECTION_BINARY_OPS = new Set<ts.SyntaxKind>([
@@ -5225,6 +5227,7 @@ function resolveAndRecordShapeStamping(ctx: CodegenContext): void {
 }
 
 function resolveAndRecordShapeBranding(ctx: CodegenContext): void {
+  appendAnonExpandoBagSlots(ctx); // (#7020) after all emission, before branding sees the layouts
   const affected = brandCollidingShapeTypes(ctx.mod, ctx.noBrandShapeTypes, linkBrandRoleOf(ctx));
   ctx.programAbiSession?.recordShapeBranding(affected);
 }
@@ -14305,6 +14308,7 @@ function hoistVarDecl(
       realmStructuralCarrier ||
       forInTargetForcesExternref ||
       transferredArrayLikeResult ||
+      bindingHoldsStandaloneClassProto(ctx, decl) || // (#7053)
       (!!decl.initializer && !decl.type && expressionHasWidenedPropertyType(ctx, decl.initializer));
     const usageF64 = hardForcesExternref
       ? null
@@ -15068,6 +15072,7 @@ function walkStmtForLetConst(
           initForcesExternref ||
           realmStructuralCarrier ||
           (mixedAssignmentCarrier && !mixedCarrierProvenF64) ||
+          bindingHoldsStandaloneClassProto(ctx, decl) || // (#7053)
           (!!decl.initializer && !decl.type && expressionHasWidenedPropertyType(ctx, decl.initializer));
         // (#4616) Empty-array (or Array<any>) initializer: use the SAME
         // usage-based vec inference `compileVariableStatement` applies

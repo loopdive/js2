@@ -21,10 +21,13 @@ requested_by: ttraenkler/wave15-traps-ce
 
 The [#7014](7014-issue-tests-detector-red-since-july.md) traps/CE slice was 44
 files / 108 red tests on upstream main 0727e2985b. #7041 (stale pins), #7040
-(IR) and #7051 (codegen) take 26 files to green. What is left is listed here,
+(IR) and #7051 (codegen) take 24 files to green. What is left is listed here,
 one row per root cause, with the bisect result where one was run (first-parent
 history of main, a `src/` snapshot per candidate, the issue test's own source
 as the probe). None of these was weakened or skipped; they stay red.
+
+(`string-derived-length-fast-path`, first listed here, is fixed in #7051:
+a range-proven index keeps the dense element lane — culprit 11bbf2a791.)
 
 ## Real regressions with a bisected culprit
 
@@ -33,7 +36,6 @@ as the probe). None of these was weakened or skipped; they stay red.
 | `issue-3017` "a strict anonymous constructor poisons its sloppy callee" (host + standalone) | trap "dereferencing a null pointer" in `__new_ctor_0` | 71e02fd3e1 (#4459, react-dom real suite) | `function probe(){ (probe as any).caller }` is now a CYCLIC hoisted function value, so `probe`'s local became a ref cell. `new (function(){ "use strict"; probe(); })()` builds its ctor closure as a bare `{func}` struct with NO captures, but `__new_ctor_0` treats param 0 as `probe`'s cell (`ref.cast` to the cell type → null). Give the `new (function…)()` ctor-closure path the same transitive capture planning `emitClosureConstruction` got in #4459 (`materializeHoistedFunctionValueBinding` per capture). |
 | `issue-2967` "async fn-expr through a VOID-typed param after an `() => any` wrapper" (host) | "illegal cast" | d32b4dad7b (#3791, `3520-c25-synthetic-reservation-abi`) | The wrapper-order RTT fix of #2873 (cast to the wrapper ROOT) regressed when synthetic reservations changed wrapper struct registration order; re-check which struct `runVoid`'s cast targets vs the one the async closure is allocated under. (5 other tests in this file were the binaryen reader — fixed by the #7041 helper once this one is green.) |
 | `issue-2554-ir-tail-call` "return-type-mismatched call in tail position" | IR alloc-provenance check: live `call` references retired AllocSiteId 1 | 19cf9e0392 (#5936, `3518-inline-call-allocation`) | The inliner retires an allocation site that a surviving call still cites; re-run provenance after inlining or keep the site alive. |
-| `string-derived-length-fast-path` "applies immutable derived-result proofs to host strings" (host, `nativeStrings:false`, any `-O`) | "illegal cast" | inside 52b61990fe (#4922 `es5-authoritative-upstream`, 116 commits; last good f2ac1030e1) | Bisect inside the branch (`good f2ac1030e1`, `bad 52b61990fe^2`), then fix the host-string derived-length arm. |
 
 ## Pre-existing defects that the suite only now catches
 

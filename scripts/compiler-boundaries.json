@@ -3008,6 +3008,14 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/object-model/anon-expando-bag-slot.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
       "path": "src/codegen/any-boxing-helpers.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -7928,6 +7936,14 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/array/tuple-array-carrier.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
       "path": "src/codegen/void-undefined-operand.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -10222,6 +10238,14 @@
       "destination": "backend-wasmgc",
       "owner": "3518-coordinator",
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/object-model/object-spread-extern-source.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Pure AST + function-local slot predicate for the object-literal spread lowering (#7051); move with the object-literal struct assembly."
     },
     {
       "path": "src/codegen/struct-carrier-growth.ts",
@@ -16243,12 +16267,28 @@
       "nextBoundary": "Pure TS-AST class-override scan feeding the IR selector and builder (#7000); retire with the IR virtual-dispatch intent or move behind the frontend-ts boundary."
     },
     {
+      "path": "src/ir/closure-signature-flow.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Pure TS-AST callable-slot flow scan feeding the IR selector (#7003); retire with an arity-adapting IR closure call or move behind the frontend-ts boundary."
+    },
+    {
       "path": "src/ir/const-binding-writes.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "frontend-ts",
       "owner": "3518-coordinator",
       "nextBoundary": "Pure TS-AST write-to-const scan feeding the IR lowerer's legacy demotion (#7014 wave 15); move behind the frontend-ts boundary with the mutation pre-pass."
+    },
+    {
+      "path": "src/ir/logical-assignment-name-targets.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Pure TS-AST scan of logical-assignment NamedEvaluation targets feeding the IR lowerer's legacy demotion (#7040); move behind the frontend-ts boundary with the mutation pre-pass."
     }
   ]
 }

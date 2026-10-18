@@ -51,3 +51,49 @@ Related (low): `async function a(){ return Promise.resolve(1); }` resolves two t
 - Scoped checks before pushing: the new test file, the nearest existing equivalence files for the touched area, `npx tsc --noEmit -p .` if it is fast enough, and the chained gates from CLAUDE.md (`check-loc-budget`, `check-func-budget`, `check-coercion-sites`, `check:oracle-ratchet`, `check:dead-exports`).
 - Keep gc output byte-identical where the change is standalone-only; if a shared path changes, say so in the PR body and name the equivalence files that cover it.
 - Do not widen scope: one root cause per PR. Record anything adjacent you notice as a note in this file, not as code.
+
+## Implementation notes (2026-10-15) — NOT shipped; larger than its plan
+
+Tried and measured on `origin/main` 3032e7c2 (with #6995 applied); reverted.
+The repros still reproduce on standalone. `tests/equivalence/issue-6996-await-settled-ordering.test.ts`
+records them: the gc-lane cases pass, the standalone cases are `it.fails`
+(they start "failing" the moment this lands — flip them to `it`).
+
+### What changed on main since the plan was written
+
+#6982 (merged 2026-10-15) already applied this fix — but only for a
+JavaScript environment (`!hostFreeEnvironment(ctx)`): `asyncFnNeedsDrive`
+skips the all-static decline and driven frames use `alwaysAsyncAwait`
+(`emitAsyncLane`), and all-settled closures take the drive lane. Host-free
+targets (`--target standalone` / wasi) deliberately keep the synchronous fast
+path; #6982's notes record that making it regime-wide broke 30 standalone/WASI
+tests whose drain contract relies on it.
+
+### The experiment
+
+Make both #6982 conditions regime-wide (drop `hostFreeEnvironment` from the
+`asyncFnNeedsDrive` decline and from `emitAsyncLane`'s `alwaysAsyncAwait`):
+
+- All four repros + the chain test match node on standalone; the #6995 struct
+  repro also passes (its body becomes driven).
+- 69 related unit/equivalence files: **25 tests go pass → fail** —
+  `issue-2865-standalone-async-await-unwrap` (6), `issue-2906-async-multiawait`
+  (4), `issue-6428-standalone-async-value-sink` (4), `issue-2906-gap3-tryfinally`
+  (3), `issue-2906-3b-forawait` (3), `issue-2895-async-frame` (2),
+  `issue-2906-3a-while-await` (1), `issue-1672-async-gen-method-trampoline` (1),
+  `issue-3527-async-replay-oracle` (1). They call an export and read the result
+  synchronously, or sink the call through `as number` without a drain — the
+  "synchronous fast path" contract (#2895/#2906 slice names say so verbatim).
+- test262 stride (317 files, see #6995): 238 → 237 pass, i.e. no measurable
+  conformance gain on that slice.
+
+### What a real fix needs (scope for whoever picks this up)
+
+1. Decide the host-free drain contract: either every embedder drains
+   (`__drain_microtasks`) before reading an async result, or the async
+   value-sink (#6428) learns to drain. Re-pin the ~25 tests accordingly.
+2. Parked closures / methods awaiting a newly-driven helper read a PENDING
+   `$Promise` on the pass-through (#6780 step 4 measured 9 → 2 and 8 → NaN):
+   the closure park must be lifted first, or those callers regress.
+3. The return-adoption two-tick delay (`return Promise.resolve(1)`) is a
+   different mechanism (scheduler, both lanes) — left as noted.

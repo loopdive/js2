@@ -53,10 +53,18 @@ describe("#1355 standalone Proxy — isExtensible trap (§10.5.3)", () => {
     ).toBe(1);
   });
 
+  // (#7072) The three pins below used to run trap results that break the
+  // §10.5 proxy INVARIANTS — `isExtensible` answering false for an extensible
+  // target, `preventExtensions` answering true while the target stays
+  // extensible — which the spec turns into a TypeError (node throws for all
+  // three original sources). They passed while the invariant checks were
+  // missing and went red once standalone enforced them. Each now runs a
+  // trap that is legal, so it pins the forwarding it was written for.
   it("the trap's falsy result is returned by Object.isExtensible", async () => {
     expect(
       await runStandalone(`export function test(): number {
-        const p: any = new Proxy({}, { isExtensible: (t: any) => false });
+        const target: any = Object.preventExtensions({});
+        const p: any = new Proxy(target, { isExtensible: (t: any) => false });
         return Object.isExtensible(p) ? 1 : 0;
       }`),
     ).toBe(0);
@@ -77,7 +85,9 @@ describe("#1355 standalone Proxy — preventExtensions trap (§10.5.4)", () => {
     expect(
       await runStandalone(`export function test(): number {
         let hit = 0;
-        const p: any = new Proxy({}, { preventExtensions: (t: any) => { hit = 1; return true; } });
+        const p: any = new Proxy({}, {
+          preventExtensions: (t: any) => { hit = 1; Object.preventExtensions(t); return true; },
+        });
         Object.preventExtensions(p);
         return hit;
       }`),
@@ -101,14 +111,17 @@ describe("#1355 standalone Proxy — preventExtensions trap (§10.5.4)", () => {
         let ie = 0, pe = 0, del = 0, gpo = 0;
         const p: any = new Proxy({ x: 1 }, {
           isExtensible: (t: any) => { ie = 1; return true; },
-          preventExtensions: (t: any) => { pe = 1; return true; },
+          preventExtensions: (t: any) => { pe = 1; Object.preventExtensions(t); return true; },
           deleteProperty: (t: any, k: any) => { del = 1; return true; },
           getPrototypeOf: (t: any) => { gpo = 1; return null; },
         });
+        // preventExtensions LAST: once the target is non-extensible, a
+        // deleteProperty answering true for an existing key and a getPrototypeOf that
+        // disagrees with the target are invariant violations too.
         Object.isExtensible(p);
-        Object.preventExtensions(p);
         delete p.x;
         Object.getPrototypeOf(p);
+        Object.preventExtensions(p);
         return ie === 1 && pe === 1 && del === 1 && gpo === 1 ? 1 : 0;
       }`),
     ).toBe(1);

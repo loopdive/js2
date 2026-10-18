@@ -10,7 +10,7 @@
  * has no `__escape` in funcMap, so the caller falls through to the generic
  * env-import path and its output stays byte-identical.
  */
-import type { ts } from "../ts-api.js";
+import { ts } from "../ts-api.js";
 import type { TypeFact } from "../checker/oracle.js";
 import type { ValType } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
@@ -21,6 +21,7 @@ import { emitNativeNumberFormat } from "./number-format-native.js";
 import { ensureSymbolCarrier } from "./symbol-native.js";
 import { flushLateImportShifts } from "./shared.js";
 import { coerceType } from "./type-coercion.js";
+import { resolvesToAmbientGlobal } from "./expressions/non-constructable.js";
 
 /**
  * Compile `escape(x)` / `unescape(x)`, or return `undefined` to fall through.
@@ -41,7 +42,12 @@ export function compileAnnexBEscapeCall(
 ): ValType | undefined {
   if (!ctx.standalone && !ctx.wasi) return undefined;
   const helperName = NATIVE_STRING_TRANSFORM_HELPERS.get(funcName);
-  if (helperName === undefined || ctx.funcMap.get(helperName) === undefined) return undefined;
+  if (helperName === undefined) return undefined;
+  // (#7025) Only the realm builtin. A user binding of the same name — React's
+  // own `function escape(key)` (child-key escaping) — keeps its ordinary call;
+  // lowering it to Annex B `escape` dropped the `$` key prefix.
+  if (ts.isIdentifier(expr.expression) && !resolvesToAmbientGlobal(ctx, expr.expression)) return undefined;
+  if (ctx.funcMap.get(helperName) === undefined) return undefined;
   const isBase64 = funcName === "atob" || funcName === "btoa";
 
   const arg0 = expr.arguments[0];

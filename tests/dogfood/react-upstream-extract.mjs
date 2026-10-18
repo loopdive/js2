@@ -133,15 +133,17 @@ function filterPreludeStatement(statement, sourceFile, supportedInfrastructure) 
   // harness failure instead of letting one import poison an entire batch.
   if (ts.isImportDeclaration(statement) || ts.isImportEqualsDeclaration(statement)) {
     // The one selected React core test import is a tiny Jest scheduler
-    // patch. Keep its public binding and satisfy it from the explicit host
-    // infrastructure instead of dropping the declaration and reporting an
-    // avoidable `patchMessageChannel is not defined` failure.
+    // patch. Keep its public binding and satisfy it with the shim's own no-op
+    // `patchMessageChannel` (the host infrastructure's is the same no-op)
+    // instead of dropping the declaration and reporting an avoidable
+    // `patchMessageChannel is not defined` failure. Not a host read: a
+    // standalone module has no host infrastructure object (#7025).
     if (
       ts.isImportDeclaration(statement) &&
       statement.moduleSpecifier.getText(sourceFile).replace(/["']/g, "") ===
         "../../../../scripts/jest/patchMessageChannel"
     ) {
-      return "var patchMessageChannel = globalThis.__js2ReactUpstreamInfrastructure.patchMessageChannel;";
+      return "// patchMessageChannel: bound by the shim (a no-op, as in the host infrastructure)";
     }
     // ReactDOM's Fizz tests import this small DOM helper from the monorepo's
     // private test utilities. The helper only manipulates the jsdom tree and

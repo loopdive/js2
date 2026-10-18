@@ -83,10 +83,15 @@ describe("#2998 static-primitive-LHS instanceof drops __instanceof_check in stan
       const obj: any = new F();
       return (obj instanceof F) ? 1 : 0;
     }`;
+    // When this was pinned the object-LHS path still routed to the HOST
+    // `__instanceof_check` (the leak was deferred), so the pin asserted that
+    // import. The proto-chain walk is native in standalone now — the deferred
+    // leak is closed — so pin what the guard is about: the fold did NOT fire
+    // (a real object answers `true`, which a short-circuited `false` cannot)
+    // and the module stays host-free.
     const r = await compileStandalone(src);
-    // The object-LHS path is intentionally unchanged; it still routes to the
-    // host predicate (leak deferred), so the guard must NOT have fired here.
-    expect(envImports(r)).toContain("__instanceof_check");
+    expect(envImports(r)).not.toContain("__instanceof_check");
+    expect(await runStandalone(src)).toBe(1);
   });
 
   it("gc/host lane keeps the dynamic predicate (byte-behaviour unchanged)", async () => {

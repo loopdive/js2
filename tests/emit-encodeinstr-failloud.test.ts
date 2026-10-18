@@ -25,10 +25,14 @@ describe("encodeInstr fail-loud (#1939)", () => {
     expect(() => encodeOne(bogus)).toThrow(/unknown op/i);
   });
 
-  it("throws on br_table (declared in the union but has no encodable payload)", () => {
-    // `{ op: "br_table" }` carries no target table, so there is no correct
-    // encoding — must fail loud rather than emit a truncated branch.
-    expect(() => encodeOne({ op: "br_table" } as Instr)).toThrow(/br_table/);
+  it("encodes br_table with its full target table (no truncated branch)", () => {
+    // Was "throws on br_table": the #1939 union member had no payload, so it
+    // had to fail loud. #2952 slice 4 (4b1f8a402a) gave it `targets` +
+    // `defaultDepth` and a real encoding, so the property this pins is now the
+    // complete 0x0e vec(labelidx) labelidx form — never a payload-less stub.
+    expect(encodeOne({ op: "br_table", targets: [0, 1], defaultDepth: 2 } as Instr)).toEqual(
+      new Uint8Array([0x0e, 0x02, 0x00, 0x01, 0x02]),
+    );
   });
 
   it("encodes the three previously-dropped simple ops to ≥1 byte", () => {

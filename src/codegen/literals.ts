@@ -44,6 +44,7 @@ import { emitStandaloneIterableMaterialize, recordStrictMethodLiteralAllocation 
 import { popBody, pushBody } from "./context/bodies.js";
 import { reportError } from "./context/errors.js";
 import { emptyBackingStoreInstrs } from "./empty-vec-store.js"; // (#3921) shared zero-length backing store
+import { spreadSourceNeedsRuntimeCopy } from "./object-model/object-spread-extern-source.js";
 import { allocLocal, allocTempLocal, releaseTempLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext, OptionalParamInfo } from "./context/types.js";
 import { isForeignEvalNode } from "./expressions/eval-source.js";
@@ -135,6 +136,7 @@ import { tagAccessorObjectLiteralReceiver } from "./accessor-object-literal.js";
 import { widenUndefinedDefaultParamSlot } from "./destructuring-params.js";
 import { widenAsyncThenableResults } from "./async-thenable-return.js"; // (#5371)
 import { readEnv } from "../env.js";
+import { recordObjectLiteralCarrier } from "./object-model/anon-expando-bag-slot.js";
 /**
  * Check if a TS expression is "undefined-like" — OmittedExpression (array hole),
  * undefined keyword, identifier `undefined`, void expression, or any of the
@@ -3507,6 +3509,7 @@ export function compileObjectLiteralForStruct(
     reportError(ctx, expr, `Unknown struct type: ${typeName}`);
     return null;
   }
+  recordObjectLiteralCarrier(ctx, expr, structTypeIdx); // (#7020) expando-receiver $bag slot
   const mayHaveModuleHostSpreadField = isModuleGlobalObjectLiteral(expr);
 
   // Check if there are any spread assignments — if so, compile spread sources into locals.
@@ -3552,6 +3555,11 @@ export function compileObjectLiteralForStruct(
         srcStructName = resolveStructName(ctx, srcType);
       }
       let resolved = false;
+      // (#7014) An externref-stored source (optional param) may hold any shape.
+      if (srcStructName && spreadSourceNeedsRuntimeCopy(fctx, expr, propIndex, runtimeSpreadSources.length)) {
+        runtimeSpreadSources.push({ expr: prop.expression, propIndex });
+        continue;
+      }
       if (srcStructName) {
         const srcStructTypeIdx = ctx.structMap.get(srcStructName);
         const srcFields = ctx.structFields.get(srcStructName);
@@ -5671,6 +5679,9 @@ export function compileArrayLiteral(
       // element is a single-code-point string. Must match the element type
       // `__str_to_char_vec` produces (same key as `__str_split`'s string[]).
       elemWasm = { kind: "ref_null", typeIdx: ctx.anyStrTypeIdx };
+    } else if ((ctx.standalone || ctx.wasi) && /^(?:Readonly)?Map$/.test(spreadType.symbol?.name ?? "")) {
+      // (#7057) A Map yields `[key, value]` ENTRIES, not its first type argument.
+      elemWasm = { kind: "externref" };
     } else {
       const typeArgs = ctx.checker.getTypeArguments(spreadType as ts.TypeReference);
       const innerType = typeArgs[0];

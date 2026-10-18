@@ -100,6 +100,9 @@ const STANDALONE_UNPROVIDED_DOM_CLASSES: ReadonlySet<string> = new Set([
   "CSSRuleList",
   "CSSStyleDeclaration",
   "MediaQueryList",
+  // (#7025) `document.implementation` — React's test shim builds its
+  // server-integration containers with `createHTMLDocument("")`.
+  "DOMImplementation",
 ]);
 
 /** Host-free and not a certified DOM-capability module (#4576). */

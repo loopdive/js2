@@ -324,7 +324,8 @@ describe("#4492 wave-5 — residual R1: an Array.prototype.toString override and
     ).toBe(1);
   });
 
-  it.fails("`String(new Array)` — INLINE receiver ignores it (test262 S15.5.1.1_A1_T8)", async () => {
+  // PROMOTED from a residual pin (#7014 follow-up): measured passing on main 2026-10-18.
+  it("`String(new Array)` — INLINE receiver ignores it (test262 S15.5.1.1_A1_T8)", async () => {
     expect(
       await runStandalone(
         `${loopBuilt("want", "__ARRAY__")}` +
@@ -407,11 +408,13 @@ describe("#4492 wave-5 — residual R2: `F.prototype.toString` is unreachable FR
     ).toBe(1);
   });
 
-  it.fails('a RUNTIME lookup from the instance misses it — `"toString" in inst`', async () => {
+  // PROMOTED from a residual pin (#7014 follow-up): measured passing on main 2026-10-18.
+  it('a RUNTIME lookup from the instance misses it — `"toString" in inst`', async () => {
     expect(await runStandalone(`${KEY}${F_SETUP} var inst = new F(7); return (k in inst) ? 1 : 0;`)).toBe(1);
   });
 
-  it.fails("…so `String(new F())` cannot see it either", async () => {
+  // PROMOTED from a residual pin (#7014 follow-up): measured passing on main 2026-10-18.
+  it("…so `String(new F())` cannot see it either", async () => {
     expect(
       await runStandalone(
         `${loopBuilt("want", "v7")}${F_SETUP} var inst = new F(7); return String(inst) === want ? 1 : 0;`,
@@ -478,7 +481,8 @@ describe("#4492 wave-5 — residual R3: no §20.1.3.6 brand classifier on the RU
     ).toBe(1);
   });
 
-  it.fails("…but the SAME object obtained via `Object.getPrototypeOf` is not (test262 Number/15.7.4-1)", async () => {
+  // PROMOTED from a residual pin (#7014 follow-up): measured passing on main 2026-10-18.
+  it("…but the SAME object obtained via `Object.getPrototypeOf` is not (test262 Number/15.7.4-1)", async () => {
     // Identical receiver, runtime-only provenance: the classifier the
     // compile-time site uses is unavailable, and nothing answers at runtime.
     expect(

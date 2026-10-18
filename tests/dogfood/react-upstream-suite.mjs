@@ -63,16 +63,50 @@ const DEFAULT_REACT_TEST_TIMEOUT_MS = 2_000;
 // `var exports = {}` makes the published CommonJS implementation an internal
 // module value. Every byte of the implementation after that one binding is
 // unmodified; the appended code only observes React's public API.
-function buildModuleSource(reactSource, tests) {
+function buildModuleSource(reactSource, tests, carriers = null) {
   return [
     "var exports = {};",
     reactSource,
     "var __REACT__ = exports;",
+    ...(isStandaloneUpstreamLane() && carriers ? standaloneCarrierSources(carriers, tests) : []),
     REACT_EXPECT_SHIM,
     ...tests.map((test) => buildTestFunction(test)),
     LAST_ERROR_EXPORT,
     ...(isStandaloneUpstreamLane() ? [reactStandaloneExports(tests)] : []),
   ].join("\n");
+}
+
+// (#7025) Standalone lane: React's own pure-JavaScript companions, compiled
+// into the batch (as `__REACT__` is) instead of read from the host
+// infrastructure, which a zero-import module cannot reach. Only batches whose
+// tests require one carry it; the shim prefers a compiled carrier when present.
+// Renderers, the scheduler mock, prop-types and jsdom are NOT compiled in:
+// tests that reach them fail with the carrier named (see standaloneCarrierOf).
+function standaloneCarrierSources(carriers, tests) {
+  const needs = (specifier) =>
+    tests.some((test) => new RegExp(`require\\(\\s*['"]${specifier}['"]\\s*\\)`).test(`${test.prelude}\n${test.body}`));
+  const module = (name, source) => `var ${name} = (function () {\nvar exports = {};\n${source}\nreturn exports;\n})();`;
+  const out = [];
+  if (needs("react/jsx-runtime")) out.push(module("__REACT_JSX_RUNTIME__", carriers.jsxRuntime));
+  if (needs("react/jsx-dev-runtime")) out.push(module("__REACT_JSX_DEV_RUNTIME__", carriers.jsxDevRuntime));
+  if (needs("react/package\\.json"))
+    out.push(`var __REACT_PACKAGE_JSON__ = ${JSON.stringify({ version: carriers.version })};`);
+  return out;
+}
+
+/**
+ * (#7025) The host carrier a standalone failure needs, or null when the failure
+ * is the compiler's. The standalone module has no jsdom document and no host
+ * `__js2ReactUpstreamInfrastructure` (renderers, test utils, scheduler mock),
+ * so a test that reaches either fails for the harness boundary, not for Wasm.
+ */
+export function standaloneCarrierOf(message) {
+  const text = String(message ?? "");
+  if (/\bdocument is not defined\b/.test(text)) return "jsdom document";
+  if (/React upstream test infrastructure is not installed/.test(text)) {
+    return "host React infrastructure (renderers, internal-test-utils, create-react-class, web-streams-polyfill)";
+  }
+  return null;
 }
 
 // (#7013) Standalone lane: dispatch the lifted test functions by index behind
@@ -218,6 +252,13 @@ export async function runHarness({
   const build = process.env.DOGFOOD_REACT_BUILD === "development" ? "development" : "production";
   const modulePath = join(packageRoot, "package", "cjs", `react.${build}.js`);
   const reactSource = readFileSync(modulePath, "utf-8");
+  const carriers = isStandaloneUpstreamLane()
+    ? {
+        jsxRuntime: readFileSync(join(packageRoot, "package", "cjs", `react-jsx-runtime.${build}.js`), "utf-8"),
+        jsxDevRuntime: readFileSync(join(packageRoot, "package", "cjs", `react-jsx-dev-runtime.${build}.js`), "utf-8"),
+        version: JSON.parse(readFileSync(join(packageRoot, "package", "package.json"), "utf-8")).version,
+      }
+    : null;
 
   const report = {
     generatedAt: new Date().toISOString(),
@@ -329,7 +370,7 @@ export async function runHarness({
     let compileMs = 0;
 
     for (let attempt = 0; attempt < 4 && batchTests.length > 0; attempt++) {
-      moduleSource = buildModuleSource(reactSource, batchTests);
+      moduleSource = buildModuleSource(reactSource, batchTests, carriers);
       const started = performance.now();
       try {
         result = await withTimeout(
@@ -494,7 +535,11 @@ export async function runHarness({
       const outcome = compiled.standaloneResults.get(test.id);
       entry.compiledPassed = outcome?.passed === true;
       entry.status = entry.compiledPassed ? "pass" : "fail";
-      if (!entry.compiledPassed) entry.compiledMessage = outcome?.error ?? "missing standalone result";
+      if (!entry.compiledPassed) {
+        entry.compiledMessage = outcome?.error ?? "missing standalone result";
+        const carrier = standaloneCarrierOf(entry.compiledMessage);
+        if (carrier) entry.standaloneCarrier = carrier;
+      }
       tests.push(entry);
       continue;
     }
@@ -559,6 +604,14 @@ export async function runHarness({
     invalidBatches: invalidBatches.length,
     binaryValidates: report.validation.validates,
   };
+  if (isStandaloneUpstreamLane()) {
+    // (#7025) Scored tests whose failure is a missing host carrier (jsdom, the
+    // host renderers / test utils) vs. the ones a zero-import module can reach.
+    const carrierBound = tests.filter((test) => test.standaloneCarrier).length;
+    report.summary.standaloneCarrierBound = carrierBound;
+    report.summary.standaloneReachable = scored.length - carrierBound;
+    report.summary.headline += `; ${scored.length - carrierBound} reachable without host carriers`;
+  }
 
   // (#7013) The standalone lane writes beside, never over, the JS-host report.
   const reportPath = isStandaloneUpstreamLane() ? REPORT_PATH.replace(/\.json$/, ".standalone.json") : REPORT_PATH;
