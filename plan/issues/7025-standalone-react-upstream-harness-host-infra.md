@@ -16,9 +16,11 @@ language_feature: dogfood, npm-compat
 goal: standalone-gap
 related: [7013, 7016, 7022, 7085]
 loc-budget-allow:
-  # 2026-10-18 (#7025): +1 line — the element-call ladder reserves the number /
-  # boolean boxers before its arms are built (`reserveScalarResultBoxers`); the
-  # bridge logic itself lives in dispatch-extern-result-bridge.ts.
+  # 2026-10-18 (#7025): +5 lines — the element-call ladder reserves the number /
+  # boolean boxers before its arms are built (`reserveScalarResultBoxers`, in
+  # dispatch-vec-result-bridge.ts so the leaf bridge module stays out of the
+  # import cycle) and its import line wraps; the bridge logic itself lives in
+  # dispatch-extern-result-bridge.ts.
   - src/codegen/expressions/calls-closures.ts
 ---
 

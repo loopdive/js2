@@ -8,10 +8,14 @@
  * - tryExternClassMethodOnAny — resolve method call on any-typed receiver via extern classes
  */
 import { tryEmitDynamicToPrimitiveMethodCall } from "./to-primitive-method-call.js"; // (#6775 S5)
-import { liveResultBridge, reserveScalarResultBoxers } from "./dispatch-extern-result-bridge.js";
+import { liveResultBridge } from "./dispatch-extern-result-bridge.js";
 import { standaloneMissingStringArgRead, standaloneRefToExternBridge } from "./dispatch-extern-arg-bridge.js";
 import { tryEmitFunctionTypedPropertyCall } from "./function-typed-property-call.js";
-import { dispatchVecResultBridge, reserveDispatchVecResultMaterializer } from "./dispatch-vec-result-bridge.js";
+import {
+  dispatchVecResultBridge,
+  reserveDispatchVecResultMaterializer,
+  reserveScalarResultBoxers,
+} from "./dispatch-vec-result-bridge.js";
 import { planCallablePropertyApplyFallback } from "./callable-property-apply-fallback.js";
 import { ts } from "../../ts-api.js";
 import { widenJsDefaultGuessSymbolSlot } from "../js-default-param-type-guess.js";

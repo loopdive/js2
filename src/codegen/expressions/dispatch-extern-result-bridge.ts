@@ -27,8 +27,6 @@
 import type { Instr, ValType } from "../../ir/types.js";
 import { allocLocal } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
-import { addUnionImports } from "../registry/imports.js";
-import { flushLateImportShifts } from "./late-imports.js";
 
 export function guardedExternRefResultBridge(
   ctx: CodegenContext,
@@ -152,26 +150,6 @@ export function liveResultBridge(
  */
 export function liveResultBridgeable(ctx: CodegenContext, from: ValType, to: ValType): boolean {
   return boxedScalarResultBridge(ctx, from, to) !== null || anyValueBoxTag(ctx, from, to) !== null;
-}
-
-/**
- * (#7025) Before a no-host ladder is built: register the number / boolean
- * boxers {@link boxedScalarResultBridge} needs when an externref call site
- * dispatches to a scalar-returning candidate. On these lanes `addUnionImports`
- * defines native helpers (no host import); it runs before any arm bakes an
- * index, never inside one (#2174).
- */
-export function reserveScalarResultBoxers(
-  ctx: CodegenContext,
-  fctx: FunctionContext,
-  candidates: readonly { readonly returnType: ValType | null }[],
-  expectedReturn: ValType | null,
-): void {
-  if (!(ctx.standalone || ctx.wasi) || expectedReturn === null) return;
-  if (expectedReturn.kind !== "externref" && expectedReturn.kind !== "ref_extern") return;
-  if (!candidates.some(({ returnType }) => returnType?.kind === "f64" || returnType?.kind === "i32")) return;
-  addUnionImports(ctx);
-  flushLateImportShifts(ctx, fctx);
 }
 
 /**
