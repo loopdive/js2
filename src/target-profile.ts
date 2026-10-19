@@ -111,6 +111,16 @@ export function hasHostAccelerator(
   return profile.accelerators?.includes(family) === true;
 }
 
+/** Whether the selected target runs without a JavaScript embedder. */
+export function hostFreeEnvironment(profile: Pick<CompileTargetProfile, "environment">): boolean {
+  return profile.environment !== "javascript";
+}
+
+/** Whether the JavaScript value bridge is required at the module boundary. */
+export function jsValueBoundary(profile: Pick<CompileTargetProfile, "hostValueInterop">): boolean {
+  return profile.hostValueInterop === "required";
+}
+
 /**
  * (#6986) Does this build have a host `Intl` to call? On WasmGC only under the
  * selected `intl` accelerator (#6979 removed the host-assisted lane, the other

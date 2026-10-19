@@ -28,7 +28,11 @@ import type { NullableElemParamOverride } from "../array-hof-nullable-elem-param
 import type { StandaloneRegExpEngineConfig } from "../regexp-standalone.js";
 import type { ObjectRuntimeTypes } from "../object-runtime.js";
 import type { FallbackCounts } from "../fallback-telemetry.js";
-import type { CompileTargetProfile } from "../../target-profile.js";
+import {
+  hostFreeEnvironment as profileHostFreeEnvironment,
+  jsValueBoundary as profileJsValueBoundary,
+  type CompileTargetProfile,
+} from "../../target-profile.js";
 import type { IrRuntimeEvalBoundaryPlan } from "../../ir/runtime-eval-boundary-plan.js";
 import type { StandaloneCapabilityDemandState } from "./capability-state.js";
 import type * as BodyRouteAudit from "./body-route-audit.js";
@@ -4938,8 +4942,8 @@ export type { SourcePos };
  * ECMAScript implementation lowers the module is `ctx.standalone`. Console
  * sinks and other environment-shaped arms key on this, never on the regime.
  */
-export function hostFreeEnvironment(ctx: CodegenContext): boolean {
-  return ctx.targetProfile.environment !== "javascript";
+export function hostFreeEnvironment(ctx: Pick<CodegenContext, "targetProfile">): boolean {
+  return profileHostFreeEnvironment(ctx.targetProfile);
 }
 
 /**
@@ -4947,6 +4951,6 @@ export function hostFreeEnvironment(ctx: CodegenContext): boolean {
  * admitted-object MOP, callbacks)? `"required"` = JS embedder + bridge on; the
  * host-free `hostBridge: "always"` projection (`"enabled"`) may not import it.
  */
-export function jsValueBoundary(ctx: CodegenContext): boolean {
-  return ctx.targetProfile.hostValueInterop === "required";
+export function jsValueBoundary(ctx: Pick<CodegenContext, "targetProfile">): boolean {
+  return profileJsValueBoundary(ctx.targetProfile);
 }

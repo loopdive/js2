@@ -616,3 +616,76 @@ Findings that are not gaps:
   build projects to `standalone` in `projectIrBackendTargetProfile`.
 - The policy tests (`4401`, `4396`, `6978`, `6986`, `5131`, `4577`) are
   re-pinned to the new classes.
+
+### S7-c IR-arm handoff (2026-10-19, Codex)
+
+Branch `codex/6979-s7c-ir-arms` is stacked on the recovered S7-b head
+`9423a71e82` (`fork/codex/6979-s7b-recovery`). This is the first bounded S7-c
+directory slice; S7 stays `in-progress`.
+
+**Ratchet.** `scripts/check-standalone-arms.mjs` now lexically counts
+`ctx.standalone` per source directory, including comments, against
+`plan/audit/standalone-arms-baseline.json`. A new directory with hits is a
+`0 → N` failure; every existing directory fails on growth;
+`--update-on-decrease` banks only reductions. The scanner also requires at
+least 1,746 TypeScript source files, so an empty or misdirected scan cannot
+pass. The package entry point is `pnpm run check:standalone-arms`.
+
+This slice measured and banked:
+
+| Measure | S7-b base | S7-c IR slice |
+| --- | ---: | ---: |
+| Raw `ctx.standalone` hits in `src/` | 1,614 | 1,590 |
+| Matching source files | 496 | 494 |
+| `src/ir/` hits | 24 | **0** |
+
+**Classification.** Every IR occurrence was classified rather than replaced
+mechanically:
+
+- Semantic decisions now select the one native WasmGC implementation:
+  undefined probing, `%Function.prototype%.[[Call]]`, batched native string
+  concat, holey-array filter, standardized exceptions, native
+  `ReferenceError`, `in`, primitive wrappers, dynamic `ToNumber`, and the
+  compiler timer shim.
+- Embedder decisions use `hostFreeEnvironment`: DOM/clock capabilities,
+  ambient extern surfaces and indirect-eval availability. The neutral helper
+  lives in `target-profile.ts`; `codegen/context/types.ts` preserves its
+  context-shaped compatibility wrapper. Keeping the IR import on the neutral
+  policy module avoided a new `ir → codegen` value-cycle edge.
+- Callback adaptation uses `jsValueBoundary`; host callbacks remain boundary
+  machinery, not a second semantic implementation.
+- Host Date and JS-string decisions use `hasHostAccelerator("date" |
+  "js-string")`. The pending JS-string profile remains rejected by #6978; no
+  implicit host-string lane was reintroduced.
+
+The result keeps native objects and strings canonical inside Wasm. JS-backed
+facades are still created only by the explicit live export boundary, and
+ambient platform objects remain environment capabilities rather than semantic
+providers.
+
+**Validation.** All new-slice gates pass:
+
+- TypeScript 7 typecheck, Biome lint, Prettier check and the new standalone-arm
+  ratchet.
+- Host-import policy: 33 probes / 452 imports / zero `regime-gap` or `unknown`
+  imports on the native-first matrix; runtime metrics remain 12,066 lines,
+  `resolveImport` 1,959 lines / 7 cases, owned adapters 898 lines and explicit
+  capabilities 1,194 lines.
+- Equivalence: 20 failing, 2,008 passing, 22 known failures, two baseline
+  failures now passing and **no new regressions**.
+- `issue-4396`, `issue-4397` and `issue-6978`: 93/93 pass under the repository's
+  exnref-enabled Node wrapper.
+- IR fallbacks, LOC, function, coercion and oracle ratchets pass. Import cycles
+  pass with no growth (one measured number dropped); flat-directory budget
+  passes. Compiler-boundary inventory remains the expected
+  `inventory-valid-architecture-incomplete` with `errors: []`.
+- The dead-export audit retains only the two pre-existing nonliteral dynamic
+  import witnesses. Four `issue-4588` timer-shim failures reproduce on the
+  S7-b control with the same assertions, so they are not S7-c regressions.
+
+**Next handoff.** Keep this PR stacked until S7-a and the recovered S7-b land.
+The next S7-c branch should start from this head and take one of the planned
+≤150-site directory groups, preferably `src/codegen/statements/` (37 hits) or
+`src/codegen/declarations/` + `registry/` (56 hits). Run
+`check:standalone-arms -- --update-on-decrease` only after the directory is at
+its reviewed lower count; never raise another directory's ceiling.

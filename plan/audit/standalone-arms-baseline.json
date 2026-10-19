@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "minimumScannedFiles": 1746,
+  "directories": {
+    "src": 6,
+    "src/codegen": 1026,
+    "src/codegen/analysis": 3,
+    "src/codegen/array": 22,
+    "src/codegen/classes": 18,
+    "src/codegen/closures": 13,
+    "src/codegen/context": 6,
+    "src/codegen/declarations": 43,
+    "src/codegen/expressions": 365,
+    "src/codegen/helpers": 5,
+    "src/codegen/object-model": 31,
+    "src/codegen/registry": 13,
+    "src/codegen/statements": 37,
+    "src/runtime/contracts": 2
+  }
+}

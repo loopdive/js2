@@ -631,15 +631,14 @@ describe("#3526 F3-S1 the demand scan", () => {
     expect(partition.trimEnd().endsWith("continue;\n    }")).toBe(true);
   });
 
-  it("projects the policy ONCE, before the freeze, from the two lane predicates", () => {
+  it("projects the policy once from environment and JS-value-boundary facts", () => {
     const start = INTEGRATION_SOURCE.indexOf("function integrationHostCallbackWrapPolicy(");
     expect(start).toBeGreaterThan(0);
     const projection = INTEGRATION_SOURCE.slice(start, INTEGRATION_SOURCE.indexOf("\n}", start));
     expect(projection).toContain("ctx.requiresStandaloneDomInteractionCapability === true");
-    expect(projection).toContain('ctx.targetProfile.environment === "none"');
-    // (#6979) The semantic-provider leg folded away: native-first is the only policy.
-    expect(projection).not.toContain("semanticProviders");
-    expect(projection).toContain('ctx.targetProfile.capabilityPolicy === "ambient-js"');
+    expect(projection).toContain("hostFreeEnvironment(ctx.targetProfile)");
+    expect(projection).toContain("jsValueBoundary(ctx.targetProfile)");
+    expect(projection).not.toContain("ctx.standalone");
     // No live manifest read, and no third arm invented here.
     expect(projection).not.toContain("prepared");
   });
