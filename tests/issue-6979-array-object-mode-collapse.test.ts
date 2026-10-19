@@ -282,5 +282,74 @@ for (const target of ["standalone", "wasi"] as const) {
       exports.__module_init?.();
       expect(exports.readResult()).toBe(42);
     });
+
+    it("Object.create applies descriptor bags through the native object runtime", async () => {
+      const { module } = await compileNative(
+        `
+          var proto = {};
+          var object: any = Object.create(proto, {
+            answer: { value: 42, enumerable: true },
+          });
+          export function readResult() {
+            return Object.getPrototypeOf(object) === proto && object.answer === 42 ? 42 : -1;
+          }
+        `,
+        target,
+      );
+      const instance = await WebAssembly.instantiate(module, {});
+      const exports = instance.exports as unknown as { __module_init?: () => void; readResult: () => number };
+      exports.__module_init?.();
+      expect(exports.readResult()).toBe(42);
+    });
+
+    it("Object.getOwnPropertyDescriptor canonicalizes numeric keys in native storage", async () => {
+      const { module } = await compileNative(
+        `
+          var object: any = { "-1": 42 };
+          export function readResult() {
+            var descriptor: any = Object.getOwnPropertyDescriptor(object, -1);
+            return descriptor != null && descriptor.value === 42 ? 42 : -1;
+          }
+        `,
+        target,
+      );
+      const instance = await WebAssembly.instantiate(module, {});
+      const exports = instance.exports as unknown as { __module_init?: () => void; readResult: () => number };
+      exports.__module_init?.();
+      expect(exports.readResult()).toBe(42);
+    });
+
+    it("Object.fromEntries consumes a native array-of-pairs carrier", async () => {
+      const { module } = await compileNative(
+        `
+          var entries: any = [["answer", 42]];
+          var object: any = Object.fromEntries(entries);
+          export function readResult() {
+            return object.answer === 42 ? 42 : -1;
+          }
+        `,
+        target,
+      );
+      const instance = await WebAssembly.instantiate(module, {});
+      const exports = instance.exports as unknown as { __module_init?: () => void; readResult: () => number };
+      exports.__module_init?.();
+      expect(exports.readResult()).toBe(42);
+    });
+
+    it("Array.from consumes a native Map iterator", async () => {
+      const { module } = await compileNative(
+        `
+          var pairs: any = Array.from(new Map([["answer", "forty-two"]]));
+          export function readResult() {
+            return pairs.length === 1 && pairs[0][0] === "answer" && pairs[0][1] === "forty-two" ? 42 : -1;
+          }
+        `,
+        target,
+      );
+      const instance = await WebAssembly.instantiate(module, {});
+      const exports = instance.exports as unknown as { __module_init?: () => void; readResult: () => number };
+      exports.__module_init?.();
+      expect(exports.readResult()).toBe(42);
+    });
   });
 }

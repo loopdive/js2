@@ -1504,3 +1504,69 @@ same split: `wasmGcBackend` for internal storage and language semantics,
 `jsValueBoundary` for real JS crossings, `hostFreeEnvironment` for platform
 capabilities, and explicit family checks for optional accelerators. Do not
 fold the remaining `index.ts` orchestrator conditions into an unrelated slice.
+
+### S7-c builtin-static call handoff (2026-10-19, Codex)
+
+This twelfth bounded S7-c checkpoint migrates the 40 remaining raw mode
+decisions in `src/codegen/expressions/call-builtin-static.ts` on
+`codex/6979-s7c-ir-arms`, published through draft PR `#6762`. S7 remains
+`in-progress`; this checkpoint does not claim the full JS-host migration is
+complete.
+
+**Ratchet.** The standalone-arm baseline is banked from 1,065 to **1,025** raw
+`ctx.standalone` hits in `src/`, from 396 to **395** matching source files, and
+from 358 to **318** hits in `src/codegen/expressions`.
+`call-builtin-static.ts` drops from 40 legacy projections to **zero**.
+
+**Classification.** BigInt narrowing, `RegExp.escape`, native Array factories,
+proxy-aware Array branding, object integrity, prototype singletons and dynamic
+prototype slots, `Object.create` descriptor application,
+`Object.getOwnPropertyDescriptor` key canonicalization,
+`Object.fromEntries`, and native `Map`/`Object.groupBy` dispatch are WasmGC
+backend decisions. In particular, `Map.groupBy` no longer treats
+`nativeStrings` as a proxy for the object backend. Optional accelerators remain
+explicit family checks rather than recovering a composite host mode.
+
+The script-top-level `globalThis` descriptor fold is the one genuine JavaScript
+realm decision in this group and now asks `jsValueBoundary` directly. This
+preserves the existing host-backed object only at the crossing, with its
+identity intact. Wasm-owned objects remain native WasmGC objects internally;
+no object is copied and the JavaScript host is not used as a semantic mirror.
+The earlier mode normalization is therefore harmless here: it unified native
+backend semantics without changing whether a value crosses the host boundary.
+
+**Runtime evidence.** `issue-6979-array-object-mode-collapse.test.ts` passes
+31/31 across standalone and WASI. Four new probes cover `Object.create`
+descriptor bags, numeric-key `Object.getOwnPropertyDescriptor`, native
+array-of-pairs `Object.fromEntries`, and `Array.from` over a native `Map`
+iterator. The wider 24-file builtin-static cohort is 169 passing, 13 failing
+and five skipped.
+
+An exact seven-file detached A/B at parent `7e27e85a1060b5ec1759ffe47c8f205266ded97b`
+is 73 passing / 14 failing at the parent and 74 passing / 13 failing at the
+candidate. The same 13 failures reproduce on both revisions; the candidate
+additionally passes the new WASI `Array.from(Map)` probe, which the parent
+cannot compile because it still requests the retired `env::__array_from`
+provider. A temporary kill switch that restored the old backend-shaped
+predicate for the script-global boundary reproduced the existing #3366 sloppy
+global-assignment failure unchanged, so the explicit `jsValueBoundary`
+classification adds no regression there.
+
+**Residuals kept explicit.** A numeric `any` backed by an i31 value can still
+surface as JavaScript `null` when exported from WASI, and the WASI native `Map`
+constructor can lose numeric values while preserving string values. The new
+tests compare native numeric values before export and use a string Map value so
+this checkpoint measures the dispatcher behavior it owns. Both residuals are
+follow-up boundary/container defects; neither should be addressed by reviving
+JS-host semantics inside the compiler.
+
+**Validation.** TypeScript 7 typecheck, Biome lint, Prettier,
+`git diff --check`, and the banked standalone-arm gate pass. The focused and
+parent-control runtime evidence above establishes a strict improvement with no
+candidate-only failure in the compared cohort.
+
+**Next handoff.** Continue with another bounded call-dispatch group. Keep
+semantic and storage decisions on `wasmGcBackend`, true JavaScript crossings on
+`jsValueBoundary`, platform access on `hostFreeEnvironment`, and named
+accelerators explicit. Preserve the two residuals above as independent work
+rather than routing native objects through the JS host.
