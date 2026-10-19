@@ -25,7 +25,7 @@ import { FS_PATH_BASED_MEMBERS, WASI_NODE_FS_ALIAS_SENTINEL } from "../checker/n
 import { addFuncType } from "./registry/types.js";
 import { addImport, addStringConstantGlobal, addStringImports } from "./registry/imports.js";
 import { brandExternMethodResult } from "./shared.js";
-import { ensureNativeStringHelpers } from "./native-strings.js";
+import { ensureNativeStringBoundaryBridge, ensureNativeStringHelpers } from "./native-strings.js";
 import { nativeTypeFromTypeNode } from "./native-type-annotations.js";
 import { reportError } from "./context/errors.js";
 import { registerHostIntlExternClasses } from "./helpers/host-intl-classes.js";
@@ -43,6 +43,10 @@ import {
   type LibDeclIndex,
 } from "./lib-decl-index.js";
 import { isStandaloneUnprovidedExternClass, skipStandalonePackageStub } from "./standalone-unavailable-globals.js";
+
+/** (#7095) A wasm value type a native carrier can cross in (any reference). */
+const isRefValType = (type: ValType): boolean => !/^(?:i32|i64|f32|f64|v128|i8|i16)$/.test(type.kind);
+
 // ── Built-in extern class registration ───────────────────────────────
 
 /** Helper to create an extern method signature with externref params and results */
@@ -892,6 +896,17 @@ function collectExternDeclarationsImpl(
             // wasm-to-wasm provider namespace (`js2wasm:qjs`) instead of the
             // `env` JS-host module. Unset for every user compile.
             registerAmbientParseImport(ctx, sourceFile, name, typeIdx);
+            // (#7095) A JS-environment regime module hands this host function
+            // Wasm-owned strings; export the bridge the runtime marshal reads.
+            const userHostFunction = !name.startsWith("__"); // `__*` stubs are injected runtime preludes (timers, stdin)
+            if (
+              ctx.nativeStrings &&
+              userHostFunction &&
+              !ctx.externImportModule &&
+              [...params, ...results].some(isRefValType)
+            ) {
+              ensureNativeStringBoundaryBridge(ctx);
+            }
           }
         }
       }
