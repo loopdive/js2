@@ -33,7 +33,7 @@ export function buildClosureResultBoxing(
   boxNumberIdx: number | undefined,
 ): Instr[] {
   if (!returnType) return buildClosureResultBody({ kind: "void", undefinedValue: undefinedExternInstrs(ctx) });
-  if ((ctx.standalone || ctx.wasi) && isAnyValue(returnType, ctx))
+  if (ctx.targetProfile.backend === "wasmgc" && isAnyValue(returnType, ctx))
     return buildClosureResultBody({ kind: "native-any", anyToExtern: ensureAnyToExternHelper(ctx) });
   if (returnType.kind === "i32") {
     const boxSymbol = ctx.funcMap.get("__box_symbol");

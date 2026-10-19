@@ -2347,8 +2347,8 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    * (#4160) Set when `ensureObjectRuntime` reserved the prototype-index-store
    * helpers (`__protoidx_*`, proto-index-store.ts) — the runtime companions
    * that make `Object.prototype[i]` / `Array.prototype[i]` writes visible
-   * through the prototype chain. Reserved ONLY under
-   * `ctx.standalone && ctx.protoIndexDirty` (pre-scan flag, #4128), so a
+   * through the prototype chain. Reserved only for a native WasmGC module with
+   * `protoIndexDirty` set by the pre-scan (#4128), so a
    * flag-clear module carries no trace; bodies + chokepoint arms are filled by
    * `fillProtoIndexStore` at FINALIZE.
    */
@@ -4936,9 +4936,9 @@ export type { SourcePos };
 
 /**
  * (#5385 S1, #6685) Is there NO JavaScript embedder? Answers the environment
- * question only (`targetProfile.environment !== "javascript"`); which
- * ECMAScript implementation lowers the module is `ctx.standalone`. Console
- * sinks and other environment-shaped arms key on this, never on the regime.
+ * question only (`targetProfile.environment !== "javascript"`); the WasmGC
+ * backend owns the native ECMAScript implementation. Console sinks and other
+ * environment-shaped arms key on this, never on the semantic backend.
  */
 export function hostFreeEnvironment(ctx: Pick<CodegenContext, "targetProfile">): boolean {
   return profileHostFreeEnvironment(ctx.targetProfile);

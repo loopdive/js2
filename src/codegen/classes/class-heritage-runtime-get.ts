@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
- * (#6772 S11) §15.7.14 ClassDefinitionEvaluation step 5.g–h for a standalone
+ * (#6772 S11) §15.7.14 ClassDefinitionEvaluation step 5.g–h for a native WasmGC
  * class whose heritage the compiler cannot resolve: read
  * `Get(superclass, "prototype")` ONCE at definition, and throw the step 5.h
  * TypeError when the answer is a primitive.
@@ -13,7 +13,7 @@
  * never threw.
  *
  * Scope (each decline keeps the class's previous bytes):
- *  - standalone only; the class is in `classDynamicUnresolvedHeritageSet`, is
+ *  - native WasmGC only; the class is in `classDynamicUnresolvedHeritageSet`, is
  *    not a linked-provider subclass (#6640, which evaluates its heritage
  *    itself) and has no builtin parent;
  *  - the heritage is not one the r3-5 check already throws for (the value is
@@ -61,7 +61,7 @@ export function heritagePrototypeGetTarget(
   ctx: CodegenContext,
   decl: ts.ClassLikeDeclaration,
 ): ts.Expression | undefined {
-  if (!ctx.standalone) return undefined;
+  if (ctx.targetProfile.backend !== "wasmgc") return undefined;
   const className = classNameOf(ctx, decl);
   if (className === undefined || !ctx.classDynamicUnresolvedHeritageSet.has(className)) return undefined;
   if (ctx.classLinkedDynamicParentExpr.has(className) || ctx.classBuiltinParentMap.has(className)) return undefined;

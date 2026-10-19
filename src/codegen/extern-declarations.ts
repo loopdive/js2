@@ -9,8 +9,7 @@
 
 import { ts, forEachChild } from "../ts-api.js";
 import type { ValType } from "../ir/types.js";
-import type { CodegenContext, ExternClassInfo } from "./context/types.js";
-import { hostFreeEnvironment } from "./context/types.js";
+import { hostFreeEnvironment, jsValueBoundary, type CodegenContext, type ExternClassInfo } from "./context/types.js";
 import {
   applyLibExternScanEffects,
   captureLibExternScanEffects,
@@ -30,6 +29,7 @@ import { nativeTypeFromTypeNode } from "./native-type-annotations.js";
 import { reportError } from "./context/errors.js";
 import { registerHostIntlExternClasses } from "./helpers/host-intl-classes.js";
 import { registerAmbientParseImport } from "./ambient-parse-import.js";
+import { registerAmbientFunctionValueThunk } from "./declarations/ambient-function-value-thunk.js";
 import { isStandaloneUnavailableTimerGlobal } from "./standalone-timers.js";
 import {
   heritageBaseName,
@@ -894,6 +894,7 @@ function collectExternDeclarationsImpl(
           }
         }
       }
+      registerAmbientFunctionValueThunk(ctx, sourceFile, stmt);
     }
     // declare var X: { prototype: X; new(): X } (lib.dom.d.ts pattern)
     // declare var Date: DateConstructor (interface with new() pattern)
@@ -1602,7 +1603,7 @@ export function collectDeclaredGlobals(
     if (!referencedNames.has(name) || userModuleBindings.has(name) || ctx.declaredGlobals.has(name)) continue;
     // No JS host exists for standalone/WASI modules.  Keep the host-free
     // behavior used by the variable-global path above.
-    if (ctx.strictNoHostImports || ctx.standalone || ctx.wasi) continue;
+    if (ctx.strictNoHostImports || !jsValueBoundary(ctx)) continue;
     const importName = `global_${name}`;
     if (!ctx.funcMap.has(importName)) {
       const typeIdx = addFuncType(ctx, [], [{ kind: "externref" }]);

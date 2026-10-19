@@ -6,8 +6,8 @@
 // real locale formatting needs the CLDR/ICU tables. So `Intl` is a HOST
 // provider, and a build has exactly two honest options:
 //
-// - a host `Intl` is available (the host-assisted lane, or the native regime
-//   with the `intl` host accelerator selected): the `Intl.*` constructors
+// - a host `Intl` is available (the linear backend, or the native regime with
+//   the `intl` host accelerator selected): the `Intl.*` constructors
 //   register as extern classes whose `Intl_<Class>_*` imports call the real
 //   host object. Under the accelerator the runtime marshals every argument and
 //   result through the JS value boundary (`src/runtime/intl-host-accelerator.ts`),
@@ -110,7 +110,7 @@ const LEGACY_HOST_INTL_CLASSES = new Set(["ListFormat", "NumberFormat", "DateTim
 /**
  * Register the `Intl.*` extern classes for a build that has a host `Intl`.
  *
- * Host-assisted lane (unchanged by #6986): ListFormat and NumberFormat always,
+ * Linear backend (unchanged by #6986): ListFormat and NumberFormat always,
  * DateTimeFormat only while strings are host strings (#5355). The native regime
  * registers every class in {@link INTL_CLASSES}, and only under the `intl`
  * accelerator — there the runtime marshals the boundary.
@@ -122,7 +122,7 @@ export function registerHostIntlExternClasses(ctx: CodegenContext): void {
     if (ctx.externClasses.has(className)) continue;
     if (!accelerated) {
       if (!LEGACY_HOST_INTL_CLASSES.has(className)) continue;
-      if (className === "DateTimeFormat" && (ctx.standalone || ctx.wasi || ctx.nativeStrings)) continue;
+      if (className === "DateTimeFormat" && ctx.nativeStrings) continue;
     }
     // The pre-#6986 method tables, kept so the host-assisted import set does not move.
     const methods = new Map<string, ExternMethod>();

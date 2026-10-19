@@ -14,7 +14,7 @@ import type { WidenedCarrierOracle } from "../../checker/usage-inference.js";
 import type { ValType } from "../../ir/types.js";
 import { annexBExistingVarUpdateNames } from "../annexb-cancel.js";
 import { getLocalType } from "../context/locals.js";
-import type { CodegenContext, FunctionContext } from "../context/types.js";
+import { jsValueBoundary, type CodegenContext, type FunctionContext } from "../context/types.js";
 import { initializerMayProduceHostCallable } from "./host-callable-initializer.js";
 import { readEnv } from "../../env.js";
 
@@ -187,7 +187,7 @@ function bindingHasOutOfShapePropertyWrite(ctx: CodegenContext, decl: ts.Variabl
  * slot would null the host value during coercion.
  */
 export function bindingMayReceiveHostCallable(ctx: CodegenContext, decl: ts.VariableDeclaration): boolean {
-  if (!ts.isIdentifier(decl.name) || !decl.initializer || ctx.standalone || ctx.wasi) return false;
+  if (!ts.isIdentifier(decl.name) || !decl.initializer || !jsValueBoundary(ctx)) return false;
   if (initializerMayProduceHostCallable(ctx, decl.initializer)) return true;
 
   const facts = scopeCarrierFacts(ctx, containingScope(decl));

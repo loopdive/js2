@@ -5,12 +5,13 @@
  * A builtin member value such as `Date.now` is a genuine JavaScript function
  * (externref), not one of this compiler's Wasm closure structs.  Bindings whose
  * initializer can select such a value must therefore keep an externref carrier
- * in host mode.  The call dispatcher uses the same proof to admit its
- * `__call_function` fallback when the runtime value is not a Wasm closure.
+ * at the JavaScript value boundary. The call dispatcher uses the same proof to
+ * admit its explicit boundary-callback adapter when the runtime value is not a
+ * Wasm closure.
  */
 
 import { ts } from "../../ts-api.js";
-import type { CodegenContext } from "../context/types.js";
+import { jsValueBoundary, type CodegenContext } from "../context/types.js";
 import { BUILTIN_CLASS_NAMES } from "../expressions/builtin-class-names.js";
 import { resolvesToAmbientGlobal } from "../expressions/non-constructable.js";
 
@@ -79,7 +80,7 @@ function isReflectiveAccessorExtraction(expression: ts.Expression): boolean {
 
 /** True when `expression` can evaluate to a genuine host function. */
 export function initializerMayProduceHostCallable(ctx: CodegenContext, expression: ts.Expression): boolean {
-  if (ctx.standalone || ctx.wasi) return false;
+  if (!jsValueBoundary(ctx)) return false;
   const current = unwrap(expression);
 
   if (

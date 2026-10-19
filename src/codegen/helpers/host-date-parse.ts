@@ -19,12 +19,12 @@ import { emitNativeStringToHostExternref } from "../string-ops.js";
 
 /** The `date` accelerator under the native regime (needs the string bridge). */
 function hostDateAccelerated(ctx: CodegenContext): boolean {
-  return ctx.standalone && hasHostAccelerator(ctx.targetProfile, "date") && hostStringBridgeUsable(ctx);
+  return hasHostAccelerator(ctx.targetProfile, "date") && hostStringBridgeUsable(ctx);
 }
 
 /** Whether Date string parsing may use the host import in this module. */
 export function hostDateParseLane(ctx: CodegenContext): boolean {
-  return (!ctx.standalone && !ctx.wasi) || hostDateAccelerated(ctx);
+  return ctx.targetProfile.backend !== "wasmgc" || hostDateAccelerated(ctx);
 }
 
 /**

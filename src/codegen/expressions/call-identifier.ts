@@ -37,7 +37,7 @@ import { emitNumberToStringSentinelAware, emitToNumber, emitToString } from "../
 import { reportError } from "../context/errors.js";
 import { allocLocal, getLocalType } from "../context/locals.js";
 import { eagerCaptureCellForCall } from "../statements/eager-capture-box.js";
-import type { CodegenContext, FunctionContext } from "../context/types.js";
+import { jsValueBoundary, type CodegenContext, type FunctionContext } from "../context/types.js";
 import {
   addImport,
   addStringConstantGlobal,
@@ -60,6 +60,7 @@ import { emitSymbolOperandCoercionThrow } from "../tonumber-symbol-throw.js"; //
 import { boundFunctionTargetIsDefinitelyCompiled, calleeIsBoundFunctionVar } from "../object-builtin-effects.js";
 import { tracesToProxyValue } from "../proxy-value-provenance.js";
 import { ensureObjVecBuilders, reserveApplyClosure } from "../object-runtime.js";
+import { canonicalUndefinedExternInstrs } from "../any-helpers.js";
 import { hostFnctorCallableFallbackImportName, reserveHostFnctorMethodDriver } from "../host-fnctor-method-driver.js"; // (#4648)
 import { emitNullCheckThrow, typeErrorThrowInstrs } from "../property-access.js";
 import { emitRuntimeEvalInterpretedCallableAdapter } from "../runtime-eval-callable.js";
@@ -131,6 +132,11 @@ import { resolvesToGlobalFunctionAlias } from "./eval-inline.js";
 import { prepareStandaloneEvalAliasCall } from "./eval-alias.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { buildUnmatchedClosureHostCall, reserveUnmatchedClosureHostCall } from "./unmatched-closure-host-call.js"; // (#1058)
+import {
+  buildExternrefHostCallFallbackArm,
+  ensureHostCallFallbackImports,
+  planHostCallFallback,
+} from "./host-call-fallback.js";
 import { withDeclarationBoundCallee } from "./declaration-bound-callee.js"; // (#1058)
 import { tryCompileNodeBuiltinMemberCall } from "../host-method-args.js"; // (#6450)
 import { isModuleInitChunkFunctionContext } from "../module-init-chunks.js";
@@ -2747,6 +2753,17 @@ function compileBoundIdentifierCall(
           }
           const unmatchedClosureHostCall =
             funcCandidates.length > 1 ? reserveUnmatchedClosureHostCall(ctx, fctx, expr) : undefined;
+          const boundaryHostCallPlan =
+            jsValueBoundary(ctx) &&
+            calleeBindingMayReceiveHostCallable &&
+            !expr.arguments.some((argument) => ts.isSpreadElement(argument))
+              ? planHostCallFallback(expr.arguments.length)
+              : undefined;
+          const boundaryBareThis = boundaryHostCallPlan === undefined ? undefined : canonicalUndefinedExternInstrs(ctx);
+          if (boundaryHostCallPlan !== undefined) {
+            ensureHostCallFallbackImports(ctx, boundaryHostCallPlan);
+            flushLateImportShifts(ctx, fctx);
+          }
           // Preserve the JavaScript distinction between an omitted argument
           // and null. A preregistered callback with optional externref formals
           // can be wider than the public callable signature, so keep one
@@ -2795,8 +2812,9 @@ function compileBoundIdentifierCall(
             // (#1712) Keep the raw externref callee around for the host-callable
             // fallback below. When the guarded struct cast nulls out (the callee
             // is a host builtin like `Object.hasOwn`, a bound function, or a
-            // closure of a foreign struct shape), the call must dispatch through
-            // `__call_function` instead of trapping on `struct.get` of null.
+            // closure of a foreign struct shape), retain the exact JS-owned
+            // value for the explicit boundary adapter instead of trapping on
+            // `struct.get` of null.
             rawCalleeLocal = allocLocal(fctx, `__callable_raw_${fctx.locals.length}`, { kind: "externref" });
             fctx.body.push({ op: "local.tee", index: rawCalleeLocal });
             fctx.body.push({ op: "any.convert_extern" });
@@ -2939,17 +2957,12 @@ function compileBoundIdentifierCall(
           // assembled.
           const callableInvocationStart = fctx.body.length;
 
-          // (#1712/#2928) Foreign-callable fallback: when the callee arrived as externref
-          // and the guarded cast to the wrapper struct failed (closureLocal is
-          // null) while the raw value is non-null, the callee is callable but
-          // not a closure of the matched shape — a host builtin held in a JS
-          // variable (acorn's `var hasOwn = Object.hasOwn || function(…){…}`),
-          // a bound function, a closure with a foreign struct layout, or the
-          // standalone runtime-eval callback marker (`var alias = eval`). The
-          // struct.get below would trap "dereferencing a null pointer". It routes
-          // through the native `__apply_closure` classifier, which owns the
-          // structurally canonical runtime-eval callback arm (the host
-          // `__call_function` arm is retired, #6979).
+          // Foreign-callable fallback: when the callee arrived as externref and
+          // the guarded native-closure cast failed, keep the original value at
+          // its owning boundary. A proven JS callable uses the fixed-arity
+          // boundary callback adapter; a runtime-eval marker uses the native
+          // `__apply_closure` classifier. Neither path revives the retired
+          // `__call_function` host-semantic ABI (#6979).
           // Eligibility excludes i64/v128-typed params/returns (no boxing rule).
           const boxableKind = (t: ValType | null): boolean =>
             t === null ||
@@ -2964,10 +2977,38 @@ function compileBoundIdentifierCall(
             ctx.runtimeEvalCallableBoundaryEnabled === true &&
             boxableKind(expectedReturn) &&
             matchedClosureInfo.paramTypes.every((t) => boxableKind(t));
+          const boundaryHostFallback =
+            rawCalleeLocal !== undefined &&
+            boundaryHostCallPlan !== undefined &&
+            boundaryBareThis !== undefined &&
+            actualArgExternLocals.length === expr.arguments.length &&
+            boxableKind(expectedReturn);
 
           let fallbackInstrs: Instr[] | null = null;
           let dispatchOuterBody: Instr[] | null = null;
-          if (runtimeApplyFallback) {
+          if (boundaryHostFallback) {
+            const hostArm = buildExternrefHostCallFallbackArm(
+              ctx,
+              boundaryHostCallPlan!,
+              rawCalleeLocal!,
+              actualArgExternLocals,
+              boundaryBareThis!,
+            );
+            if (hostArm !== undefined) {
+              const mainBuf = fctx.body;
+              fctx.savedBodies.push(mainBuf);
+              fctx.body = [...hostArm];
+              if (expectedReturn === null) {
+                fctx.body.push({ op: "drop" });
+              } else if (expectedReturn.kind !== "externref") {
+                coerceType(ctx, fctx, { kind: "externref" }, expectedReturn);
+              }
+              fallbackInstrs = fctx.body;
+              fctx.savedBodies.push(fallbackInstrs);
+              fctx.body = [];
+              dispatchOuterBody = mainBuf;
+            }
+          } else if (runtimeApplyFallback) {
             // Ensure all fallback imports BEFORE detaching buffers so the index
             // shifts land while every buffer is reachable by the shifters.
             let arrNew: number | undefined;
@@ -3414,7 +3455,7 @@ function compileBoundIdentifierCall(
           // (#1712/#2928) Assemble the foreign-callable fallback split: the funcref
           // dispatch emitted above went into a detached buffer; wrap both arms
           // in an `if` on "cast failed but raw callee non-null".
-          if (runtimeApplyFallback && fallbackInstrs && dispatchOuterBody) {
+          if ((boundaryHostFallback || runtimeApplyFallback) && fallbackInstrs && dispatchOuterBody) {
             const dispatchInstrs = fctx.body;
             fctx.body = dispatchOuterBody;
             fctx.savedBodies.pop(); // fallbackInstrs

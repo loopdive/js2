@@ -45,10 +45,9 @@ export function declarationReadsStructuralObjectFromRealmGlobal(
   declaration: ts.VariableDeclaration,
 ): boolean {
   // The native global-object runtime can continue dynamic structural reads
-  // from the raw externref without a JS host. Host/gc needs a separate
-  // declaration-keyed dynamic-access route for genuine host objects; changing
-  // only its slot would be incomplete, so leave that lane byte-identical.
-  if (!ctx.standalone && !ctx.wasi) return false;
+  // from the raw externref on every WasmGC environment. The linear backend
+  // keeps its own carrier policy.
+  if (ctx.targetProfile.backend !== "wasmgc") return false;
   if (!ts.isIdentifier(declaration.name) || declaration.initializer === undefined) return false;
   // The oracle keeps this proof representation-based without leaking checker
   // objects: classes, arrays, builtins, and callables have distinct fact kinds.

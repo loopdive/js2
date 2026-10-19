@@ -854,3 +854,84 @@ group `src/codegen/context/` (4), `analysis/` (3), `helpers/` (5), `classes/`
 environment, value boundary and named accelerator. Do not reintroduce a JS
 object as internal semantic storage; keep host-backed objects at the explicit
 interop boundary only.
+
+### S7-c leaf-directory and callable-boundary handoff (2026-10-19, Codex)
+
+This fourth bounded S7-c checkpoint finishes the 43-site leaf-directory group
+on `codex/6979-s7c-ir-arms` and closes the ambient-function value gap exposed by
+that classification. S7 remains `in-progress`; this PR remains stacked and
+draft until its S7-a/S7-b prerequisites land.
+
+**Ratchet.** The reviewed reductions are banked:
+
+| Measure | Declaration/registry checkpoint | Leaf/callable checkpoint |
+| --- | ---: | ---: |
+| Raw `ctx.standalone` hits in `src/` | 1,469 | **1,425** |
+| Matching source files | 472 | **446** |
+| `src/codegen/context/` | 4 | **0** |
+| `src/codegen/analysis/` | 3 | **0** |
+| `src/codegen/helpers/` | 5 | **0** |
+| `src/codegen/classes/` | 18 | **0** |
+| `src/codegen/closures/` | 13 | **0** |
+
+The extra one-hit reduction is the ambient-function declared-global gate in
+`extern-declarations.ts`, now keyed directly to `jsValueBoundary`.
+
+**Classification.** Class and closure object-model choices are native WasmGC
+backend facts: derived-constructor guards, dynamic heritage reads, constructor
+return overrides, native collection subclasses, closure result carriers,
+`new.target`, Function construction and apply dispatch no longer pretend that
+the JavaScript environment selects a second semantic implementation. Host
+callback result boxing and mixed host-callable storage are instead keyed to
+`jsValueBoundary`. RegExp, Date and Intl routes name their accelerator families
+directly. The linear backend retains its existing provider/carrier behavior.
+
+**Ambient functions as values.** A user `declare function hostTick(...)` still
+uses its typed Wasm function import for a direct `hostTick(...)` call. Only a
+real first-class read such as `let selected = hostTick` requests the separate
+`global_hostTick` identity thunk and fixed-arity
+`__boundary_callback_call_1` adapter. The variable keeps the exact JS function
+as an externref at the boundary, while later assignments may still install a
+native compiled closure. The identifier dispatcher distinguishes those two at
+runtime and never revives the retired `__call_function` semantic ABI.
+
+No object or function is copied by this path. If the global thunk runs during
+the Wasm start section, it returns the original JS identity immediately and
+defers only per-instance boundary admission until `setInstance` publishes the
+exports. That makes the existing host-backed object/function machinery usable
+at the boundary without making it native storage. A direct-call-only regression
+also proves that neither the global identity thunk nor a boundary-callback
+adapter is emitted when no value read exists. The implementation lives in the
+declarations subsystem rather than growing the ambient collector god-file.
+
+**Validation.** The candidate has the following evidence:
+
+- TypeScript 7 typecheck, Biome lint, Prettier, standalone-arm ratchet,
+  IR-fallback, LOC, function, coercion, oracle, import-cycle and flat-directory
+  gates pass.
+- Host-import policy remains 33 probes / 452 imports / zero `regime-gap` or
+  `unknown` imports. Runtime metrics remain 12,066 lines, 1,959
+  `resolveImport` lines / 7 cases and 1,194 explicit-capability lines; the
+  owned-adapter surface is **897**, below its 898-line ceiling.
+- `issue-4397-native-semantic-js-host.test.ts` passes 64/64, including direct
+  ambient calls, a boundary-stored host callable, startup-window identity
+  admission and replacement with a compiled closure.
+- Equivalence remains 20 failing, 2,008 passing and 22 known failures, with two
+  baseline failures now passing and no new regressions.
+- The focused class/closure/accelerator run has 171 passing and ten failing
+  assertions. Eight failures (`issue-2951`, `issue-6417`) reproduce exactly on
+  pre-checkpoint commit `97e364b700`; two `issue-3488` rows cannot run because
+  this checkout lacks their test262 fixture files. There is no candidate-only
+  failure. Class residue passes 51/51; Intl, accelerators, collection subclasses,
+  console values and Octane TypeScript pass completely.
+- The changed-root hook reached 16/17 assertions in `issue-1183`; its sole Set
+  iteration boundary failure reproduces identically on the same detached
+  `97e364b700` control.
+- Compiler-boundary inventory retains the expected
+  `inventory-valid-architecture-incomplete` status with `errors: []`.
+
+**Next handoff.** Continue with a bounded reviewed group, preferably
+`src/codegen/array/` (22) plus `src/codegen/object-model/` (29), before taking
+the much larger expression directory (362). Preserve the same rule: native
+WasmGC owns language semantics and storage; JS machinery owns only explicit
+interop values, capabilities and named accelerators.

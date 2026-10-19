@@ -302,12 +302,12 @@ export function isHostCallbackArgument(node: ts.Node, ctx: CodegenContext): bool
       // invalid `this`, or `Array.prototype.find.call(undefined, fn)`) is a
       // plain function-object VALUE, not a synchronously-invoked host callback.
       // Routing it through `__make_callback` leaks an `env::` import in
-      // standalone mode for no reason; the GC closure-struct path produces a
-      // valid function-object value host-free (and any HOF that the *receiver*
+      // native WasmGC mode for no reason; the GC closure-struct path produces a
+      // valid function-object value (and any HOF that the *receiver*
       // then invokes — `Array.prototype.forEach.call(arr, cb)` — dispatches the
-      // struct via `__call_fn_N`, verified host-free). Standalone-gated so the
-      // js-host lane stays byte-identical.
-      if (ctx.standalone && (methodName === "call" || methodName === "apply")) {
+      // struct via `__call_fn_N`). This is a semantic-backend decision, not an
+      // environment decision.
+      if (ctx.targetProfile.backend === "wasmgc" && (methodName === "call" || methodName === "apply")) {
         return false;
       }
       try {
@@ -392,12 +392,11 @@ export function isHostCallbackArgument(node: ts.Node, ctx: CodegenContext): bool
         // bridge here would leak `env.__make_callback` (breaking host-free
         // instantiation) AND hand the substrate an externref it can't `ref.cast`
         // to the closure struct. So give these the closure-struct path.
-        // Standalone-gated (js-host/gc keep the pre-existing host path,
-        // byte-identical). map/filter (typed-RESULT construction) are NOT here —
+        // Native-WasmGC-gated. map/filter (typed-RESULT construction) are NOT here —
         // deferred to R4b. The dyn-view (`$__ta_dyn_view`) receiver shape stays
         // on its own #3058/#3162 path in array-methods.ts.
         if (
-          ctx.standalone &&
+          ctx.targetProfile.backend === "wasmgc" &&
           STANDALONE_TYPED_ARRAY_SCALAR_HOFS.has(methodName) &&
           isTypedArrayReceiverType(receiverType, ctx)
         ) {

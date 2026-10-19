@@ -3,14 +3,9 @@
   "minimumScannedFiles": 1746,
   "directories": {
     "src": 6,
-    "src/codegen": 1005,
-    "src/codegen/analysis": 3,
+    "src/codegen": 1004,
     "src/codegen/array": 22,
-    "src/codegen/classes": 18,
-    "src/codegen/closures": 13,
-    "src/codegen/context": 4,
     "src/codegen/expressions": 362,
-    "src/codegen/helpers": 5,
     "src/codegen/object-model": 29,
     "src/runtime/contracts": 2
   }

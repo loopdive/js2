@@ -51,6 +51,27 @@ export function buildHostCallFallbackArm(
 }
 
 /**
+ * The same boundary call when the caller already retained the callee as an
+ * externref. Identifier-call dispatch does this before its guarded conversion
+ * to the native closure root, so converting through anyref and back would add
+ * no information and would obscure that the value stays JS-owned.
+ */
+export function buildExternrefHostCallFallbackArm(
+  ctx: CodegenContext,
+  plan: HostCallFallbackPlan,
+  calleeExternLocal: number,
+  argLocals: readonly number[],
+  thisArgInstrs: readonly Instr[],
+): Instr[] | undefined {
+  const callFn = ctx.funcMap.get(plan.importName);
+  if (callFn === undefined || argLocals.length !== plan.arity) return undefined;
+  const body: Instr[] = [{ op: "local.get", index: calleeExternLocal }, ...thisArgInstrs];
+  for (const argLocal of argLocals) body.push({ op: "local.get", index: argLocal });
+  body.push({ op: "call", funcIdx: callFn });
+  return body;
+}
+
+/**
  * (#6686) Under the native regime a dynamic call already has an in-Wasm
  * default (the apply fallback). The JS boundary callback must only take the
  * callees Wasm does NOT own — an admitted JS function is a non-eq host ref —

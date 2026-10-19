@@ -1190,7 +1190,7 @@ export function ensureFuncClosureSingleton(
   const liveGlobalBindingResultBridge =
     !eagerAsyncPromiseWrap &&
     !nativeGeneratorResultBridge &&
-    (ctx.standalone === true || ctx.wasi === true) &&
+    ctx.targetProfile.backend === "wasmgc" &&
     ctx.runtimeEvalGlobalFunctionBindings === true &&
     sig.results.length === 1 &&
     (sig.results[0]!.kind === "ref" || sig.results[0]!.kind === "ref_null");

@@ -34,7 +34,7 @@ export function standaloneCommaHeritage(
   ctx: CodegenContext,
   decl: ts.ClassLikeDeclaration,
 ): { readonly value: ts.Identifier; readonly effects: readonly ts.Expression[] } | undefined {
-  if (!ctx.standalone && !ctx.wasi) return undefined;
+  if (ctx.targetProfile.backend !== "wasmgc") return undefined;
   const clause = decl.heritageClauses?.find((c) => c.token === ts.SyntaxKind.ExtendsKeyword && c.types.length > 0);
   if (clause === undefined) return undefined;
   const effects: ts.Expression[] = [];

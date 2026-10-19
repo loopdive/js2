@@ -128,6 +128,72 @@ describe("#4397 native semantics in a JavaScript environment", () => {
     );
   });
 
+  it("keeps genuine host callables on the JS value boundary without making them native storage", async () => {
+    const result = await compile(
+      `
+        declare function hostTick(value: number): number;
+        let selected = hostTick;
+        export function directHostCall(): number { return hostTick(1); }
+        export function callHost(): number { return selected(2); }
+        export function installCompiledAndCall(): number {
+          selected = (value: number): number => value + 1;
+          return selected(2);
+        }
+      `,
+      { fileName: "issue-4397-host-callable-boundary.ts" },
+    );
+    expect(result.success, result.errors.map((error) => error.message).join("; ")).toBe(true);
+    const boundaryImports = wasmImports(result.binary);
+    expect(boundaryImports).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ module: "env", name: "hostTick" }),
+        expect.objectContaining({ module: "env", name: "global_hostTick" }),
+        expect.objectContaining({ module: "env", name: "__boundary_callback_call_1" }),
+      ]),
+    );
+    expect(boundaryImports.some((entry) => entry.name === "__call_function")).toBe(false);
+    expect(result.hostImportInventory).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: "hostTick",
+          classification: "platform-capability",
+          family: "declared:hostTick",
+        }),
+        expect.objectContaining({
+          name: "global_hostTick",
+          classification: "platform-capability",
+          family: "global:hostTick",
+        }),
+        expect.objectContaining({
+          name: "__boundary_callback_call_1",
+          classification: "value-adapter",
+        }),
+      ]),
+    );
+
+    const imports = buildCompiledImports(result, { hostTick: (value: number) => value + 40 });
+    const { instance } = await WebAssembly.instantiate(result.binary, imports);
+    imports.setInstance?.(instance);
+    const exports = wrapCompiledExports(result, instance);
+
+    expect(exports.directHostCall()).toBe(41);
+    expect(exports.callHost()).toBe(42);
+    expect(exports.installCompiledAndCall()).toBe(3);
+
+    const directOnly = await compile(
+      `
+        declare function hostTick(value: number): number;
+        export function run(): number { return hostTick(1); }
+      `,
+      { fileName: "issue-4397-host-callable-direct-only.ts" },
+    );
+    expect(directOnly.success, directOnly.errors.map((error) => error.message).join("; ")).toBe(true);
+    const directImports = wasmImports(directOnly.binary);
+    expect(directImports.some((entry) => entry.name === "hostTick")).toBe(true);
+    expect(directImports.some((entry) => entry.name === "global_hostTick")).toBe(false);
+    expect(directImports.some((entry) => entry.name.startsWith("__boundary_callback_call_"))).toBe(false);
+  });
+
   it("keeps Wasm-owned objects live and identity-stable at the JS boundary", async () => {
     const result = await compile(
       `
