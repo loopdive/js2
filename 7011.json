@@ -1,10 +1,11 @@
 {
   "id": "7011",
   "assignee": "ttraenkler/opus-7011-sab",
-  "requested_by": "ttraenkler/opus-7011-sab",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "issue-7011-regime-sharedarraybuffer",
   "claimed_at": "2026-10-19T11:34:36Z",
-  "updated_at": "2026-10-19T11:34:36Z",
-  "write_id": "92599-k2s3o7xq"
+  "updated_at": "2026-10-19T21:35:06Z",
+  "write_id": "34049-3xvifpr6",
+  "released_at": "2026-10-19T21:35:06Z"
 }
