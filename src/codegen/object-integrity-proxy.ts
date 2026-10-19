@@ -748,7 +748,6 @@ function ensureProxyEnumerableOwn(ctx: CodegenContext, ownKeysAllIdx: number): n
  * their front-guards exist.
  */
 export function fillObjectIntegrityProxyArms(ctx: CodegenContext, proxyTypeIdx: number): void {
-  if (!ctx.standalone) return;
   const proxyTrapsTypeIdx = ctx.objectRuntimeTypes?.proxyTrapsTypeIdx;
   if (proxyTrapsTypeIdx === undefined) return;
   const ownKeysAllIdx = ensureProxyOwnKeysAll(ctx);

@@ -671,7 +671,6 @@ import {
 } from "./vec-access-exports.js"; // (#3272) extracted verbatim
 import { emitInitMarshalHelperRegistration } from "./init-marshal-helpers.js"; // (#5193)
 import { emitInitClassDispatchRegistration } from "./init-class-dispatch-helpers.js"; // (#5202)
-import { emitObjectCreateClassInstanceExport } from "./object-create-class-instance.js"; // (#5239)
 import { emitClassInstanceProtoExport } from "./class-instance-proto.js"; // (#5347)
 import { hostBridgeMethodKeys } from "./runtime-key-class-methods.js"; // (#5358)
 import { emitClassValueConstructExports } from "./class-value-construct.js"; // (#5242)
@@ -915,7 +914,7 @@ function typedArrayNameFromTypeNode(node: ts.TypeNode): string | null {
 // width truncation. Float views stay f64. Host/gc mode stays f64 for all but
 // Uint8Array — the JS-host marshalling boundary already classifies non-Uint8
 // typed arrays as `number[]`-on-return; packing host-side risks that boundary and
-// is deferred (#2593 note). The packed map is gated on `ctx.wasi || ctx.standalone`.
+// is deferred (#2593 note). The packed map is gated on `ctx.wasi || the regime flag`.
 const TYPED_ARRAY_PACKED_STORAGE: Readonly<Record<string, { key: string; type: ValType }>> = {
   Int8Array: { key: "i8_byte", type: { kind: "i8" } },
   Uint8Array: { key: "i8_byte", type: { kind: "i8" } },
@@ -6275,10 +6274,6 @@ export function generateModule(
     // Emit __call_@@iterator export for runtime Symbol.iterator dispatch on WasmGC structs
     emitIteratorMethodExport(ctx);
 
-    // (#5239) `Object.create(<class value>.prototype)` — the dynamic twin of
-    // the syntactic `Object.create(Foo.prototype)` fast path.
-    emitObjectCreateClassInstanceExport(ctx);
-
     // (#5347) …and the REVERSE map of the same family: which class minted this
     // struct, and what is its prototype carrier.
     emitClassInstanceProtoExport(ctx);
@@ -6876,7 +6871,7 @@ export function generateModule(
     // fill PREPENDS at body[0], which would break those shape probes if it ran
     // first. The prepended `$NativeProto` arm is receiver-disjoint from every
     // vec / TA-view arm, so taking the front slot is semantically inert.
-    // No-op unless `ctx.standalone && ctx.protoIndexDirty` reserved the store.
+    // No-op unless `the regime flag && ctx.protoIndexDirty` reserved the store.
     fillProtoIndexStore(ctx);
 
     // (#4222 ES5 residual) The bounded sparse Array IR provider uses the
@@ -11565,9 +11560,6 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
 
     // Emit __call_@@iterator export for runtime Symbol.iterator dispatch.
     profilePhase("emit-iterator-method-export", () => emitIteratorMethodExport(ctx));
-
-    // (#5239) See the single-source path — same placement, same gate.
-    profilePhase("emit-object-create-class-instance", () => emitObjectCreateClassInstanceExport(ctx));
 
     // (#5347) See the single-source path — same placement, same gate.
     profilePhase("emit-class-instance-proto", () => emitClassInstanceProtoExport(ctx));

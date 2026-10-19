@@ -71,7 +71,7 @@ const i32 = (): ValType => ({ kind: "i32" });
 
 /** Links are live: standalone, and the module can hold a Proxy value at all. */
 export function protoLinkActive(ctx: CodegenContext): boolean {
-  return ctx.standalone === true && ctx.proxyDirty === true;
+  return ctx.proxyDirty === true;
 }
 
 /** The `protoLink` operand every `struct.new $Object` pushes last. A factory (no shared Instr objects). */

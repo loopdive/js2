@@ -26,8 +26,8 @@ export function registerObjectSameValueHelper(
   // this runtime and its #2042-S4 ValidateAndApplyPropertyDescriptor preflight
   // bakes a direct `call __object_is` for the SameValue value-change check. WASI
   // is host-free too (no JS `__object_is` import — `--target wasi` sets
-  // `ctx.wasi` but leaves `ctx.standalone` false), so gating this registration on
-  // `ctx.standalone` alone left `funcMap.get("__object_is")` undefined in WASI,
+  // `ctx.wasi` and, before #6979 S7-c, left the regime flag false), so gating this
+  // registration on the regime flag alone left `funcMap.get("__object_is")` undefined in WASI,
   // and the define helper baked an undefined funcIdx → "function index out of
   // range — undefined at __defineProperty_value" hard emit error (loopdive/js2wasm#389).
   // The compatibility-provider path still owns `__object_is` via its JS import,

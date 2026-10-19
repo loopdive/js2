@@ -45,7 +45,7 @@ const TRAP_GET = 0;
 export function prependProxyArrayGetIteratorArm(ctx: CodegenContext): void {
   // `proxyDirty`: the pre-scan saw the identifier `Proxy` (#6651 H6). A module
   // whose proxy runtime was reserved for any other reason keeps its bytes.
-  if (!ctx.standalone || ctx.proxyDirty !== true) return;
+  if (ctx.proxyDirty !== true) return;
   const proxyTypeIdx = ctx.objectRuntimeTypes?.proxyTypeIdx;
   const iteratorIdx = ctx.funcMap.get("__iterator");
   const isArrayIdx = ctx.funcMap.get("__extern_is_array");

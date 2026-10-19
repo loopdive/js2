@@ -70,7 +70,6 @@ type RegisterNative = (
  * module reserved the #6944 struct-link helpers. `undefined` otherwise.
  */
 export function structProtoLinkOk(ctx: CodegenContext): number | undefined {
-  if (!ctx.standalone && !ctx.wasi) return undefined;
   return ctx.funcMap.get("__fnctor_struct_proto_ok");
 }
 

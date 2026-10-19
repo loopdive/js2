@@ -47,7 +47,7 @@ import { buildThrowJsErrorInstrs } from "./js-errors.js";
  * Params: 0 = self (closure struct), 1 = `this` (externref). Result externref.
  */
 export function emitObjectProtoValueOfBody(ctx: CodegenContext, fctx: FunctionContext, member: string): ValType | null {
-  if (member !== "valueOf" || !ctx.standalone) return null;
+  if (member !== "valueOf") return null;
   fctx.body.push(
     { op: "local.get", index: 1 },
     { op: "ref.is_null" },

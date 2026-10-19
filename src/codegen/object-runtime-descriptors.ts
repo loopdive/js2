@@ -251,7 +251,7 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
   // (`fillVecOverlayHelpers`, after every `__vec_*` carrier type exists); the
   // `$__vec_base` arms below bake a plain `call <reserved idx>` — the
   // accessor-driver reserve/fill funcIdx discipline (#1888 S5b, #329/#1899).
-  const vecOverlay = ctx.standalone ? reserveVecOverlayHelpers(ctx) : null;
+  const vecOverlay = reserveVecOverlayHelpers(ctx);
   const vecOverlayBaseIdx = vecOverlay ? getOrRegisterVecBaseType(ctx) : -1;
   /** `if (anyLocal is a $__vec_base) → return <helper>(params...)` (or []). */
   const vecOverlayArm = (anyLocal: number, helperIdx: number, paramCount: number): Instr[] => {
@@ -799,7 +799,6 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
      * gc/host keeps the exact prior instruction sequence AND local vector, so
      * its output stays byte-identical).
      */
-    const deferOCarrierRefusal = ctx.standalone;
     /** Recorded verdict local — APPENDED last, standalone only. */
     const L_O_NOCARRIER = (propsClosureArm ? 23 : 22) + (propsVecArm ? 1 : 0);
 
@@ -987,30 +986,18 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
           // pass 2, guarded on a non-empty gathered set. Strictly narrowing —
           // every input that refused before and still has work to do still
           // refuses, with the same message and the same tag.
-          ...(deferOCarrierRefusal
-            ? ([
-                ...oCarrierPresentTest,
-                { op: "i32.eqz" },
-                {
-                  op: "if",
-                  blockType: { kind: "empty" },
-                  then: [
-                    { op: "i32.const", value: 1 },
-                    { op: "local.set", index: L_O_NOCARRIER },
-                  ],
-                },
-              ] satisfies Instr[])
-            : isVecCarrierIdx === undefined && isDefineCarrierInstrs(ctx, 0) === undefined
-              ? throwUnsupported(" [SITE-O-NO-CARRIER]")
-              : ([
-                  ...oCarrierPresentTest,
-                  { op: "i32.eqz" },
-                  {
-                    op: "if",
-                    blockType: { kind: "empty" },
-                    then: throwUnsupported(" [SITE-O-NO-CARRIER]"),
-                  },
-                ] satisfies Instr[])),
+          ...([
+            ...oCarrierPresentTest,
+            { op: "i32.eqz" },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [
+                { op: "i32.const", value: 1 },
+                { op: "local.set", index: L_O_NOCARRIER },
+              ],
+            },
+          ] satisfies Instr[]),
         ],
       },
 
@@ -1349,14 +1336,12 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
       // walk has run: refuse only if the receiver has no store AND there is at
       // least one descriptor to apply. An empty gathered set means the whole
       // operation is "return O", which every receiver can do.
-      ...(deferOCarrierRefusal
-        ? ([
-            { op: "local.get", index: L_O_NOCARRIER },
-            { op: "local.get", index: L_M },
-            { op: "i32.and" },
-            { op: "if", blockType: { kind: "empty" }, then: throwUnsupported(" [SITE-O-NO-CARRIER]") },
-          ] satisfies Instr[])
-        : []),
+      ...([
+        { op: "local.get", index: L_O_NOCARRIER },
+        { op: "local.get", index: L_M },
+        { op: "i32.and" },
+        { op: "if", blockType: { kind: "empty" }, then: throwUnsupported(" [SITE-O-NO-CARRIER]") },
+      ] satisfies Instr[]),
 
       // Pass 2: apply the gathered records through the existing single-property
       // helpers. No target mutation happened before this point.
@@ -1469,9 +1454,7 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
           ? ([{ name: "vecKeySrc", type: { kind: "externref" } }] as { name: string; type: ValType }[])
           : []),
         // (#4230) deferred receiver-carrier verdict — standalone only.
-        ...(deferOCarrierRefusal
-          ? ([{ name: "oNoCarrier", type: { kind: "i32" } }] as { name: string; type: ValType }[])
-          : []),
+        ...([{ name: "oNoCarrier", type: { kind: "i32" } }] as { name: string; type: ValType }[]),
       ],
       body,
     );
@@ -1881,7 +1864,7 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
     // enumerable:false, configurable:false }. Standalone + nativeStrings only —
     // the gc/host lane keeps its host `getOwnPropertyDescriptor` (byte-inert).
     const charAtIdx = ctx.nativeStrHelpers.get("__str_charAt");
-    const strExotic = ctx.standalone && ctx.nativeStrings && anyStrTypeIdx >= 0 && charAtIdx !== undefined;
+    const strExotic = ctx.nativeStrings && anyStrTypeIdx >= 0 && charAtIdx !== undefined;
     const stringExternG = (value: string): Instr[] => {
       addStringConstantGlobal(ctx, value);
       return stringConstantExternrefInstrs(ctx, value);
@@ -1949,7 +1932,7 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
     const L_WLEN = 10;
     const L_KSTR = 11;
     const L_KIDX = 12;
-    const closureProtoOfIdx = ctx.standalone ? ctx.funcMap.get(CLOSURE_PROTO_OF) : undefined;
+    const closureProtoOfIdx = ctx.funcMap.get(CLOSURE_PROTO_OF);
     const L_FNPROTO = strExotic ? 13 : 7;
     // (#3319) A gOPD MISS (no own property / non-`$Object` receiver) answers
     // `undefined`. Under the `undefinedSingleton` regime (#2106 flip) that

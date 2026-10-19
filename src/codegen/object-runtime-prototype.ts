@@ -63,7 +63,6 @@ export const OBJECT_PROTO_SINGLETON = "__object_proto_singleton";
  * `fillObjectProtoSingleton`.
  */
 export function fillObjectProtoSingleton(ctx: CodegenContext): void {
-  if (!ctx.standalone && !ctx.wasi) return;
   const fn = ctx.mod.functions.find((f) => f.name === OBJECT_PROTO_SINGLETON);
   if (!fn) return;
   const instrs = buildLazyNativeProtoGetInstrs(ctx, BUILTIN_BRAND_TABLE.Object);
@@ -91,7 +90,6 @@ export const ARRAY_PROTO_SINGLETON = "__array_proto_singleton";
  * `Object.getPrototypeOf(a) === Array.prototype` is an `===` on one carrier.
  */
 export function fillArrayProtoSingleton(ctx: CodegenContext): void {
-  if (!ctx.standalone && !ctx.wasi) return;
   fillNativeCarrierGetPrototypeOfArms(ctx, {
     protoGet: buildLazyNativeProtoGetInstrs,
     stringLit: (c, v) => nativeStringLiteralInstrs(c, v),
@@ -280,7 +278,6 @@ function reserveArrayProtoSingleton(
   ctx: CodegenContext,
   registerNative: ObjectPrototypeHelperState["registerNative"],
 ): number | undefined {
-  if (!ctx.standalone && !ctx.wasi) return undefined;
   return registerNative(ARRAY_PROTO_SINGLETON, [], [{ kind: "externref" }], [], [{ op: "ref.null.extern" }]);
 }
 
@@ -567,10 +564,13 @@ export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectProtot
   // (#5270 step 2) Reserve the `%Object.prototype%` carrier helper with the
   // pre-change answer (`null`). `fillObjectProtoSingleton` replaces the body at
   // finalize, once the `Object` brand's lazy `$NativeProto` global exists.
-  const objectProtoSingletonIdx =
-    ctx.standalone || ctx.wasi
-      ? registerNative(OBJECT_PROTO_SINGLETON, [], [{ kind: "externref" }], [], [{ op: "ref.null.extern" }])
-      : undefined;
+  const objectProtoSingletonIdx = registerNative(
+    OBJECT_PROTO_SINGLETON,
+    [],
+    [{ kind: "externref" }],
+    [],
+    [{ op: "ref.null.extern" }],
+  );
   const arrayProtoSingletonIdx = reserveArrayProtoSingleton(ctx, registerNative); // (#6651 R1)
 
   // __getPrototypeOf(externref) -> externref (ES §20.1.2.12):

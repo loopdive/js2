@@ -84,7 +84,7 @@ export function objectAssignPrimitiveTargetOf(ctx: CodegenContext, expr: ts.Expr
  * object and its bindings are already dynamic.
  */
 export function objectAssignResultNeedsExternref(ctx: CodegenContext, initializer: ts.Expression | undefined): boolean {
-  if (!ctx.standalone || initializer === undefined) return false;
+  if (initializer === undefined) return false;
   const call = ambientObjectAssignCall(ctx, initializer);
   if (call === undefined) return false;
   // A `new String(…)` operand lies the same way: `{} & String` is `String`.
@@ -106,7 +106,6 @@ function isPrimitiveWrapperOperand(ctx: CodegenContext, expr: ts.Expression): bo
  * Such a consumer must decline and take the dynamic externref read instead.
  */
 export function isObjectAssignPrimitiveResultBinding(ctx: CodegenContext, expr: ts.Expression): boolean {
-  if (!ctx.standalone) return false;
   const id = unwrap(expr);
   if (!ts.isIdentifier(id)) return false;
   return objectAssignResultNeedsExternref(ctx, ctx.oracle.variableInitializerOf(id));
@@ -141,7 +140,6 @@ export function stringExoticAssignSourceInstrs(
   const getIdx = ctx.funcMap.get("__extern_get");
   const strictSetIdx = ctx.funcMap.get("__extern_set_strict");
   if (
-    !ctx.standalone ||
     pushKeysIdx === undefined ||
     objVecNewIdx === undefined ||
     lengthIdx === undefined ||

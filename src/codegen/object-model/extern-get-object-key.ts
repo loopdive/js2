@@ -33,7 +33,6 @@ export function unshiftExternGetObjectKeyCoercionArm(
   ctx: CodegenContext,
   symbolWrapperArm: SymbolWrapperArmBuilder,
 ): void {
-  if (!ctx.standalone) return;
   const types = ctx.objectRuntimeTypes;
   const toPropertyKeyIdx = ctx.funcMap.get("__to_property_key");
   if (!types || toPropertyKeyIdx === undefined) return;

@@ -25,6 +25,11 @@ loc-budget-allow:
   # (+10 next to hostFreeEnvironment/jsValueBoundary, where every environment key lives). Without it
   # WASI on the regime prints nothing (34 WASI rows red).
   - src/codegen/context/types.ts
+func-budget-allow:
+  # 2026-10-16 (#6979 S7-c): formatting only. Un-nesting the regime arm of a
+  # `ctx.standalone || ctx.wasi ? registerNative(...) : undefined` ternary leaves a
+  # call prettier wraps over 7 lines (+3 net); the function lost its host branch.
+  - src/codegen/object-runtime-prototype.ts::buildObjectPrototypeHelpers
 ---
 
 # #6979 — S7: delete the host-semantic implementation

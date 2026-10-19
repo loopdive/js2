@@ -15,13 +15,12 @@ import { emitUndefinedExtern } from "./any-helpers.js";
 import {
   collectReferencedIdentifiers,
   collectWrittenIdentifiers,
-  compileArrowAsCallback,
   compileArrowAsClosure,
   promoteAccessorCapturesToGlobals,
 } from "./closures.js";
 import { reportError } from "./context/errors.js";
 import { isGlobalObjectExpr } from "./global-environment.js"; // (#4394) host global object, never a struct
-import { allocLocal, allocTempLocal, getLocalType, releaseTempLocal } from "./context/locals.js";
+import { allocLocal, allocTempLocal, releaseTempLocal } from "./context/locals.js";
 import { recordSidecarPropertyOwner } from "./sidecar-owner-scope.js";
 import { singleReturnExpressionOfCall, tracesToProxyConstructorValue } from "./proxy-value-provenance.js"; // (#6651 F3) realm-spelled `new X(t,h)`; (#6651 F4) helper-returned
 import type { CodegenContext, FunctionContext } from "./context/types.js";
@@ -34,8 +33,7 @@ import { closedReflectiveStructName } from "./fnctor-instance-names.js";
 import { widenedStructNameForUse, integrityVarKey } from "./widened-var-key.js";
 import { addUnionImports, cacheStringLiterals, getOrRegisterTupleType, resolveWasmType } from "./index.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
-import { emitVecLengthHoleFill } from "./vec-length-hole-fill.js"; // (#6482 r7) a pre-grow creates holes
-import { addStringConstantGlobal, ensureExnTag, localGlobalIdx } from "./registry/imports.js";
+import { addStringConstantGlobal, ensureExnTag } from "./registry/imports.js";
 import { addFuncType, getArrTypeIdxFromVec, getOrRegisterRefCellType, getOrRegisterVecType } from "./registry/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3) stable-regime minting
 import type { InnerResult } from "./shared.js";
@@ -48,11 +46,7 @@ import {
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { compileNativeStringLiteral, compileStringLiteral } from "./string-ops.js";
 import { getVecInfo } from "./type-coercion.js";
-import {
-  isSideEffectFreeReceiver,
-  maybeEmitVecLengthDefine,
-  tryEmitVecLengthDefineForDefineProperties,
-} from "./array-length-define.js";
+import { tryEmitVecLengthDefineForDefineProperties } from "./array-length-define.js";
 import { emitHasOwnPresence } from "./closed-struct-presence.js"; // (#3920) per-instance own-presence
 import { carrierBagKeyNeedsRuntime } from "./builtin-instance-key-presence.js"; // (#4062) + (#4491 T9) vec/Date/RegExp expando presence
 import { isStaticDescWellFormed, isStaticallyNonObjectDescExpr } from "./descriptor-shape.js";
@@ -236,7 +230,7 @@ function emitDescriptorStructReify(
   fctx.body.push({ op: "local.set", index: srcLocal });
 
   if (newObjIdx === undefined || setIdx === undefined) {
-    // Object runtime unavailable (should not happen under ctx.standalone, but be
+    // Object runtime unavailable (should not happen under the regime flag, but be
     // safe): degrade to the prior behavior — push the struct as externref.
     fctx.body.push({ op: "local.get", index: srcLocal });
     fctx.body.push({ op: "extern.convert_any" });
@@ -379,205 +373,6 @@ export function emitDefinePropertyDescRuntime(
 }
 
 // ── #1130 PR-0: array-index-exotic length growth on defineProperty ───
-
-/**
- * Parse a property key string as a canonical array index per the array
- * exotic-object rules (ES §10.4.2.1 / `CanonicalNumericIndexString` plus
- * `ToString(ToUint32(n)) === key`). Returns the index when the key is a
- * canonical array index in `[0, 2^32-2]`, else undefined. "length", "01",
- * "-1", "1.5", "4294967295" are NOT canonical array indices.
- */
-function parseCanonicalArrayIndex(key: string): number | undefined {
-  if (!/^(0|[1-9][0-9]*)$/.test(key)) return undefined;
-  const n = Number(key);
-  // Array indices are < 2^32 - 1 (4294967295 is the max length, not an index).
-  if (!Number.isInteger(n) || n < 0 || n >= 0xffffffff) return undefined;
-  return n;
-}
-
-/**
- * #1130 PR-0: emit array-index-exotic `length` growth.
- *
- * `Object.defineProperty(arr, "n", desc)` on an array exotic object with
- * `n >= arr.length` sets `arr.length = n + 1` (ES §10.4.2.1 ArraySetLength
- * via `[[DefineOwnProperty]]`). Our WasmGC vec stores the logical length in
- * struct field 0; this emits a guarded bump on a freshly-compiled vec ref.
- *
- * Emits nothing (and returns) when `objArg` is not a side-effect-free vec
- * receiver or `propArg` is not a canonical array index. Leaves the operand
- * stack unchanged.
- */
-function maybeEmitVecLengthGrowth(
-  ctx: CodegenContext,
-  fctx: FunctionContext,
-  objArg: ts.Expression,
-  propArg: ts.Expression,
-  // (#6482 r7) The descriptor this grow is making room for, when it is a plain
-  // object literal. Only a DATA descriptor lets the absence-marker fill below
-  // run — see the comment at the fill.
-  descArg?: ts.Expression,
-): void {
-  if (!ts.isStringLiteral(propArg)) return;
-  const idx = parseCanonicalArrayIndex(propArg.text);
-  if (idx === undefined) return;
-  if (!isSideEffectFreeReceiver(objArg)) return;
-
-  const objTsType = ctx.checker.getTypeAtLocation(objArg);
-  const wasmType = resolveWasmType(ctx, objTsType);
-  if (wasmType.kind !== "ref" && wasmType.kind !== "ref_null") return;
-  const vecTypeIdx = (wasmType as { typeIdx?: number }).typeIdx;
-  if (vecTypeIdx === undefined) return;
-  const vecInfo = getVecInfo(ctx, vecTypeIdx);
-  if (vecInfo === null) return;
-  const arrTypeIdx = vecInfo.arrTypeIdx;
-
-  // Re-compile the receiver to a raw vec ref (safe: side-effect-free).
-  const recvType = compileExpression(ctx, fctx, objArg);
-  if (!recvType || (recvType.kind !== "ref" && recvType.kind !== "ref_null")) {
-    // Unexpected: discard whatever landed on the stack to stay balanced.
-    if (recvType) fctx.body.push({ op: "drop" });
-    return;
-  }
-  const vecLocal = allocLocal(fctx, `__defprop_grow_${fctx.locals.length}`, recvType);
-  fctx.body.push({ op: "local.set", index: vecLocal });
-
-  // Only grow when idx >= vec.length. Inside the guard, grow the backing
-  // `$data` array if its capacity is too small (so iteration/index reads
-  // don't trap), then set vec.length = idx + 1. This mirrors the indexed
-  // assignment grow path in expressions/assignment.ts so the vec stays
-  // internally consistent (logical length never exceeds backing capacity).
-  const dataLocal = allocLocal(fctx, `__defprop_grow_data_${fctx.locals.length}`, {
-    kind: "ref_null",
-    typeIdx: arrTypeIdx,
-  });
-  const oldCapLocal = allocLocal(fctx, `__defprop_grow_ocap_${fctx.locals.length}`, { kind: "i32" });
-  const newDataLocal = allocLocal(fctx, `__defprop_grow_ndata_${fctx.locals.length}`, {
-    kind: "ref_null",
-    typeIdx: arrTypeIdx,
-  });
-
-  // (#6482 r7) The length this pre-grow is about to leave behind. Captured
-  // BEFORE the guard because the absence-marker fill below needs to know which
-  // region the grow invents, and by then field 0 already reads `idx + 1`.
-  const oldLenLocal = allocLocal(fctx, `__defprop_grow_olen_${fctx.locals.length}`, { kind: "i32" });
-  fctx.body.push({ op: "local.get", index: vecLocal });
-  fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 });
-  fctx.body.push({ op: "local.set", index: oldLenLocal });
-
-  fctx.body.push({ op: "i32.const", value: idx });
-  fctx.body.push({ op: "local.get", index: oldLenLocal });
-  fctx.body.push({ op: "i32.ge_s" }); // idx >= vec.length?
-  fctx.body.push({
-    op: "if",
-    blockType: { kind: "empty" },
-    then: [
-      // data = vec.data
-      { op: "local.get", index: vecLocal },
-      { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 },
-      { op: "local.set", index: dataLocal },
-
-      // if (idx >= array.len(data)) grow backing array to idx + 1
-      { op: "local.get", index: dataLocal },
-      { op: "array.len" },
-      { op: "local.tee", index: oldCapLocal },
-      { op: "i32.const", value: idx },
-      { op: "i32.le_s" }, // oldCap <= idx?
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [
-          // newData = array.new_default(idx + 1)
-          { op: "i32.const", value: idx + 1 },
-          { op: "array.new_default", typeIdx: arrTypeIdx },
-          { op: "local.set", index: newDataLocal },
-          // array.copy newData[0..oldCap] = data[0..oldCap]
-          { op: "local.get", index: newDataLocal },
-          { op: "i32.const", value: 0 },
-          { op: "local.get", index: dataLocal },
-          { op: "i32.const", value: 0 },
-          { op: "local.get", index: oldCapLocal },
-          { op: "array.copy", dstTypeIdx: arrTypeIdx, srcTypeIdx: arrTypeIdx },
-          // vec.data = newData
-          { op: "local.get", index: vecLocal },
-          { op: "local.get", index: newDataLocal },
-          { op: "ref.as_non_null" },
-          { op: "struct.set", typeIdx: vecTypeIdx, fieldIdx: 1 },
-        ],
-      },
-
-      // vec.length = idx + 1
-      { op: "local.get", index: vecLocal },
-      { op: "i32.const", value: idx + 1 },
-      { op: "struct.set", typeIdx: vecTypeIdx, fieldIdx: 0 },
-    ],
-  });
-
-  // (#6482 r7) A PRE-GROW CREATES HOLES, NOT ZEROS — the same §10.4.2.1 rule
-  // round 4b applied to the `Object.defineProperty(arr, "length", …)` site,
-  // owed by this site for exactly the same reason.
-  //
-  // `array.new_default` zero-fills the tail it allocates (and an already-large
-  // enough capacity keeps whatever sat in `[oldLen, cap)`), so after the grow
-  // the slot at `idx` holds a legal-looking `0.0`. `__vec_has_own_index` reads
-  // the RAW element to tell a hole from a present one, so it answers "own" for
-  // an index that did not exist a moment ago — and `_vecDefineOwnProperty` then
-  // treats the define as a REDEFINE (§10.1.6.3 keeps omitted attributes)
-  // instead of a FIRST definition (omitted attributes default false). Measured
-  // before this fill existed, that cost 10 rows on the `15.2.3.6-4-*` slice
-  // (`{201,203,216,218,238,241,246,248,251,538-6}` — `0 descriptor should not
-  // be {writable,enumerable,configurable}` / `Expected TypeError, got …`).
-  //
-  // Gated on the grow actually happening: when `idx < oldLen` the element is a
-  // real, pre-existing one and nothing here may touch the backing store.
-  // `ctx.usesArrayHoles` is already armed in any module that reaches this site
-  // (`isDescriptorDefineReference` in `array-holes.ts` arms it for every
-  // descriptor builtin), so the reads that observe these markers are
-  // hole-aware — the invariant round 4b records: reads and stores must be
-  // armed by the same pre-pass, because function compilation order is not
-  // source order.
-  // Everything EXCEPT a statically recognisable ACCESSOR descriptor.
-  //
-  // An accessor define writes no element, and its index must stay readable
-  // through the accessor — `15.2.3.6-4-538-6` defines a getter/setter on a
-  // fresh index and then redefines it with a value, and a marker left by the
-  // first define made the result read non-configurable.
-  //
-  // Everything else fills, INCLUDING a descriptor with no `value` at all
-  // (`{}`, or attributes-only). That is not an omission: on a FRESH index
-  // §10.1.6.3 says the absent `value` is `undefined`, and
-  // `15.2.3.6-4-{191,199,229,234,236,244}` assert exactly that — requiring a
-  // literal `value` property left all six reading back the stale slot
-  // (`0 descriptor value should be undefined`). A `value` that IS present is
-  // written by `_vecDefineOwnProperty` right after this and overwrites the
-  // marker, so filling costs it nothing.
-  //
-  // A NON-literal descriptor is unknowable here and does not fill — the
-  // pre-#6482-r7 behaviour, so it can lose nothing.
-  const descIsStaticDataDescriptor =
-    descArg !== undefined &&
-    ts.isObjectLiteralExpression(descArg) &&
-    !descArg.properties.some(
-      (prop) =>
-        (ts.isPropertyAssignment(prop) || ts.isMethodDeclaration(prop)) &&
-        ts.isIdentifier(prop.name) &&
-        (prop.name.text === "get" || prop.name.text === "set"),
-    );
-  if (descIsStaticDataDescriptor) {
-    const savedBody = fctx.body;
-    fctx.body = [];
-    // `newLen = oldLen` makes the shared emitter's `min(vec.length, newLen)`
-    // resolve to `oldLen`, i.e. fill exactly `[oldLen, array.len(data))`.
-    emitVecLengthHoleFill(ctx, fctx, vecLocal, oldLenLocal, "both", true);
-    const fillInstrs = fctx.body;
-    fctx.body = savedBody;
-    if (fillInstrs.length > 0) {
-      fctx.body.push({ op: "i32.const", value: idx });
-      fctx.body.push({ op: "local.get", index: oldLenLocal });
-      fctx.body.push({ op: "i32.ge_s" });
-      fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: fillInstrs });
-    }
-  }
-}
 
 // ── Compile-time primitive type check for Object methods ─────────────
 
@@ -745,73 +540,6 @@ function applyDescriptorFlags(
   }
 
   return flags;
-}
-
-/**
- * (#3043) Compile-time §10.1.6.3 ValidateAndApplyPropertyDescriptor transition
- * check for a statically-tracked `varName:propName` property. Emits a Wasm
- * `throw TypeError` when redefining a NON-configurable property in a
- * spec-forbidden way. Shared so the data fast path, the accessor fast path, and
- * the attribute-only runtime path all enforce the SAME matrix against
- * `definedPropertyFlags` — previously only the inline data path validated, so an
- * accessor define (which records flags but routed a later attribute-only /
- * get-set redefine through a path that skipped validation) silently accepted
- * illegal transitions (15.2.3.6-4-30 / -252 / -312, 15.2.3.7-6-a-241).
- *
- * Mirrors the inline data-path check (writable-narrow, enum-toggle,
- * config-false→true, data↔accessor flip) and adds the accessor-redefine case:
- * `newProvidesFreshAccessorFn` is true when the redefining descriptor supplies a
- * get/set as a *fresh function expression* (getNode/setNode) — always a distinct
- * object, so redefining a non-configurable accessor's get/set with it can never
- * be SameValue and MUST throw (spec step 10.a/b). An identifier-ref get/set is
- * left to conservative allow (it *may* be SameValue with the existing accessor).
- *
- * The data/accessor KIND is read from `newFlags` (which `applyDescriptorFlags`
- * already resolved — an attribute-only redefine like `{enumerable:true}`
- * PRESERVES the existing kind), NOT from a raw "did this descriptor name a
- * get/set" flag: the latter false-flags a bare-attribute redefine of an
- * accessor as a data↔accessor flip (the accSameAttrs false-throw).
- *
- * Returns true when a throw was emitted (caller may skip further emission).
- */
-function emitStaticDescriptorTransitionThrow(
-  ctx: CodegenContext,
-  fctx: FunctionContext,
-  existingFlags: number | undefined,
-  newFlags: number,
-  _isAccessor: boolean,
-  newProvidesFreshAccessorFn: boolean,
-): boolean {
-  if (existingFlags === undefined) return false;
-  if (existingFlags & PROP_FLAG_CONFIGURABLE) return false; // configurable ⇒ any redefine ok
-  // configurable false → true is forbidden.
-  if (newFlags & PROP_FLAG_CONFIGURABLE) {
-    emitThrowTypeError(ctx, fctx, "Cannot redefine property");
-    return true;
-  }
-  // enumerable toggle is forbidden.
-  if ((existingFlags & PROP_FLAG_ENUMERABLE) !== (newFlags & PROP_FLAG_ENUMERABLE)) {
-    emitThrowTypeError(ctx, fctx, "Cannot redefine property");
-    return true;
-  }
-  const existingIsAccessor = !!(existingFlags & PROP_FLAG_ACCESSOR);
-  const newIsAccessor = !!(newFlags & PROP_FLAG_ACCESSOR);
-  // data ↔ accessor flip is forbidden on a non-configurable property.
-  if (existingIsAccessor !== newIsAccessor) {
-    emitThrowTypeError(ctx, fctx, "Cannot redefine property");
-    return true;
-  }
-  // Data property: writable false → true is forbidden.
-  if (!existingIsAccessor && !newIsAccessor && !(existingFlags & PROP_FLAG_WRITABLE) && newFlags & PROP_FLAG_WRITABLE) {
-    emitThrowTypeError(ctx, fctx, "Cannot redefine property");
-    return true;
-  }
-  // Accessor → accessor: a fresh (distinct) get/set can never be SameValue.
-  if (existingIsAccessor && newIsAccessor && newProvidesFreshAccessorFn) {
-    emitThrowTypeError(ctx, fctx, "Cannot redefine property");
-    return true;
-  }
-  return false;
 }
 
 // ── Mapped-arguments value redefine (#2667) ──────────────────────────────
@@ -1088,175 +816,105 @@ export function compileObjectDefineProperty(
   // path. Accessor/getter inline literals are NOT rerouted (the proxy
   // defineProperty harness rows use data descriptors; an accessor reroute would
   // lose the struct-accessor compiled-getter wiring).
-  if (ctx.standalone) {
-    const isProxyReceiver = (() => {
-      // (#6651 F3) The callee test is "does this `new` MAKE a proxy", not "is it
-      // spelled `Proxy`". `var p = new OProxy(t, h)` (`OProxy` =
-      // `$262.createRealm().global.Proxy`) mints a real `$Proxy` — the construct
-      // driver's carrier-identity arm does it — so `Object.defineProperty(p, …)`
-      // has to take the same dispatch route the literal spelling takes. On base
-      // it took the inline `__defineProperty_value` store instead and the define
-      // trap ran ZERO times (probed: `trapruns[A]` for four proxies, only the
-      // literal spelling). The §19.1.2.4-step-1 null hazard the surrounding
-      // comment guards against cannot reach this widening: the receiver's
-      // declaration is a `new`, which never evaluates to null or a primitive.
-      // Unshadowed `new Proxy(…)` is subsumed — the predicate answers
-      // `text === "Proxy"` for an un-aliased binding — and an alias hop is
-      // admitted only under its own single-assignment proof.
-      const isNewProxy = (e: ts.Expression): boolean =>
-        ts.isNewExpression(e) && tracesToProxyConstructorValue(ctx, e.expression);
-      // (#6494 S2) `Proxy.revocable(t, h)` returns `{proxy, revoke}`, so a
-      // `<r>.proxy` READ is as provably a proxy as `new Proxy(...)` is — and it
-      // is the ONLY spelling the revocation tests use. Without it a revoked
-      // proxy reached through `Object.defineProperty(p.proxy, …)` took the
-      // inline `__defineProperty_value` fast path, which `ref.cast $Object`s
-      // the carrier and stores into it: the revoked check never ran and the
-      // define trap ran ZERO times (measured 2026-09-17 on `c698c755bb`, probes
-      // `probe_live_defineprop_member` = 0 trap calls,
-      // `probe_revoked_defineprop_member` = no throw). Widening to any
-      // `.proxy` read would be a guess; requiring the RECEIVER's declaration to
-      // be `Proxy.revocable(...)` keeps it a proof, so no non-proxy receiver is
-      // newly rerouted.
-      const isProxyRevocableCall = (raw: ts.Expression): boolean => {
-        const e = unwrapTransparentExpression(raw);
-        if (!ts.isCallExpression(e)) return false;
-        const callee = unwrapTransparentExpression(e.expression);
-        if (!ts.isPropertyAccessExpression(callee) || callee.name.text !== "revocable") return false;
-        const ns = unwrapTransparentExpression(callee.expression);
-        return ts.isIdentifier(ns) && ns.text === "Proxy";
-      };
-      const declInitializerOf = (raw: ts.Expression): ts.Expression | undefined => {
-        const e = unwrapTransparentExpression(raw);
-        if (!ts.isIdentifier(e)) return undefined;
-        const sym = ctx.checker.getSymbolAtLocation(e);
-        const decl = sym?.valueDeclaration;
-        return decl && ts.isVariableDeclaration(decl) ? decl.initializer : undefined;
-      };
-      const isRevocableProxyRead = (raw: ts.Expression): boolean => {
-        const e = unwrapTransparentExpression(raw);
-        if (!ts.isPropertyAccessExpression(e) || e.name.text !== "proxy") return false;
-        const recv = e.expression;
-        if (isProxyRevocableCall(recv)) return true;
-        const init = declInitializerOf(recv);
-        return init !== undefined && isProxyRevocableCall(init);
-      };
-      // (#6651 F4) …and the third spelling F3 named as invisible to BOTH
-      // admissions: a proxy returned by a helper. `function mk(){ return new
-      // Proxy(t,h); } Object.defineProperty(mk(), …)` — and its one-hop twin
-      // `var m = mk()` — ran ZERO define-trap calls on this branch's base,
-      // because no predicate here traced a function's RETURN value. The hop
-      // (single statement, `return <expr>`, callee binding proven
-      // single-assignment) lives in `proxy-value-provenance.ts` so the read,
-      // write, construct and define sites all ask one question.
-      const isProxyExpr = (raw: ts.Expression): boolean => {
-        const e = unwrapTransparentExpression(raw);
-        if (isNewProxy(e) || isRevocableProxyRead(raw)) return true;
-        const returned = singleReturnExpressionOfCall(ctx, e);
-        return (
-          returned !== undefined &&
-          (isNewProxy(unwrapTransparentExpression(returned)) || isRevocableProxyRead(returned))
-        );
-      };
-      if (isProxyExpr(objArg)) return true;
-      const objInit = declInitializerOf(objArg);
-      return objInit !== undefined && isProxyExpr(objInit);
-    })();
-    // (#6651 V1) Accessor literals take the same route: the inline accessor
-    // store wrote the getter onto the `$Proxy` carrier itself, so neither the
-    // trap nor a trapless forward to the target ever ran
-    // (`Object.defineProperty(new Proxy([], {}), "length", {get(){}})` defined
-    // nothing and threw nothing; §10.4.2.1 rejects it on the array target).
-    if (isProxyReceiver) {
-      const init = !ts.isObjectLiteralExpression(descArg)
-        ? descriptorInitializerForIdentifier(ctx, descArg)
-        : undefined;
-      const r = emitDefinePropertyDescRuntime(
-        ctx,
-        fctx,
-        objArg,
-        propArg,
-        descArg,
-        init ? descriptorUndefinedFields(init) : [],
+  const isProxyReceiver = (() => {
+    // (#6651 F3) The callee test is "does this `new` MAKE a proxy", not "is it
+    // spelled `Proxy`". `var p = new OProxy(t, h)` (`OProxy` =
+    // `$262.createRealm().global.Proxy`) mints a real `$Proxy` — the construct
+    // driver's carrier-identity arm does it — so `Object.defineProperty(p, …)`
+    // has to take the same dispatch route the literal spelling takes. On base
+    // it took the inline `__defineProperty_value` store instead and the define
+    // trap ran ZERO times (probed: `trapruns[A]` for four proxies, only the
+    // literal spelling). The §19.1.2.4-step-1 null hazard the surrounding
+    // comment guards against cannot reach this widening: the receiver's
+    // declaration is a `new`, which never evaluates to null or a primitive.
+    // Unshadowed `new Proxy(…)` is subsumed — the predicate answers
+    // `text === "Proxy"` for an un-aliased binding — and an alias hop is
+    // admitted only under its own single-assignment proof.
+    const isNewProxy = (e: ts.Expression): boolean =>
+      ts.isNewExpression(e) && tracesToProxyConstructorValue(ctx, e.expression);
+    // (#6494 S2) `Proxy.revocable(t, h)` returns `{proxy, revoke}`, so a
+    // `<r>.proxy` READ is as provably a proxy as `new Proxy(...)` is — and it
+    // is the ONLY spelling the revocation tests use. Without it a revoked
+    // proxy reached through `Object.defineProperty(p.proxy, …)` took the
+    // inline `__defineProperty_value` fast path, which `ref.cast $Object`s
+    // the carrier and stores into it: the revoked check never ran and the
+    // define trap ran ZERO times (measured 2026-09-17 on `c698c755bb`, probes
+    // `probe_live_defineprop_member` = 0 trap calls,
+    // `probe_revoked_defineprop_member` = no throw). Widening to any
+    // `.proxy` read would be a guess; requiring the RECEIVER's declaration to
+    // be `Proxy.revocable(...)` keeps it a proof, so no non-proxy receiver is
+    // newly rerouted.
+    const isProxyRevocableCall = (raw: ts.Expression): boolean => {
+      const e = unwrapTransparentExpression(raw);
+      if (!ts.isCallExpression(e)) return false;
+      const callee = unwrapTransparentExpression(e.expression);
+      if (!ts.isPropertyAccessExpression(callee) || callee.name.text !== "revocable") return false;
+      const ns = unwrapTransparentExpression(callee.expression);
+      return ts.isIdentifier(ns) && ns.text === "Proxy";
+    };
+    const declInitializerOf = (raw: ts.Expression): ts.Expression | undefined => {
+      const e = unwrapTransparentExpression(raw);
+      if (!ts.isIdentifier(e)) return undefined;
+      const sym = ctx.checker.getSymbolAtLocation(e);
+      const decl = sym?.valueDeclaration;
+      return decl && ts.isVariableDeclaration(decl) ? decl.initializer : undefined;
+    };
+    const isRevocableProxyRead = (raw: ts.Expression): boolean => {
+      const e = unwrapTransparentExpression(raw);
+      if (!ts.isPropertyAccessExpression(e) || e.name.text !== "proxy") return false;
+      const recv = e.expression;
+      if (isProxyRevocableCall(recv)) return true;
+      const init = declInitializerOf(recv);
+      return init !== undefined && isProxyRevocableCall(init);
+    };
+    // (#6651 F4) …and the third spelling F3 named as invisible to BOTH
+    // admissions: a proxy returned by a helper. `function mk(){ return new
+    // Proxy(t,h); } Object.defineProperty(mk(), …)` — and its one-hop twin
+    // `var m = mk()` — ran ZERO define-trap calls on this branch's base,
+    // because no predicate here traced a function's RETURN value. The hop
+    // (single statement, `return <expr>`, callee binding proven
+    // single-assignment) lives in `proxy-value-provenance.ts` so the read,
+    // write, construct and define sites all ask one question.
+    const isProxyExpr = (raw: ts.Expression): boolean => {
+      const e = unwrapTransparentExpression(raw);
+      if (isNewProxy(e) || isRevocableProxyRead(raw)) return true;
+      const returned = singleReturnExpressionOfCall(ctx, e);
+      return (
+        returned !== undefined && (isNewProxy(unwrapTransparentExpression(returned)) || isRevocableProxyRead(returned))
       );
-      // (#3177 slice 4) Object.defineProperty converts a null (rejection
-      // sentinel / falsy-undefined trap result) into the §20.1.2.4 TypeError.
-      //
-      // (#6494 S1) A `defineProperty` trap that RETURNS FALSE is not null — it
-      // is a boxed `false`, so the `ref.is_null` test above let it through and
-      // §DefinePropertyOrThrow step 4 never fired. On THIS arm (and only this
-      // arm) the result is either the trap's booleanish externref or, when the
-      // trap is absent, `__obj_define_from_desc`'s always-truthy object, so
-      // ToBoolean is the exact §20.1.2.4 test. `Reflect.defineProperty` already
-      // reads the same value through `__is_truthy` and answered `false`
-      // correctly — this makes the OrThrow wrapper agree with it.
-      if (r !== null) emitDefinePropertyRejectionThrow(ctx, fctx, { falsyIsRejection: true });
-      return r;
-    }
-  }
-
-  // (#2668 Slice C) Array exotic `[[DefineOwnProperty]]` for the `length`
-  // property: `Object.defineProperty(arr, "length", desc)` (ES §10.4.2.1
-  // ArraySetLength) — RangeError on a non-uint32 length value, TypeError on an
-  // illegal attribute change / accessor descriptor, else set `vec.length`. When
-  // it fully handles the define, return immediately (the receiver is the result).
-  //
-  // (#3251 S3) STANDALONE-GATED OFF: the native `__vec_dp_value` length arm now
-  // implements the FULL ArraySetLength — including the per-index-configurable
-  // shrink stop (step 15) and the non-writable length bit that this inline
-  // path deliberately deferred — over the overlay companion. The inline path
-  // has no companion knowledge, so letting it win here silently shrank past
-  // non-configurable indices in the static lane. Host mode is unchanged.
-  if (!ctx.standalone) {
-    const lenDef = maybeEmitVecLengthDefine(ctx, fctx, objArg, propArg, descArg);
-    if (lenDef !== false) return lenDef;
-  }
-
-  // (#1130 PR-0) Array exotic objects grow `length` when a numeric-index
-  // property at or beyond the current length is defined. Emit the guarded
-  // bump before the descriptor is applied; no-op for non-array receivers.
-  //
-  // (#3251 S1) STANDALONE-GATED OFF: the native `__defineProperty_value` vec
-  // arm owns growth there (per-carrier `__vec_elem_set_<t>` on write-back).
-  // The call-site pre-growth destroyed the real-element/fresh-hole
-  // distinction the overlay's seeding depends on (the #3116 regression-class-1
-  // hazard: a pre-grown hole at idx<length is indistinguishable from a real
-  // element, so a FRESH index define would seed w/e/c=true instead of the
-  // CompletePropertyDescriptor false defaults). Host mode is unchanged.
-  if (!ctx.standalone) maybeEmitVecLengthGrowth(ctx, fctx, objArg, propArg, descArg);
-
-  // (#2668 Slice A) Host-mode DYNAMIC-DESCRIPTOR route. The inline fast paths
-  // below only fire when the descriptor is a *syntactic* object literal at the
-  // call site (`Object.defineProperty(o, k, { value: 1 })`). The common
-  // `var d = { value: 1 }; Object.defineProperty(o, k, d)` shape (descriptor in
-  // a local whose initializer is an object literal — the dominant `15.2.3.6-3-*`
-  // ES5 pattern) never reached any value/attr handling and fell through to
-  // `emitExternDefinePropertyNoValue`, silently dropping the value + attributes.
-  // Route THAT shape through `emitDefinePropertyDescRuntime` →
-  // `__defineProperty_desc`, the runtime applier that runs full
-  // ToPropertyDescriptor + `_validatePropertyDescriptor` (§10.1.6.3) and writes
-  // the canonical `_wasmPropDescs` sidecar every read / for-in / write / delete
-  // consults; for a plain JS receiver + plain JS descriptor it bottoms out in
-  // native `Object.defineProperty`, so attribute defaulting,
-  // redefine-preserves-omitted, non-configurable throws, and SameValue come for
-  // free.
-  //
-  // SCOPE — only when the descriptor identifier resolves to a *literal*
-  // initializer (`descriptorInitializerForIdentifier`). Deliberately NOT routing
-  // arbitrary host-object descriptors (`Math`, a `Date` instance, an
-  // `Object.create(proto)` whose attributes live on a sidecar-backed
-  // PROTOTYPE): `__defineProperty_desc`'s ToPropertyDescriptor reader resolves a
-  // WasmGC-struct descriptor's attributes only on its OWN level, so a
-  // prototype-inherited `enumerable`/`configurable` is dropped — which would
-  // flip those properties non-enumerable and regress the
-  // `15.2.3.6-3-23..45` for-in cluster (a deeper Object.create + proto-sidecar
-  // gap, out of Slice A scope). Those non-literal descriptors keep their prior
-  // path. The standalone lane has its own native route (#1629b / #2372). Inline
-  // object literals keep their zero-overhead fast paths (no behavior change).
-  if (!ctx.standalone && !ts.isObjectLiteralExpression(descArg)) {
-    const init = descriptorInitializerForIdentifier(ctx, descArg);
-    if (init) {
-      return emitDefinePropertyDescRuntime(ctx, fctx, objArg, propArg, descArg, descriptorUndefinedFields(init));
-    }
+    };
+    if (isProxyExpr(objArg)) return true;
+    const objInit = declInitializerOf(objArg);
+    return objInit !== undefined && isProxyExpr(objInit);
+  })();
+  // (#6651 V1) Accessor literals take the same route: the inline accessor
+  // store wrote the getter onto the `$Proxy` carrier itself, so neither the
+  // trap nor a trapless forward to the target ever ran
+  // (`Object.defineProperty(new Proxy([], {}), "length", {get(){}})` defined
+  // nothing and threw nothing; §10.4.2.1 rejects it on the array target).
+  if (isProxyReceiver) {
+    const init = !ts.isObjectLiteralExpression(descArg) ? descriptorInitializerForIdentifier(ctx, descArg) : undefined;
+    const r = emitDefinePropertyDescRuntime(
+      ctx,
+      fctx,
+      objArg,
+      propArg,
+      descArg,
+      init ? descriptorUndefinedFields(init) : [],
+    );
+    // (#3177 slice 4) Object.defineProperty converts a null (rejection
+    // sentinel / falsy-undefined trap result) into the §20.1.2.4 TypeError.
+    //
+    // (#6494 S1) A `defineProperty` trap that RETURNS FALSE is not null — it
+    // is a boxed `false`, so the `ref.is_null` test above let it through and
+    // §DefinePropertyOrThrow step 4 never fired. On THIS arm (and only this
+    // arm) the result is either the trap's booleanish externref or, when the
+    // trap is absent, `__obj_define_from_desc`'s always-truthy object, so
+    // ToBoolean is the exact §20.1.2.4 test. `Reflect.defineProperty` already
+    // reads the same value through `__is_truthy` and answered `false`
+    // correctly — this makes the OrThrow wrapper agree with it.
+    if (r !== null) emitDefinePropertyRejectionThrow(ctx, fctx, { falsyIsRejection: true });
+    return r;
   }
 
   // Check if descriptor is an object literal with a `value`, `get`, or `set` property
@@ -1397,7 +1055,8 @@ export function compileObjectDefineProperty(
       // (#2992 S3, standalone) explicit `get: undefined`/`set: undefined` are
       // present accessor fields for the §6.2.5.6 step-4 conflict too. Host
       // mode keeps its runtime-route handling (byte-inert).
-      (ctx.standalone && (getExplicitUndefined || setExplicitUndefined));
+      getExplicitUndefined ||
+      setExplicitUndefined;
     if (hasData && hasAccessor) {
       // Compile obj/prop for side effects then throw.
       const t1 = compileExpression(ctx, fctx, objArg);
@@ -1562,23 +1221,6 @@ export function compileObjectDefineProperty(
     return r;
   }
 
-  // (#1629) Explicit-`undefined` descriptor fields (e.g. `{ value: undefined }`,
-  // `{ get: undefined }`) need the runtime __defineProperty_desc path so the
-  // field is recorded as PRESENT (not omitted) per ToPropertyDescriptor. That
-  // path emits the `__defineProperty_desc` / `__extern_set` JS-host imports,
-  // which are refused in `--target standalone` (#1472 Phase B) and would turn
-  // every such inline literal into a compile_error. The standalone fast path
-  // (struct.set + flag table) already compiles these correctly — origin/main
-  // passed all of test/built-ins/Object/define*({value:undefined}) in
-  // standalone via that path — so only take the host-runtime branch when a JS
-  // host is available. JS-host mode keeps the precise presence-bit behavior.
-  if (!ctx.standalone) {
-    const explicitUndefinedFields = descriptorUndefinedFields(descArg);
-    if (explicitUndefinedFields.length > 0) {
-      return emitDefinePropertyDescRuntime(ctx, fctx, objArg, propArg, descArg, explicitUndefinedFields);
-    }
-  }
-
   // Check if obj is a struct type with the given field
   // (#4394) …unless the receiver IS the global object — see `isGlobalObjectExpr`.
   // ALL lanes: in JS-host mode the global object is a host value with no
@@ -1611,8 +1253,7 @@ export function compileObjectDefineProperty(
   // (an object literal with callable fields lowered to a host object) must take
   // the runtime accessor path — a compiled `${struct}_get_<p>` is invisible to
   // host [[Get]] and so to the iterator-protocol helpers.
-  const receiverIsStaticStruct =
-    structName !== undefined && (ctx.standalone || ctx.wasi || !bindingSlotIsExternref(ctx, fctx, objArg));
+  const receiverIsStaticStruct = structName !== undefined;
   // #4504: `C.prototype` is an inherited-descriptor owner, never the
   // instance's physical struct.  The historical static-struct accessor path
   // recorded `${C}_p` in `classAccessorSet`, which later made the closed-field
@@ -1620,7 +1261,6 @@ export function compileObjectDefineProperty(
   // standalone modules keep this target on the runtime prototype path instead;
   // genuine instance-side accessors retain the compiled fast path below.
   const prototypeDescriptorTarget =
-    ctx.standalone &&
     inheritedSetAnyDirty(ctx) &&
     (() => {
       const unwrapped = unwrapTransparentExpression(objArg);
@@ -1712,7 +1352,7 @@ export function compileObjectDefineProperty(
   // Keep the runtime identity/descriptor checks in the existing vec overlay;
   // a direct field store bypasses both deletion and non-configurable stops.
   const needsArrayLengthDescriptor =
-    ctx.standalone && propName === "length" && structTypeIdx !== undefined && getVecInfo(ctx, structTypeIdx) !== null;
+    propName === "length" && structTypeIdx !== undefined && getVecInfo(ctx, structTypeIdx) !== null;
   const useStruct =
     !needsArrayLengthDescriptor &&
     !_anyFlagDynamic &&
@@ -1784,8 +1424,7 @@ export function compileObjectDefineProperty(
     // the existing identity-keyed descriptor bag. Do the runtime/import setup
     // before emitting the receiver: its reservation can shift function indices.
     // Classes and JS-host retain their established static-accessor path.
-    const mirrorStandaloneAnonAccessor =
-      ctx.standalone && S5C_STRUCT_ACCESSOR_CLOSURE && structName.startsWith("__anon_");
+    const mirrorStandaloneAnonAccessor = S5C_STRUCT_ACCESSOR_CLOSURE && structName.startsWith("__anon_");
     let mirrorAccessorFnIdx: number | undefined;
     if (mirrorStandaloneAnonAccessor) {
       ensureObjectRuntime(ctx);
@@ -1838,37 +1477,6 @@ export function compileObjectDefineProperty(
       ctx.nonConfigurableAccessorKeys.delete(`${objArg.text}:${propName}`);
     }
 
-    // (#3043) Record this accessor's descriptor flags in `definedPropertyFlags`
-    // (the compile-time descriptor source-of-truth) and validate the transition
-    // against any prior define for the same key. This fast path previously
-    // recorded ONLY `nonConfigurableAccessorKeys`, so a subsequent attribute-only
-    // redefine (routed through `emitExternDefinePropertyNoValue`) or a get/set
-    // redefine saw no existing descriptor and silently accepted illegal
-    // transitions on a non-configurable accessor (configurable false→true,
-    // enumerable toggle, data↔accessor flip, get/set change) — 15.2.3.6-4-30 /
-    // -252 / -312, 15.2.3.7-6-a-241. Only on an identifier receiver (the key
-    // shape the flag maps use).
-    // (#3043) HOST-lane only: recording an accessor key in `definedPropertyFlags`
-    // routes standalone `hasOwnProperty` through the wasm-native `__hasOwnProperty`
-    // helper (object-ops.ts ~4543), which does NOT report a defineProperty-added
-    // struct-shape property as own → regresses the standalone accessor
-    // hasOwnProperty case (#2726). The #3043 transition-validation cluster is the
-    // JS-host default lane, so gate the record + check to host mode; standalone
-    // keeps origin/main behaviour.
-    if (!ctx.standalone && ts.isIdentifier(objArg)) {
-      const dpKey = `${integrityVarKey(ctx, objArg)}:${propName}`; // (#3403) per-declaration key
-      const existingFlags = ctx.definedPropertyFlags.get(dpKey);
-      const newFlags = applyDescriptorFlags(existingFlags, descWritable, descEnumerable, descConfigurable, true, false);
-      // On an illegal transition, RETURN immediately — emitting the compiled
-      // getter/setter below would register a second accessor that clobbers the
-      // still-live original (the define throws, so nothing must change).
-      if (emitStaticDescriptorTransitionThrow(ctx, fctx, existingFlags, newFlags, true, !!(getNode || setNode))) {
-        fctx.body.push({ op: "unreachable" });
-        return objType;
-      }
-      ctx.definedPropertyFlags.set(dpKey, newFlags);
-    }
-
     // (#1888 S5c / C2) STORE arm — land dark behind `S5C_STRUCT_ACCESSOR_CLOSURE`.
     // The #1629-S3 bare `${struct}_get/set_${prop}` fns below have NO capture
     // environment, so a getter/setter that closes over outer scope reads those
@@ -1888,7 +1496,7 @@ export function compileObjectDefineProperty(
     let mirrorSetLocal: number | undefined;
     let mirrorGetGlobalIdx: number | undefined;
     let mirrorSetGlobalIdx: number | undefined;
-    if (S5C_STRUCT_ACCESSOR_CLOSURE && ctx.standalone) {
+    if (S5C_STRUCT_ACCESSOR_CLOSURE) {
       if (getNode) {
         const getGlobalIdx = ensureStructAccessorGlobal(ctx, structName, propName, "get");
         if (mirrorStandaloneAnonAccessor) {
@@ -2746,16 +2354,10 @@ function emitRuntimeFlagsF64(
   // host-dependent. `__is_truthy` is strictly ≥ `__to_boolean` in spec-fidelity
   // here (the host import, seeing an opaque WasmGC ref, can only answer
   // "non-null → truthy"), so every leaky-PASS converts 1:1 host-free with no
-  // behaviour change. Gated on `ctx.standalone` so the GC/host lane emits the
+  // behaviour change. Gated on the regime flag so the GC/host lane emits the
   // byte-identical `__to_boolean` sequence it always did.
-  const useNativeTruthy = ctx.standalone;
-  if (useNativeTruthy) addUnionImports(ctx);
-  const toBoolIdx = ensureLateImport(
-    ctx,
-    useNativeTruthy ? "__is_truthy" : "__to_boolean",
-    [{ kind: "externref" }],
-    [{ kind: "i32" }],
-  );
+  addUnionImports(ctx);
+  const toBoolIdx = ensureLateImport(ctx, "__is_truthy", [{ kind: "externref" }], [{ kind: "i32" }]);
   flushLateImportShifts(ctx, fctx);
 
   const emitDyn = (expr: ts.Expression, valueBitShift: number): void => {
@@ -2799,7 +2401,7 @@ function emitRuntimeFlagsF64(
  * key. It is idempotent on strings, so string keys pass through unchanged.
  *
  * Expects the key externref on top of the stack; leaves a $AnyString externref.
- * Gated on `ctx.standalone`: in host mode `__defineProperty_value` is a JS
+ * Gated on the regime flag: in host mode `__defineProperty_value` is a JS
  * import that ToPropertyKeys the key itself (and correctly preserves Symbol
  * keys, which a pre-emptive ToString would alias) — so host output stays
  * byte-identical. Symbol keys in standalone are out of scope for Part A; the
@@ -2808,7 +2410,6 @@ function emitRuntimeFlagsF64(
  * numeric, not symbol, so the bulk is fixed here.
  */
 function emitStandaloneDefinePropertyKeyToString(ctx: CodegenContext, fctx: FunctionContext): void {
-  if (!ctx.standalone) return;
   const toStrIdx = ensureLateImport(ctx, "__extern_toString", [{ kind: "externref" }], [{ kind: "externref" }]);
   flushLateImportShifts(ctx, fctx);
   const finalIdx = ctx.funcMap.get("__extern_toString") ?? toStrIdx;
@@ -2976,7 +2577,6 @@ function emitDefinePropertyRejectionThrow(
   fctx: FunctionContext,
   options: { falsyIsRejection?: boolean } = {},
 ): void {
-  if (!(ctx.standalone || ctx.wasi)) return;
   const resLocal = allocLocal(fctx, `__defprop_res_${fctx.locals.length}`, { kind: "externref" });
   fctx.body.push({ op: "local.tee", index: resLocal });
   // (#6494 S1) ToBoolean instead of `is null` — opt-in, because the other four
@@ -3034,7 +2634,7 @@ function resolveExprToFuncNode(
  * value was pushed, `false` when the caller should push `ref.null.extern`.
  *
  * Dual-mode:
- *  - **standalone** (`ctx.standalone`): compile the function as a HOST-FREE
+ *  - **standalone** (the regime flag): compile the function as a HOST-FREE
  *    closure (`compileArrowAsClosure`) and convert the closure-struct ref →
  *    externref. This is what makes the stored `$PropEntry.$get/$set` slot hold a
  *    real callable closure that the native accessor arms in `__extern_get`/
@@ -3045,24 +2645,21 @@ function resolveExprToFuncNode(
  *    installed receiver per §6.2.5.5 / §10.1.5.3.
  *  - **JS-host / GC** (default): unchanged — `compileArrowAsCallback` with
  *    `needsThis: true` routes through the `__make_getter_callback` JS bridge.
- *    Gating strictly on `ctx.standalone` keeps the host/GC binary byte-identical.
+ *    Gating strictly on the regime flag keeps the host/GC binary byte-identical.
  */
 function emitAccessorFn(
   ctx: CodegenContext,
   fctx: FunctionContext,
   fn: ts.FunctionExpression | ts.ArrowFunction,
 ): boolean {
-  if (ctx.standalone) {
-    const closureType = compileArrowAsClosure(ctx, fctx, fn);
-    if (!closureType) return false;
-    // compileArrowAsClosure leaves a closure-struct ref; __defineProperty_accessor
-    // expects externref. Convert unless it is already externref.
-    if (closureType.kind !== "externref") {
-      fctx.body.push({ op: "extern.convert_any" });
-    }
-    return true;
+  const closureType = compileArrowAsClosure(ctx, fctx, fn);
+  if (!closureType) return false;
+  // compileArrowAsClosure leaves a closure-struct ref; __defineProperty_accessor
+  // expects externref. Convert unless it is already externref.
+  if (closureType.kind !== "externref") {
+    fctx.body.push({ op: "extern.convert_any" });
   }
-  return !!compileArrowAsCallback(ctx, fctx, fn, { needsThis: true });
+  return true;
 }
 
 /**
@@ -3085,7 +2682,7 @@ function emitAccessorFn(
  * wrapper dispatches through `__call_fn_method_0/1`, threading the receiver as
  * `this` (a strict improvement over the captureless re-synthesized fn).
  *
- * Host mode only. Under `ctx.standalone` the descriptor stores a host-free
+ * Host mode only. Under the regime flag the descriptor stores a host-free
  * closure that the native accessor arms dispatch through, so keep the existing
  * {@link emitAccessorFn} path there (byte-identical standalone output).
  *
@@ -3093,39 +2690,21 @@ function emitAccessorFn(
  * `ref.null.extern`.
  */
 function emitAccessorRefValue(ctx: CodegenContext, fctx: FunctionContext, expr: ts.Expression): boolean {
-  if (ctx.standalone) {
-    // (#2992 S3) `get: someIdentifier` — compile the identifier's VALUE (the
-    // live host-free closure) instead of re-synthesizing a fresh closure from
-    // its AST. The re-synthesis lost function identity: gOPD read back a
-    // DIFFERENT function object, so `desc.get === getFunc` was always false
-    // (15.2.3.6-4-* accessor fidelity family). A closure value is directly
-    // invocable by the accessor get/set drivers (#1636-S1), verified via the
-    // dynamic-descriptor path which has always stored raw values. Non-
-    // identifier shapes keep the AST fallback.
-    if (ts.isIdentifier(expr)) {
-      const t = compileExpression(ctx, fctx, expr, { kind: "externref" });
-      if (t) {
-        if (t.kind === "ref" || t.kind === "ref_null") {
-          fctx.body.push({ op: "extern.convert_any" });
-        } else if (t.kind !== "externref") {
-          coerceType(ctx, fctx, t, { kind: "externref" });
-        }
-        return true;
+  if (ts.isIdentifier(expr)) {
+    const t = compileExpression(ctx, fctx, expr, { kind: "externref" });
+    if (t) {
+      if (t.kind === "ref" || t.kind === "ref_null") {
+        fctx.body.push({ op: "extern.convert_any" });
+      } else if (t.kind !== "externref") {
+        coerceType(ctx, fctx, t, { kind: "externref" });
       }
-      return false;
+      return true;
     }
-    const funcNode = resolveExprToFuncNode(ctx, expr);
-    if (!funcNode) return false;
-    return emitAccessorFn(ctx, fctx, funcNode as unknown as ts.FunctionExpression);
+    return false;
   }
-  const t = compileExpression(ctx, fctx, expr, { kind: "externref" });
-  if (!t) return false;
-  if (t.kind === "ref" || t.kind === "ref_null") {
-    fctx.body.push({ op: "extern.convert_any" });
-  } else if (t.kind !== "externref") {
-    coerceType(ctx, fctx, t, { kind: "externref" });
-  }
-  return true;
+  const funcNode = resolveExprToFuncNode(ctx, expr);
+  if (!funcNode) return false;
+  return emitAccessorFn(ctx, fctx, funcNode as unknown as ts.FunctionExpression);
 }
 
 /**
@@ -3184,8 +2763,7 @@ function emitExternDefinePropertyNoValue(
   // the accessor applier with the half's "specified" bit and a null slot, so
   // the property becomes an accessor visible to gOPD (15.2.3.6-4-439). Host
   // mode keeps its `emitDefinePropertyDescRuntime` presence handling.
-  const isAccessorDesc =
-    !!(getNode || setNode || getExpr || setExpr) || (ctx.standalone && (getExplicitUndefined || setExplicitUndefined));
+  const isAccessorDesc = !!(getNode || setNode || getExpr || setExpr) || getExplicitUndefined || setExplicitUndefined;
   if (!isAccessorDesc) {
     // Compile descriptor for side effects:
     // - non-accessor descriptors are applied through the flag-only runtime
@@ -3228,27 +2806,7 @@ function emitExternDefinePropertyNoValue(
           isAccessor,
           descWritable !== undefined,
         );
-        // (#3043) §10.1.6.3 transition check. Covers the attribute-only redefine
-        // of a non-configurable accessor (`{configurable:true}` / enumerable
-        // toggle) whose FIRST define recorded flags via the accessor fast path,
-        // AND the `const o:any` accessor get/set redefine that lands here. The
-        // throw is emitted after argument side-effects (spec order). On a throw
-        // we RETURN immediately (unreachable) — continuing would emit a second,
-        // dead accessor registration that clobbers the still-live original
-        // accessor (15.2.3.6-4-540-*: the post-catch read must see the ORIGINAL
-        // get/set intact).
-        // Host-lane only (see the accessor fast-path note): the transition
-        // matrix is validated against `definedPropertyFlags`, which in standalone
-        // feeds the wasm-native hasOwnProperty routing; keep standalone on its
-        // origin/main path. The existing `definedPropertyFlags.set` below is
-        // unchanged in both modes.
-        if (
-          !ctx.standalone &&
-          emitStaticDescriptorTransitionThrow(ctx, fctx, existingFlags, newFlags, isAccessor, !!(getNode || setNode))
-        ) {
-          fctx.body.push({ op: "unreachable" });
-          return { kind: "externref" };
-        }
+
         ctx.definedPropertyFlags.set(key, newFlags);
       }
     }
@@ -3344,10 +2902,8 @@ function emitExternDefinePropertyNoValue(
         // accessor applier MERGES a partial descriptor (absent half preserves
         // the live half, §10.1.6.3). Standalone-gated so the gc/host lane's
         // f64 flag consts stay byte-identical.
-        ctx.standalone
-          ? (getNode || getExpr || getExplicitUndefined ? 1 << 8 : 0) |
-              (setNode || setExpr || setExplicitUndefined ? 1 << 9 : 0)
-          : 0,
+        (getNode || getExpr || getExplicitUndefined ? 1 << 8 : 0) |
+          (setNode || setExpr || setExplicitUndefined ? 1 << 9 : 0),
       );
 
       const accFuncIdx = ensureLateImport(
@@ -3382,7 +2938,7 @@ function emitExternDefinePropertyNoValue(
         (objType.kind === "ref" || objType.kind === "ref_null"
           ? ctx.typeIdxToStructName.get(objType.typeIdx)
           : undefined);
-      if (S5C_STRUCT_ACCESSOR_CLOSURE && ctx.standalone && mirrorStructName && structProperty.propName !== undefined) {
+      if (S5C_STRUCT_ACCESSOR_CLOSURE && mirrorStructName && structProperty.propName !== undefined) {
         if (getNode) {
           const getGlobalIdx = ensureStructAccessorGlobal(ctx, mirrorStructName, structProperty.propName, "get");
           if (buildAccessorClosure(ctx, fctx, getNode as unknown as ts.FunctionExpression)) {
@@ -3586,7 +3142,7 @@ export function compileObjectDefineProperties(
   // expand the plural operation into singular definitions. Each descriptor is
   // still read at the original call site, after all intervening mutations.
   const stableDescriptorMapEntries = (() => {
-    if (!ctx.standalone || !ts.isIdentifier(descsArg)) return undefined;
+    if (!ts.isIdentifier(descsArg)) return undefined;
     // (#3957) Receiver gate widened from "<fn>.prototype only" to "any
     // re-evaluable-without-side-effects receiver", i.e. a bare identifier as
     // well. The expansion below compiles `objArg` once PER KEY, so the gate's
@@ -4210,7 +3766,7 @@ export function compileObjectDefineProperties(
           if (dpGetNode) {
             if (!emitAccessorFn(ctx, fctx, dpGetNode as unknown as ts.FunctionExpression))
               fctx.body.push({ op: "ref.null.extern" });
-          } else if (dpGetExpr && ctx.standalone) {
+          } else if (dpGetExpr) {
             // (#2992 S3) identity-preserving direct value — see emitAccessorRefValue.
             if (!emitAccessorRefValue(ctx, fctx, dpGetExpr)) fctx.body.push({ op: "ref.null.extern" });
           } else if (dpGetExpr) {
@@ -4229,7 +3785,7 @@ export function compileObjectDefineProperties(
           if (dpSetNode) {
             if (!emitAccessorFn(ctx, fctx, dpSetNode as unknown as ts.FunctionExpression))
               fctx.body.push({ op: "ref.null.extern" });
-          } else if (dpSetExpr && ctx.standalone) {
+          } else if (dpSetExpr) {
             // (#2992 S3) identity-preserving direct value — see emitAccessorRefValue.
             if (!emitAccessorRefValue(ctx, fctx, dpSetExpr)) fctx.body.push({ op: "ref.null.extern" });
           } else if (dpSetExpr) {
@@ -4256,7 +3812,7 @@ export function compileObjectDefineProperties(
             dpAccDyn.configurableDyn,
             // (#2992 S3) [[Get]]/[[Set]] specified bits — see the
             // emitExternDefinePropertyNoValue twin. Standalone-gated.
-            ctx.standalone ? (dpGetNode || dpGetExpr ? 1 << 8 : 0) | (dpSetNode || dpSetExpr ? 1 << 9 : 0) : 0,
+            (dpGetNode || dpGetExpr ? 1 << 8 : 0) | (dpSetNode || dpSetExpr ? 1 << 9 : 0),
           );
           const accIdx = ensureLateImport(
             ctx,
@@ -4548,7 +4104,7 @@ export function compileObjectKeysOrValues(
     // (`{values,entries}/observable-operations.js`). The native enumerator
     // carries the `$Proxy` front-guard, so it runs the traps.
     //
-    // (#5268 review F1) `ctx.standalone` is LOAD-BEARING, not defensive. The
+    // (#5268 review F1) the regime flag is LOAD-BEARING, not defensive. The
     // arm body resolves `__object_<method>` out of `ctx.funcMap`, and in JS-HOST
     // mode that native does not exist — the arm reported "native object
     // enumerator is unavailable" for every host-lane `Object.keys(<proxy>)`
@@ -4563,7 +4119,7 @@ export function compileObjectKeysOrValues(
     // reason (an alias of a proxy-over-literal binding reads back null on this
     // tree AND on `origin/main`, so routing it to the runtime read turns a
     // correct compile-time answer into `[]`).
-    (ctx.standalone && isDirectProxyBinding(ctx, arg)) ||
+    isDirectProxyBinding(ctx, arg) ||
     (objectRuntimeTypes !== undefined &&
       (structTypeIdx === objectRuntimeTypes.objectTypeIdx || structTypeIdx === objectRuntimeTypes.proxyTypeIdx))
   ) {
@@ -5391,15 +4947,9 @@ export function compilePropertyIntrospection(
       // delete textually and must still answer `true`, so both reads must come
       // from the same mechanism. See `scanModuleMemberDeletes`.
       const standaloneDeleteObserved =
-        ctx.standalone && recvVarName !== undefined && (ctx.memberDeleteReceiverNames?.has(recvVarName) ?? false);
-      // (#4745) Host Reflect.deleteProperty mutates the runtime sidecar, while
-      // a closed-struct hasOwnProperty call would otherwise fold from its
-      // immutable shape. Route that receiver through the host predicate even
-      // when no Object.defineProperty widening is present.
-      const hostReflectDeleteObserved =
-        !ctx.standalone && recvVarName !== undefined && (ctx.memberDeleteReceiverNames?.has(recvVarName) ?? false);
-      if (hostReflectDeleteObserved) needsRuntime = true;
-      if (!needsRuntime && (!ctx.standalone || standaloneDeleteObserved)) {
+        recvVarName !== undefined && (ctx.memberDeleteReceiverNames?.has(recvVarName) ?? false);
+
+      if (!needsRuntime && standaloneDeleteObserved) {
         for (const k of ctx.definePropertyReceiverKeys) {
           if (k.startsWith(prefix)) {
             needsRuntime = true;
@@ -5542,13 +5092,4 @@ export function compilePropertyIntrospection(
   }
   fctx.body.push({ op: "i32.const", value: 0 });
   return { kind: "i32", boolean: true };
-}
-
-/** (#1691) True when `expr` names a local / module global whose wasm slot is externref. */
-function bindingSlotIsExternref(ctx: CodegenContext, fctx: FunctionContext, expr: ts.Expression): boolean {
-  if (!ts.isIdentifier(expr)) return false;
-  const localIdx = fctx.localMap.get(expr.text);
-  if (localIdx !== undefined) return getLocalType(fctx, localIdx)?.kind === "externref";
-  const globalIdx = ctx.moduleGlobals.get(expr.text);
-  return globalIdx !== undefined && ctx.mod.globals[localGlobalIdx(ctx, globalIdx)]?.type.kind === "externref";
 }

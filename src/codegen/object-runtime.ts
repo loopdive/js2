@@ -194,7 +194,7 @@ import { ensureSymbolCarrier } from "./symbol-native.js";
 import { ensureVecElemSet } from "./vec-elem-set.js";
 import { SPARSE_INDEX_CEILING } from "./vec-sparse-index.js";
 // (#4160) prototype-index store — reserve + registration-time consult builders
-// (all resolve to `undefined` unless `ctx.standalone && ctx.protoIndexDirty`).
+// (all resolve to `undefined` unless `the regime flag && ctx.protoIndexDirty`).
 import {
   SET_DECISION_ALLOW_OWN,
   SET_DECISION_HANDLED,
@@ -505,7 +505,7 @@ function classObjectNameMetadata(ctx: CodegenContext): ClassObjectNameMetadata[]
  * writable to `verifyProperty`.
  */
 export function fillClassObjectNameArms(ctx: CodegenContext): void {
-  if (!ctx.standalone || ctx.anyStrTypeIdx < 0 || ctx.nativeStrTypeIdx < 0) return;
+  if (ctx.anyStrTypeIdx < 0 || ctx.nativeStrTypeIdx < 0) return;
   const entries = classObjectNameMetadata(ctx);
   if (entries.length === 0) return;
   const flattenIdx = ctx.nativeStrHelpers.get("__str_flatten");
@@ -727,7 +727,7 @@ export const STANDALONE_VEC_BUILTIN_PARENTS: ReadonlySet<string> = new Set([
  * begin to pass) is left to a follow-up; the arg-honoring Array/Date/RegExp/
  * ArrayBuffer slices (which DO have passing behavior tests) are separate work.
  *
- * Host/gc mode never calls this — the caller gates on `ctx.standalone || ctx.wasi`
+ * Host/gc mode never calls this — the caller gates on `the regime flag || ctx.wasi`
  * and keeps the `__new_<Parent>` import there, so those lanes stay byte-identical.
  *
  * (#2917) PER-ARITY registration — funcMap key `<importName>@<argCount>`,
@@ -798,7 +798,7 @@ export function emitStandaloneVecBuiltinConstructor(
  * (`tryStaticInstanceOf`), as with the other externref-backed builtins.
  *
  * Host/gc mode never calls this — the caller gates on
- * `ctx.standalone || ctx.wasi`, so those lanes stay byte-identical.
+ * `the regime flag || ctx.wasi`, so those lanes stay byte-identical.
  *
  * (#2917) PER-ARITY registration — funcMap key `__new_Array@<argCount>`,
  * funcIdx RETURNED (see `emitStandaloneObjectConstructor` for the mis-call
@@ -1483,33 +1483,31 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   // closure root + `__extern_get`/`_set` funcIdx is known. Standalone/wasi only:
   // in gc/host mode the `env::__extern_*` imports own the dynamic-property path,
   // these defined arms are not emitted, and nothing here is reserved.
-  if (ctx.standalone || ctx.wasi) {
-    reserveClosurePropHelpers(ctx);
-    // (#2660 M3) The function-value → prototype-object identity edge — same
-    // reserve-before-arms-bake discipline; see `closure-prototype-edge.ts`.
-    reserveClosurePrototypeEdge(ctx);
-    // (#4637 A1) The bag↔callable proto-view map. Must come AFTER
-    // `reserveClosurePropHelpers` (its fill bakes `__closure_bag_ensure`'s
-    // funcIdx) and BEFORE `buildObjectPrototypeHelpers` below, which bakes
-    // `call __proto_from_function` / `call __function_from_proto` into
-    // `__object_create` / `__getPrototypeOf` / `__isPrototypeOf` /
-    // `__object_setPrototypeOf`.
-    reserveProtoFunctionValue(ctx, objectTypeIdx);
-    // (#3537) reserve the array-expando side table right after — same
-    // reserve-before-arms-bake discipline, appended indices only.
-    reserveVecPropHelpers(ctx);
-    reserveErrorPropHelpers(ctx); // (#4098) before every write/define/visibility call site bakes its funcIdx
-    reserveCarrierBagVisibility(ctx); // (#4010 S3) visibility over both bags — see that module
-    reserveInstanceTombstones(ctx); // (#4098 G1 s1) per-instance delete over the SAME bag
-    reserveInstanceProps(ctx); // (#4194) per-instance WRITE-through + expando over that bag
-    reserveFunctionInstanceProps(ctx); // (#4436) `length` own-property on a user function instance
-    // (#4160) Prototype-index store — self-gated on `ctx.standalone &&
-    // ctx.protoIndexDirty`, so a flag-clear module reserves NOTHING and every
-    // consult site below resolves `funcMap.get("__protoidx_*") === undefined`,
-    // emitting its exact pre-existing instructions (byte-identity by
-    // construction). Same reserve-before-arms-bake discipline as above.
-    reserveProtoIndexStore(ctx);
-  }
+  reserveClosurePropHelpers(ctx);
+  // (#2660 M3) The function-value → prototype-object identity edge — same
+  // reserve-before-arms-bake discipline; see `closure-prototype-edge.ts`.
+  reserveClosurePrototypeEdge(ctx);
+  // (#4637 A1) The bag↔callable proto-view map. Must come AFTER
+  // `reserveClosurePropHelpers` (its fill bakes `__closure_bag_ensure`'s
+  // funcIdx) and BEFORE `buildObjectPrototypeHelpers` below, which bakes
+  // `call __proto_from_function` / `call __function_from_proto` into
+  // `__object_create` / `__getPrototypeOf` / `__isPrototypeOf` /
+  // `__object_setPrototypeOf`.
+  reserveProtoFunctionValue(ctx, objectTypeIdx);
+  // (#3537) reserve the array-expando side table right after — same
+  // reserve-before-arms-bake discipline, appended indices only.
+  reserveVecPropHelpers(ctx);
+  reserveErrorPropHelpers(ctx); // (#4098) before every write/define/visibility call site bakes its funcIdx
+  reserveCarrierBagVisibility(ctx); // (#4010 S3) visibility over both bags — see that module
+  reserveInstanceTombstones(ctx); // (#4098 G1 s1) per-instance delete over the SAME bag
+  reserveInstanceProps(ctx); // (#4194) per-instance WRITE-through + expando over that bag
+  reserveFunctionInstanceProps(ctx); // (#4436) `length` own-property on a user function instance
+  // (#4160) Prototype-index store — self-gated on `the regime flag &&
+  // ctx.protoIndexDirty`, so a flag-clear module reserves NOTHING and every
+  // consult site below resolves `funcMap.get("__protoidx_*") === undefined`,
+  // emitting its exact pre-existing instructions (byte-identity by
+  // construction). Same reserve-before-arms-bake discipline as above.
+  reserveProtoIndexStore(ctx);
 
   // ── __extern_is_array(externref v) -> i32 ────────────────────────────────
   //
@@ -1564,7 +1562,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   //                                                 undeleted own names were
   //                                                 pushed into vec).
   //
-  // Gated on ctx.standalone: in gc/host mode this runtime is also pulled in
+  // Gated on the regime flag: in gc/host mode this runtime is also pulled in
   // (Object.keys etc.) but builtin function values are host objects there — the
   // host imports own their metadata, and registering these would only shift
   // funcMap indices (gc bytes must stay unchanged).
@@ -1578,61 +1576,59 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     // untouched; `fillFunctionInstanceProps` is the only writer.
     { name: "fnmeta", type: { kind: "externref" } as ValType },
   ];
-  if (ctx.standalone) {
-    registerNative(
-      "__builtinfn_get_meta",
-      [{ kind: "externref" }, { kind: "externref" }],
-      [{ kind: "externref" }],
-      bfnMetaLocals,
-      [{ op: "ref.null.extern" }],
-    );
-    registerNative(
-      "__builtinfn_gopd",
-      [{ kind: "externref" }, { kind: "externref" }],
-      [{ kind: "externref" }],
-      [{ name: "v", type: { kind: "externref" } as ValType }],
-      [{ op: "ref.null.extern" }],
-    );
-    registerNative(
-      "__builtinfn_delete",
-      [{ kind: "externref" }, { kind: "externref" }],
-      [{ kind: "i32" }],
-      bfnMetaLocals,
-      [{ op: "i32.const", value: 0 }],
-    );
-    registerNative(
-      "__builtinfn_push_ownnames",
-      [{ kind: "externref" }, { kind: "externref" }],
-      [{ kind: "i32" }],
-      [
-        { name: "any", type: { kind: "anyref" } as ValType },
-        // (#4437) local 3 — the `$fnmeta` struct, gating the `"name"` push.
-        { name: "fnmeta", type: { kind: "externref" } as ValType },
-      ],
-      [{ op: "i32.const", value: 0 }],
-    );
-    // (#5197) `__builtinfn_is_builtin(v) -> i32` — 1 iff v is one of the §17
-    // built-in function objects this module materializes (a registered
-    // `ctx.builtinFnMetaByTypeIdx` family). Filled from the SAME finalized
-    // predicate `prependBuiltinFnObjectSemantics` uses for
-    // `isExtensible`/`getPrototypeOf`, so the three answers cannot disagree
-    // about what counts as a builtin function object.
-    //
-    // Its consumer is §7.2.4 IsConstructor at a dynamic `new` site: a built-in
-    // function that is not identified as a constructor has no [[Construct]], so
-    // `new resolveFn()` must throw a TypeError rather than evaluate to null.
-    registerNative(
-      "__builtinfn_is_builtin",
-      [{ kind: "externref" }],
-      [{ kind: "i32" }],
-      [],
-      [{ op: "i32.const", value: 0 }],
-    );
-  }
-  const bfnGetMetaIdx = ctx.standalone ? ctx.funcMap.get("__builtinfn_get_meta") : undefined;
-  const bfnGopdIdx = ctx.standalone ? ctx.funcMap.get("__builtinfn_gopd") : undefined;
-  const bfnDeleteIdx = ctx.standalone ? ctx.funcMap.get("__builtinfn_delete") : undefined;
-  const bfnPushOwnNamesIdx = ctx.standalone ? ctx.funcMap.get("__builtinfn_push_ownnames") : undefined;
+  registerNative(
+    "__builtinfn_get_meta",
+    [{ kind: "externref" }, { kind: "externref" }],
+    [{ kind: "externref" }],
+    bfnMetaLocals,
+    [{ op: "ref.null.extern" }],
+  );
+  registerNative(
+    "__builtinfn_gopd",
+    [{ kind: "externref" }, { kind: "externref" }],
+    [{ kind: "externref" }],
+    [{ name: "v", type: { kind: "externref" } as ValType }],
+    [{ op: "ref.null.extern" }],
+  );
+  registerNative(
+    "__builtinfn_delete",
+    [{ kind: "externref" }, { kind: "externref" }],
+    [{ kind: "i32" }],
+    bfnMetaLocals,
+    [{ op: "i32.const", value: 0 }],
+  );
+  registerNative(
+    "__builtinfn_push_ownnames",
+    [{ kind: "externref" }, { kind: "externref" }],
+    [{ kind: "i32" }],
+    [
+      { name: "any", type: { kind: "anyref" } as ValType },
+      // (#4437) local 3 — the `$fnmeta` struct, gating the `"name"` push.
+      { name: "fnmeta", type: { kind: "externref" } as ValType },
+    ],
+    [{ op: "i32.const", value: 0 }],
+  );
+  // (#5197) `__builtinfn_is_builtin(v) -> i32` — 1 iff v is one of the §17
+  // built-in function objects this module materializes (a registered
+  // `ctx.builtinFnMetaByTypeIdx` family). Filled from the SAME finalized
+  // predicate `prependBuiltinFnObjectSemantics` uses for
+  // `isExtensible`/`getPrototypeOf`, so the three answers cannot disagree
+  // about what counts as a builtin function object.
+  //
+  // Its consumer is §7.2.4 IsConstructor at a dynamic `new` site: a built-in
+  // function that is not identified as a constructor has no [[Construct]], so
+  // `new resolveFn()` must throw a TypeError rather than evaluate to null.
+  registerNative(
+    "__builtinfn_is_builtin",
+    [{ kind: "externref" }],
+    [{ kind: "i32" }],
+    [],
+    [{ op: "i32.const", value: 0 }],
+  );
+  const bfnGetMetaIdx = ctx.funcMap.get("__builtinfn_get_meta");
+  const bfnGopdIdx = ctx.funcMap.get("__builtinfn_gopd");
+  const bfnDeleteIdx = ctx.funcMap.get("__builtinfn_delete");
+  const bfnPushOwnNamesIdx = ctx.funcMap.get("__builtinfn_push_ownnames");
 
   const keyResources = {
     anyStrTypeIdx,
@@ -1672,27 +1668,25 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   // standalone-only: in gc/host mode the host `__extern_*` JS imports own these
   // paths and ToPropertyKey the key themselves, so registering this helper there
   // would only shift funcMap indices — host output stays byte-identical.
-  if (ctx.standalone) {
-    const numToStringIdx = ctx.funcMap.get("number_toString")!;
-    const unboxNumberIdx = ctx.funcMap.get("__unbox_number")!;
-    const boxNumTypeIdx = ctx.nativeBoxNumberTypeIdx;
-    const tpkBody: Instr[] = buildObjectPropertyKeyPrefix({
-      anyStrTypeIdx,
-      boxNumTypeIdx,
-      unboxNumberIdx,
-      numToStringIdx,
-    });
-    registerNative(
-      "__to_property_key",
-      [{ kind: "externref" }],
-      [{ kind: "externref" }],
-      [{ name: "any", type: { kind: "anyref" } }],
-      tpkBody,
-    );
-    // Record the splice point: index of the trailing `local.get 0` fallthrough.
-    // After `__extern_toString` registers we insert the `$Object`-key arm here.
-    tpkBodyRef = tpkBody;
-  }
+  const numToStringIdx = ctx.funcMap.get("number_toString")!;
+  const unboxNumberIdx = ctx.funcMap.get("__unbox_number")!;
+  const boxNumTypeIdx = ctx.nativeBoxNumberTypeIdx;
+  const tpkBody: Instr[] = buildObjectPropertyKeyPrefix({
+    anyStrTypeIdx,
+    boxNumTypeIdx,
+    unboxNumberIdx,
+    numToStringIdx,
+  });
+  registerNative(
+    "__to_property_key",
+    [{ kind: "externref" }],
+    [{ kind: "externref" }],
+    [{ name: "any", type: { kind: "anyref" } }],
+    tpkBody,
+  );
+  // Record the splice point: index of the trailing `local.get 0` fallthrough.
+  // After `__extern_toString` registers we insert the `$Object`-key arm here.
+  tpkBodyRef = tpkBody;
   const toPropertyKeyIdx = ctx.funcMap.get("__to_property_key");
 
   // Prepend, in standalone mode, a guarded ToPropertyKey coercion to a key-taking
@@ -2529,7 +2523,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   // only at individual callers) prevents descriptor-bearing host/native-first
   // builds from gaining a private result global whose index could be shifted by
   // later imports.
-  const inheritedSetRuntimeActive = ctx.standalone && inheritedSetAnyDirty(ctx);
+  const inheritedSetRuntimeActive = inheritedSetAnyDirty(ctx);
   const SET_RESULT_UNADMITTED = 0;
   const SET_RESULT_SUCCESS = 1;
   const SET_RESULT_REFUSED = 2;
@@ -6474,7 +6468,7 @@ export function fillApplyClosure(ctx: CodegenContext): void {
       ? directDataField.type.typeIdx
       : undefined;
   const fastDirectArgs = directVecTypeIdx !== undefined && directVecArrTypeIdx !== undefined;
-  const getUndefinedIdx = !ctx.standalone && !ctx.wasi ? ctx.funcMap.get("__get_undefined") : undefined;
+  const getUndefinedIdx = undefined;
 
   if (!hasGenericArgsReader && !fastObjArgs && !fastDirectArgs) {
     bridgeFn.body = [{ op: "ref.null.extern" }];
@@ -8011,7 +8005,7 @@ export function fillExternGetIdxVecArms(ctx: CodegenContext): void {
  * output byte-neutral.
  */
 export function fillConcatNativeHoleArms(ctx: CodegenContext): void {
-  if (!ctx.standalone || !ctx.usesNativeConcatHoleSubstrate || ctx.holeGlobalIdx === undefined) return;
+  if (!ctx.usesNativeConcatHoleSubstrate || ctx.holeGlobalIdx === undefined) return;
   const types = ctx.objectRuntimeTypes;
   if (!types) return;
 
@@ -8360,7 +8354,7 @@ export function fillConcatNativeHoleArms(ctx: CodegenContext): void {
  * at body index 0 (the `fillExternGetErrorProps` discipline): it returns on a
  * vec match and falls through untouched for every non-vec receiver, so host /
  * non-vec output stays byte-identical. Locals are APPENDED (never renumber the
- * existing ones). Standalone-only — gated on `ctx.standalone`; host mode's JS
+ * existing ones). Standalone-only — gated on the regime flag; host mode's JS
  * `__extern_*` imports own these paths.
  */
 /**
@@ -8377,7 +8371,7 @@ export function fillConcatNativeHoleArms(ctx: CodegenContext): void {
  * all previously-baked call indices remain stable.
  */
 export function fillClosedStructHasOwnArms(ctx: CodegenContext): void {
-  if (!ctx.standalone || ctx.anyStrTypeIdx < 0) return;
+  if (ctx.anyStrTypeIdx < 0) return;
   const flattenIdx = ctx.nativeStrHelpers.get("__str_flatten");
   const equalsIdx = ctx.nativeStrHelpers.get("__str_equals");
   if (flattenIdx === undefined || equalsIdx === undefined) return;
@@ -8872,7 +8866,6 @@ function buildClosedStructEnumerationArms(
 }
 
 export function fillClosedStructOwnPropertyNamesArms(ctx: CodegenContext): void {
-  if (!ctx.standalone) return;
   const targets = ["__getOwnPropertyNames"]
     .map((name) => ctx.mod.functions.find((candidate) => candidate.name === name))
     .filter((f): f is NonNullable<typeof f> => f !== undefined);
@@ -9030,7 +9023,7 @@ export function fillClosedStructEnumerationArms(ctx: CodegenContext): void {
  * reports the physical field.
  */
 export function fillClosedStructExternGetArms(ctx: CodegenContext): void {
-  if (!ctx.standalone || ctx.anyStrTypeIdx < 0) return;
+  if (ctx.anyStrTypeIdx < 0) return;
   const inheritedSetGetMissActive = inheritedSetAnyDirty(ctx);
   const fn = ctx.mod.functions.find((candidate) => candidate.name === "__extern_get");
   const flattenIdx = ctx.nativeStrHelpers.get("__str_flatten");
@@ -9557,7 +9550,6 @@ export function fillClosedStructExternGetArms(ctx: CodegenContext): void {
  * vector. No new callable or constructor ABI is introduced.
  */
 export function fillFnctorPrototypeDispatchArms(ctx: CodegenContext): void {
-  if (!ctx.standalone) return;
   const protoStartIdx = ctx.funcMap.get("__fnctor_proto_start");
   const protoStartFn = protoStartIdx === undefined ? undefined : definedFuncAt(ctx, protoStartIdx);
   if (protoStartFn) {
@@ -9781,7 +9773,6 @@ export function fillFnctorPrototypeDispatchArms(ctx: CodegenContext): void {
  * shadowing argument live in wrapper-constructor-carrier.ts.
  */
 export function unshiftExternGetWrapperCtorArm(ctx: CodegenContext): void {
-  if (!ctx.standalone) return;
   const anyStrTypeIdx = ctx.anyStrTypeIdx;
   const objTypes = ctx.objectRuntimeTypes;
   if (anyStrTypeIdx < 0 || objTypes === undefined) return;
@@ -9830,7 +9821,7 @@ export function unshiftExternGetWrapperCtorArm(ctx: CodegenContext): void {
  * visible.
  */
 export function unshiftExternGetStringExoticArm(ctx: CodegenContext): void {
-  if (!ctx.standalone || !ctx.nativeStrings || ctx.anyStrTypeIdx < 0 || ctx.nativeStrTypeIdx < 0) return;
+  if (!ctx.nativeStrings || ctx.anyStrTypeIdx < 0 || ctx.nativeStrTypeIdx < 0) return;
   const objectTypes = ctx.objectRuntimeTypes;
   if (!objectTypes) return;
   const fn = ctx.mod.functions.find((candidate) => candidate.name === "__extern_get");
@@ -10001,7 +9992,7 @@ function receiverHasNoOwnKeyGuard(ctx: CodegenContext, hasOwnIdx: number): Instr
 
 export function unshiftExternGetProtoCacheArm(ctx: CodegenContext): void {
   unshiftFnctorFastGetArm(ctx); // (#6973) BEFORE the cache arm, which must stay the prefix
-  if (!ctx.standalone || ctx.hashedStrTypeIdx < 0) return;
+  if (ctx.hashedStrTypeIdx < 0) return;
   const HSTR = ctx.hashedStrTypeIdx;
   const protoStartIdx = ctx.funcMap.get("__fnctor_proto_start");
   const objTypes = ctx.objectRuntimeTypes;
@@ -10162,7 +10153,7 @@ function buildVecEnumerationTail(ctx: CodegenContext, forIn: boolean, vecLocal: 
 }
 
 export function fillDynamicForinVecArms(ctx: CodegenContext): void {
-  if (!ctx.standalone) return; // host imports own the dynamic path
+  // host imports own the dynamic path
   const anyStrTypeIdx = ctx.anyStrTypeIdx;
   if (anyStrTypeIdx < 0) return;
   const vecBaseIdx = getOrRegisterVecBaseType(ctx);
@@ -10690,7 +10681,7 @@ export function fillExternSetVecArms(ctx: CodegenContext): void {
   const setResultGlobalIdx = ctx.externSetResultGlobalIdx;
   const setDecideIdx = ctx.funcMap.get("__extern_set_decide");
   const descriptorDecisionAvailable =
-    ctx.standalone && inheritedSetAnyDirty(ctx) && setResultGlobalIdx !== undefined && setDecideIdx !== undefined;
+    inheritedSetAnyDirty(ctx) && setResultGlobalIdx !== undefined && setDecideIdx !== undefined;
   // Descriptor overlay writes are the lossless storage for canonical numeric
   // keys that cannot be represented by the signed i32 backing lane. The
   // overlay helper is reserved before this finalize-time fill and receives its
@@ -11085,7 +11076,6 @@ export function fillExternArrayLikeStructArms(ctx: CodegenContext): void {
   // all four helpers; the guard only avoids turning a missing helper into a
   // new regression in a reduced profile.
   const ordinaryReaderReady =
-    ctx.standalone &&
     ordinaryExternGetIdx !== undefined &&
     ordinaryNumberToStringIdx !== undefined &&
     ordinaryExternHasIdx !== undefined &&
@@ -12012,7 +12002,7 @@ export function fillBuiltinFnMeta(ctx: CodegenContext): void {
 /**
  * Names of the object-runtime host imports that `ensureObjectRuntime` provides
  * Wasm-native implementations for. `ensureLateImport` routes these here under
- * `ctx.standalone` (mirrors `UNION_NATIVE_HELPER_NAMES` for the #1471 boxing
+ * the regime flag (mirrors `UNION_NATIVE_HELPER_NAMES` for the #1471 boxing
  * helpers) so existing call sites resolve to the native func with no per-site
  * change. Internal helpers (`__obj_hash`, `__obj_find`, `__obj_insert`,
  * `__obj_grow`) are NOT in this set — they are never requested via
