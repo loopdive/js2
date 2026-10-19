@@ -1069,3 +1069,25 @@ Runtime is now **10,163 lines** (three additional routing lines), leaving
 remaining program/dependency acceptance stay open. This corrects interop at
 the existing shared boundary; the measured object-argument body still uses
 the existing direct route and is not claimed as new IR-only coverage.
+
+### 2026-10-19 — import-budget blocker closed by native key filtering
+
+The S7 issue's "S7-k native boundary key filtering / import gate handoff"
+supersedes the preceding **457/452** blocker. The unchanged official
+33-probe gate now passes at **433/452**, with zero unknown/gap entries in that
+population. Native string/symbol filtering shares the existing admitted-object
+own-key primitive: **44** redundant provider occurrences removed, **20**
+existing-primitive occurrences added, **24 fewer net imports**. No baseline,
+probe or detector relaxation.
+
+Boundary controls pass **158/158**; the **230-case** and **145-case** parent
+comparisons retain their existing outcomes after explicitly re-pinning the
+removed-import expectation. Six native binaries are byte-identical. Three
+measured JS key programs grow **319/319/443 bytes**; that tradeoff and the
+remaining program-wide cost review are not hidden by the import reduction.
+See `plan/audit/6979-native-boundary-own-keys-20261019.json`.
+
+Runtime remains **10,163 lines**, **2,163** above target. The predecessor stack,
+opaque bound functions, raw-mode retirement, named native-provider gaps,
+strict closure and full compatibility/conformance/accelerator acceptance
+remain open. Do not mark this parent complete from the now-green import gate.

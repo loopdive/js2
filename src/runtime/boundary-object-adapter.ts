@@ -26,6 +26,7 @@ type BoundaryBinaryOperation = (obj: any, value: any, exports: Record<string, Fu
 // IsConstructor(newTarget) must not read its prototype or invoke user code.
 // A trapping target returns the dummy result without OrdinaryCreateFromConstructor.
 const constructorProbe = new Proxy(class {}, { construct: () => ({}) });
+const nativeOwnKeys = Reflect.ownKeys;
 
 function admittedExports(context: BoundaryObjectAdapterContext, obj: unknown): Record<string, Function> | undefined {
   const exports = context.getExports();
@@ -186,7 +187,7 @@ export function createBoundaryObjectAdapter(
             ? Object.getOwnPropertyNames(obj)
             : operation === "getOwnPropertySymbols"
               ? Object.getOwnPropertySymbols(obj)
-              : Reflect.ownKeys(obj);
+              : nativeOwnKeys(obj);
         return context.toNativeVector(keys, exports);
       });
     case "isAdmitted":

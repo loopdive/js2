@@ -12233,6 +12233,14 @@
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
     },
     {
+      "path": "src/codegen/boundary-own-key-filters.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "6979",
+      "nextBoundary": "Separate native property-key filtering from physical object-runtime registration."
+    },
+    {
       "path": "src/codegen/extern-class-metadata.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",

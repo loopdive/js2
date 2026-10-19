@@ -1,0 +1,570 @@
+{
+  "schema": "6979-native-boundary-own-keys-v1",
+  "date": "2026-10-19",
+  "parentCommit": "2381a04d088a6cf247ee7be641d13c3bccd44a5c",
+  "candidate": "Containing commit; exact source hashes below.",
+  "scope": "Move admitted JS own-key name/symbol filtering into the shared native runtime, using one existing ownKeys MOP import. Not a full migration certificate.",
+  "implementation": {
+    "core": "Native bounded helpers filter the existing native ObjVec by exact AnyString/Symbol type, preserve order and key identity, return null for a non-admitted boundary answer and trap on invalid internal key carriers.",
+    "ownership": "Only registered for a JS value boundary. Native-only targets mint no new helpers/imports. Physical primitive indices settled before native bodies; no new AST body path or selector override.",
+    "boundary": "Existing admission-gated Reflect own-key primitive retained. Snapshot its intrinsic once so replacement of the ambient public Reflect.ownKeys property cannot redefine the operation. Legacy name/symbol adapter bindings remain accepted for old manifests, but newly generated modules no longer import them."
+  },
+  "harness": {
+    "node": "v24.4.1",
+    "vitest": "3.2.4, fork pool, VITEST_MAX_FORKS=2, --experimental-wasm-exnref",
+    "lane": "Native-first JS for boundary probes; explicit standalone/WASI controls.",
+    "parentSupport": "Only new test and ignored harness inputs copied; parent tracked production sources unchanged."
+  },
+  "imports": {
+    "officialGate": "PASS: 433 <= unchanged 452; 33/33 probes, zero unknown/gap in this population.",
+    "parentGate": "FAIL: 457 > 452 at exact published parent; official script and baseline unchanged.",
+    "parent": {
+      "probes": 33,
+      "imports": 457,
+      "unknown": 0,
+      "regimeGap": 0
+    },
+    "candidate": {
+      "probes": 33,
+      "imports": 433,
+      "unknown": 0,
+      "regimeGap": 0
+    },
+    "removedOccurrences": 44,
+    "addedOccurrences": 20,
+    "netReduction": 24,
+    "changedProbes": 22,
+    "unchangedProbes": 11,
+    "perProbe": [
+      {
+        "probe": "core",
+        "parent": 21,
+        "candidate": 20,
+        "removed": ["__boundary_object_get_own_property_names", "__boundary_object_get_own_property_symbols"],
+        "added": ["__boundary_object_own_keys"]
+      },
+      {
+        "probe": "regexp",
+        "parent": 18,
+        "candidate": 17,
+        "removed": ["__boundary_object_get_own_property_names", "__boundary_object_get_own_property_symbols"],
+        "added": ["__boundary_object_own_keys"]
+      },
+      {
+        "probe": "collections",
+        "parent": 18,
+        "candidate": 17,
+        "removed": ["__boundary_object_get_own_property_names", "__boundary_object_get_own_property_symbols"],
+        "added": ["__boundary_object_own_keys"]
+      },
+      {
+        "probe": "promise",
+        "parent": 20,
+        "candidate": 19,
+        "removed": ["__boundary_object_get_own_property_names", "__boundary_object_get_own_property_symbols"],
+        "added": ["__boundary_object_own_keys"]
+      },
+      {
+        "probe": "date",
+        "parent": 3,
+        "candidate": 3,
+        "removed": [],
+        "added": []
+      },
+      {
+        "probe": "dataView",
+        "parent": 18,
+        "candidate": 17,
+        "removed": ["__boundary_object_get_own_property_names", "__boundary_object_get_own_property_symbols"],
+        "added": ["__boundary_object_own_keys"]
+      },
+      {
+        "probe": "bigint",
+        "parent": 3,
+        "candidate": 3,
+        "removed": [],
+        "added": []
+      },
+      {
+        "probe": "bigintFormatting",
+        "parent": 3,
+        "candidate": 3,
+        "removed": [],
+        "added": []
+      },
+      {
+        "probe": "number",
+        "parent": 3,
+        "candidate": 3,
+        "removed": [],
+        "added": []
+      },
+      {
+        "probe": "textGlobals",
+        "parent": 3,
+        "candidate": 3,
+        "removed": [],
+        "added": []
+      },
+      {
+        "probe": "object",
+        "parent": 21,
+        "candidate": 20,
+        "removed": ["__boundary_object_get_own_property_names", "__boundary_object_get_own_property_symbols"],
+        "added": ["__boundary_object_own_keys"]
+      },
+      {
+        "probe": "objectRest",
+        "parent": 18,
+        "candidate": 17,
+        "removed": ["__boundary_object_get_own_property_names", "__boundary_object_get_own_property_symbols"],
+        "added": ["__boundary_object_own_keys"]
+      },
+      {
+        "probe": "functionBind",
+        "parent": 21,
+        "candidate": 20,
+        "removed": ["__boundary_object_get_own_property_names", "__boundary_object_get_own_property_symbols"],
+        "added": ["__boundary_object_own_keys"]
+      },
+      {
+        "probe": "proxy",
+        "parent": 22,
+        "candidate": 21,
+        "removed": ["__boundary_object_get_own_property_names", "__boundary_object_get_own_property_symbols"],
+        "added": ["__boundary_object_own_keys"]
+      },
+      {
+        "probe": "typedArrays",
+        "parent": 3,
+        "candidate": 3,
+        "removed": [],
+        "added": []
+      },
+      {
+        "probe": "objectDescriptors",
+        "parent": 18,
+        "candidate": 17,
+        "removed": ["__boundary_object_get_own_property_names", "__boundary_object_get_own_property_symbols"],
+        "added": ["__boundary_object_own_keys"]
+      },
+      {
+        "probe": "objectPrototype",
+        "parent": 21,
+        "candidate": 20,
+        "removed": ["__boundary_object_get_own_property_names", "__boundary_object_get_own_property_symbols"],
+        "added": ["__boundary_object_own_keys"]
+      },
+      {
+        "probe": "functionCall",
+        "parent": 0,
+        "candidate": 0,
+        "removed": [],
+        "added": []
+      },
+      {
+        "probe": "functionApply",
+        "parent": 0,
+        "candidate": 0,
+        "removed": [],
+        "added": []
+      },
+      {
+        "probe": "errors",
+        "parent": 18,
+        "candidate": 17,
+        "removed": ["__boundary_object_get_own_property_names", "__boundary_object_get_own_property_symbols"],
+        "added": ["__boundary_object_own_keys"]
+      },
+      {
+        "probe": "generators",
+        "parent": 20,
+        "candidate": 19,
+        "removed": ["__boundary_object_get_own_property_names", "__boundary_object_get_own_property_symbols"],
+        "added": ["__boundary_object_own_keys"]
+      },
+      {
+        "probe": "iterators",
+        "parent": 3,
+        "candidate": 3,
+        "removed": [],
+        "added": []
+      },
+      {
+        "probe": "promiseCombinators",
+        "parent": 20,
+        "candidate": 19,
+        "removed": ["__boundary_object_get_own_property_names", "__boundary_object_get_own_property_symbols"],
+        "added": ["__boundary_object_own_keys"]
+      },
+      {
+        "probe": "promiseAnyRace",
+        "parent": 20,
+        "candidate": 19,
+        "removed": ["__boundary_object_get_own_property_names", "__boundary_object_get_own_property_symbols"],
+        "added": ["__boundary_object_own_keys"]
+      },
+      {
+        "probe": "regexpDynamic",
+        "parent": 18,
+        "candidate": 17,
+        "removed": ["__boundary_object_get_own_property_names", "__boundary_object_get_own_property_symbols"],
+        "added": ["__boundary_object_own_keys"]
+      },
+      {
+        "probe": "mapIteration",
+        "parent": 3,
+        "candidate": 3,
+        "removed": [],
+        "added": []
+      },
+      {
+        "probe": "setIteration",
+        "parent": 3,
+        "candidate": 3,
+        "removed": [],
+        "added": []
+      },
+      {
+        "probe": "reflect",
+        "parent": 19,
+        "candidate": 17,
+        "removed": ["__boundary_object_get_own_property_names", "__boundary_object_get_own_property_symbols"],
+        "added": []
+      },
+      {
+        "probe": "dynamicOps",
+        "parent": 18,
+        "candidate": 17,
+        "removed": ["__boundary_object_get_own_property_names", "__boundary_object_get_own_property_symbols"],
+        "added": ["__boundary_object_own_keys"]
+      },
+      {
+        "probe": "destructuring",
+        "parent": 18,
+        "candidate": 17,
+        "removed": ["__boundary_object_get_own_property_names", "__boundary_object_get_own_property_symbols"],
+        "added": ["__boundary_object_own_keys"]
+      },
+      {
+        "probe": "proxyMop",
+        "parent": 24,
+        "candidate": 22,
+        "removed": ["__boundary_object_get_own_property_names", "__boundary_object_get_own_property_symbols"],
+        "added": []
+      },
+      {
+        "probe": "proxyRevocable",
+        "parent": 21,
+        "candidate": 20,
+        "removed": ["__boundary_object_get_own_property_names", "__boundary_object_get_own_property_symbols"],
+        "added": ["__boundary_object_own_keys"]
+      },
+      {
+        "probe": "stringProtocols",
+        "parent": 18,
+        "candidate": 17,
+        "removed": ["__boundary_object_get_own_property_names", "__boundary_object_get_own_property_symbols"],
+        "added": ["__boundary_object_own_keys"]
+      }
+    ],
+    "commonImports": "All common import names retain exact kind, intent type, classification, family and owner metadata.",
+    "selectedAccelerators": {
+      "regexp": 4,
+      "date": 1,
+      "intl": 4
+    },
+    "remainingNamedGaps": {
+      "eager-generator-buffer": [
+        "__create_async_generator",
+        "__gen_create_buffer",
+        "__gen_push_f64",
+        "__gen_push_ref",
+        "__gen_result_value_f64"
+      ],
+      "shared-array-buffer": ["SharedArrayBuffer_new"],
+      "temporal-strings": ["__temporal_plain_date_from_string_field", "__temporal_plain_date_to_string"]
+    }
+  },
+  "validation": {
+    "focused": {
+      "parent": {
+        "files": 5,
+        "total": 78,
+        "passing": 76,
+        "failing": 2,
+        "skipped": 0
+      },
+      "candidate": {
+        "files": 5,
+        "total": 78,
+        "passing": 78,
+        "failing": 0,
+        "skipped": 0
+      },
+      "uniqueParentKeys": 78,
+      "uniqueCandidateKeys": 78,
+      "changes": [
+        {
+          "test": "tests/issue-6979-boundary-own-key-filters.test.ts :: #6979 native own-key filtering over one JS boundary primitive does not import separate name and symbol filtering providers",
+          "before": "failed",
+          "after": "passed",
+          "beforeError": "AssertionError: expected [ '__str_from_mem', …(18) ] to not include '__boundary_object_get_own_property_na…'",
+          "afterError": null
+        },
+        {
+          "test": "tests/issue-6979-boundary-own-key-filters.test.ts :: #6979 native own-key filtering over one JS boundary primitive does not consult a replaced ambient Reflect.ownKeys implementation",
+          "before": "failed",
+          "after": "passed",
+          "beforeError": "AssertionError: expected 1 to be +0 // Object.is equality",
+          "afterError": null
+        }
+      ],
+      "runtimeCoordinateRelocations": []
+    },
+    "boundaries": {
+      "files": 14,
+      "total": 158,
+      "passing": 158,
+      "failing": 0,
+      "skipped": 0
+    },
+    "broad": {
+      "parent": {
+        "files": 14,
+        "total": 230,
+        "passing": 155,
+        "failing": 50,
+        "skipped": 25
+      },
+      "candidate": {
+        "files": 14,
+        "total": 230,
+        "passing": 155,
+        "failing": 50,
+        "skipped": 25
+      },
+      "uniqueParentKeys": 230,
+      "uniqueCandidateKeys": 230,
+      "changes": [
+        {
+          "test": "tests/issue-1691-yieldstar-host-throw.test.ts :: #1691 yield* throw/return delegation (JS host) forwards throw(v) to the delegate and binds its done value",
+          "before": "failed",
+          "after": "failed",
+          "beforeError": "AssertionError: expected [ '__str_from_mem', …(20) ] to include '__gen_yield_star_step'",
+          "afterError": "AssertionError: expected [ '__str_from_mem', …(19) ] to include '__gen_yield_star_step'"
+        },
+        {
+          "test": "tests/issue-1691-yieldstar-host-throw.test.ts :: #1691 yield* throw/return delegation (JS host) re-yields a not-done throw result",
+          "before": "failed",
+          "after": "failed",
+          "beforeError": "AssertionError: expected [ '__str_from_mem', …(20) ] to include '__gen_yield_star_step'",
+          "afterError": "AssertionError: expected [ '__str_from_mem', …(19) ] to include '__gen_yield_star_step'"
+        },
+        {
+          "test": "tests/issue-1691-yieldstar-host-throw.test.ts :: #1691 yield* throw/return delegation (JS host) closes the delegate and throws TypeError when it has no throw method",
+          "before": "failed",
+          "after": "failed",
+          "beforeError": "AssertionError: expected [ '__str_from_mem', …(20) ] to include '__gen_yield_star_step'",
+          "afterError": "AssertionError: expected [ '__str_from_mem', …(19) ] to include '__gen_yield_star_step'"
+        },
+        {
+          "test": "tests/issue-1691-yieldstar-host-throw.test.ts :: #1691 yield* throw/return delegation (JS host) forwards return(v) to the delegate",
+          "before": "failed",
+          "after": "failed",
+          "beforeError": "AssertionError: expected [ '__str_from_mem', …(20) ] to include '__gen_yield_star_step'",
+          "afterError": "AssertionError: expected [ '__str_from_mem', …(19) ] to include '__gen_yield_star_step'"
+        }
+      ],
+      "runtimeCoordinateRelocations": []
+    },
+    "prepared": {
+      "parent": {
+        "files": 8,
+        "total": 145,
+        "passing": 129,
+        "failing": 16,
+        "skipped": 0
+      },
+      "candidate": {
+        "files": 8,
+        "total": 145,
+        "passing": 129,
+        "failing": 16,
+        "skipped": 0
+      },
+      "uniqueParentKeys": 145,
+      "uniqueCandidateKeys": 145,
+      "changes": [],
+      "runtimeCoordinateRelocations": []
+    },
+    "broadDiagnosticLimit": "Four pre-existing failing #1691 assertions differ only in their displayed import-array abbreviation …(20) -> …(19); status and all remaining text are exact after directory replacement. No generic normalization.",
+    "contractRepin": "One initial 230-case candidate failure was the old assertion requiring both removed imports. Only those two import expectations were replaced with absence checks; existing ownKeys presence and every runtime value/identity assertion retained. Final 230-case population is unchanged, not credited as a new fix.",
+    "focusedAttribution": "Import-shape control and ambient Reflect replacement control fail on parent and pass on candidate. Five behavior controls already pass on parent. This is not seven new runtime semantic fixes.",
+    "behavior": "Ordering; non-enumerables; exact symbols; empty and 48-key mixed lists; one ownKeys trap and no descriptor/get/prototype traps; original throw tokens; invalid/duplicate/revoked proxies; admission denial; ambient intrinsic isolation.",
+    "native": {
+      "byteIdentical": 6,
+      "rows": [
+        {
+          "target": "standalone",
+          "name": "scalar",
+          "bytes": 11413,
+          "sha256": "81d83998cf308dea1a6063218bfb63cba2c642ba3e62c8aee1ae9dbd5eea215e",
+          "imports": [],
+          "outputs": [42, 7],
+          "boundaryProbeExported": false
+        },
+        {
+          "target": "standalone",
+          "name": "flat",
+          "bytes": 33185,
+          "sha256": "671336c22fe661e836754ebaaa758e6b8a14b5202083538e6067e5a68aa4d134",
+          "imports": [],
+          "outputs": [42, 7],
+          "boundaryProbeExported": false
+        },
+        {
+          "target": "standalone",
+          "name": "dynamic",
+          "bytes": 146186,
+          "sha256": "a14649794c2bbcaf55a300cffabe34cc49e2a2caa6210a121af4ade43f851ecf",
+          "imports": [],
+          "outputs": [42, 7],
+          "boundaryProbeExported": false
+        },
+        {
+          "target": "wasi",
+          "name": "scalar",
+          "bytes": 22719,
+          "sha256": "ab7f880debe1399bbf089b74cb76d26e154a50c3d8aeaff4f3a9e3511bd10c58",
+          "imports": [],
+          "outputs": [42, 7],
+          "boundaryProbeExported": false
+        },
+        {
+          "target": "wasi",
+          "name": "flat",
+          "bytes": 52928,
+          "sha256": "7b8d7a6e7a8ab1c22952e9c6e4e46147565202c419b0dc93f36936241c09d187",
+          "imports": [],
+          "outputs": [42, 7],
+          "boundaryProbeExported": false
+        },
+        {
+          "target": "wasi",
+          "name": "dynamic",
+          "bytes": 141053,
+          "sha256": "a0ce3ef8ebe472044ae2cafccbc0533b04e9f9487adcf64ef60ffd08bdd70b88",
+          "imports": [],
+          "outputs": [42, 7],
+          "boundaryProbeExported": false
+        }
+      ]
+    },
+    "jsBinaryCosts": [
+      {
+        "name": "names",
+        "parentBytes": 103446,
+        "candidateBytes": 103765,
+        "deltaBytes": 319,
+        "parentSha256": "4e10d0b9fae09ca1ed1c7234fbca313306e7ffe1747dbb7b3d42865eb12d6a0b",
+        "candidateSha256": "7168f38b5fec0b2f03d11a81b8b0b37216723ff8754248851d2c1c10796278b5",
+        "routes": [
+          {
+            "name": "run",
+            "direct": 1,
+            "ir": 0,
+            "kind": "unsupported"
+          },
+          {
+            "name": "<module-init>",
+            "kind": "non-executable"
+          }
+        ]
+      },
+      {
+        "name": "symbols",
+        "parentBytes": 102540,
+        "candidateBytes": 102859,
+        "deltaBytes": 319,
+        "parentSha256": "eb25d3e55d9893496d89545712d334cb4a2ac9db73ca0b8bf1dbe4d57d940cc7",
+        "candidateSha256": "580528678aa1f4d8005de8ac02b4db75f0072cdcd4ade1f3699e08b45391f7ae",
+        "routes": [
+          {
+            "name": "run",
+            "direct": 1,
+            "ir": 0,
+            "kind": "unsupported"
+          },
+          {
+            "name": "<module-init>",
+            "kind": "non-executable"
+          }
+        ]
+      },
+      {
+        "name": "mixed",
+        "parentBytes": 103668,
+        "candidateBytes": 104111,
+        "deltaBytes": 443,
+        "parentSha256": "862a539b1a4375038f257000a186824a7f93f125cf620797b2ebfe64af62253c",
+        "candidateSha256": "f26554f53ff23160facc4b84345b944634adcfe1ab06a20ce7a528107f878246",
+        "routes": [
+          {
+            "name": "names",
+            "direct": 1,
+            "ir": 0,
+            "kind": "unsupported"
+          },
+          {
+            "name": "symbols",
+            "direct": 1,
+            "ir": 0,
+            "kind": "unsupported"
+          },
+          {
+            "name": "<module-init>",
+            "kind": "non-executable"
+          }
+        ]
+      }
+    ],
+    "routeLimit": "Measured names/symbols entry bodies remain direct=1/IR=0 on both sides. Shared native runtime changed, not frozen direct-AST body emitters; no new whole-program IR-only claim."
+  },
+  "runtimeMetrics": {
+    "runtimeTsLines": 10163,
+    "resolveImportLines": 1371,
+    "resolveImportCases": 7,
+    "ownedAdapterLines": 896,
+    "explicitCapabilityLines": 1194
+  },
+  "gates": {
+    "typecheck": "PASS",
+    "lint": "PASS",
+    "format": "PASS",
+    "loc": "PASS",
+    "functionBudget": "PASS",
+    "coercion": "PASS",
+    "oracle": "PASS",
+    "irLayering": "PASS: 87 lines/15 files, unbanked",
+    "irFallbacks": "PASS",
+    "compilerInventory": "Valid, architecture incomplete; helper classified as unmigrated backend debt.",
+    "deadExports": "6/6 full and 6/6 cut preservation witnesses; strict closure remains uncertified at optimize.ts/platform-capability-adapter.ts nonliteral imports.",
+    "hostImportPolicy": "PASS; no detector/probe/baseline edits or ceiling increase."
+  },
+  "limits": [
+    "Three measured JS key programs grow 319, 319 and 443 bytes. No performance claim or full binary-cost acceptance.",
+    "Runtime remains 10163 lines versus 8000 target. Opaque bound functions, named regime gaps, raw mode retirement, strict closure, full conformance/npm-compat/accelerator and stack acceptance remain open.",
+    "Predecessor PR 6701/recovered S7-b dependency still prevents independent merge. Import-gate closure alone is not completion."
+  ],
+  "sourceSha256": {
+    "src/codegen/boundary-own-key-filters.ts": "8d30ad7721ee57df26cb2231d30d1151385acda94ef777fe62bd81fb327d3bc6",
+    "src/codegen/object-runtime.ts": "d1ff5dd06a5497fbb35a7a751b58fd086e0f61036854a062b10dab2f8911110a",
+    "src/runtime/boundary-object-adapter.ts": "78bf0c021e523d1dc872f0149f7cc919d0278a1ff4afe45f7f55fdb4608ee03c",
+    "tests/issue-6979-boundary-own-key-filters.test.ts": "067d4830b500a72ed6d0a36792bfa536361f5c6ac36c45e12158a07047e73df0",
+    "tests/issue-4397-native-semantic-js-host.test.ts": "4d6a8c411316dc2b6b1d217ae83877dbb7ea8983e34471f431ca97350a543642",
+    "scripts/compiler-boundaries.json": "d80acef9c19ff3d7cfa2faf518d9666cc8406ffb28e7688eacbb11c86afcd4e7",
+    "scripts/check-host-import-policy.ts": "d2057ac4359c9c0754ac8b050650cc2d957d665d0c36a5e6c8dc0450268109aa",
+    "plan/audit/host-import-policy-baseline.json": "3a9609b9569670d7faf58cc206e1fd56b318475644e9ba452779880ab1a89d76"
+  }
+}

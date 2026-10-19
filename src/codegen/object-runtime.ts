@@ -69,6 +69,7 @@ import { buildObjectGetBody } from "../runtime/wasmgc/values/object-get-bodies.j
 import { buildVariadicBuiltinApplyArm } from "./apply-closure-variadic-builtin.js"; // (#6701)
 import { buildRestOnlyApply } from "./closures/rest-only-apply.js";
 import { withApplyTail } from "./closures/apply-extras-tail.js";
+import { registerBoundaryOwnKeyFilters } from "./boundary-own-key-filters.js";
 import {
   buildObjectPropertyKeyPrefix,
   prependObjectKeyCoercion,
@@ -1130,13 +1131,6 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }, { kind: "externref" }, { kind: "f64" }],
       [{ kind: "externref" }],
     );
-    ensureLateImport(ctx, "__boundary_object_get_own_property_names", [{ kind: "externref" }], [{ kind: "externref" }]);
-    ensureLateImport(
-      ctx,
-      "__boundary_object_get_own_property_symbols",
-      [{ kind: "externref" }],
-      [{ kind: "externref" }],
-    );
     ensureLateImport(ctx, "__boundary_object_own_keys", [{ kind: "externref" }], [{ kind: "externref" }]);
     ensureLateImport(ctx, "__boundary_object_is_admitted", [{ kind: "externref" }], [{ kind: "i32" }]);
     ensureLateImport(ctx, "__boundary_object_prevent_extensions", [{ kind: "externref" }], [{ kind: "externref" }]);
@@ -1208,12 +1202,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   const boundaryObjectDefinePropertyAccessorIdx = boundaryObjectInterop
     ? ctx.funcMap.get("__boundary_object_define_property_accessor")
     : undefined;
-  const boundaryObjectGetOwnPropertyNamesIdx = boundaryObjectInterop
-    ? ctx.funcMap.get("__boundary_object_get_own_property_names")
-    : undefined;
-  const boundaryObjectGetOwnPropertySymbolsIdx = boundaryObjectInterop
-    ? ctx.funcMap.get("__boundary_object_get_own_property_symbols")
-    : undefined;
+  const boundaryObjectOwnKeysIdx = boundaryObjectInterop ? ctx.funcMap.get("__boundary_object_own_keys") : undefined;
   const boundaryObjectForInKeysIdx = boundaryObjectInterop
     ? ctx.funcMap.get("__boundary_object_for_in_keys")
     : undefined;
@@ -3693,6 +3682,23 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     buildArgumentVectorPushBody(argumentVectorLayout),
   );
   const objVecPushIdx = ctx.funcMap.get("__objvec_push")!;
+  const boundaryOwnKeyFilters =
+    boundaryObjectOwnKeysIdx === undefined
+      ? undefined
+      : registerBoundaryOwnKeyFilters(
+          {
+            ownKeysIdx: boundaryObjectOwnKeysIdx,
+            objVecNewIdx,
+            objVecPushIdx,
+            objVecTypeIdx,
+            objVecArrTypeIdx,
+            anyStrTypeIdx,
+            symbolTypeIdx,
+          },
+          registerNative,
+        );
+  const boundaryObjectGetOwnPropertyNamesIdx = boundaryOwnKeyFilters?.names;
+  const boundaryObjectGetOwnPropertySymbolsIdx = boundaryOwnKeyFilters?.symbols;
 
   // ── __hasOwnProperty / __object_hasOwn (externref obj, externref key) -> i32 ─
   //

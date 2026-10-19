@@ -1390,19 +1390,19 @@ describe("#4397 native semantics in a JavaScript environment", () => {
           name: "__boundary_object_define_property_accessor",
           classification: "value-adapter",
         }),
-        expect.objectContaining({
-          name: "__boundary_object_get_own_property_names",
-          classification: "value-adapter",
-        }),
-        expect.objectContaining({
-          name: "__boundary_object_get_own_property_symbols",
-          classification: "value-adapter",
-        }),
         expect.objectContaining({ name: "__boundary_object_for_in_keys", classification: "value-adapter" }),
         expect.objectContaining({ name: "__boundary_object_own_keys", classification: "value-adapter" }),
         expect.objectContaining({ name: "__boundary_object_is_admitted", classification: "value-adapter" }),
         expect.objectContaining({ name: "__boundary_callback_call_1", classification: "value-adapter" }),
       ]),
+    );
+    // (#6979) These filters are now native helpers over the single own-key
+    // primitive; keep the runtime assertions above, not the retired import ABI.
+    expect(wasmImports(native.result.binary).map((entry) => entry.name)).not.toEqual(
+      expect.arrayContaining(["__boundary_object_get_own_property_names"]),
+    );
+    expect(wasmImports(native.result.binary).map((entry) => entry.name)).not.toEqual(
+      expect.arrayContaining(["__boundary_object_get_own_property_symbols"]),
     );
     expect(native.result.hostImportInventory?.filter((entry) => entry.classification === "unknown")).toEqual([]);
     expect(native.result.hostImportSummary?.byClassification).toMatchObject({

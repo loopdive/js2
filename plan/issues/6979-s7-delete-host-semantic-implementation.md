@@ -3105,3 +3105,90 @@ live regime gaps, runtime retirement target, strict closure, full
 compatibility/conformance/accelerator and binary-cost acceptance still prevent
 completion and independent merge. Continue from those program requirements;
 do not equate this verified interop repair with the full migration.
+
+### S7-k native boundary key filtering / import gate handoff (2026-10-19, Codex)
+
+Parent: `2381a04d088a6cf247ee7be641d13c3bccd44a5c`. The authoritative
+33-probe inventory totals 457 imports against the unchanged 452 ceiling.
+Investigate exact registration/use/retention edges before changing imports.
+Keep all admitted JS-object MOP, identity and callable behavior; no baseline
+increase or detector/probe reduction is authorized. Any reduction must come
+from production code and be validated against the same 33 probes plus runtime
+boundary controls.
+
+Closed the import-budget blocker in production code. Newly generated modules
+use the existing admitted-object `__boundary_object_own_keys` primitive and
+bounded native helpers that filter its native key vector by exact string/
+symbol carrier types. Key order and original symbol identity are preserved;
+non-admitted answers remain null and invalid internal key carriers trap.
+The helpers use the existing native ObjVec allocator/push operation and are
+registered only for a JS value boundary. Frozen direct-AST body emitters and
+the selector are unchanged.
+
+The boundary primitive captures intrinsic Reflect.ownKeys once; replacing the
+ambient public method cannot redefine the operation. Legacy name/symbol
+adapter bindings remain usable by old manifests, but new compiler output
+does not import them. This is removal of compiler dependence, not a claim
+that all boundary adapter source or compatibility ABI was deleted.
+
+The **unchanged official** `scripts/check-host-import-policy.ts` fails on the
+exact published parent at **457 > 452** and passes on the candidate at
+**433 ≤ 452**. All **33** probe keys are retained, with zero unknown/gap entries
+in that population. No detector, probe, policy classification or baseline is
+relaxed. Exact import delta: remove **44** name/symbol-provider occurrences,
+add **20** occurrences of the existing own-key primitive, **24 fewer net**.
+Twenty-two probes shrink; eleven are unchanged. Every common import retains
+its exact kind, intent type, family, classification and owner metadata.
+
+Measured local Node 24.4.1 / Vitest 3.2.4 forks with
+`--experimental-wasm-exnref`:
+
+- Fourteen boundary/support files: **158/158**. Focused parent comparison:
+  **76 passing/2 failing → 78/78**. The import-shape guard and ambient Reflect
+  replacement guard improve; five new runtime behavior controls already pass
+  on the parent. This is not seven new semantic runtime fixes.
+- Controls cover non-enumerable strings and ordering, exact symbols, empty/
+  48-key mixed lists, one ownKeys trap with no descriptor/get/prototype traps,
+  original exception tokens, invalid/duplicate/revoked proxies and admission
+  denial. The enumerable Object.keys path still invokes descriptor traps.
+- Fresh broad comparison retains **230 cases: 155 passing/50 failing/25
+  skipped**. One initial candidate failure was solely the old passing test
+  requiring the two removed imports, after all its runtime assertions passed.
+  Only those expectations were replaced with absence checks; ownKeys presence
+  and all value/identity assertions remain. This is a contract re-pin, not a
+  new semantic improvement.
+- Four already-failing generator tests display `…(19)` instead of `…(20)`
+  in their import-array previews. Their statuses and all other error text
+  match after directory replacement; no generic error normalization hides
+  these differences. All other broad errors match exactly.
+- The fresh **145-case** preparation/ABI comparison remains **129 passing/16
+  failing**, with exact keys, outcomes and error texts. Six standalone/WASI
+  scalar/flat/dynamic controls are **byte-identical 6/6**, zero-import and
+  retain answers 42/7.
+- Cost is explicit: the names-only and symbols-only JS probes each grow
+  **319 bytes**; the combined probe grows **443 bytes**. Both sides keep the
+  existing direct entry-body routes; shared native runtime helpers changed,
+  not AST emitters. This proves no new whole-program IR-only coverage and no
+  performance improvement.
+- Typecheck, lint/format, source/function, coercion, oracle, layering,
+  IR-fallback and compiler-inventory checks pass. The new helper remains
+  unmigrated backend debt in the inventory. Dead-export preservation remains
+  **6/6 full and 6/6 cut**; strict closure is still uncertified.
+
+Evidence and exact source hashes:
+`plan/audit/6979-native-boundary-own-keys-20261019.json`. Parent tracked
+production sources were unchanged; only the new test and ignored harness
+inputs were copied. Reports were preserved before verified-clean removal.
+The gate script and baseline hashes are pinned and unchanged.
+
+Current runtime source remains **10,163**, resolveImport **1,371/seven cases**;
+owned adapter source is **896** (one intrinsic-snapshot line), explicit
+capability source **1,194**, all within existing caps. The runtime 8,000-line
+target still has a **2,163-line gap**. No ceiling is raised or banked.
+
+Next owner: treat **457/452 as a historical blocker now resolved**, not a
+current failure. Keep the unchanged 452 ceiling. The predecessor/recovered
+dependency, opaque bound functions, raw-mode/source retirement, live named
+regime gaps, strict closure, full conformance/npm-compat/accelerator and
+binary-cost acceptance remain open. Import-gate closure alone is not migration
+completion or permission to merge this stack independently.
