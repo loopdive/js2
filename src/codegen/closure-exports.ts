@@ -22,7 +22,11 @@ import {
   buildClosureMethodArgument,
   buildClosureReferenceArgument,
 } from "../runtime/wasmgc/values/closure-argument-bodies.js";
-import { buildVariadicBuiltinMethodCallArm, restoreThisKeepResult } from "./apply-closure-variadic-builtin.js"; // (#6701)
+import {
+  buildVariadicBuiltinArgvProbe,
+  buildVariadicBuiltinMethodCallArm,
+  restoreThisKeepResult,
+} from "./apply-closure-variadic-builtin.js"; // (#6701)
 import { ts } from "../ts-api.js";
 import { STABLE_FUNC_BASE } from "../emit/resolve-layout.js";
 import type { FuncTypeDef, Instr, ValType, WasmExport, WasmFunction } from "../ir/types.js";
@@ -2031,7 +2035,9 @@ export function emitClosureArityExport(ctx: CodegenContext): void {
 
 /**
  * Emit `__closure_has_rest(externref) -> i32` for the narrow host-accessor
- * bridge. A returned rest closure cannot be exposed through the generic
+ * bridge: 0 = positional, 1 = source rest, 2 = native packed argv (exact
+ * builtin identity). Reflective .length and __closure_arity are unchanged.
+ * A returned rest closure cannot be exposed through the generic
  * host-call dispatcher: its single Wasm formal is the materialized rest vec,
  * while V8 supplies the call's positional host arguments. Treating the first
  * host argument as that vec causes an uncatchable concrete-struct `ref.cast`.
@@ -2039,19 +2045,24 @@ export function emitClosureArityExport(ctx: CodegenContext): void {
  * The source-shape bit lives on `ClosureInfo`; captured rest closures retain a
  * concrete subtype, while no-capture closures can reuse a signature-keyed
  * wrapper. The latter means an identical vec-signature non-rest closure is
- * conservatively left raw too. Modules without rest closures emit nothing.
+ * conservatively left raw too. Modules without rest or packed callables emit nothing.
  */
 export function emitClosureHasRestExport(ctx: CodegenContext): void {
   const restTypes = [...ctx.closureInfoByTypeIdx]
     .filter(([, info]) => info.hasRestParam === true)
     .map(([typeIdx]) => typeIdx);
-  if (restTypes.length === 0) {
+  if (restTypes.length === 0 && ctx.variadicBuiltinClosure === undefined) {
     emitClosureHostBridgeManifest(ctx);
     return;
   }
 
   const typeIdx = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "i32" }], "$closure_has_rest_type");
-  const body: Instr[] = [{ op: "local.get", index: 0 }, { op: "any.convert_extern" }, { op: "local.set", index: 1 }];
+  const body: Instr[] = [
+    ...buildVariadicBuiltinArgvProbe(ctx),
+    { op: "local.get", index: 0 },
+    { op: "any.convert_extern" },
+    { op: "local.set", index: 1 },
+  ];
   for (const restType of new Set(restTypes)) {
     body.push(
       { op: "local.get", index: 1 },

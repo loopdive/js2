@@ -3403,3 +3403,103 @@ then the full equivalence/conformance/npm-compat/accelerator and cost acceptance
 on the resolved prerequisite stack. Keep the 452 import ceiling and binary
 tradeoffs visible. Both migration issues remain in progress and the PR draft;
 this checkpoint does not authorize independent merge or migration completion.
+
+### S7-n native callable argv and returned-function handoff (2026-10-19, Codex)
+
+Published parent: `9600194e3760ed89c7c94f9c26c330cb45e7d6d4`.
+The previous callable-escape error misidentified the mechanism: the minimal
+Object.assign getter **does publish authenticated dispatchers 1–4**, but
+wrapExports' separate return wrapper only selected 0 or 1. Ordinary returned
+two-parameter functions failed too. Reuse the identity-cached dynamic bridge
+instead of that duplicate wrapper; retain genuine JS-owned input/receiver
+objects in the existing per-instance admission set, without traversing them.
+Translate native primitive results and native Error payloads at this bridge;
+do not blanket-marshal aggregate results (other native callers need raw values).
+
+Native variadic builtins use the existing physical one-vector convention.
+Extend the authenticated `__closure_has_rest` discriminator: **0 positional,
+1 source rest, 2 native packed argv**. The native identity arm precedes source
+shape checks and reuses the existing metadata-id / linked-signature guards.
+It does not mutate shared signature ClosureInfo, which could misclassify an
+ordinary array-parameter function. The boundary constructs only the argument
+list through existing ObjVec/vector adapters; the builtin still executes in
+Wasm and sees every supplied argument, including more than four. Target,
+source, nested token, symbol and throw-token objects remain identity-backed.
+
+Keep `__closure_arity` and reflective native `.length` unchanged. A negative
+arity discriminator was rejected during investigation: native ToPrimitive
+and other readers also use `arity >= 0` as a callability guard. The existing
+rest-discriminator readers instead test `=== 1`; extending it with an exact
+native identity does not change those source-rest decisions. No new host
+import implementation, semantic provider, AST body, driver or selector change.
+
+The ordinary typed-array control exposed a separate shared-reader omission:
+native `__extern_length` did not admit JS-owned array-likes. Its existing
+Get/ToLength arm now also recognizes already-admitted objects, without adding
+a host-free import or probing their prototype. This fixes positional array
+length conversion, **not** the typed-array identity/mutation residual below.
+Argument-list construction also avoids consulting the host Array iterator.
+
+Local Node 24.4.1 / Vitest 3.2.4 fork harness, `--experimental-wasm-exnref`,
+exact unchanged parent production tree and identical new test:
+
+- New matrix **17/17**. Combined **376 cases / 22 files: 349 passing / 27
+  failing → 366 passing / 10 failing**, zero skipped. All 17 changed rows
+  belong to the new file; they are not 17 independent defects. No old test
+  expectations changed. Nine retained failures have identical full errors
+  after directory substitution; the tenth differs only in runtime stack-line
+  locations, with the same error message and other frames.
+- The first linked-harness attempt lacked compareArray.js in both trees.
+  Re-run with the repository-pinned Test262 harness
+  `b363f29d3c43c626dc852744ad64a0b48a003693`: both linked end-to-end controls
+  now stop at unavailable QuickJS execution. Those two remain failures, not
+  evidence of linked compatibility; the combined population uses this rerun.
+- **33/33 complete policy inventories match; unchanged guard passes 433/452**,
+  zero unknown/gap entries in that population. Eleven policy binaries match;
+  eighteen grow **5 bytes**, four grow **149 bytes**. No probe, detector,
+  baseline, ceiling or allowance change; no size/performance win claimed.
+- Four of six native binaries match. Standalone/WASI dynamic controls each
+  grow **83 bytes**; all six retain zero imports, answers 42/7 and no exported
+  JS-boundary probe. This is not a byte-neutral native change.
+- TypeScript7 repo typecheck, lint/format, LOC/function/flat budgets, coercion,
+  oracle, IR layering/fallback, issue/retirement and inventory checks pass.
+  Flat codegen remains **833** files. Dead-export preservation has six
+  full/six cut witnesses; **strict modeled closure remains uncertified** at
+  the two recorded nonliteral dynamic imports. The import-cycle gate still
+  fails on both trees with the same reported codegen→ir **298→301** and
+  ir→codegen **74→75** violations; no waiver or whole-graph equality claim.
+
+Runtime **10,163 → 10,161 lines**, still **2,161** above target. resolveImport
+is unchanged at **1,371/seven cases**, owned adapters **896**, capabilities
+**1,194**. This checkpoint does not delete the remaining raw-mode field or
+activate new IR coverage. The new leaf constant is a runtime contract; shared
+context-dependent codegen bodies remain migration debt.
+Exact source/gate hashes, transitions, retained failure hashes, binary costs
+and negative-control source:
+`plan/audit/6979-callable-boundary-argv-20261019.json`.
+
+**Next owner — do not equate native builtin argv with complete callable interop.**
+Fresh parent/candidate controls retain these failures:
+
+1. An ordinary returned rest closure given 32 arguments observes **4**.
+2. An ordinary returned five-parameter closure has no callable free dispatcher.
+   The candidate now refuses while wrapping, instead of deferring the old
+   misleading 0/1-dispatch error until invocation. Fix these through a shared
+   native complete-argv calling contract, not more frozen AST body emitters.
+3. A returned Object.assign facade still reports wrong JS-side name/length:
+   candidate `wasmClosureDynamicBridge`/0, parent empty name/0, expected assign/2.
+   Reflective metadata **inside Wasm** remains correct; full reflective JS
+   function-object fidelity is not certified by that passing control.
+4. A typed `number[]` formal still materializes a native vec: pushing 42 does
+   not update the original JS array, and the raw returned vec is not that
+   array. Both sides fail the same identity/mutation/aggregate-return control.
+   Preserve the user's live boundary-object requirement when repairing it;
+   do not hide it behind a copied graph or claim array-length success fixes it.
+
+The prior primitive-target and patched-Math fixtures also retain all six
+target/fixture failures exactly. Continue these mechanisms, opaque bound
+functions, raw-mode/runtime retirement, strict closure/cycles, prerequisite
+resolution and full equivalence/conformance/npm-compat/accelerator/cost
+acceptance. Both migration issues stay in progress and PR6762 stays draft,
+stacked on unmerged PR6701 and recovered S7-b; no independent merge or complete
+migration claim is authorized by this handoff.

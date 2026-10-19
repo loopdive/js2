@@ -25,6 +25,7 @@ import { getClosureFuncSelfTypeIdx } from "./closures/funcref-wrapper-types.js";
 import type { CodegenContext } from "./context/types.js";
 import { BFN_ID_FIELD_IDX, linkedMetaSignatureGuard } from "./builtin-fn-meta.js";
 import { VARIADIC_VALUE_STATICS } from "./closures/native-variadic-builtins.js";
+import { PACKED_CLOSURE_ARGV } from "../runtime/contracts/closure-call-abi.js";
 
 /** A rest callback can share the builtin's signature, but not its identity. */
 function variadicBuiltinIdentity(ctx: CodegenContext): Instr[] {
@@ -55,6 +56,19 @@ function variadicBuiltinIdentity(ctx: CodegenContext): Instr[] {
     );
   }
   return body;
+}
+
+/** Exact builtin identity, not the shared vec signature or reflective length. */
+export function buildVariadicBuiltinArgvProbe(ctx: CodegenContext): Instr[] {
+  if (ctx.variadicBuiltinClosure === undefined) return [];
+  return [
+    ...variadicBuiltinIdentity(ctx),
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [{ op: "i32.const", value: PACKED_CLOSURE_ARGV }, { op: "return" }],
+    },
+  ];
 }
 
 /**

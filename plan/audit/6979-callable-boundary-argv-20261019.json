@@ -1,0 +1,933 @@
+{
+  "schemaVersion": 1,
+  "issue": 6979,
+  "date": "2026-10-19",
+  "parentCommit": "9600194e3760ed89c7c94f9c26c330cb45e7d6d4",
+  "candidate": "worktree source hashes below; committed together with this audit",
+  "scope": "Shared native callable argv contract and identity-backed JS boundary; not full migration completion",
+  "environment": {
+    "node": "v24.4.1",
+    "vitest": "3.2.4",
+    "harness": "forks, max-old-space-size=1024, --expose-gc, --experimental-wasm-exnref",
+    "test262Commit": "b363f29d3c43c626dc852744ad64a0b48a003693",
+    "test262Use": "only existing linked-harness controls; no sweep; tracked harness files shared read-only with both trees"
+  },
+  "sourceSha256": {
+    "src/runtime/contracts/closure-call-abi.ts": "42c5d4068b3bb3b85595d14cadab257babcb0420dc5f83bfb4889d051c098755",
+    "src/codegen/apply-closure-variadic-builtin.ts": "85ca158ee7b892579b21e7e9edbfd903280e16e816818c3779c604b7e3c3015d",
+    "src/codegen/closure-exports.ts": "6d42f66c52cd60a4394d55e41e76ec8503dd2435759c17f8cba2590b0308e81a",
+    "src/codegen/object-runtime-enumeration.ts": "d02832d6735ca142c48fa866b990581fdd31df9168f76477ed2a9517ca589c17",
+    "src/runtime.ts": "a41f90e9c1d23f27b5053f9dab4ea52a8c1e89af604eb1e913375263b112290c",
+    "scripts/compiler-boundaries.json": "cb029e8e6f4815f20eed1b38b119d7e078bb02360f2636ae4ac99fdbec13e059",
+    "tests/issue-6979-callable-boundary-argv.test.ts": "f086a8dd01c1147121d9c21bd6beac20f441802fba0e9ca0092371d926b4b7f9"
+  },
+  "unchangedGateSha256": {
+    "scripts/check-host-import-policy.ts": "d2057ac4359c9c0754ac8b050650cc2d957d665d0c36a5e6c8dc0450268109aa",
+    "plan/audit/host-import-policy-baseline.json": "3a9609b9569670d7faf58cc206e1fd56b318475644e9ba452779880ab1a89d76",
+    "scripts/check-import-cycles.mjs": "bf560d65767445f356ab5e9848734bcb1860864279880b8ddef2eaef15192d97",
+    "scripts/import-cycles-baseline.json": "1561fee6013d225da8401e9f13d14c6f8a9e56924a4cec43b8fa21b03a2759ec",
+    "scripts/check-compiler-boundaries.mjs": "dd440013f7047518e1c844be7a6e17012e0523384482d4460276754c283bd12c",
+    "scripts/check-flat-dir-budget.mjs": "aff7bf6a42235ee3ff51bf762b090a49c872d86e5a0bbe54119bd212d72c32a1",
+    "scripts/flat-dir-budget-baseline.json": "e5fe3ed486eb63c17a01ab084ae95e58bc872e640a8b38a33e0c38c0577c8049"
+  },
+  "cohort": {
+    "parent": {
+      "total": 376,
+      "passing": 349,
+      "failing": 27,
+      "skipped": 0,
+      "files": 22
+    },
+    "candidate": {
+      "total": 376,
+      "passing": 366,
+      "failing": 10,
+      "skipped": 0,
+      "files": 22
+    },
+    "changed": [
+      {
+        "file": "issue-6979-callable-boundary-argv.test.ts",
+        "name": "native callable values crossing the live JS boundary classifies exact native packed identities separately from ordinary array/rest closures",
+        "before": "failed",
+        "after": "passed",
+        "parentError": "AssertionError: expected +0 to be 2 // Object.is equality"
+      },
+      {
+        "file": "issue-6979-callable-boundary-argv.test.ts",
+        "name": "native callable values crossing the live JS boundary preserves builtin facade identity across repeated returns",
+        "before": "failed",
+        "after": "passed",
+        "parentError": "AssertionError: expected [Function] to be [Function] // Object.is equality"
+      },
+      {
+        "file": "issue-6979-callable-boundary-argv.test.ts",
+        "name": "native callable values crossing the live JS boundary calls ordinary two-argument closures",
+        "before": "failed",
+        "after": "passed",
+        "parentError": "AssertionError: expected null to be 42 // Object.is equality"
+      },
+      {
+        "file": "issue-6979-callable-boundary-argv.test.ts",
+        "name": "native callable values crossing the live JS boundary keeps ordinary array parameters positional",
+        "before": "failed",
+        "after": "passed",
+        "parentError": "AssertionError: expected +0 to be 3 // Object.is equality"
+      },
+      {
+        "file": "issue-6979-callable-boundary-argv.test.ts",
+        "name": "native callable values crossing the live JS boundary preserves rest-function receivers",
+        "before": "failed",
+        "after": "passed",
+        "parentError": "AssertionError: expected {} to be 42 // Object.is equality"
+      },
+      {
+        "file": "issue-6979-callable-boundary-argv.test.ts",
+        "name": "native callable values crossing the live JS boundary pads omitted formals without changing arguments.length",
+        "before": "failed",
+        "after": "passed",
+        "parentError": "AssertionError: expected null to be 42 // Object.is equality"
+      },
+      {
+        "file": "issue-6979-callable-boundary-argv.test.ts",
+        "name": "native callable values crossing the live JS boundary admits ordinary callback arguments without copying their graph",
+        "before": "failed",
+        "after": "passed",
+        "parentError": "TypeError: WebAssembly objects are opaque"
+      },
+      {
+        "file": "issue-6979-callable-boundary-argv.test.ts",
+        "name": "native callable values crossing the live JS boundary preserves all 0 native builtin arguments",
+        "before": "failed",
+        "after": "passed",
+        "parentError": "AssertionError: expected null to be -Infinity // Object.is equality"
+      },
+      {
+        "file": "issue-6979-callable-boundary-argv.test.ts",
+        "name": "native callable values crossing the live JS boundary preserves all 1 native builtin arguments",
+        "before": "failed",
+        "after": "passed",
+        "parentError": "AssertionError: expected {} to be 65 // Object.is equality"
+      },
+      {
+        "file": "issue-6979-callable-boundary-argv.test.ts",
+        "name": "native callable values crossing the live JS boundary preserves all 3 native builtin arguments",
+        "before": "failed",
+        "after": "passed",
+        "parentError": "AssertionError: expected null to be 67 // Object.is equality"
+      },
+      {
+        "file": "issue-6979-callable-boundary-argv.test.ts",
+        "name": "native callable values crossing the live JS boundary preserves all 9 native builtin arguments",
+        "before": "failed",
+        "after": "passed",
+        "parentError": "AssertionError: expected null to be 73 // Object.is equality"
+      },
+      {
+        "file": "issue-6979-callable-boundary-argv.test.ts",
+        "name": "native callable values crossing the live JS boundary preserves all 32 native builtin arguments",
+        "before": "failed",
+        "after": "passed",
+        "parentError": "AssertionError: expected null to be 96 // Object.is equality"
+      },
+      {
+        "file": "issue-6979-callable-boundary-argv.test.ts",
+        "name": "native callable values crossing the live JS boundary preserves assign target, nested value and symbol identities beyond dispatcher arity",
+        "before": "failed",
+        "after": "passed",
+        "parentError": "AssertionError: expected null to be {} // Object.is equality"
+      },
+      {
+        "file": "issue-6979-callable-boundary-argv.test.ts",
+        "name": "native callable values crossing the live JS boundary does not consult the host Array iterator while constructing argv",
+        "before": "failed",
+        "after": "passed",
+        "parentError": "AssertionError: expected null to be 30 // Object.is equality"
+      },
+      {
+        "file": "issue-6979-callable-boundary-argv.test.ts",
+        "name": "native callable values crossing the live JS boundary asks live descriptors and getters in order without probing a prototype",
+        "before": "failed",
+        "after": "passed",
+        "parentError": "AssertionError: expected null to be {} // Object.is equality"
+      },
+      {
+        "file": "issue-6979-callable-boundary-argv.test.ts",
+        "name": "native callable values crossing the live JS boundary preserves throw tokens and partial writes",
+        "before": "failed",
+        "after": "passed",
+        "parentError": "AssertionError: expected AssertionError: expected \"getter must thr… { …(3) } to be {} // Object.is equality"
+      },
+      {
+        "file": "issue-6979-callable-boundary-argv.test.ts",
+        "name": "native callable values crossing the live JS boundary rejects a missing target",
+        "before": "failed",
+        "after": "passed",
+        "parentError": "AssertionError: expected function to throw an error, but it didn't"
+      }
+    ],
+    "retainedFailures": [
+      {
+        "file": "issue-1058-closure-rest-host-dispatch.test.ts",
+        "name": "#1058 externref-backed closure rest host dispatch materializes empty and populated rest arrays for plain and method host calls",
+        "status": "failed",
+        "firstLine": "AssertionError: expected {} to be 15 // Object.is equality",
+        "parentFullErrorsSha256": "f3e3854c211e49e291e9da6f9381b4036bdfae4788e7f2da4cd8873917ebfd18",
+        "candidateFullErrorsSha256": "f3e3854c211e49e291e9da6f9381b4036bdfae4788e7f2da4cd8873917ebfd18",
+        "fullErrorsEqual": true
+      },
+      {
+        "file": "issue-2623-p7-finally-bridge.test.ts",
+        "name": "#2623 P-7 — B-5: §27.2.5.3 synchronous abrupt completion through .finally() well-behaved .finally(cb) still chains (wrap removal does not break the happy path)",
+        "status": "failed",
+        "firstLine": "AssertionError: expected {} to be 41 // Object.is equality",
+        "parentFullErrorsSha256": "c7d83d759623cdab385342f6e795ff64929e4a8a8649da84604baf743c2d5ed3",
+        "candidateFullErrorsSha256": "c7d83d759623cdab385342f6e795ff64929e4a8a8649da84604baf743c2d5ed3",
+        "fullErrorsEqual": true
+      },
+      {
+        "file": "issue-3526-callable-boundary-callback.test.ts",
+        "name": "#3526 F3-S1 end-to-end behaviour is unchanged keeps the maker at its pre-slice import position and spells it from the record",
+        "status": "failed",
+        "firstLine": "AssertionError: expected [] to include 'install'",
+        "parentFullErrorsSha256": "697fe485e9bb71575bfdba01bafa26c5f4c9c6c55816af21a6767e1600963aad",
+        "candidateFullErrorsSha256": "697fe485e9bb71575bfdba01bafa26c5f4c9c6c55816af21a6767e1600963aad",
+        "fullErrorsEqual": true
+      },
+      {
+        "file": "issue-3526-callable-boundary-callback.test.ts",
+        "name": "#3526 F3-S1 end-to-end behaviour is unchanged dispatches the wrapped one-shot callback exactly as before",
+        "status": "failed",
+        "firstLine": "AssertionError: expected {} to be undefined",
+        "parentFullErrorsSha256": "bedd022f80b1ee73e3ecbdbdee5e0bec11ec8798c30fa0ff4f34e57ec88807ea",
+        "candidateFullErrorsSha256": "bedd022f80b1ee73e3ecbdbdee5e0bec11ec8798c30fa0ff4f34e57ec88807ea",
+        "fullErrorsEqual": true
+      },
+      {
+        "file": "issue-1058-unmatched-closure-host-call.test.ts",
+        "name": "#1058 callback with its own ABI through a generic helper calls void, number and captured callbacks through forEach",
+        "status": "failed",
+        "firstLine": "TypeError: Cannot access property on null or undefined at 6:28",
+        "parentFullErrorsSha256": "a0a9ee17ceb04ab77c59db3f5cc4d86e98f56e58c4bcb5a1a655ffe12d0f46fe",
+        "candidateFullErrorsSha256": "76ce52f3a37b5c1a73c2c4e285989593bad20564a6f426c621725f4b4bf7f291",
+        "fullErrorsEqual": false
+      },
+      {
+        "file": "issue-6426-linked-object-rest-source.test.ts",
+        "name": "#6426 — an object-rest source keeps its values across a package boundary single module",
+        "status": "failed",
+        "firstLine": "AssertionError: expected { restObj: {}, restFn: {}, …(10) } to deeply equal { restObj: 'R', …(11) }",
+        "parentFullErrorsSha256": "378f02593fed6f10a98d61738ed1867374aff92fe1afd05f5744f83bc51f79cc",
+        "candidateFullErrorsSha256": "378f02593fed6f10a98d61738ed1867374aff92fe1afd05f5744f83bc51f79cc",
+        "fullErrorsEqual": true
+      },
+      {
+        "file": "issue-6426-linked-object-rest-source.test.ts",
+        "name": "#6426 — an object-rest source keeps its values across a package boundary two untyped .js modules in one compilation unit",
+        "status": "failed",
+        "firstLine": "AssertionError: expected { restObj: {}, restFn: {}, …(10) } to deeply equal { restObj: 'R', …(11) }",
+        "parentFullErrorsSha256": "50901f938b35836fbd042cbc8249a43d9d1ed19abbdf9cb228c7c23f83b5d2fa",
+        "candidateFullErrorsSha256": "50901f938b35836fbd042cbc8249a43d9d1ed19abbdf9cb228c7c23f83b5d2fa",
+        "fullErrorsEqual": true
+      },
+      {
+        "file": "issue-6426-linked-object-rest-source.test.ts",
+        "name": "#6426 — an object-rest source keeps its values across a package boundary library in a separately linked package",
+        "status": "failed",
+        "firstLine": "AssertionError: expected { restObj: {}, restFn: {}, …(10) } to deeply equal { restObj: 'R', …(11) }",
+        "parentFullErrorsSha256": "c67ec8a187d55fe9d5099ec9b2f69e8ed448a820017cc47e3e66d9ef6f1f3f16",
+        "candidateFullErrorsSha256": "c67ec8a187d55fe9d5099ec9b2f69e8ed448a820017cc47e3e66d9ef6f1f3f16",
+        "fullErrorsEqual": true
+      },
+      {
+        "file": "issue-6757-linked-closure-dispatch-bounce.test.ts",
+        "name": "#6757 — a body-minted closure called by the linked harness runs through the module that minted it instead of overflowing the stack",
+        "status": "failed",
+        "firstLine": "AssertionError: expected 'fail: JS2WASM_EVAL_ENGINE=quickjs but…' to be 'pass' // Object.is equality",
+        "parentFullErrorsSha256": "c08ea4d9a903eb3d1e6b648152fa1ed8e611e15601819b496c7f55425f773264",
+        "candidateFullErrorsSha256": "c08ea4d9a903eb3d1e6b648152fa1ed8e611e15601819b496c7f55425f773264",
+        "fullErrorsEqual": true
+      },
+      {
+        "file": "issue-6757-linked-closure-dispatch-bounce.test.ts",
+        "name": "#6757 — a body-minted closure called by the linked harness still reports a real mismatch from the body-minted validator",
+        "status": "failed",
+        "firstLine": "AssertionError: expected 'fail: JS2WASM_EVAL_ENGINE=quickjs but…' to be 'pass' // Object.is equality",
+        "parentFullErrorsSha256": "bc0289c31de279056272c1f517e84cb78fd0e8d53846e5a9a0819debe9fa94fa",
+        "candidateFullErrorsSha256": "bc0289c31de279056272c1f517e84cb78fd0e8d53846e5a9a0819debe9fa94fa",
+        "fullErrorsEqual": true
+      }
+    ],
+    "notes": [
+      "The initial broad run lacked compareArray.js in both trees. Those eight linked-file rows are replaced here by the rerun with the repository-pinned harness. Two rows still fail because QuickJS execution is unavailable; they do not certify linked compatibility.",
+      "All changed rows belong to the new file, not 17 independent defects. No pre-existing expectation changes.",
+      "The published parent production tree was unchanged; only the identical new test and ignored harness/probes were added to the control."
+    ]
+  },
+  "hostPolicy": {
+    "parentTotals": {
+      "probes": 33,
+      "imports": 433,
+      "regimeGapImports": 0,
+      "unknownImports": 0
+    },
+    "candidateTotals": {
+      "probes": 33,
+      "imports": 433,
+      "regimeGapImports": 0,
+      "unknownImports": 0
+    },
+    "ceiling": 452,
+    "migrationMetrics": {
+      "runtimeTsLines": 10161,
+      "resolveImportLines": 1371,
+      "resolveImportCases": 7,
+      "ownedAdapterLines": 896,
+      "explicitCapabilityLines": 1194
+    },
+    "binaries": [
+      {
+        "name": "core",
+        "parentBytes": 600592,
+        "candidateBytes": 600741,
+        "delta": 149,
+        "parentSha256": "198f1d7e0e4266cb11bd57e3ad80071d9f450a237a5d27d73989db8cf498d7f5",
+        "candidateSha256": "9cbdf0ede10c660ab53faf64729dcb5bf554c171c02babc6a4695f56a03721fa",
+        "inventorySha256": "03893f30b32ce4c253dc5fa7e93bab7b622787bcb08142355e790371f959e16d",
+        "importsEqual": true
+      },
+      {
+        "name": "regexp",
+        "parentBytes": 116659,
+        "candidateBytes": 116664,
+        "delta": 5,
+        "parentSha256": "1fac4c40d18c41f4278f982027e186857ee4a2b50c9deed0f2726aaa0d25795e",
+        "candidateSha256": "f3d1d96d390faa80a744c70dd8587cc8188ebcecf42a18c9b981b57315f9b4c4",
+        "inventorySha256": "a5279e5f9b3c62d6126626a280f1360443df1d9cd1a4d5e338bc3866b60f1533",
+        "importsEqual": true
+      },
+      {
+        "name": "collections",
+        "parentBytes": 104652,
+        "candidateBytes": 104657,
+        "delta": 5,
+        "parentSha256": "6fe769c8339285af77c9f32b0930386d4b6b1a2bbf47f9abdfc325cd6dac68f2",
+        "candidateSha256": "ecf863a79ed10c9fd1e23240704605024abbea3dc8bfb7891414ed2d86b76a2b",
+        "inventorySha256": "a5279e5f9b3c62d6126626a280f1360443df1d9cd1a4d5e338bc3866b60f1533",
+        "importsEqual": true
+      },
+      {
+        "name": "promise",
+        "parentBytes": 122973,
+        "candidateBytes": 122978,
+        "delta": 5,
+        "parentSha256": "d9bae89d70d666f77e49dae9311803a77a6d1c4cdde3d9898736f54d65724d90",
+        "candidateSha256": "bc12c84685f65d7a2f457cbd989ae3b78ad867f8cfd65c184c8fa3c7b7087c13",
+        "inventorySha256": "a82a2c9f1b4bcafe25a11d190dd018c1fdb0225bb978645139eb686aef36d039",
+        "importsEqual": true
+      },
+      {
+        "name": "date",
+        "parentBytes": 50950,
+        "candidateBytes": 50950,
+        "delta": 0,
+        "parentSha256": "ca7b1848dbe583a09ce06a1f0d754d6b4ea2e63a188a5e8604e8f743cae666b9",
+        "candidateSha256": "ca7b1848dbe583a09ce06a1f0d754d6b4ea2e63a188a5e8604e8f743cae666b9",
+        "inventorySha256": "f1355b46d88b222a3cbe40d861b55135261521096cb0257eaf00f3b9df2f18c2",
+        "importsEqual": true
+      },
+      {
+        "name": "dataView",
+        "parentBytes": 114595,
+        "candidateBytes": 114600,
+        "delta": 5,
+        "parentSha256": "1d4a629c71e85b5d4962a2db3ce39a8de51bc577475691fcbcd26fb947bde042",
+        "candidateSha256": "99960792b0061800ed931bf66d504a3cc5d032d009f8fbbb58d95c94e2551ca6",
+        "inventorySha256": "a5279e5f9b3c62d6126626a280f1360443df1d9cd1a4d5e338bc3866b60f1533",
+        "importsEqual": true
+      },
+      {
+        "name": "bigint",
+        "parentBytes": 39336,
+        "candidateBytes": 39336,
+        "delta": 0,
+        "parentSha256": "edeb373282164d5ed47fa4b3bea8d33bde5febac06f56d2c0ac7f51f836d0924",
+        "candidateSha256": "edeb373282164d5ed47fa4b3bea8d33bde5febac06f56d2c0ac7f51f836d0924",
+        "inventorySha256": "f1355b46d88b222a3cbe40d861b55135261521096cb0257eaf00f3b9df2f18c2",
+        "importsEqual": true
+      },
+      {
+        "name": "bigintFormatting",
+        "parentBytes": 38560,
+        "candidateBytes": 38560,
+        "delta": 0,
+        "parentSha256": "75ad72c79b2b7752b81783f0a7ba4cd2992f0d01107eb895c116e691f0779f3c",
+        "candidateSha256": "75ad72c79b2b7752b81783f0a7ba4cd2992f0d01107eb895c116e691f0779f3c",
+        "inventorySha256": "f1355b46d88b222a3cbe40d861b55135261521096cb0257eaf00f3b9df2f18c2",
+        "importsEqual": true
+      },
+      {
+        "name": "number",
+        "parentBytes": 30248,
+        "candidateBytes": 30248,
+        "delta": 0,
+        "parentSha256": "0be91bad70917fbd26fd52e13998b72c6ab439a6b3f45f9ec07500688c8489ea",
+        "candidateSha256": "0be91bad70917fbd26fd52e13998b72c6ab439a6b3f45f9ec07500688c8489ea",
+        "inventorySha256": "f1355b46d88b222a3cbe40d861b55135261521096cb0257eaf00f3b9df2f18c2",
+        "importsEqual": true
+      },
+      {
+        "name": "textGlobals",
+        "parentBytes": 47103,
+        "candidateBytes": 47103,
+        "delta": 0,
+        "parentSha256": "2530a367e0209f7d6ec144fe061f98d5d62a7eabe1f90fd4c094d7071e02d289",
+        "candidateSha256": "2530a367e0209f7d6ec144fe061f98d5d62a7eabe1f90fd4c094d7071e02d289",
+        "inventorySha256": "f1355b46d88b222a3cbe40d861b55135261521096cb0257eaf00f3b9df2f18c2",
+        "importsEqual": true
+      },
+      {
+        "name": "object",
+        "parentBytes": 122025,
+        "candidateBytes": 122030,
+        "delta": 5,
+        "parentSha256": "19201ade1731f6742bb899a268bb691695599d18c08ec993a4cc2594c0a01025",
+        "candidateSha256": "a13ed7566b8ff5c951a7daccab87be402c48eadc4d6cd746ce3fdc7060d8269e",
+        "inventorySha256": "a372e23a0c583d09c74185ebf9ce845de483319fb1778766d3b546ef15daddd9",
+        "importsEqual": true
+      },
+      {
+        "name": "objectRest",
+        "parentBytes": 106741,
+        "candidateBytes": 106746,
+        "delta": 5,
+        "parentSha256": "db482018f3577fb9b0af14a63d3d3b416edb0bbe0ab64b270199a8081c96846e",
+        "candidateSha256": "a6de245ffbe73c844ce2a2bdcb3cf58053b9ff26182bf3eccf21e98e457ed908",
+        "inventorySha256": "a5279e5f9b3c62d6126626a280f1360443df1d9cd1a4d5e338bc3866b60f1533",
+        "importsEqual": true
+      },
+      {
+        "name": "functionBind",
+        "parentBytes": 114888,
+        "candidateBytes": 114893,
+        "delta": 5,
+        "parentSha256": "6c96a1e58710ae8eef06487a65ee5e72d2c6e9c3cccbe2339709eb5a3cacd733",
+        "candidateSha256": "ffa1171f0d2306e9707171dc5010888d554be0ed4f4493170df3273b9dd90ff0",
+        "inventorySha256": "742a3fba7a153bfbf4148c78a92fc0a72c4086a38569a9a9a4a1e8a10a6e848a",
+        "importsEqual": true
+      },
+      {
+        "name": "proxy",
+        "parentBytes": 718690,
+        "candidateBytes": 718839,
+        "delta": 149,
+        "parentSha256": "a700f53b3bc727a3799a9694132d20a300b9e739688cec650823c0c22ac42dd4",
+        "candidateSha256": "2ee2564e1dc5db55dc711ed1cd38ccc35e9a662797d551991b65026f1fbb3ff2",
+        "inventorySha256": "b7d7f90509a1b2243fe2e64f418bfd7bca218a4a438bcf7ae3c0ba0d1949f5c1",
+        "importsEqual": true
+      },
+      {
+        "name": "typedArrays",
+        "parentBytes": 41676,
+        "candidateBytes": 41676,
+        "delta": 0,
+        "parentSha256": "21112acaf27694cd5209c7d236884c999a93a2f547903c1622072275a5d58fc1",
+        "candidateSha256": "21112acaf27694cd5209c7d236884c999a93a2f547903c1622072275a5d58fc1",
+        "inventorySha256": "f1355b46d88b222a3cbe40d861b55135261521096cb0257eaf00f3b9df2f18c2",
+        "importsEqual": true
+      },
+      {
+        "name": "objectDescriptors",
+        "parentBytes": 109259,
+        "candidateBytes": 109264,
+        "delta": 5,
+        "parentSha256": "0841207e9dde6fc8167c886cae8b0453e3ed1e369d6d9f7527687cabc884699d",
+        "candidateSha256": "7d15fda3ec21583b951a91e1ea8807dc09028c666d31d06eb748aad541bb3e12",
+        "inventorySha256": "de626d164772129678e288dab7fd540d6fc4e2ab4ce06c81e781397a7f848d45",
+        "importsEqual": true
+      },
+      {
+        "name": "objectPrototype",
+        "parentBytes": 252262,
+        "candidateBytes": 252267,
+        "delta": 5,
+        "parentSha256": "87d0b63c6012d5df80ee11ace54d2353603bb1089acc4f9dfdfb94145d3d37e9",
+        "candidateSha256": "e74fb8c40b005788dd1ff79b29bd6b546ad8b519ee9a1d564d576463c0f9bc67",
+        "inventorySha256": "566f1b53f13636428998d4f691228d2bbcf19eb5dea5a2b8595cb7a2b3983936",
+        "importsEqual": true
+      },
+      {
+        "name": "functionCall",
+        "parentBytes": 12057,
+        "candidateBytes": 12057,
+        "delta": 0,
+        "parentSha256": "0bc349cc91ae2d38dd00cb14056975582873a9f4d572feb8c54cdbed93a052ed",
+        "candidateSha256": "0bc349cc91ae2d38dd00cb14056975582873a9f4d572feb8c54cdbed93a052ed",
+        "inventorySha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "importsEqual": true
+      },
+      {
+        "name": "functionApply",
+        "parentBytes": 12057,
+        "candidateBytes": 12057,
+        "delta": 0,
+        "parentSha256": "1bcb77769ae53b4cdafa667f040f74c322ce5a23178a6f4fda126a1853febd85",
+        "candidateSha256": "1bcb77769ae53b4cdafa667f040f74c322ce5a23178a6f4fda126a1853febd85",
+        "inventorySha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "importsEqual": true
+      },
+      {
+        "name": "errors",
+        "parentBytes": 103000,
+        "candidateBytes": 103005,
+        "delta": 5,
+        "parentSha256": "6bc0349c7832ece674265429335ee8c0e185c0cd713ff8ebe04905639e40b490",
+        "candidateSha256": "e6212c0015eb97551a1770a30a6431cb385de3a7e19abcd60816f1bff6eb7316",
+        "inventorySha256": "a5279e5f9b3c62d6126626a280f1360443df1d9cd1a4d5e338bc3866b60f1533",
+        "importsEqual": true
+      },
+      {
+        "name": "generators",
+        "parentBytes": 129190,
+        "candidateBytes": 129195,
+        "delta": 5,
+        "parentSha256": "1c76a61042738e321775098a6afd39b0911e200af6eb55061d42507cb9ffb679",
+        "candidateSha256": "c1ee0a8c57e6f9fdbd856f7100d9fd207bb5d3df32f7d82ce47607372b90df43",
+        "inventorySha256": "adcf03203bd1e5c02f9888a2d0b573adcc08af9e30f816afffa7ad02469f5b87",
+        "importsEqual": true
+      },
+      {
+        "name": "iterators",
+        "parentBytes": 40985,
+        "candidateBytes": 40985,
+        "delta": 0,
+        "parentSha256": "a7ea06a06a0ba23278ac6b999397acc551cd2e8b6f75046c20b456538c962568",
+        "candidateSha256": "a7ea06a06a0ba23278ac6b999397acc551cd2e8b6f75046c20b456538c962568",
+        "inventorySha256": "f1355b46d88b222a3cbe40d861b55135261521096cb0257eaf00f3b9df2f18c2",
+        "importsEqual": true
+      },
+      {
+        "name": "promiseCombinators",
+        "parentBytes": 128442,
+        "candidateBytes": 128447,
+        "delta": 5,
+        "parentSha256": "d7b30f224ecdfcc34400d23122a5d993de3abc49f3ae1a6f37d1640643e62113",
+        "candidateSha256": "640de7a074bd835d2aba08afc3a7ec185e533194f872a3eb5c77c8390238afca",
+        "inventorySha256": "a82a2c9f1b4bcafe25a11d190dd018c1fdb0225bb978645139eb686aef36d039",
+        "importsEqual": true
+      },
+      {
+        "name": "promiseAnyRace",
+        "parentBytes": 124008,
+        "candidateBytes": 124013,
+        "delta": 5,
+        "parentSha256": "64cf635ee649c193daf99be5c5a2917c76068d6450a5d6b29738c6cec1e93467",
+        "candidateSha256": "61334b13e8a202a7ea7da851f7b5bab46cf3b9f5563030e9334347c685c43a96",
+        "inventorySha256": "a82a2c9f1b4bcafe25a11d190dd018c1fdb0225bb978645139eb686aef36d039",
+        "importsEqual": true
+      },
+      {
+        "name": "regexpDynamic",
+        "parentBytes": 151325,
+        "candidateBytes": 151330,
+        "delta": 5,
+        "parentSha256": "2223024810b4862283d10c478d01a2cb6651b9e42e6228a7626f22d8912458f0",
+        "candidateSha256": "7ae9da748ac271bdae391dbebda67f41dcf2326ccac16fb5d606ab8f2b0718b7",
+        "inventorySha256": "a5279e5f9b3c62d6126626a280f1360443df1d9cd1a4d5e338bc3866b60f1533",
+        "importsEqual": true
+      },
+      {
+        "name": "mapIteration",
+        "parentBytes": 42951,
+        "candidateBytes": 42951,
+        "delta": 0,
+        "parentSha256": "6daa2c1fd9f1c5e9ce82e38313b26d5aed3ecc2b0504d6f71f57cfb8c0c4a5ae",
+        "candidateSha256": "6daa2c1fd9f1c5e9ce82e38313b26d5aed3ecc2b0504d6f71f57cfb8c0c4a5ae",
+        "inventorySha256": "f1355b46d88b222a3cbe40d861b55135261521096cb0257eaf00f3b9df2f18c2",
+        "importsEqual": true
+      },
+      {
+        "name": "setIteration",
+        "parentBytes": 46222,
+        "candidateBytes": 46222,
+        "delta": 0,
+        "parentSha256": "e7a1ca759e4848f4523f12442b9cf5d3ec1a2040bf10965ac2d2f4f0a65db33b",
+        "candidateSha256": "e7a1ca759e4848f4523f12442b9cf5d3ec1a2040bf10965ac2d2f4f0a65db33b",
+        "inventorySha256": "f1355b46d88b222a3cbe40d861b55135261521096cb0257eaf00f3b9df2f18c2",
+        "importsEqual": true
+      },
+      {
+        "name": "reflect",
+        "parentBytes": 115363,
+        "candidateBytes": 115368,
+        "delta": 5,
+        "parentSha256": "21a2489d003e6e3dea28ec8254e354a56e3bb0d5e6c4052732b88ddd2fd2afac",
+        "candidateSha256": "a2109f68ec0376b5ec51c9fe63ce71519c8f299750135e9ef8ccb6646e8fa0a6",
+        "inventorySha256": "de626d164772129678e288dab7fd540d6fc4e2ab4ce06c81e781397a7f848d45",
+        "importsEqual": true
+      },
+      {
+        "name": "dynamicOps",
+        "parentBytes": 104582,
+        "candidateBytes": 104587,
+        "delta": 5,
+        "parentSha256": "7d54406659d3eeeb49398127ddecad9d639a388dac5a4c4be5c019a9436f19ba",
+        "candidateSha256": "c29bb1ca7b8cbe38f2cb0751b7a2c473da1ded65cec7bda8a62a2c2107f27e6c",
+        "inventorySha256": "a5279e5f9b3c62d6126626a280f1360443df1d9cd1a4d5e338bc3866b60f1533",
+        "importsEqual": true
+      },
+      {
+        "name": "destructuring",
+        "parentBytes": 109614,
+        "candidateBytes": 109619,
+        "delta": 5,
+        "parentSha256": "9360490b0226c42baaeaae6817156a6fbf478b0d8ed7f9d9fe5f74fff9a7c77c",
+        "candidateSha256": "b57a1571c6a1739af46b8bd8bd9472ead04f98601c9e59a7b045544310c8e996",
+        "inventorySha256": "de626d164772129678e288dab7fd540d6fc4e2ab4ce06c81e781397a7f848d45",
+        "importsEqual": true
+      },
+      {
+        "name": "proxyMop",
+        "parentBytes": 593878,
+        "candidateBytes": 594027,
+        "delta": 149,
+        "parentSha256": "4e11b82de2d76185fb6fd144ccad81627c42b2404b8a80ea2d7ad2f791f56823",
+        "candidateSha256": "eb62e78103504ea5febdd41608015726f3844cf9fe64dbaca63fdc7cc514dfbb",
+        "inventorySha256": "d092fe86b2632f687facfd2de27ceb7647ab121f3f64b331bcd17d2c55e3bdf6",
+        "importsEqual": true
+      },
+      {
+        "name": "proxyRevocable",
+        "parentBytes": 593868,
+        "candidateBytes": 594017,
+        "delta": 149,
+        "parentSha256": "37c0009124179cd1c6595ae905c4b0701472f75ba859f791f5fb2be5f8b4ee49",
+        "candidateSha256": "40a76a60f277481bf68b64773be3434086a5418dc8f178fcb558117b0fdf561c",
+        "inventorySha256": "701e32a63daf1d5f637c9ed12d9e17640c0c170b7cff9112512f1cbf03785e6c",
+        "importsEqual": true
+      },
+      {
+        "name": "stringProtocols",
+        "parentBytes": 121558,
+        "candidateBytes": 121563,
+        "delta": 5,
+        "parentSha256": "ad6158133c58be010cdf0f14f8d45b6b0f490fcffecf150a22ccd84f1b9814cb",
+        "candidateSha256": "4e9d9e3265dec4e2ec4bdc0ea53b1541dc5cf64adaabde9f669514e5cd9a0a4b",
+        "inventorySha256": "a5279e5f9b3c62d6126626a280f1360443df1d9cd1a4d5e338bc3866b60f1533",
+        "importsEqual": true
+      }
+    ],
+    "notes": [
+      "Every complete detailed inventory compared equal. No detector/probe/ceiling/baseline edit.",
+      "Binaries have mixed cost: no byte-neutrality, overall size win or speed claim."
+    ]
+  },
+  "nativeControls": [
+    {
+      "target": "standalone",
+      "name": "scalar",
+      "parentBytes": 11413,
+      "candidateBytes": 11413,
+      "delta": 0,
+      "parentSha256": "81d83998cf308dea1a6063218bfb63cba2c642ba3e62c8aee1ae9dbd5eea215e",
+      "candidateSha256": "81d83998cf308dea1a6063218bfb63cba2c642ba3e62c8aee1ae9dbd5eea215e",
+      "imports": [],
+      "outputs": [42, 7],
+      "boundaryProbeExported": false
+    },
+    {
+      "target": "standalone",
+      "name": "flat",
+      "parentBytes": 33185,
+      "candidateBytes": 33185,
+      "delta": 0,
+      "parentSha256": "671336c22fe661e836754ebaaa758e6b8a14b5202083538e6067e5a68aa4d134",
+      "candidateSha256": "671336c22fe661e836754ebaaa758e6b8a14b5202083538e6067e5a68aa4d134",
+      "imports": [],
+      "outputs": [42, 7],
+      "boundaryProbeExported": false
+    },
+    {
+      "target": "standalone",
+      "name": "dynamic",
+      "parentBytes": 146733,
+      "candidateBytes": 146816,
+      "delta": 83,
+      "parentSha256": "335b6fe892a7a51b5fe166ecd8a03c1041eb13c90027ef90e8ce91dd6840d93e",
+      "candidateSha256": "22686ce8db34ef5e2fe6053952683e075f4df0f98cd317d144345826ebf51490",
+      "imports": [],
+      "outputs": [42, 7],
+      "boundaryProbeExported": false
+    },
+    {
+      "target": "wasi",
+      "name": "scalar",
+      "parentBytes": 22719,
+      "candidateBytes": 22719,
+      "delta": 0,
+      "parentSha256": "ab7f880debe1399bbf089b74cb76d26e154a50c3d8aeaff4f3a9e3511bd10c58",
+      "candidateSha256": "ab7f880debe1399bbf089b74cb76d26e154a50c3d8aeaff4f3a9e3511bd10c58",
+      "imports": [],
+      "outputs": [42, 7],
+      "boundaryProbeExported": false
+    },
+    {
+      "target": "wasi",
+      "name": "flat",
+      "parentBytes": 52928,
+      "candidateBytes": 52928,
+      "delta": 0,
+      "parentSha256": "7b8d7a6e7a8ab1c22952e9c6e4e46147565202c419b0dc93f36936241c09d187",
+      "candidateSha256": "7b8d7a6e7a8ab1c22952e9c6e4e46147565202c419b0dc93f36936241c09d187",
+      "imports": [],
+      "outputs": [42, 7],
+      "boundaryProbeExported": false
+    },
+    {
+      "target": "wasi",
+      "name": "dynamic",
+      "parentBytes": 145914,
+      "candidateBytes": 145997,
+      "delta": 83,
+      "parentSha256": "9c0c89c54bccab13b5b850990e31ebec65ead6d11936ddb2fbb0d538b95499ef",
+      "candidateSha256": "2b905598dcb10b5343da74c9107a2e801eaa57e98b06ae3277176ab67ec6a3f2",
+      "imports": [],
+      "outputs": [42, 7],
+      "boundaryProbeExported": false
+    }
+  ],
+  "cycles": {
+    "parent": {
+      "largestSccSize": 712,
+      "sccCountOver1": 4,
+      "twoWayDirEdges": {
+        "backend->ir": 115,
+        "checker->ir": 1,
+        "codegen->ir": 301,
+        "codegen-linear->ir": 9,
+        "compiler->deadcode-elide.ts": 1,
+        "deadcode-elide.ts->compiler": 1,
+        "frontend->ir": 17,
+        "frontend->ts-api.ts": 2,
+        "ir->backend": 25,
+        "ir->checker": 8,
+        "ir->codegen": 75,
+        "ir->codegen-linear": 4,
+        "ir->frontend": 7,
+        "ir->runtime": 9,
+        "runtime->ir": 1,
+        "runtime->timer-capability-contract.ts": 1,
+        "runtime-eval.ts->runtime.ts": 1,
+        "runtime.ts->runtime-eval.ts": 1,
+        "timer-capability-contract.ts->runtime": 1,
+        "ts-api.ts->frontend": 1
+      }
+    },
+    "candidate": {
+      "largestSccSize": 712,
+      "sccCountOver1": 4,
+      "twoWayDirEdges": {
+        "backend->ir": 115,
+        "checker->ir": 1,
+        "codegen->ir": 301,
+        "codegen-linear->ir": 9,
+        "compiler->deadcode-elide.ts": 1,
+        "deadcode-elide.ts->compiler": 1,
+        "frontend->ir": 17,
+        "frontend->ts-api.ts": 2,
+        "ir->backend": 25,
+        "ir->checker": 8,
+        "ir->codegen": 75,
+        "ir->codegen-linear": 4,
+        "ir->frontend": 7,
+        "ir->runtime": 9,
+        "runtime->ir": 1,
+        "runtime->timer-capability-contract.ts": 1,
+        "runtime-eval.ts->runtime.ts": 1,
+        "runtime.ts->runtime-eval.ts": 1,
+        "timer-capability-contract.ts->runtime": 1,
+        "ts-api.ts->frontend": 1
+      }
+    },
+    "parentDetail": {
+      "files": 1954,
+      "valueEdges": 10743
+    },
+    "candidateDetail": {
+      "files": 1955,
+      "valueEdges": 10745
+    },
+    "verdict": "FAIL on both; same reported codegen->ir 298->301 and ir->codegen 74->75 violations. Not a whole-graph equality certificate."
+  },
+  "remaining": {
+    "priorSixControls": {
+      "parent": [
+        {
+          "name": "primitiveTarget",
+          "target": "standalone",
+          "expected": [42, 42],
+          "actual": [-1, -1]
+        },
+        {
+          "name": "primitiveTarget",
+          "target": "wasi",
+          "expected": [42, 42],
+          "actual": [-1, -1]
+        },
+        {
+          "name": "primitiveTarget",
+          "target": "gc",
+          "expected": [42, 42],
+          "actual": [-1, -1]
+        },
+        {
+          "name": "patchedMath",
+          "target": "standalone",
+          "expected": [42, 42],
+          "error": "[object WebAssembly.Exception]"
+        },
+        {
+          "name": "patchedMath",
+          "target": "wasi",
+          "expected": [42, 42],
+          "actual": [-1, -1]
+        },
+        {
+          "name": "patchedMath",
+          "target": "gc",
+          "expected": [42, 42],
+          "error": "TypeError: Cannot access property on null or undefined at 1:103"
+        }
+      ],
+      "candidate": [
+        {
+          "name": "primitiveTarget",
+          "target": "standalone",
+          "expected": [42, 42],
+          "actual": [-1, -1]
+        },
+        {
+          "name": "primitiveTarget",
+          "target": "wasi",
+          "expected": [42, 42],
+          "actual": [-1, -1]
+        },
+        {
+          "name": "primitiveTarget",
+          "target": "gc",
+          "expected": [42, 42],
+          "actual": [-1, -1]
+        },
+        {
+          "name": "patchedMath",
+          "target": "standalone",
+          "expected": [42, 42],
+          "error": "[object WebAssembly.Exception]"
+        },
+        {
+          "name": "patchedMath",
+          "target": "wasi",
+          "expected": [42, 42],
+          "actual": [-1, -1]
+        },
+        {
+          "name": "patchedMath",
+          "target": "gc",
+          "expected": [42, 42],
+          "error": "TypeError: Cannot access property on null or undefined at 1:103"
+        }
+      ]
+    },
+    "callableControls": {
+      "parent": [
+        {
+          "name": "wideRest",
+          "value": 4,
+          "expected": 32
+        },
+        {
+          "name": "wideFixed",
+          "error": "Wasm closure returned to JS host is not callable: __call_fn_0/__call_fn_1 not exported"
+        },
+        {
+          "name": "metadata",
+          "value": {
+            "name": "",
+            "length": 0
+          },
+          "expected": {
+            "name": "assign",
+            "length": 2
+          }
+        },
+        {
+          "name": "typedArrayIdentity",
+          "value": {
+            "same": false,
+            "inputAfter": "1,2"
+          },
+          "expected": {
+            "same": true,
+            "inputAfter": "1,2,42",
+            "length": 3
+          }
+        }
+      ],
+      "candidate": [
+        {
+          "name": "wideRest",
+          "value": 4,
+          "expected": 32
+        },
+        {
+          "name": "wideFixed",
+          "error": "Wasm closure returned to JS host has no authenticated call dispatcher"
+        },
+        {
+          "name": "metadata",
+          "value": {
+            "name": "wasmClosureDynamicBridge",
+            "length": 0
+          },
+          "expected": {
+            "name": "assign",
+            "length": 2
+          }
+        },
+        {
+          "name": "typedArrayIdentity",
+          "value": {
+            "same": false,
+            "inputAfter": "1,2"
+          },
+          "expected": {
+            "same": true,
+            "inputAfter": "1,2,42",
+            "length": 3
+          }
+        }
+      ],
+      "sources": "import {compile} from '../src/index.ts';\nimport {buildCompiledImports,wrapCompiledExports} from '../src/runtime.ts';\nfor(const [name,source] of [\n  ['wideRest','export function get():any{return function(...a:any[]):number{return a.length;};}'],\n  ['wideFixed','export function get():any{return function(a:number,b:number,c:number,d:number,e:number):number{return a+b+c+d+e;};}'],\n  ['metadata','export function get():any{return Object.assign;}'],\n  ['typedArrayIdentity','export function get():any{return function(a:number[]):any{a.push(42);return a;};}'],\n] as const){\n  try {\n    const r=await compile(source,{skipSemanticDiagnostics:true});if(!r.success)throw Error(JSON.stringify(r.errors));\n    const imports=buildCompiledImports(r);const{instance}=await WebAssembly.instantiate(r.binary,imports);imports.setInstance?.(instance);\n    const ex=wrapCompiledExports(r,instance) as any;const f=ex.get();\n    const input=[1,2];const returned=name==='typedArrayIdentity'?f(input):undefined;\n    const value=name==='typedArrayIdentity'?{same:returned===input,inputAfter:input.join(','),length:returned.length}:name==='metadata'?{name:f.name,length:f.length}:name==='wideRest'?f(...Array(32).fill(1)):f(1,2,3,4,5);\n    console.log(JSON.stringify({name,value,expected:name==='typedArrayIdentity'?{same:true,inputAfter:'1,2,42',length:3}:name==='metadata'?{name:'assign',length:2}:name==='wideRest'?32:15}));\n  }catch(e:any){console.log(JSON.stringify({name,error:e?.message??'opaque error'}));}\n}\n"
+    },
+    "program": [
+      "ordinary rest arguments beyond free-dispatch cap",
+      "ordinary fixed closures above free-dispatch cap",
+      "returned native builtin reflective name/length",
+      "typed JS array identity, mutation and aggregate return boundary",
+      "opaque bound-function slots",
+      "raw-mode deletion and runtime <=8000",
+      "strict modeled closure at two nonliteral dynamic imports",
+      "prerequisite PR6701 and recovered S7-b",
+      "named native-provider gaps",
+      "full equivalence/conformance/Test262/npm compatibility and accelerator/cost acceptance"
+    ]
+  },
+  "proofLimits": [
+    "No frozen AST body, selector or IR activation change; no new host semantic provider or import implementation.",
+    "Packed-builtin argument-list materialization reuses native ObjVec/vector adapters; its JS target/source/token objects stay live and identity-backed. Typed array formals still materialize a native vec; their identity/mutation and generic aggregate returns remain uncertified, as the negative control shows.",
+    "__closure_arity and reflective native .length are unchanged; packed argv uses discriminator 2 in authenticated __closure_has_rest, with metadata id/signature guards before shape-based rest checks.",
+    "Ordinary native callback object results remain raw in generic bridge. Only native primitive/error translation is added, avoiding blanket aggregate copying/marshalling.",
+    "Dead-export preservation is PASS (six full/six cut witnesses), not strict modeled closure certification.",
+    "Both migration issues remain in progress; PR remains draft and must not merge independently."
+  ]
+}

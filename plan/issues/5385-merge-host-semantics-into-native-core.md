@@ -1144,3 +1144,33 @@ call dispatchers were not exported. Full host interoperability is not certified.
 The flat-directory gate is now satisfied at **833** files by locating the new
 helpers under existing subsystems and moving the unchanged boundary filters;
 binary/test equivalence of that relocation is recorded in the audit.
+
+### 2026-10-19 — native callable argv at the live boundary
+
+The S7 issue's "S7-n native callable argv and returned-function handoff"
+corrects the preceding dispatch diagnosis: exports existed, but a duplicate
+return wrapper ignored them. Returned functions now use the existing cached
+bridge; exact native builtin identity declares packed argv through the
+authenticated rest discriminator, independently of reflective arity. Existing
+argument-list adapters preserve JS target/source/token identity and all native
+builtin arguments, including 32-argument calls. Ordinary callback objects and
+receivers are admitted live, with native primitive/error translation. No host
+semantic implementation, new import, frozen AST body or selector change.
+
+New controls pass **17/17**. The **376-case / 22-file** comparison improves
+**349/27 → 366/10**, zero skipped; no previous expectations changed. Two of
+the retained failures are linked-harness controls whose pinned test data is
+present but QuickJS execution is unavailable, not compatibility passes.
+All **33** import inventories match and the guard stays **433/452**. Eleven
+policy binaries match, eighteen grow **5 bytes**, four grow **149**; two native
+dynamic controls grow **83 bytes**, with all six native controls still
+import-free. No overall size/performance improvement is claimed.
+
+Runtime is **10,161 lines**, **2,161** above target. Wider ordinary rest calls,
+five-parameter returned functions, JS facade name/length and typed JS array
+identity/mutations/aggregate returns remain failing in fresh controls. The
+previous six primitive-target / patched-Math controls also remain unchanged.
+These, inherited cycle failures, strict closure, opaque bound functions,
+source retirement, the prerequisite stack and full program acceptance stay
+open. Do not mark this parent complete. Evidence:
+`plan/audit/6979-callable-boundary-argv-20261019.json`.

@@ -245,10 +245,16 @@ export function buildArrayLikeToLengthFromExternref(ctx: CodegenContext, symbolT
 /** `$Object` arm: Get first, then the shared ordinary ToLength conversion. */
 function buildObjectArrayLikeLengthArm(ctx: CodegenContext, objectTypeIdx: number, symbolTypeIdx: number): Instr[] {
   const externGetIdx2036 = ctx.funcMap.get("__extern_get")!;
+  const admitted = ctx.funcMap.get("__boundary_object_is_admitted");
   return [
     { op: "local.get", index: 1 },
     { op: "ref.test", typeIdx: objectTypeIdx },
     ...orProxyArrayLikeTest(ctx, 1), // (#6651 H6) §7.3.18 on a Proxy
+    // The same Get/ToLength walk applies to admitted JS-owned array-likes.
+    // No host-free import or prototype probe is needed to recognize them.
+    ...(admitted === undefined
+      ? []
+      : ([{ op: "local.get", index: 0 }, { op: "call", funcIdx: admitted }, { op: "i32.or" }] satisfies Instr[])),
     {
       op: "if",
       blockType: { kind: "val", type: { kind: "f64" } },

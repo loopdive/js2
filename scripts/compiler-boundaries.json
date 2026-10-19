@@ -273,6 +273,7 @@
         "src/runtime/contracts/builtin-brands.ts",
         "src/runtime/contracts/collection-kind.ts",
         "src/runtime/contracts/js-value-tags.ts",
+        "src/runtime/contracts/closure-call-abi.ts",
         "src/runtime/contracts/native-realm-catalog.ts",
         "src/runtime/contracts/well-known-symbols.ts"
       ],
@@ -14638,6 +14639,11 @@
     },
     {
       "path": "src/runtime/contracts/js-value-tags.ts",
+      "state": "clean",
+      "layer": "runtime-contracts"
+    },
+    {
+      "path": "src/runtime/contracts/closure-call-abi.ts",
       "state": "clean",
       "layer": "runtime-contracts"
     },

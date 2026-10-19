@@ -51,6 +51,7 @@ import { linkedClosureDispatch } from "./runtime/linked-closure-dispatch.js";
 import { rawExportsStructDecodeError } from "./runtime/raw-exports-struct-authority.js"; // (#6438)
 import { tryCallWasmDateHostMethod, wasmDateHostView } from "./runtime/date-host-method.js";
 import { compiledClassInstancePrototype } from "./runtime/compiled-class-prototype.js"; // (#5347)
+import { PACKED_CLOSURE_ARGV } from "./runtime/contracts/closure-call-abi.js";
 import { getWasmVecPrototypeMember as vecProtoGet, WASM_VEC_PROTOTYPE_MISS } from "./runtime/wasm-vec-prototype.js";
 export { buildStringConstants, buildStringConstants16 };
 export { _installIteratorHelperPolyfills, _resetIteratorRuntimeIntrinsicsForRealmIsolation };
@@ -1458,6 +1459,16 @@ function _wrapWasmClosureUnknownArity(
     return realArityCache;
   };
   const dispatch = function wasmClosureDynamicDispatch(this: any, ...args: any[]): any {
+    // A closure is an entry boundary too: admit JS-owned values by identity,
+    // just as dynamic named exports do. No traversal or aggregate conversion.
+    if (_canBeWeakKey(this)) _nativeDynamicFromHost(this, exports);
+    for (let i = 0; i < args.length; i++) if (_canBeWeakKey(args[i])) _nativeDynamicFromHost(args[i], exports);
+    // Only an authenticated native identity can declare this convention.
+    // __call_fn_1 materializes the argv carrier; its contents stay live values,
+    // and the builtin still executes in Wasm, including calls beyond arity 4.
+    if (exports.__closure_has_rest?.(closure) === PACKED_CLOSURE_ARGV) {
+      return exports.__call_fn_1(closure, _nativeBoundaryVector(args, exports));
+    }
     // (#3051 Slice 3) Host-side [[Construct]] (`new bridge(...)` — e.g. V8's
     // `Construct(C_species, «rx, flags»)` in the RegExp @@split protocol): a
     // raw wasm-struct return must be marshalled to its host mirror so the
@@ -1567,9 +1578,12 @@ function _wrapWasmClosureUnknownArity(
           ? _intrinsicReflectApply(via, this, args)
           : _intrinsicReflectConstruct(via, args, new.target);
       _drainNativePromiseBoundary(callbackState);
-      return result;
+      const primitive = _nativePrimitiveToHost(result, exports);
+      return primitive === _MISS ? result : primitive;
     } catch (error) {
-      throw normalizeModuleCallbackException(error, callbackState, ASYNC_CALLBACK_EXCEPTION_POLICY);
+      const payload = normalizeModuleCallbackException(error, callbackState, ASYNC_CALLBACK_EXCEPTION_POLICY);
+      const translated = _nativeErrorToHost(payload, exports);
+      throw translated === _MISS ? payload : translated;
     }
   };
   // (#3429) Surface the closure's real declared `.name`/`.length` (codegen's
@@ -5457,7 +5471,7 @@ function _nativeBoundaryVector(values: readonly any[], exports: Record<string, F
     return _nativeDynamicFromHost(Array.from(values), exports);
   }
   const vec = create();
-  for (const value of values) push(vec, _nativeDynamicFromHost(value, exports));
+  for (let i = 0; i < values.length; i++) push(vec, _nativeDynamicFromHost(values[i], exports));
   return vec;
 }
 
@@ -9807,8 +9821,6 @@ export function wrapExports(
   // view above. Struct results would then marshal to `{}` in silence.
   const dataStructDecoderMasked =
     _hasOwn(rawExports, "__struct_field_names") && typeof exportsForMarshal.__struct_field_names !== "function";
-  const callFn0 = exportsForMarshal.__call_fn_0 as ((closure: any) => any) | undefined;
-  const callFn1 = exportsForMarshal.__call_fn_1 as ((closure: any, arg: any) => any) | undefined;
   // (#1700) Vec allocator + byte-writer for Uint8Array args. Either may be
   // undefined, in which case the wrapper falls back
   // to passing the arg through unchanged.
@@ -9821,23 +9833,9 @@ export function wrapExports(
 
   // Build a JS-callable wrapper around a Wasm closure struct.
   const makeCallableClosureWrapper = (closure: any): ((...args: any[]) => any) => {
-    const hasRest = exportsForMarshal.__closure_has_rest as ((value: any) => number) | undefined;
-    if (typeof hasRest === "function" && hasRest(closure) === 1) {
-      const dynamic = _wrapWasmClosureUnknownArity(closure, { getExports: () => exportsForMarshal });
-      if (dynamic) return dynamic;
-    }
-    return function (this: any, ...args: any[]): any {
-      if (args.length === 1 && typeof callFn1 === "function") {
-        return callFn1(closure, args[0]);
-      }
-      if (typeof callFn0 === "function") {
-        // 0-arg dispatch — also the fallback for higher-arity calls until
-        // __extras_argv plumbing from JS lands. The closure body still
-        // executes; user-supplied args are simply not propagated.
-        return callFn0(closure);
-      }
-      throw new TypeError("Wasm closure returned to JS host is not callable: __call_fn_0/__call_fn_1 not exported");
-    };
+    const dynamic = _wrapWasmClosureUnknownArity(closure, { getExports: () => exportsForMarshal });
+    if (dynamic) return dynamic;
+    throw new TypeError("Wasm closure returned to JS host has no authenticated call dispatcher");
   };
 
   // #1504: discriminate a "named struct" / "vec" result from a closure struct.
