@@ -13,10 +13,13 @@ import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { coerceType, compileExpression, valTypesMatch, VOID_RESULT } from "./shared.js";
 import type { InnerResult } from "./shared.js";
 import { compileStringLiteral } from "./string-ops.js";
-import { emitThrowTypeError, noJsHost } from "./expressions/helpers.js";
+import { buildThrowJsErrorInstrs, emitThrowTypeError, noJsHost } from "./expressions/helpers.js";
 import { ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
 import { emitWasiErrorConstructor } from "./registry/error-types.js";
 import { ensureExnTag } from "./registry/imports.js";
+import { ensureNativeStringHelpers } from "./native-strings.js";
+import { ensureInModuleTemporalHelper, temporalHelpersInModule } from "./temporal/native-helpers.js";
+import type { TemporalHelperServices } from "./temporal/wasm-kit.js";
 
 type TemporalKind = "PlainDate" | "PlainTime" | "Duration";
 
@@ -311,6 +314,12 @@ function releaseRefLocal(fctx: FunctionContext, ref: { local: number } | null): 
   if (ref) releaseTempLocal(fctx, ref.local);
 }
 
+/**
+ * Resolve one of the ten `__temporal_*` helpers. (#7012) A native-string build
+ * (native-first, standalone, WASI) defines it in the module
+ * (`temporal/native-helpers.ts`); only the host-assisted lane with
+ * `wasm:js-string` strings imports the `runtime.ts` implementation.
+ */
 function ensureTemporalImport(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -318,9 +327,27 @@ function ensureTemporalImport(
   params: ValType[],
   results: ValType[],
 ): number | undefined {
-  const idx = ensureLateImport(ctx, name, params, results);
+  const idx = temporalHelpersInModule(ctx)
+    ? ensureInModuleTemporalHelper(ctx, name, TEMPORAL_HELPER_SERVICES)
+    : ensureLateImport(ctx, name, params, results);
   flushLateImportShifts(ctx, fctx);
   return ctx.funcMap.get(name) ?? idx;
+}
+
+/**
+ * (#7012) What the in-module helpers need from codegen, injected (keeps them
+ * out of the import cycle). Late-bound wrappers, not the bare bindings: this
+ * module is evaluated inside the codegen cycle, where an imported binding can
+ * still be uninitialised when this constant is built.
+ */
+const TEMPORAL_HELPER_SERVICES: TemporalHelperServices = {
+  throwJsError: (ctx, kind, message, opts) => buildThrowJsErrorInstrs(ctx, kind, message, opts),
+  ensureNativeStringHelpers: (ctx) => ensureNativeStringHelpers(ctx),
+};
+
+/** (#7012) The type a string-producing helper leaves on the stack. */
+function temporalStringResult(ctx: CodegenContext): ValType {
+  return temporalHelpersInModule(ctx) ? { kind: "ref", typeIdx: ctx.anyStrTypeIdx } : EXTERNREF;
 }
 
 /**
@@ -916,7 +943,7 @@ export function tryCompileTemporalPropertyAccess(
         compileStringLiteral(ctx, fctx, "M00");
       }
       releaseRefLocal(fctx, ref);
-      return EXTERNREF;
+      return temporalStringResult(ctx);
     }
     if (kind === "Duration" && (propName === "sign" || propName === "blank")) {
       const ref = compileTemporalRefToLocal(ctx, fctx, expr.expression, "Duration");
@@ -1225,7 +1252,7 @@ function emitTemporalToString(
     compileStringLiteral(ctx, fctx, "");
   }
   releaseRefLocal(fctx, ref);
-  return EXTERNREF;
+  return temporalStringResult(ctx);
 }
 
 export function tryCompileTemporalMethodCall(
