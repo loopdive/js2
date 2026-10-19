@@ -3034,3 +3034,74 @@ opaque bound-function boundary slots, **457/452** hard gate, remaining runtime
 size target, strict closure, compatibility/conformance/accelerator acceptance
 and binary-cost review still prevent migration completion or independent PR
 merge.
+
+### S7-j declared capability / accelerator isolation handoff (2026-10-19, Codex)
+
+Parent: `b3a0500cd4bad754a6c40a8b84ac49f77f137740`. Inspect whether
+explicitly qualified APIs still inherit builtin-specific argument coercion,
+RegExp lastIndex shims or implicit Intl constructor lookup merely by name.
+These must stay ordinary declared capabilities, while selected intrinsic
+accelerators retain their own adapters. Reproduce with actual compiled
+carriers/host providers before changing the shared runtime boundary; keep
+frozen direct-AST semantic bodies and import ceilings untouched.
+
+Verified the leak and repaired it at the shared runtime boundary. Policy,
+runtime constructor/property adaptation and the Intl wrapper now use one exact
+intrinsic identity contract. Only unqualified Date/RegExp and the seven
+registered constructors under exactly `["Intl"]` use those accelerator
+adapters. A class named Intl, nested Intl paths, and arbitrary qualified API
+classes remain declared capabilities.
+
+The parent four-shape compiled probe reads an object bag correctly for
+`api.External` (42/7), but `api.Date` and `api.RegExp` receive a coerced string
+and `api.Test262Error` receives an unreadable raw carrier; all three return
+NaN. The candidate returns **42/7 for all four** through normal live facades.
+The functional controls also prove original JS-owned argument, constructed
+instance and thrown-token identity with accelerator selection both off and on.
+No object is copied.
+
+Qualified RegExp.lastIndex no longer installs the intrinsic coercion shim; it
+uses the same property contract as an ordinary capability. A missing
+`Intl.custom.NumberFormat`, `Intl.custom.Date` or `Intl.Date` cannot silently
+select a global builtin. Exact selected Intl.NumberFormat still binds, and
+the existing selected Date/RegExp/Intl tests pass unchanged. The shared Intl
+constructor-name list is the same seven names the binder already supported.
+
+Measured local Node 24.4.1 / Vitest 3.2.4 fork validation with
+`--experimental-wasm-exnref` against the parent above:
+
+- Thirteen boundary/support files: **151/151**. Focused five-file comparison:
+  **57 passing/11 failing → 68/68**. All eleven transitions are fail to pass,
+  with no missing/added test keys. Fourteen new controls include six object-bag
+  cases (three affected names, accelerators off/on), missing-provider and
+  exact-identity/classification controls, plus the ordinary API controls.
+- The compiled object-argument probe remains **one direct body/zero IR bodies
+  on both sides**. No frozen AST semantic-body emitter changed: this is a
+  shared boundary repair, not an IR adoption or whole-program IR-only claim.
+- Fresh fourteen-file broad comparison retains **230 cases: 155 passing/50
+  failing/25 skipped**. Exact keys and outcomes match. Two Request failure
+  stacks move runtime 8053 → 8056, same column and unchanged source line;
+  replacing only those coordinates and the control directory leaves exact
+  error-text equality. No broader conformance gain is claimed.
+- Six standalone/WASI controls are **byte-identical 6/6**, have zero imports
+  and return 42/7. All **33** detailed import inventories match. The hard gate
+  remains **457 > 452**, unapproved; no import or source ceiling was raised.
+- Typecheck, lint/format, source/function, coercion, oracle, layering,
+  IR-fallback and compiler-inventory checks pass. The new identity contract is
+  classified as unmigrated compiler debt, not an architecture activation.
+  Dead-export preservation remains **6/6 full and 6/6 cut**; strict closure
+  stays open at the two previously recorded nonliteral imports.
+
+Evidence: `plan/audit/6979-capability-accelerator-isolation-20261019.json`.
+Parent tracked production sources were unchanged; only the new test and ignored
+harness inputs were copied into the control. Reports were preserved before
+verified-clean control removal. Earlier audit hashes are historical snapshots.
+
+Runtime is **10,163 lines**, `resolveImport` **1,371/seven cases**; the three-line
+increase wires the shared identity decision. Owned adapter/capability counts
+remain **895/1,194**, and the runtime target gap is **2,163**. No ratchet is
+banked. The unmerged predecessor/recovered dependency, opaque bound functions,
+live regime gaps, runtime retirement target, strict closure, full
+compatibility/conformance/accelerator and binary-cost acceptance still prevent
+completion and independent merge. Continue from those program requirements;
+do not equate this verified interop repair with the full migration.

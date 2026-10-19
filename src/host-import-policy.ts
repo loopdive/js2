@@ -4,6 +4,7 @@ import type { ImportDescriptor, ImportIntent } from "./index.js";
 import type { WasmModule } from "./ir/types.js";
 import type { CompileEnvironment, HostAcceleratorFamily } from "./target-profile.js";
 import { isDomCapabilityImportDescriptor, isDomInteractionImportDescriptor } from "./dom-capability-contract.js";
+import { externClassAcceleratorFamily } from "./extern-class-identity.js";
 
 export type HostImportPolicyClass =
   | "platform-capability"
@@ -243,10 +244,7 @@ function acceleratorFamilyOfEnvImport(descriptor: ImportDescriptor): HostAcceler
     case "date_method":
       return "date";
     case "extern_class":
-      if (intent.namespacePath?.length && intent.namespacePath[0] !== "Intl") return undefined;
-      if (intent.className === "RegExp") return "regexp";
-      if (intent.className === "Date") return "date";
-      return intent.className === "Intl" || intent.namespacePath?.[0] === "Intl" ? "intl" : undefined;
+      return externClassAcceleratorFamily(intent);
     case "declared_global":
       return intent.name === "Intl" ? "intl" : undefined;
     case "builtin":

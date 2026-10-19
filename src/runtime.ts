@@ -19,6 +19,7 @@ import type { CompileResult, ImportDescriptor, ImportIntent, ImportPolicy } from
 import { validateExportBoundaryPolicies } from "./boundary-policy.js";
 import type { BoundaryValuePolicy, ExportBoundaryPolicy } from "./boundary-policy.js";
 import { classifyHostImport } from "./host-import-policy.js";
+import { externClassAcceleratorFamily } from "./extern-class-identity.js";
 import { resolveRegExpHostImport } from "./runtime/regexp-host-accelerator.js";
 import * as intlAccel from "./runtime/intl-host-accelerator.js"; // (#6986)
 import {
@@ -7970,6 +7971,7 @@ function resolveImport(
     case "caught_exception":
       return createCaughtExceptionImport(getCaughtException);
     case "extern_class": {
+      const acceleratorFamily = externClassAcceleratorFamily(intent);
       if (intent.className === "Document" && intent.action === "get" && intent.member === "body") {
         return (self: any) => self.body;
       }
@@ -8014,17 +8016,18 @@ function resolveImport(
         if (!Ctor && intent.namespacePath && intent.namespacePath.length > 0) {
           Ctor = _resolveNamespacedClass(intent.namespacePath, intent.className, deps);
         }
-        if (!intent.namespacePath?.length || intent.namespacePath[0] === "Intl")
-          Ctor ??= builtinCtors[intent.className];
+        if (!intent.namespacePath?.length) Ctor ??= builtinCtors[intent.className];
+        else if (acceleratorFamily === "intl") Ctor ??= intlAccel.intlHostConstructors()[intent.className];
         if (!Ctor)
           return (...args: any[]) => {
             throw new Error(`No dependency provided for extern class "${intent.className}"`);
           };
         // Only selected accelerators coerce arguments; other extern classes
         // are declared capabilities whose compiled data crosses as live facades.
-        const coercesArgsToPrimitive = intent.className === "RegExp" || intent.className === "Date";
-        const argCoercionHint = intent.className === "Date" ? "default" : "string";
-        const marshalsStructArgsForHost = !coercesArgsToPrimitive && intent.className !== "Test262Error";
+        const coercesArgsToPrimitive = acceleratorFamily === "regexp" || acceleratorFamily === "date";
+        const argCoercionHint = acceleratorFamily === "date" ? "default" : "string";
+        const marshalsStructArgsForHost =
+          !coercesArgsToPrimitive && (intent.className !== "Test262Error" || !!intent.namespacePath?.length);
         return (...args: any[]) => {
           let len = args.length;
           while (len > 0 && args[len - 1] == null) len--;
@@ -8066,7 +8069,7 @@ function resolveImport(
       // so an explicit `r.lastIndex` read sees the SAME object the program stored
       // (`assert.sameValue(r.lastIndex, obj)`). Primitive numbers pass through
       // untouched.
-      if (intent.className === "RegExp" && intent.member === "lastIndex") {
+      if (acceleratorFamily === "regexp" && intent.member === "lastIndex") {
         if (intent.action === "get") {
           return (self: any) => {
             const stored = _safeGet(self, "lastIndex");

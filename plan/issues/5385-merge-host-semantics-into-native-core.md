@@ -1047,3 +1047,25 @@ still has a **2,160-line gap**, and the hard import gate remains **457/452**.
 See `plan/audit/6979-provider-retirement-20261019.json` for scoped proof and
 source hashes. The live gap families, predecessor stack and full acceptance
 remain open; do not mark this parent complete.
+
+### 2026-10-19 — exact declared capability / accelerator identities
+
+The S7 issue's "S7-j declared capability / accelerator isolation handoff"
+records a verified boundary repair: same-named API Date/RegExp classes no
+longer coerce compiled object arguments, qualified Test262Error receives a
+normal live facade, and nested Intl capabilities cannot select global
+constructors or receive the intrinsic Intl wrapper merely by prefix.
+Selected intrinsic accelerators remain intact. JS object/result/exception
+identity is preserved, without copying or a frozen AST body-emitter change.
+
+Boundary controls pass **151/151**. The focused parent comparison improves
+**57/68 → 68/68**; the broad **230-case** population remains **155 passing/50
+failing/25 skipped**. Six native binaries and all 33 import inventories match.
+Evidence and proof limits are in
+`plan/audit/6979-capability-accelerator-isolation-20261019.json`.
+
+Runtime is now **10,163 lines** (three additional routing lines), leaving
+**2,163** against the 8,000-line target. The **457/452** import gate and all
+remaining program/dependency acceptance stay open. This corrects interop at
+the existing shared boundary; the measured object-argument body still uses
+the existing direct route and is not claimed as new IR-only coverage.

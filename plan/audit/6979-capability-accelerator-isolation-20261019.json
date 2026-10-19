@@ -1,0 +1,328 @@
+{
+  "schema": "6979-capability-accelerator-isolation-v1",
+  "date": "2026-10-19",
+  "parentCommit": "b3a0500cd4bad754a6c40a8b84ac49f77f137740",
+  "candidate": "Containing commit; exact source hashes below.",
+  "scope": "Separate declared capability identities from builtin accelerators at the existing runtime boundary. Not whole migration completion.",
+  "behavior": {
+    "sharedIdentity": "Unqualified Date/RegExp are intrinsic constructors. Exactly the seven registered constructor names under the single Intl namespace belong to the Intl accelerator. Nested Intl paths and a class named Intl are ordinary capabilities.",
+    "arguments": "Qualified API Date/RegExp no longer ToPrimitive their Wasm-owned object arguments. Qualified Test262Error no longer bypasses normal live-facade conversion. JS-owned arguments, constructed instances and thrown tokens retain original identity.",
+    "properties": "Qualified RegExp.lastIndex uses the ordinary capability setter/getter, not the intrinsic deferred coercion shim. Test compares to an ordinary External property rather than pinning a forever-raw-carrier ABI.",
+    "fallback": "Missing Intl.custom.NumberFormat, Intl.custom.Date and Intl.Date cannot select global NumberFormat or Date. Actual selected Intl.NumberFormat remains available.",
+    "constructors": "Same seven Intl constructor names now shared between policy, runtime selection and Intl constructor binding instead of drifting lists."
+  },
+  "harness": {
+    "node": "v24.4.1",
+    "vitest": "3.2.4, forks, VITEST_MAX_FORKS=2, --experimental-wasm-exnref",
+    "lane": "Native-first JS environment for boundary controls; standalone/WASI explicitly selected in native controls and existing suites.",
+    "parentSupport": "Only the new test plus ignored harness scripts copied into clean parent. No new production helper copied; parent tracked production tree unchanged.",
+    "control": "Generic api.External reads compiled bag.value as 42/7 on parent and candidate."
+  },
+  "validation": {
+    "focused": {
+      "parent": {
+        "files": 5,
+        "total": 68,
+        "passing": 57,
+        "failing": 11,
+        "skipped": 0
+      },
+      "candidate": {
+        "files": 5,
+        "total": 68,
+        "passing": 68,
+        "failing": 0,
+        "skipped": 0
+      },
+      "uniqueParentKeys": 68,
+      "uniqueCandidateKeys": 68,
+      "changes": [
+        {
+          "test": "tests/issue-6979-capability-accelerator-isolation.test.ts :: #6979 declared APIs do not inherit intrinsic adapters does not treat a declared class named Intl as the Intl namespace",
+          "before": "failed",
+          "after": "passed",
+          "beforeError": "AssertionError: expected 'host-accelerator' to be 'platform-capability' // Object.is equality",
+          "afterError": null
+        },
+        {
+          "test": "tests/issue-6979-capability-accelerator-isolation.test.ts :: #6979 declared APIs do not inherit intrinsic adapters keeps api.Date object arguments and identity — accelerators false",
+          "before": "failed",
+          "after": "passed",
+          "beforeError": "AssertionError: expected NaN to be 42 // Object.is equality",
+          "afterError": null
+        },
+        {
+          "test": "tests/issue-6979-capability-accelerator-isolation.test.ts :: #6979 declared APIs do not inherit intrinsic adapters keeps api.RegExp object arguments and identity — accelerators false",
+          "before": "failed",
+          "after": "passed",
+          "beforeError": "AssertionError: expected NaN to be 42 // Object.is equality",
+          "afterError": null
+        },
+        {
+          "test": "tests/issue-6979-capability-accelerator-isolation.test.ts :: #6979 declared APIs do not inherit intrinsic adapters keeps api.Test262Error object arguments and identity — accelerators false",
+          "before": "failed",
+          "after": "passed",
+          "beforeError": "AssertionError: expected NaN to be 42 // Object.is equality",
+          "afterError": null
+        },
+        {
+          "test": "tests/issue-6979-capability-accelerator-isolation.test.ts :: #6979 declared APIs do not inherit intrinsic adapters keeps api.Date object arguments and identity — accelerators true",
+          "before": "failed",
+          "after": "passed",
+          "beforeError": "AssertionError: expected NaN to be 42 // Object.is equality",
+          "afterError": null
+        },
+        {
+          "test": "tests/issue-6979-capability-accelerator-isolation.test.ts :: #6979 declared APIs do not inherit intrinsic adapters keeps api.RegExp object arguments and identity — accelerators true",
+          "before": "failed",
+          "after": "passed",
+          "beforeError": "AssertionError: expected NaN to be 42 // Object.is equality",
+          "afterError": null
+        },
+        {
+          "test": "tests/issue-6979-capability-accelerator-isolation.test.ts :: #6979 declared APIs do not inherit intrinsic adapters keeps api.Test262Error object arguments and identity — accelerators true",
+          "before": "failed",
+          "after": "passed",
+          "beforeError": "AssertionError: expected NaN to be 42 // Object.is equality",
+          "afterError": null
+        },
+        {
+          "test": "tests/issue-6979-capability-accelerator-isolation.test.ts :: #6979 declared APIs do not inherit intrinsic adapters never falls back from Intl.custom.Date to the global Date",
+          "before": "failed",
+          "after": "passed",
+          "beforeError": "AssertionError: expected [Function] to throw an error",
+          "afterError": null
+        },
+        {
+          "test": "tests/issue-6979-capability-accelerator-isolation.test.ts :: #6979 declared APIs do not inherit intrinsic adapters never falls back from Intl.Date to the global Date",
+          "before": "failed",
+          "after": "passed",
+          "beforeError": "AssertionError: expected [Function] to throw an error",
+          "afterError": null
+        },
+        {
+          "test": "tests/issue-6979-capability-accelerator-isolation.test.ts :: #6979 declared APIs do not inherit intrinsic adapters does not marshal a nested Intl capability as the intrinsic Intl constructor",
+          "before": "failed",
+          "after": "passed",
+          "beforeError": "AssertionError: expected 'host-accelerator' to be 'platform-capability' // Object.is equality",
+          "afterError": null
+        },
+        {
+          "test": "tests/issue-6979-capability-accelerator-isolation.test.ts :: #6979 declared APIs do not inherit intrinsic adapters does not install a RegExp lastIndex coercion shim on a declared API object",
+          "before": "failed",
+          "after": "passed",
+          "beforeError": "TypeError: WebAssembly objects are opaque",
+          "afterError": null
+        }
+      ],
+      "runtimeCoordinateRelocations": []
+    },
+    "boundaries": {
+      "files": 13,
+      "total": 151,
+      "passing": 151,
+      "failing": 0,
+      "skipped": 0
+    },
+    "broad": {
+      "parent": {
+        "files": 14,
+        "total": 230,
+        "passing": 155,
+        "failing": 50,
+        "skipped": 25
+      },
+      "candidate": {
+        "files": 14,
+        "total": 230,
+        "passing": 155,
+        "failing": 50,
+        "skipped": 25
+      },
+      "uniqueParentKeys": 230,
+      "uniqueCandidateKeys": 230,
+      "changes": [],
+      "runtimeCoordinateRelocations": [
+        {
+          "test": "tests/issue-5381-intl-options-bag.test.ts :: #5381 — extern-class constructors marshal their options bag consumer-only (single module) CONTROL — the Request init dictionary is unchanged",
+          "frames": [
+            {
+              "parentLine": 8053,
+              "candidateLine": 8056,
+              "column": 18,
+              "unchangedSourceLine": "          return new Ctor(...args);"
+            }
+          ]
+        },
+        {
+          "test": "tests/issue-5381-intl-options-bag.test.ts :: #5381 — extern-class constructors marshal their options bag through a linked provider (bag minted in another module) CONTROL — the Request init dictionary is unchanged across the link",
+          "frames": [
+            {
+              "parentLine": 8053,
+              "candidateLine": 8056,
+              "column": 18,
+              "unchangedSourceLine": "          return new Ctor(...args);"
+            }
+          ]
+        }
+      ]
+    },
+    "runtimeProbe": {
+      "parent": "External returns 42/7; Date, RegExp and Test262Error return NaN (JSON probe serializes it as null). A missing nested Intl.custom.NumberFormat silently creates a builtin NumberFormat.",
+      "candidate": "All four return 42/7; missing nested Intl namespace throws the existing missing-dependency error.",
+      "bodyOwnership": "The object-argument probe has directBodyEmissions=1 and irBodyEmissions=0 on BOTH sides. It exercises an existing body route plus the shared runtime repair. No frozen direct-AST emitter edited; no new IR-only claim."
+    },
+    "attribution": "Eleven fail-to-pass rows: six object-argument cases (three names, selected/unselected accelerators), two missing Date namespace cases, nested Intl classification, class named Intl classification, and ordinary lastIndex property behavior. Fourteen new cases total; all prior focused controls retained.",
+    "native": {
+      "byteIdentical": 6,
+      "rows": [
+        {
+          "target": "standalone",
+          "name": "scalar",
+          "bytes": 11413,
+          "sha256": "81d83998cf308dea1a6063218bfb63cba2c642ba3e62c8aee1ae9dbd5eea215e",
+          "imports": [],
+          "outputs": [42, 7],
+          "boundaryProbeExported": false
+        },
+        {
+          "target": "standalone",
+          "name": "flat",
+          "bytes": 33185,
+          "sha256": "671336c22fe661e836754ebaaa758e6b8a14b5202083538e6067e5a68aa4d134",
+          "imports": [],
+          "outputs": [42, 7],
+          "boundaryProbeExported": false
+        },
+        {
+          "target": "standalone",
+          "name": "dynamic",
+          "bytes": 146186,
+          "sha256": "a14649794c2bbcaf55a300cffabe34cc49e2a2caa6210a121af4ade43f851ecf",
+          "imports": [],
+          "outputs": [42, 7],
+          "boundaryProbeExported": false
+        },
+        {
+          "target": "wasi",
+          "name": "scalar",
+          "bytes": 22719,
+          "sha256": "ab7f880debe1399bbf089b74cb76d26e154a50c3d8aeaff4f3a9e3511bd10c58",
+          "imports": [],
+          "outputs": [42, 7],
+          "boundaryProbeExported": false
+        },
+        {
+          "target": "wasi",
+          "name": "flat",
+          "bytes": 52928,
+          "sha256": "7b8d7a6e7a8ab1c22952e9c6e4e46147565202c419b0dc93f36936241c09d187",
+          "imports": [],
+          "outputs": [42, 7],
+          "boundaryProbeExported": false
+        },
+        {
+          "target": "wasi",
+          "name": "dynamic",
+          "bytes": 141053,
+          "sha256": "a0ce3ef8ebe472044ae2cafccbc0533b04e9f9487adcf64ef60ffd08bdd70b88",
+          "imports": [],
+          "outputs": [42, 7],
+          "boundaryProbeExported": false
+        }
+      ]
+    },
+    "imports": {
+      "totals": {
+        "probes": 33,
+        "imports": 457,
+        "unknown": 0,
+        "regimeGap": 0
+      },
+      "identicalDetailedInventories": 33,
+      "perProbeSha256": {
+        "core": "978bc260c6c3946cc00fce4f0f338bd7425dd58d2cdd877166e0b62635ef63a7",
+        "regexp": "f0d27f35edbe5298c994fc9e063bedf18ff78c93ff8c51fe900be7583ad18a82",
+        "collections": "f0d27f35edbe5298c994fc9e063bedf18ff78c93ff8c51fe900be7583ad18a82",
+        "promise": "558162d5a8e56d8a305a5d1fdd988bdf12db489fddbfc3178366cdf1b82cdd7e",
+        "date": "f1355b46d88b222a3cbe40d861b55135261521096cb0257eaf00f3b9df2f18c2",
+        "dataView": "f0d27f35edbe5298c994fc9e063bedf18ff78c93ff8c51fe900be7583ad18a82",
+        "bigint": "f1355b46d88b222a3cbe40d861b55135261521096cb0257eaf00f3b9df2f18c2",
+        "bigintFormatting": "f1355b46d88b222a3cbe40d861b55135261521096cb0257eaf00f3b9df2f18c2",
+        "number": "f1355b46d88b222a3cbe40d861b55135261521096cb0257eaf00f3b9df2f18c2",
+        "textGlobals": "f1355b46d88b222a3cbe40d861b55135261521096cb0257eaf00f3b9df2f18c2",
+        "object": "11483f0d34aaeb5abf5d1752ea59abef82b4ee9db5d7bb90ea23a3c239b4d559",
+        "objectRest": "f0d27f35edbe5298c994fc9e063bedf18ff78c93ff8c51fe900be7583ad18a82",
+        "functionBind": "693f94552e9c5cae5a35f88209a53caf844f1df7c6e25ab6e13ae2ff19af86a3",
+        "proxy": "3880ade8aba827352dd07007c7ae489cc7db63b672dbc31d94f581e184e477f2",
+        "typedArrays": "f1355b46d88b222a3cbe40d861b55135261521096cb0257eaf00f3b9df2f18c2",
+        "objectDescriptors": "5bfc0985a85fffdcb6c0e5cdcc203f75d55a6dc6e823283b52e5a963ce1d778a",
+        "objectPrototype": "b3e73453cdf6ad9f7b1e11cfff5eae20c643fdbfd180bd23d98174fa899032bb",
+        "functionCall": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "functionApply": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "errors": "f0d27f35edbe5298c994fc9e063bedf18ff78c93ff8c51fe900be7583ad18a82",
+        "generators": "804345448dd1449a2ac4cd6cd197e978b65641468d0b4cd7bf7050e4d6d7f21f",
+        "iterators": "f1355b46d88b222a3cbe40d861b55135261521096cb0257eaf00f3b9df2f18c2",
+        "promiseCombinators": "558162d5a8e56d8a305a5d1fdd988bdf12db489fddbfc3178366cdf1b82cdd7e",
+        "promiseAnyRace": "558162d5a8e56d8a305a5d1fdd988bdf12db489fddbfc3178366cdf1b82cdd7e",
+        "regexpDynamic": "f0d27f35edbe5298c994fc9e063bedf18ff78c93ff8c51fe900be7583ad18a82",
+        "mapIteration": "f1355b46d88b222a3cbe40d861b55135261521096cb0257eaf00f3b9df2f18c2",
+        "setIteration": "f1355b46d88b222a3cbe40d861b55135261521096cb0257eaf00f3b9df2f18c2",
+        "reflect": "1fb396e359d67f420fb8fd0cc1aced3065ba4a0fef83158cad9aedde5cf84b85",
+        "dynamicOps": "f0d27f35edbe5298c994fc9e063bedf18ff78c93ff8c51fe900be7583ad18a82",
+        "destructuring": "5bfc0985a85fffdcb6c0e5cdcc203f75d55a6dc6e823283b52e5a963ce1d778a",
+        "proxyMop": "b2892de09fb3c2c3f7d42b21213403a10892e3cbc7b9e1efc80610e67ec54426",
+        "proxyRevocable": "7b806933d15686f4369723812df3b01562ea6ff49a573d050ccb87239993d296",
+        "stringProtocols": "f0d27f35edbe5298c994fc9e063bedf18ff78c93ff8c51fe900be7583ad18a82"
+      },
+      "budgetViolations": ["native-first imports 457 > maximum 452"]
+    },
+    "failureNormalization": "Only parent directory and two runtime coordinates whose exact source line/column are verified unchanged. No status changes in the broad population."
+  },
+  "runtimeMetrics": {
+    "parent": {
+      "runtimeTsLines": 10160,
+      "resolveImportLines": 1369,
+      "resolveImportCases": 7,
+      "ownedAdapterLines": 895,
+      "explicitCapabilityLines": 1194
+    },
+    "candidate": {
+      "runtimeTsLines": 10163,
+      "resolveImportLines": 1371,
+      "resolveImportCases": 7,
+      "ownedAdapterLines": 895,
+      "explicitCapabilityLines": 1194
+    },
+    "runtimeTarget": 8000,
+    "remainingGap": 2163
+  },
+  "gates": {
+    "typecheck": "PASS",
+    "lint": "PASS",
+    "format": "PASS",
+    "loc": "PASS",
+    "functionBudget": "PASS",
+    "coercion": "PASS",
+    "oracle": "PASS",
+    "layering": "PASS: 87 lines / 15 files; unbanked",
+    "irFallbacks": "PASS",
+    "compilerInventory": "Valid, architecture incomplete. New identity contract classified as unmigrated debt, not newly activated.",
+    "deadExports": "6/6 full and 6/6 cut preservation witnesses; strict closure remains uncertified at optimize.ts and platform-capability-adapter.ts nonliteral imports.",
+    "hardImports": "FAIL unchanged: 457 > 452, unapproved"
+  },
+  "limits": [
+    "No native semantic provider or host import added. Existing declared-capability boundary implementation corrected.",
+    "Object-argument integration controls are single-module. No new linked-module claim, full Test262 sweep or whole-program IR-only certificate.",
+    "Runtime grows three lines for shared identity routing; no ceiling raised or banked. Earlier retirement audits remain historical snapshots.",
+    "Unmerged predecessor PR 6701/recovered S7-b dependency, opaque bound functions, remaining regime gaps, runtime target, strict closure, full compatibility/conformance/accelerator and binary-cost acceptance remain open."
+  ],
+  "sourceSha256": {
+    "src/extern-class-identity.ts": "018624e9df33b159675de88f5e825347fb4657562bc3d63089fd6372f9a3aa44",
+    "src/host-import-policy.ts": "c09745c9070e39271b680396658ee0b4d9431e37bb1f13cc6bc4463395075e05",
+    "src/runtime.ts": "9289c25690c8fc2bdeca261b30ae85aa498733f10af394c2494a005261de8475",
+    "src/runtime/intl-host-accelerator.ts": "1a2c6dcc95c46296790d663f13205af6aa822f941127b486be97295d0112623d",
+    "scripts/compiler-boundaries.json": "7a38276f1a7cfed853064ed7b157ea77a34369213d3eb2586af30a0675e6e18c",
+    "tests/issue-6979-capability-accelerator-isolation.test.ts": "e37a051e0ba9ca219db02f7725dd9c6d69a002fae3352aa10156346536c3ffe2"
+  }
+}
