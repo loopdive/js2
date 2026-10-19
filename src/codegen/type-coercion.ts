@@ -13,6 +13,7 @@ import { allocLocal, allocTempLocal, releaseTempLocal } from "./context/locals.j
 import { emitToInt32 } from "./binary-ops.js";
 import { popBody, pushBody } from "./context/bodies.js";
 import type { ClosureInfo, CodegenContext, FunctionContext, OptionalParamInfo } from "./context/types.js";
+import { hostFreeEnvironment, wasmGcBackend } from "./context/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { addUnionImports, ensureAnyHelpers, ensureAnyToExternHelper, isAnyValue } from "./index.js";
 import { canonicalUndefinedExternInstrs, ensureAnyFromExternHelper, undefinedExternInstrs } from "./any-helpers.js"; // (#2106 S1 / #2864 wave-2 S1 / #6631)
@@ -906,36 +907,14 @@ export function buildVecFromExternref(
   strictIterator = false,
   materializingVecTypes: ReadonlySet<number> = new Set([vecTypeIdx]),
 ): Instr[] {
-  // #1472 Phase B Blocker B Slice 2 — standalone enumeration consumer.
-  //
-  // `__array_from_iter` is a JS-host import (it invokes the Symbol.iterator
-  // protocol via the runtime). In standalone there is no host, and the source
-  // we are coercing here is already an indexable externref — the native
-  // `$ObjVec` produced by `__object_keys`/`values`/`entries` (Slice 1), which
-  // `__extern_length` + `__extern_get_idx` read directly. So under
-  // `ctx.standalone` we SKIP the materialization step (pass the externref
-  // through unchanged) and read it with the native indexed accessor below,
-  // never leaking `env::__array_from_iter`. (Generators / custom @@iterator
-  // standalone materialization is a separate slice — those don't reach an
-  // $ObjVec source.) The JS-host path is unchanged.
-  //
-  // WASI is host-free at runtime too (the module runs under raw wasmtime — see
-  // `examples/native-messaging/scale-test.mjs`), so it must take the SAME native
-  // reader path: `__extern_get_idx` / `__extern_get` / `__box_number` /
-  // `__unbox_number` are all emitted as DEFINED funcs under WASI, but
-  // `__array_from_iter` is only ever a host import — emitting it makes the WASI
-  // module fail instantiation (`unknown import: env::__array_from_iter`). #2311
-  // gated this on `ctx.standalone` alone, which left the WASI nm_js2wasm_node_*
-  // hosts importing `__array_from_iter` (loopdive/js2wasm#389 / #2311 regression);
-  // `ctx.standalone || ctx.wasi` is the established host-free idiom used
-  // throughout codegen (and elsewhere in this file). (#2839)
-  // Native-first JS can reach this coercion with a typed Wasm vector (for
-  // example the result of `array.map`) as well as an `$ObjVec`. Normalize that
-  // broader iterable set through the native materializer before indexed reads;
-  // the historical standalone/WASI sites already prove their source is an
-  // `$ObjVec` and keep the cheaper direct path.
-  const useNativeMaterializer = ctx.targetProfile.environment === "javascript";
-  const useNativeObjVec = useNativeMaterializer || ctx.standalone || ctx.wasi;
+  // (#1472/#2839) WasmGC reads native indexed carriers through defined helpers,
+  // without importing the legacy `__array_from_iter` semantic provider.
+  // JavaScript-environment callers can supply a typed Wasm vector as well as
+  // an `$ObjVec`, even with the JS value bridge disabled. Normalize that
+  // broader iterable set with the native materializer before indexed reads;
+  // the existing host-free callers prove an indexable source already.
+  const useNativeMaterializer = !hostFreeEnvironment(ctx);
+  const useNativeObjVec = wasmGcBackend(ctx);
   if (useNativeMaterializer) ensureNativeArrayFromIterN(ctx);
   // #2696 — register EVERY late import (helper) FIRST, flush ONCE, then read the
   // funcIdx values from funcMap. ensureLateImport for a NEW env import shifts the
@@ -996,7 +975,7 @@ export function buildVecFromExternref(
   // (#2866 slice 3, see the i32 element arm) `$Symbol` carrier → its id, else
   // a number unbox. (#6770 S2) Shared with the tuple-field arm below.
   const symbolCarrierOrNumberUnbox = (unbox: number): Instr[] | undefined => {
-    if (!(ctx.standalone || ctx.wasi) || ctx.symbolTypeIdx < 0) return undefined;
+    if (!wasmGcBackend(ctx) || ctx.symbolTypeIdx < 0) return undefined;
     const symIdx = ctx.symbolTypeIdx;
     const tmpSym = allocLocal(fctx, `__sym_elem_${fctx.locals.length}`, { kind: "externref" });
     return [
@@ -1048,13 +1027,13 @@ export function buildVecFromExternref(
       // typed-array views and plain numeric arrays keep the untouched
       // `__unbox_number` path below.
       //
-      // HOST LANE ONLY, deliberately: standalone/WASI keep the #2866 arm just
-      // below, which `ref.test`s the `$Symbol` carrier and falls back to a
-      // number unbox. The boundary helper's standalone branch is an UNGUARDED
+      // Non-WasmGC provider only: WasmGC keeps the #2866 arm just below,
+      // which tests the `$Symbol` carrier and falls back to a number unbox.
+      // The boundary helper's native branch is an UNGUARDED
       // `ref.cast` that would trap on a non-symbol element, and with no
       // `$Symbol` carrier registered it reaches for the `__unbox_symbol` host
       // import — which a host-free module must never acquire.
-      if (et.kind === "i32" && et.symbol === true && !ctx.standalone && !ctx.wasi) {
+      if (et.kind === "i32" && et.symbol === true && !wasmGcBackend(ctx)) {
         const symInstrs = symbolBoundaryCoercionInstrs(ctx, { kind: "externref" }, et, fctx);
         if (symInstrs !== undefined) return symInstrs;
       }
@@ -2881,7 +2860,7 @@ export function coerceType(
   // delegates the kind-keyed dispatch. `jsType: "unknown"` reproduces the
   // historical externref→tag-5 (#1888) / ref→tag-6 behaviour exactly.
   if (isAnyValue(to, ctx)) {
-    if (from.kind === "externref" && (ctx.standalone || ctx.wasi)) {
+    if (from.kind === "externref" && wasmGcBackend(ctx)) {
       addUnionImports(ctx);
     }
     ensureAnyHelpers(ctx);
@@ -3063,7 +3042,7 @@ export function coerceType(
         return;
       }
     }
-    if (ctx.standalone) {
+    if (wasmGcBackend(ctx)) {
       const hint = toPrimitiveHint ?? "number";
       // (#3673) Typed member-get rewrite: when the externref on the stack is
       // literally the result of a `call __get_member_<p>` generic dispatcher
@@ -3265,7 +3244,7 @@ export function coerceType(
     // payload. Generic ToString here would corrupt null/undefined sentinels and
     // silently stringify unrelated objects at every typed-string boundary.
     if (
-      (ctx.standalone || ctx.wasi) &&
+      wasmGcBackend(ctx) &&
       ctx.nativeStrings &&
       toIdx === ctx.anyStrTypeIdx &&
       ctx.anyStrTypeIdx >= 0 &&
@@ -3411,11 +3390,10 @@ export function coerceType(
       }
     }
     // symbol → __box_symbol (takes the i32 handle/id directly; identity-stable
-    // via the host symbol cache in gc mode, via the i32 `$id` in the native
-    // `$Symbol` carrier in standalone/wasi). (#2792/#2866) `ensureLateImport`
-    // resolves the right `__box_symbol`: a host `env::__box_symbol` import in gc
-    // mode (added by `addUnionImports` above) and the in-module `$Symbol` carrier
-    // builder under `ctx.standalone || ctx.wasi` (`ensureSymbolCarrier`). Before
+    // via the provider's symbol cache or the native `$Symbol` carrier's i32
+    // `$id`). (#2792/#2866) `ensureLateImport` resolves the right `__box_symbol`:
+    // the provider import or the in-module `$Symbol` carrier builder on WasmGC
+    // (`ensureSymbolCarrier`). Before
     // #2866 the standalone branch had no native helper, so a symbol-keyed boxing
     // (e.g. `o[sym] = v`) fell through to the number box and corrupted the symbol
     // id — or leaked an unsatisfiable host import. Still guarded: falls through to
@@ -3572,7 +3550,7 @@ export function coerceType(
     // structs (no ToPrimitive method) keep the byte-identical `extern.convert_any`
     // below — preserving `typeof`/field-read/identity for the common case.
     if (
-      (ctx.standalone === true || ctx.wasi === true) &&
+      wasmGcBackend(ctx) &&
       name !== undefined &&
       structMustReifyAtExternrefBoundary(ctx, name) &&
       !fctx.regexpLastIndexIdentityStructTypes?.has(typeIdx) &&

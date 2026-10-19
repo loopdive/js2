@@ -3,7 +3,7 @@
 import { ts } from "../../ts-api.js";
 import type { ValType } from "../../ir/types.js";
 import { getLocalType } from "../context/locals.js";
-import type { CodegenContext, FunctionContext } from "../context/types.js";
+import { type CodegenContext, type FunctionContext, wasmGcBackend } from "../context/types.js";
 import { getArrTypeIdxFromVec } from "../registry/types.js";
 import { compileObjectLiteralAsExternref, resolvePropertyNameText } from "../literals.js";
 import {
@@ -37,7 +37,7 @@ export function compileInternalCallArgument(
   if (
     forceArrayLiteralVec &&
     expectedType?.kind === "externref" &&
-    (ctx.standalone || ctx.wasi) &&
+    wasmGcBackend(ctx) &&
     ts.isArrayLiteralExpression(expression)
   ) {
     const previous = (ctx as unknown as { _arrayLiteralForceVec?: boolean })._arrayLiteralForceVec;
@@ -48,8 +48,8 @@ export function compileInternalCallArgument(
       (ctx as unknown as { _arrayLiteralForceVec?: boolean })._arrayLiteralForceVec = previous;
     }
   }
-  // A native `externref` parameter is an open JavaScript-value boundary. A
-  // plain object literal must therefore use the runtime `$Object` carrier,
+  // An internal `externref` formal is an open native value slot. A plain
+  // object literal must therefore use the runtime `$Object` carrier,
   // even when TypeScript gives the literal a concrete contextual object type.
   // Boxing a closed Wasm struct as externref makes dynamic operations such as
   // a captured `Object.assign(target, source)` unable to enumerate the source.
@@ -70,7 +70,7 @@ export function compileInternalCallArgument(
     if (objectValue !== null) return objectValue;
   }
 
-  if (expectedType?.kind !== "externref" || ctx.standalone || ctx.wasi) {
+  if (expectedType?.kind !== "externref" || wasmGcBackend(ctx)) {
     return compileExpression(ctx, fctx, expression, expectedType);
   }
 

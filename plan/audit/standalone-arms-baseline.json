@@ -3,8 +3,8 @@
   "minimumScannedFiles": 1746,
   "directories": {
     "src": 6,
-    "src/codegen": 699,
-    "src/codegen/expressions": 283,
+    "src/codegen": 686,
+    "src/codegen/expressions": 276,
     "src/runtime/contracts": 2
   }
 }

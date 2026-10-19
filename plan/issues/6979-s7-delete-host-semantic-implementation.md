@@ -1634,3 +1634,67 @@ every host-looking helper as a boundary. Use `wasmGcBackend` for internal
 language semantics and storage, `jsValueBoundary` only for genuine JS value
 crossings, `hostFreeEnvironment` for platform availability, and explicit
 capability gates where a WasmGC target does not enable a native accelerator.
+
+### S7-c shared value-coercion handoff (2026-10-19, Codex)
+
+This fourteenth bounded checkpoint migrates `type-coercion.ts`,
+`symbol-field-carrier.ts`, `dyn-ops.ts`, `dispatch-extern-arg-bridge.ts`,
+`dispatch-vec-result-bridge.ts`, `callable-result-unbox.ts`, and
+`internal-call-argument.ts` on `codex/6979-s7c-ir-arms` / draft PR `#6762`.
+The 20 raw `ctx.standalone` references in this group (16 decisions and four
+historical comments) fall to zero. The banked source inventory falls from
+990 to **970**, `src/codegen` from 699 to **686**, and expressions from 283 to
+**276**. S7 remains `in-progress`.
+
+**Classification.** Native indexed array readers, symbol carriers, AnyValue
+boxing, string-payload recovery, ToPrimitive/ToNumber, native object
+reification, and internal callable argument/result conversions are WasmGC
+backend decisions. An internal `externref` formal is an open native value
+slot; it does not by itself require a JavaScript object or array mirror.
+
+The IR dynamic-method helper is different: when there is a real JS value
+boundary, its receiver can be a JS-owned object and must retain that exact
+identity for the boundary adapter. This check now asks `jsValueBoundary`.
+Host-free builds continue using the native AnyValue classifier. The existing
+JavaScript-environment array materialization policy is retained through
+`hostFreeEnvironment`, independently of whether the JS bridge is enabled:
+these callers may supply a typed native vector rather than an already
+indexable ObjVec. This materializer converts between native array layouts; it
+does not create a JS semantic mirror.
+
+**Runtime improvement.** WASI previously skipped the native ToPrimitive step
+when converting an open object to a number. Subtracting one from
+`{ valueOf() { return 42; } }` consequently returned `NaN`. The shared WasmGC
+path returns **41**, with zero imports. A single-gate kill switch that restores
+the old projection reproduces `NaN` under WASI while standalone still passes,
+so the improvement is attributed to this conversion gate.
+
+**Controlled validation.** Before edits, the existing 17-file mixed coercion
+cohort at parent `ad0f0396529501f49962506aeca812207bd8e180` was 209 passing,
+15 failing, and three skipped. With the same two new numeric probes applied
+to both revisions, the exact detached parent is **210 passing / 16 failing /
+three skipped**, and the candidate is **211 passing / 15 failing / three
+skipped** (229 rows each). The only status change is the WASI valueOf probe;
+all 15 residual failure messages match after normalizing worktree paths.
+This is a mixed standalone/WASI/JavaScript/IR regression comparison, not a
+Test262 conformance population or proof of complete IR admission.
+
+The final focused check is **39/39**: 33 S7 array/object tests and six
+JavaScript-boundary tests. Its new IR-specific boundary probe explicitly
+requires both zero- and one-argument functions in `irCompiledFuncs`, checks
+that JavaScript `this` is the original object, and verifies exactly two calls.
+TypeScript 7 typecheck, Biome lint, Prettier, LOC/function, coercion-site,
+oracle, and standalone-arm gates pass. Host-import policy passes **33 probes /
+452 imports / zero regime-gap or unknown imports**, including selected RegExp,
+Date, and Intl controls. The IR-fallback gate has no unintended, post-claim,
+or module-level increases. Dead-export preservation remains 6/6 full and cut
+witnesses; its strict retirement proof is still open at the two previously
+recorded nonliteral dynamic imports.
+
+**Residuals and next work.** The compared residuals are one Number([]) stale
+expectation, seven symbol-array behavior/import assertions, one IR admission
+assertion, two IR dynamic-member cases, three typed-array/undefined/BigInt
+boundary cases, and one undefined callable-result assertion. Keep these
+visible rather than presenting the cohort as green. Continue with the
+remaining receiver/namespace call and constructor semantic groups, preserving
+the same explicit backend, value-boundary, environment, and accelerator facts.

@@ -20,13 +20,13 @@
  * body flushed against any index shift that reservation causes.
  */
 import type { Instr, ValType } from "../../ir/types.js";
-import type { CodegenContext, FunctionContext } from "../context/types.js";
+import { type CodegenContext, type FunctionContext, wasmGcBackend } from "../context/types.js";
 import { buildVecFromExternMaterializer, getVecInfo, vecFromExternFuncIdx } from "../type-coercion.js";
 import { addUnionImports } from "../registry/imports.js";
 import { flushLateImportShifts } from "./late-imports.js";
 
-function noHostVecTarget(ctx: CodegenContext, to: ValType | null): number | undefined {
-  if (!(ctx.standalone || ctx.wasi) || to === null || to.kind !== "ref_null") return undefined;
+function nativeVecTarget(ctx: CodegenContext, to: ValType | null): number | undefined {
+  if (!wasmGcBackend(ctx) || to === null || to.kind !== "ref_null") return undefined;
   return getVecInfo(ctx, to.typeIdx) === null ? undefined : to.typeIdx;
 }
 
@@ -36,7 +36,7 @@ export function reserveDispatchVecResultMaterializer(
   fctx: FunctionContext,
   expectedReturn: ValType | null,
 ): void {
-  const vecTypeIdx = noHostVecTarget(ctx, expectedReturn);
+  const vecTypeIdx = nativeVecTarget(ctx, expectedReturn);
   if (vecTypeIdx === undefined || vecFromExternFuncIdx(ctx, vecTypeIdx) !== undefined) return;
   if (buildVecFromExternMaterializer(ctx, vecTypeIdx) !== undefined) flushLateImportShifts(ctx, fctx);
 }
@@ -44,7 +44,7 @@ export function reserveDispatchVecResultMaterializer(
 /** `externref` arm result → expected vec, when the materializer was reserved. Read-only. */
 export function dispatchVecResultBridge(ctx: CodegenContext, from: ValType, to: ValType): Instr[] | null {
   if (from.kind !== "externref") return null;
-  const vecTypeIdx = noHostVecTarget(ctx, to);
+  const vecTypeIdx = nativeVecTarget(ctx, to);
   if (vecTypeIdx === undefined) return null;
   const funcIdx = vecFromExternFuncIdx(ctx, vecTypeIdx);
   return funcIdx === undefined ? null : [{ op: "call", funcIdx }];
@@ -65,7 +65,7 @@ export function reserveScalarResultBoxers(
   candidates: readonly { readonly returnType: ValType | null }[],
   expectedReturn: ValType | null,
 ): void {
-  if (!(ctx.standalone || ctx.wasi) || expectedReturn === null) return;
+  if (!wasmGcBackend(ctx) || expectedReturn === null) return;
   if (expectedReturn.kind !== "externref" && expectedReturn.kind !== "ref_extern") return;
   if (!candidates.some(({ returnType }) => returnType?.kind === "f64" || returnType?.kind === "i32")) return;
   addUnionImports(ctx);

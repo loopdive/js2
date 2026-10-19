@@ -58,6 +58,25 @@ describe("#6686 JS value boundary under the native regime", () => {
     );
   });
 
+  it("preserves JS-owned receivers through IR dynamic method calls", async () => {
+    const { exports, result } = await instantiateRegime(`
+      export function callNoArg(target: any): any { return target.f(); }
+      export function callOneArg(target: any): any { return target.f(3); }
+    `);
+    expect(result.irCompiledFuncs).toEqual(expect.arrayContaining(["callNoArg", "callOneArg"]));
+    let calls = 0;
+    const target = {
+      f(this: unknown, value = 0) {
+        expect(this).toBe(target);
+        calls++;
+        return value + 42;
+      },
+    };
+    expect(exports.callNoArg(target)).toBe(42);
+    expect(exports.callOneArg(target)).toBe(45);
+    expect(calls).toBe(2);
+  });
+
   it("unwraps a compiled object's host facade before a closure export casts it", async () => {
     const { exports } = await instantiateRegime(`
       interface P { a: number }

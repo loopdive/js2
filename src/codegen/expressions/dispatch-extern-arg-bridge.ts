@@ -25,11 +25,11 @@
  */
 import type { Instr, ValType } from "../../ir/types.js";
 import { canonicalUndefinedExternInstrs } from "../any-helpers.js";
-import type { CodegenContext } from "../context/types.js";
+import { type CodegenContext, wasmGcBackend } from "../context/types.js";
 
-/** Admission + plain crossing for a no-host ref → externref argument. */
+/** Admission + identity-preserving crossing for a WasmGC ref → externref argument. */
 export function standaloneRefToExternBridge(ctx: CodegenContext, from: ValType, to: ValType): Instr[] | null {
-  if (!(ctx.standalone || ctx.wasi)) return null;
+  if (!wasmGcBackend(ctx)) return null;
   if (from.kind !== "ref" && from.kind !== "ref_null") return null;
   if (to.kind !== "externref") return null;
   if (from.typeIdx === ctx.anyValueTypeIdx) return null;

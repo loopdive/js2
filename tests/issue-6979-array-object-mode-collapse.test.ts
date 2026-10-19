@@ -42,6 +42,20 @@ describe("#6979 S7-c array/object mode collapse — WASI structure", () => {
 
 for (const target of ["standalone", "wasi"] as const) {
   describe(`#6979 S7-c array/object mode collapse — ${target} runtime`, () => {
+    it("converts an open native object with valueOf before numeric arithmetic", async () => {
+      const { module } = await compileNative(
+        `
+          var object: any = { valueOf() { return 42; } };
+          export function readResult(): number { return object - 1; }
+        `,
+        target,
+      );
+      const instance = await WebAssembly.instantiate(module, {});
+      const exports = instance.exports as unknown as { __module_init?: () => void; readResult: () => number };
+      exports.__module_init?.();
+      expect(exports.readResult()).toBe(41);
+    });
+
     it("Reflect.defineProperty translates native descriptor rejection to false", async () => {
       const { module } = await compileNative(
         `
