@@ -6820,6 +6820,7 @@ function makeFromAstResolver(
   // (#3526 F3-S3) Resolved once, pre-freeze: the arm below projects this value.
   const functionPrototypeCall = integrationFunctionPrototypeCallPolicy(ctx);
   return {
+    inferModuleStrict: () => ctx.inferModuleStrictArguments !== false,
     ...preparedIrAsyncFromAstResolver(ctx),
     hostIndirectEvalTarget() {
       if (hostFreeEnvironment(ctx.targetProfile) || ctx.strictNoHostImports) return null;

@@ -127,6 +127,21 @@ The normal public compiler does not yet select this contract; its typed-object
 negative controls remain open. A backend fixture's manually bound primitive
 providers are not a replacement for authenticated production resource planning.
 
+Source property writes must retain their lexical failed-write policy before
+the AST is discarded: strict writes throw on refusal; sloppy writes retain the
+RHS without throwing on refusal (a setter's own exception still propagates).
+Reference projection requires the corresponding declared setter; unknown
+policy cannot default to strict or silently reuse another provider. This fact
+is independent of environment and physical carrier choice.
+
+Checker-derived record shapes in prepared source signatures are logical
+contracts only. Aliases and nested records do not establish native allocation,
+own properties or a public foreign-reference ABI. Physical acceptance must
+still refuse a component whose carriers/providers are not materialized.
+Project raw source IR before optimization, not an already optimized prepared
+packet or decoded copy. Complete reachable callee contracts and authenticated
+entry publication remain prerequisites for using this boundary in compile().
+
 This contract supersedes the former deep-marshaling proposal in this file.
 That proposal's recursive incoming Array-to-vector policy is not an approved
 implementation of the live boundary. Its historical text remains available

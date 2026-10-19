@@ -15856,6 +15856,43 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/frontend/logical-record-type.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "6979",
+      "nextBoundary": "Checker-certified scalar/record annotation contracts, including aliases and nested records. Logical shapes do not certify physical layout, own properties, Get/Set providers or foreign entry publication."
+    },
+    {
+      "path": "src/frontend/object-write.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "6979",
+      "nextBoundary": "Source-to-IR write-failure projection shared by all typed-object assignment forms. Builder type dependency is explicit; do not treat source metadata as physical boundary authority."
+    },
+    {
+      "path": "src/ir/core/object-writes.ts",
+      "state": "clean",
+      "layer": "ir-core"
+    },
+    {
+      "path": "src/frontend/source-strictness.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "6979",
+      "nextBoundary": "One source strictness owner shared by IR and compatibility callers; preserves lexical write mode and script-wrapper policy before AST disposal. TypeScript syntax ownership remains explicit."
+    },
+    {
+      "path": "src/frontend/use-strict-directive.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "6979",
+      "nextBoundary": "Existing raw-token Use Strict predicate moved without semantic duplication; keep TypeScript source-token handling at the frontend boundary."
+    },
+    {
       "path": "src/frontend/boolean-return-boundary.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",

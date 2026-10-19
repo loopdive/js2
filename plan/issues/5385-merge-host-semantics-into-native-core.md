@@ -1286,3 +1286,42 @@ acceptance obligations remain open. Runtime remains 10230 lines; strict
 modeled closure and inherited cycle gates still fail. Both migration issues
 remain in progress and PR6762 stays draft. Detailed handoff and exact evidence:
 `plan/audit/6979-reference-object-lowering-20261019.json`.
+
+### 2026-10-19 — source write policy and logical record contract handoff
+
+S7-s continues from signed `de036a4a4f71a208f816b5e7cf6610b66a2df63b`.
+Source ObjectSet now preserves strict/sloppy failed-write behavior; early
+reference projection requires that fact and the corresponding structurally
+declared setter. Unknown policy or absent provider fails closed. One frontend
+strictness owner serves IR and compatibility callers, also fixing inheritance
+through enclosing arrows/accessors: four real standalone/WASI probes change
+-1→42 with no imports. Their bodies remain direct, not newly IR-owned.
+
+Checker-derived logical record contracts now survive whole-program source
+preparation and codec replay for aliases/interfaces/inheritance/nested/generic
+records. Unsupported recursive/optional/indexed/empty/union/nominal shapes
+fail explicitly; expanding generic recursion is bounded. Logical annotation
+is not physical-layout or foreign-entry authority. The prepared driver still
+rejects read/echo/write at physical acceptance, and the public typed-object
+diagnostic remains **5/16 passing, 11 failing**, identical binary.
+
+Focused candidate **73/73**, exact parent **36/73** with identical tests;
+33 transitions concern source/provider contracts and four actual native
+strictness behavior. Existing cohorts stay **655/670**, **66/68** and **35/41**,
+with all 23 retained normalized full errors matching, zero skips. All 33
+policy inventories/binaries and six zero-import native binaries match; guard
+437/452. Typecheck/lint/format, size/function/coercion/oracle, layering/fallback,
+flat/inventory and issue checks pass without new allowances. Strict modeled
+closure remains open; cycles now also expose frontend→ir 17→18,
+frontend→ts-api 2→5, ir→frontend 7→9, not waived or called green.
+
+Next owner: project on raw source IR **before optimization**, plan the complete
+reachable reference-callable component and canonical native strict/sloppy
+Get/Set resources, then atomically publish authenticated ABI/entry metadata.
+Plan mutable/container/rest/class/capture carriers and actual-carrier equality;
+cut the measured cycles. No graph copy, frozen AST/selector/admission expansion
+or new host imports. Complete component planning/public entry publication and
+all prior retirement/acceptance obligations remain open. Both issues stay in
+progress; PR6762 stays draft pending prerequisites. Detailed actionable handoff:
+the S7 issue's "S7-s source write-mode and logical record contracts" section and
+`plan/audit/6979-source-reference-contracts-20261019.json`.

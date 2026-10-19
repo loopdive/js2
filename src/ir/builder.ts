@@ -52,6 +52,7 @@ import type { IrCountedStringAppendSiteId } from "./counted-string-append-proven
 // `emitUnbox`, and `emitUnbox`/`emitTagTest` take a neutral `TagId`. `js-tag.ts`
 // is no longer imported: the builder names no ECMAScript partition.
 import { defaultTagDomain } from "./producer.js";
+import { objectSetInstruction } from "./core/object-writes.js";
 import type { TagDomain, TagId } from "./tag-domain.js";
 import type { IrStringConcatMode, IrStringEncoding } from "./string-runtime.js";
 import { INTRINSIC_DEFINITIONS, type IntrinsicId } from "./intrinsics.js";
@@ -817,15 +818,8 @@ export class IrFunctionBuilder {
   /**
    * Emit `object.set` to write a named field. Void result.
    */
-  emitObjectSet(value: IrValueId, name: string, newValue: IrValueId): void {
-    this.pushInstr({
-      kind: "object.set",
-      value,
-      name,
-      newValue,
-      result: null,
-      resultType: null,
-    });
+  emitObjectSet(value: IrValueId, name: string, newValue: IrValueId, failureMode?: "throw" | "ignore"): void {
+    this.pushInstr(objectSetInstruction(value, name, newValue, failureMode));
   }
 
   // --- function-style constructor ops (#3521) ---------------------------

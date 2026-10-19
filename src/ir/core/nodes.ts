@@ -15,6 +15,8 @@
 
 import type { IrSourceMapOrigin } from "../../shared/contracts/ir-unit-inventory.js";
 import type { IrAsyncPlan } from "./async-plan.js";
+import type { IrInstrObjectSet } from "./object-writes.js";
+export type { IrInstrObjectSet } from "./object-writes.js";
 // #3954 phase 2 — the ECMAScript-specific instruction kinds. This is the ONE
 // sanctioned core->dialect import; `scripts/check-ir-dialect.mjs` fails the
 // build on any other. Type-only, so the core<->dialect cycle has no runtime edge.
@@ -724,18 +726,6 @@ export interface IrInstrObjectGet extends IrInstrBase {
   readonly kind: "object.get";
   readonly value: IrValueId;
   readonly name: string;
-}
-
-/**
- * Write a named field on an object. `value` must be `IrType.object`,
- * `newValue` must match the field's IrType. Void result. Lowering emits
- * `struct.set $obj_<shape> <fieldIdx>`.
- */
-export interface IrInstrObjectSet extends IrInstrBase {
-  readonly kind: "object.set";
-  readonly value: IrValueId;
-  readonly name: string;
-  readonly newValue: IrValueId;
 }
 
 // ---------------------------------------------------------------------------

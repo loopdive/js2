@@ -23,11 +23,15 @@ export function objectReferenceFieldProvider(
   name: string,
   type: IrType | null,
   operation: "get" | "set",
+  failureMode?: "throw" | "ignore",
 ): IrFuncRef {
   const field = shape.fields.find((row) => row.name === name);
   if (!field || !type || !irTypeEquals(field.type, type))
     throw new Error(`ir/lower: reference object ${operation} has a different logical field contract (${name})`);
-  const provider = reference.fields.get(name)?.[operation];
+  if (operation === "set" && failureMode !== "throw" && failureMode !== "ignore")
+    throw new Error("ir/lower: reference object Set requires its source write mode");
+  const role = operation === "set" && failureMode === "ignore" ? "setSloppy" : operation;
+  const provider = reference.fields.get(name)?.[role];
   if (!provider) throw new Error(`ir/lower: reference object ${operation} has no declared provider (${name})`);
   return provider;
 }

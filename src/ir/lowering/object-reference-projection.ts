@@ -40,7 +40,14 @@ export function projectObjectReferenceFunction(
       const operation = instruction.kind === "object.get" ? "get" : "set";
       const fieldType =
         instruction.kind === "object.get" ? instruction.resultType : (types.get(instruction.newValue) ?? null);
-      const target = objectReferenceFieldProvider(reference, type.shape, instruction.name, fieldType, operation);
+      const target = objectReferenceFieldProvider(
+        reference,
+        type.shape,
+        instruction.name,
+        fieldType,
+        operation,
+        instruction.kind === "object.set" ? instruction.failureMode : undefined,
+      );
       return {
         kind: "call",
         target,

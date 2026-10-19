@@ -50,6 +50,7 @@ import {
 import { exactIndirectEvalStatement } from "../eval-call-shape.js";
 import { resolveOrdinaryObjectClosureSignature } from "./ordinary-object-closure-signatures.js";
 import { isDirectObjectCreateNullCall } from "../frontend/builtins/prepare-object-create.js";
+import { emitSourceObjectSet } from "../frontend/object-write.js";
 
 import { TsCheckerOracle, type TypeOracle } from "../checker/oracle.js";
 import {
@@ -404,6 +405,8 @@ export type { IrExternClassMeta } from "./extern-class-contract.js";
  * until Phase 3, so from-ast doesn't see them.
  */
 export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
+  /** False only for a synthetic script wrapper; lexical directives/classes still apply. */
+  inferModuleStrict?(): boolean;
   /** Exact complete-source proof of a local closure's primordial call/apply member. */
   sourceClosureInvocation?(expression: ts.CallExpression): SourceClosureInvocationPlan | undefined;
   /** Exact higher-order parameter certified by the complete source invocation proof. */
@@ -10187,7 +10190,7 @@ function lowerPropertyAssignment(expr: ts.BinaryExpression, cx: LowerCtx): void 
         `ir/from-ast: assignment to .${fieldName} (${describeIrType(fieldType)}) got ${describeIrType(newValueType)} (${cx.funcName})`,
       );
     }
-    cx.builder.emitObjectSet(recv, fieldName, newValue);
+    emitSourceObjectSet(cx, recv, fieldName, newValue, expr);
     return;
   }
 
@@ -10346,7 +10349,7 @@ function lowerPropertyCompound(
     );
   }
   if (recvType.kind === "class") cx.builder.emitClassSet(recv, fieldName, result);
-  else cx.builder.emitObjectSet(recv, fieldName, result);
+  else emitSourceObjectSet(cx, recv, fieldName, result, lhs);
 }
 
 /**
@@ -10569,7 +10572,7 @@ function lowerChainedAssignment(expr: ts.BinaryExpression, cx: LowerCtx): void {
     } else if (target.kind === "class") {
       cx.builder.emitClassSet(target.recv, target.field, value);
     } else {
-      cx.builder.emitObjectSet(target.recv, target.field, value);
+      emitSourceObjectSet(cx, target.recv, target.field, value, expr);
     }
   }
 }
@@ -12987,7 +12990,7 @@ function lowerIdentifierAssignment(id: ts.Identifier, rhs: ts.Expression, cx: Lo
         `ir/from-ast: assignment to with binding "${id.text}" (${describeIrType(binding.type)}) has incompatible value in ${cx.funcName}`,
       );
     }
-    cx.builder.emitObjectSet(binding.receiver, binding.name, newValue);
+    emitSourceObjectSet(cx, binding.receiver, binding.name, newValue, id);
     return;
   }
   if (binding.kind !== "slot") {

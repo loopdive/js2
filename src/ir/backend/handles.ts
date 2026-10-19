@@ -82,7 +82,11 @@ export interface IrObjectStructLowering {
  */
 export interface IrObjectReferenceLowering {
   readonly carrier: { readonly kind: "externref" };
-  readonly fields: ReadonlyMap<string, { readonly get?: IrFuncRef; readonly set?: IrFuncRef }>;
+  /** set is strict [[Set]]; setSloppy is the same operation without throwing on false. */
+  readonly fields: ReadonlyMap<
+    string,
+    { readonly get?: IrFuncRef; readonly set?: IrFuncRef; readonly setSloppy?: IrFuncRef }
+  >;
 }
 
 /**

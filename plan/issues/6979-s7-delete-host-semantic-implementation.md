@@ -3900,3 +3900,109 @@ entry or relax `param-signature-unstable`. Preserve the 11 public negative
 controls until source-to-Wasm acceptance actually improves. All S7-q remaining
 work and full migration acceptance remain open; both issues stay in progress
 and PR6762 stays draft.
+
+### S7-s source write-mode and logical record contracts (2026-10-19, Codex)
+
+Continue from signed `de036a4a4f71a208f816b5e7cf6610b66a2df63b`.
+Connect the reference-object prerequisite to genuine source/preparation facts
+and complete reachable callable contracts, not a backend fixture or relaxed
+admission guard. Investigation found another required source fact currently
+erased by fixed-field IR: strict versus sloppy assignment. A foreign setter
+must throw on a refused strict write but retain the original RHS without
+throwing in sloppy code. Preserve lexical write mode in source IR, reject
+unknown mode during reference projection and bind the correct declared setter
+before optimization. Then plan exact source/callee/provider identities and
+physical carrier obligations across the whole reference component. Public
+source interop, authenticated provider/entry publication and full migration
+acceptance remain open until their real execution evidence improves.
+
+**Checkpoint handoff: source facts implemented; component planning still open.**
+All four source producers of fixed-field ObjectSet now retain the lexical
+failed-write policy (`throw` or `ignore`). The neutral core field is optional
+for native-only producers; absence is unknown, never implicitly strict at a
+reference boundary. Reference projection requires an explicit policy and
+resolves either the strict setter or a separately declared sloppy setter by
+structural callable identity **before optimization**. Missing policy/provider
+fails closed; a refused sloppy write does not become a strict TypeError.
+Plain, compound, increment, chained and supported inline-with stores are
+covered; inline-with coverage is metadata/projection only, not foreign with-
+binding execution. No new host import or graph copier was introduced.
+
+Strictness and raw-token directive analysis now have one frontend owner;
+old codegen paths are compatibility re-exports. The raw-token predicate moved
+unchanged. Enclosing arrows/accessors/constructors are now included in lexical
+strictness inheritance. Four actual standalone/WASI probes (arrow/accessor,
+two targets) change from -1 to 42 with empty imports on both trees. Their
+source-body ledger remains direct, with no IR-owned functions on either tree:
+this is a shared source-analysis correction, **not expanded IR body coverage**.
+No frozen direct-AST body, selector or admission guard was extended.
+
+Whole-program source capture now derives exact logical record signatures
+from checker facts, including aliases, interfaces/inheritance, nested records
+and instantiated generic aliases. Canonical field order, callable/export joins,
+write policy and signatures survive preparation plus codec replay. Recursive,
+expanding generic, optional, open-indexed, empty and unsupported union/nominal
+contracts fail explicitly; generic expansion is depth-bounded. These are
+logical contracts, **not proof of native origin, physical layout, own fields
+or foreign entry authority**. The internal prepared driver rejects all three
+read/echo/write probes at acceptance because physical record carriers are not
+materialized. Public compile() admission and entry publication are unchanged.
+
+Against signed `de036a4a4f71a208f816b5e7cf6610b66a2df63b`, Node 24.4.1 /
+Vitest 3.2.4 forks with `--experimental-wasm-exnref`, two workers:
+
+- Focused **73/73** candidate versus **36 passing / 37 failing of 73** on the
+  exact parent with identical tests: 43 source/write cases, 26 prior reference
+  cases and four actual native strictness cases. Of the 37 transitions, 33
+  primarily establish source metadata/preparation/provider obligations; do
+  not present them as 33 public interop fixes. Providers remain manually
+  bound fixtures, not authenticated canonical production resources.
+- Existing **670 cases / 31 files remain 655 passing / 15 failing**. Additional
+  source/preparation/codec cases remain **66 passing / 2 failing of 68**;
+  strictness compatibility cases remain **35 passing / 6 failing of 41**.
+  Zero skips/status transitions, and all 23 normalized full errors match.
+  Missing QuickJS artifacts account for some retained failures; no expectations
+  were edited. No full Test262 or full-program acceptance claim.
+- All **33** complete policy inventories and binaries match; guard stays
+  **437/452**, zero unknown/gap entries. All **six** native control binaries
+  match with zero imports, answers 42/7 and no JS-boundary probe export.
+  Public typed-object diagnostic stays **5 passing / 11 failing of 16**, with
+  the identical 131388-byte binary; all eleven typed foreign cases stay open.
+- TypeScript7, lint/format, LOC/function, coercion/oracle, layering/fallback,
+  flat/inventory and issue gates pass. No new allowance/baseline/ceiling or
+  detector/probe change. The neutral data-only core leaf is clean; four new
+  TypeScript frontend leaves remain explicitly unmigrated/mixed-needs-split.
+- Preservation-only remains six full/six cut witnesses; strict modeled
+  closure still fails at the same two nonliteral imports. The cycle gate
+  **fails**, not waived: inherited codegen→ir 298→301 and ir→codegen 74→75,
+  plus new frontend→ir 17→18, frontend→ts-api 2→5 and ir→frontend 7→9.
+  Extraction makes ownership explicit but has not closed these dependencies.
+
+Runtime remains 10230 lines, resolveImport 1371/seven cases, owned adapters
+896, capabilities 1194. Exact paired rows, error/inventory hashes, negative
+controls and gate results: `plan/audit/6979-source-reference-contracts-20261019.json`.
+
+**Next owner, in implementation order:**
+
+1. Plan the complete reachable source/callee/provider reference component on
+   raw source IR, before hygiene/optimization. `prepareWholeIrProgram` output
+   is already optimized; projecting that sealed packet cannot recover an
+   unused Get. Start at raw source preparation/capture, not codec replay.
+2. Allocate exact canonical native Get/Set resource providers (including
+   strict/sloppy refusal, thrown-value/realm handling and reentry), then
+   validate every reachable callable signature and publish authenticated
+   entry metadata atomically. Preserve the eleven public negative controls
+   until genuine source-to-Wasm execution improves. Do not relax
+   `param-signature-unstable` or silently choose a native-only carrier.
+3. Plan mutable slots, nested/container/vector/rest/class/capture carriers;
+   audit equality against actual carrier proofs. A logical object annotation
+   alone does not prove non-null native object identity or authorize using
+   strict reference equality for loose `==` across a foreign boundary.
+4. Cut the measured frontend/IR cycles, resolve strict closure and the earlier
+   runtime/source/raw-mode retirement debt, then complete program acceptance.
+
+The whole-component planner, canonical provider ownership and public typed
+entry are **not implemented by this checkpoint**. Resolve the prerequisite
+stack, including PR6701 and recovered S7-b `9423a71e82`, before any merge.
+Both migration issues stay in progress; PR6762 stays draft for this handoff.
+No GitHub issues or issue comments were created.
