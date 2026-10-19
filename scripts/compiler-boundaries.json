@@ -319,6 +319,7 @@
         "src/backend/wasmgc/resources/native-object-access-declarations.ts",
         "src/backend/wasmgc/resources/native-object-access.ts",
         "src/backend/wasmgc/resources/native-object-storage.ts",
+        "src/backend/wasmgc/resources/native-object-construction.ts",
         "src/backend/wasmgc/resources/native-bigint.ts",
         "src/backend/wasmgc/resources/native-object-same-value.ts",
         "src/backend/wasmgc/resources/native-object-descriptors.ts",
@@ -14615,6 +14616,21 @@
       "path": "src/runtime/wasmgc/values/ordinary-object-storage-bodies.ts",
       "state": "clean",
       "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/object-construction-definition.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/backend/wasmgc/resources/native-object-construction.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/ir/program/native-object-construction-requirements.ts",
+      "state": "clean",
+      "layer": "ir-program"
     },
     {
       "path": "src/runtime/wasmgc/values/ordinary-object-storage-definitions.ts",

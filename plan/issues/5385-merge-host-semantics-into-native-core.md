@@ -1388,3 +1388,29 @@ section of `plan/issues/6979-s7-delete-host-semantic-implementation.md`
 Both issues remain in progress; PR6762 remains a draft handoff, not a merge-ready
 migration. The existing prerequisite stack and inherited acceptance failures
 are unchanged. Tracking stays in repo Markdown; no GitHub issues or comments.
+
+### S7-v: owned native record initialization prerequisite
+
+The next checkpoint implements real explicit-prototype WasmGC initialization
+from actual prepared record allocations, using the canonical storage,
+descriptor and primitive owners. Source insertion order is independent of
+storage order; nested references retain identity. Canonical fills, complete
+dependency ownership and current source requirements are required—not caller
+placeholders or type/layout lookalikes. Duplicate logical fields are rejected
+by source-fact validation.
+
+New native-resource tests pass **13/13**, alongside the prior **135/135** focused
+cases. Three instances execute without imports, including displaced indices and
+codec replay. Fresh parent/candidate resource tests retain **147 pass / 14 fail
+of 161** with identical full errors; the 779-case cohort retains **756 pass /
+23 fail**. All 33 policy binaries/inventories, six native controls and the
+5-pass/11-fail public typed-object diagnostic remain unchanged.
+
+This does not complete source default prototypes, the native Object/Function
+realm, foreign field carriers, provider wiring, callable/storage closure,
+Linear/WASI record construction or public boundary publication. Architecture
+cycles now include backend→ir 115→117; no waiver is added. The detailed S7-v
+handoff also records an inferred method-object return erased to void, which
+must not become an absence/construction proof. Both issues remain in progress;
+PR6762 stays draft. Evidence:
+`plan/audit/6979-native-construction-resource-20261019.json`.

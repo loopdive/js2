@@ -21,6 +21,7 @@ export function isSourceObjectConstruction(value: unknown, fields: readonly { re
     facts.keys.length === fields.length &&
     facts.keys.every((key) => typeof key === "string") &&
     new Set(facts.keys).size === fields.length &&
+    new Set(fields.map((field) => field.name)).size === fields.length &&
     fields.every((field) => facts.keys!.includes(field.name))
   );
 }

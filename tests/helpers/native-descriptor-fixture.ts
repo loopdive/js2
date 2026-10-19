@@ -103,8 +103,12 @@ export function descriptorSource(decoded = false) {
 const ext: ValType = { kind: "externref" },
   i32: ValType = { kind: "i32" },
   f64: ValType = { kind: "f64" };
-export function descriptorFixture(offset = false) {
-  const { program, projection } = descriptorSource();
+export function descriptorFixture(
+  offset = false,
+  source = descriptorSource(),
+  additionalLiterals: readonly string[] = [],
+) {
+  const { program, projection } = source;
   const access = deriveNativeObjectAccessRequirements(program, projection);
   const valuePlan = deriveNativeValueResourcePlan(program, projection, "native-string");
   const module = createEmptyModule(),
@@ -116,7 +120,17 @@ export function descriptorFixture(offset = false) {
     // Filled only after the shared freeze; no external imports or providers.
     prefixTokens.set(tx, { prefix, global });
   }
-  const texts = [...new Set(["", "TypeError", "value", "other", "missing", ...NATIVE_OBJECT_DESCRIPTOR_LITERALS])];
+  const texts = [
+    ...new Set([
+      "",
+      "TypeError",
+      "value",
+      "other",
+      "missing",
+      ...NATIVE_OBJECT_DESCRIPTOR_LITERALS,
+      ...additionalLiterals,
+    ]),
+  ];
   const strings = reserveNativeStringLiteralResources(tx, {
     key: "strings",
     utf8Storage: offset,

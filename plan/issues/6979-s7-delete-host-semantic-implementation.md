@@ -4218,3 +4218,82 @@ records the current reruns separately. No GitHub issues/comments were created.
 
 Machine-readable source/report hashes and counts:
 `plan/audit/6979-source-construction-handoff-20261019.json`.
+
+### S7-v native record initialization resource (2026-10-19, Codex)
+
+Continue from signed `4493f10dcf922dbe2cf620c0e80f576ba818796f`.
+Implement a genuinely owned explicit-prototype initialization prerequisite from
+actual prepared record allocations and source construction facts. Compose the
+existing canonical storage/descriptor/value owners, rather than a new property
+semantic engine. Verify native execution and ownership negatives. Keep default
+realm completion, source special-prototype/method requirements, actual foreign
+field carriers and public physical admission explicitly open; an inner kernel
+is not completion of the full migration.
+
+Source-census caution found during S7-v: the probe
+`export function make(){return {method():number{return 1;}};}` prepares a
+void/empty `make` plus a lifted constant method, not an observed object
+allocation. Do not count this as a passing method-construction negative or as
+an absence proof. Investigate inferred return-type handling before general
+source acceptance. The constructor test instead uses an explicit numeric
+return and an actually invoked method; it observes both semantic/projected
+object.new occurrences before requiring the method-construction gap.
+
+#### S7-v implementation and verification
+
+Completed the **explicit-prototype initialization prerequisite**, not default
+source construction or public entry publication:
+
+- Derive demands from genuine prepared object.new occurrences in both semantic
+  and selected runtime views. Check instruction/buffer coordinates, exact live
+  allocation/type, unique canonical allocation, source key permutation and SSA
+  operand/field types. Authenticate issued requirements through the existing
+  complete property census; copied requirements and detached inputs fail.
+- Own constructor slots in the existing physical reservation ledger. Require
+  the exact descriptor/access owner and its canonical storage, SameValue,
+  native strings, value and error dependencies. Preflight the complete key set,
+  recheck the plan/dependency identities, and require canonical dependency fills
+  before constructing. Caller-filled placeholders are not completion receipts.
+- Compose canonical createWithPrototype, defineData (mask 191), number boxing
+  and Boolean boxing using the actual owned primitive type. Preserve native
+  strings and nested live references; install fields in source order while
+  keeping existing operand coordinates. No second property engine, host import,
+  recursive copy, selector expansion or public acceptance change.
+- Fix structural fact validation to reject duplicate logical fields: matching
+  keys against duplicated fields was not a complete permutation check.
+- **13/13 new tests**, plus the prior **135/135** reference/source/allocation
+  cases. Three zero-import WasmGC instances exercise actual owned resources,
+  displaced indices and decoded/reissued source requirements: both source-order
+  variants, 12-field table growth, all own descriptors/sequences, inherited
+  read-only properties, explicit null/native prototypes, live identity,
+  true/false, -0/NaN/Infinity, and foreign prototype/string wrapper rejection.
+  Observer wrappers do not authenticate production entry publication.
+- Separate existing resource population: fresh exact-parent `4493f10d`
+  checkout and candidate both **147 passing / 14 failing of 161** across three
+  files, with identical normalized full errors. The failures are preservation
+  receipt/dependency mismatches; no old expectations were changed or skipped.
+- Existing **779-case / 38-file** rerun remains **756 passing / 23 failing**,
+  identical normalized full rows against the retained post-commit `4493f10d`
+  report. All **33** policy binaries/inventories and **six** native controls
+  match; public typed-object diagnostic stays **5/16 passing, 11 failing**,
+  identical 131388-byte binary. No full Test262 or production interop credit.
+- Typecheck/lint/format, incremental size/function, coercion/oracle, layering,
+  fallback, flat-directory and inventory checks pass without new allowances or
+  allowed-edge/floor changes. One exact new backend resource root is activated.
+  **Cycle gate remains red:** backend→ir is now 115→117, adding a sixth failing
+  directory pair; the other five S7-u pairs are unchanged. No waiver. Strict
+  modeled closure retains the two nonliteral imports; preservation-only six
+  full/six cut does not certify retirement.
+
+Exact source/report hashes and executable binary costs:
+`plan/audit/6979-native-construction-resource-20261019.json`.
+
+Still required: complete the actual default Object/Function realm (all eligible
+record demands retain that gap), source prototype setters/method requirements,
+actual foreign/dynamic field carriers, canonical property-provider wiring and
+callable/storage closure, then atomic authenticated physical/public entry
+publication. The new kernel is WasmGC-specific; equivalent Linear/WASI native
+construction remains open, not claimed by unchanged scalar/native controls.
+Investigate the inferred-return erasure above and cut architecture cycles.
+The migration and both issues remain in progress; the PR remains draft and
+must not be merged independently of its existing prerequisite stack.
