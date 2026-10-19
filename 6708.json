@@ -1,10 +1,11 @@
 {
   "id": "6708",
   "assignee": "ttraenkler/codex",
-  "requested_by": "ttraenkler/codex",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "issue-6708-a-default-native-first",
   "claimed_at": "2026-10-18T15:38:24Z",
-  "updated_at": "2026-10-18T15:38:24Z",
-  "write_id": "45256-274lv4zm"
+  "updated_at": "2026-10-19T09:26:40Z",
+  "write_id": "83902-wkbhgb7z",
+  "released_at": "2026-10-19T09:26:40Z"
 }
