@@ -35,7 +35,7 @@ import { moduleVarSlotIsUndefinedSeeded } from "../declarations/module-var-undef
 import {
   compileArrayLiteral,
   arrayLiteralEscapeWidensToExternref,
-  objectLiteralIsStandaloneAnyObjectCarrier,
+  objectLiteralIsNativeAnyObjectCarrier,
   objectLiteralForcesHostPath,
   objectLiteralSpreadTakesHostPath,
   resolveComputedKeyExpression,
@@ -1075,7 +1075,7 @@ export function hoistedVarRetypesToConcreteRef(ctx: CodegenContext, decl: ts.Var
     ts.isObjectLiteralExpression(decl.initializer) &&
     !ctx.ordinaryToPrimitiveObjectDeclarations.has(decl) &&
     !(ts.isIdentifier(decl.name) && ctx.growableObjectLiteralVars.has(decl.name.text)) &&
-    objectLiteralIsStandaloneAnyObjectCarrier(ctx, decl.initializer)
+    objectLiteralIsNativeAnyObjectCarrier(ctx, decl.initializer)
   ) {
     return true;
   }
@@ -1930,7 +1930,7 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
       // the tag-6 `ref $Object` carrier — its reads/setPrototypeOf go through the
       // externref `__extern_*` path.
       !initIsProtoReceiverLiteral &&
-      objectLiteralIsStandaloneAnyObjectCarrier(ctx, decl.initializer);
+      objectLiteralIsNativeAnyObjectCarrier(ctx, decl.initializer);
     const anyObjectCarrierTypeIdx = initIsAnyObjectCarrier ? ensureObjectRuntime(ctx).objectTypeIdx : -1;
     // A binding that crosses representation domains must keep the same boxed
     // carrier chosen by the var hoister. In particular, numeric-use analysis

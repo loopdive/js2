@@ -153,7 +153,7 @@ export function isStandaloneUnprovidedExternClass(ctx: CodegenContext, className
  * Name-level only: the caller proves the reference is the ambient binding.
  */
 export function isStandaloneUnavailableConstructorGlobal(ctx: CodegenContext, name: string): boolean {
-  return ctx.standalone && ctx.standaloneGlobalThisImport === undefined && isUnavailableName(ctx, name);
+  return ctx.standalone && ctx.linkedGlobalThisImport === undefined && isUnavailableName(ctx, name);
 }
 
 /**

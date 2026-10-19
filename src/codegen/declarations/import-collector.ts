@@ -247,7 +247,12 @@ function collectorProvesHostEvalString(
 }
 
 function needsHostIndirectEvalImport(ctx: CodegenContext, node: ts.Node): boolean {
-  if (ctx.standalone || ctx.wasi || ctx.strictNoHostImports || ctx.nativeStrings || !ts.isCallExpression(node)) {
+  if (
+    ctx.targetProfile.backend === "wasmgc" ||
+    ctx.strictNoHostImports ||
+    ctx.nativeStrings ||
+    !ts.isCallExpression(node)
+  ) {
     return false;
   }
   const shape = exactIndirectEvalStatement(node);
@@ -321,7 +326,9 @@ export function unifiedVisitNode(ctx: CodegenContext, state: UnifiedCollectorSta
   }
 
   // ── collectConsoleImports ──
-  if (ctx.standalone && !state.consoleValueRead) state.consoleValueRead = isConsoleValueIdentifier(node); // (#6671)
+  if (ctx.targetProfile.environment === "none" && !state.consoleValueRead) {
+    state.consoleValueRead = isConsoleValueIdentifier(node); // (#6671)
+  }
   if (
     ts.isCallExpression(node) &&
     ts.isPropertyAccessExpression(node.expression) &&
@@ -457,7 +464,7 @@ export function unifiedVisitNode(ctx: CodegenContext, state: UnifiedCollectorSta
     // this registration is gated off there. The 0-arg guard keeps a
     // locale-argument form (which would need real Intl) on the host fallback.
     if (
-      (ctx.standalone || ctx.wasi) &&
+      ctx.targetProfile.backend === "wasmgc" &&
       isNumberType(receiverType) &&
       methodName === "toLocaleString" &&
       node.arguments.length === 0
@@ -471,7 +478,8 @@ export function unifiedVisitNode(ctx: CodegenContext, state: UnifiedCollectorSta
     // recognized here — this scan drives `emitNativeNumberFormat` in standalone —
     // or the helper is never emitted and the call site returns null. Gated on
     // standalone (the recovery path); host/WASI keep their existing routing.
-    const isNumFmtRecv = isNumberType(receiverType) || (ctx.standalone && isNumberWrapperType(receiverType));
+    const isNumFmtRecv =
+      isNumberType(receiverType) || (ctx.targetProfile.backend === "wasmgc" && isNumberWrapperType(receiverType));
     if (isNumFmtRecv && methodName === "toFixed") {
       state.primitiveNeeded.add("number_toFixed");
     }
@@ -482,13 +490,13 @@ export function unifiedVisitNode(ctx: CodegenContext, state: UnifiedCollectorSta
       state.primitiveNeeded.add("number_toExponential");
     }
     if (
-      ctx.standalone &&
+      ctx.targetProfile.backend === "wasmgc" &&
       isNumberWrapperType(receiverType) &&
       (methodName === "toString" || methodName === "toLocaleString")
     ) {
       state.primitiveNeeded.add("number_toString");
     }
-    if (ctx.standalone && isNumberWrapperType(receiverType) && methodName === "toString") {
+    if (ctx.targetProfile.backend === "wasmgc" && isNumberWrapperType(receiverType) && methodName === "toString") {
       // radix form needs the 2-arg helper
       state.primitiveNeeded.add("number_toString_radix");
     }
@@ -551,7 +559,7 @@ export function unifiedVisitNode(ctx: CodegenContext, state: UnifiedCollectorSta
     const elemRecvExpr = node.expression.expression;
     const isElemNumFmtRecv =
       ctx.oracle.staticJsTypeOf(elemRecvExpr) === "number" ||
-      (ctx.standalone && ctx.oracle.declaredNameOf(elemRecvExpr) === "Number");
+      (ctx.targetProfile.backend === "wasmgc" && ctx.oracle.declaredNameOf(elemRecvExpr) === "Number");
     if (isElemNumFmtRecv) {
       if (elemMethodName === "toFixed") {
         state.primitiveNeeded.add("number_toFixed");
@@ -763,7 +771,7 @@ export function unifiedVisitNode(ctx: CodegenContext, state: UnifiedCollectorSta
     // (#7079) The HTML Base64 pair joins the same native family on the
     // host-free targets only (base64-native.ts); the JS-host lane keeps its
     // `env.atob`/`env.btoa` import from the ambient declaration, byte-identical.
-    if ((name === "atob" || name === "btoa") && (ctx.standalone || ctx.wasi)) {
+    if ((name === "atob" || name === "btoa") && ctx.targetProfile.backend === "wasmgc") {
       state.escapeNeeded.add(name);
     }
     if (name === "Number") {
@@ -919,7 +927,7 @@ export function unifiedVisitNode(ctx: CodegenContext, state: UnifiedCollectorSta
         // only: standalone/WASI compile the method as a host-free closure (#2194)
         // and must not declare the unsatisfiable `env::` bridge import.
         const isPlainLiteralKey = ts.isNumericLiteral(inner) || ts.isStringLiteralLike(inner);
-        if (!isPlainLiteralKey && !ctx.standalone && !ctx.wasi) {
+        if (!isPlainLiteralKey && ctx.targetProfile.backend !== "wasmgc") {
           state.getterCallbackFound = true;
           break;
         }
@@ -1001,7 +1009,7 @@ export function unifiedVisitNode(ctx: CodegenContext, state: UnifiedCollectorSta
       node.asteriskToken &&
       node.body &&
       !hasDeclareModifier(node) &&
-      !((ctx.standalone || ctx.wasi) && isNativeGeneratorCandidate(ctx, node))
+      !(ctx.targetProfile.backend === "wasmgc" && isNativeGeneratorCandidate(ctx, node))
     ) {
       state.unionFound = true;
     }
@@ -1112,8 +1120,8 @@ export function unifiedVisitNode(ctx: CodegenContext, state: UnifiedCollectorSta
   // seen before any `.then` bridge compiles. gc/host + wasi are untouched
   // (standalone-only setter; the consumer re-checks the target too).
   if (
-    ctx.standalone === true &&
-    ctx.wasi !== true &&
+    ctx.targetProfile.backend === "wasmgc" &&
+    ctx.targetProfile.environment !== "wasi" &&
     ctx.moduleHasHostPromiseSource !== true &&
     ts.isCallExpression(node)
   ) {
@@ -1155,8 +1163,8 @@ export function unifiedVisitNode(ctx: CodegenContext, state: UnifiedCollectorSta
   // the subclass shape needs its own flag, keyed on the heritage clause
   // (pre-body, so a textually-later class declaration is still seen).
   if (
-    ctx.standalone === true &&
-    ctx.wasi !== true &&
+    ctx.targetProfile.backend === "wasmgc" &&
+    ctx.targetProfile.environment !== "wasi" &&
     ctx.moduleHasHostPromiseSource !== true &&
     (ts.isClassDeclaration(node) || ts.isClassExpression(node))
   ) {
@@ -1323,7 +1331,7 @@ export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedColl
   // finalize emits the `__stdout_prepare`/`__stdout_char` readout exports. The
   // sink stays 100% host-free (WasmGC in-module), so the #2961 import-leak gate
   // still rejects genuine host imports. (#6685) Keyed on the environment: a JS one keeps `console_*` below.
-  if (ctx.standalone && hostFreeEnvironment(ctx) && (state.consoleNeededByMethod.size > 0 || state.consoleValueRead)) {
+  if (ctx.targetProfile.environment === "none" && (state.consoleNeededByMethod.size > 0 || state.consoleValueRead)) {
     ctx.usesStandaloneConsoleSink = true;
   }
 
@@ -1634,7 +1642,7 @@ export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedColl
     // native `__apply_closure`/`__hof_*`/`__iter_hof_*` serve exercised callbacks
     // host-free) — the eager registration only ever *declares* an unsatisfiable
     // never-called import that fails the host-free metric. Gate it off (mirrors the
-    // async-CPS `!ctx.standalone` gate below); any residual host-callback site
+    // native-WasmGC gate below); any residual host-callback site
     // degrades to the native closure struct (see compileArrowAsCallback). JS-host
     // lane byte-identical.
 
@@ -1657,8 +1665,8 @@ export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedColl
   // guards on `ctx.funcMap.has("__gen_create_buffer")` internally.
   if (state.generatorFound) {
     const needsNoJsHostFallback =
-      (ctx.standalone || ctx.wasi) && sourceNeedsGeneratorHostImports(ctx, state.sourceFile);
-    if (!(ctx.standalone || ctx.wasi) || needsNoJsHostFallback) {
+      ctx.targetProfile.backend === "wasmgc" && sourceNeedsGeneratorHostImports(ctx, state.sourceFile);
+    if (ctx.targetProfile.backend !== "wasmgc" || needsNoJsHostFallback) {
       addGeneratorImports(ctx, { allowNoJsHost: needsNoJsHostFallback });
     }
     reportEagerGeneratorAbruptResumptions(ctx, state.sourceFile); // (#6781) traced .throw()/.return() on eager
@@ -1756,7 +1764,7 @@ export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedColl
     // the absent-import `else` branch produced before). Genuine JS-host
     // builtins cannot exist in standalone anyway, so there is nothing to lose.
     // Host (JS) mode still registers the import for those builtins.
-    if (ctx.wasi || ctx.standalone) {
+    if (ctx.targetProfile.backend === "wasmgc") {
       continue;
     }
     const params: ValType[] = Array.from({ length: argCount }, () => ({ kind: "externref" }) as ValType);

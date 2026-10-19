@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
 
-// #2372 — standalone dynamic-object-receiver representation.
+// #2372 — native WasmGC dynamic-object-receiver representation.
 //
 // A `const o: any = {}` receiver that is the target of an
 // `Object.defineProperty(o, key, descVar)` with a *dynamic* (non-inline-literal)
@@ -10,16 +10,16 @@ import { compile } from "../src/index.js";
 // native `__obj_define_from_desc` `$Object` runtime, but the read-back `o.key`
 // lowered to `struct.get` against the (different) widened struct, returning 0.
 // The fix suppresses struct-widening for any receiver targeted by a
-// dynamic-descriptor define (standalone), keeping it on the `$Object` path so
+// dynamic-descriptor define, keeping it on the `$Object` path so
 // write and read are consistent.
-async function runStandalone(src: string): Promise<unknown> {
-  const r = await compile(src, { fileName: "test.ts", target: "standalone" });
+async function runNative(target: "standalone" | "wasi", src: string): Promise<unknown> {
+  const r = await compile(src, { fileName: "test.ts", target });
   if (!r.success) throw new Error(`compile error: ${r.errors[0]?.message}`);
-  const { instance } = await WebAssembly.instantiate(r.binary, {});
+  const { instance } = await WebAssembly.instantiate(r.binary, r.importObject ?? {});
   return (instance.exports as { test?: () => unknown }).test?.();
 }
 
-describe("#2372 — standalone dynamic-descriptor receiver read-back", () => {
+describe.each(["standalone", "wasi"] as const)("#2372 — %s dynamic-descriptor receiver read-back", (target) => {
   it("reads back a data value defined via a dynamic descriptor variable", async () => {
     const src = `
       export function test(): number {
@@ -29,7 +29,7 @@ describe("#2372 — standalone dynamic-descriptor receiver read-back", () => {
         return o.x;
       }
     `;
-    expect(await runStandalone(src)).toBe(42);
+    expect(await runNative(target, src)).toBe(42);
   });
 
   it("hasOwnProperty observes a dynamically-defined property", async () => {
@@ -41,7 +41,7 @@ describe("#2372 — standalone dynamic-descriptor receiver read-back", () => {
         return (o.x === 42 && o.hasOwnProperty("x")) ? 1 : 0;
       }
     `;
-    expect(await runStandalone(src)).toBe(1);
+    expect(await runNative(target, src)).toBe(1);
   });
 
   it("reads back a dynamic accessor (getter) descriptor", async () => {
@@ -53,7 +53,7 @@ describe("#2372 — standalone dynamic-descriptor receiver read-back", () => {
         return o.x;
       }
     `;
-    expect(await runStandalone(src)).toBe(9);
+    expect(await runNative(target, src)).toBe(9);
   });
 
   it("mixed inline + dynamic defines on the same receiver both read back", async () => {
@@ -66,7 +66,7 @@ describe("#2372 — standalone dynamic-descriptor receiver read-back", () => {
         return (o.a === 1 && o.x === 42) ? 1 : 0;
       }
     `;
-    expect(await runStandalone(src)).toBe(1);
+    expect(await runNative(target, src)).toBe(1);
   });
 
   // Regression guards: the struct fast path must remain intact for receivers
@@ -79,7 +79,7 @@ describe("#2372 — standalone dynamic-descriptor receiver read-back", () => {
         return o.x;
       }
     `;
-    expect(await runStandalone(src)).toBe(5);
+    expect(await runNative(target, src)).toBe(5);
   });
 
   it("plain property write/read on the same any-receiver is unaffected", async () => {
@@ -90,7 +90,31 @@ describe("#2372 — standalone dynamic-descriptor receiver read-back", () => {
         return o.y;
       }
     `;
-    expect(await runStandalone(src)).toBe(5);
+    expect(await runNative(target, src)).toBe(5);
+  });
+
+  it("dynamic writes through an any alias update a closed WasmGC field", async () => {
+    const src = `
+      export function test(): number {
+        const shaped = { y: 1 };
+        const o: any = shaped;
+        const key: any = "y";
+        o[key] = 5;
+        return shaped.y;
+      }
+    `;
+    expect(await runNative(target, src)).toBe(5);
+  });
+
+  it("closed WasmGC fields remain visible to dynamic own-property reflection", async () => {
+    const src = `
+      export function test(): number {
+        const shaped = { y: 1 };
+        const o: any = shaped;
+        return o.hasOwnProperty("y") && Object.getOwnPropertyNames(o).length === 1 ? 1 : 0;
+      }
+    `;
+    expect(await runNative(target, src)).toBe(1);
   });
 
   it("class-instance field access (typed-struct fast path) is unchanged", async () => {
@@ -101,7 +125,7 @@ describe("#2372 — standalone dynamic-descriptor receiver read-back", () => {
         return p.x;
       }
     `;
-    expect(await runStandalone(src)).toBe(7);
+    expect(await runNative(target, src)).toBe(7);
   });
 
   // Descriptor-reification cases — the un-annotated `var desc = {...}` shape the
@@ -117,7 +141,7 @@ describe("#2372 — standalone dynamic-descriptor receiver read-back", () => {
         return (o as any).x;
       }
     `;
-    expect(await runStandalone(src)).toBe(42);
+    expect(await runNative(target, src)).toBe(42);
   });
 
   it("inferred const receiver + inferred const descriptor reads back", async () => {
@@ -129,7 +153,7 @@ describe("#2372 — standalone dynamic-descriptor receiver read-back", () => {
         return (o as any).x;
       }
     `;
-    expect(await runStandalone(src)).toBe(7);
+    expect(await runNative(target, src)).toBe(7);
   });
 
   it("typed-struct descriptor with multiple attributes reifies", async () => {
@@ -141,7 +165,7 @@ describe("#2372 — standalone dynamic-descriptor receiver read-back", () => {
         return o.x;
       }
     `;
-    expect(await runStandalone(src)).toBe(5);
+    expect(await runNative(target, src)).toBe(5);
   });
 
   it("data+accessor conflict in a reified descriptor still throws TypeError (§6.2.5.6)", async () => {
@@ -158,6 +182,6 @@ describe("#2372 — standalone dynamic-descriptor receiver read-back", () => {
         return threw && !o.hasOwnProperty("foo") ? 1 : 0;
       }
     `;
-    expect(await runStandalone(src)).toBe(1);
+    expect(await runNative(target, src)).toBe(1);
   });
 });

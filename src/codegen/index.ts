@@ -6717,7 +6717,7 @@ export function generateModule(
     // `ta-dyn-mop` arm) unshift in front of it, so running after them makes the
     // extraction fail and the pass decline wholesale. DEFAULT ON since the flip.
     // A graph-local cache must not bypass the foreign ownership check installed below.
-    if (!ctx.standaloneGlobalThisImport?.owns) inlineExternGetCallSites(ctx);
+    if (!ctx.linkedGlobalThisImport?.owns) inlineExternGetCallSites(ctx);
     inlineFlatStrCallSites(ctx); // (#4157) flatten/equals site fast paths — rationale in flat-str-ic.ts
 
     // (#4157) Inline the member-WRITE dispatchers' first arm at the call
@@ -11415,7 +11415,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // soundness rests on. Later fills (`fillDynamicForinVecArms`, the
     // `ta-dyn-mop` arm) unshift in front of it, so running after them makes the
     // extraction fail and the pass decline wholesale. DEFAULT ON since the flip.
-    if (!ctx.standaloneGlobalThisImport?.owns) {
+    if (!ctx.linkedGlobalThisImport?.owns) {
       profilePhase("inline-extern-get-call-sites", () => inlineExternGetCallSites(ctx));
     }
 

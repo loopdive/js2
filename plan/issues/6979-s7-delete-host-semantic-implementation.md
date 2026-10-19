@@ -759,3 +759,98 @@ environment decisions use the explicit environment/value-boundary facts,
 semantic decisions collapse to native WasmGC, accelerators name their family,
 and any host-only construct with no native counterpart is a measured regime
 gap rather than a renamed mode arm.
+
+### S7-c declaration/registry handoff (2026-10-19, Codex)
+
+This third bounded S7-c slice continues on `codex/6979-s7c-ir-arms`. It
+finishes the planned `src/codegen/declarations/` + `registry/` group and closes
+the directly exposed native-object consumer mismatch in the same checkpoint.
+S7 remains `in-progress`; the PR stays stacked and draft until S7-a/S7-b land.
+
+**Ratchet.** The reviewed reductions are banked:
+
+| Measure | Statement checkpoint | Declaration/registry checkpoint |
+| --- | ---: | ---: |
+| Raw `ctx.standalone` hits in `src/` | 1,549 | **1,469** |
+| Matching source files | 486 | **472** |
+| `src/codegen/declarations/` hits | 41 | **0** |
+| `src/codegen/registry/` hits | 13 | **0** |
+
+The remaining 26-hit reduction comes from the dependency closure and from
+renaming internal capability facts whose names still encoded the retired mode:
+`standaloneGlobalThisImport` is now `linkedGlobalThisImport`, and
+`standaloneMicrotaskNotifyImport` is now `microtaskNotifyImport`. Public compile
+options and link-manifest fields are unchanged.
+
+**Classification.** Declaration and registry sites now describe the actual
+axis they select:
+
+- WasmGC semantic/carrier analysis uses `targetProfile.backend === "wasmgc"`:
+  empty-object shape evolution, divergent assigned shapes, descriptor-array
+  carriers, module-undefined seeds, parameter/return inference and native
+  struct registration are backend facts, not environment or JS-host facts.
+- Registry construction uses the same backend fact for native error types,
+  type registration, peer exception namespaces and native import ownership.
+  The linear backend retains its pre-existing import/type behavior.
+- Environment-owned decisions are explicit. Standalone console value/sink
+  registration uses `targetProfile.environment === "none"`; the historical
+  GC/standalone Promise-source condition is expressed as WasmGC plus
+  `environment !== "wasi"`; microtask notification is a named linked
+  capability rather than a mode field.
+- Import normalization is only a classification/routing cleanup: it maps each
+  request to backend, environment, boundary or named-capability facts before
+  registration. It does not copy values, change object identity, or introduce
+  a new semantic provider. Linear and JS-boundary compatibility behavior is
+  preserved.
+
+**Native object dependency closure.** Enabling the declaration analyses for
+WASI exposed consumers that still treated `ctx.standalone` as synonymous with
+"native WasmGC". The initial #2372 probe made the split visible: descriptor
+and receiver analyses selected native carriers, while dynamic reads and
+reflection skipped the finalized native arms. The closure is deliberately on
+the semantic side of the boundary:
+
+- non-empty `any`/`unknown` object literals use the existing native `$Object`
+  carrier on every WasmGC environment, so a dynamic descriptor remains an
+  object the native `__obj_define_from_desc` machinery can inspect;
+- finalized closed-struct `__extern_get`, `__extern_set`, has-own and own-name
+  arms now run for every WasmGC environment;
+- native `$Object` and closed WasmGC structs remain canonical inside the
+  module. Existing JS-host-backed wrappers/facades are retained only at the
+  explicit JS value boundary; this slice adds no internal dependency on JS
+  objects and performs no object copying at that boundary.
+
+This answers the boundary design question directly: objects should use JS
+machinery only when they actually cross into JavaScript. Reusing the existing
+host-backed boundary object is preferable there, because it preserves identity
+and avoids duplicate mirrors. It must not become the compiler's internal
+semantic representation; WASI demonstrates why the native carrier has to stand
+on its own without a JS host.
+
+**Validation.** The final candidate passes:
+
+- `tests/issue-2372.test.ts`: 26/26 across standalone and WASI, including
+  dynamic data/accessor descriptors, conflict throwing, closed-struct dynamic
+  get/set and own-property reflection.
+- Focused object/carrier suite: 208 passing and five failing assertions. The
+  same five failures reproduce exactly on pre-slice commit `1c98d6a685` (three
+  stale known-gap expectations, RegExp gOPN and the existing #4194 constructor
+  field divergence), so there is no candidate-only failure.
+- Equivalence gate: 20 failing, 2,008 passing, 22 known failures; two baseline
+  failures now pass and there are **no new regressions**.
+- TypeScript 7 typecheck, Biome lint, Prettier, standalone-arm ratchet,
+  IR-fallback, import-cycle, flat-directory, LOC, function, coercion and oracle
+  gates pass. Compiler-boundary inventory remains
+  `inventory-valid-architecture-incomplete` with `errors: []`; dead-export
+  analysis retains only the two known nonliteral dynamic-import witnesses.
+- Host-import policy remains 33 probes / 452 imports / zero `regime-gap` or
+  `unknown` imports. Runtime metrics remain 12,066 lines, 1,959
+  `resolveImport` lines / 7 cases, 898 owned-adapter lines and 1,194 explicit
+  capability lines.
+
+**Next handoff.** A compact next checkpoint is the remaining leaf-directory
+group `src/codegen/context/` (4), `analysis/` (3), `helpers/` (5), `classes/`
+(18) and `closures/` (13): 43 raw hits total. Continue classifying by backend,
+environment, value boundary and named accelerator. Do not reintroduce a JS
+object as internal semantic storage; keep host-backed objects at the explicit
+interop boundary only.

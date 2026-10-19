@@ -6454,7 +6454,7 @@ export function fillApplyClosure(ctx: CodegenContext): void {
   // Build the arity dispatch from the bottom up (n>MAX → undefined), each arm
   // guarded on the matching __call_fn_method_N being registered.
   const callMethod = (n: number): number | undefined => ctx.funcMap.get(`__call_fn_method_${n}`);
-  const linkedCallName = ctx.standaloneGlobalThisImport?.call;
+  const linkedCallName = ctx.linkedGlobalThisImport?.call;
   // (#5383 S2f R12) …or, on the standalone wasm→wasm lane, the linked
   // provider's own `__apply_closure`, published as `__js2wasm_link_apply`.
   // Reached only after every module-local arity dispatcher has already
@@ -8471,7 +8471,7 @@ export function fillConcatNativeHoleArms(ctx: CodegenContext): void {
  * `__extern_*` imports own these paths.
  */
 /**
- * Teach the standalone own-property predicates about closed compiler structs.
+ * Teach the native WasmGC own-property predicates about closed compiler structs.
  *
  * The object runtime is emitted while user shapes are still being discovered,
  * so its eager `__object_hasOwn` / `__hasOwnProperty` bodies can initially see
@@ -8484,7 +8484,7 @@ export function fillConcatNativeHoleArms(ctx: CodegenContext): void {
  * all previously-baked call indices remain stable.
  */
 export function fillClosedStructHasOwnArms(ctx: CodegenContext): void {
-  if (!ctx.standalone || ctx.anyStrTypeIdx < 0) return;
+  if (ctx.targetProfile.backend !== "wasmgc" || ctx.anyStrTypeIdx < 0) return;
   const flattenIdx = ctx.nativeStrHelpers.get("__str_flatten");
   const equalsIdx = ctx.nativeStrHelpers.get("__str_equals");
   if (flattenIdx === undefined || equalsIdx === undefined) return;
@@ -8979,7 +8979,7 @@ function buildClosedStructEnumerationArms(
 }
 
 export function fillClosedStructOwnPropertyNamesArms(ctx: CodegenContext): void {
-  if (!ctx.standalone) return;
+  if (ctx.targetProfile.backend !== "wasmgc") return;
   const targets = ["__getOwnPropertyNames"]
     .map((name) => ctx.mod.functions.find((candidate) => candidate.name === name))
     .filter((f): f is NonNullable<typeof f> => f !== undefined);
@@ -9131,13 +9131,13 @@ export function fillClosedStructEnumerationArms(ctx: CodegenContext): void {
 }
 
 /**
- * Finalize the standalone dynamic getter with closed-struct field arms.
+ * Finalize the native WasmGC dynamic getter with closed-struct field arms.
  * Computed reads such as Acorn's `opts[opt]` otherwise fall through the eager
  * `$Object`-only body and return undefined even though Object.hasOwn correctly
  * reports the physical field.
  */
 export function fillClosedStructExternGetArms(ctx: CodegenContext): void {
-  if (!ctx.standalone || ctx.anyStrTypeIdx < 0) return;
+  if (ctx.targetProfile.backend !== "wasmgc" || ctx.anyStrTypeIdx < 0) return;
   const inheritedSetGetMissActive = inheritedSetAnyDirty(ctx);
   const fn = ctx.mod.functions.find((candidate) => candidate.name === "__extern_get");
   const flattenIdx = ctx.nativeStrHelpers.get("__str_flatten");

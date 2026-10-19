@@ -272,7 +272,6 @@ import {
   compileArrayConstructorCall,
   compileObjectLiteralAsExternref,
   compileSymbolCall,
-  objectLiteralTakesStandaloneAnyObjectPath,
   resolveComputedKeyExpression,
   resolvePropertyNameText,
 } from "../literals.js";

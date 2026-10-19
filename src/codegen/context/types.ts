@@ -3884,19 +3884,18 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   /** Widened empty-object fields introduced by Object.defineProperty rather than assignment. */
   widenedDefinePropertyKeys: Set<string>;
   /**
-   * (#2372) Standalone-only: receiver var names that are the target of at least
+   * (#2372) Native-WasmGC-only: receiver var names that are the target of at least
    * one `Object.defineProperty(var, key, desc)` where `desc` is a *dynamic*
    * (non-inline-literal) descriptor. Such defines are applied via the native
    * `__obj_define_from_desc` `$Object` runtime, which the struct-widening read
    * path (`struct.get`) cannot observe. Membership here suppresses
    * struct-widening for the receiver so it stays on the `$Object` representation
    * and both the dynamic write and the read-back route through the native
-   * runtime consistently. Empty in host/gc/wasi mode (only populated under
-   * `ctx.standalone`).
+   * runtime consistently. Empty on the linear backend.
    */
   dynamicDescriptorWidenVars: Set<string>;
   /**
-   * (#2584) Standalone-only: receiver var names that are the subject of at least
+   * (#2584) Native-WasmGC-only: receiver var names that are the subject of at least
    * one `$Object`-hash-only operation — bracket read/write (`o[k]`), `key in o`,
    * `Object.keys/values/entries/getOwnPropertyDescriptor/getOwnPropertyNames(o)`,
    * `Object.assign(o, …)` / `Object.assign(…, o)`, or `for (… in o)`. These
@@ -3907,8 +3906,7 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    * struct-widening for the receiver so it stays a `__new_plain_object` /
    * `$Object`; dot-writes then route through `__extern_set` and every access form
    * reads the same hash consistently. Mirrors `dynamicDescriptorWidenVars`; the
-   * two sets are additive. Empty in host/gc/wasi mode (only populated under
-   * `ctx.standalone`).
+   * two sets are additive. Empty on the linear backend.
    */
   objectHashConsumerVars: Set<string>;
   /**
@@ -4277,8 +4275,8 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    *  `__unbox_string`, `__str_from_mem`, `__str_to_mem`,
    *  `__str_extern_len`). Implies `nativeStrings === true`. */
   standalone: boolean;
-  /** Linked zero-argument getter for the canonical standalone realm-global object. */
-  standaloneGlobalThisImport?: {
+  /** Linked zero-argument getter for the canonical realm-global object. */
+  linkedGlobalThisImport?: {
     module: string;
     name: string;
     call?: string;
@@ -4286,7 +4284,7 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
     owns?: string;
     get?: string;
   };
-  standaloneMicrotaskNotifyImport?: { module: string; name: string };
+  microtaskNotifyImport?: { module: string; name: string };
   sharedScriptVarBindings?: boolean;
   /** (#5383 S2p) True while the outlined `__native_globalThis_ensure` seed body
    *  is under construction, so a re-entrant realm-global read inside the seed

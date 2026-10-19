@@ -617,7 +617,7 @@ function buildLinkedGlobalCallFallback(
   firstArgLocal: number,
   argsLocal: number,
 ): Instr[] {
-  const linkedGlobal = ctx.standaloneGlobalThisImport;
+  const linkedGlobal = ctx.linkedGlobalThisImport;
   const callName = linkedGlobal?.call;
   if (linkedGlobal === undefined || callName === undefined) return [{ op: "ref.null.extern" }];
   const callIdx = ctx.funcMap.get(callName);
@@ -804,7 +804,7 @@ function emitClosureCallExportN(ctx: CodegenContext, arity: number): void {
 
   const linkedArgsLocal = funcLocal + 1;
   let funcrefDispatch: Instr[] =
-    ctx.standaloneGlobalThisImport?.call !== undefined
+    ctx.linkedGlobalThisImport?.call !== undefined
       ? buildLinkedGlobalCallFallback(
           ctx,
           arity,
@@ -1403,7 +1403,7 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number,
 
   const linkedArgsLocal = prevThisLocal + 3;
   let funcrefDispatch: Instr[] =
-    ctx.standaloneGlobalThisImport?.call !== undefined
+    ctx.linkedGlobalThisImport?.call !== undefined
       ? buildLinkedGlobalCallFallback(ctx, arity, 1, [{ op: "local.get", index: 0 }], 2, linkedArgsLocal)
       : [{ op: "ref.null.extern" }];
   // (#3673 round 10) per-entry callBody capture for the arity-bucketed

@@ -28,8 +28,7 @@
  * Exactly the redeclaration sibling's: the declaration is pinned to the
  * externref slot (`redeclaredObjectIdentityDeclarations`, consulted by every
  * module/local slot typer) and every participating literal to the open
- * `$Object` builder (`redeclaredObjectIdentityLiterals`). Standalone only, like
- * the sibling.
+ * `$Object` builder (`redeclaredObjectIdentityLiterals`) on WasmGC.
  *
  * ## Why the predicate is narrow
  *
@@ -102,7 +101,7 @@ export function collectAssignedShapeDivergentObjects(
   isModuleScoped: (decl: ts.VariableDeclaration) => boolean,
   markOpenConsumers: (decl: ts.VariableDeclaration) => void,
 ): void {
-  if (!ctx.standalone) return;
+  if (ctx.targetProfile.backend !== "wasmgc") return;
   const assignedLiterals = new Map<ts.VariableDeclaration, ts.ObjectLiteralExpression[]>();
   const visit = (node: ts.Node): void => {
     if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken) {

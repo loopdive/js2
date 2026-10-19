@@ -1917,8 +1917,8 @@ export function objectLiteralSpreadTakesHostPath(ctx: CodegenContext, expr: ts.O
 
 /**
  * (#3037 CS1a) True when a **non-empty, spread-free, data-only** object literal
- * is produced into a genuine `any`/`unknown` contextual position under
- * `--target standalone` — a subset of the `isAnyContextNonEmpty` branch of
+ * is produced into a genuine `any`/`unknown` contextual position on a native
+ * WasmGC backend — a subset of the `isAnyContextNonEmpty` branch of
  * `compileObjectLiteral` that builds it as an open `$Object` and hands back an
  * **externref**. This is the object-identity CS1a "carrier" site: such a literal
  * assigned to an `any`-typed local is currently carried as an externref, so at
@@ -1938,11 +1938,8 @@ export function objectLiteralSpreadTakesHostPath(ctx: CodegenContext, expr: ts.O
  * parameter default. The pure string-index DICTIONARY case is intentionally
  * excluded (it must keep the externref carrier for runtime `o[k]=v` writes).
  */
-export function objectLiteralIsStandaloneAnyObjectCarrier(
-  ctx: CodegenContext,
-  expr: ts.ObjectLiteralExpression,
-): boolean {
-  if (!ctx.standalone) return false;
+export function objectLiteralIsNativeAnyObjectCarrier(ctx: CodegenContext, expr: ts.ObjectLiteralExpression): boolean {
+  if (ctx.targetProfile.backend !== "wasmgc") return false;
   if (expr.properties.length === 0) return false;
   if (ts.isParameter(expr.parent)) return false;
   // Data-only, spread-free, statically-named keys — matches the open-`$Object`
@@ -1990,35 +1987,29 @@ function objectLiteralHasCallableProperty(ctx: CodegenContext, expr: ts.ObjectLi
 }
 
 /**
- * (#1901/#2542, extracted for #3128) The standalone open-`$Object` divert
+ * (#1901/#2542, extracted for #3128) The native WasmGC open-`$Object` divert
  * decision for a NON-EMPTY object literal: `compileObjectLiteral` builds the
  * literal as an open `$Object` handed back as **externref** (via
  * `compileObjectLiteralAsExternref`) instead of a closed struct when this
  * predicate answers true. Exported so CONSUMERS that pre-decide a slot type
  * for the literal's value can make the IDENTICAL decision — the same
  * lockstep discipline `objectLiteralSpreadTakesHostPath` (#2804) and
- * `objectLiteralIsStandaloneAnyObjectCarrier` (#1930) established. The
+ * `objectLiteralIsNativeAnyObjectCarrier` (#1930) established. The
  * inlined-IIFE return-local typing (calls.ts, #3128) consults this: typing
  * the ret-local from the TS struct type while the literal lowers dynamically
  * made the ret-value coercion's `ref.test` arm silently null the result.
  *
- * Shape gate: standalone only; data props / spreads / plain-named method
+ * Shape gate: native WasmGC only; data props / spreads / plain-named method
  * shorthand (#3099), no accessor / computed / symbol keys, not a parameter
  * default. Context gate: requires an EXPLICIT any / unknown / `object`
  * contextual type (#1897 — an ABSENT contextual type means consumers compile
  * against the inferred struct), or a PURE string-index dictionary context
  * (#2542).
  */
-export function objectLiteralTakesStandaloneAnyObjectPath(
-  ctx: CodegenContext,
-  expr: ts.ObjectLiteralExpression,
-): boolean {
-  if (ctx.standalone && ctx.redeclaredObjectIdentityLiterals.has(expr)) return true;
+export function objectLiteralTakesNativeAnyObjectPath(ctx: CodegenContext, expr: ts.ObjectLiteralExpression): boolean {
+  if (ctx.targetProfile.backend === "wasmgc" && ctx.redeclaredObjectIdentityLiterals.has(expr)) return true;
   if (
-    // (#2542) `ctx.wasi` admitted so the PURE string-index arm below can fire on
-    // the other host-free target; the #1901 any-context arm stays standalone-only,
-    // enforced at the return.
-    !(ctx.standalone || ctx.wasi) ||
+    ctx.targetProfile.backend !== "wasmgc" ||
     expr.properties.length === 0 ||
     ts.isParameter(expr.parent) ||
     // only data props / spreads / plain-named method shorthand we can build onto
@@ -2082,9 +2073,7 @@ export function objectLiteralTakesStandaloneAnyObjectPath(
   const strIndex = ctxTypeNonEmpty ? ctx.checker.getIndexInfoOfType(ctxTypeNonEmpty, ts.IndexKind.String) : undefined;
   const isPureStringIndexContext = !!strIndex && !!ctxTypeNonEmpty && ctxTypeNonEmpty.getProperties().length === 0;
   if (objectLiteralHasCallableProperty(ctx, expr)) return true;
-  // #1901's any-context arm stays standalone-only (widening it would change every
-  // any-typed literal's lowering under wasi); #2542's index arm covers both.
-  return (ctx.standalone && isAnyContextNonEmpty) || isPureStringIndexContext;
+  return isAnyContextNonEmpty || isPureStringIndexContext;
 }
 
 /**
@@ -2388,7 +2377,7 @@ export function compileObjectLiteral(
       }
     }
   }
-  if (objectLiteralTakesStandaloneAnyObjectPath(ctx, expr)) {
+  if (objectLiteralTakesNativeAnyObjectPath(ctx, expr)) {
     const objResult = compileObjectLiteralAsExternref(ctx, fctx, expr);
     if (objResult) return objResult;
     // fall through to the struct path if the $Object builder declined.

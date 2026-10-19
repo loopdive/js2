@@ -7,7 +7,7 @@ import { ensureLateImport, flushLateImportShifts } from "../shared.js";
  * local function or a mismatched import as the requested host scheduler.
  */
 export function registerMicrotaskNotification(ctx: CodegenContext): Instr[] {
-  const binding = ctx.standaloneMicrotaskNotifyImport;
+  const binding = ctx.microtaskNotifyImport;
   if (!binding) return [];
   const index = ensureLateImport(ctx, binding.name, [], [], binding.module);
   // Complete this import batch before emitting a call to its newly inserted

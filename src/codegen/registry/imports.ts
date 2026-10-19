@@ -369,7 +369,7 @@ export function resolveDeferredStringConstants(ctx: CodegenContext): void {
  * source text can retain its native carrier everywhere else.
  */
 export function addHostStringConstantGlobal(ctx: CodegenContext, value: string): number | undefined {
-  if (ctx.standalone || ctx.wasi || ctx.strictNoHostImports) return undefined;
+  if (ctx.targetProfile.backend === "wasmgc" || ctx.strictNoHostImports) return undefined;
   if (!ctx.nativeStrings) {
     addStringConstantGlobal(ctx, value);
     const globalIdx = ctx.stringGlobalMap.get(value);
@@ -775,7 +775,7 @@ export function addStringImports(ctx: CodegenContext): void {
   if (ctx.hasStringImports) return;
   // #1470: standalone target must never register the wasm:js-string namespace.
   // The nativeStrings path is the standalone alternative and is forced on for
-  // ctx.standalone in createCodegenContext. If a caller still reaches this
+  // native WasmGC policy in createCodegenContext. If a caller still reaches this
   // path under standalone (e.g. via a missed gate), no-op so the resulting
   // module remains JS-host-free. WASI mode keeps the historical no-op
   // behavior via the same nativeStrings forcing.
@@ -1851,7 +1851,7 @@ export function addIteratorImports(ctx: CodegenContext): void {
  *   - `__get_caught_exception` () → externref  (for the body's try/catch wrapper)
  */
 export function addGeneratorImports(ctx: CodegenContext, options?: { allowNoJsHost?: boolean }): void {
-  if ((ctx.standalone || ctx.wasi) && !options?.allowNoJsHost) return;
+  if (ctx.targetProfile.backend === "wasmgc" && !options?.allowNoJsHost) return;
   // Guard: only register once
   if (ctx.funcMap.has("__gen_create_buffer")) return;
 
@@ -1892,7 +1892,7 @@ export function addGeneratorImports(ctx: CodegenContext, options?: { allowNoJsHo
 /** Scan user code and register only the extern class imports actually used */
 export function collectUsedExternImports(ctx: CodegenContext, sourceFile: ts.SourceFile): void {
   const registered = new Set<string>();
-  const useNativeEncodingApi = ctx.wasi || ctx.standalone || ctx.strictNoHostImports;
+  const useNativeEncodingApi = ctx.targetProfile.backend === "wasmgc" || ctx.strictNoHostImports;
   const isNativeEncodingClass = (className: string | undefined): boolean =>
     useNativeEncodingApi && (className === "TextEncoder" || className === "TextDecoder");
 
@@ -2117,7 +2117,7 @@ export function collectUsedExternImports(ctx: CodegenContext, sourceFile: ts.Sou
           // class, harness `verifyProperty`/`obj[name]` drives it into ~4.5k
           // tests). Skipping the pre-registration lets the native routing win;
           // host/gc mode is unchanged (still eagerly seeds the host import).
-          if (!(ctx.standalone || ctx.wasi)) {
+          if (ctx.targetProfile.backend !== "wasmgc") {
             register("__extern_get", [{ kind: "externref" }, { kind: "externref" }], [{ kind: "externref" }]);
           }
         }

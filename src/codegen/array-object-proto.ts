@@ -3984,7 +3984,7 @@ export function emitAsyncGeneratorFunctionPrototypeSingleton(
  */
 export function emitNativeGlobalThisObject(ctx: CodegenContext, fctx: FunctionContext): ValType | null {
   ensureObjectRuntime(ctx);
-  const linkedGlobal = ctx.standaloneGlobalThisImport;
+  const linkedGlobal = ctx.linkedGlobalThisImport;
   if (linkedGlobal !== undefined) {
     const getterIdx = ensureLateImport(ctx, linkedGlobal.name, [], [{ kind: "externref" }], linkedGlobal.module);
     if (linkedGlobal.call !== undefined) {

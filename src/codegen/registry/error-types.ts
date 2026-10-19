@@ -157,7 +157,7 @@ export function externrefBackedOwnFieldBacking(
  * `ref.null extern` placeholder, so `err.name` reads the correct value in
  * standalone mode (the property-access fast path in `property-access.ts`
  * already does `struct.get $Error_struct[2]` for `.name` under
- * `ctx.wasi || ctx.standalone`). The constant is materialized via the
+ * native WasmGC backend). The constant is materialized via the
  * shared `stringConstantExternrefInstrs` dual-mode helper: nativeStrings
  * mode builds the FlatString struct inline + `extern.convert_any`;
  * host-strings mode emits a `global.get` of the interned string constant.
@@ -580,14 +580,16 @@ export function ensureNativeSuppressedErrorCtor(ctx: CodegenContext): number | u
 /**
  * Does `fillExternGetErrorProps` build the `constructor` arm for user error
  * constructor `name`? When this module mints `$Error_struct` instances for it
- * — and (#6723 D4) always in a wasm-consumed standalone PROVIDER, which must
+ * — and (#6723 D4) always in a wasm-consumed native WasmGC PROVIDER, which must
  * also answer for instances its CONSUMER minted: the linked consumer lowers
  * `new Test262Error(…)` to its own `$Error_struct` (a canonical type, so this
  * arm sees it), and the provider's function value is the constructor both
  * modules name.
  */
 function userErrorCtorArmApplies(ctx: CodegenContext, name: string): boolean {
-  return ctx.funcMap.has(`__new_${name}`) || (ctx.standalone && ctx.exportsConsumedByWasm === true);
+  return (
+    ctx.funcMap.has(`__new_${name}`) || (ctx.targetProfile.backend === "wasmgc" && ctx.exportsConsumedByWasm === true)
+  );
 }
 
 /**

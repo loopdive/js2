@@ -2325,7 +2325,7 @@ function compileIdentifierCore(
     // symbol-less name has no foreign binding to leak, and it is exactly the
     // script-installed-global shape the linked realm serves (`dynamicAnswer`
     // written by the owning realm before this module evaluates).
-    if ((!unresolvedInModuleGoal || !sym) && ctx.standaloneGlobalThisImport !== undefined) {
+    if ((!unresolvedInModuleGoal || !sym) && ctx.linkedGlobalThisImport !== undefined) {
       const getIdx = ensureLateImport(
         ctx,
         "__extern_get",

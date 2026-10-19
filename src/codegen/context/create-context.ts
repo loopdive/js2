@@ -419,10 +419,10 @@ export function createCodegenContext(
     nodeFsReadSyncIdx: -1,
     nodeFsWriteSyncIdx: -1,
     standalone: targetProfile.nativeRegime, // (#5385) the native semantic regime, not the environment
-    ...(options?.standaloneGlobalThisImport ? { standaloneGlobalThisImport: options.standaloneGlobalThisImport } : {}),
+    ...(options?.standaloneGlobalThisImport ? { linkedGlobalThisImport: options.standaloneGlobalThisImport } : {}),
     sharedScriptVarBindings: options?.standaloneScriptVarBindings,
     ...(options?.standaloneMicrotaskNotifyImport
-      ? { standaloneMicrotaskNotifyImport: options.standaloneMicrotaskNotifyImport }
+      ? { microtaskNotifyImport: options.standaloneMicrotaskNotifyImport }
       : {}),
     directEvalMode: options?.directEval ?? "legacy",
     runtimeEvalProviderAbsent: targetProfile.target === "standalone" && options?.runtimeEvalProvider === false,

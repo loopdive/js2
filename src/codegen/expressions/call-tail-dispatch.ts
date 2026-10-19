@@ -42,7 +42,7 @@ import {
   hoistVarDeclarations,
   resolveWasmType,
 } from "../index.js";
-import { objectLiteralTakesStandaloneAnyObjectPath, resolveComputedKeyExpression } from "../literals.js";
+import { objectLiteralTakesNativeAnyObjectPath, resolveComputedKeyExpression } from "../literals.js";
 import { emitNullCheckThrow, typeErrorThrowInstrs } from "../property-access.js";
 import { tryCompileStandaloneRegExpSymbolCall, usesNativeRegExpProvider } from "../regexp-standalone.js";
 import type { InnerResult } from "../shared.js";
@@ -405,7 +405,7 @@ export function compileTailDispatch(
             // expression will ACTUALLY lower to. Under standalone, an object
             // literal in any/unknown/dictionary context diverts to the open
             // `$Object` path and produces an **externref**
-            // (`objectLiteralTakesStandaloneAnyObjectPath`, the #1901/#2542
+            // (`objectLiteralTakesNativeAnyObjectPath`, the #1901/#2542
             // gate) — but `resolveWasmType` types the ret local from the TS
             // struct type. The return-site coercion externref→(ref null $struct)
             // then goes through a `ref.test` arm that silently yields NULL
@@ -435,10 +435,7 @@ export function compileTailDispatch(
                   ) {
                     retExpr = ts.isBinaryExpression(retExpr) ? retExpr.right : retExpr.expression;
                   }
-                  if (
-                    ts.isObjectLiteralExpression(retExpr) &&
-                    objectLiteralTakesStandaloneAnyObjectPath(ctx, retExpr)
-                  ) {
+                  if (ts.isObjectLiteralExpression(retExpr) && objectLiteralTakesNativeAnyObjectPath(ctx, retExpr)) {
                     divertedObjlitReturn = true;
                     return;
                   }
