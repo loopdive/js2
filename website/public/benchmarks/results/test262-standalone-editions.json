@@ -2856,9 +2856,9 @@
   },
   {
     "edition": "ES2024",
-    "pass": 389,
-    "fail": 59,
-    "ce": 108,
+    "pass": 391,
+    "fail": 63,
+    "ce": 102,
     "skip": 0,
     "total": 556,
     "pct": 70,
@@ -3054,12 +3054,12 @@
       },
       {
         "name": "promise-with-resolvers",
-        "pass": 2,
-        "fail": 1,
-        "ce": 6,
+        "pass": 4,
+        "fail": 5,
+        "ce": 0,
         "skip": 0,
         "total": 9,
-        "pct": 22
+        "pct": 44
       },
       {
         "name": "String.prototype.isWellFormed",
@@ -3127,8 +3127,8 @@
       {
         "name": "top-level-await",
         "pass": 0,
-        "fail": 0,
-        "ce": 3,
+        "fail": 3,
+        "ce": 0,
         "skip": 0,
         "total": 3,
         "pct": 0
@@ -3208,8 +3208,8 @@
       {
         "name": "dynamic-import",
         "pass": 0,
-        "fail": 0,
-        "ce": 1,
+        "fail": 1,
+        "ce": 0,
         "skip": 0,
         "total": 1,
         "pct": 0
@@ -3571,18 +3571,18 @@
   },
   {
     "edition": "ES2026",
-    "pass": 4581,
+    "pass": 4582,
     "fail": 197,
-    "ce": 143,
+    "ce": 142,
     "skip": 0,
     "total": 4921,
     "pct": 93,
     "features": [
       {
         "name": "Temporal",
-        "pass": 4482,
+        "pass": 4483,
         "fail": 106,
-        "ce": 23,
+        "ce": 22,
         "skip": 0,
         "total": 4611,
         "pct": 97
