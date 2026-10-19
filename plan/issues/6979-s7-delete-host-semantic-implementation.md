@@ -1960,3 +1960,121 @@ parent and candidate; keep it visible. Unknown runtime target spellings are
 not accepted adapter targets; do not reuse `js-host` fixtures as valid `gc`
 evidence. Preserve all full S7 retirement, compatibility, accelerator and
 conformance acceptance requirements: this checkpoint does not satisfy them.
+
+### S7-c native constructor lookup checkpoint and landing handoff (2026-10-19, Codex)
+
+**Publication, not merge readiness.** The user requested the current work in
+a PR with a repository-issue handoff. Publish this checkpoint on
+`codex/6979-s7c-ir-arms`, PR [#6762](https://github.com/loopdive/js2/pull/6762),
+above parent `62d4803e12d1d025594fce64f0496ef36a7f43e6`. Keep the PR draft:
+the import-count gate below is red, the prerequisite
+[Remove the host-assisted semantic policy](https://github.com/loopdive/js2/pull/6701)
+is still open, and the recovered S7-b commit `9423a71e82` remains in the stack.
+Do not merge this stack independently or describe S7 as complete. No GitHub
+issue was created or edited.
+
+**Implementation and ownership boundary.** Fix the retained genuine-array
+`constructor === Array` failure in shared native runtime demand planning,
+not by adding a special direct-AST property reader. Previously only two
+reflective String helpers demanded the Array carrier. Constructor demand now
+prepares Array, wrapper and ordinary-object carriers, prototype tables and
+companion seeds for every WasmGC environment. Bare builtin constructor and
+namespace values no longer become WASI null placeholders. A namespace
+publishes its singleton identity before recursive property seeding.
+
+The source pre-scan admits unknown computed keys and stored `Reflect.get`
+values; it no longer requires an `Object` identifier to give an ordinary
+object its inherited constructor. Direct `Reflect.get` calls with known
+non-constructor literal keys do not force this demand. This is not a proof
+that every reflective alias through a dynamic realm/global is covered;
+audit those shapes before claiming general reflection completeness.
+
+Array and wrapper lookup uses the live prototype property, not an intrinsic
+selected solely from the receiver tag. Own constructor properties still
+shadow inheritance, deletion restores it, and the explicit null-prototype
+flag prevents an invented Object constructor. The removed
+`plainCtorCarrierDemanded` field had one definition and two setup producers;
+its only consumer and its `moduleMentionsObjectIdentifier` helper are removed
+together. Preserve the existing JS boundary normalization: no adapter body,
+copying policy or host semantic implementation was added or removed here.
+
+**Runtime evidence, with denominators.** Node 24 requires
+`--experimental-wasm-exnref` for these local runs. Temporary worker-config
+and hook flag adjustments are local only and must not be committed.
+
+- New native lookup suite: **24/24**, twelve cases each on standalone and
+  WASI. Every module verifies an empty import list, instantiates with `{}`,
+  and checks the runtime answer. Cases cover literal/split/map arrays,
+  unknown computed keys without an Array identifier, own shadow/delete,
+  live Array/Number/Object prototype replacement, wrapper metadata,
+  ordinary objects without an Object identifier, explicit null prototypes,
+  and stored Reflect.get.
+- Focused native/boundary/existing-constructor run: **38/38**. The eight
+  boundary tests retain JS-owned constructor and getter-result identities
+  and the getter's original receiver, alongside typed-facade re-entry tests.
+  No JS-owned object is replaced by a native copy.
+- Controlled, unchanged **14-file / 182-row** comparison at parent `62d4803e12`
+  versus candidate: **143 passing / 37 failing / two skipped → 160 passing /
+  20 failing / two skipped**. Only the original sixteen new native cases
+  and the old genuine-array constructor assertion change status. All twenty
+  remaining failure messages match exactly.
+- Final expanded same-file population: **191 rows / 169 passing / 20 failing /
+  two skipped** after adding eight live/null/Reflect controls and one boundary
+  control. Those nine additions are passing controls, not nine measured
+  parent-to-candidate fixes. All twenty residual failure messages still match
+  the parent. Fourteen cannot execute because Test262 source files are missing;
+  the other six are one obsolete host Object_get_constructor expectation,
+  two existing footprint/bridge assertions, and three existing Node namespace
+  import cases. This cohort is not green and is not an IR Test262 sweep.
+
+Local reports: `.tmp/s7c-constructor-lookup-{parent,candidate}.json`,
+`.tmp/s7c-constructor-lookup-final-cohort.json`, and
+`.tmp/s7c-constructor-lookup-live-controls-after.json`. The committed test
+files are the portable runtime witnesses; ignored reports are local evidence.
+
+**Binary cost, not just arm-count reduction.** Twelve compile-and-run probes
+compare the exact parent with this candidate at optimize level zero and the
+same filename/options. Nine no-lookup arithmetic, Fibonacci and numeric-index
+programs are byte-identical across standalone, WASI and valid `gc`, and retain
+answers 9, 21 and 19. The constructor probe changes its wrong answer −1 to 42
+in all three targets, but grows: standalone **173,984 → 581,487 bytes**,
+WASI **113,838 → 462,068**, `gc` **179,292 → 590,134**. This is substantial
+transitive builtin materialization, not an overall size improvement. The
+`gc` probe uses the real generated imports and instance wiring, not stubs.
+Records: `.tmp/s7c-lookup-{parent,final}-bytes.jsonl` (12 rows each).
+
+**Hard merge blocker: import ceiling unchanged.** The actual
+`check:host-import-policy` fails **456 > 452**. Diagnostic compilation of all
+**33/33** exact policy probes measures parent 452 versus candidate 456, with
+zero `regime-gap` and zero `unknown` classifications. Four additional import
+occurrences, all existing `value-adapter` names, account for the difference:
+
+| probe | additional adapter |
+| --- | --- |
+| core | `__boundary_object_callable_kind` |
+| core | `__unwrap_for_wasm` |
+| proxy | `__unwrap_for_wasm` |
+| proxyMop | `__unwrap_for_wasm` |
+
+The unwrap requests originate in generated typed-reference closure entrypoints
+for newly exposed native builtin function/prototype carriers. Attempts to
+alter closure argument-demand checks did not reduce the count and were
+reverted; do not delete working normalization to make the count green.
+The host-import baseline remains **452**, and the standalone-arm baseline
+remains **818**. The candidate source measures **804** lexical mode references
+in **357 / 1,942** scanned source files, but that reduction is deliberately not
+banked while the checkpoint is unready. Empty JSON files from failed policy
+runs are not successful reports. The complete diagnostic records are
+`.tmp/s7c-lookup-{parent,final}-imports.jsonl` (33 rows each).
+
+**Next owner / required decision.** First obtain an explicit decision to
+accept and document the four existing-adapter occurrences, or redesign
+carrier materialization to stay within 452 without regressing native lookup
+or boundary identity. Publishing this checkpoint is not approval to raise
+the ceiling. Also review the binary growth above before marking the PR ready.
+Then rerun the hard policy gate and its accelerator controls, the focused
+runtime suites, the unchanged-test comparison, and footprint probes; only
+after acceptance bank the raw-mode reduction. Preserve full S7 retirement,
+compatibility, accelerator and conformance requirements. Dead-export
+preservation has 6/6 full and cut witnesses, but strict retirement remains
+uncertified at the two previously recorded nonliteral dynamic imports.

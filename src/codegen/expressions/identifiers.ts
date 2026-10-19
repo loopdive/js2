@@ -36,7 +36,7 @@ import { emitConditionalCaptureBoxRepair } from "../closures/conditional-capture
 import { emitNativeGlobalThisObject } from "../array-object-proto.js";
 import { tryEmitNativeUserCtorInstanceOf } from "../native-user-instanceof.js";
 import { emitLazyClassObjectGet } from "./extern.js";
-import type { CodegenContext, FunctionContext } from "../context/types.js";
+import { type CodegenContext, type FunctionContext, wasmGcBackend } from "../context/types.js";
 import {
   addFuncType,
   addImport,
@@ -1671,10 +1671,10 @@ function compileIdentifierCore(
   if (ctx.sloppyImplicitGlobals?.has(name) && !(!ctx.standalone && !ctx.wasi && isShadowStaticArmFor(name))) {
     return emitImplicitGlobalRead(ctx, fctx, name);
   }
-  // Standalone built-in namespace values (Array/Object) materialize as lazy
+  // Native WasmGC built-in namespace values (Array/Object) materialize as lazy
   // open-object singletons before ambient lib declarations can route them to
   // host globals.
-  if (ctx.standalone && isSupportedBuiltinNamespace(name)) {
+  if (wasmGcBackend(ctx) && isSupportedBuiltinNamespace(name)) {
     const builtinObject = emitBuiltinNamespaceObject(ctx, fctx, name);
     if (builtinObject) return builtinObject;
   }
@@ -1988,7 +1988,7 @@ function compileIdentifierCore(
   // `x instanceof ArrayBuffer` at the instanceof lowering, `typeof ArrayBuffer`
   // at the typeof fold. Only the bare-value read changes, and only from a value
   // no conforming program can observe as the constructor.
-  if ((ctx.standalone || (noJsHost(ctx) && name === "ArrayBuffer")) && isBuiltinConstructorIdentityName(name)) {
+  if (wasmGcBackend(ctx) && isBuiltinConstructorIdentityName(name)) {
     return emitBuiltinConstructorIdentity(ctx, fctx, name);
   }
 

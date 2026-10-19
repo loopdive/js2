@@ -14,7 +14,7 @@ import { emitCachedFuncClosureAccess } from "./closures.js";
 import { pushBuiltinCtorOwnPropSeed } from "./builtin-ctor-own-props.js";
 import { BUILTIN_STATIC_METHOD_ARITY, pushBuiltinFnSingletonValueInstrs } from "./builtin-fn-meta.js";
 import { ensureStandaloneBuiltinStaticMethodClosure } from "./builtin-value-read.js";
-import type { CodegenContext, FunctionContext } from "./context/types.js";
+import { type CodegenContext, type FunctionContext, wasmGcBackend } from "./context/types.js";
 import { allocLocal } from "./context/locals.js";
 import { emitPreparedBuiltinConstructorIdentityRead } from "./builtin-constructor-prepared.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
@@ -386,7 +386,7 @@ function coerceTopToExternref(fctx: FunctionContext, valueType: ValType | null):
  * reflection surface.
  */
 function pushJsonNamespaceOwnPropSeed(ctx: CodegenContext, fctx: FunctionContext, objLocal: number): void {
-  if (!ctx.standalone && !ctx.wasi) return;
+  if (!wasmGcBackend(ctx)) return;
   const defineIdx = ctx.funcMap.get("__defineProperty_value");
   if (defineIdx === undefined) return;
 
@@ -428,7 +428,7 @@ function pushMathReflectNamespaceTagSeed(
   builtinName: string,
   objLocal: number,
 ): void {
-  if ((!ctx.standalone && !ctx.wasi) || (builtinName !== "Math" && builtinName !== "Reflect")) return;
+  if (!wasmGcBackend(ctx) || (builtinName !== "Math" && builtinName !== "Reflect")) return;
   const defineIdx = ctx.funcMap.get("__defineProperty_value");
   if (defineIdx === undefined) return;
   const boxSymbolIdx = ensureLateImport(ctx, "__box_symbol", [{ kind: "i32" }], [{ kind: "externref" }]);
@@ -495,6 +495,10 @@ export function emitBuiltinNamespaceObject(
   const initBody: Instr[] = [
     { op: "call", funcIdx: newObjectIdx },
     { op: "local.set", index: objLocal },
+    // Prototype companions can re-enter this carrier's initializer while
+    // seeding `constructor`. Publish its identity before that re-entry.
+    { op: "local.get", index: objLocal },
+    { op: "global.set", index: globalIdx },
   ];
 
   const savedBody = fctx.body;
@@ -531,8 +535,6 @@ export function emitBuiltinNamespaceObject(
     // `prototype`. No-op for the true namespaces (`Math`/`JSON`/`Reflect`),
     // which own none of the three.
     pushBuiltinCtorOwnPropSeed(ctx, fctx, builtinName, objLocal);
-    fctx.body.push({ op: "local.get", index: objLocal });
-    fctx.body.push({ op: "global.set", index: globalIdx });
   } finally {
     fctx.body = savedBody;
     ctx.liveBodies.delete(savedBody);

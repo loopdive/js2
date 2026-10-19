@@ -4338,8 +4338,8 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    *  a post-delete read returned the stale value (#2179). Delete-free modules
    *  keep the byte-identical inline fast-path (zero overhead). */
   moduleUsesDelete?: boolean;
-  /** (#4223) True when the module syntactically READS a `constructor` property
-   *  (`x.constructor` / `x["constructor"]`) and the target is standalone.
+  /** (#4223) True when a WasmGC module can read a `constructor` property
+   *  (`x.constructor`, `x["constructor"]`, or an unknown computed key).
    *  Pre-scanned once at module setup; it is the demand gate for the
    *  primitive-wrapper constructor carriers
    *  (`ensureWrapperConstructorCarriers`, wrapper-constructor-carrier.ts) and
@@ -4347,15 +4347,6 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    *  never reads `.constructor` mints nothing and emits byte-identical
    *  output. */
   wrapperCtorCarrierDemanded?: boolean;
-  /** (#4232) True when `wrapperCtorCarrierDemanded` holds AND the module
-   *  mentions the `Object` identifier — the NARROWER gate for the
-   *  ordinary-object (`Object(null)`) arm alone. That arm answers from
-   *  `emitBuiltinNamespaceObject`, which materializes the whole `Object`
-   *  static surface as closures and thereby arms the JS-host method-closure
-   *  bridge; riding the shared flag put that surface into every standalone
-   *  module reading `.constructor` anywhere, including ones only ever asking
-   *  about a primitive wrapper (#4034's unconditional-pull-in hazard). */
-  plainCtorCarrierDemanded?: boolean;
   /** (#4187/#4745) Identifier names appearing as the receiver of a member
    *  delete (`delete r.k` / `delete r[e]`) or Reflect.deleteProperty(r, …),
    *  pre-scanned by `scanModuleMemberDeletes`. Consulted by the

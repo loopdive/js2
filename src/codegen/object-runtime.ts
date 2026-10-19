@@ -295,7 +295,7 @@ import {
   buildClosureApplyLength,
   buildClosureApplyProxyGuard,
 } from "../runtime/wasmgc/values/closure-apply-body.js";
-import { vecConstructorArmInstrs } from "./vec-constructor-carrier.js"; // (#4220) runtime `<array>.constructor`
+import { ensureVecConstructorCarrier, vecConstructorArmInstrs } from "./vec-constructor-carrier.js"; // (#4220) runtime `<array>.constructor`
 import {
   registerStringExoticHasOwn,
   registerStringExoticPushKeys,
@@ -5750,6 +5750,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   // the nested `ensureObjectRuntime` the carrier emit performs returns
   // immediately instead of recursing.)
   ensureWrapperConstructorCarriers(ctx);
+  if (ctx.wrapperCtorCarrierDemanded) ensureVecConstructorCarrier(ctx);
 
   // Native-first JS keeps this object runtime authoritative but still exposes
   // objects through the existing identity-cached host proxy. Export only the
@@ -9897,6 +9898,7 @@ export function unshiftExternGetWrapperCtorArm(ctx: CodegenContext): void {
     firstLocalIndex: 2 + fn.locals.length,
     objectTypeIdx: objTypes.objectTypeIdx,
     propEntryTypeIdx: objTypes.propEntryTypeIdx,
+    nullProtoFlag: OBJ_FLAG_NULL_PROTO,
   });
   if (arm.instrs.length === 0) return;
   fn.locals.push(...arm.locals);

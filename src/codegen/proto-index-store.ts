@@ -69,7 +69,7 @@ import {
  *    a companion accessor with the ORIGINAL receiver bound as `this`
  *    (§6.2.5.5) via `__call_accessor_get`.
  *
- * ## Gate — `ctx.standalone && (ctx.protoIndexDirty || ctx.protoNamedDirty)`;
+ * ## Gate — native WasmGC prototype reflection, mutation, or constructor reads;
  * ## byte-identity by construction
  *
  * Both flags are PRE-SCAN flags (array-holes.ts, set before any body compiles
@@ -118,7 +118,7 @@ import {
 import { inheritedSetAnyDirty } from "./inherited-set-gate.js"; // (#4602) per-key #4504 gate
 import type { Instr, ValType, WasmFunction } from "../ir/types.js";
 import { undefinedExternInstrs } from "./any-helpers.js";
-import type { CodegenContext } from "./context/types.js";
+import { type CodegenContext, wasmGcBackend } from "./context/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { BUILTIN_BRAND_BASE, BUILTIN_BRAND_COUNT, builtinBrandOffsetOf } from "./builtin-brands.js";
 import { nativeStringLiteralInstrs } from "./native-strings.js"; // (#4176) wrapper-slot key at FILL time
@@ -188,7 +188,7 @@ export const SET_DECISION_REFUSED = 3;
  * Reserve the proto-property-store table global + helper stubs. Called from
  * `ensureObjectRuntime` right after the closure/vec side-table reserves,
  * BEFORE the `__extern_*` bodies bake their `call <idx>`. Self-gated on
- * `ctx.standalone && (ctx.protoIndexDirty || ctx.protoNamedDirty)` (see
+ * native WasmGC prototype/constructor demand (see
  * module header) and idempotent. Appends types/globals/funcs only — never
  * shifts an existing index.
  */
@@ -202,8 +202,14 @@ export function reserveProtoIndexStore(ctx: CodegenContext): void {
   // their constructor lookup must read a real intrinsic data property even
   // in modules with no source-level prototype reflection or mutation.
   if (
-    !ctx.standalone ||
-    !(ctx.protoIndexDirty || ctx.protoNamedDirty || ctx.protoMemberDirty || ctx.moduleUsesDynTaView)
+    !wasmGcBackend(ctx) ||
+    !(
+      ctx.protoIndexDirty ||
+      ctx.protoNamedDirty ||
+      ctx.protoMemberDirty ||
+      ctx.moduleUsesDynTaView ||
+      ctx.wrapperCtorCarrierDemanded
+    )
   )
     return;
   if (ctx.protoIndexStoreReserved) return;

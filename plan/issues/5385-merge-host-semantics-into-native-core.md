@@ -928,3 +928,17 @@ explicit native-first (`drop-excess` / `default-value-lossy` /
 `call-arg-coerce`). Both baselines now gate the new default. The stack-balance
 numbers remain explicit Phase 2 emitter debt; the rebank prevents S6 from
 comparing different provider families and does not declare the repairs clean.
+
+### 2026-10-19 — S7 current-work PR handoff
+
+The in-flight shared-code refactoring is published in
+[Separate native semantics from JS host mode](https://github.com/loopdive/js2/pull/6762).
+The detailed handoff lives in [S7: delete the host-semantic implementation](6979-s7-delete-host-semantic-implementation.md),
+section "S7-c native constructor lookup checkpoint and landing handoff".
+It records the implementation, parent-controlled test evidence, substantial
+constructor-program binary growth, dependency stack and remaining decisions.
+Native lookup and JS-owned boundary identities pass their focused controls,
+but the import policy is **456 against an unchanged 452 ceiling**. The PR
+remains draft, not merged; publishing the checkpoint does not approve a
+ceiling increase or complete the migration. Resume with that decision and
+the binary-cost review, not another untracked refactoring slice.

@@ -422,7 +422,7 @@ import { fillBigIntDynValueOfArm } from "./wrapper-proto-value-of.js"; // (#4631
 import { scanGlobalThisFnShadows } from "./fn-global-shadow.js"; // (#4630) globalThis.<fn> reassignment shadowing
 import { fillAsyncClosurePromiseWrappers } from "./async-closure-promise.js"; // (#4648)
 import { fillDeferredCallablePropertyDispatches } from "./expressions/calls-closures.js";
-import { moduleMentionsObjectIdentifier, moduleReadsConstructorProp } from "./wrapper-constructor-carrier.js"; // (#4223/#4232)
+import { moduleReadsConstructorProp } from "./wrapper-constructor-carrier.js"; // (#4223/#4232)
 import { unshiftNativeProtoHasOwnArms } from "./native-proto-own-props.js"; // (#4248) builtin-proto own members
 import { unshiftRegExpAccessorSetGuard } from "./regexp-accessor-set-guard.js"; // (#2875 w4-F)
 import { unshiftNativeProtoToPrimitiveArm } from "./native-proto-wrapper-primitive.js"; // (#4248) proto [[PrimitiveValue]]
@@ -5370,12 +5370,9 @@ export function generateModule(
   // keep main's exact traversal.
   // (#4223) Demand gate for the primitive-wrapper `.constructor` carriers. Set
   // BEFORE anything can call `ensureObjectRuntime` (which is where the mint
-  // hangs), and only for standalone — the gc/host lane keeps its genuine
-  // `Object_get_constructor` read.
-  ctx.wrapperCtorCarrierDemanded = ctx.standalone === true && moduleReadsConstructorProp(ast.sourceFile);
-  // (#4232) Narrower gate for the ordinary-object arm alone — see
-  // `moduleMentionsObjectIdentifier` for why it cannot ride the flag above.
-  ctx.plainCtorCarrierDemanded = ctx.wrapperCtorCarrierDemanded && moduleMentionsObjectIdentifier(ast.sourceFile);
+  // hangs). Unknown computed keys conservatively demand the shared native
+  // constructor surface; the source need not mention a builtin's name.
+  ctx.wrapperCtorCarrierDemanded = wasmGcBackend(ctx) && moduleReadsConstructorProp(ast.sourceFile);
   const collectMemberDeleteReceivers =
     ctx.standalone === true || ast.sourceFile.text.includes("Reflect.deleteProperty");
   const memberDeletes = scanModuleMemberDeletes(ast.sourceFile, collectMemberDeleteReceivers);
@@ -10697,10 +10694,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
   // (#4223) Same demand gate as the single-source path — any source file that
   // reads a `constructor` property arms the wrapper carriers.
   ctx.wrapperCtorCarrierDemanded =
-    ctx.standalone === true && multiAst.sourceFiles.some((sf) => moduleReadsConstructorProp(sf));
-  // (#4232) Narrower gate for the ordinary-object arm alone.
-  ctx.plainCtorCarrierDemanded =
-    ctx.wrapperCtorCarrierDemanded && multiAst.sourceFiles.some((sf) => moduleMentionsObjectIdentifier(sf));
+    wasmGcBackend(ctx) && multiAst.sourceFiles.some((sf) => moduleReadsConstructorProp(sf));
   // (#4235) Run the fnctor pipeline HERE — the same point in the pass that
   // `generateModule` runs it, but over the whole module graph.
   //

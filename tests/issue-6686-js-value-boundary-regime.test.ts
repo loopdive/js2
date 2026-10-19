@@ -19,6 +19,23 @@ async function instantiateRegime(source: string) {
 }
 
 describe("#6686 JS value boundary under the native regime", () => {
+  it("returns a JS-owned constructor and object property without replacing either identity", async () => {
+    const { exports } = await instantiateRegime(`
+      export function read(value: any, key: string): any { return value[key]; }
+    `);
+    class Foreign {}
+    const object = new Foreign();
+    const sentinel = { marker: 42 };
+    Object.defineProperty(object, "payload", {
+      get() {
+        expect(this).toBe(object);
+        return sentinel;
+      },
+    });
+    expect(exports.read(object, "constructor")).toBe(Foreign);
+    expect(exports.read(object, "payload")).toBe(sentinel);
+  });
+
   it("reflectively calls a JS-owned function with its original receiver and argument list", async () => {
     const { exports } = await instantiateRegime(`
       export function callIt(fn: any, receiver: any): any { return fn.call(receiver, 3, 4); }

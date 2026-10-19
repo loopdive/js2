@@ -33,27 +33,29 @@
  *
  * Prepended to `__extern_get` at finalize: when the key is `"constructor"` and
  * the receiver is a `$Object` with a `[[PrimitiveValue]]` slot, classify the
- * slot value's box type and return the matching carrier. The classification
+ * slot value's box type and read from its live prototype. The classification
  * ladder is deliberately the SAME one `__protoidx_brand_off`
  * (proto-index-store.ts, #4176) uses to recover a wrapper's prototype brand —
  * `$AnyString` → String, `$__box_number` or `i31` → Number, `$__box_boolean` →
  * Boolean — so a wrapper cannot be classified one way for its inherited
- * properties and another way for its constructor.
+ * properties and another way for its constructor. The tag selects the receiver
+ * arm, not the returned identity: a replaced prototype constructor must win.
  *
  * `constructor` is an ordinary writable INHERITED property (§7.3.2), so an own
  * entry must shadow the answer. The arm consults `__obj_find(o, "constructor")`
  * FIRST and declines when the wrapper carries its own — the main body then
- * answers it normally. That check is what makes prepending sound: the arm
- * behaves as if it sat at the chain-exhausted miss, because a wrapper's
- * [[Prototype]] chain contains no other `$Object` that could define the key.
+ * answers it normally. Otherwise use `__getPrototypeOf` and the shared Get
+ * operation so both a native companion and a custom prototype remain live.
  *
  * ## Why demand-minted, and why the gate is a module-wide scan
  *
  * Materializing the three carriers drags in the `$Object` runtime's
  * define-property path plus each carrier's `length`/`name`/`prototype` seed
- * (builtin-ctor-own-props.ts) — ~700 bytes measured. #4034 is the standing
- * reminder of what an unconditional pull-in costs, so a module that never reads
- * `.constructor` mints nothing and `wrapperConstructorArmInstrs` installs no arm.
+ * (builtin-ctor-own-props.ts). The transitive runtime cost is substantial;
+ * the current measured sizes are recorded in #6979. #4034 is the standing
+ * reminder of what an unconditional pull-in costs, so a module with no possible
+ * constructor read mints nothing. Unknown computed keys conservatively demand
+ * the same native surface; a source-name heuristic must not select semantics.
  *
  * The gate is a SOURCE scan (`moduleReadsConstructorProp`) rather than a hook on
  * the emitting call site, because there is no single emitting call site: the
@@ -74,7 +76,7 @@
 import type { Instr, ValType } from "../ir/types.js";
 import { ts } from "../ts-api.js";
 import { emitBuiltinConstructorIdentity, emitBuiltinNamespaceObject } from "./builtin-static-globals.js";
-import type { CodegenContext, FunctionContext } from "./context/types.js";
+import { type CodegenContext, type FunctionContext, wasmGcBackend } from "./context/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { nativeStringLiteralInstrs } from "./native-strings.js";
 import { addFuncType } from "./registry/types.js";
@@ -126,7 +128,7 @@ const I31_HEAP_TYPE = -20;
 
 /**
  * (#4223) The demand gate: does this module syntactically READ a `constructor`
- * property anywhere? Cached per source file, same shape as #3133's
+ * property, or use a computed key which could name it? Cached per source file, same shape as #3133's
  * `moduleTouchesConstructorProp` (property-access.ts) — which asks the
  * complementary question (does the module WRITE one).
  *
@@ -146,8 +148,22 @@ export function moduleReadsConstructorProp(sourceFile: ts.SourceFile): boolean {
       if (
         (ts.isPropertyAccessExpression(node) && node.name.text === "constructor") ||
         (ts.isElementAccessExpression(node) &&
-          ts.isStringLiteralLike(node.argumentExpression) &&
-          node.argumentExpression.text === "constructor")
+          (ts.isStringLiteralLike(node.argumentExpression)
+            ? node.argumentExpression.text === "constructor"
+            : !ts.isNumericLiteral(node.argumentExpression))) ||
+        // A stored Reflect.get value can read any key. A direct call with a
+        // different literal key cannot read `constructor` and needs no seed.
+        (ts.isPropertyAccessExpression(node) &&
+          ts.isIdentifier(node.expression) &&
+          node.expression.text === "Reflect" &&
+          node.name.text === "get" &&
+          !(
+            ts.isCallExpression(node.parent) &&
+            node.parent.expression === node &&
+            (node.parent.arguments[1] === undefined ||
+              (ts.isStringLiteralLike(node.parent.arguments[1]!) && node.parent.arguments[1]!.text !== "constructor") ||
+              ts.isNumericLiteral(node.parent.arguments[1]!))
+          ))
       ) {
         reads = true;
         return;
@@ -158,54 +174,6 @@ export function moduleReadsConstructorProp(sourceFile: ts.SourceFile): boolean {
     constructorPropReadCache.set(sourceFile, reads);
   }
   return reads;
-}
-
-/**
- * (#4232) SECOND demand gate, for the ordinary-object arm only: does this
- * module mention the `Object` identifier at all?
- *
- * Why this is separate from `moduleReadsConstructorProp`, and why it had to be
- * added after the fact: the plain-`Object` answer comes from
- * `emitBuiltinNamespaceObject`, which materializes the namespace object's
- * COMPLETE function-valued own surface — every `Object.keys` / `defineProperty`
- * / … as a closure. Materializing closures arms the JS-host method-closure
- * bridge, whose five compiler-reserved `__\0js2_call_fn_method_argc_N` exports
- * then appear in the module. Hanging that off `moduleReadsConstructorProp`
- * alone put the whole `Object` static surface into EVERY standalone module that
- * reads `.constructor` anywhere — including modules that only ever read a
- * primitive wrapper's, which are answered by the three `__builtin_ctor_<Name>`
- * carriers and never reach the plain arm at all. That is exactly the
- * unconditional pull-in #4034 stands as the reminder against, and it is what
- * broke #4223's own suite (five tests that sweep `Object.entries(exports)` and
- * assert an exact shape).
- *
- * The gate is a genuine heuristic and it is worth being explicit about the
- * trade: a module that reads `.constructor` on a bare `$Object` while never
- * mentioning `Object` keeps today's `undefined`. That is the same bargain the
- * `moduleReadsConstructorProp` gate above already strikes — accept a wrong
- * `undefined` in a case that cannot be cheaply detected rather than pay an
- * unconditional pull-in — except that gate is exact and this one is not. Every
- * test262 file the arm was added for (`S15.2.1.1_A1_T1..T5`, `A3_T2`) mentions
- * `Object` by construction: they all build the receiver with `Object(null)` or
- * `new Object(null)`.
- */
-const objectMentionCache = new WeakMap<ts.SourceFile, boolean>();
-export function moduleMentionsObjectIdentifier(sourceFile: ts.SourceFile): boolean {
-  let mentions = objectMentionCache.get(sourceFile);
-  if (mentions === undefined) {
-    mentions = false;
-    const walk = (node: ts.Node): void => {
-      if (mentions) return;
-      if (ts.isIdentifier(node) && node.text === "Object") {
-        mentions = true;
-        return;
-      }
-      ts.forEachChild(node, walk);
-    };
-    walk(sourceFile);
-    objectMentionCache.set(sourceFile, mentions);
-  }
-  return mentions;
 }
 
 /**
@@ -221,13 +189,10 @@ export function moduleMentionsObjectIdentifier(sourceFile: ts.SourceFile): boole
  * before any funcIdx is captured by name and flush afterwards.
  */
 export function ensureWrapperConstructorCarriers(ctx: CodegenContext): void {
-  if (!ctx.standalone || ctx.wrapperCtorCarrierDemanded !== true) return;
+  if (!wasmGcBackend(ctx) || ctx.wrapperCtorCarrierDemanded !== true) return;
   for (const builtinName of [...WRAPPER_BUILTINS, PLAIN_CARRIER_FN] as const) {
-    // (#4232) The plain-`Object` carrier carries its own, NARROWER gate — see
-    // `moduleMentionsObjectIdentifier`. The three wrapper carriers are cheap
-    // (`__builtin_ctor_<Name>` singletons); this one drags in the whole
-    // `Object` namespace surface, so it must not ride the shared flag.
-    if (builtinName === PLAIN_CARRIER_FN && ctx.plainCtorCarrierDemanded !== true) continue;
+    // A generic receiver can be an ordinary object even when the source never
+    // names `Object`; a name-mention heuristic is not a semantic proof.
     const name = builtinName === PLAIN_CARRIER_FN ? PLAIN_CARRIER_FN : carrierFnName(builtinName);
     if (ctx.funcMap.get(name) !== undefined) continue;
 
@@ -287,17 +252,20 @@ export function wrapperConstructorArmInstrs(
     firstLocalIndex: number;
     objectTypeIdx: number;
     propEntryTypeIdx: number;
+    nullProtoFlag: number;
   },
 ): { instrs: Instr[]; locals: { name: string; type: ValType }[] } {
   const empty = {
     instrs: [] as Instr[],
     locals: [] as { name: string; type: ValType }[],
   };
-  if (!ctx.standalone) return empty;
-  const { keyEqualsConstructor, firstLocalIndex, objectTypeIdx, propEntryTypeIdx } = opts;
+  if (!wasmGcBackend(ctx)) return empty;
+  const { keyEqualsConstructor, firstLocalIndex, objectTypeIdx, propEntryTypeIdx, nullProtoFlag } = opts;
   if (!keyEqualsConstructor) return empty;
   const objFindIdx = ctx.funcMap.get("__obj_find");
-  if (objFindIdx === undefined) return empty;
+  const getPrototypeIdx = ctx.funcMap.get("__getPrototypeOf");
+  const getIdx = ctx.funcMap.get("__extern_get");
+  if (objFindIdx === undefined || getPrototypeIdx === undefined || getIdx === undefined) return empty;
 
   const carriers = WRAPPER_BUILTINS.map((n) => ({
     name: n,
@@ -329,7 +297,13 @@ export function wrapperConstructorArmInstrs(
     { op: "ref.as_non_null" },
     { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: ENTRY_VALUE },
   ];
-  const answer = (idx: number): Instr[] => [{ op: "call", funcIdx: idx }, { op: "return" }];
+  const answer = (): Instr[] => [
+    { op: "local.get", index: 0 },
+    { op: "call", funcIdx: getPrototypeIdx },
+    { op: "local.get", index: 1 },
+    { op: "call", funcIdx: getIdx },
+    { op: "return" },
+  ];
   const stringIdx = carriers[0]!.idx;
   const numberIdx = carriers[1]!.idx;
   const booleanIdx = carriers[2]!.idx;
@@ -339,7 +313,7 @@ export function wrapperConstructorArmInstrs(
       ? ([
           ...slotValue(),
           { op: "ref.test", typeIdx: anyStr },
-          { op: "if", blockType: { kind: "empty" }, then: answer(stringIdx) },
+          { op: "if", blockType: { kind: "empty" }, then: answer() },
         ] satisfies Instr[])
       : []),
     ...(numberIdx !== undefined && boxNum >= 0
@@ -349,14 +323,14 @@ export function wrapperConstructorArmInstrs(
           ...slotValue(),
           { op: "ref.test", typeIdx: I31_HEAP_TYPE },
           { op: "i32.or" },
-          { op: "if", blockType: { kind: "empty" }, then: answer(numberIdx) },
+          { op: "if", blockType: { kind: "empty" }, then: answer() },
         ] satisfies Instr[])
       : []),
     ...(booleanIdx !== undefined && boxBool >= 0
       ? ([
           ...slotValue(),
           { op: "ref.test", typeIdx: boxBool },
-          { op: "if", blockType: { kind: "empty" }, then: answer(booleanIdx) },
+          { op: "if", blockType: { kind: "empty" }, then: answer() },
         ] satisfies Instr[])
       : []),
   ];
@@ -383,12 +357,9 @@ export function wrapperConstructorArmInstrs(
    * enclosing block has already established that the receiver carries no OWN
    * `constructor`, so §7.3.2 shadowing is honored for free.
    *
-   * Known limitation, recorded rather than papered over: `Object.create(null)`
-   * is represented identically to `{}` — there is no null-prototype marker on
-   * `$Object` — so it also reads `Object` here instead of `undefined`. That is
-   * a value-representation gap (the same one that makes
-   * `Object.getPrototypeOf(Object.create(null))` indistinguishable), not
-   * something this arm can decide.
+   * Explicit null prototypes carry a runtime flag and are excluded by the
+   * enclosing guard. The prototype read preserves a live replacement of
+   * `Object.prototype.constructor`, rather than inferring its value from type.
    */
   const plainArm: Instr[] =
     plainIdx === undefined
@@ -401,7 +372,7 @@ export function wrapperConstructorArmInstrs(
           { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: OBJECT_PROTO },
           { op: "ref.is_null" },
           { op: "i32.and" },
-          { op: "if", blockType: { kind: "empty" }, then: answer(plainIdx) },
+          { op: "if", blockType: { kind: "empty" }, then: answer() },
         ];
   if (classify.length === 0 && plainArm.length === 0) return empty;
 
@@ -428,6 +399,14 @@ export function wrapperConstructorArmInstrs(
             { op: "local.get", index: 1 },
             { op: "call", funcIdx: objFindIdx },
             { op: "ref.is_null" },
+            // Explicitly null-prototype objects inherit no constructor.
+            { op: "local.get", index: objLocal },
+            { op: "ref.as_non_null" },
+            { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 4 },
+            { op: "i32.const", value: nullProtoFlag },
+            { op: "i32.and" },
+            { op: "i32.eqz" },
+            { op: "i32.and" },
             {
               op: "if",
               blockType: { kind: "empty" },
