@@ -1,5 +1,6 @@
-import { describe, it, expect } from "vitest";
-import { compileAndInstantiate } from "../src/runtime-instantiate.js";
+import { describe, expect, it } from "vitest";
+import { compile } from "../src/index.js";
+import { buildImports } from "../src/runtime.js";
 
 // (#6789) Regression of #2025: `const m = obj.m; m()` on an object-literal
 // method that reads `this` trapped with an uncatchable "dereferencing a null
@@ -9,7 +10,12 @@ import { compileAndInstantiate } from "../src/runtime-instantiate.js";
 // reused by the finalize rebuild. JS throws a catchable TypeError here.
 
 async function exportsOf(src: string): Promise<Record<string, () => unknown>> {
-  return (await compileAndInstantiate(src)) as Record<string, () => unknown>;
+  const result = await compile(src, { semanticProviders: "host-assisted" });
+  expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+  const imports = buildImports(result.imports, {}, result.stringPool);
+  const { instance } = await WebAssembly.instantiate(result.binary, imports);
+  imports.setInstance?.(instance);
+  return instance.exports as Record<string, () => unknown>;
 }
 
 describe("#6789 extracted method with absent receiver throws a catchable TypeError", () => {

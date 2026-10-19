@@ -29,12 +29,13 @@ async function runHost(source: string): Promise<Record<string, (...a: unknown[])
     true,
   );
   const built = buildImports(result.imports, undefined, result.stringPool) as unknown as {
-    setExports?: (e: unknown) => void;
+    // (#7014) setInstance: raw setExports(instance.exports) lost data-struct authority in 708ebbd56d (#5337).
+    setInstance?: (e: WebAssembly.Instance) => void;
   };
   const { instance } = await WebAssembly.instantiate(result.binary, built as unknown as WebAssembly.Imports);
   // Mirror the production wiring: exports are wired AFTER instantiate (the start
   // section / module-init has already run by this point).
-  built.setExports?.(instance.exports);
+  built.setInstance?.(instance);
   return instance.exports as unknown as Record<string, (...a: unknown[]) => unknown>;
 }
 

@@ -44,6 +44,7 @@ import { addFuncType, getArrTypeIdxFromVec, getOrRegisterTaDynViewType } from ".
 import { ensureObjectRuntime, reserveApplyClosure } from "./object-runtime.js";
 import { ensureLateImport, flushLateImportShifts } from "./shared.js";
 import { ensureTaDynMopElemHelpers } from "./ta-dyn-mop.js";
+import { WRAP_F64_TO_INT32_LOCALS, wrapF64ToInt32Instrs } from "./array/ta-int-elem-coercion.js"; // (#7018)
 
 /**
  * Ensure the native `map`/`filter` helper for the packed vec struct `vecTypeIdx`
@@ -164,8 +165,9 @@ export function ensureTaMapFilterHelper(
         { op: "call", funcIdx: unboxNumIdx },
       ];
 
-  // f64 (on stack) → the i32 to store. Default: `i32.trunc_sat_f64_s` (packed
-  // `array.set` masks to element width = JS ToInt8/ToUint8/…). Clamp variant
+  // f64 (on stack) → the i32 to store. Default (#7018): the exact ToInt32 bit
+  // pattern (packed `array.set` keeps the low 8/16 bits = ToInt8/ToUint8/…), via
+  // i64 scratch locals 10..13 — never a saturating truncation. Clamp variant
   // (#2903 R4c): `ToUint8Clamp` (§7.1.11) — NaN→0, ≤0→0, ≥255→255, else round-
   // HALF-TO-EVEN. Mirrors `emitToUint8Clamp` (binary-ops.ts, #2593) with the
   // helper's own scratch locals; `roundHalfEven` only runs for 0<x<255 so its
@@ -245,7 +247,7 @@ export function ensureTaMapFilterHelper(
     },
     { op: "local.get", index: COUT },
   ];
-  const f64ToStore: Instr[] = clamp ? clampToUint8 : [{ op: "i32.trunc_sat_f64_s" }];
+  const f64ToStore: Instr[] = clamp ? clampToUint8 : wrapF64ToInt32Instrs(10);
 
   // data[dst] = f64ToStore(unbox(source))   (packed array.set masks to width)
   const writeAt = (dstLocal: number): Instr[] => [
@@ -347,7 +349,7 @@ export function ensureTaMapFilterHelper(
       { name: "cd", type: { kind: "f64" } },
       { name: "cout", type: { kind: "i32" } },
     );
-  }
+  } else locals.push(...WRAP_F64_TO_INT32_LOCALS); // (#7018) scratch for `wrapF64ToInt32Instrs(10)`
   pushDefinedFunc(ctx, funcIdx, {
     name: helperName,
     typeIdx,

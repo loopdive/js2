@@ -51,7 +51,10 @@ describe("#3565 — restore IR designed demote-to-legacy contracts", () => {
   it("site 1: TypedArray element STORE in a claimed fn demotes to legacy (compiles, host + standalone)", async () => {
     const src = `export function putByte(buf: Uint8Array, i: number, v: number): void { buf[i] = v; }`;
     for (const target of [undefined, "standalone"] as const) {
-      const r: any = await compile(src, { ...COMPILE_OPTS, ...(target ? { target } : {}) });
+      const r: any = await compile(src, {
+        ...COMPILE_OPTS,
+        ...(target ? { target } : { semanticProviders: "host-assisted" as const }),
+      });
       expect(r.success).toBe(true);
       expect(hardIrErrors(r)).toHaveLength(0);
       // The demote path is actually exercised (not silently absent).
@@ -64,7 +67,7 @@ describe("#3565 — restore IR designed demote-to-legacy contracts", () => {
     const src =
       `declare class Coll { [i: number]: string; length: number; }\n` +
       `export function first(c: Coll): string { return c[0]; }`;
-    const r: any = await compile(src, COMPILE_OPTS);
+    const r: any = await compile(src, { ...COMPILE_OPTS, semanticProviders: "host-assisted" });
     expect(r.success).toBe(true);
     expect(hardIrErrors(r)).toHaveLength(0);
     const pc = (r.irPostClaimErrors ?? []).map((e: any) => e.message);

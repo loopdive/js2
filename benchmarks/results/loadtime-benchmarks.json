@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-10-15T00:34:30.324Z",
+  "timestamp": "2026-10-18T22:14:59.497Z",
   "benchmarks": [
     {
       "name": "fib",
@@ -19,16 +19,6 @@
           "intent": {
             "type": "declared_global",
             "name": "document"
-          },
-          "paramCount": 0
-        },
-        {
-          "module": "env",
-          "name": "global_performance",
-          "kind": "func",
-          "intent": {
-            "type": "declared_global",
-            "name": "performance"
           },
           "paramCount": 0
         },
@@ -70,27 +60,6 @@
         },
         {
           "module": "env",
-          "name": "Performance_now",
-          "kind": "func",
-          "intent": {
-            "type": "extern_class",
-            "className": "Performance",
-            "action": "method",
-            "member": "now"
-          },
-          "paramCount": 1
-        },
-        {
-          "module": "env",
-          "name": "__extern_get",
-          "kind": "func",
-          "intent": {
-            "type": "extern_get"
-          },
-          "paramCount": 2
-        },
-        {
-          "module": "env",
           "name": "Element_get_children",
           "kind": "func",
           "intent": {
@@ -100,35 +69,6 @@
             "member": "children"
           },
           "paramCount": 1
-        },
-        {
-          "module": "env",
-          "name": "number_toString",
-          "kind": "func",
-          "intent": {
-            "type": "builtin",
-            "name": "number_toString"
-          },
-          "paramCount": 1
-        },
-        {
-          "module": "env",
-          "name": "number_toFixed",
-          "kind": "func",
-          "intent": {
-            "type": "builtin",
-            "name": "number_toFixed"
-          },
-          "paramCount": 2
-        },
-        {
-          "module": "env",
-          "name": "__make_callback",
-          "kind": "func",
-          "intent": {
-            "type": "callback_maker"
-          },
-          "paramCount": 2
         },
         {
           "module": "env",
@@ -192,177 +132,282 @@
         },
         {
           "module": "env",
-          "name": "__get_undefined",
+          "name": "__str_from_mem",
           "kind": "func",
           "intent": {
             "type": "builtin",
-            "name": "__get_undefined"
-          },
-          "paramCount": 0
-        },
-        {
-          "module": "env",
-          "name": "__call_function_0",
-          "kind": "func",
-          "intent": {
-            "type": "builtin",
-            "name": "__call_function_0"
+            "name": "__str_from_mem"
           },
           "paramCount": 2
         },
         {
           "module": "env",
-          "name": "__js_array_new",
+          "name": "__str_to_mem",
           "kind": "func",
           "intent": {
             "type": "builtin",
-            "name": "__js_array_new"
+            "name": "__str_to_mem"
           },
-          "paramCount": 0
+          "paramCount": 2
         },
         {
           "module": "env",
-          "name": "__call_function",
+          "name": "__str_extern_len",
           "kind": "func",
           "intent": {
             "type": "builtin",
-            "name": "__call_function"
+            "name": "__str_extern_len"
+          },
+          "paramCount": 1
+        },
+        {
+          "module": "env",
+          "name": "__boundary_object_get",
+          "kind": "func",
+          "intent": {
+            "type": "boundary_object",
+            "operation": "get"
+          },
+          "paramCount": 2
+        },
+        {
+          "module": "env",
+          "name": "__boundary_object_set",
+          "kind": "func",
+          "intent": {
+            "type": "boundary_object",
+            "operation": "set"
           },
           "paramCount": 3
         },
         {
           "module": "env",
-          "name": "__unbox_number",
+          "name": "__boundary_object_has",
           "kind": "func",
           "intent": {
-            "type": "unbox",
-            "targetType": "number"
+            "type": "boundary_object",
+            "operation": "has"
+          },
+          "paramCount": 2
+        },
+        {
+          "module": "env",
+          "name": "__boundary_object_delete",
+          "kind": "func",
+          "intent": {
+            "type": "boundary_object",
+            "operation": "delete"
+          },
+          "paramCount": 2
+        },
+        {
+          "module": "env",
+          "name": "__boundary_object_keys",
+          "kind": "func",
+          "intent": {
+            "type": "boundary_object",
+            "operation": "keys"
           },
           "paramCount": 1
         },
         {
           "module": "env",
-          "name": "__box_number",
+          "name": "__boundary_object_call",
           "kind": "func",
           "intent": {
-            "type": "box",
-            "targetType": "number"
-          },
-          "paramCount": 1
-        },
-        {
-          "module": "env",
-          "name": "__new_TypeError",
-          "kind": "func",
-          "intent": {
-            "type": "extern_class",
-            "className": "TypeError",
-            "action": "new"
-          },
-          "paramCount": 1
-        },
-        {
-          "module": "env",
-          "name": "__extern_to_string_default",
-          "kind": "func",
-          "intent": {
-            "type": "builtin",
-            "name": "__extern_to_string_default"
-          },
-          "paramCount": 1
-        },
-        {
-          "module": "env",
-          "name": "__new_RangeError",
-          "kind": "func",
-          "intent": {
-            "type": "extern_class",
-            "className": "RangeError",
-            "action": "new"
-          },
-          "paramCount": 1
-        },
-        {
-          "module": "env",
-          "name": "__concat_4",
-          "kind": "func",
-          "intent": {
-            "type": "builtin",
-            "name": "__concat_4"
-          },
-          "paramCount": 4
-        },
-        {
-          "module": "env",
-          "name": "__call_function_1",
-          "kind": "func",
-          "intent": {
-            "type": "builtin",
-            "name": "__call_function_1"
+            "type": "boundary_object",
+            "operation": "call"
           },
           "paramCount": 3
         },
         {
           "module": "env",
-          "name": "__call_function_2",
+          "name": "__boundary_object_get_prototype",
           "kind": "func",
           "intent": {
-            "type": "builtin",
-            "name": "__call_function_2"
+            "type": "boundary_object",
+            "operation": "getPrototypeOf"
+          },
+          "paramCount": 1
+        },
+        {
+          "module": "env",
+          "name": "__boundary_object_set_prototype",
+          "kind": "func",
+          "intent": {
+            "type": "boundary_object",
+            "operation": "setPrototypeOf"
+          },
+          "paramCount": 2
+        },
+        {
+          "module": "env",
+          "name": "__boundary_object_get_own_property_descriptor",
+          "kind": "func",
+          "intent": {
+            "type": "boundary_object",
+            "operation": "getOwnPropertyDescriptor"
+          },
+          "paramCount": 2
+        },
+        {
+          "module": "env",
+          "name": "__boundary_object_define_property_value",
+          "kind": "func",
+          "intent": {
+            "type": "boundary_object",
+            "operation": "definePropertyValue"
           },
           "paramCount": 4
         },
         {
           "module": "env",
-          "name": "__call_function_3",
+          "name": "__boundary_object_define_property_accessor",
           "kind": "func",
           "intent": {
-            "type": "builtin",
-            "name": "__call_function_3"
+            "type": "boundary_object",
+            "operation": "definePropertyAccessor"
           },
           "paramCount": 5
         },
         {
           "module": "env",
-          "name": "__call_function_4",
+          "name": "__boundary_object_get_own_property_names",
+          "kind": "func",
+          "intent": {
+            "type": "boundary_object",
+            "operation": "getOwnPropertyNames"
+          },
+          "paramCount": 1
+        },
+        {
+          "module": "env",
+          "name": "__boundary_object_get_own_property_symbols",
+          "kind": "func",
+          "intent": {
+            "type": "boundary_object",
+            "operation": "getOwnPropertySymbols"
+          },
+          "paramCount": 1
+        },
+        {
+          "module": "env",
+          "name": "__boundary_object_is_admitted",
+          "kind": "func",
+          "intent": {
+            "type": "boundary_object",
+            "operation": "isAdmitted"
+          },
+          "paramCount": 1
+        },
+        {
+          "module": "env",
+          "name": "__boundary_object_for_in_keys",
+          "kind": "func",
+          "intent": {
+            "type": "boundary_object",
+            "operation": "forInKeys"
+          },
+          "paramCount": 1
+        },
+        {
+          "module": "env",
+          "name": "__unwrap_for_wasm",
           "kind": "func",
           "intent": {
             "type": "builtin",
-            "name": "__call_function_4"
+            "name": "__unwrap_for_wasm"
           },
-          "paramCount": 6
+          "paramCount": 1
         }
       ],
       "stringPool": [
-        "el",
-        "bcrd",
-        "div",
-        "padding:0.75rem;background:#1a1a35;",
-        "border-radius:6px;border:1px solid #2a2a4a;",
-        "margin-bottom:0.5rem;cursor:pointer",
-        "font-size:0.8rem;color:#fff;font-weight:bold",
-        "font-size:0.7rem;color:#666;margin:2px 0 6px",
-        "font-size:0.75rem;color:#888",
-        "tap to run",
-        "addBenchCard",
-        "click",
-        " in ",
-        "ms",
-        "",
-        "./helpers.ts",
-        "fib",
-        "bench_fib",
-        "main",
-        "margin:0;background:#111;color:#ddd;",
-        "font-family:system-ui,sans-serif;overflow-y:auto",
-        "padding:0.75rem",
-        "fib(30)",
-        "Recursive — pure i32/f64 math, no host calls",
-        "padding:0.75rem;background:#1a1a35;border-radius:6px;border:1px solid #2a2a4a;margin-bottom:0.5rem;cursor:pointer",
-        "margin:0;background:#111;color:#ddd;font-family:system-ui,sans-serif;overflow-y:auto",
+        "TypeError",
+        "Cannot convert null or undefined to a BigInt",
+        "Cannot convert value to a BigInt",
+        "RangeError",
+        "The number cannot be converted to a BigInt because it is not an integer",
+        "SyntaxError",
+        "Cannot convert string to a BigInt",
+        "Cannot convert string to a BigInt in standalone mode",
         "Cannot access property on null or undefined at 31:15",
+        "[[PrimitiveValue]]",
+        "TypeError: Cannot assign to read only property",
+        "has",
+        "Cannot convert object to primitive value",
+        "toString",
+        "valueOf",
+        "[object Arguments]",
+        "default",
+        "[object Object]",
+        "null",
+        "string",
+        "get",
+        "Cannot convert a Symbol value to a number",
+        "Cannot convert undefined or null to object",
+        "TypeError: Cannot define property, object is not extensible",
+        "TypeError: Cannot redefine property: configurable attribute of a non-configurable property",
+        "TypeError: Cannot redefine property: enumerable attribute of a non-configurable property",
+        "TypeError: Cannot redefine property: cannot convert a non-configurable accessor to a data property",
+        "TypeError: Cannot redefine property: writable attribute of a non-configurable, non-writable property",
+        "TypeError: Cannot assign to read only property of a non-configurable property",
+        "TypeError: Cannot redefine property: cannot convert a non-configurable data property to an accessor",
+        "TypeError: Cannot redefine property: get attribute of a non-configurable property",
+        "TypeError: Cannot redefine property: set attribute of a non-configurable property",
+        "Object.defineProperties unsupported descriptor shape in standalone mode (#1906) [SITE-PROPS-BAG-NOT-AUTHORITATIVE]",
+        "Object.defineProperties unsupported descriptor shape in standalone mode (#1906) [SITE-PROPS-VEC-INDEXED]",
+        "Object.defineProperties called on non-object",
+        "TypeError: Cannot convert undefined or null to object",
+        "Object.defineProperties unsupported descriptor shape in standalone mode (#1906) [SITE-PROPS-STRING-INDICES]",
+        "Object.defineProperties unsupported descriptor shape in standalone mode (#1906) [SITE-DESC-NULL]",
+        "Object.defineProperties unsupported descriptor shape in standalone mode (#1906) [SITE-DESC-NOT-OBJ]",
+        "TypeError: Object.defineProperties get/set must be callable (#1906)",
+        "TypeError: Invalid property descriptor in Object.defineProperties (#1906)",
+        "Object.defineProperties unsupported descriptor shape in standalone mode (#1906) [SITE-O-NO-CARRIER]",
+        "TypeError: Property description must be an object",
+        "TypeError: Getter/setter must be a function",
+        "TypeError: Invalid property descriptor. Cannot both specify accessors and a value or writable attribute",
+        "called value is not a function",
+        "Cannot perform operation on a proxy that has been revoked",
+        "Proxy ownKeys trap result must be an object",
+        "'set' on proxy: trap returned falsish",
+        "Proxy get trap is not callable",
+        "Proxy trap is not callable",
+        "Proxy target is not callable",
+        "Proxy trap result violates a Proxy invariant",
+        "configurable",
+        "enumerable",
+        "writable",
+        "value",
+        "set",
+        "deleteProperty",
+        "getOwnPropertyDescriptor",
+        "getPrototypeOf",
+        "setPrototypeOf",
+        "isExtensible",
+        "preventExtensions",
+        "ownKeys",
+        "defineProperty",
+        "apply",
+        "Proxy target is not a constructor",
+        "Proxy construct trap is not callable",
+        "Proxy construct trap must return an object",
+        "construct",
+        "prototype",
+        "Cannot create proxy with a non-object as target or handler",
+        "proxy",
+        "revoke",
+        "call",
+        "Cannot freeze or seal this object",
         "Cannot access property on null or undefined at 33:17",
-        "RangeError: toFixed() digits argument must be between 0 and 100"
+        "Cannot convert a Symbol value",
+        "RangeError: toFixed() digits argument must be between 0 and 100",
+        "toString() radix must be between 2 and 36",
+        "number",
+        "@@1,at,concat,copyWithin,entries,every,fill,filter,find,findIndex,findLast,findLastIndex,flat,flatMap,forEach,includes,indexOf,join,keys,lastIndexOf,map,pop,push,reduce,reduceRight,reverse,shift,slice,some,sort,splice,toLocaleString,toReversed,toSorted,toSpliced,toString,unshift,values,with",
+        "Array",
+        "\u0000js2_data_struct_host_bridge_token",
+        "function () { [native code] }"
       ]
     },
     {
@@ -388,16 +433,6 @@
         },
         {
           "module": "env",
-          "name": "global_performance",
-          "kind": "func",
-          "intent": {
-            "type": "declared_global",
-            "name": "performance"
-          },
-          "paramCount": 0
-        },
-        {
-          "module": "env",
           "name": "Document_createElement",
           "kind": "func",
           "intent": {
@@ -434,27 +469,6 @@
         },
         {
           "module": "env",
-          "name": "Performance_now",
-          "kind": "func",
-          "intent": {
-            "type": "extern_class",
-            "className": "Performance",
-            "action": "method",
-            "member": "now"
-          },
-          "paramCount": 1
-        },
-        {
-          "module": "env",
-          "name": "__extern_get",
-          "kind": "func",
-          "intent": {
-            "type": "extern_get"
-          },
-          "paramCount": 2
-        },
-        {
-          "module": "env",
           "name": "Element_get_children",
           "kind": "func",
           "intent": {
@@ -464,35 +478,6 @@
             "member": "children"
           },
           "paramCount": 1
-        },
-        {
-          "module": "env",
-          "name": "number_toString",
-          "kind": "func",
-          "intent": {
-            "type": "builtin",
-            "name": "number_toString"
-          },
-          "paramCount": 1
-        },
-        {
-          "module": "env",
-          "name": "number_toFixed",
-          "kind": "func",
-          "intent": {
-            "type": "builtin",
-            "name": "number_toFixed"
-          },
-          "paramCount": 2
-        },
-        {
-          "module": "env",
-          "name": "__make_callback",
-          "kind": "func",
-          "intent": {
-            "type": "callback_maker"
-          },
-          "paramCount": 2
         },
         {
           "module": "env",
@@ -556,176 +541,282 @@
         },
         {
           "module": "env",
-          "name": "__get_undefined",
+          "name": "__str_from_mem",
           "kind": "func",
           "intent": {
             "type": "builtin",
-            "name": "__get_undefined"
-          },
-          "paramCount": 0
-        },
-        {
-          "module": "env",
-          "name": "__call_function_0",
-          "kind": "func",
-          "intent": {
-            "type": "builtin",
-            "name": "__call_function_0"
+            "name": "__str_from_mem"
           },
           "paramCount": 2
         },
         {
           "module": "env",
-          "name": "__js_array_new",
+          "name": "__str_to_mem",
           "kind": "func",
           "intent": {
             "type": "builtin",
-            "name": "__js_array_new"
+            "name": "__str_to_mem"
           },
-          "paramCount": 0
+          "paramCount": 2
         },
         {
           "module": "env",
-          "name": "__call_function",
+          "name": "__str_extern_len",
           "kind": "func",
           "intent": {
             "type": "builtin",
-            "name": "__call_function"
+            "name": "__str_extern_len"
+          },
+          "paramCount": 1
+        },
+        {
+          "module": "env",
+          "name": "__boundary_object_get",
+          "kind": "func",
+          "intent": {
+            "type": "boundary_object",
+            "operation": "get"
+          },
+          "paramCount": 2
+        },
+        {
+          "module": "env",
+          "name": "__boundary_object_set",
+          "kind": "func",
+          "intent": {
+            "type": "boundary_object",
+            "operation": "set"
           },
           "paramCount": 3
         },
         {
           "module": "env",
-          "name": "__unbox_number",
+          "name": "__boundary_object_has",
           "kind": "func",
           "intent": {
-            "type": "unbox",
-            "targetType": "number"
+            "type": "boundary_object",
+            "operation": "has"
+          },
+          "paramCount": 2
+        },
+        {
+          "module": "env",
+          "name": "__boundary_object_delete",
+          "kind": "func",
+          "intent": {
+            "type": "boundary_object",
+            "operation": "delete"
+          },
+          "paramCount": 2
+        },
+        {
+          "module": "env",
+          "name": "__boundary_object_keys",
+          "kind": "func",
+          "intent": {
+            "type": "boundary_object",
+            "operation": "keys"
           },
           "paramCount": 1
         },
         {
           "module": "env",
-          "name": "__box_number",
+          "name": "__boundary_object_call",
           "kind": "func",
           "intent": {
-            "type": "box",
-            "targetType": "number"
-          },
-          "paramCount": 1
-        },
-        {
-          "module": "env",
-          "name": "__new_TypeError",
-          "kind": "func",
-          "intent": {
-            "type": "extern_class",
-            "className": "TypeError",
-            "action": "new"
-          },
-          "paramCount": 1
-        },
-        {
-          "module": "env",
-          "name": "__extern_to_string_default",
-          "kind": "func",
-          "intent": {
-            "type": "builtin",
-            "name": "__extern_to_string_default"
-          },
-          "paramCount": 1
-        },
-        {
-          "module": "env",
-          "name": "__new_RangeError",
-          "kind": "func",
-          "intent": {
-            "type": "extern_class",
-            "className": "RangeError",
-            "action": "new"
-          },
-          "paramCount": 1
-        },
-        {
-          "module": "env",
-          "name": "__concat_4",
-          "kind": "func",
-          "intent": {
-            "type": "builtin",
-            "name": "__concat_4"
-          },
-          "paramCount": 4
-        },
-        {
-          "module": "env",
-          "name": "__call_function_1",
-          "kind": "func",
-          "intent": {
-            "type": "builtin",
-            "name": "__call_function_1"
+            "type": "boundary_object",
+            "operation": "call"
           },
           "paramCount": 3
         },
         {
           "module": "env",
-          "name": "__call_function_2",
+          "name": "__boundary_object_get_prototype",
           "kind": "func",
           "intent": {
-            "type": "builtin",
-            "name": "__call_function_2"
+            "type": "boundary_object",
+            "operation": "getPrototypeOf"
+          },
+          "paramCount": 1
+        },
+        {
+          "module": "env",
+          "name": "__boundary_object_set_prototype",
+          "kind": "func",
+          "intent": {
+            "type": "boundary_object",
+            "operation": "setPrototypeOf"
+          },
+          "paramCount": 2
+        },
+        {
+          "module": "env",
+          "name": "__boundary_object_get_own_property_descriptor",
+          "kind": "func",
+          "intent": {
+            "type": "boundary_object",
+            "operation": "getOwnPropertyDescriptor"
+          },
+          "paramCount": 2
+        },
+        {
+          "module": "env",
+          "name": "__boundary_object_define_property_value",
+          "kind": "func",
+          "intent": {
+            "type": "boundary_object",
+            "operation": "definePropertyValue"
           },
           "paramCount": 4
         },
         {
           "module": "env",
-          "name": "__call_function_3",
+          "name": "__boundary_object_define_property_accessor",
           "kind": "func",
           "intent": {
-            "type": "builtin",
-            "name": "__call_function_3"
+            "type": "boundary_object",
+            "operation": "definePropertyAccessor"
           },
           "paramCount": 5
         },
         {
           "module": "env",
-          "name": "__call_function_4",
+          "name": "__boundary_object_get_own_property_names",
+          "kind": "func",
+          "intent": {
+            "type": "boundary_object",
+            "operation": "getOwnPropertyNames"
+          },
+          "paramCount": 1
+        },
+        {
+          "module": "env",
+          "name": "__boundary_object_get_own_property_symbols",
+          "kind": "func",
+          "intent": {
+            "type": "boundary_object",
+            "operation": "getOwnPropertySymbols"
+          },
+          "paramCount": 1
+        },
+        {
+          "module": "env",
+          "name": "__boundary_object_is_admitted",
+          "kind": "func",
+          "intent": {
+            "type": "boundary_object",
+            "operation": "isAdmitted"
+          },
+          "paramCount": 1
+        },
+        {
+          "module": "env",
+          "name": "__boundary_object_for_in_keys",
+          "kind": "func",
+          "intent": {
+            "type": "boundary_object",
+            "operation": "forInKeys"
+          },
+          "paramCount": 1
+        },
+        {
+          "module": "env",
+          "name": "__unwrap_for_wasm",
           "kind": "func",
           "intent": {
             "type": "builtin",
-            "name": "__call_function_4"
+            "name": "__unwrap_for_wasm"
           },
-          "paramCount": 6
+          "paramCount": 1
         }
       ],
       "stringPool": [
-        "el",
-        "bcrd",
-        "div",
-        "padding:0.75rem;background:#1a1a35;",
-        "border-radius:6px;border:1px solid #2a2a4a;",
-        "margin-bottom:0.5rem;cursor:pointer",
-        "font-size:0.8rem;color:#fff;font-weight:bold",
-        "font-size:0.7rem;color:#666;margin:2px 0 6px",
-        "font-size:0.75rem;color:#888",
-        "tap to run",
-        "addBenchCard",
-        "click",
-        " in ",
-        "ms",
-        "",
-        "./helpers.ts",
-        "bench_loop",
-        "main",
-        "margin:0;background:#111;color:#ddd;",
-        "font-family:system-ui,sans-serif;overflow-y:auto",
-        "padding:0.75rem",
-        "Loop: 1M Int32 sum",
-        "Tight i32 loop with explicit | 0 wrap, no allocations",
-        "padding:0.75rem;background:#1a1a35;border-radius:6px;border:1px solid #2a2a4a;margin-bottom:0.5rem;cursor:pointer",
-        "margin:0;background:#111;color:#ddd;font-family:system-ui,sans-serif;overflow-y:auto",
+        "TypeError",
+        "Cannot convert null or undefined to a BigInt",
+        "Cannot convert value to a BigInt",
+        "RangeError",
+        "The number cannot be converted to a BigInt because it is not an integer",
+        "SyntaxError",
+        "Cannot convert string to a BigInt",
+        "Cannot convert string to a BigInt in standalone mode",
         "Cannot access property on null or undefined at 31:15",
+        "[[PrimitiveValue]]",
+        "TypeError: Cannot assign to read only property",
+        "has",
+        "Cannot convert object to primitive value",
+        "toString",
+        "valueOf",
+        "[object Arguments]",
+        "default",
+        "[object Object]",
+        "null",
+        "string",
+        "get",
+        "Cannot convert a Symbol value to a number",
+        "Cannot convert undefined or null to object",
+        "TypeError: Cannot define property, object is not extensible",
+        "TypeError: Cannot redefine property: configurable attribute of a non-configurable property",
+        "TypeError: Cannot redefine property: enumerable attribute of a non-configurable property",
+        "TypeError: Cannot redefine property: cannot convert a non-configurable accessor to a data property",
+        "TypeError: Cannot redefine property: writable attribute of a non-configurable, non-writable property",
+        "TypeError: Cannot assign to read only property of a non-configurable property",
+        "TypeError: Cannot redefine property: cannot convert a non-configurable data property to an accessor",
+        "TypeError: Cannot redefine property: get attribute of a non-configurable property",
+        "TypeError: Cannot redefine property: set attribute of a non-configurable property",
+        "Object.defineProperties unsupported descriptor shape in standalone mode (#1906) [SITE-PROPS-BAG-NOT-AUTHORITATIVE]",
+        "Object.defineProperties unsupported descriptor shape in standalone mode (#1906) [SITE-PROPS-VEC-INDEXED]",
+        "Object.defineProperties called on non-object",
+        "TypeError: Cannot convert undefined or null to object",
+        "Object.defineProperties unsupported descriptor shape in standalone mode (#1906) [SITE-PROPS-STRING-INDICES]",
+        "Object.defineProperties unsupported descriptor shape in standalone mode (#1906) [SITE-DESC-NULL]",
+        "Object.defineProperties unsupported descriptor shape in standalone mode (#1906) [SITE-DESC-NOT-OBJ]",
+        "TypeError: Object.defineProperties get/set must be callable (#1906)",
+        "TypeError: Invalid property descriptor in Object.defineProperties (#1906)",
+        "Object.defineProperties unsupported descriptor shape in standalone mode (#1906) [SITE-O-NO-CARRIER]",
+        "TypeError: Property description must be an object",
+        "TypeError: Getter/setter must be a function",
+        "TypeError: Invalid property descriptor. Cannot both specify accessors and a value or writable attribute",
+        "called value is not a function",
+        "Cannot perform operation on a proxy that has been revoked",
+        "Proxy ownKeys trap result must be an object",
+        "'set' on proxy: trap returned falsish",
+        "Proxy get trap is not callable",
+        "Proxy trap is not callable",
+        "Proxy target is not callable",
+        "Proxy trap result violates a Proxy invariant",
+        "configurable",
+        "enumerable",
+        "writable",
+        "value",
+        "set",
+        "deleteProperty",
+        "getOwnPropertyDescriptor",
+        "getPrototypeOf",
+        "setPrototypeOf",
+        "isExtensible",
+        "preventExtensions",
+        "ownKeys",
+        "defineProperty",
+        "apply",
+        "Proxy target is not a constructor",
+        "Proxy construct trap is not callable",
+        "Proxy construct trap must return an object",
+        "construct",
+        "prototype",
+        "Cannot create proxy with a non-object as target or handler",
+        "proxy",
+        "revoke",
+        "call",
+        "Cannot freeze or seal this object",
         "Cannot access property on null or undefined at 33:17",
-        "RangeError: toFixed() digits argument must be between 0 and 100"
+        "Cannot convert a Symbol value",
+        "RangeError: toFixed() digits argument must be between 0 and 100",
+        "toString() radix must be between 2 and 36",
+        "number",
+        "@@1,at,concat,copyWithin,entries,every,fill,filter,find,findIndex,findLast,findLastIndex,flat,flatMap,forEach,includes,indexOf,join,keys,lastIndexOf,map,pop,push,reduce,reduceRight,reverse,shift,slice,some,sort,splice,toLocaleString,toReversed,toSorted,toSpliced,toString,unshift,values,with",
+        "Array",
+        "\u0000js2_data_struct_host_bridge_token",
+        "function () { [native code] }"
       ]
     },
     {
@@ -751,16 +842,6 @@
         },
         {
           "module": "env",
-          "name": "global_performance",
-          "kind": "func",
-          "intent": {
-            "type": "declared_global",
-            "name": "performance"
-          },
-          "paramCount": 0
-        },
-        {
-          "module": "env",
           "name": "Document_createElement",
           "kind": "func",
           "intent": {
@@ -797,27 +878,6 @@
         },
         {
           "module": "env",
-          "name": "Performance_now",
-          "kind": "func",
-          "intent": {
-            "type": "extern_class",
-            "className": "Performance",
-            "action": "method",
-            "member": "now"
-          },
-          "paramCount": 1
-        },
-        {
-          "module": "env",
-          "name": "__extern_get",
-          "kind": "func",
-          "intent": {
-            "type": "extern_get"
-          },
-          "paramCount": 2
-        },
-        {
-          "module": "env",
           "name": "Element_get_children",
           "kind": "func",
           "intent": {
@@ -827,35 +887,6 @@
             "member": "children"
           },
           "paramCount": 1
-        },
-        {
-          "module": "env",
-          "name": "number_toString",
-          "kind": "func",
-          "intent": {
-            "type": "builtin",
-            "name": "number_toString"
-          },
-          "paramCount": 1
-        },
-        {
-          "module": "env",
-          "name": "number_toFixed",
-          "kind": "func",
-          "intent": {
-            "type": "builtin",
-            "name": "number_toFixed"
-          },
-          "paramCount": 2
-        },
-        {
-          "module": "env",
-          "name": "__make_callback",
-          "kind": "func",
-          "intent": {
-            "type": "callback_maker"
-          },
-          "paramCount": 2
         },
         {
           "module": "env",
@@ -919,188 +950,283 @@
         },
         {
           "module": "env",
-          "name": "__get_undefined",
+          "name": "__str_from_mem",
           "kind": "func",
           "intent": {
             "type": "builtin",
-            "name": "__get_undefined"
-          },
-          "paramCount": 0
-        },
-        {
-          "module": "env",
-          "name": "__call_function_0",
-          "kind": "func",
-          "intent": {
-            "type": "builtin",
-            "name": "__call_function_0"
+            "name": "__str_from_mem"
           },
           "paramCount": 2
         },
         {
           "module": "env",
-          "name": "__js_array_new",
+          "name": "__str_to_mem",
           "kind": "func",
           "intent": {
             "type": "builtin",
-            "name": "__js_array_new"
+            "name": "__str_to_mem"
           },
-          "paramCount": 0
+          "paramCount": 2
         },
         {
           "module": "env",
-          "name": "__call_function",
+          "name": "__str_extern_len",
           "kind": "func",
           "intent": {
             "type": "builtin",
-            "name": "__call_function"
+            "name": "__str_extern_len"
+          },
+          "paramCount": 1
+        },
+        {
+          "module": "env",
+          "name": "__boundary_object_get",
+          "kind": "func",
+          "intent": {
+            "type": "boundary_object",
+            "operation": "get"
+          },
+          "paramCount": 2
+        },
+        {
+          "module": "env",
+          "name": "__boundary_object_set",
+          "kind": "func",
+          "intent": {
+            "type": "boundary_object",
+            "operation": "set"
           },
           "paramCount": 3
         },
         {
           "module": "env",
-          "name": "__unbox_number",
+          "name": "__boundary_object_has",
           "kind": "func",
           "intent": {
-            "type": "unbox",
-            "targetType": "number"
+            "type": "boundary_object",
+            "operation": "has"
+          },
+          "paramCount": 2
+        },
+        {
+          "module": "env",
+          "name": "__boundary_object_delete",
+          "kind": "func",
+          "intent": {
+            "type": "boundary_object",
+            "operation": "delete"
+          },
+          "paramCount": 2
+        },
+        {
+          "module": "env",
+          "name": "__boundary_object_keys",
+          "kind": "func",
+          "intent": {
+            "type": "boundary_object",
+            "operation": "keys"
           },
           "paramCount": 1
         },
         {
           "module": "env",
-          "name": "__box_number",
+          "name": "__boundary_object_call",
           "kind": "func",
           "intent": {
-            "type": "box",
-            "targetType": "number"
+            "type": "boundary_object",
+            "operation": "call"
+          },
+          "paramCount": 3
+        },
+        {
+          "module": "env",
+          "name": "__boundary_object_get_prototype",
+          "kind": "func",
+          "intent": {
+            "type": "boundary_object",
+            "operation": "getPrototypeOf"
           },
           "paramCount": 1
         },
         {
           "module": "env",
-          "name": "__new_TypeError",
+          "name": "__boundary_object_set_prototype",
           "kind": "func",
           "intent": {
-            "type": "extern_class",
-            "className": "TypeError",
-            "action": "new"
+            "type": "boundary_object",
+            "operation": "setPrototypeOf"
           },
-          "paramCount": 1
+          "paramCount": 2
         },
         {
           "module": "env",
-          "name": "__extern_to_string_default",
+          "name": "__boundary_object_get_own_property_descriptor",
           "kind": "func",
           "intent": {
-            "type": "builtin",
-            "name": "__extern_to_string_default"
+            "type": "boundary_object",
+            "operation": "getOwnPropertyDescriptor"
           },
-          "paramCount": 1
+          "paramCount": 2
         },
         {
           "module": "env",
-          "name": "__new_RangeError",
+          "name": "__boundary_object_define_property_value",
           "kind": "func",
           "intent": {
-            "type": "extern_class",
-            "className": "RangeError",
-            "action": "new"
-          },
-          "paramCount": 1
-        },
-        {
-          "module": "env",
-          "name": "__concat_4",
-          "kind": "func",
-          "intent": {
-            "type": "builtin",
-            "name": "__concat_4"
+            "type": "boundary_object",
+            "operation": "definePropertyValue"
           },
           "paramCount": 4
         },
         {
           "module": "env",
-          "name": "__extern_method_call_1",
+          "name": "__boundary_object_define_property_accessor",
           "kind": "func",
           "intent": {
-            "type": "builtin",
-            "name": "__extern_method_call_1"
-          },
-          "paramCount": 3
-        },
-        {
-          "module": "env",
-          "name": "__call_function_1",
-          "kind": "func",
-          "intent": {
-            "type": "builtin",
-            "name": "__call_function_1"
-          },
-          "paramCount": 3
-        },
-        {
-          "module": "env",
-          "name": "__call_function_2",
-          "kind": "func",
-          "intent": {
-            "type": "builtin",
-            "name": "__call_function_2"
-          },
-          "paramCount": 4
-        },
-        {
-          "module": "env",
-          "name": "__call_function_3",
-          "kind": "func",
-          "intent": {
-            "type": "builtin",
-            "name": "__call_function_3"
+            "type": "boundary_object",
+            "operation": "definePropertyAccessor"
           },
           "paramCount": 5
         },
         {
           "module": "env",
-          "name": "__call_function_4",
+          "name": "__boundary_object_get_own_property_names",
+          "kind": "func",
+          "intent": {
+            "type": "boundary_object",
+            "operation": "getOwnPropertyNames"
+          },
+          "paramCount": 1
+        },
+        {
+          "module": "env",
+          "name": "__boundary_object_get_own_property_symbols",
+          "kind": "func",
+          "intent": {
+            "type": "boundary_object",
+            "operation": "getOwnPropertySymbols"
+          },
+          "paramCount": 1
+        },
+        {
+          "module": "env",
+          "name": "__boundary_object_is_admitted",
+          "kind": "func",
+          "intent": {
+            "type": "boundary_object",
+            "operation": "isAdmitted"
+          },
+          "paramCount": 1
+        },
+        {
+          "module": "env",
+          "name": "__boundary_object_for_in_keys",
+          "kind": "func",
+          "intent": {
+            "type": "boundary_object",
+            "operation": "forInKeys"
+          },
+          "paramCount": 1
+        },
+        {
+          "module": "env",
+          "name": "__unwrap_for_wasm",
           "kind": "func",
           "intent": {
             "type": "builtin",
-            "name": "__call_function_4"
+            "name": "__unwrap_for_wasm"
           },
-          "paramCount": 6
+          "paramCount": 1
         }
       ],
       "stringPool": [
-        "el",
-        "bcrd",
-        "div",
-        "padding:0.75rem;background:#1a1a35;",
-        "border-radius:6px;border:1px solid #2a2a4a;",
-        "margin-bottom:0.5rem;cursor:pointer",
-        "font-size:0.8rem;color:#fff;font-weight:bold",
-        "font-size:0.7rem;color:#666;margin:2px 0 6px",
-        "font-size:0.75rem;color:#888",
-        "tap to run",
-        "addBenchCard",
-        "click",
-        " in ",
-        "ms",
-        "",
-        "./helpers.ts",
-        "bench_string",
-        "abcde",
-        "main",
-        "margin:0;background:#111;color:#ddd;",
-        "font-family:system-ui,sans-serif;overflow-y:auto",
-        "padding:0.75rem",
-        "String: concat 1k",
-        "wasm:js-string concat per iteration",
-        "padding:0.75rem;background:#1a1a35;border-radius:6px;border:1px solid #2a2a4a;margin-bottom:0.5rem;cursor:pointer",
-        "repeat",
-        "margin:0;background:#111;color:#ddd;font-family:system-ui,sans-serif;overflow-y:auto",
+        "RangeError: Invalid count value",
+        "TypeError",
+        "Cannot convert null or undefined to a BigInt",
+        "Cannot convert value to a BigInt",
+        "RangeError",
+        "The number cannot be converted to a BigInt because it is not an integer",
+        "SyntaxError",
+        "Cannot convert string to a BigInt",
+        "Cannot convert string to a BigInt in standalone mode",
         "Cannot access property on null or undefined at 31:15",
+        "[[PrimitiveValue]]",
+        "TypeError: Cannot assign to read only property",
+        "has",
+        "Cannot convert object to primitive value",
+        "toString",
+        "valueOf",
+        "[object Arguments]",
+        "default",
+        "[object Object]",
+        "null",
+        "string",
+        "get",
+        "Cannot convert a Symbol value to a number",
+        "Cannot convert undefined or null to object",
+        "TypeError: Cannot define property, object is not extensible",
+        "TypeError: Cannot redefine property: configurable attribute of a non-configurable property",
+        "TypeError: Cannot redefine property: enumerable attribute of a non-configurable property",
+        "TypeError: Cannot redefine property: cannot convert a non-configurable accessor to a data property",
+        "TypeError: Cannot redefine property: writable attribute of a non-configurable, non-writable property",
+        "TypeError: Cannot assign to read only property of a non-configurable property",
+        "TypeError: Cannot redefine property: cannot convert a non-configurable data property to an accessor",
+        "TypeError: Cannot redefine property: get attribute of a non-configurable property",
+        "TypeError: Cannot redefine property: set attribute of a non-configurable property",
+        "Object.defineProperties unsupported descriptor shape in standalone mode (#1906) [SITE-PROPS-BAG-NOT-AUTHORITATIVE]",
+        "Object.defineProperties unsupported descriptor shape in standalone mode (#1906) [SITE-PROPS-VEC-INDEXED]",
+        "Object.defineProperties called on non-object",
+        "TypeError: Cannot convert undefined or null to object",
+        "Object.defineProperties unsupported descriptor shape in standalone mode (#1906) [SITE-PROPS-STRING-INDICES]",
+        "Object.defineProperties unsupported descriptor shape in standalone mode (#1906) [SITE-DESC-NULL]",
+        "Object.defineProperties unsupported descriptor shape in standalone mode (#1906) [SITE-DESC-NOT-OBJ]",
+        "TypeError: Object.defineProperties get/set must be callable (#1906)",
+        "TypeError: Invalid property descriptor in Object.defineProperties (#1906)",
+        "Object.defineProperties unsupported descriptor shape in standalone mode (#1906) [SITE-O-NO-CARRIER]",
+        "TypeError: Property description must be an object",
+        "TypeError: Getter/setter must be a function",
+        "TypeError: Invalid property descriptor. Cannot both specify accessors and a value or writable attribute",
+        "called value is not a function",
+        "Cannot perform operation on a proxy that has been revoked",
+        "Proxy ownKeys trap result must be an object",
+        "'set' on proxy: trap returned falsish",
+        "Proxy get trap is not callable",
+        "Proxy trap is not callable",
+        "Proxy target is not callable",
+        "Proxy trap result violates a Proxy invariant",
+        "configurable",
+        "enumerable",
+        "writable",
+        "value",
+        "set",
+        "deleteProperty",
+        "getOwnPropertyDescriptor",
+        "getPrototypeOf",
+        "setPrototypeOf",
+        "isExtensible",
+        "preventExtensions",
+        "ownKeys",
+        "defineProperty",
+        "apply",
+        "Proxy target is not a constructor",
+        "Proxy construct trap is not callable",
+        "Proxy construct trap must return an object",
+        "construct",
+        "prototype",
+        "Cannot create proxy with a non-object as target or handler",
+        "proxy",
+        "revoke",
+        "call",
+        "Cannot freeze or seal this object",
         "Cannot access property on null or undefined at 33:17",
-        "RangeError: toFixed() digits argument must be between 0 and 100"
+        "Cannot convert a Symbol value",
+        "RangeError: toFixed() digits argument must be between 0 and 100",
+        "toString() radix must be between 2 and 36",
+        "number",
+        "@@1,at,concat,copyWithin,entries,every,fill,filter,find,findIndex,findLast,findLastIndex,flat,flatMap,forEach,includes,indexOf,join,keys,lastIndexOf,map,pop,push,reduce,reduceRight,reverse,shift,slice,some,sort,splice,toLocaleString,toReversed,toSorted,toSpliced,toString,unshift,values,with",
+        "Array",
+        "\u0000js2_data_struct_host_bridge_token",
+        "function () { [native code] }"
       ]
     },
     {
@@ -1126,16 +1252,6 @@
         },
         {
           "module": "env",
-          "name": "global_performance",
-          "kind": "func",
-          "intent": {
-            "type": "declared_global",
-            "name": "performance"
-          },
-          "paramCount": 0
-        },
-        {
-          "module": "env",
           "name": "Document_createElement",
           "kind": "func",
           "intent": {
@@ -1172,27 +1288,6 @@
         },
         {
           "module": "env",
-          "name": "Performance_now",
-          "kind": "func",
-          "intent": {
-            "type": "extern_class",
-            "className": "Performance",
-            "action": "method",
-            "member": "now"
-          },
-          "paramCount": 1
-        },
-        {
-          "module": "env",
-          "name": "__extern_get",
-          "kind": "func",
-          "intent": {
-            "type": "extern_get"
-          },
-          "paramCount": 2
-        },
-        {
-          "module": "env",
           "name": "Element_get_children",
           "kind": "func",
           "intent": {
@@ -1202,35 +1297,6 @@
             "member": "children"
           },
           "paramCount": 1
-        },
-        {
-          "module": "env",
-          "name": "number_toString",
-          "kind": "func",
-          "intent": {
-            "type": "builtin",
-            "name": "number_toString"
-          },
-          "paramCount": 1
-        },
-        {
-          "module": "env",
-          "name": "number_toFixed",
-          "kind": "func",
-          "intent": {
-            "type": "builtin",
-            "name": "number_toFixed"
-          },
-          "paramCount": 2
-        },
-        {
-          "module": "env",
-          "name": "__make_callback",
-          "kind": "func",
-          "intent": {
-            "type": "callback_maker"
-          },
-          "paramCount": 2
         },
         {
           "module": "env",
@@ -1294,176 +1360,282 @@
         },
         {
           "module": "env",
-          "name": "__get_undefined",
+          "name": "__str_from_mem",
           "kind": "func",
           "intent": {
             "type": "builtin",
-            "name": "__get_undefined"
-          },
-          "paramCount": 0
-        },
-        {
-          "module": "env",
-          "name": "__call_function_0",
-          "kind": "func",
-          "intent": {
-            "type": "builtin",
-            "name": "__call_function_0"
+            "name": "__str_from_mem"
           },
           "paramCount": 2
         },
         {
           "module": "env",
-          "name": "__js_array_new",
+          "name": "__str_to_mem",
           "kind": "func",
           "intent": {
             "type": "builtin",
-            "name": "__js_array_new"
+            "name": "__str_to_mem"
           },
-          "paramCount": 0
+          "paramCount": 2
         },
         {
           "module": "env",
-          "name": "__call_function",
+          "name": "__str_extern_len",
           "kind": "func",
           "intent": {
             "type": "builtin",
-            "name": "__call_function"
+            "name": "__str_extern_len"
+          },
+          "paramCount": 1
+        },
+        {
+          "module": "env",
+          "name": "__boundary_object_get",
+          "kind": "func",
+          "intent": {
+            "type": "boundary_object",
+            "operation": "get"
+          },
+          "paramCount": 2
+        },
+        {
+          "module": "env",
+          "name": "__boundary_object_set",
+          "kind": "func",
+          "intent": {
+            "type": "boundary_object",
+            "operation": "set"
           },
           "paramCount": 3
         },
         {
           "module": "env",
-          "name": "__unbox_number",
+          "name": "__boundary_object_has",
           "kind": "func",
           "intent": {
-            "type": "unbox",
-            "targetType": "number"
+            "type": "boundary_object",
+            "operation": "has"
+          },
+          "paramCount": 2
+        },
+        {
+          "module": "env",
+          "name": "__boundary_object_delete",
+          "kind": "func",
+          "intent": {
+            "type": "boundary_object",
+            "operation": "delete"
+          },
+          "paramCount": 2
+        },
+        {
+          "module": "env",
+          "name": "__boundary_object_keys",
+          "kind": "func",
+          "intent": {
+            "type": "boundary_object",
+            "operation": "keys"
           },
           "paramCount": 1
         },
         {
           "module": "env",
-          "name": "__box_number",
+          "name": "__boundary_object_call",
           "kind": "func",
           "intent": {
-            "type": "box",
-            "targetType": "number"
-          },
-          "paramCount": 1
-        },
-        {
-          "module": "env",
-          "name": "__new_TypeError",
-          "kind": "func",
-          "intent": {
-            "type": "extern_class",
-            "className": "TypeError",
-            "action": "new"
-          },
-          "paramCount": 1
-        },
-        {
-          "module": "env",
-          "name": "__extern_to_string_default",
-          "kind": "func",
-          "intent": {
-            "type": "builtin",
-            "name": "__extern_to_string_default"
-          },
-          "paramCount": 1
-        },
-        {
-          "module": "env",
-          "name": "__new_RangeError",
-          "kind": "func",
-          "intent": {
-            "type": "extern_class",
-            "className": "RangeError",
-            "action": "new"
-          },
-          "paramCount": 1
-        },
-        {
-          "module": "env",
-          "name": "__concat_4",
-          "kind": "func",
-          "intent": {
-            "type": "builtin",
-            "name": "__concat_4"
-          },
-          "paramCount": 4
-        },
-        {
-          "module": "env",
-          "name": "__call_function_1",
-          "kind": "func",
-          "intent": {
-            "type": "builtin",
-            "name": "__call_function_1"
+            "type": "boundary_object",
+            "operation": "call"
           },
           "paramCount": 3
         },
         {
           "module": "env",
-          "name": "__call_function_2",
+          "name": "__boundary_object_get_prototype",
           "kind": "func",
           "intent": {
-            "type": "builtin",
-            "name": "__call_function_2"
+            "type": "boundary_object",
+            "operation": "getPrototypeOf"
+          },
+          "paramCount": 1
+        },
+        {
+          "module": "env",
+          "name": "__boundary_object_set_prototype",
+          "kind": "func",
+          "intent": {
+            "type": "boundary_object",
+            "operation": "setPrototypeOf"
+          },
+          "paramCount": 2
+        },
+        {
+          "module": "env",
+          "name": "__boundary_object_get_own_property_descriptor",
+          "kind": "func",
+          "intent": {
+            "type": "boundary_object",
+            "operation": "getOwnPropertyDescriptor"
+          },
+          "paramCount": 2
+        },
+        {
+          "module": "env",
+          "name": "__boundary_object_define_property_value",
+          "kind": "func",
+          "intent": {
+            "type": "boundary_object",
+            "operation": "definePropertyValue"
           },
           "paramCount": 4
         },
         {
           "module": "env",
-          "name": "__call_function_3",
+          "name": "__boundary_object_define_property_accessor",
           "kind": "func",
           "intent": {
-            "type": "builtin",
-            "name": "__call_function_3"
+            "type": "boundary_object",
+            "operation": "definePropertyAccessor"
           },
           "paramCount": 5
         },
         {
           "module": "env",
-          "name": "__call_function_4",
+          "name": "__boundary_object_get_own_property_names",
+          "kind": "func",
+          "intent": {
+            "type": "boundary_object",
+            "operation": "getOwnPropertyNames"
+          },
+          "paramCount": 1
+        },
+        {
+          "module": "env",
+          "name": "__boundary_object_get_own_property_symbols",
+          "kind": "func",
+          "intent": {
+            "type": "boundary_object",
+            "operation": "getOwnPropertySymbols"
+          },
+          "paramCount": 1
+        },
+        {
+          "module": "env",
+          "name": "__boundary_object_is_admitted",
+          "kind": "func",
+          "intent": {
+            "type": "boundary_object",
+            "operation": "isAdmitted"
+          },
+          "paramCount": 1
+        },
+        {
+          "module": "env",
+          "name": "__boundary_object_for_in_keys",
+          "kind": "func",
+          "intent": {
+            "type": "boundary_object",
+            "operation": "forInKeys"
+          },
+          "paramCount": 1
+        },
+        {
+          "module": "env",
+          "name": "__unwrap_for_wasm",
           "kind": "func",
           "intent": {
             "type": "builtin",
-            "name": "__call_function_4"
+            "name": "__unwrap_for_wasm"
           },
-          "paramCount": 6
+          "paramCount": 1
         }
       ],
       "stringPool": [
-        "el",
-        "bcrd",
-        "div",
-        "padding:0.75rem;background:#1a1a35;",
-        "border-radius:6px;border:1px solid #2a2a4a;",
-        "margin-bottom:0.5rem;cursor:pointer",
-        "font-size:0.8rem;color:#fff;font-weight:bold",
-        "font-size:0.7rem;color:#666;margin:2px 0 6px",
-        "font-size:0.75rem;color:#888",
-        "tap to run",
-        "addBenchCard",
-        "click",
-        " in ",
-        "ms",
-        "",
-        "./helpers.ts",
-        "bench_array",
-        "main",
-        "margin:0;background:#111;color:#ddd;",
-        "font-family:system-ui,sans-serif;overflow-y:auto",
-        "padding:0.75rem",
-        "Array: fill+sum 10k",
-        "Wasm GC array — push / get loop",
-        "padding:0.75rem;background:#1a1a35;border-radius:6px;border:1px solid #2a2a4a;margin-bottom:0.5rem;cursor:pointer",
-        "margin:0;background:#111;color:#ddd;font-family:system-ui,sans-serif;overflow-y:auto",
+        "TypeError",
+        "Cannot convert null or undefined to a BigInt",
+        "Cannot convert value to a BigInt",
+        "RangeError",
+        "The number cannot be converted to a BigInt because it is not an integer",
+        "SyntaxError",
+        "Cannot convert string to a BigInt",
+        "Cannot convert string to a BigInt in standalone mode",
         "Cannot access property on null or undefined at 31:15",
+        "[[PrimitiveValue]]",
+        "TypeError: Cannot assign to read only property",
+        "has",
+        "Cannot convert object to primitive value",
+        "toString",
+        "valueOf",
+        "[object Arguments]",
+        "default",
+        "[object Object]",
+        "null",
+        "string",
+        "get",
+        "Cannot convert a Symbol value to a number",
+        "Cannot convert undefined or null to object",
+        "TypeError: Cannot define property, object is not extensible",
+        "TypeError: Cannot redefine property: configurable attribute of a non-configurable property",
+        "TypeError: Cannot redefine property: enumerable attribute of a non-configurable property",
+        "TypeError: Cannot redefine property: cannot convert a non-configurable accessor to a data property",
+        "TypeError: Cannot redefine property: writable attribute of a non-configurable, non-writable property",
+        "TypeError: Cannot assign to read only property of a non-configurable property",
+        "TypeError: Cannot redefine property: cannot convert a non-configurable data property to an accessor",
+        "TypeError: Cannot redefine property: get attribute of a non-configurable property",
+        "TypeError: Cannot redefine property: set attribute of a non-configurable property",
+        "Object.defineProperties unsupported descriptor shape in standalone mode (#1906) [SITE-PROPS-BAG-NOT-AUTHORITATIVE]",
+        "Object.defineProperties unsupported descriptor shape in standalone mode (#1906) [SITE-PROPS-VEC-INDEXED]",
+        "Object.defineProperties called on non-object",
+        "TypeError: Cannot convert undefined or null to object",
+        "Object.defineProperties unsupported descriptor shape in standalone mode (#1906) [SITE-PROPS-STRING-INDICES]",
+        "Object.defineProperties unsupported descriptor shape in standalone mode (#1906) [SITE-DESC-NULL]",
+        "Object.defineProperties unsupported descriptor shape in standalone mode (#1906) [SITE-DESC-NOT-OBJ]",
+        "TypeError: Object.defineProperties get/set must be callable (#1906)",
+        "TypeError: Invalid property descriptor in Object.defineProperties (#1906)",
+        "Object.defineProperties unsupported descriptor shape in standalone mode (#1906) [SITE-O-NO-CARRIER]",
+        "TypeError: Property description must be an object",
+        "TypeError: Getter/setter must be a function",
+        "TypeError: Invalid property descriptor. Cannot both specify accessors and a value or writable attribute",
+        "called value is not a function",
+        "Cannot perform operation on a proxy that has been revoked",
+        "Proxy ownKeys trap result must be an object",
+        "'set' on proxy: trap returned falsish",
+        "Proxy get trap is not callable",
+        "Proxy trap is not callable",
+        "Proxy target is not callable",
+        "Proxy trap result violates a Proxy invariant",
+        "configurable",
+        "enumerable",
+        "writable",
+        "value",
+        "set",
+        "deleteProperty",
+        "getOwnPropertyDescriptor",
+        "getPrototypeOf",
+        "setPrototypeOf",
+        "isExtensible",
+        "preventExtensions",
+        "ownKeys",
+        "defineProperty",
+        "apply",
+        "Proxy target is not a constructor",
+        "Proxy construct trap is not callable",
+        "Proxy construct trap must return an object",
+        "construct",
+        "prototype",
+        "Cannot create proxy with a non-object as target or handler",
+        "proxy",
+        "revoke",
+        "call",
+        "Cannot freeze or seal this object",
         "Cannot access property on null or undefined at 33:17",
-        "RangeError: toFixed() digits argument must be between 0 and 100"
+        "Cannot convert a Symbol value",
+        "RangeError: toFixed() digits argument must be between 0 and 100",
+        "toString() radix must be between 2 and 36",
+        "number",
+        "@@1,at,concat,copyWithin,entries,every,fill,filter,find,findIndex,findLast,findLastIndex,flat,flatMap,forEach,includes,indexOf,join,keys,lastIndexOf,map,pop,push,reduce,reduceRight,reverse,shift,slice,some,sort,splice,toLocaleString,toReversed,toSorted,toSpliced,toString,unshift,values,with",
+        "Array",
+        "\u0000js2_data_struct_host_bridge_token",
+        "function () { [native code] }"
       ]
     },
     {
@@ -1489,16 +1661,6 @@
         },
         {
           "module": "env",
-          "name": "global_performance",
-          "kind": "func",
-          "intent": {
-            "type": "declared_global",
-            "name": "performance"
-          },
-          "paramCount": 0
-        },
-        {
-          "module": "env",
           "name": "HTMLElement_addEventListener",
           "kind": "func",
           "intent": {
@@ -1511,27 +1673,6 @@
         },
         {
           "module": "env",
-          "name": "Performance_now",
-          "kind": "func",
-          "intent": {
-            "type": "extern_class",
-            "className": "Performance",
-            "action": "method",
-            "member": "now"
-          },
-          "paramCount": 1
-        },
-        {
-          "module": "env",
-          "name": "__extern_get",
-          "kind": "func",
-          "intent": {
-            "type": "extern_get"
-          },
-          "paramCount": 2
-        },
-        {
-          "module": "env",
           "name": "Element_get_children",
           "kind": "func",
           "intent": {
@@ -1541,25 +1682,6 @@
             "member": "children"
           },
           "paramCount": 1
-        },
-        {
-          "module": "env",
-          "name": "number_toFixed",
-          "kind": "func",
-          "intent": {
-            "type": "builtin",
-            "name": "number_toFixed"
-          },
-          "paramCount": 2
-        },
-        {
-          "module": "env",
-          "name": "__make_callback",
-          "kind": "func",
-          "intent": {
-            "type": "callback_maker"
-          },
-          "paramCount": 2
         },
         {
           "module": "env",
@@ -1659,188 +1781,282 @@
         },
         {
           "module": "env",
-          "name": "number_toString",
+          "name": "__str_from_mem",
           "kind": "func",
           "intent": {
             "type": "builtin",
-            "name": "number_toString"
-          },
-          "paramCount": 1
-        },
-        {
-          "module": "env",
-          "name": "__get_undefined",
-          "kind": "func",
-          "intent": {
-            "type": "builtin",
-            "name": "__get_undefined"
-          },
-          "paramCount": 0
-        },
-        {
-          "module": "env",
-          "name": "__call_function_0",
-          "kind": "func",
-          "intent": {
-            "type": "builtin",
-            "name": "__call_function_0"
+            "name": "__str_from_mem"
           },
           "paramCount": 2
         },
         {
           "module": "env",
-          "name": "__js_array_new",
+          "name": "__str_to_mem",
           "kind": "func",
           "intent": {
             "type": "builtin",
-            "name": "__js_array_new"
+            "name": "__str_to_mem"
           },
-          "paramCount": 0
+          "paramCount": 2
         },
         {
           "module": "env",
-          "name": "__call_function",
+          "name": "__str_extern_len",
           "kind": "func",
           "intent": {
             "type": "builtin",
-            "name": "__call_function"
+            "name": "__str_extern_len"
+          },
+          "paramCount": 1
+        },
+        {
+          "module": "env",
+          "name": "__boundary_object_get",
+          "kind": "func",
+          "intent": {
+            "type": "boundary_object",
+            "operation": "get"
+          },
+          "paramCount": 2
+        },
+        {
+          "module": "env",
+          "name": "__boundary_object_set",
+          "kind": "func",
+          "intent": {
+            "type": "boundary_object",
+            "operation": "set"
           },
           "paramCount": 3
         },
         {
           "module": "env",
-          "name": "__unbox_number",
+          "name": "__boundary_object_has",
           "kind": "func",
           "intent": {
-            "type": "unbox",
-            "targetType": "number"
+            "type": "boundary_object",
+            "operation": "has"
+          },
+          "paramCount": 2
+        },
+        {
+          "module": "env",
+          "name": "__boundary_object_delete",
+          "kind": "func",
+          "intent": {
+            "type": "boundary_object",
+            "operation": "delete"
+          },
+          "paramCount": 2
+        },
+        {
+          "module": "env",
+          "name": "__boundary_object_keys",
+          "kind": "func",
+          "intent": {
+            "type": "boundary_object",
+            "operation": "keys"
           },
           "paramCount": 1
         },
         {
           "module": "env",
-          "name": "__box_number",
+          "name": "__boundary_object_call",
           "kind": "func",
           "intent": {
-            "type": "box",
-            "targetType": "number"
-          },
-          "paramCount": 1
-        },
-        {
-          "module": "env",
-          "name": "__new_TypeError",
-          "kind": "func",
-          "intent": {
-            "type": "extern_class",
-            "className": "TypeError",
-            "action": "new"
-          },
-          "paramCount": 1
-        },
-        {
-          "module": "env",
-          "name": "__extern_to_string_default",
-          "kind": "func",
-          "intent": {
-            "type": "builtin",
-            "name": "__extern_to_string_default"
-          },
-          "paramCount": 1
-        },
-        {
-          "module": "env",
-          "name": "__new_RangeError",
-          "kind": "func",
-          "intent": {
-            "type": "extern_class",
-            "className": "RangeError",
-            "action": "new"
-          },
-          "paramCount": 1
-        },
-        {
-          "module": "env",
-          "name": "__concat_4",
-          "kind": "func",
-          "intent": {
-            "type": "builtin",
-            "name": "__concat_4"
-          },
-          "paramCount": 4
-        },
-        {
-          "module": "env",
-          "name": "__call_function_1",
-          "kind": "func",
-          "intent": {
-            "type": "builtin",
-            "name": "__call_function_1"
+            "type": "boundary_object",
+            "operation": "call"
           },
           "paramCount": 3
         },
         {
           "module": "env",
-          "name": "__call_function_2",
+          "name": "__boundary_object_get_prototype",
           "kind": "func",
           "intent": {
-            "type": "builtin",
-            "name": "__call_function_2"
+            "type": "boundary_object",
+            "operation": "getPrototypeOf"
+          },
+          "paramCount": 1
+        },
+        {
+          "module": "env",
+          "name": "__boundary_object_set_prototype",
+          "kind": "func",
+          "intent": {
+            "type": "boundary_object",
+            "operation": "setPrototypeOf"
+          },
+          "paramCount": 2
+        },
+        {
+          "module": "env",
+          "name": "__boundary_object_get_own_property_descriptor",
+          "kind": "func",
+          "intent": {
+            "type": "boundary_object",
+            "operation": "getOwnPropertyDescriptor"
+          },
+          "paramCount": 2
+        },
+        {
+          "module": "env",
+          "name": "__boundary_object_define_property_value",
+          "kind": "func",
+          "intent": {
+            "type": "boundary_object",
+            "operation": "definePropertyValue"
           },
           "paramCount": 4
         },
         {
           "module": "env",
-          "name": "__call_function_3",
+          "name": "__boundary_object_define_property_accessor",
           "kind": "func",
           "intent": {
-            "type": "builtin",
-            "name": "__call_function_3"
+            "type": "boundary_object",
+            "operation": "definePropertyAccessor"
           },
           "paramCount": 5
         },
         {
           "module": "env",
-          "name": "__call_function_4",
+          "name": "__boundary_object_get_own_property_names",
+          "kind": "func",
+          "intent": {
+            "type": "boundary_object",
+            "operation": "getOwnPropertyNames"
+          },
+          "paramCount": 1
+        },
+        {
+          "module": "env",
+          "name": "__boundary_object_get_own_property_symbols",
+          "kind": "func",
+          "intent": {
+            "type": "boundary_object",
+            "operation": "getOwnPropertySymbols"
+          },
+          "paramCount": 1
+        },
+        {
+          "module": "env",
+          "name": "__boundary_object_is_admitted",
+          "kind": "func",
+          "intent": {
+            "type": "boundary_object",
+            "operation": "isAdmitted"
+          },
+          "paramCount": 1
+        },
+        {
+          "module": "env",
+          "name": "__boundary_object_for_in_keys",
+          "kind": "func",
+          "intent": {
+            "type": "boundary_object",
+            "operation": "forInKeys"
+          },
+          "paramCount": 1
+        },
+        {
+          "module": "env",
+          "name": "__unwrap_for_wasm",
           "kind": "func",
           "intent": {
             "type": "builtin",
-            "name": "__call_function_4"
+            "name": "__unwrap_for_wasm"
           },
-          "paramCount": 6
+          "paramCount": 1
         }
       ],
       "stringPool": [
-        "el",
-        "bcrd",
-        "div",
-        "padding:0.75rem;background:#1a1a35;",
-        "border-radius:6px;border:1px solid #2a2a4a;",
-        "margin-bottom:0.5rem;cursor:pointer",
-        "font-size:0.8rem;color:#fff;font-weight:bold",
-        "font-size:0.7rem;color:#666;margin:2px 0 6px",
-        "font-size:0.75rem;color:#888",
-        "tap to run",
-        "addBenchCard",
-        "click",
-        " in ",
-        "ms",
-        "",
-        "./helpers.ts",
-        "bench_dom",
-        "display:none",
-        "span",
-        "main",
-        "margin:0;background:#111;color:#ddd;",
-        "font-family:system-ui,sans-serif;overflow-y:auto",
-        "padding:0.75rem",
-        "DOM: 100 elements",
-        "Host boundary — createElement + appendChild",
-        "padding:0.75rem;background:#1a1a35;border-radius:6px;border:1px solid #2a2a4a;margin-bottom:0.5rem;cursor:pointer",
-        "margin:0;background:#111;color:#ddd;font-family:system-ui,sans-serif;overflow-y:auto",
+        "TypeError",
+        "Cannot convert null or undefined to a BigInt",
+        "Cannot convert value to a BigInt",
+        "RangeError",
+        "The number cannot be converted to a BigInt because it is not an integer",
+        "SyntaxError",
+        "Cannot convert string to a BigInt",
+        "Cannot convert string to a BigInt in standalone mode",
         "Cannot access property on null or undefined at 31:15",
+        "[[PrimitiveValue]]",
+        "TypeError: Cannot assign to read only property",
+        "has",
+        "Cannot convert object to primitive value",
+        "toString",
+        "valueOf",
+        "[object Arguments]",
+        "default",
+        "[object Object]",
+        "null",
+        "string",
+        "get",
+        "Cannot convert a Symbol value to a number",
+        "Cannot convert undefined or null to object",
+        "TypeError: Cannot define property, object is not extensible",
+        "TypeError: Cannot redefine property: configurable attribute of a non-configurable property",
+        "TypeError: Cannot redefine property: enumerable attribute of a non-configurable property",
+        "TypeError: Cannot redefine property: cannot convert a non-configurable accessor to a data property",
+        "TypeError: Cannot redefine property: writable attribute of a non-configurable, non-writable property",
+        "TypeError: Cannot assign to read only property of a non-configurable property",
+        "TypeError: Cannot redefine property: cannot convert a non-configurable data property to an accessor",
+        "TypeError: Cannot redefine property: get attribute of a non-configurable property",
+        "TypeError: Cannot redefine property: set attribute of a non-configurable property",
+        "Object.defineProperties unsupported descriptor shape in standalone mode (#1906) [SITE-PROPS-BAG-NOT-AUTHORITATIVE]",
+        "Object.defineProperties unsupported descriptor shape in standalone mode (#1906) [SITE-PROPS-VEC-INDEXED]",
+        "Object.defineProperties called on non-object",
+        "TypeError: Cannot convert undefined or null to object",
+        "Object.defineProperties unsupported descriptor shape in standalone mode (#1906) [SITE-PROPS-STRING-INDICES]",
+        "Object.defineProperties unsupported descriptor shape in standalone mode (#1906) [SITE-DESC-NULL]",
+        "Object.defineProperties unsupported descriptor shape in standalone mode (#1906) [SITE-DESC-NOT-OBJ]",
+        "TypeError: Object.defineProperties get/set must be callable (#1906)",
+        "TypeError: Invalid property descriptor in Object.defineProperties (#1906)",
+        "Object.defineProperties unsupported descriptor shape in standalone mode (#1906) [SITE-O-NO-CARRIER]",
+        "TypeError: Property description must be an object",
+        "TypeError: Getter/setter must be a function",
+        "TypeError: Invalid property descriptor. Cannot both specify accessors and a value or writable attribute",
+        "called value is not a function",
+        "Cannot perform operation on a proxy that has been revoked",
+        "Proxy ownKeys trap result must be an object",
+        "'set' on proxy: trap returned falsish",
+        "Proxy get trap is not callable",
+        "Proxy trap is not callable",
+        "Proxy target is not callable",
+        "Proxy trap result violates a Proxy invariant",
+        "configurable",
+        "enumerable",
+        "writable",
+        "value",
+        "set",
+        "deleteProperty",
+        "getOwnPropertyDescriptor",
+        "getPrototypeOf",
+        "setPrototypeOf",
+        "isExtensible",
+        "preventExtensions",
+        "ownKeys",
+        "defineProperty",
+        "apply",
+        "Proxy target is not a constructor",
+        "Proxy construct trap is not callable",
+        "Proxy construct trap must return an object",
+        "construct",
+        "prototype",
+        "Cannot create proxy with a non-object as target or handler",
+        "proxy",
+        "revoke",
+        "call",
+        "Cannot freeze or seal this object",
         "Cannot access property on null or undefined at 33:17",
-        "RangeError: toFixed() digits argument must be between 0 and 100"
+        "Cannot convert a Symbol value",
+        "RangeError: toFixed() digits argument must be between 0 and 100",
+        "toString() radix must be between 2 and 36",
+        "number",
+        "@@1,at,concat,copyWithin,entries,every,fill,filter,find,findIndex,findLast,findLastIndex,flat,flatMap,forEach,includes,indexOf,join,keys,lastIndexOf,map,pop,push,reduce,reduceRight,reverse,shift,slice,some,sort,splice,toLocaleString,toReversed,toSorted,toSpliced,toString,unshift,values,with",
+        "Array",
+        "\u0000js2_data_struct_host_bridge_token",
+        "function () { [native code] }"
       ]
     },
     {
@@ -1861,16 +2077,6 @@
           "intent": {
             "type": "declared_global",
             "name": "document"
-          },
-          "paramCount": 0
-        },
-        {
-          "module": "env",
-          "name": "global_performance",
-          "kind": "func",
-          "intent": {
-            "type": "declared_global",
-            "name": "performance"
           },
           "paramCount": 0
         },
@@ -1900,27 +2106,6 @@
         },
         {
           "module": "env",
-          "name": "Performance_now",
-          "kind": "func",
-          "intent": {
-            "type": "extern_class",
-            "className": "Performance",
-            "action": "method",
-            "member": "now"
-          },
-          "paramCount": 1
-        },
-        {
-          "module": "env",
-          "name": "__extern_get",
-          "kind": "func",
-          "intent": {
-            "type": "extern_get"
-          },
-          "paramCount": 2
-        },
-        {
-          "module": "env",
           "name": "Element_get_children",
           "kind": "func",
           "intent": {
@@ -1930,25 +2115,6 @@
             "member": "children"
           },
           "paramCount": 1
-        },
-        {
-          "module": "env",
-          "name": "number_toFixed",
-          "kind": "func",
-          "intent": {
-            "type": "builtin",
-            "name": "number_toFixed"
-          },
-          "paramCount": 2
-        },
-        {
-          "module": "env",
-          "name": "__make_callback",
-          "kind": "func",
-          "intent": {
-            "type": "callback_maker"
-          },
-          "paramCount": 2
         },
         {
           "module": "env",
@@ -2048,200 +2214,282 @@
         },
         {
           "module": "env",
-          "name": "number_toString",
+          "name": "__str_from_mem",
           "kind": "func",
           "intent": {
             "type": "builtin",
-            "name": "number_toString"
-          },
-          "paramCount": 1
-        },
-        {
-          "module": "env",
-          "name": "__get_undefined",
-          "kind": "func",
-          "intent": {
-            "type": "builtin",
-            "name": "__get_undefined"
-          },
-          "paramCount": 0
-        },
-        {
-          "module": "env",
-          "name": "__call_function_0",
-          "kind": "func",
-          "intent": {
-            "type": "builtin",
-            "name": "__call_function_0"
+            "name": "__str_from_mem"
           },
           "paramCount": 2
         },
         {
           "module": "env",
-          "name": "__js_array_new",
+          "name": "__str_to_mem",
           "kind": "func",
           "intent": {
             "type": "builtin",
-            "name": "__js_array_new"
+            "name": "__str_to_mem"
           },
-          "paramCount": 0
+          "paramCount": 2
         },
         {
           "module": "env",
-          "name": "__call_function",
+          "name": "__str_extern_len",
           "kind": "func",
           "intent": {
             "type": "builtin",
-            "name": "__call_function"
+            "name": "__str_extern_len"
+          },
+          "paramCount": 1
+        },
+        {
+          "module": "env",
+          "name": "__boundary_object_get",
+          "kind": "func",
+          "intent": {
+            "type": "boundary_object",
+            "operation": "get"
+          },
+          "paramCount": 2
+        },
+        {
+          "module": "env",
+          "name": "__boundary_object_set",
+          "kind": "func",
+          "intent": {
+            "type": "boundary_object",
+            "operation": "set"
           },
           "paramCount": 3
         },
         {
           "module": "env",
-          "name": "__unbox_number",
+          "name": "__boundary_object_has",
           "kind": "func",
           "intent": {
-            "type": "unbox",
-            "targetType": "number"
+            "type": "boundary_object",
+            "operation": "has"
+          },
+          "paramCount": 2
+        },
+        {
+          "module": "env",
+          "name": "__boundary_object_delete",
+          "kind": "func",
+          "intent": {
+            "type": "boundary_object",
+            "operation": "delete"
+          },
+          "paramCount": 2
+        },
+        {
+          "module": "env",
+          "name": "__boundary_object_keys",
+          "kind": "func",
+          "intent": {
+            "type": "boundary_object",
+            "operation": "keys"
           },
           "paramCount": 1
         },
         {
           "module": "env",
-          "name": "__box_number",
+          "name": "__boundary_object_call",
           "kind": "func",
           "intent": {
-            "type": "box",
-            "targetType": "number"
-          },
-          "paramCount": 1
-        },
-        {
-          "module": "env",
-          "name": "__new_TypeError",
-          "kind": "func",
-          "intent": {
-            "type": "extern_class",
-            "className": "TypeError",
-            "action": "new"
-          },
-          "paramCount": 1
-        },
-        {
-          "module": "env",
-          "name": "__extern_to_string_default",
-          "kind": "func",
-          "intent": {
-            "type": "builtin",
-            "name": "__extern_to_string_default"
-          },
-          "paramCount": 1
-        },
-        {
-          "module": "env",
-          "name": "__new_RangeError",
-          "kind": "func",
-          "intent": {
-            "type": "extern_class",
-            "className": "RangeError",
-            "action": "new"
-          },
-          "paramCount": 1
-        },
-        {
-          "module": "env",
-          "name": "__concat_4",
-          "kind": "func",
-          "intent": {
-            "type": "builtin",
-            "name": "__concat_4"
-          },
-          "paramCount": 4
-        },
-        {
-          "module": "env",
-          "name": "__concat_5",
-          "kind": "func",
-          "intent": {
-            "type": "builtin",
-            "name": "__concat_5"
-          },
-          "paramCount": 5
-        },
-        {
-          "module": "env",
-          "name": "__call_function_1",
-          "kind": "func",
-          "intent": {
-            "type": "builtin",
-            "name": "__call_function_1"
+            "type": "boundary_object",
+            "operation": "call"
           },
           "paramCount": 3
         },
         {
           "module": "env",
-          "name": "__call_function_2",
+          "name": "__boundary_object_get_prototype",
           "kind": "func",
           "intent": {
-            "type": "builtin",
-            "name": "__call_function_2"
+            "type": "boundary_object",
+            "operation": "getPrototypeOf"
+          },
+          "paramCount": 1
+        },
+        {
+          "module": "env",
+          "name": "__boundary_object_set_prototype",
+          "kind": "func",
+          "intent": {
+            "type": "boundary_object",
+            "operation": "setPrototypeOf"
+          },
+          "paramCount": 2
+        },
+        {
+          "module": "env",
+          "name": "__boundary_object_get_own_property_descriptor",
+          "kind": "func",
+          "intent": {
+            "type": "boundary_object",
+            "operation": "getOwnPropertyDescriptor"
+          },
+          "paramCount": 2
+        },
+        {
+          "module": "env",
+          "name": "__boundary_object_define_property_value",
+          "kind": "func",
+          "intent": {
+            "type": "boundary_object",
+            "operation": "definePropertyValue"
           },
           "paramCount": 4
         },
         {
           "module": "env",
-          "name": "__call_function_3",
+          "name": "__boundary_object_define_property_accessor",
           "kind": "func",
           "intent": {
-            "type": "builtin",
-            "name": "__call_function_3"
+            "type": "boundary_object",
+            "operation": "definePropertyAccessor"
           },
           "paramCount": 5
         },
         {
           "module": "env",
-          "name": "__call_function_4",
+          "name": "__boundary_object_get_own_property_names",
+          "kind": "func",
+          "intent": {
+            "type": "boundary_object",
+            "operation": "getOwnPropertyNames"
+          },
+          "paramCount": 1
+        },
+        {
+          "module": "env",
+          "name": "__boundary_object_get_own_property_symbols",
+          "kind": "func",
+          "intent": {
+            "type": "boundary_object",
+            "operation": "getOwnPropertySymbols"
+          },
+          "paramCount": 1
+        },
+        {
+          "module": "env",
+          "name": "__boundary_object_is_admitted",
+          "kind": "func",
+          "intent": {
+            "type": "boundary_object",
+            "operation": "isAdmitted"
+          },
+          "paramCount": 1
+        },
+        {
+          "module": "env",
+          "name": "__boundary_object_for_in_keys",
+          "kind": "func",
+          "intent": {
+            "type": "boundary_object",
+            "operation": "forInKeys"
+          },
+          "paramCount": 1
+        },
+        {
+          "module": "env",
+          "name": "__unwrap_for_wasm",
           "kind": "func",
           "intent": {
             "type": "builtin",
-            "name": "__call_function_4"
+            "name": "__unwrap_for_wasm"
           },
-          "paramCount": 6
+          "paramCount": 1
         }
       ],
       "stringPool": [
-        "el",
-        "bcrd",
-        "div",
-        "padding:0.75rem;background:#1a1a35;",
-        "border-radius:6px;border:1px solid #2a2a4a;",
-        "margin-bottom:0.5rem;cursor:pointer",
-        "font-size:0.8rem;color:#fff;font-weight:bold",
-        "font-size:0.7rem;color:#666;margin:2px 0 6px",
-        "font-size:0.75rem;color:#888",
-        "tap to run",
-        "addBenchCard",
-        "click",
-        " in ",
-        "ms",
-        "",
-        "./helpers.ts",
-        "bench_style",
-        "width:1px;height:1px;position:fixed;top:-9px",
-        "rgb(",
-        ",",
-        ",128)",
-        "main",
-        "margin:0;background:#111;color:#ddd;",
-        "font-family:system-ui,sans-serif;overflow-y:auto",
-        "padding:0.75rem",
-        "Style: 100 updates",
-        "Host boundary — style.background per iteration",
-        "padding:0.75rem;background:#1a1a35;border-radius:6px;border:1px solid #2a2a4a;margin-bottom:0.5rem;cursor:pointer",
-        "margin:0;background:#111;color:#ddd;font-family:system-ui,sans-serif;overflow-y:auto",
+        "TypeError",
+        "Cannot convert null or undefined to a BigInt",
+        "Cannot convert value to a BigInt",
+        "RangeError",
+        "The number cannot be converted to a BigInt because it is not an integer",
+        "SyntaxError",
+        "Cannot convert string to a BigInt",
+        "Cannot convert string to a BigInt in standalone mode",
         "Cannot access property on null or undefined at 31:15",
+        "[[PrimitiveValue]]",
+        "TypeError: Cannot assign to read only property",
+        "has",
+        "Cannot convert object to primitive value",
+        "toString",
+        "valueOf",
+        "[object Arguments]",
+        "default",
+        "[object Object]",
+        "null",
+        "string",
+        "get",
+        "Cannot convert a Symbol value to a number",
+        "Cannot convert undefined or null to object",
+        "TypeError: Cannot define property, object is not extensible",
+        "TypeError: Cannot redefine property: configurable attribute of a non-configurable property",
+        "TypeError: Cannot redefine property: enumerable attribute of a non-configurable property",
+        "TypeError: Cannot redefine property: cannot convert a non-configurable accessor to a data property",
+        "TypeError: Cannot redefine property: writable attribute of a non-configurable, non-writable property",
+        "TypeError: Cannot assign to read only property of a non-configurable property",
+        "TypeError: Cannot redefine property: cannot convert a non-configurable data property to an accessor",
+        "TypeError: Cannot redefine property: get attribute of a non-configurable property",
+        "TypeError: Cannot redefine property: set attribute of a non-configurable property",
+        "Object.defineProperties unsupported descriptor shape in standalone mode (#1906) [SITE-PROPS-BAG-NOT-AUTHORITATIVE]",
+        "Object.defineProperties unsupported descriptor shape in standalone mode (#1906) [SITE-PROPS-VEC-INDEXED]",
+        "Object.defineProperties called on non-object",
+        "TypeError: Cannot convert undefined or null to object",
+        "Object.defineProperties unsupported descriptor shape in standalone mode (#1906) [SITE-PROPS-STRING-INDICES]",
+        "Object.defineProperties unsupported descriptor shape in standalone mode (#1906) [SITE-DESC-NULL]",
+        "Object.defineProperties unsupported descriptor shape in standalone mode (#1906) [SITE-DESC-NOT-OBJ]",
+        "TypeError: Object.defineProperties get/set must be callable (#1906)",
+        "TypeError: Invalid property descriptor in Object.defineProperties (#1906)",
+        "Object.defineProperties unsupported descriptor shape in standalone mode (#1906) [SITE-O-NO-CARRIER]",
+        "TypeError: Property description must be an object",
+        "TypeError: Getter/setter must be a function",
+        "TypeError: Invalid property descriptor. Cannot both specify accessors and a value or writable attribute",
+        "called value is not a function",
+        "Cannot perform operation on a proxy that has been revoked",
+        "Proxy ownKeys trap result must be an object",
+        "'set' on proxy: trap returned falsish",
+        "Proxy get trap is not callable",
+        "Proxy trap is not callable",
+        "Proxy target is not callable",
+        "Proxy trap result violates a Proxy invariant",
+        "configurable",
+        "enumerable",
+        "writable",
+        "value",
+        "set",
+        "deleteProperty",
+        "getOwnPropertyDescriptor",
+        "getPrototypeOf",
+        "setPrototypeOf",
+        "isExtensible",
+        "preventExtensions",
+        "ownKeys",
+        "defineProperty",
+        "apply",
+        "Proxy target is not a constructor",
+        "Proxy construct trap is not callable",
+        "Proxy construct trap must return an object",
+        "construct",
+        "prototype",
+        "Cannot create proxy with a non-object as target or handler",
+        "proxy",
+        "revoke",
+        "call",
+        "Cannot freeze or seal this object",
         "Cannot access property on null or undefined at 33:17",
-        "RangeError: toFixed() digits argument must be between 0 and 100"
+        "Cannot convert a Symbol value",
+        "RangeError: toFixed() digits argument must be between 0 and 100",
+        "toString() radix must be between 2 and 36",
+        "number",
+        "@@1,at,concat,copyWithin,entries,every,fill,filter,find,findIndex,findLast,findLastIndex,flat,flatMap,forEach,includes,indexOf,join,keys,lastIndexOf,map,pop,push,reduce,reduceRight,reverse,shift,slice,some,sort,splice,toLocaleString,toReversed,toSorted,toSpliced,toString,unshift,values,with",
+        "Array",
+        "\u0000js2_data_struct_host_bridge_token",
+        "function () { [native code] }"
       ]
     },
     {
@@ -2267,37 +2515,6 @@
         },
         {
           "module": "env",
-          "name": "global_performance",
-          "kind": "func",
-          "intent": {
-            "type": "declared_global",
-            "name": "performance"
-          },
-          "paramCount": 0
-        },
-        {
-          "module": "env",
-          "name": "Performance_now",
-          "kind": "func",
-          "intent": {
-            "type": "extern_class",
-            "className": "Performance",
-            "action": "method",
-            "member": "now"
-          },
-          "paramCount": 1
-        },
-        {
-          "module": "env",
-          "name": "__extern_get",
-          "kind": "func",
-          "intent": {
-            "type": "extern_get"
-          },
-          "paramCount": 2
-        },
-        {
-          "module": "env",
           "name": "Element_get_children",
           "kind": "func",
           "intent": {
@@ -2307,25 +2524,6 @@
             "member": "children"
           },
           "paramCount": 1
-        },
-        {
-          "module": "env",
-          "name": "number_toFixed",
-          "kind": "func",
-          "intent": {
-            "type": "builtin",
-            "name": "number_toFixed"
-          },
-          "paramCount": 2
-        },
-        {
-          "module": "env",
-          "name": "__make_callback",
-          "kind": "func",
-          "intent": {
-            "type": "callback_maker"
-          },
-          "paramCount": 2
         },
         {
           "module": "env",
@@ -2447,11 +2645,31 @@
         },
         {
           "module": "env",
-          "name": "number_toString",
+          "name": "__str_from_mem",
           "kind": "func",
           "intent": {
             "type": "builtin",
-            "name": "number_toString"
+            "name": "__str_from_mem"
+          },
+          "paramCount": 2
+        },
+        {
+          "module": "env",
+          "name": "__str_to_mem",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__str_to_mem"
+          },
+          "paramCount": 2
+        },
+        {
+          "module": "env",
+          "name": "__str_extern_len",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__str_extern_len"
           },
           "paramCount": 1
         },
@@ -2466,312 +2684,254 @@
         },
         {
           "module": "env",
-          "name": "__get_undefined",
+          "name": "__boundary_object_get",
           "kind": "func",
           "intent": {
-            "type": "builtin",
-            "name": "__get_undefined"
-          },
-          "paramCount": 0
-        },
-        {
-          "module": "env",
-          "name": "__call_function_0",
-          "kind": "func",
-          "intent": {
-            "type": "builtin",
-            "name": "__call_function_0"
+            "type": "boundary_object",
+            "operation": "get"
           },
           "paramCount": 2
         },
         {
           "module": "env",
-          "name": "__js_array_new",
+          "name": "__boundary_object_set",
           "kind": "func",
           "intent": {
-            "type": "builtin",
-            "name": "__js_array_new"
-          },
-          "paramCount": 0
-        },
-        {
-          "module": "env",
-          "name": "__call_function",
-          "kind": "func",
-          "intent": {
-            "type": "builtin",
-            "name": "__call_function"
+            "type": "boundary_object",
+            "operation": "set"
           },
           "paramCount": 3
         },
         {
           "module": "env",
-          "name": "__unbox_number",
+          "name": "__boundary_object_has",
           "kind": "func",
           "intent": {
-            "type": "unbox",
-            "targetType": "number"
+            "type": "boundary_object",
+            "operation": "has"
+          },
+          "paramCount": 2
+        },
+        {
+          "module": "env",
+          "name": "__boundary_object_delete",
+          "kind": "func",
+          "intent": {
+            "type": "boundary_object",
+            "operation": "delete"
+          },
+          "paramCount": 2
+        },
+        {
+          "module": "env",
+          "name": "__boundary_object_keys",
+          "kind": "func",
+          "intent": {
+            "type": "boundary_object",
+            "operation": "keys"
           },
           "paramCount": 1
         },
         {
           "module": "env",
-          "name": "__box_number",
+          "name": "__boundary_object_call",
           "kind": "func",
           "intent": {
-            "type": "box",
-            "targetType": "number"
-          },
-          "paramCount": 1
-        },
-        {
-          "module": "env",
-          "name": "__new_TypeError",
-          "kind": "func",
-          "intent": {
-            "type": "extern_class",
-            "className": "TypeError",
-            "action": "new"
-          },
-          "paramCount": 1
-        },
-        {
-          "module": "env",
-          "name": "__extern_to_string_default",
-          "kind": "func",
-          "intent": {
-            "type": "builtin",
-            "name": "__extern_to_string_default"
-          },
-          "paramCount": 1
-        },
-        {
-          "module": "env",
-          "name": "__new_RangeError",
-          "kind": "func",
-          "intent": {
-            "type": "extern_class",
-            "className": "RangeError",
-            "action": "new"
-          },
-          "paramCount": 1
-        },
-        {
-          "module": "env",
-          "name": "__concat_4",
-          "kind": "func",
-          "intent": {
-            "type": "builtin",
-            "name": "__concat_4"
-          },
-          "paramCount": 4
-        },
-        {
-          "module": "env",
-          "name": "__concat_7",
-          "kind": "func",
-          "intent": {
-            "type": "builtin",
-            "name": "__concat_7"
-          },
-          "paramCount": 7
-        },
-        {
-          "module": "env",
-          "name": "__throw_reference_error",
-          "kind": "func",
-          "intent": {
-            "type": "builtin",
-            "name": "__throw_reference_error"
-          },
-          "paramCount": 1
-        },
-        {
-          "module": "env",
-          "name": "__call_function_1",
-          "kind": "func",
-          "intent": {
-            "type": "builtin",
-            "name": "__call_function_1"
+            "type": "boundary_object",
+            "operation": "call"
           },
           "paramCount": 3
         },
         {
           "module": "env",
-          "name": "__call_function_2",
+          "name": "__boundary_object_get_prototype",
           "kind": "func",
           "intent": {
-            "type": "builtin",
-            "name": "__call_function_2"
+            "type": "boundary_object",
+            "operation": "getPrototypeOf"
+          },
+          "paramCount": 1
+        },
+        {
+          "module": "env",
+          "name": "__boundary_object_set_prototype",
+          "kind": "func",
+          "intent": {
+            "type": "boundary_object",
+            "operation": "setPrototypeOf"
+          },
+          "paramCount": 2
+        },
+        {
+          "module": "env",
+          "name": "__boundary_object_get_own_property_descriptor",
+          "kind": "func",
+          "intent": {
+            "type": "boundary_object",
+            "operation": "getOwnPropertyDescriptor"
+          },
+          "paramCount": 2
+        },
+        {
+          "module": "env",
+          "name": "__boundary_object_define_property_value",
+          "kind": "func",
+          "intent": {
+            "type": "boundary_object",
+            "operation": "definePropertyValue"
           },
           "paramCount": 4
         },
         {
           "module": "env",
-          "name": "__call_function_3",
+          "name": "__boundary_object_define_property_accessor",
           "kind": "func",
           "intent": {
-            "type": "builtin",
-            "name": "__call_function_3"
+            "type": "boundary_object",
+            "operation": "definePropertyAccessor"
           },
           "paramCount": 5
         },
         {
           "module": "env",
-          "name": "__call_function_4",
+          "name": "__boundary_object_get_own_property_names",
           "kind": "func",
           "intent": {
-            "type": "builtin",
-            "name": "__call_function_4"
+            "type": "boundary_object",
+            "operation": "getOwnPropertyNames"
           },
-          "paramCount": 6
+          "paramCount": 1
         },
         {
           "module": "env",
-          "name": "__register_init_export",
+          "name": "__boundary_object_get_own_property_symbols",
           "kind": "func",
           "intent": {
-            "type": "builtin",
-            "name": "__register_init_export"
+            "type": "boundary_object",
+            "operation": "getOwnPropertySymbols"
           },
-          "paramCount": 2
+          "paramCount": 1
         },
         {
           "module": "env",
-          "name": "__register_init_class_export",
+          "name": "__boundary_object_is_admitted",
           "kind": "func",
           "intent": {
-            "type": "builtin",
-            "name": "__register_init_class_export"
+            "type": "boundary_object",
+            "operation": "isAdmitted"
           },
-          "paramCount": 3
+          "paramCount": 1
+        },
+        {
+          "module": "env",
+          "name": "__boundary_object_for_in_keys",
+          "kind": "func",
+          "intent": {
+            "type": "boundary_object",
+            "operation": "forInKeys"
+          },
+          "paramCount": 1
         }
       ],
       "stringPool": [
-        "el",
-        "bcrd",
-        "div",
-        "padding:0.75rem;background:#1a1a35;",
-        "border-radius:6px;border:1px solid #2a2a4a;",
-        "margin-bottom:0.5rem;cursor:pointer",
-        "font-size:0.8rem;color:#fff;font-weight:bold",
-        "font-size:0.7rem;color:#666;margin:2px 0 6px",
-        "font-size:0.75rem;color:#888",
-        "tap to run",
-        "addBenchCard",
-        "click",
-        " in ",
-        "ms",
-        "",
-        "mname",
-        "Jan",
-        "Feb",
-        "Mar",
-        "Apr",
-        "May",
-        "Jun",
-        "Jul",
-        "Aug",
-        "Sep",
-        "Oct",
-        "Nov",
-        "Dec",
-        "dimOf",
-        "fdow",
-        "priceOf",
-        "renderCal",
-        "padding:8px 4px;text-align:center;font-size:0.8rem;",
-        "color:#555;font-style:italic",
-        "font-weight:bold",
-        "font-size:0.6rem;margin-top:2px",
-        " €",
-        "transparent",
-        "#ddd",
-        "2px solid transparent",
-        "#aaa",
-        "#333",
-        "#fff",
-        "#111",
-        "#666",
-        "#7c3aed",
-        "rgba(255,255,255,0.6)",
-        "2px solid #7c3aed",
-        "padding:6px 4px;text-align:center;font-size:0.8rem;",
-        "cursor:pointer;border-radius:4px;",
-        "background:",
-        ";color:",
-        ";",
-        "border:",
-        ";transition:background 0.1s",
-        "font-size:0.6rem;margin-top:2px;color:",
-        "mouseenter",
-        "#222",
-        "mouseleave",
-        "onDay",
-        "updFoot",
-        " nights",
-        "0 nights",
-        "main",
-        "margin:0;background:#111;color:#ddd;",
-        "font-family:system-ui,sans-serif;overflow:hidden",
-        "padding:1rem;max-width:420px;margin:0 auto",
-        "display:flex;justify-content:space-between;align-items:baseline;",
-        "margin-bottom:0.5rem",
-        "font-size:3.5rem;font-weight:bold;color:#fff;line-height:1",
-        "font-size:1.1rem;color:#888",
-        "MON",
-        "TUE",
-        "WED",
-        "THU",
-        "FRI",
-        "SAT",
-        "SUN",
-        "display:grid;grid-template-columns:repeat(7,1fr);",
-        "text-align:center;font-size:0.6rem;color:#666;margin-bottom:4px",
-        "padding:2px",
-        "display:grid;grid-template-columns:repeat(7,1fr);gap:2px",
-        "text-align:center;font-size:0.6rem;color:#666;margin-top:4px",
-        "display:flex;justify-content:space-between;margin:0.75rem 0",
-        "cursor:pointer;font-size:1.2rem;color:#888;padding:4px 12px",
-        "←",
-        "→",
-        "display:flex;align-items:center;justify-content:space-between;",
-        "margin-top:0.75rem;font-size:0.85rem",
-        "span",
-        "color:#888;cursor:pointer;text-decoration:underline",
-        "Clear Dates",
-        "color:#aaa",
-        "margin-top:0.5rem",
-        "color:#fff;font-weight:bold;font-size:2rem",
-        "padding:8px 28px;background:#fff;color:#111;",
-        "border-radius:999px;cursor:pointer;font-size:0.9rem;font-weight:600",
-        "Save",
-        "saved ",
-        "-",
-        "padding:0.75rem;background:#1a1a35;border-radius:6px;border:1px solid #2a2a4a;margin-bottom:0.5rem;cursor:pointer",
-        "padding:8px 4px;text-align:center;font-size:0.8rem;color:#555;font-style:italic",
-        "padding:6px 4px;text-align:center;font-size:0.8rem;cursor:pointer;border-radius:4px;background:",
-        ";border:",
+        "TypeError",
+        "Cannot convert null or undefined to a BigInt",
+        "Cannot convert value to a BigInt",
+        "RangeError",
+        "The number cannot be converted to a BigInt because it is not an integer",
+        "SyntaxError",
+        "Cannot convert string to a BigInt",
+        "Cannot convert string to a BigInt in standalone mode",
+        "Date.prototype method called on a non-Date receiver",
+        "Cannot access property on null or undefined at 31:15",
+        "[[PrimitiveValue]]",
+        "TypeError: Cannot assign to read only property",
+        "has",
+        "Cannot convert object to primitive value",
+        "toString",
+        "valueOf",
+        "[object Arguments]",
+        "default",
+        "[object Object]",
+        "null",
+        "string",
+        "get",
+        "Cannot convert a Symbol value to a number",
+        "Cannot convert undefined or null to object",
+        "TypeError: Cannot define property, object is not extensible",
+        "TypeError: Cannot redefine property: configurable attribute of a non-configurable property",
+        "TypeError: Cannot redefine property: enumerable attribute of a non-configurable property",
+        "TypeError: Cannot redefine property: cannot convert a non-configurable accessor to a data property",
+        "TypeError: Cannot redefine property: writable attribute of a non-configurable, non-writable property",
+        "TypeError: Cannot assign to read only property of a non-configurable property",
+        "TypeError: Cannot redefine property: cannot convert a non-configurable data property to an accessor",
+        "TypeError: Cannot redefine property: get attribute of a non-configurable property",
+        "TypeError: Cannot redefine property: set attribute of a non-configurable property",
+        "Object.defineProperties unsupported descriptor shape in standalone mode (#1906) [SITE-PROPS-BAG-NOT-AUTHORITATIVE]",
+        "Object.defineProperties unsupported descriptor shape in standalone mode (#1906) [SITE-PROPS-VEC-INDEXED]",
+        "Object.defineProperties called on non-object",
+        "TypeError: Cannot convert undefined or null to object",
+        "Object.defineProperties unsupported descriptor shape in standalone mode (#1906) [SITE-PROPS-STRING-INDICES]",
+        "Object.defineProperties unsupported descriptor shape in standalone mode (#1906) [SITE-DESC-NULL]",
+        "Object.defineProperties unsupported descriptor shape in standalone mode (#1906) [SITE-DESC-NOT-OBJ]",
+        "TypeError: Object.defineProperties get/set must be callable (#1906)",
+        "TypeError: Invalid property descriptor in Object.defineProperties (#1906)",
+        "Object.defineProperties unsupported descriptor shape in standalone mode (#1906) [SITE-O-NO-CARRIER]",
+        "TypeError: Property description must be an object",
+        "TypeError: Getter/setter must be a function",
+        "TypeError: Invalid property descriptor. Cannot both specify accessors and a value or writable attribute",
+        "called value is not a function",
+        "Cannot perform operation on a proxy that has been revoked",
+        "Proxy ownKeys trap result must be an object",
+        "'set' on proxy: trap returned falsish",
+        "Proxy get trap is not callable",
+        "Proxy trap is not callable",
+        "Proxy target is not callable",
+        "Proxy trap result violates a Proxy invariant",
+        "configurable",
+        "enumerable",
+        "writable",
+        "value",
+        "set",
+        "deleteProperty",
+        "getOwnPropertyDescriptor",
+        "getPrototypeOf",
+        "setPrototypeOf",
+        "isExtensible",
+        "preventExtensions",
+        "ownKeys",
+        "defineProperty",
+        "apply",
+        "Proxy target is not a constructor",
+        "Proxy construct trap is not callable",
+        "Proxy construct trap must return an object",
+        "construct",
+        "prototype",
+        "Cannot create proxy with a non-object as target or handler",
+        "proxy",
+        "revoke",
+        "call",
+        "Cannot freeze or seal this object",
+        "Cannot access property on null or undefined at 33:17",
+        "Cannot convert a Symbol value",
+        "RangeError: toFixed() digits argument must be between 0 and 100",
+        "ReferenceError",
+        "gridEl is not defined",
+        "curYear is not defined",
+        "curMonth is not defined",
         "selStart is not defined",
         "selEnd is not defined",
-        "margin:0;background:#111;color:#ddd;font-family:system-ui,sans-serif;overflow:hidden",
-        "display:flex;justify-content:space-between;align-items:baseline;margin-bottom:0.5rem",
         "monthEl is not defined",
         "yearEl is not defined",
-        "display:grid;grid-template-columns:repeat(7,1fr);text-align:center;font-size:0.6rem;color:#666;margin-bottom:4px",
-        "gridEl is not defined",
-        "display:grid;grid-template-columns:repeat(7,1fr);text-align:center;font-size:0.6rem;color:#666;margin-top:4px",
-        "display:flex;align-items:center;justify-content:space-between;margin-top:0.75rem;font-size:0.85rem",
         "nightsEl is not defined",
-        "display:flex;align-items:center;justify-content:space-between;margin-top:0.5rem",
         "totalEl is not defined",
-        "padding:8px 28px;background:#fff;color:#111;border-radius:999px;cursor:pointer;font-size:0.9rem;font-weight:600",
-        "Cannot access property on null or undefined at 31:15",
-        "Cannot access property on null or undefined at 33:17",
-        "RangeError: toFixed() digits argument must be between 0 and 100",
-        "timestamp",
+        "toString() radix must be between 2 and 36",
+        "number",
+        "@@1,at,concat,copyWithin,entries,every,fill,filter,find,findIndex,findLast,findLastIndex,flat,flatMap,forEach,includes,indexOf,join,keys,lastIndexOf,map,pop,push,reduce,reduceRight,reverse,shift,slice,some,sort,splice,toLocaleString,toReversed,toSorted,toSpliced,toString,unshift,values,with",
+        "Array",
         "\u0000js2_data_struct_host_bridge_token",
-        "__\u0000js2_call_fn_method_argc_0,__\u0000js2_call_fn_method_argc_1,__\u0000js2_call_fn_method_argc_2,__\u0000js2_call_fn_method_argc_3,__\u0000js2_call_fn_method_argc_4,__\u0000js2_call_fn_method_argc_5,__call_fn_0,__call_fn_1,__call_fn_2,__call_fn_3,__call_fn_4,__call_fn_method_0,__call_fn_method_1,__call_fn_method_2,__call_fn_method_3,__call_fn_method_4,__call_fn_method_5,__cb_0,__cb_1,__cb_2,__cb_3,__cb_4,__cb_5,__cb_6,__cb_7,__closure_arity,__is_closure,__is_data_struct,__sget_timestamp,__struct_field_names"
+        "function () { [native code] }",
+        "Invalid Date"
       ]
     }
   ]

@@ -57,11 +57,18 @@ function toEntry(file) {
       failureMessages: t.result?.errors?.map((e) => e.stack || e.message) || [],
     };
   });
+  const fileFailureMessages = [];
+  const collectFileErrors = (task) => {
+    for (const error of task.result?.errors || []) fileFailureMessages.push(error.stack || error.message);
+    for (const child of task.tasks || []) if (child.type !== "test") collectFileErrors(child);
+  };
+  collectFileErrors(file);
   const hasFailedTests = assertionResults.some((a) => a.status === "failed");
   return {
     name: file.filepath,
-    status: file.result?.state === "fail" || hasFailedTests ? "failed" : "passed",
+    status: file.result?.state === "fail" || hasFailedTests || fileFailureMessages.length ? "failed" : "passed",
     message: file.result?.errors?.[0]?.message ?? "",
+    fileFailureMessages,
     assertionResults,
   };
 }
@@ -90,11 +97,16 @@ export default class KnownFailuresReporter {
 
   // A file whose import or collection fails never reaches onTestModuleEnd;
   // it surfaces here, with the error on its task, when the run ends normally.
-  onTestRunEnd(testModules) {
+  onTestRunEnd(testModules, unhandledErrors = [], reason) {
     for (const testModule of testModules || []) {
       if (this.ended.has(testModule.moduleId) || !testModule.task?.result?.state) continue;
       this.onTestModuleEnd(testModule);
     }
+    this.write({
+      event: "run-end",
+      reason,
+      errors: unhandledErrors.map((error) => error.stack || error.message || String(error)),
+    });
   }
 
   onTestModuleEnd(testModule) {

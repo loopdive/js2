@@ -1,34 +1,17 @@
 import { describe, it, expect } from "vitest";
-import { compile } from "../src/index.js";
-import { buildStringConstants } from "../src/runtime.js";
+import { compile, type CompileResult } from "../src/index.js";
+import { buildImports as buildHostImports } from "../src/runtime.js";
 
-const jsStringPolyfill = {
-  concat: (a: string, b: string) => a + b,
-  length: (s: string) => s.length,
-  equals: (a: string, b: string) => (a === b ? 1 : 0),
-  substring: (s: string, start: number, end: number) => s.substring(start, end),
-  charCodeAt: (s: string, i: number) => s.charCodeAt(i),
-};
-
-function buildImports(result: CompileResult): WebAssembly.Imports {
-  const env: Record<string, Function> = {
-    console_log_number: () => {},
-    console_log_string: () => {},
-    console_log_bool: () => {},
-    __typeof: (v: unknown) => typeof v,
-    __is_truthy: (v: unknown) => (v ? 1 : 0),
-    __box_number: (v: number) => v,
-    __box_boolean: (v: number) => Boolean(v),
-    __unbox_number: (v: unknown) => Number(v),
-    __unbox_boolean: (v: unknown) => (v ? 1 : 0),
-    string_compare: (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0),
-    __make_callback: () => null,
-  };
-  return {
-    env,
-    "wasm:js-string": jsStringPolyfill,
-    string_constants: buildStringConstants(result.stringPool),
-  };
+// (#7029) This file used to hand-roll the host `env`, listing only the imports
+// its programs needed when it was written. The JS-host lane has since grown
+// real-semantics imports for the same programs (`__register_prototype` for
+// every class, 5ff86e89f5 #5347; real `TypeError` instances via
+// `__new_TypeError`, #3287; `__get_undefined`, `__call_function_N`, ...), and
+// each one turned a passing test into an instantiate-time LinkError. Link
+// against the production resolver instead: it is the import contract the
+// compiler actually emits against.
+function buildImports(result: CompileResult) {
+  return buildHostImports(result.imports, undefined, result.stringPool);
 }
 
 async function run(source: string, fn: string, args: unknown[] = []): Promise<unknown> {
@@ -43,7 +26,8 @@ async function run(source: string, fn: string, args: unknown[] = []): Promise<un
     throw new Error(`Codegen errors:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}`);
   }
   const imports = buildImports(result);
-  const { instance } = await WebAssembly.instantiate(result.binary, imports);
+  const { instance } = await WebAssembly.instantiate(result.binary, imports as WebAssembly.Imports);
+  imports.setExports?.(instance.exports as Record<string, Function>);
   return (instance.exports as any)[fn](...args);
 }
 

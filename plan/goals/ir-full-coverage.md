@@ -70,6 +70,28 @@ The compiler is **default-on hybrid, not IR-only**:
   IR-only is intentionally red on async (2), call-graph closure (1), body shape
   (1), static class members (2), and the 37 legacy-emitted bodies.
 
+### Wide-corpus ledger (2026-10-18, #7002)
+
+The bullets above are playground-corpus measurements (`check:ir-only` reads
+READY at 41/41 standalone units). The IR claim ledger
+(`scripts/ir-claim-ledger.mts`, committed as
+`benchmarks/results/ir-claim-ledger-standalone.json`, refreshed nightly by the
+advisory `IR claim ledger` workflow) measures the playground plus every 40th
+test262 file, standalone, telemetry on:
+
+| Population | Units | IR body | both | legacy | neither | invariant |
+| --- | --- | --- | --- | --- | --- | --- |
+| playground (13 files) | 73 | 48 | 0 | 14 | 11 | 0 |
+| test262 stride 40 (1,340 files) | 1,720 | 9 | 13 | 1,592 | 106 | 69 |
+
+- test262 by unit kind (IR / legacy): module-init 3 both / 1,116 of 1,128;
+  class members 5 / 234 of 308; functions 4 IR + 10 both / 242 of 284.
+- `select:body-shape-rejected` is 1,233 of 1,621 test262 rejections, while the
+  playground bucket in `scripts/ir-fallback-baseline.json` is 0.
+- All 69 invariants are `body-emission-evidence` — class-expression members
+  compiled twice by the direct path (#7070).
+- 193 of 1,340 test262 files produced no telemetry rows at all.
+
 ## Delivery strategy
 
 The old bucket-only sequence (#2855) is complete as a measured function-corpus

@@ -127,7 +127,11 @@ import {
 } from "./runtime/host-async-imports.js";
 import { markPromiseHandled, PROMISE_INTRINSICS } from "./runtime/promise-intrinsics.js";
 import { createHostImportCallState } from "./runtime/host-import-call-state.js";
-import { createBoundaryValueAdapter, isBoundaryValueImportIntent } from "./runtime/boundary-value-adapter.js";
+import {
+  createBoundaryValueAdapter,
+  isBoundaryValueImportIntent,
+  withModuleTagThrow,
+} from "./runtime/boundary-value-adapter.js";
 import { createInstanceLifecycleAdapter } from "./runtime/instance-lifecycle-adapter.js";
 import {
   installFreshDataStructAssociationToken,
@@ -135,6 +139,7 @@ import {
   sameExportedFunction,
 } from "./runtime/exported-function-identity.js";
 import { resolvePlatformCapabilityImport, wrapConsoleForHost } from "./runtime/console-host-marshal.js"; // (#6685)
+import { marshalPlatformArgs } from "./runtime/platform-arg-marshal.js"; // (#6708) regime carriers → JS values
 import {
   CLOCK_CAPABILITY_AUTHORITY,
   createCompiledDomCapabilityRuntime,
@@ -11521,8 +11526,14 @@ function resolveImport(
     coherentBuiltinRealms.has(globalSandbox!) ? ((globalSandbox![name] as T | undefined) ?? fallback) : fallback;
   if (isBoundaryValueImportIntent(intent)) {
     return createBoundaryValueAdapter(intent, {
-      object: (operation) => _createBoundaryObjectImport(operation, callbackState),
-      callback: (arity) => _createBoundaryCallbackImport(arity, callbackState),
+      object: (operation) =>
+        withModuleTagThrow(
+          _createBoundaryObjectImport(operation, callbackState),
+          callbackState,
+          _nativeDynamicFromHost,
+        ),
+      callback: (arity) =>
+        withModuleTagThrow(_createBoundaryCallbackImport(arity, callbackState), callbackState, _nativeDynamicFromHost),
       promise: (operation) => _createBoundaryPromiseImport(operation, callbackState),
     });
   }
@@ -19663,6 +19674,8 @@ export function buildImports(
     if (intlAccel.isIntlAcceleratedImport(imp, options?.hostAccelerators)) {
       const [toHost, fromHost, vector] = [_nativeBoundaryToHost, _nativeDynamicFromHost, _nativeBoundaryVector];
       fn = intlAccel.marshalIntlHostImport(fn, callbackState, toHost, fromHost, _marshalWasmDateForHost, vector); // (#6986)
+    } else {
+      fn = marshalPlatformArgs(imp, fn, callbackState, _nativePrimitiveToHost, _MISS, _maybeWrapCallableUnknownArity);
     }
     // DOM containment wrapping
     if (options?.domRoot && !domCapabilityRuntime) {
@@ -20008,7 +20021,13 @@ export function wrapExports(
             return symbolId;
           }
           if (sig.params[index] === "promise") return _nativeDynamicFromHost(arg, exportsForMarshal);
-          if (sig.params[index] === "dynamic") return _nativeDynamicFromHost(arg, exportsForMarshal);
+          // (#6980) An `any` argument's null is the in-module `ref.null` every
+          // null check tests (and the one `_nativePrimitiveToHost` maps back);
+          // the tag-0 box is only for boundary-object reads, where a raw null
+          // return means "not admitted".
+          if (sig.params[index] === "dynamic") {
+            return arg === null ? null : _nativeDynamicFromHost(arg, exportsForMarshal);
+          }
           return arg;
         });
       }

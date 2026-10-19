@@ -8,10 +8,14 @@
  * - tryExternClassMethodOnAny — resolve method call on any-typed receiver via extern classes
  */
 import { tryEmitDynamicToPrimitiveMethodCall } from "./to-primitive-method-call.js"; // (#6775 S5)
-import { guardedExternRefResultBridge } from "./dispatch-extern-result-bridge.js";
+import { liveResultBridge } from "./dispatch-extern-result-bridge.js";
 import { standaloneMissingStringArgRead, standaloneRefToExternBridge } from "./dispatch-extern-arg-bridge.js";
 import { tryEmitFunctionTypedPropertyCall } from "./function-typed-property-call.js";
-import { dispatchVecResultBridge, reserveDispatchVecResultMaterializer } from "./dispatch-vec-result-bridge.js";
+import {
+  dispatchVecResultBridge,
+  reserveDispatchVecResultMaterializer,
+  reserveScalarResultBoxers,
+} from "./dispatch-vec-result-bridge.js";
 import { planCallablePropertyApplyFallback } from "./callable-property-apply-fallback.js";
 import { ts } from "../../ts-api.js";
 import { widenJsDefaultGuessSymbolSlot } from "../js-default-param-type-guess.js";
@@ -26,6 +30,10 @@ import {
 } from "../closures.js";
 import { ARRAY_METHODS, compileArrayJoinExtern, emitBoundsCheckedArrayGet } from "../array-methods.js";
 import { tryCompileNativeDisposableStackAnyMethodCall } from "../disposable-runtime.js";
+import {
+  disposableStackShortcutSuppressed,
+  tryEmitDisposableStackAnyTwoArm,
+} from "./disposable-any-receiver-two-arm.js"; // (#7060)
 import { noJsHost } from "../js-errors.js";
 import { stringConstantExternrefInstrs } from "../native-strings.js";
 import { ensureObjVecBuilders, reserveApplyClosure } from "../object-runtime.js";
@@ -395,6 +403,41 @@ function buildClosureFuncCandidates(
 }
 
 /**
+ * (#7054) Host-free twin of the #5334 rest bridge: a callable property's
+ * synthetic wrapper cannot tell `...rest` from a trailing array formal, so the
+ * positional push cast arg 1 into the vec slot (→ null; hono `this.use = (a,
+ * ...handlers) =>`). The checker signature's own `...rest` is the evidence.
+ */
+function standaloneRestPropertyInfo(ctx: CodegenContext, sig: ts.Signature, info: ClosureInfo): ClosureInfo | null {
+  if (!noJsHost(ctx) || info.paramTypes.length === 0) return null;
+  const decl = sig.getDeclaration();
+  if (decl === undefined || !ts.isFunctionLike(decl)) return null;
+  const params = decl.parameters;
+  if (params.length !== info.paramTypes.length || params[params.length - 1]!.dotDotDotToken === undefined) return null;
+  return { ...info, hasRestParam: true };
+}
+
+/**
+ * (#7054) Rest-packed {@link collectPropertyCallArgLocals}: stores the fixed
+ * args + packed rest vec into locals and sets the true `__argc`. Null (nothing
+ * emitted) when the shape is not packable.
+ */
+function collectRestPropertyCallArgLocals(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+  restInfo: ClosureInfo,
+): number[] | null {
+  const rest = compileRestClosureArguments(ctx, fctx, expr, restInfo);
+  if (rest === null) return null;
+  const locals = restInfo.paramTypes.map((type) => allocLocal(fctx, `__cparg_${fctx.locals.length}`, type));
+  for (let i = locals.length - 1; i >= 0; i--) fctx.body.push({ op: "local.set", index: locals[i]! });
+  fctx.body.push(...buildArgcExtrasSetupFromLocals(ctx, fctx, rest.fixedParamCount, rest.restExternLocals));
+  emitSetArgc(ctx, fctx, expr.arguments.length, rest.fixedParamCount);
+  return locals;
+}
+
+/**
  * (#3205) Compile a callable-property/element call's arguments into locals so a
  * multi-arm funcref dispatch can re-push them in each candidate arm. Clamps to
  * the declared param count (excess args evaluated for side effects then
@@ -563,10 +606,10 @@ function emitRootFuncrefDispatch(
       coerceType(ctx, fctx, fc.returnType!, expectedReturn!);
       fctx.body = saved;
     } else if (matchedDispatch && !valTypesMatch(fc.returnType!, expectedReturn!)) {
-      // (#6684) A live externref result survives a guarded downcast (no-host).
+      // (#6684 / #7025) A live result survives on the no-host lanes: boxed or guarded-downcast.
       const guarded =
         dispatchVecResultBridge(ctx, fc.returnType!, expectedReturn!) ?? // (#6704) array carrier → expected vec
-        guardedExternRefResultBridge(ctx, fctx, fc.returnType!, expectedReturn!);
+        liveResultBridge(ctx, fctx, fc.returnType!, expectedReturn!);
       if (guarded !== null) fcCallBody.push(...guarded);
       else fcCallBody.push({ op: "drop" }, ...defaultValueInstrs(expectedReturn!));
     }
@@ -1893,7 +1936,9 @@ export function compileCallablePropertyCall(
         emitNullCheckThrow(ctx, fctx, closureRefType);
 
         // Push call arguments (only up to declared param count)
-        {
+        // (#7054) This path installs no `__argc`, so the rest pack stays on the stack.
+        const restInfo = standaloneRestPropertyInfo(ctx, sig, matchedClosureInfo);
+        if (restInfo === null || compileRestClosureArguments(ctx, fctx, expr, restInfo) === null) {
           const wpParamCount = matchedClosureInfo.paramTypes.length;
           for (let i = 0; i < Math.min(expr.arguments.length, wpParamCount); i++) {
             compileInternalCallArgument(ctx, fctx, expr.arguments[i]!, matchedClosureInfo.paramTypes[i]);
@@ -1904,10 +1949,10 @@ export function compileCallablePropertyCall(
               fctx.body.push({ op: "drop" });
             }
           }
-        }
-        // Pad missing arguments
-        for (let i = expr.arguments.length; i < matchedClosureInfo.paramTypes.length; i++) {
-          pushMissingCallablePropertyArgument(i, matchedClosureInfo.paramTypes[i]!);
+          // Pad missing arguments
+          for (let i = expr.arguments.length; i < matchedClosureInfo.paramTypes.length; i++) {
+            pushMissingCallablePropertyArgument(i, matchedClosureInfo.paramTypes[i]!);
+          }
         }
 
         // Get funcref from closure struct and call_ref — null-check → TypeError (#728)
@@ -1953,21 +1998,26 @@ export function compileCallablePropertyCall(
       fctx.body.push({ op: "drop" });
 
       // Save args to locals so each dispatch arm can re-push them.
-      const argLocals = collectPropertyCallArgLocals(
-        ctx,
-        fctx,
-        expr,
-        matchedClosureInfo.paramTypes,
-        false,
-        pushMissingCallablePropertyArgument,
-      );
+      const restInfo = standaloneRestPropertyInfo(ctx, sig, matchedClosureInfo); // (#7054)
+      const restLocals = restInfo ? collectRestPropertyCallArgLocals(ctx, fctx, expr, restInfo) : null;
+      const argLocals =
+        restLocals ??
+        collectPropertyCallArgLocals(
+          ctx,
+          fctx,
+          expr,
+          matchedClosureInfo.paramTypes,
+          false,
+          pushMissingCallablePropertyArgument,
+        );
 
       // (#4373) A property value can be a lower-arity JavaScript closure whose
       // body reads `arguments`. Preserve every overflow value and the exact
       // call-site count instead of dropping the values before the funcref
       // ladder. All candidates in this ladder share the declared formal arity,
-      // so one setup is valid for every arm.
-      emitClosureCallArgcExtras(ctx, fctx, expr.arguments, matchedClosureInfo.paramTypes.length);
+      // so one setup is valid for every arm. (The rest pack set its own.)
+      if (restLocals === null)
+        emitClosureCallArgcExtras(ctx, fctx, expr.arguments, matchedClosureInfo.paramTypes.length);
 
       // After the args (they may read the caller's `this`), before the ladder.
       if (bind) emitObjectLiteralMethodThisInstall(ctx, fctx, bind);
@@ -2366,6 +2416,7 @@ export function compileCallableElementAccessCall(
 
   const argLocals = collectPropertyCallArgLocals(ctx, fctx, expr, closureInfo.paramTypes);
   if (bind) emitObjectLiteralMethodThisInstall(ctx, fctx, bind);
+  reserveScalarResultBoxers(ctx, fctx, funcCandidates, expectedReturn); // (#7025)
   emitRootFuncrefDispatch(
     ctx,
     fctx,
@@ -2661,7 +2712,15 @@ export function tryExternClassMethodOnAny(
   // the import). The helper handles `dispose` (Slice 1) + `defer`/`adopt`/`use`
   // (Slice 2); other methods fall through to the loop unchanged. Host lane
   // (`!nativeStrings`) is untouched.
-  if (ctx.nativeStrings && ctx.externClasses.get("DisposableStack")?.methods.has(methodName)) {
+  // (#7060) Host-free: brand-guard the shortcut so a non-stack receiver calls its
+  // own member instead of throwing; the generic arm re-dispatches with it off.
+  if (
+    ctx.nativeStrings &&
+    !disposableStackShortcutSuppressed(expr) &&
+    ctx.externClasses.get("DisposableStack")?.methods.has(methodName)
+  ) {
+    const twoArm = tryEmitDisposableStackAnyTwoArm(ctx, fctx, propAccess, expr, methodName);
+    if (twoArm !== undefined) return twoArm;
     const dsAny = tryCompileNativeDisposableStackAnyMethodCall(ctx, fctx, propAccess, expr, methodName);
     if (dsAny !== undefined) return dsAny;
   }

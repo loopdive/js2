@@ -11,7 +11,9 @@ import { collectScopeLocalDeclNames } from "./scope-local-decl-names.js";
 import { registerResolvedRestParam, restPatternParamVecType } from "./resolved-rest-param.js"; // (#1058)
 import { widenUndefinedDefaultParamSlot } from "./destructuring-params.js";
 import { expressionHasWidenedPropertyType } from "./strict-eq-stale-type.js";
+import { bindingHoldsStandaloneClassProto } from "./class-proto-object.js"; // (#7053)
 import { functionReturnsWidenedProperty } from "./declarations/widened-property-return.js";
+import { isCjsModuleExportsObject } from "./declarations/cjs-module-exports.js"; // (#7032)
 import { ts, forEachChild } from "../ts-api.js";
 import {
   isBigIntType,
@@ -90,6 +92,7 @@ import { addFunctionOwnLocals } from "../ir/analysis/binding-info.js"; // (#2103
 import { dedupeDiagnosticsFrom, reportError } from "./context/errors.js";
 import type { CodegenContext, FunctionContext, OptionalParamInfo } from "./context/types.js";
 import { jsValueBoundary } from "./context/types.js";
+import { usesJsEnvironmentPlatformGlobal } from "./extern-declarations.js";
 import { compileFunctionBody, dumpFrameBreach, registerInlinableFunction } from "./audited-function-body.js";
 import { _hasRuntimeComputedKey, objectLiteralForcesHostPath } from "./literals.js"; // (#3024/#4638) module-global externref routing in lockstep with the literal's own host-path gate
 import { prepareIntlAcceleratorBoundary } from "./helpers/host-intl-locale.js"; // (#6986)
@@ -2647,6 +2650,11 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
   // restores #4931's unconditional module-Proxy widening for same-tree A/B.
   const proxyModuleEscapeGateEnabled = readEnv("JS2WASM_PROXY_MODULE_ESCAPE_GATE") !== "0";
   const runtimeModuleGroups = runtimeModuleDeclarationGroups(sourceFile);
+  // (#6708) A JS-environment regime module that binds a DOM platform global
+  // hands it Wasm-owned strings; export the bridge the runtime marshal reads.
+  if (isEntryFile && ctx.nativeStrings && jsValueBoundary(ctx) && usesJsEnvironmentPlatformGlobal(ctx)) {
+    ensureNativeStringBoundaryBridge(ctx);
+  }
 
   // First: collect enum declarations (so enum values are available)
   collectEnumDeclarations(ctx, sourceFile);
@@ -3248,20 +3256,13 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
   // This runs after the ESM export-default block so CJS and ESM don't conflict.
   if (isEntryFile) {
     // Helper: check if expression is `module.exports`
-    function isModuleExports(e: ts.Expression): boolean {
-      return (
-        ts.isPropertyAccessExpression(e) &&
-        ts.isIdentifier(e.expression) &&
-        e.expression.text === "module" &&
-        e.name.text === "exports"
-      );
-    }
+    const isModuleExports = isCjsModuleExportsObject;
 
     // Helper: extract export name from `module.exports.foo` or `exports.foo`
     function getCjsNamedExportName(e: ts.Expression): string | undefined {
       if (!ts.isPropertyAccessExpression(e)) return undefined;
-      // module.exports.foo
-      if (isModuleExports(e.expression)) return e.name.text;
+      // module.exports.foo (or its rewritten export-cell spelling)
+      if (isCjsModuleExportsObject(e.expression)) return e.name.text;
       // exports.foo
       if (ts.isIdentifier(e.expression) && e.expression.text === "exports") return e.name.text;
       return undefined;
@@ -3597,6 +3598,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
       return { kind: "externref" };
     }
     if (proxyOrTransferredResultNeedsExternref(ctx, decl)) return { kind: "externref" };
+    if (bindingHoldsStandaloneClassProto(ctx, decl)) return { kind: "externref" }; // (#7053)
     // A host builtin static read (`Date.now`, `Object.hasOwn`, …) is a genuine
     // JS function, not a Wasm closure struct.  Conditional/short-circuit
     // initializers can select either that externref or a compiled closure, so
@@ -6548,13 +6550,8 @@ export function compileDeclarations(
       } else if (ts.isPropertyAccessExpression(left)) {
         // module.exports.foo or exports.foo
         const inner = left.expression;
-        const isModExports =
-          ts.isPropertyAccessExpression(inner) &&
-          ts.isIdentifier(inner.expression) &&
-          inner.expression.text === "module" &&
-          inner.name.text === "exports";
         const isExports = ts.isIdentifier(inner) && inner.text === "exports";
-        if (isModExports || isExports) {
+        if (isCjsModuleExportsObject(inner) || isExports) {
           fnExpr = expr.right;
           funcName = left.name.text;
         }

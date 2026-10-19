@@ -5269,7 +5269,10 @@ export function tryCompileStandaloneRegExpToString(
       propAccess.expression.getSourceFile(),
       propAccess.expression.text,
       "toString",
-      expr.getStart(),
+      // A synthetic `recv.toString()` (e.g. `String(arr)` → #2160's
+      // `tryEmitArrayToStringNative`) has no source position; its receiver
+      // identifier is the real node, and starts inside the same call.
+      (expr.pos >= 0 ? expr : propAccess.expression).getStart(),
     );
     if (transferred !== undefined) {
       const result = tryEmitTransferredObjectToStringCall(ctx, fctx, expr, propAccess.expression, transferred);

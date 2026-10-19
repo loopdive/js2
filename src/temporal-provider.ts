@@ -42,7 +42,7 @@ import type { CompileOptions, CompileResult, LinkedModuleArtifact } from "./inde
 import { compileMulti, compileProject } from "./index.js";
 import { standaloneIntlShimSource } from "./temporal-intl-shim.js";
 import { getDefaultEnvironment } from "./env.js";
-import { resolveCompileTargetProfile } from "./target-profile.js";
+import { resolveCompileTargetProfile, semanticProviderCacheKey } from "./target-profile.js";
 
 /** npm package name the polyfill bundle is presented to the linker under. */
 export const TEMPORAL_PACKAGE_NAME = "@js-temporal/polyfill";
@@ -175,11 +175,13 @@ function providerSource(options: { polyfillSource: string; compileOptions?: Comp
 
 /** (#6748) Does this JavaScript-target provider lower with the native regime? */
 function nativeRegimeProvider(options: CompileOptions | undefined): boolean {
-  if (options?.semanticProviders !== "native-first") return false;
+  // (#6708) The regime is the default policy, so key on the resolved profile,
+  // not on an explicit `semanticProviders: "native-first"` spelling.
   return resolveCompileTargetProfile({
-    target: options.target,
-    semanticProviders: options.semanticProviders,
-    hostBridge: options.hostBridge,
+    target: options?.target,
+    semanticProviders: options?.semanticProviders,
+    nativeStrings: options?.nativeStrings,
+    hostBridge: options?.hostBridge,
   }).nativeRegime;
 }
 
@@ -189,7 +191,7 @@ function providerOptionFingerprint(options: CompileOptions | undefined): string 
     fast: options?.fast === true,
     nativeStrings: options?.nativeStrings === true,
     utf8Storage: options?.utf8Storage === true,
-    semanticProviders: options?.semanticProviders ?? "auto",
+    semanticProviders: semanticProviderCacheKey(options ?? {}),
     hostBridge: options?.hostBridge ?? "auto",
     platform: options?.platform ?? "web",
     ...(options?.hostAccelerators?.length ? { hostAccelerators: [...options.hostAccelerators].sort() } : {}),

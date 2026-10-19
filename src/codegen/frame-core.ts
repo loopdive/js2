@@ -78,6 +78,49 @@ export interface FrameLayout {
    * parameter-copy prelude reads the written value (generator-param-writeback.ts).
    */
   paramWriteBack?: readonly { local: number; field: number }[];
+  /**
+   * (#6980) Numeric-carrier generators in the native regime: field index of the
+   * i32 `ret_origin` marker; `ret_value` (externref) is the next field. The
+   * f64 `abrupt` field cannot hold a non-number `.return(v)` argument, so the
+   * opaque `.return` dispatcher keeps the argument itself in `ret_value` and
+   * ARMS the marker; any other write of `abrupt` DISARMS it; the abrupt-return
+   * completion tails turn an armed marker into CONSUMED. Only a consumed marker
+   * lets the dispatcher answer `{ value: ret_value, done: true }` — the
+   * completion's provenance, never an inference from the result's bits.
+   */
+  returnOriginFieldIdx?: number;
+}
+
+export const RETURN_ORIGIN_NONE = 0;
+export const RETURN_ORIGIN_ARMED = 1;
+export const RETURN_ORIGIN_CONSUMED = 2;
+
+/** (#6980) `frame.ret_origin = origin` (empty when the frame has no marker). */
+export function setReturnOriginInstrs(layout: FrameLayout, self: Instr[], origin: number): Instr[] {
+  if (layout.returnOriginFieldIdx === undefined) return [];
+  return [
+    ...self.map((instr) => ({ ...instr })),
+    { op: "i32.const", value: origin },
+    { op: "struct.set", typeIdx: layout.stateTypeIdx, fieldIdx: layout.returnOriginFieldIdx },
+  ];
+}
+
+/** (#6980) Abrupt-return completion tail: ARMED → CONSUMED (empty without a marker). */
+export function consumeReturnOriginInstrs(layout: FrameLayout, selfLocal: number): Instr[] {
+  const field = layout.returnOriginFieldIdx;
+  if (field === undefined) return [];
+  return [
+    { op: "local.get", index: selfLocal },
+    { op: "struct.get", typeIdx: layout.stateTypeIdx, fieldIdx: field },
+    { op: "i32.const", value: RETURN_ORIGIN_ARMED },
+    { op: "i32.eq" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: setReturnOriginInstrs(layout, [{ op: "local.get", index: selfLocal }], RETURN_ORIGIN_CONSUMED),
+      else: [],
+    },
+  ];
 }
 
 export type FrameSpillCellMap = ReadonlyMap<number, { refCellTypeIdx: number; valType: ValType }>;
@@ -112,6 +155,10 @@ export function setStateFieldFromLocal(
     { op: "local.get", index: selfLocal },
     { op: "local.get", index: valueLocal },
     { op: "struct.set", typeIdx: layout.stateTypeIdx, fieldIdx },
+    // (#6980) Any `abrupt` write other than the `.return(v)` dispatcher's disarms.
+    ...(fieldIdx === ABRUPT_FIELD
+      ? setReturnOriginInstrs(layout, [{ op: "local.get", index: selfLocal }], RETURN_ORIGIN_NONE)
+      : []),
   ];
 }
 

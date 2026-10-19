@@ -48,6 +48,7 @@ import { ts } from "./ts-api.js";
 import type { CompileOptions, CompileResult, LinkedModuleArtifact } from "./index.js";
 import { compileMulti, compileProject } from "./index.js";
 import { getDefaultEnvironment } from "./env.js";
+import { semanticProviderCacheKey } from "./target-profile.js";
 import { RUNTIME_RECGROUP_ABI_VERSION } from "./emit/canonical-recgroup.js";
 import { PROVIDER_COMPILER_ABI_VERSION, PROVIDER_LINKER_ABI_VERSION } from "./provider-manifest.js";
 
@@ -117,7 +118,7 @@ function providerOptionFingerprint(options: CompileOptions | undefined): string 
     fast: options?.fast === true,
     nativeStrings: options?.nativeStrings === true,
     utf8Storage: options?.utf8Storage === true,
-    semanticProviders: options?.semanticProviders ?? "auto",
+    semanticProviders: semanticProviderCacheKey(options ?? {}),
     hostBridge: options?.hostBridge ?? "auto",
     ...(options?.hostAccelerators?.length ? { hostAccelerators: [...options.hostAccelerators].sort() } : {}),
     platform: options?.platform ?? "web",

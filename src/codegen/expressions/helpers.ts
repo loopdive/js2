@@ -21,6 +21,7 @@ import { addStringConstantGlobal } from "../registry/imports.js";
 import { coerceType, compileExpression, valTypesMatch } from "../shared.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { isStrictContext } from "../helpers/is-strict-function.js";
+import { findUserBindingDecl } from "../index.js";
 export { tryCompileCallableStaticField } from "./static-callable-field.js";
 
 // (#3191 — bloat S1) The JS-error-throw lowering was hoisted into the
@@ -103,7 +104,16 @@ export function isConstIdentifierAssignmentTarget(
   // binding and must not override that identity. Its `variableDeclarationOf`
   // intentionally declines destructured bindings, so walk a resolved
   // BindingElement through its binding pattern to the owning declaration.
-  const declaration = ctx.oracle.valueDeclarationOf(id);
+  let declaration = ctx.oracle.valueDeclarationOf(id);
+  // (#2176) In a Script, a user `let name` does not shadow lib.dom's ambient
+  // `declare const name`: the checker resolves the reference to the LIB's
+  // symbol alone, so `let name = "a"; name = "b"` threw "Assignment to
+  // constant variable". The runtime binding is the user's — find it the way
+  // the #2176 read side does (`resolveIdentifierType`).
+  if (declaration !== undefined && declaration.getSourceFile().isDeclarationFile) {
+    const own = findUserBindingDecl(id);
+    if (own !== undefined) declaration = own as ts.Declaration;
+  }
   if (declaration !== undefined) {
     // (#5195 Step 9 I) §15.7.14 step 3: ClassDefinitionEvaluation creates a
     // second, IMMUTABLE binding of the class name inside the class body's own

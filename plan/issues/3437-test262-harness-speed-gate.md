@@ -100,3 +100,22 @@ shared helper; broadening coverage to the remaining direct sites is a follow-up.
 - Depends on #3433 (PR #3374) landing first (sets the fast baseline).
 - Do **not** revert the v8 harness to regain speed — #3433 already restores
   it with full rigor; this issue prevents the regression from recurring.
+
+### 2026-10-18 native-first rebank (#6708)
+
+S6 changed the omitted semantic-provider policy from the JS-host profile to
+native-first. The first required `quality` run measured 260,711 traversals and
+correctly stopped the PR against the prior 142,936 baseline. Repeating the
+probe in one process showed that native-first pays 28,760 traversals once to
+initialize provider data; test262 workers compile thousands of files per
+process, so charging that startup work to every representative file did not
+model the #3433 regression class. The probe and end-to-end test now perform an
+unmetered warm-up compile before measuring the repeated per-file path.
+
+Steady measurements on the same tree were 158,639 for explicit
+`host-assisted` and 231,951 for explicit `native-first`. The documented
+`--update` flow rebanked the default-profile budget at 231,951 with the
+existing 15% margin. This keeps the gate on the new user-facing default and
+continues to reject added or de-memoized per-file scans; it does not hide the
+native provider work by pinning the probe to the retiring compatibility
+profile.

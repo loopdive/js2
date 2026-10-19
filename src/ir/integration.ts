@@ -6101,6 +6101,16 @@ function resolveModuleBindingGlobal(
     global.type.kind === storageType.kind &&
     ((global.type.kind !== "ref" && global.type.kind !== "ref_null") ||
       (storageType.kind === global.type.kind && storageType.typeIdx === global.type.typeIdx));
+  if (!storageMatches && identity.valueKind.kind === "dynamic") {
+    // (#7014) `const a: any = x` (x a number const) is NARROWED to f64 by the
+    // #4178 const-chain trace; #5289 (163eb5bc5c) assumed the dynamic carrier.
+    // A contradicted admission, not a corrupt ABI: demote the module-init.
+    throw new IrUnsupportedError(
+      "module-init-legacy-coupling",
+      "build",
+      `module-init: dynamic binding ${globalName} uses narrowed legacy ${global.type.kind} storage`,
+    );
+  }
   if (!storageMatches) {
     throw new IrInvariantError(
       "abi-type-index-mismatch",

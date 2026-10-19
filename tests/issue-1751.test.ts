@@ -37,9 +37,11 @@ describe("#1751 WIT generator complete world surface", () => {
     expect(wit).toContain("package native-messaging-host:native-messaging-js2;");
     expect(wit).not.toContain("package local:module;");
     expect(wit).toContain("world module {");
-    expect(wit).toContain("/// Core import: wasi_snapshot_preview1.fd_write");
+    // The import annotation reads "Core provider import" since the native-first
+    // host-semantics rework (dbccc693f6), which also annotates the capability.
+    expect(wit).toContain("/// Core provider import: wasi_snapshot_preview1.fd_write");
     expect(wit).toContain("import fd-write: func(fd: s32, iovs: s32, iovs-len: s32, nwritten: s32) -> s32;");
-    expect(wit).toContain("/// Core import: wasi_snapshot_preview1.proc_exit");
+    expect(wit).toContain("/// Core provider import: wasi_snapshot_preview1.proc_exit");
     expect(wit).toContain("import proc-exit: func(code: s32);");
     expect(wit).toContain("export main: func();");
   });

@@ -10,6 +10,7 @@
 import { ts, forEachChild } from "../ts-api.js";
 import type { ValType } from "../ir/types.js";
 import type { CodegenContext, ExternClassInfo } from "./context/types.js";
+import { hostFreeEnvironment } from "./context/types.js";
 import {
   applyLibExternScanEffects,
   captureLibExternScanEffects,
@@ -41,7 +42,7 @@ import {
   typeRefName,
   type LibDeclIndex,
 } from "./lib-decl-index.js";
-import { isStandaloneUnprovidedExternClass } from "./standalone-unavailable-globals.js";
+import { isStandaloneUnprovidedExternClass, skipStandalonePackageStub } from "./standalone-unavailable-globals.js";
 // ── Built-in extern class registration ───────────────────────────────
 
 /** Helper to create an extern method signature with externref params and results */
@@ -756,6 +757,7 @@ function collectExternDeclarationsImpl(
     }
     // Top-level declare class (e.g. user-defined or import-resolver stubs)
     if (!skipExternClasses && ts.isClassDeclaration(stmt) && stmt.name && hasDeclareModifier(stmt)) {
+      if (skipStandalonePackageStub(ctx, sourceFile, stmt.name)) continue; // #6843: not a host class
       collectExternClass(ctx, stmt, [], libIndex);
     }
     // Top-level declare function stubs — registered as Wasm imports so that calls
@@ -846,10 +848,15 @@ function collectExternDeclarationsImpl(
       // (correct semantics — standalone has no structuredClone). Host mode still
       // registers the import so a real host can satisfy it.
       if ((ctx.wasi || ctx.standalone) && name === "structuredClone") continue;
+      // (#7079) `atob`/`btoa` have pure-Wasm lowerings on the host-free targets
+      // (base64-native.ts, emitted by the import-collector finalize): never
+      // retain an unsatisfiable `env.atob`/`env.btoa`.
+      if ((ctx.wasi || ctx.standalone) && (name === "atob" || name === "btoa")) continue;
       // (#6664) standalone `queueMicrotask(cb)` enqueues on the module's own
       // microtask queue (standalone-queue-microtask.ts), never on the host.
       if (ctx.standalone && name === "queueMicrotask") continue;
       if (isStandaloneUnavailableTimerGlobal(ctx, name)) continue; // #6675: no event loop, no env.<timer>
+      if (skipStandalonePackageStub(ctx, sourceFile, stmt.name)) continue; // #6843: not a host global
       if (!ctx.funcMap.has(name)) {
         // (#4238) Under `externNativeTypes` an explicit native annotation
         // (`type i32 = number` & friends) wins over the default mapping, so
@@ -1547,7 +1554,11 @@ export function collectDeclaredGlobals(
       // or the `ref.null.extern` graceful default. Host/gc mode is unchanged.
       const certifiedStandaloneDocument =
         ctx.standalone && ctx.requiresStandaloneDomCapability === true && name === "document";
-      if (ctx.strictNoHostImports || (ctx.standalone && !certifiedStandaloneDocument)) continue;
+      // (#6708) The regime in a JS environment keeps DOM globals: they are
+      // platform capabilities of the embedder, not ECMAScript semantics.
+      const jsEnvironmentPlatformGlobal = !hostFreeEnvironment(ctx) && DOM_ONLY_GLOBALS.has(name);
+      if (ctx.strictNoHostImports || (ctx.standalone && !certifiedStandaloneDocument && !jsEnvironmentPlatformGlobal))
+        continue;
       const importName = `global_${name}`;
       const typeIdx = addFuncType(ctx, [], [{ kind: "externref" }]);
       addImport(ctx, "env", importName, { kind: "func", typeIdx });
@@ -1698,6 +1709,13 @@ export function collectDeclaredGlobals(
       ctx.declaredGlobals.set(name, { type: { kind: "externref" }, funcIdx });
     }
   }
+}
+
+/** (#6708) Did a JS-environment regime module bind a DOM platform global? */
+export function usesJsEnvironmentPlatformGlobal(ctx: CodegenContext): boolean {
+  if (!ctx.standalone || hostFreeEnvironment(ctx)) return false;
+  for (const name of DOM_ONLY_GLOBALS) if (ctx.declaredGlobals.has(name)) return true;
+  return false;
 }
 
 /**

@@ -36,7 +36,12 @@ import { buildImports } from "../src/runtime.js";
 const swallowRejection = (): void => {};
 
 async function instantiate(src: string): Promise<WebAssembly.Exports> {
-  const r = await compile(src);
+  // (#6708) This suite is the fast regression guard for the retired
+  // JS-synthesized Promise-subclass constructor path documented above. Keep
+  // that implementation-specific rollback control explicit while S6 makes
+  // the native semantic core the default; S7 must delete or replace this suite
+  // together with `host-assisted` and the registration machinery.
+  const r = await compile(src, { semanticProviders: "host-assisted" });
   if (!r.success) throw new Error("compile failed: " + JSON.stringify(r.errors));
   const imports = buildImports(r.imports, undefined, r.stringPool);
   const m = await WebAssembly.instantiate(r.binary, imports);

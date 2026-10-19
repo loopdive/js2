@@ -9,8 +9,9 @@
 //
 // Every behaviour case was RED on the slice's base: reading a Promise subclass as a value emitted
 // the host import `env::__promise_subclass_ctor`, so none of these sources compiled host-free.
-// The controls pin what must NOT move: the gc lane keeps the host constructor, and a standalone
-// module with no Promise subclass never names the new helpers.
+// The controls pin what must NOT move during S6: the explicit host-assisted
+// rollback keeps the host constructor, and a standalone module with no Promise
+// subclass never names the new helpers. S7 removes the rollback control.
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
 
@@ -147,11 +148,11 @@ export function test(): number {
     expect(value).toBe(8);
   });
 
-  it("control: the gc lane keeps the host Promise-subclass constructor and never names the new helper", async () => {
+  it("control: host-assisted keeps the host Promise-subclass constructor and never names the native helper", async () => {
     const result = await compile(
       `class S extends Promise<any> { constructor(e: any) { super(e); } }
 export function test(): number { const p: any = Promise.resolve.call(S); return p instanceof S ? 1 : 0; }`,
-      { fileName: "issue-6651-d4-gc.ts" },
+      { fileName: "issue-6651-d4-gc.ts", semanticProviders: "host-assisted" },
     );
     expect(result.success).toBe(true);
     if (!result.success) return;
