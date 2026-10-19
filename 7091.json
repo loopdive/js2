@@ -1,10 +1,11 @@
 {
   "id": "7091",
   "assignee": "ttraenkler/opus-7091-ir-dom",
-  "requested_by": "ttraenkler/opus-7091-ir-dom",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "issue-7091-ir-host-extern-native-strings",
   "claimed_at": "2026-10-19T13:35:41Z",
-  "updated_at": "2026-10-19T13:35:41Z",
-  "write_id": "66669-vi1nirdo"
+  "updated_at": "2026-10-19T21:35:13Z",
+  "write_id": "34212-9ec6a7w0",
+  "released_at": "2026-10-19T21:35:13Z"
 }
