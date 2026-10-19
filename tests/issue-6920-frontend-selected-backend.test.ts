@@ -95,7 +95,11 @@ describe("#6920 A-C1 frontend selected backend", () => {
         },
       });
       expect(calls[0]).toEqual(physicalCarrier);
-      expect(reads.indexOf("vecStructTypeIdx")).toBeLessThan(reads.indexOf("elementValType"));
+      const checkRead = reads.indexOf("vecStructTypeIdx");
+      const elementRead = reads.indexOf("elementValType");
+      expect(checkRead).toBeGreaterThanOrEqual(0);
+      expect(elementRead).toBeGreaterThanOrEqual(0);
+      expect(checkRead).toBeLessThan(elementRead);
     });
 
     it("refuses before reading any element or data field when no backend is selected", () => {
