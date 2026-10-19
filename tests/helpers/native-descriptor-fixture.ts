@@ -107,6 +107,7 @@ export function descriptorFixture(
   offset = false,
   source = descriptorSource(),
   additionalLiterals: readonly string[] = [],
+  extensible = false,
 ) {
   const { program, projection } = source;
   const access = deriveNativeObjectAccessRequirements(program, projection);
@@ -145,7 +146,7 @@ export function descriptorFixture(
   const bigintPlan = declareNativeBigIntResources("bigints");
   const bigints = reserveNativeBigIntResources(tx, "bigints", bigintPlan);
   const symbols = reserveNativeSymbolCarrierResources(tx, "symbols", strings);
-  const layoutRequirements = { key: "objects" },
+  const layoutRequirements = { key: "objects", ...(extensible ? { extensible: true as const } : {}) },
     layoutPlan = declareNativeObjectLayouts(layoutRequirements);
   const layouts = reserveNativeObjectLayouts(tx, layoutRequirements, layoutPlan);
   const lookupDependencies = { layouts, layoutPlan, strings, flatten, equality, symbols };

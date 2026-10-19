@@ -6,7 +6,10 @@ import type {
   NativeResourceRecipe,
 } from "../../../runtime/wasmgc/values/native-resource-declaration-types.js";
 import { buildBoxBooleanBody } from "../../../runtime/wasmgc/values/boolean-bodies.js";
-import { buildNativeObjectConstructionDefinition } from "../../../runtime/wasmgc/values/object-construction-definition.js";
+import {
+  buildNativeObjectConstructionDefinition,
+  buildRealmObjectConstructionAllocation,
+} from "../../../runtime/wasmgc/values/object-construction-definition.js";
 import {
   assertNativeObjectConstructionRequirementsCurrent,
   type NativeObjectConstructionRequirements,
@@ -21,6 +24,11 @@ import {
 } from "./native-object-descriptors.js";
 import { requireNativeStringLiteral } from "./native-string-literals.js";
 import {
+  requireNativeRealmObjectLayouts,
+  requireCompletedNativeRealmObjectLayouts,
+  type NativeRealmObjectLayoutReservations,
+} from "./native-realm-object-layouts.js";
+import {
   executeNativeResourceRecipe,
   freezeNativeResourceRecipe,
   requireNativeDeclaredReservation,
@@ -29,6 +37,8 @@ import {
 export interface NativeObjectConstructionDependencies {
   readonly descriptors: NativeObjectDescriptorReservations;
   readonly descriptorDependencies: NativeObjectDescriptorDependencies;
+  /** Storage/state only. The caller still owns mixed prototype admission and realm population. */
+  readonly realmState?: NativeRealmObjectLayoutReservations;
 }
 export interface NativeObjectConstructionReservations {
   readonly initialize: FunctionReservation;
@@ -42,10 +52,11 @@ export function declareNativeObjectConstructionResources(
   demand: NativeObjectConstructionDemand,
   objectTypeKey: string,
   stringTypeKey: string,
+  realmState = false,
 ): NativeResourceRecipe {
-  if (!key || !objectTypeKey || !stringTypeKey) fail("invalid declaration key/type");
+  if (!key || !objectTypeKey || !stringTypeKey || typeof realmState !== "boolean") fail("invalid declaration key/type");
   const ext = { kind: "externref" } as const;
-  const params: NativeDeclaredValType[] = [{ kind: "ref_null", typeKey: objectTypeKey }];
+  const params: NativeDeclaredValType[] = [realmState ? ext : { kind: "ref_null", typeKey: objectTypeKey }];
   for (const carrier of demand.carriers) {
     switch (carrier) {
       case "number":
@@ -81,6 +92,14 @@ export function declareNativeObjectConstructionResources(
       name: "__ordinary_object_box_boolean",
       signature: { params: [{ kind: "i32" }], results: [ext] },
     });
+  if (realmState)
+    declarations.push({
+      key: key + ":allocate-with-state",
+      role: ["ordinary-construction", "realm-state-allocation"],
+      space: "function",
+      name: "__ordinary_object_allocate_with_state",
+      signature: { params: [ext], results: [ext] },
+    });
   return freezeNativeResourceRecipe({
     declarations,
     reservationSteps: declarations.map((row) => ({ phase: "resources", kind: "reserve", resourceKey: row.key })),
@@ -110,9 +129,14 @@ function dependencies(
   requirements: NativeObjectConstructionRequirements,
   d: NativeObjectConstructionDependencies,
 ) {
+  const state = Object.getOwnPropertyDescriptor(d, "realmState");
+  if (state ? !Object.hasOwn(state, "value") || !state.enumerable || !state.value : "realmState" in d)
+    fail("realm state must be an own enumerable data owner or absent");
   requireNativeObjectDescriptorReservations(tx, d.descriptors, d.descriptorDependencies);
   if (d.descriptorDependencies.access !== requirements.access) fail("foreign source/property requirement owner");
   const lookup = d.descriptorDependencies.storageDependencies.lookupDependencies;
+  if (d.realmState)
+    requireNativeRealmObjectLayouts(tx, d.realmState, { objects: lookup.layouts, objectPlan: lookup.layoutPlan });
   const stringType = lookup.strings.types.find((token) => token.typeIndex === lookup.strings.layout.anyStrTypeIdx);
   if (!stringType) fail("missing issued native string type");
   return { lookup, stringType };
@@ -128,7 +152,13 @@ function recipeFor(
     { lookup, stringType } = dependencies(tx, requirements, d);
   demand.keys.forEach((key) => requireNativeStringLiteral(tx, lookup.strings, key));
   return {
-    recipe: declareNativeObjectConstructionResources(key, demand, lookup.layouts.object.key, stringType.key),
+    recipe: declareNativeObjectConstructionResources(
+      key,
+      demand,
+      lookup.layouts.object.key,
+      stringType.key,
+      !!d.realmState,
+    ),
     lookup,
     stringType,
   };
@@ -138,7 +168,8 @@ function requireOwner(tx: PhysicalModuleReservations, pack: NativeObjectConstruc
   if (!owner || owner.tx !== tx) fail("foreign or copied owner");
   if (
     owner.dependencies.descriptors !== owner.identities.descriptors ||
-    owner.dependencies.descriptorDependencies !== owner.identities.descriptorDependencies
+    owner.dependencies.descriptorDependencies !== owner.identities.descriptorDependencies ||
+    Object.getOwnPropertyDescriptor(owner.dependencies, "realmState")?.value !== owner.identities.realmState
   )
     fail("substituted dependency identity");
   const current = recipeFor(tx, owner.key, owner.requirements, owner.index, owner.dependencies).recipe;
@@ -213,6 +244,8 @@ export function fillNativeObjectConstructionResources(
     d = owner.dependencies.descriptorDependencies;
   if (tx.state !== "filling" || owner.filled) fail("invalid phase or duplicate canonical fill");
   requireCompletedNativeObjectDescriptors(tx, owner.dependencies.descriptors, d);
+  const state = owner.dependencies.realmState;
+  if (state) requireCompletedNativeRealmObjectLayouts(tx, state);
   const demand = selected(owner.requirements, owner.index),
     strings = d.storageDependencies.lookupDependencies.strings;
   const keys = demand.keys.map((key) => {
@@ -234,7 +267,7 @@ export function fillNativeObjectConstructionResources(
         conversion.push({ op: "call", funcIdx: d.sameValueDependencies.values.functions.boxNumber.handle });
         break;
       case "boolean":
-        if (!owner.tokens[1]) fail("missing owned Boolean boxer");
+        if (!demand.carriers.includes("boolean") || !owner.tokens[1]) fail("missing owned Boolean boxer");
         conversion.push({ op: "call", funcIdx: owner.tokens[1].handle });
         break;
       case "native-string":
@@ -247,20 +280,31 @@ export function fillNativeObjectConstructionResources(
     }
     return { argument: field + 1, key: keys[sourceIndex]!, conversion };
   });
+  const allocation = state ? owner.tokens.at(-1)! : undefined;
+  const allocationBody =
+    state &&
+    buildRealmObjectConstructionAllocation({
+      objectTypeIdx: tx.physicalIndex(d.storageDependencies.lookupDependencies.layouts.object),
+      propMapTypeIdx: tx.physicalIndex(d.storageDependencies.lookupDependencies.layouts.propMap),
+      ordinaryTypeIdx: tx.physicalIndex(state.types.ordinary),
+      stateTypeIdx: tx.physicalIndex(state.types.state),
+      realmGlobalIdx: tx.physicalIndex(state.anchors.realm),
+    });
   const body = buildNativeObjectConstructionDefinition({
-    create: d.storage.createWithPrototype.handle,
+    create: allocation?.handle ?? d.storage.createWithPrototype.handle,
     defineData: owner.dependencies.descriptors.defineData.handle,
     parameterCount: demand.carriers.length + 1,
     fields,
   });
-  if (owner.tokens[1])
-    tx.fillFunction(owner.tokens[1], {
+  if (demand.carriers.includes("boolean"))
+    tx.fillFunction(owner.tokens[1]!, {
       locals: [],
       body: buildBoxBooleanBody({
         mode: "allocating",
         typeIndex: d.sameValueDependencies.values.types.boxedBoolean.typeIndex,
       }),
     });
+  if (allocation && allocationBody) tx.fillFunction(allocation, allocationBody);
   tx.fillFunction(pack.initialize, body);
   owner.filled = true;
 }
@@ -275,6 +319,7 @@ export function requireCompletedNativeObjectConstruction(
   const owner = owners.get(pack)!;
   if (!owner.filled) fail("missing canonical fill");
   requireCompletedNativeObjectDescriptors(tx, d.descriptors, d.descriptorDependencies);
+  if (d.realmState) requireCompletedNativeRealmObjectLayouts(tx, d.realmState);
   owner.tokens.forEach((token) => tx.assertCompletedReservation(token));
   return pack;
 }

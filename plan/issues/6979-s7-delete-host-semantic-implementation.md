@@ -4374,3 +4374,91 @@ source cases. Default Object/Function realm completion, source method/prototype
 semantics, actual foreign field carriers, provider/callable/storage closure,
 Linear/WASI record construction, architecture closure and the prerequisite stack
 remain open. Both issues stay in progress and PR6762 stays draft.
+
+### S7-x realm-aware record allocation (2026-10-19, Codex)
+
+Continue from signed `3cd3cbc36932521873b684f86fb7cafb8dceb77a`.
+The actual ordinary realm subtype has a seventh state field, but the existing
+record initializer allocates the six-field storage root. Join record allocation
+to the issued realm layout owner, retaining the existing descriptor/storage
+engine and explicit prototype operand. Require exact shared storage layouts and
+canonical realm-state initialization; never infer completed intrinsics from a
+non-null realm anchor. Keep the existing non-realm recipe byte-identical.
+Default-realm publication, mixed prototype admission, full Object/Function
+population and Linear/WASI construction remain required, not waived.
+
+Readers/mutators checked before this change: construction declarations,
+reservation/currentness/fill/completion all live in the construction resource
+owner; its only external callers are the construction fixture and tests. Realm
+layout identity/currentness/completion remain with their existing owner. The
+runtime definition only composes storage initialization and canonical field
+definition; no selector or frozen AST path is changed.
+
+#### S7-x verified implementation and handoff
+
+The actual construction resource can now borrow an issued realm layout owner
+from the **same canonical own-storage layout/plan**, allocate its ordinary
+subtype, and retain a fresh ObjectState with the explicit prototype and current
+realm allocation. The six-field prefix is canonical explicit-null own storage;
+prototype traversal belongs to mixed-object operations, not a duplicate storage
+chain. Existing canonical DefineData still installs fields in source order.
+Absent state preserves the old recipe and binaries. A descriptive stateful
+recipe cannot authorize a stateful allocator without the genuine owner.
+
+The new state allocation requires canonical realm-layout completion before
+filling its functions, and traps at runtime if the realm identity anchor is
+missing. It deliberately does not require/select Function.prototype for an
+explicit prototype. A non-null anchor still does **not** certify standard realm
+population, prototype admission, a default prototype or a public provider.
+Test-only raw state observers are not the semantic SetPrototypeOf algorithm.
+
+Measured at parent `3cd3cbc36932521873b684f86fb7cafb8dceb77a`, Node24.4.1 /
+Vitest3.2.4, two forks with Wasm exception references:
+
+- **9/9 new, 69/69 focused** cases pass. Real source construction demands,
+  including offset/codec replay, execute with zero imports, independent object
+  and state identity, shared immutable realm identity, live explicit prototypes,
+  canonical Boolean/string/reference fields and twelve-field storage growth.
+  Empty records retain an actual allocation and state without a Boolean helper.
+  Copied/foreign/same-ledger-different-storage owners, hidden/accessor/inherited
+  roles and a stateful recipe without its issuer are rejected before reservation.
+- Four executed binary witnesses: ordinary base **15840 bytes**, displaced and
+  decoded **16309 bytes**, decoded empty record **15420 bytes**. These are full
+  test instances with observers, **not marginal production overhead**. Default
+  prototype gaps remain three/one for normal/empty sources.
+- The old three construction binary witnesses are byte-identical (15227/15696/
+  15696 bytes). All **33** full policy inventories/binaries and **six** native
+  controls are unchanged. No new host import, module/root/allowance, selector,
+  frozen AST expansion, copying or public boundary admission.
+- Existing **779 cases / 38 files** stay **756 passing / 23 failing**. Existing
+  resource **161 cases / three files** stay **147 passing / 14 failing**.
+  Full result rows/errors match the retained published-parent reports exactly;
+  these are retained-report comparisons, not fresh parent checkouts this turn.
+  No skips, old expectation changes, full Test262 or conformance gain claimed.
+- Typecheck/lint/format, size/function, coercion/oracle, layering/fallback,
+  flat-directory and issue checks pass. Inventory is valid, architecture
+  incomplete; the same six cycle pairs remain red. Preservation-only checks
+  pass, but strict closure still has the same two nonliteral imports and does
+  not certify retirement. No waiver.
+
+**Measurement correction to S7-w:** its ad-hoc source probe passed only backend
+and target to `acceptPreparedIrProgram`, omitting required resolved options,
+including `utf8Storage`. Its method/cast literal-plan exception is therefore not
+evidence of a normal consumer ownership bug. A fresh paired input control on the
+same genuine captured-call program executes with complete options (94, zero
+imports), and reproduces the literal-plan exception only with incomplete API
+input. Keep the literal owner authentication strict. Earlier binary/return
+measurements remain historical evidence with that instrumentation limitation;
+do not infer broad physical support from their incomplete option bags.
+
+Exact source/report hashes, complete new case names, four binary witnesses and
+the paired options-control results:
+`plan/audit/6979-realm-record-construction-20261019.json`.
+
+Next: implement actual Object/Function algorithms and singleton population;
+join the stateful allocator to authenticated mixed prototype/value admission
+and canonical property providers, then atomically publish source/public entries.
+Default realm, special source prototype/method semantics, foreign/dynamic fields,
+first-class undefined, callable/storage closure, Linear/WASI construction and
+architecture/retirement gates remain open. Both issues stay in progress and
+PR6762 stays draft, behind its existing prerequisite stack.

@@ -1439,3 +1439,32 @@ full Test262 claim. Exact evidence:
 `plan/audit/6979-inferred-return-contracts-20261019.json`.
 Both issues remain in progress; default realm, actual field carriers, provider
 publication, Linear/WASI construction and architecture completion still remain.
+
+### S7-x: native records retain actual realm state
+
+The existing construction resource now optionally borrows the genuine realm
+layout owner sharing its exact own-storage layout. It allocates the ordinary
+subtype with a fresh prototype/realm state, then uses the existing canonical
+descriptor engine for source-order fields. Missing runtime realm identity traps;
+non-null identity is not proof of completed standard intrinsics. No second
+property engine, copied graph, host import or default/public admission is added.
+The old non-realm constructor recipes and three binary witnesses stay identical.
+
+**9/9 new, 69/69 focused** cases pass, with four real zero-import stateful
+instances including displaced indices, codec replay, empty allocation and
+storage growth. The 779-case cohort retains **756 pass / 23 fail**, and the
+161-case resource suite **147 pass / 14 fail**, with identical full rows against
+retained published-parent reports. All 33 policy inventories/binaries and six
+native controls remain unchanged. Architecture cycles and strict-closure gaps
+remain open; preservation-only checks do not certify retirement.
+
+The detailed S7-x handoff also corrects the earlier S7-w ad-hoc source probe:
+its literal-plan errors used incomplete required backend options, not a normal
+consumer request. Complete options execute the genuine captured-call control
+(94, zero imports); only the incomplete input reproduces that ownership error.
+Do not weaken authentication to repair a malformed probe.
+
+Evidence: `plan/audit/6979-realm-record-construction-20261019.json`.
+Both issues remain in progress. Actual default Object/Function algorithms and
+population, authenticated mixed prototype/field carriers, canonical provider
+publication, Linear/WASI construction and retirement acceptance remain required.

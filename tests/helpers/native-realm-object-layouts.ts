@@ -103,7 +103,7 @@ export function reserveRealmAnchorControls(f: Pick<ReturnType<typeof realmLayout
     prototype,
     realm,
     setPrototype,
-    fill() {
+    fill(exportPrefix = "") {
       tx.fillFunction(initialize, {
         locals: [],
         body: [
@@ -135,7 +135,7 @@ export function reserveRealmAnchorControls(f: Pick<ReturnType<typeof realmLayout
         ],
       });
       for (const [name, token] of Object.entries({ initialize, state, prototype, realm, setPrototype }))
-        tx.defineExport("control:export:" + name, name, token);
+        tx.defineExport("control:export:" + name, exportPrefix + name, token);
     },
   };
 }

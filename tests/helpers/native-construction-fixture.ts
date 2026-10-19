@@ -13,6 +13,12 @@ import {
 import { emitBinary } from "../../src/emit/binary.js";
 import { requireNativeStringLiteral } from "../../src/backend/wasmgc/resources/native-string-literals.js";
 import type { Instr, ValType } from "../../src/wasm/model/instructions.js";
+import {
+  declareNativeRealmObjectLayouts,
+  reserveNativeRealmObjectLayouts,
+  fillNativeRealmObjectLayouts,
+} from "../../src/backend/wasmgc/resources/native-realm-object-layouts.js";
+import { reserveRealmAnchorControls } from "./native-realm-object-layouts.js";
 
 export const RECORD_SOURCE = `
 type Ref={x:number};
@@ -39,27 +45,53 @@ export function constructionSource(text = RECORD_SOURCE, decoded = false) {
   const program = decoded ? decodePreparedIrProgram(encodePreparedIrProgram(result.program)) : result.program;
   return { program, projection: program.runtime[0]! };
 }
-export function constructionFixture(offset = false, decoded = false, text = RECORD_SOURCE) {
+export function constructionFixture(offset = false, decoded = false, text = RECORD_SOURCE, stateful = false) {
   const source =
     decoded || text !== RECORD_SOURCE ? constructionSource(text, decoded) : (cached ??= constructionSource());
   const literals = [..."zyxwvutsrqpo", "a", "text", "ref", "hello", "inherited"];
-  const f = descriptorFixture(offset, source, literals);
+  const f = descriptorFixture(offset, source, literals, stateful);
   const requirements = deriveNativeObjectConstructionRequirements(f.access);
-  const dependencies = { descriptors: f.pack, descriptorDependencies: f.dependencies };
+  const realmState = stateful
+    ? reserveNativeRealmObjectLayouts(
+        f.tx,
+        "construction:realm",
+        { objects: f.layouts, objectPlan: f.lookupDependencies.layoutPlan },
+        declareNativeRealmObjectLayouts("construction:realm", f.layouts.object.key, f.layouts.propMap.key),
+      )
+    : undefined;
+  const dependencies = {
+    descriptors: f.pack,
+    descriptorDependencies: f.dependencies,
+    ...(realmState ? { realmState } : {}),
+  };
   const stringType = f.strings.types.find((type) => type.typeIndex === f.strings.layout.anyStrTypeIdx)!;
   const plans = requirements.constructors.map((demand, index) =>
-    declareNativeObjectConstructionResources("construction:" + index, demand, f.layouts.object.key, stringType.key),
+    declareNativeObjectConstructionResources(
+      "construction:" + index,
+      demand,
+      f.layouts.object.key,
+      stringType.key,
+      stateful,
+    ),
   );
   const constructors = plans.map((plan, index) =>
     reserveNativeObjectConstructionResources(f.tx, "construction:" + index, requirements, index, dependencies, plan),
   );
-  return { ...f, requirements, constructionDependencies: dependencies, constructionPlans: plans, constructors };
+  return {
+    ...f,
+    requirements,
+    realmState,
+    constructionDependencies: dependencies,
+    constructionPlans: plans,
+    constructors,
+  };
 }
 
 /** Observer ABI is test-only; actual record demand and every production resource are genuine. */
-export function constructionRuntime(offset = false, decoded = false, text = RECORD_SOURCE) {
-  const f = constructionFixture(offset, decoded, text),
+export function constructionRuntime(offset = false, decoded = false, text = RECORD_SOURCE, stateful = false) {
+  const f = constructionFixture(offset, decoded, text, stateful),
     { tx } = f;
+  const realmControls = f.realmState && reserveRealmAnchorControls({ tx, pack: f.realmState });
   const ext: ValType = { kind: "externref" },
     i32: ValType = { kind: "i32" };
   const observer = (name: string, params: ValType[], results: ValType[]) =>
@@ -70,6 +102,7 @@ export function constructionRuntime(offset = false, decoded = false, text = RECO
     count = observer("count", [ext], [i32]);
   const has = observer("has", [ext, ext], [i32]),
     isBoolean = f.booleans.isBoolean;
+  const objectState = f.realmState && observer("objectState", [ext], [ext]);
   const wrappers = f.constructors.map((_, index) => {
     const demand = f.requirements.constructors[index]!;
     const params: ValType[] = demand.carriers.map((carrier) =>
@@ -82,6 +115,8 @@ export function constructionRuntime(offset = false, decoded = false, text = RECO
     token: observer("key:" + text, [], [ext]),
   }));
   completeDescriptorFixture(f);
+  if (f.realmState) fillNativeRealmObjectLayouts(tx, f.realmState);
+  realmControls?.fill("realm:");
   f.constructors.forEach((pack, index) => {
     fillNativeObjectConstructionResources(tx, pack);
     requireCompletedNativeObjectConstruction(tx, pack, f.requirements, index, f.constructionDependencies);
@@ -123,11 +158,34 @@ export function constructionRuntime(offset = false, decoded = false, text = RECO
   tx.fillFunction(prototype, {
     locals: [],
     body: [
-      ...object(),
-      { op: "struct.get", typeIdx: f.layouts.object.typeIndex, fieldIdx: 0 },
-      { op: "extern.convert_any" },
+      ...(f.realmState
+        ? ([
+            { op: "local.get", index: 0 },
+            { op: "any.convert_extern" },
+            { op: "ref.cast", typeIdx: f.realmState.types.ordinary.typeIndex },
+            { op: "struct.get", typeIdx: f.realmState.types.ordinary.typeIndex, fieldIdx: 6 },
+            { op: "struct.get", typeIdx: f.realmState.types.state.typeIndex, fieldIdx: 0 },
+          ] as Instr[])
+        : ([
+            ...object(),
+            { op: "struct.get", typeIdx: f.layouts.object.typeIndex, fieldIdx: 0 },
+            { op: "extern.convert_any" },
+          ] as Instr[])),
     ],
   });
+  if (objectState && f.realmState) {
+    tx.fillFunction(objectState, {
+      locals: [],
+      body: [
+        { op: "local.get", index: 0 },
+        { op: "any.convert_extern" },
+        { op: "ref.cast", typeIdx: f.realmState.types.ordinary.typeIndex },
+        { op: "struct.get", typeIdx: f.realmState.types.ordinary.typeIndex, fieldIdx: 6 },
+        { op: "extern.convert_any" },
+      ],
+    });
+    tx.defineExport("export:objectState", "objectState", objectState);
+  }
   tx.fillFunction(count, {
     locals: [],
     body: [...object(), { op: "struct.get", typeIdx: f.layouts.object.typeIndex, fieldIdx: 2 }],
@@ -140,8 +198,9 @@ export function constructionRuntime(offset = false, decoded = false, text = RECO
     const demand = f.requirements.constructors[index]!;
     const body: Instr[] = [
       { op: "local.get", index: 0 },
-      { op: "any.convert_extern" },
-      { op: "ref.cast_null", typeIdx: f.layouts.object.typeIndex },
+      ...(!f.realmState
+        ? ([{ op: "any.convert_extern" }, { op: "ref.cast_null", typeIdx: f.layouts.object.typeIndex }] as Instr[])
+        : []),
     ];
     demand.carriers.forEach((carrier, i) => {
       body.push({ op: "local.get", index: i + 1 });
