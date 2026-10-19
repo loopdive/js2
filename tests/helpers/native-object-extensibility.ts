@@ -27,7 +27,10 @@ import {
   reserveNativeObjectExtensibilityAlgorithms,
   fillNativeObjectExtensibilityAlgorithms,
   requireCompletedNativeObjectExtensibilityAlgorithms,
-} from "../../src/backend/wasmgc/resources/native-object-extensibility.js";
+  reserveNativeObjectSetPrototypeAlgorithm,
+  fillNativeObjectSetPrototypeAlgorithm,
+  requireCompletedNativeObjectSetPrototypeAlgorithm,
+} from "../../src/backend/wasmgc/resources/native-object-structural-algorithms.js";
 import { requireNativeStringLiteral } from "../../src/backend/wasmgc/resources/native-string-literals.js";
 import { buildUndefinedInitializer } from "../../src/runtime/wasmgc/values/primitive-layouts.js";
 import {
@@ -43,6 +46,7 @@ export function objectExtensibilityFixture(
   displaced = false,
   decoded = false,
   mode: "interned" | "allocating" = "interned",
+  includeSetPrototype = false,
 ) {
   const r = mixedOwnerFixture(displaced, decoded),
     { tx } = r;
@@ -96,6 +100,9 @@ export function objectExtensibilityFixture(
     errorDependencies,
   };
   const algorithms = reserveNativeObjectExtensibilityAlgorithms(tx, algorithmDependencies);
+  const prototypeAlgorithm = includeSetPrototype
+    ? reserveNativeObjectSetPrototypeAlgorithm(tx, algorithmDependencies)
+    : undefined;
   return {
     ...r,
     mixed,
@@ -111,6 +118,7 @@ export function objectExtensibilityFixture(
     errorDependencies,
     algorithmDependencies,
     algorithms,
+    prototypeAlgorithm,
   };
 }
 export function fillObjectExtensibilityDependencies(r: ReturnType<typeof objectExtensibilityFixture>) {
@@ -134,9 +142,11 @@ export function objectExtensibilityRuntime(
   displaced = false,
   decoded = false,
   mode: "interned" | "allocating" = "interned",
+  includeSetPrototype = false,
 ) {
-  const r = objectExtensibilityFixture(displaced, decoded, mode),
+  const r = objectExtensibilityFixture(displaced, decoded, mode, includeSetPrototype),
     { tx, f } = r;
+  const selectedEntries = [...r.algorithms.entries, ...(r.prototypeAlgorithm?.entries ?? [])];
   const bigintOperands = reserveBigIntOperands(tx);
   const signatures: Record<string, { params: ValType[]; results: ValType[] }> = {
     initialize: { params: [], results: [] },
@@ -157,6 +167,17 @@ export function objectExtensibilityRuntime(
     },
     stored0: { params: [ext, ext, { kind: "ref", typeIdx: f.substrate.arguments.carrier.typeIndex }], results: [ext] },
     stored1: { params: [ext, ext, { kind: "ref", typeIdx: f.substrate.arguments.carrier.typeIndex }], results: [ext] },
+    ...(includeSetPrototype
+      ? {
+          stored2: {
+            params: [ext, ext, { kind: "ref" as const, typeIdx: f.substrate.arguments.carrier.typeIndex }],
+            results: [ext],
+          },
+          corruptParent: { params: [ext, ext], results: [] },
+          fakePrefix: { params: [ext, ext], results: [] },
+          native2: { params: [i32, i32], results: [ext] },
+        }
+      : {}),
   };
   const controls = Object.fromEntries(
     Object.entries(signatures).map(([name, signature]) => [
@@ -181,6 +202,10 @@ export function objectExtensibilityRuntime(
   fillObjectExtensibilityDependencies(r);
   fillNativeObjectExtensibilityAlgorithms(tx, r.algorithms);
   requireCompletedNativeObjectExtensibilityAlgorithms(tx, r.algorithms);
+  if (r.prototypeAlgorithm) {
+    fillNativeObjectSetPrototypeAlgorithm(tx, r.prototypeAlgorithm);
+    requireCompletedNativeObjectSetPrototypeAlgorithm(tx, r.prototypeAlgorithm);
+  }
   // Exercise the real prevention algorithm's false branch with the genuine
   // IsExtensible result of a non-extensible object. This derivative is a named
   // test control, never filled into a catalog slot or accepted by its owner.
@@ -230,9 +255,9 @@ export function objectExtensibilityRuntime(
       ...prefix(),
       { op: "struct.new", typeIdx: f.pack.types.objectPrototype.typeIndex },
       { op: "global.set", index: tx.physicalIndex(r.realm.declarations.objectPrototype.singleton) },
-      ...r.algorithms.entries.flatMap((entry): Instr[] => [
+      ...selectedEntries.flatMap((entry): Instr[] => [
         { op: "ref.func", funcIdx: entry.lifted.handle },
-        n(1),
+        n(entry.request.intrinsic.callable.length),
         call(r.storage.createNull.handle),
         n(0),
         n(entry.metadata.metadata.id),
@@ -245,6 +270,27 @@ export function objectExtensibilityRuntime(
       ]),
     ],
   });
+  if (includeSetPrototype) {
+    tx.fillFunction(controls.corruptParent!, {
+      locals: [],
+      body: [
+        ...as(0, f.pack.types.ordinary.typeIndex),
+        { op: "struct.get", typeIdx: f.pack.types.ordinary.typeIndex, fieldIdx: 6 },
+        get(1),
+        { op: "struct.set", typeIdx: f.pack.types.state.typeIndex, fieldIdx: 0 },
+      ],
+    });
+    tx.fillFunction(controls.fakePrefix!, {
+      locals: [],
+      body: [
+        ...as(0, f.objects.object.typeIndex),
+        get(1),
+        { op: "any.convert_extern" },
+        { op: "ref.cast_null", typeIdx: f.objects.object.typeIndex },
+        { op: "struct.set", typeIdx: f.objects.object.typeIndex, fieldIdx: 0 },
+      ],
+    });
+  }
   tx.fillFunction(controls.ordinary!, {
     locals: [],
     body: [
@@ -315,6 +361,30 @@ export function objectExtensibilityRuntime(
       { op: "extern.convert_any" },
     ],
   });
+  if (r.prototypeAlgorithm) {
+    const entry = r.prototypeAlgorithm.entries[0]!;
+    tx.fillFunction(controls.native2!, {
+      locals: [],
+      body: [
+        { op: "ref.func", funcIdx: entry.lifted.handle },
+        n(2),
+        call(r.storage.createNull.handle),
+        n(0),
+        get(0),
+        { op: "ref.null.extern" },
+        get(1),
+        {
+          op: "if",
+          blockType: { kind: "val", type: { kind: "ref", typeIdx: f.pack.types.identity.typeIndex } },
+          then: [{ op: "struct.new", typeIdx: f.pack.types.identity.typeIndex }],
+          else: [global(realm), { op: "ref.as_non_null" }],
+        },
+        ...text("name", false),
+        { op: "struct.new", typeIdx: entry.type.typeIndex },
+        { op: "extern.convert_any" },
+      ],
+    });
+  }
   tx.fillFunction(controls.clearBag!, {
     locals: [],
     body: [
@@ -343,7 +413,10 @@ export function objectExtensibilityRuntime(
     locals: [],
     body: [...as(0, r.errors.type.typeIndex), { op: "struct.get", typeIdx: r.errors.type.typeIndex, fieldIdx: 0 }],
   });
-  for (const key of ["stored0", "stored1"])
+  for (const [index, key] of (includeSetPrototype
+    ? ["stored0", "stored1", "stored2"]
+    : ["stored0", "stored1"]
+  ).entries())
     tx.fillFunction(controls[key]!, {
       locals: [],
       body: [
@@ -352,12 +425,12 @@ export function objectExtensibilityRuntime(
         get(2),
         ...as(0, r.c.closures.root.typeIndex),
         { op: "struct.get", typeIdx: r.c.closures.root.typeIndex, fieldIdx: 0 },
-        { op: "ref.cast", typeIdx: r.algorithms.entries[0]!.metadata.signature.liftedFuncTypeIndex },
-        { op: "call_ref", typeIdx: r.algorithms.entries[0]!.metadata.signature.liftedFuncTypeIndex },
+        { op: "ref.cast", typeIdx: selectedEntries[index]!.metadata.signature.liftedFuncTypeIndex },
+        { op: "call_ref", typeIdx: selectedEntries[index]!.metadata.signature.liftedFuncTypeIndex },
       ],
     });
   tx.defineExport("extensibility:export:exception", "exception", r.realm.declarations.exception.tag);
-  const storedCalls = r.algorithms.entries.map((entry, index) => {
+  const storedCalls = selectedEntries.map((entry, index) => {
     // Existing signature must have been interned before freeze; this is a direct
     // exported genuine lifted entry, with self supplied by the test observer.
     tx.defineExport("extensibility:export:lifted:" + index, "lifted" + index, entry.lifted);
@@ -381,6 +454,9 @@ export function objectExtensibilityRuntime(
     newBigInt: r.wrappers.allocation.BigInt,
     newString: r.stringCreate.create,
     objectPrototype: r.realm.declarations.objectPrototype.singleton,
+    ...(includeSetPrototype
+      ? { getPrototypeOf: r.mixed.getPrototypeOf, internalSetPrototypeOf: r.mixed.setPrototypeOf }
+      : {}),
   }))
     tx.defineExport("extensibility:export:" + name, name, token);
   const live = reachableFunctionPositions(f.module),

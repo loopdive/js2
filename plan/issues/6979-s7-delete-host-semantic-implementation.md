@@ -5139,3 +5139,124 @@ Get/Call, constructors and population before atomic public/source publication.
 Foreign/dynamic identity with live boundary references, first-class undefined,
 Linear/WASI and architecture/custody/retirement/conformance acceptance remain
 required. Both issues stay in progress; the PR stays draft, not merge-ready.
+
+### S7-af ordered Object.setPrototypeOf catalog composition (2026-10-20, Codex)
+
+Continue from signed `8b193c79c5f6bcaae58216a554c6738ee10b52b3`.
+Implement the actual algorithm/lifted slots for Object.setPrototypeOf using the
+genuine mixed mutation and primitive/error owners. Keep RequireObjectCoercible
+before prototype checks and validate the prototype before returning a primitive
+receiver unchanged. Missing arguments use canonical undefined. Unknown/unready
+private-ABI inputs must refuse, not become false/success or pretend to be public
+TypeErrors. Preserve identity, SameValue-first mutation, immutable prototypes,
+non-extensibility and cycle/gap handling in the existing mixed owner.
+
+Share the existing fixed catalog producer machinery with extensibility under
+a structural-algorithms module name; no exported arbitrary-entry/body binder.
+Separate issued scopes and per-kind uniqueness must prevent cross-scope fill or
+completion. Readers of the old producer path are its two test imports and the
+compiler inventory classification; writers are its canonical fixed producers.
+Rename those consumers, retain the old entry bodies unchanged, and leave pinned
+historical audit paths as historical evidence. No state/algorithm body moves out
+of the mixed owner, and no caller may provide alternative function handles.
+
+Verify the new real owner through guarded/stored calls and zero-import component
+snapshots, all native primitive/object families, ordered errors, actual live
+prototype mutation, sealed/immutable/cyclic refusals and missing authority.
+Audit substituted algorithm/lifted definitions and wrong/copy/foreign scopes.
+Public/source admission, full population, remaining catalog/ToObject/default
+prototypes, foreign boundary identity, Linear/WASI and retirement remain open.
+
+#### S7-af implementation and landing handoff
+
+The unpublished slice is now a checkpoint for the existing draft
+[refactor(codegen): separate native semantics from JS host mode](https://github.com/loopdive/js2/pull/6762).
+Its parent is signed `8b193c79c5f6bcaae58216a554c6738ee10b52b3`. The
+prerequisite [refactor(runtime): remove the host-assisted semantic policy](https://github.com/loopdive/js2/pull/6701)
+was read back OPEN/unmerged at handoff. Do not merge or mark this migration done.
+
+The fixed downstream producer fills the genuine Object.setPrototypeOf algorithm
+and guarded Call slots, using existing mixed-object mutation, native primitive
+classification and native TypeError owners. RequireObjectCoercible happens before
+reading P, and prototype validation precedes the primitive-O early return.
+Only canonical undefined is accepted as undefined; layout copies, foreign/unready
+objects and unsupported chains trap instead of receiving a fabricated semantic
+result. Object identity, actual prototype state and existing mutation rules stay
+with the mixed owner. No JS-owned object is recursively copied or newly admitted.
+
+The producer was renamed to
+`src/backend/wasmgc/resources/native-object-structural-algorithms.ts`. Shared
+dependency/canonical-definition checks remain private, with fixed exported
+factories, separate completion scopes and per-kind uniqueness. This is not an
+arbitrary-entry binder. Extensibility callers were moved to the new import path;
+their existing expectations and the old pure instruction builder are unchanged.
+Historical audits retain the old path at their pinned revisions.
+
+Resume from this PR's verified head, not the dirty primary checkout. Before the
+next implementation slice, read this issue and the parent
+[Merge JS-host and standalone modes: one native semantic core, host semantics only as opt-in accelerators](5385-merge-host-semantics-into-native-core.md).
+The next work is genuine ToObject/default-prototype ownership and the remaining
+catalog algorithms/constructors, then mixed Get/Call and complete singleton/property
+population before atomic authenticated source/public publication. Do not weaken
+admission or treat a non-null anchor, bag, count, allocator receipt or this partial
+algorithm completion as whole-realm authority.
+
+The broader migration still requires live identity-backed foreign/dynamic
+boundary references, first-class undefined, Linear/WASI construction and full
+architecture/custody/conformance/retirement acceptance. Resolve the four existing
+dependency-direction violations and the two unconstrained dynamic-import proof
+gaps without baseline edits or new waivers. Prior broad-cohort/physical-receipt
+failures remain open; no full-suite or full-Test262 green claim follows from
+these component checks. The draft also has unresolved merge conflicts. Both
+Markdown issues remain in progress; no GitHub issue or issue comment is created.
+
+Additional checker follow-up discovered during landing: the auxiliary
+`scripts/check-issue-ids.mjs` workspace mode uses URL `.pathname`, so the space
+in this checkout's volume path remains `%20` and it fails to scan the directory.
+Its committed mode prints a green result with **zero issues**, which is not
+verification and is not counted as a passing gate here. The separate
+`check-committed-issue-integrity.mjs HEAD` positively scans all **4955** issue
+files, and `update-issues.mjs --check` also indexes **4955**. No issue IDs are
+introduced in this checkpoint. Repair and positive-control the auxiliary
+checker separately; do not waive failures or accept its empty observation.
+
+#### S7-af verification at publication
+
+The final full new-file run is **38/38 passing**, no skips or reported runner
+errors, exit zero: **33 runtime cases and five owner controls**. Three
+zero-import component snapshots execute the actual algorithm and guarded/stored
+entries at normal and displaced/decoded coordinates, including allocating
+Booleans. Their real reservation ledger remains unsealed/incomplete; test-only
+initialization and snapshot sweeping are not production population or admission.
+
+All **63 existing extensibility assertions** are reported passing with the final
+helper/source, and all **four existing component byte hashes and reachability
+counts** equal the retained parent audit, with an explicit four-row floor.
+However, the enclosing intermediate two-file run is **98 pass / 3 fail of 101
+plus one onTaskUpdate runner error**, not a clean pass. Its three newly authored
+guard assertions were corrected before the clean 38-case run; no production
+source or old expectation changed. The first development run was 80 pass / 21
+fail of 101 plus the same reported runner error. Both reports remain recorded.
+Do not describe these observations as a single clean 101-case run or infer a
+concurrency cause. Obtain a clean complete regression run before merge.
+
+All **33 policy inventories/binaries** and **six standalone/WASI compiled
+controls** match retained parent reports byte-for-byte. Typecheck/lint/format,
+size/function, coercion/oracle, layering/flat-directory and fallback checks pass.
+Checkpoint: **three source files, net +155 LOC**. Whole PR: **379 source files,
+net -16790 LOC**, base `ae913d622f3cb5c4136e43a27594b8ec48e4c933`.
+No new allowance or baseline change. Inventory valid: **1981 modules**, zero
+errors, architecture incomplete. Value edges 10846→10848; largest SCC712,
+four nontrivial SCCs and every direction metric unchanged from the parent.
+The cycle gate still exits one for the same four directions growing against
+main. Preservation-only is 6/6 full + 6/6 cut; strict retirement still refuses
+the two unconstrained dynamic imports. These are not waived or certified.
+
+Node24.4.1/Vitest3.2.4 and the Wasm exception-reference flag were used. The last
+new-file run requests fork limit one using `VITEST_MAX_FORKS`; actual concurrency
+was not sampled. The case/hook limits remain 35/120 seconds. No timing A/B claim,
+ignored errors or timeout increase. Full 674-case, broader 161/779, full Test262
+and historical custody cohorts were not rerun. Prior physical-receipt and other
+failures remain open. Exact source/report hashes, component witnesses and all
+development failures are in
+`plan/audit/6979-native-object-set-prototype-20261020.json`.

@@ -15603,12 +15603,17 @@
       "layer": "backend-wasmgc"
     },
     {
-      "path": "src/backend/wasmgc/resources/native-object-extensibility.ts",
+      "path": "src/backend/wasmgc/resources/native-object-structural-algorithms.ts",
       "state": "clean",
       "layer": "backend-wasmgc"
     },
     {
       "path": "src/runtime/wasmgc/values/native-object-extensibility-bodies.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/native-object-prototype-bodies.ts",
       "state": "clean",
       "layer": "native-runtime"
     },

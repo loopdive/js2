@@ -1690,3 +1690,51 @@ population and mixed Get/Call, atomic source/public publication, foreign/live
 boundary identity, first-class undefined, Linear/WASI and the architecture/
 custody/retirement/conformance gates remain required. Both issues stay in
 progress; the PR stays draft.
+
+### S7-af checkpoint handoff: native Object.setPrototypeOf
+
+The actual Object.setPrototypeOf algorithm and guarded Call slots now compose
+the existing authenticated primitive/mixed-object/error owners. Nullish O is
+rejected before reading P; P must be Object or null even when O is a primitive.
+Primitive results retain their exact reference; objects mutate their real state,
+not a copied bag or the stale ordinary prefix. Immutable, non-extensible and
+cycle behavior remains the existing mixed owner's responsibility. Unknown,
+unready and foreign private-ABI values still refuse loudly. No public/source
+Object support or whole-realm completion is implied.
+
+The shared fixed producer lives in
+`src/backend/wasmgc/resources/native-object-structural-algorithms.ts`. Its two
+exported factory families retain distinct issued scopes and no caller-selected
+entry, function handle or body may certify completion. Existing extensibility
+expectations are unchanged. No new host import, semantic engine or graph copying.
+
+Detailed implementation, verification and next-owner instructions are in
+[S7: delete the host-semantic implementation — one native semantic core, host imports only as capabilities, adapters and named accelerators](6979-s7-delete-host-semantic-implementation.md),
+under **S7-af implementation and landing handoff**. Work is published through the
+existing draft [refactor(codegen): separate native semantics from JS host mode](https://github.com/loopdive/js2/pull/6762),
+not a new GitHub issue. The prerequisite PR is still open; conflicts, the four
+architecture-direction violations and strict retirement proof gaps remain.
+
+Next: genuine ToObject/default-prototype owners, remaining catalog/constructors,
+mixed Get/Call and complete population before atomic source/public admission;
+then the live foreign-boundary, undefined, Linear/WASI, custody and conformance
+obligations already listed above. Both issues stay in progress; do not mark the
+migration complete or ready this PR on the strength of component completion.
+
+Final new-file verification is **38/38 passing**, with no skips or reported
+runner errors: 33 runtime cases and five owner controls. Three zero-import
+component witnesses exercise actual slots; the real realm remains incomplete.
+All four existing extensibility binaries equal retained parent hashes. The 63
+existing assertions also report passing, but their enclosing intermediate run
+has three subsequently corrected new assertions and one onTaskUpdate runner
+error; no clean combined-run claim. Before merge, obtain a clean complete
+regression run. No old receipt/expectation was changed.
+
+All 33 policy inventories/binaries and six native standalone/WASI controls equal
+retained parent reports. Selected quality/budget gates pass, but the same four
+architecture directions and strict dynamic-import proof gaps remain red/open.
+Full Test262 and the complete earlier 674-case/broader cohorts were not rerun.
+Source/report hashes and failed development observations are retained in
+`plan/audit/6979-native-object-set-prototype-20261020.json`. The auxiliary
+issue-ID checker's failed/empty scans are tracked in the detailed handoff and
+are not treated as passing verification.

@@ -1,0 +1,231 @@
+{
+  "schemaVersion": 1,
+  "checkpoint": "S7-af native Object.setPrototypeOf catalog algorithm and guarded Call",
+  "parentCommit": "8b193c79c5f6bcaae58216a554c6738ee10b52b3",
+  "candidate": "Identified by exact sourceHashes; signed checkpoint follows",
+  "sourceHashes": {
+    "src/backend/wasmgc/resources/native-object-structural-algorithms.ts": "e7450334b0096c44f40900e2bd6bff07f9e7f6325c3d16ad0877fdd0ba217ac5",
+    "src/runtime/wasmgc/values/native-object-prototype-bodies.ts": "a5ef5608ad1aba92ef6f253fcb7421ef49d6038586db22db45851a892f3a5917",
+    "tests/helpers/native-object-extensibility.ts": "fec3346b80a6a34672dd3ca2986acfa21b7d9e45a5c0a526f05ebc133eb6d279",
+    "tests/issue-6979-native-object-extensibility.test.ts": "28bf10eabf6add2e613a3af08f00d6a49c0377f33579e6c58cb2353807cb0347",
+    "tests/issue-6979-native-object-set-prototype.test.ts": "6368c7f12448edbc302c574be0a2172183197afd34035f65c51acd4b9a37ea0d",
+    "scripts/compiler-boundaries.json": "b113347d6c17328663528fd1824be9641ea2063b54aca7d59d18453f1302ac89"
+  },
+  "specification": "https://tc39.es/ecma262/multipage/fundamental-objects.html#sec-object.setprototypeof",
+  "scope": {
+    "completionScope": "native-object-set-prototype-call",
+    "actualEntry": "%Object.setPrototypeOf%",
+    "actualReservedAlgorithmAndGuardedLiftedSlots": true,
+    "fixedExportedFactoriesNotArbitraryEntryBinders": true,
+    "separateScopesAndPerKindUniqueness": true,
+    "requireObjectCoercibleBeforeReadingPrototype": true,
+    "prototypeValidationBeforePrimitiveEarlyReturn": true,
+    "canonicalUndefinedIdentityRequired": true,
+    "unknownUnreadyAndUnsupportedPrivateAbiInputsTrap": true,
+    "existingMixedOwnerPerformsActualMutation": true,
+    "languageObjectsOrBagsCopied": false,
+    "newHostImportsOrPublicSourceAdmission": false,
+    "wholeRealmCompletionOrRetirementCertified": false,
+    "renamedFrom": "src/backend/wasmgc/resources/native-object-extensibility.ts",
+    "historicalAuditPathsRewritten": false
+  },
+  "harness": {
+    "node": "v24.4.1",
+    "vitest": "3.2.4",
+    "forkLimitEnvironment": { "twoFileDevelopmentRuns": 2, "finalSetPrototypeRun": 1 },
+    "measuredConcurrentWorkerCount": null,
+    "testTimeoutMs": 35000,
+    "componentBeforeAllTimeoutMs": 120000,
+    "flags": ["--experimental-wasm-exnref"],
+    "timeoutsOrIgnoresChangedToObtainPass": false,
+    "timingOrConcurrencyABClaimed": false
+  },
+  "tests": {
+    "finalFocused": {
+      "path": ".tmp/s7af-set-prototype-final.json",
+      "log": ".tmp/s7af-set-prototype-final.log",
+      "scope": "Full new Object.setPrototypeOf file; existing extensibility has a separate report below",
+      "status": "terminal",
+      "runnerExit": 0,
+      "cases": 38,
+      "passed": 38,
+      "failed": 0,
+      "skipped": 0,
+      "reportedRunnerErrors": 0,
+      "runtimeCases": 33,
+      "ownerControls": 5
+    },
+    "existingExtensibility": {
+      "path": ".tmp/s7af-focused-final.json",
+      "cases": 63,
+      "assertionsReportedPassed": 63,
+      "reportedRunnerErrorsInContainingRun": 1,
+      "cleanRunClaimed": false,
+      "limitation": "The historical final filename belongs to the intermediate two-file run, not the final corrected new test file. All existing rows passed with the final helper/source; only the new guard assertion was subsequently edited. The enclosing run still failed with three new guard assertions and an onTaskUpdate timeout."
+    },
+    "intermediateGuardCorrection": {
+      "path": ".tmp/s7af-focused-final.json",
+      "log": ".tmp/s7af-focused-final.log",
+      "runnerExit": 1,
+      "cases": 101,
+      "passed": 98,
+      "failed": 3,
+      "reportedRunnerErrors": 1,
+      "runnerError": "[vitest-worker]: Timeout calling onTaskUpdate",
+      "correction": "A newly authored assertion grouped ABI-compatible closure-shaped builtins with an incompatible ordinary object. Other builtins must reach the native identity/metadata guard; ordinary objects are rejected at the JS/Wasm boundary. Split the controls accordingly; no production source or prior expectation changed.",
+      "greenRunClaimed": false
+    },
+    "developmentRun": {
+      "path": ".tmp/s7af-focused.json",
+      "log": ".tmp/s7af-focused.log",
+      "runnerExit": 1,
+      "cases": 101,
+      "passed": 80,
+      "failed": 21,
+      "reportedRunnerErrors": 1,
+      "runnerError": "[vitest-worker]: Timeout calling onTaskUpdate",
+      "existingExtensibilityCases": { "cases": 63, "passed": 63 },
+      "newCases": { "cases": 38, "passed": 17, "failed": 21 },
+      "correction": "Only newly authored tests/observers changed: assert the internal getter's [status, value] ABI and exact reference identity; separate concrete-self JS/Wasm boundary rejection from native guard errors. Add same-type clones with wrong metadata, identical metadata and foreign realm to exercise the actual guard. Production source unchanged.",
+      "greenRunClaimed": false
+    },
+    "fullPrior674CaseCohortRerun": false,
+    "prior674CaseEvidence": "Retained S7-ae audit: 673 passed and one physical-record receipt failure. Not a fresh full-parent or current full-cohort run here.",
+    "broader161And779CohortsRerun": false,
+    "fullTest262OrHistoricalCustodyRerun": false,
+    "existingExpectationsReceiptsOrSkipsChanged": false
+  },
+  "componentInterpretation": {
+    "actualProducerSlotsExecuted": true,
+    "reachableFunctionFillFloorChecked": true,
+    "onlyClonedSnapshotsUseExistingUnreachableFunctionSweep": true,
+    "realLedgerRemainsUnsealedAndMissingCatalogBodiesUnfilled": true,
+    "testInitializationIsProductionPopulation": false,
+    "componentSizeIsMarginalProductionCost": false,
+    "prototypeObserverChecksStatusAndExactValueIdentity": true
+  },
+  "componentWitnesses": [
+    {
+      "displaced": false,
+      "decoded": false,
+      "booleans": "interned",
+      "bytes": 44253,
+      "sha256": "d37f7ddd571dede4f3c8a2e2cc3bcf4e949ab3168fd9b3b43008c2ef330c4c8b",
+      "imports": [],
+      "reachableFunctions": 71,
+      "deadSnapshotBodies": 109,
+      "wholeRealmCompleted": false
+    },
+    {
+      "displaced": true,
+      "decoded": true,
+      "booleans": "interned",
+      "bytes": 44060,
+      "sha256": "91d92640ed057aa3853108ab21adc74d55e227a3100186f5e97a758f9f91b109",
+      "imports": [],
+      "reachableFunctions": 72,
+      "deadSnapshotBodies": 110,
+      "wholeRealmCompleted": false
+    },
+    {
+      "displaced": false,
+      "decoded": false,
+      "booleans": "allocating",
+      "bytes": 44226,
+      "sha256": "16de8828dff899284b898fe2908fb19cd7040e07c523b66a2c9fba71e8c735f1",
+      "imports": [],
+      "reachableFunctions": 71,
+      "deadSnapshotBodies": 109,
+      "wholeRealmCompleted": false
+    }
+  ],
+  "existingExtensibilityComponentWitnesses": {
+    "cases": 4,
+    "allCoordinatesByteHashesAndReachabilityCountsEqualParent": true,
+    "comparison": "Exact four-row positive-floor comparison with the retained S7-ae audit, not a fresh parent execution"
+  },
+  "compilerControls": {
+    "policyInventories": 33,
+    "policyBinaryWitnesses": 33,
+    "policyReport": ".tmp/s7af-policy.log",
+    "policyReportSha256": "17f87021b75df26b865737c49331d7749a160bb621e955115d1786ef16f253dd",
+    "nativeStandaloneAndWasiControls": 6,
+    "nativeControlReport": ".tmp/s7af-native-controls.log",
+    "nativeControlReportSha256": "3b2b598b433a5802cd71989c1bb4f1f31b21af605afe596685e74c7f120f7895",
+    "allReportsEqualRetainedParentReportsByteForByte": true,
+    "freshParentExecutionThisTurn": false,
+    "nativeControlsImports": [],
+    "nativeControlOutputs": [42, 7]
+  },
+  "qualityAndArchitecture": {
+    "typecheckLintFormat": "pass",
+    "checkpointSourceFiles": 3,
+    "checkpointNetSourceLoc": 155,
+    "wholePrSourceFiles": 379,
+    "wholePrNetSourceLoc": -16790,
+    "wholePrBudgetBase": "ae913d622f3cb5c4136e43a27594b8ec48e4c933",
+    "sizeFunctionCoercionOracleLayeringFlatDirectoryFallbackChecks": "pass",
+    "existingFunctionGrantsChanged": false,
+    "inventory": ".tmp/s7af-inventory.json",
+    "inventoryValid": true,
+    "modules": 1981,
+    "cleanModules": 340,
+    "backendWasmGcModules": 63,
+    "nativeRuntimeModules": 112,
+    "inventoryErrors": 0,
+    "architectureComplete": false,
+    "allParentClassificationsUnchangedExceptDocumentedRename": true,
+    "newModuleClassifiedInExistingLayer": true,
+    "rootsFloorsAllowedEdgesBaselinesOrWaiversChanged": false,
+    "graph": ".tmp/s7af-cycles.json",
+    "valueEdgesParent": 10846,
+    "valueEdgesCandidate": 10848,
+    "largestScc": 712,
+    "nontrivialSccs": 4,
+    "allDirectionMetricsEqualParent": true,
+    "cycleGateExit": 1,
+    "stillRedAgainstMain": [
+      "backend->ir 115 to 117",
+      "codegen->ir 298 to 301",
+      "ir->codegen 74 to 75",
+      "ir->frontend 7 to 10"
+    ],
+    "preservationOnly": "6/6 full and 6/6 dispatch-cut witnesses pass; strict modeled closure still refuses both unconstrained dynamic imports; retirement is not certified",
+    "positiveIssueIntegrityScans": { "committedFiles": 4955, "workspaceIndexedIssues": 4955 },
+    "auxiliaryIssueIdChecker": "Not passing evidence: workspace URL.pathname retains %20 and cannot scan this path; committed mode prints green with zero issues. Both defects are recorded in the Markdown handoff."
+  },
+  "handoff": {
+    "pr": "https://github.com/loopdive/js2/pull/6762",
+    "draft": true,
+    "mergeReady": false,
+    "prerequisite": "https://github.com/loopdive/js2/pull/6701",
+    "prerequisiteReadback": "OPEN/unmerged",
+    "issues": [
+      "plan/issues/6979-s7-delete-host-semantic-implementation.md",
+      "plan/issues/5385-merge-host-semantics-into-native-core.md"
+    ],
+    "remaining": [
+      "genuine ToObject/default-prototype owners",
+      "remaining catalog methods and constructors",
+      "mixed Get/Call and complete population",
+      "atomic authenticated source/public admission",
+      "live foreign/dynamic boundary references",
+      "first-class undefined",
+      "Linear/WASI construction",
+      "merge conflicts and architecture/custody/conformance/retirement acceptance"
+    ],
+    "migrationComplete": false,
+    "githubIssuesOrIssueCommentsCreated": false
+  },
+  "artifactHashes": {
+    ".tmp/s7af-set-prototype-final.json": "e1ac5a27394564ce2a7dc4256fb6452cd734bf52dc0f9ffe17354b8d540b4599",
+    ".tmp/s7af-set-prototype-final.log": "a4adce41a9564548760b564e04916d7fdfd37337fad59c715e33dcce72488f12",
+    ".tmp/s7af-focused-final.json": "22e55371c9c45fb9cd2e0e430d7e43c8c2387f498f28d1eb32d8d7246d17b851",
+    ".tmp/s7af-focused-final.log": "0dc46c8fdeeea0ee50a1eb8930c4aafbaeb8a1e581bc7b63f1af0762748c998f",
+    ".tmp/s7af-focused.json": "a2ba1c9fe9705319424fd3356dccf6265a3f381f63cb5bbf12bbfd8aa8ff9f96",
+    ".tmp/s7af-focused.log": "073026b96df247ae0f6287eef777cf017773f5d6b83e684a14fad6e09827357f",
+    ".tmp/s7af-inventory.json": "21da7336d4621e88bf64f07065d4995cea1816eb03807003c122c433b271ee64",
+    ".tmp/s7af-cycles.json": "14fd55f2cc879c50a99c61d0875890f39cc37ed2aa3995b1957734ee3685d172",
+    ".tmp/s7af-preservation.log": "44138c9a54f79482ee3467c1aec41b74cbc1847a01cf01272c6168992aacdb02"
+  }
+}

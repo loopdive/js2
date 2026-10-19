@@ -12,7 +12,7 @@ import {
   requireNativeObjectExtensibilityAlgorithms,
   fillNativeObjectExtensibilityAlgorithms,
   requireCompletedNativeObjectExtensibilityAlgorithms,
-} from "../src/backend/wasmgc/resources/native-object-extensibility.js";
+} from "../src/backend/wasmgc/resources/native-object-structural-algorithms.js";
 import { requireCompletedNativeObjectRealm } from "../src/backend/wasmgc/resources/native-object-realm.js";
 import { ORDINARY_OBJECT_DESCRIPTOR_ENCODING as flags } from "../src/runtime/wasmgc/values/ordinary-object-descriptor-common.js";
 import { requireNativeStringLiteral } from "../src/backend/wasmgc/resources/native-string-literals.js";

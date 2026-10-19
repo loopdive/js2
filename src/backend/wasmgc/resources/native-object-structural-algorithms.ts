@@ -30,6 +30,7 @@ import {
 import { requireNativeStringLiteral, nativeStringLiteralReservationInventory } from "./native-string-literals.js";
 import { planNativeStringLiteral } from "../../../runtime/wasmgc/values/string-literal-bodies.js";
 import { buildNativeObjectExtensibilityDefinition } from "../../../runtime/wasmgc/values/native-object-extensibility-bodies.js";
+import { buildNativeObjectSetPrototypeDefinition } from "../../../runtime/wasmgc/values/native-object-prototype-bodies.js";
 import { buildBoxBooleanBody, buildBooleanBoxInitializer } from "../../../runtime/wasmgc/values/boolean-bodies.js";
 import { buildUndefinedInitializer } from "../../../runtime/wasmgc/values/primitive-layouts.js";
 import { buildErrorConstructorBody } from "../../../runtime/wasmgc/values/error-bodies.js";
@@ -52,6 +53,15 @@ export interface NativeObjectExtensibilityAlgorithms {
   readonly entries: readonly NativeObjectRealmEntry[];
   readonly completionScope: "native-object-extensibility-calls";
 }
+export interface NativeObjectSetPrototypeAlgorithm {
+  readonly realm: NativeObjectRealmDeclarations;
+  readonly entries: readonly NativeObjectRealmEntry[];
+  readonly completionScope: "native-object-set-prototype-call";
+}
+type Algorithms = NativeObjectExtensibilityAlgorithms | NativeObjectSetPrototypeAlgorithm;
+type Kind = "extensibility" | "set-prototype";
+const scope = (kind: Kind) =>
+  kind === "extensibility" ? "native-object-extensibility-calls" : "native-object-set-prototype-call";
 const roles = [
   "mixed",
   "mixedDependencies",
@@ -63,18 +73,22 @@ const roles = [
   "errorRequirements",
   "errorDependencies",
 ] as const;
-const ids = ["%Object.isExtensible%", "%Object.preventExtensions%"] as const;
+const ids = {
+  extensibility: ["%Object.isExtensible%", "%Object.preventExtensions%"],
+  "set-prototype": ["%Object.setPrototypeOf%"],
+} as const;
 interface Owner {
+  readonly kind: Kind;
   readonly tx: PhysicalModuleReservations;
   readonly original: NativeObjectExtensibilityDependencies;
   readonly dependencies: NativeObjectExtensibilityDependencies;
   readonly entries: readonly NativeObjectRealmEntry[];
   phase: "reserved" | "filling" | "complete" | "failed";
 }
-const owners = new WeakMap<NativeObjectExtensibilityAlgorithms, Owner>();
-const realms = new WeakSet<NativeObjectRealmDeclarations>();
+const owners = new WeakMap<Algorithms, Owner>();
+const realms = new WeakMap<NativeObjectRealmDeclarations, Set<Kind>>();
 function fail(detail: string): never {
-  throw Error("native Object extensibility: " + detail);
+  throw Error("native Object structural algorithms: " + detail);
 }
 function record(value: unknown, keys: readonly string[]): Record<string, unknown> {
   if (!value || typeof value !== "object" || ![null, Object.prototype].includes(Object.getPrototypeOf(value)))
@@ -134,45 +148,56 @@ function dependencies(tx: PhysicalModuleReservations, input: NativeObjectExtensi
     fail("different primitive/error/string owners");
   return d;
 }
-function entries(realm: NativeObjectRealmDeclarations) {
-  return ids.map((id) => {
+function entries(realm: NativeObjectRealmDeclarations, kind: Kind) {
+  return ids[kind].map((id) => {
     const entry = realm.entries.find((entry) => entry.request.intrinsic.id === id);
-    if (!entry || entry.construct || entry.request.intrinsic.callable.length !== 1)
-      fail("missing actual extensibility catalog entry");
+    if (!entry || entry.construct || entry.request.intrinsic.callable.length !== (kind === "extensibility" ? 1 : 2))
+      fail("missing actual structural catalog entry");
     return entry;
   });
 }
 /** Downstream composition of actual reserved slots, never a raw-handle/body binder. */
+function reserve(tx: PhysicalModuleReservations, input: NativeObjectExtensibilityDependencies, kind: Kind): Algorithms {
+  if (tx.state !== "reserving") fail("invalid reservation phase");
+  const d = Object.freeze(dependencies(tx, input)),
+    realm = d.mixedDependencies.realm;
+  const issued = realms.get(realm) ?? new Set<Kind>();
+  if (issued.has(kind)) fail("realm already has this structural algorithm owner");
+  const selected = Object.freeze(entries(realm, kind));
+  const pack = Object.freeze({
+    realm,
+    entries: selected,
+    completionScope: scope(kind),
+  });
+  owners.set(pack, { tx, kind, original: input, dependencies: d, entries: selected, phase: "reserved" });
+  issued.add(kind);
+  realms.set(realm, issued);
+  return pack;
+}
 export function reserveNativeObjectExtensibilityAlgorithms(
   tx: PhysicalModuleReservations,
   input: NativeObjectExtensibilityDependencies,
 ): NativeObjectExtensibilityAlgorithms {
-  if (tx.state !== "reserving") fail("invalid reservation phase");
-  const d = Object.freeze(dependencies(tx, input)),
-    realm = d.mixedDependencies.realm;
-  if (realms.has(realm)) fail("realm already has an extensibility algorithm owner");
-  const selected = Object.freeze(entries(realm));
-  const pack = Object.freeze({
-    realm,
-    entries: selected,
-    completionScope: "native-object-extensibility-calls" as const,
-  });
-  owners.set(pack, { tx, original: input, dependencies: d, entries: selected, phase: "reserved" });
-  realms.add(realm);
-  return pack;
+  return reserve(tx, input, "extensibility") as NativeObjectExtensibilityAlgorithms;
 }
-function current(tx: PhysicalModuleReservations, pack: NativeObjectExtensibilityAlgorithms) {
+export function reserveNativeObjectSetPrototypeAlgorithm(
+  tx: PhysicalModuleReservations,
+  input: NativeObjectExtensibilityDependencies,
+): NativeObjectSetPrototypeAlgorithm {
+  return reserve(tx, input, "set-prototype") as NativeObjectSetPrototypeAlgorithm;
+}
+function current(tx: PhysicalModuleReservations, pack: Algorithms, kind: Kind) {
   const owner = owners.get(pack);
-  if (!owner || owner.tx !== tx) fail("foreign or copied algorithm owner");
+  if (!owner || owner.tx !== tx || owner.kind !== kind) fail("foreign, copied or wrong-scope algorithm owner");
   const d = dependencies(tx, owner.original);
   if (roles.some((role) => d[role] !== owner.dependencies[role])) fail("changed dependency identity");
   if (
     pack.realm !== d.mixedDependencies.realm ||
     pack.entries !== owner.entries ||
-    pack.completionScope !== "native-object-extensibility-calls"
+    pack.completionScope !== scope(kind)
   )
     fail("changed completion scope/identity");
-  const selected = entries(pack.realm);
+  const selected = entries(pack.realm, kind);
   if (selected.some((entry, index) => entry !== owner.entries[index])) fail("changed actual catalog entries");
   return owner;
 }
@@ -181,7 +206,16 @@ export function requireNativeObjectExtensibilityAlgorithms(
   pack: NativeObjectExtensibilityAlgorithms,
   realm: NativeObjectRealmDeclarations,
 ): NativeObjectExtensibilityAlgorithms {
-  current(tx, pack);
+  current(tx, pack, "extensibility");
+  if (pack.realm !== realm) fail("different expected realm");
+  return pack;
+}
+export function requireNativeObjectSetPrototypeAlgorithm(
+  tx: PhysicalModuleReservations,
+  pack: NativeObjectSetPrototypeAlgorithm,
+  realm: NativeObjectRealmDeclarations,
+): NativeObjectSetPrototypeAlgorithm {
+  current(tx, pack, "set-prototype");
   if (pack.realm !== realm) fail("different expected realm");
   return pack;
 }
@@ -254,7 +288,6 @@ function definitions(
   tx: PhysicalModuleReservations,
   d: NativeObjectExtensibilityDependencies,
   entry: NativeObjectRealmEntry,
-  prevent: boolean,
 ) {
   const m = d.mixedDependencies,
     realm = m.realm,
@@ -264,19 +297,32 @@ function definitions(
     { op: "call", funcIdx: d.errors.newTypeError.handle },
     { op: "throw", tagIdx: tx.physicalIndex(realm.exception.tag) },
   ];
-  const algorithm = buildNativeObjectExtensibilityDefinition(
-    {
-      vectorTypeIdx: substrate.arguments.carrier.typeIndex,
-      vectorArrayTypeIdx: substrate.arguments.array.typeIndex,
-      undefinedGlobal: tx.physicalIndex(m.values.globals.undefined),
-      undefinedTypeIdx: m.values.types.anyValue.typeIndex,
-      isPrimitive: d.primitives.isPrimitive.handle,
-      operation: (prevent ? d.mixed.preventExtensions : d.mixed.isExtensible).handle,
-      boxBoolean: d.booleanBoxes.boxBoolean.handle,
-      throwTypeError: failure("TypeError"),
-    },
-    prevent,
-  );
+  const prevent = entry.request.intrinsic.id === "%Object.preventExtensions%";
+  const algorithm =
+    entry.request.intrinsic.id === "%Object.setPrototypeOf%"
+      ? buildNativeObjectSetPrototypeDefinition({
+          vectorTypeIdx: substrate.arguments.carrier.typeIndex,
+          vectorArrayTypeIdx: substrate.arguments.array.typeIndex,
+          undefinedGlobal: tx.physicalIndex(m.values.globals.undefined),
+          undefinedTypeIdx: m.values.types.anyValue.typeIndex,
+          isPrimitive: d.primitives.isPrimitive.handle,
+          classify: d.mixed.classify.handle,
+          setPrototypeOf: d.mixed.setPrototypeOf.handle,
+          throwTypeError: failure("TypeError"),
+        })
+      : buildNativeObjectExtensibilityDefinition(
+          {
+            vectorTypeIdx: substrate.arguments.carrier.typeIndex,
+            vectorArrayTypeIdx: substrate.arguments.array.typeIndex,
+            undefinedGlobal: tx.physicalIndex(m.values.globals.undefined),
+            undefinedTypeIdx: m.values.types.anyValue.typeIndex,
+            isPrimitive: d.primitives.isPrimitive.handle,
+            operation: (prevent ? d.mixed.preventExtensions : d.mixed.isExtensible).handle,
+            boxBoolean: d.booleanBoxes.boxBoolean.handle,
+            throwTypeError: failure("TypeError"),
+          },
+          prevent,
+        );
   const lifted = buildBuiltinFunctionCheckedEntryDefinition({
     identity: {
       typeIdx: entry.type.typeIndex,
@@ -291,14 +337,11 @@ function definitions(
   });
   return { algorithm, lifted };
 }
-export function fillNativeObjectExtensibilityAlgorithms(
-  tx: PhysicalModuleReservations,
-  pack: NativeObjectExtensibilityAlgorithms,
-): void {
-  const owner = current(tx, pack);
+function fill(tx: PhysicalModuleReservations, pack: Algorithms, kind: Kind): void {
+  const owner = current(tx, pack, kind);
   if (tx.state !== "filling" || owner.phase !== "reserved") fail("invalid phase or duplicate/failed fill");
   completedDependencies(tx, owner.dependencies);
-  const bodies = owner.entries.map((entry, index) => definitions(tx, owner.dependencies, entry, index === 1));
+  const bodies = owner.entries.map((entry) => definitions(tx, owner.dependencies, entry));
   owner.phase = "filling";
   try {
     owner.entries.forEach((entry, index) => {
@@ -311,17 +354,39 @@ export function fillNativeObjectExtensibilityAlgorithms(
     throw error;
   }
 }
+function completed(tx: PhysicalModuleReservations, pack: Algorithms, kind: Kind): void {
+  const owner = current(tx, pack, kind);
+  if (owner.phase !== "complete") fail("missing canonical algorithm/lifted fill");
+  completedDependencies(tx, owner.dependencies);
+  owner.entries.forEach((entry) => {
+    const body = definitions(tx, owner.dependencies, entry);
+    tx.assertCanonicalFunctionDefinition(entry.algorithm, body.algorithm);
+    tx.assertCanonicalFunctionDefinition(entry.lifted, body.lifted);
+  });
+}
+export function fillNativeObjectExtensibilityAlgorithms(
+  tx: PhysicalModuleReservations,
+  pack: NativeObjectExtensibilityAlgorithms,
+): void {
+  fill(tx, pack, "extensibility");
+}
+export function fillNativeObjectSetPrototypeAlgorithm(
+  tx: PhysicalModuleReservations,
+  pack: NativeObjectSetPrototypeAlgorithm,
+): void {
+  fill(tx, pack, "set-prototype");
+}
 export function requireCompletedNativeObjectExtensibilityAlgorithms(
   tx: PhysicalModuleReservations,
   pack: NativeObjectExtensibilityAlgorithms,
 ): NativeObjectExtensibilityAlgorithms {
-  const owner = current(tx, pack);
-  if (owner.phase !== "complete") fail("missing canonical algorithm/lifted fill");
-  completedDependencies(tx, owner.dependencies);
-  owner.entries.forEach((entry, index) => {
-    const body = definitions(tx, owner.dependencies, entry, index === 1);
-    tx.assertCanonicalFunctionDefinition(entry.algorithm, body.algorithm);
-    tx.assertCanonicalFunctionDefinition(entry.lifted, body.lifted);
-  });
+  completed(tx, pack, "extensibility");
+  return pack;
+}
+export function requireCompletedNativeObjectSetPrototypeAlgorithm(
+  tx: PhysicalModuleReservations,
+  pack: NativeObjectSetPrototypeAlgorithm,
+): NativeObjectSetPrototypeAlgorithm {
+  completed(tx, pack, "set-prototype");
   return pack;
 }
