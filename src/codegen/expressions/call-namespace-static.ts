@@ -120,6 +120,7 @@ import {
 } from "./helpers.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { resolvePromiseSubclassName } from "./promise-subclass.js";
+import { tryEmitNativePromiseWithResolvers } from "../promise/with-resolvers.js";
 import {
   applyRuntimeNewTargetPrototype,
   classifyRuntimeNewTargetSite,
@@ -2990,6 +2991,10 @@ export function compileNamespaceStaticCall(
       return fallbackReturn(3, "extern-null");
     }
   }
+
+  // (#7090) `Promise.withResolvers()` — routed to the native provider runtime.
+  const withResolvers = tryEmitNativePromiseWithResolvers(ctx, fctx, expr, propAccess);
+  if (withResolvers !== undefined) return withResolvers;
 
   // Handle Promise.all / Promise.race / Promise.allSettled / Promise.any / Promise.resolve / Promise.reject — host-delegated static calls
   //
