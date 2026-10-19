@@ -190,6 +190,8 @@ describe("#7012 Temporal string/field helpers are in-module on native-string bui
   });
 
   for (const [label, options] of [
+    // #6708: the default gc build IS the native-first regime.
+    ["default gc", {}],
     ["native-first", { semanticProviders: "native-first" }],
     ["standalone", { target: "standalone" }],
     ["wasi", { target: "wasi" }],
@@ -202,11 +204,12 @@ describe("#7012 Temporal string/field helpers are in-module on native-string bui
     });
   }
 
-  it("the host-assisted lane keeps its runtime.ts helpers (legacy, deleted with that lane)", async () => {
+  it("the explicit host-assisted lane keeps its runtime.ts helpers (legacy, deleted with that lane)", async () => {
     const compiled = await compile(
       `declare const Temporal: any;\nexport function f(): string { return new Temporal.PlainDate(2000, 5, 2).toString(); }`,
       {
         fileName: "issue-7012-host.ts",
+        semanticProviders: "host-assisted",
       },
     );
     expect(compiled.success).toBe(true);

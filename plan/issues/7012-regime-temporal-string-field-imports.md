@@ -1,10 +1,11 @@
 ---
 id: 7012
 title: "Regime gap: the #661 Temporal lowering's string/field helpers still import `env::__temporal_*` on native-string builds"
-status: in-progress
+status: done
 assignee: ttraenkler/opus-7012-temporal
 created: 2026-10-16
-updated: 2026-10-16
+updated: 2026-10-19
+completed: 2026-10-19
 priority: high
 horizon: m
 feasibility: hard
@@ -105,20 +106,57 @@ New files under `src/codegen/temporal/`:
   helper name throws "#7012: … has no in-module implementation" — a new host
   helper cannot silently become an import on a native-string build.
 
-The host-assisted lane (default `gc` on main until #6708 flips it) keeps the
-`runtime.ts` implementations: its strings are JS strings, which the in-module
-helpers cannot read. Those registrations therefore stay in this PR — the
-default lane's corpus (`tests/issue-661.test.ts`, the equivalence suite) still
-reaches them. After #6708 the default build is native-strings, nothing reaches
-them, and S7 (#6979) deletes `runtime.ts`'s `__temporal_*` block together with
-the `ensureLateImport` arm of `ensureTemporalImport`; the S7-b `temporal-strings`
-regime-gap family then has no exposing program and its probe asks to be closed.
+The explicit host-assisted lane (`semanticProviders: "host-assisted"`) keeps
+the `runtime.ts` implementations: its strings are JS strings, which the
+in-module helpers cannot read. Since #6708 (merged while this was in flight) the
+default `gc` build is the native-first regime and takes the in-module helpers;
+only the explicit opt-in still reaches the host registration, so it is NOT
+deleted here. S7 (#6979) deletes `runtime.ts`'s `__temporal_*` block together
+with the `ensureLateImport` arm of `ensureTemporalImport` when it deletes that
+lane; the S7-b `temporal-strings` regime-gap family then has no exposing
+program and its probe asks to be closed.
+
+The linked provider needed no new export: a bound `Temporal` stands the #661
+lowering down entirely, so a linked program never reaches these helpers (CI's
+standalone baseline of 2026-10-16 already reports all seven S7-b programs
+`pass`, through the polyfill).
+
+**Direct-AST freeze** (`plan/method/ir-only-development-freeze.md`): the new
+behaviour lives in generated runtime helpers (`src/codegen/temporal/`). The
+only edit to the #661 AST lowering is routing — `ensureTemporalImport` picks
+the in-module helper instead of the import, and the two string-returning sites
+report the module's string type. No new Temporal syntax or semantics is added
+to the AST emitters.
+
+## Measurements
+
+- Local standalone lane, unlinked, `TEST262_PATH_FILTER=built-ins/Temporal/{PlainDate,PlainTime,Duration}/`
+  (1,685 rows), interpreter eval engine:
+  - before (main @ 69d148815f, 2026-10-16): 63 pass, 766 fail, 327
+    compile_error (every one an `env::__temporal_*` "#2961 standalone target
+    emitted host imports"), 529 compile_timeout (box load average 60-90).
+  - after (branch merged with main @ #6708, 2026-10-19): 181 pass, 1,481 fail,
+    0 compile_error, 23 compile_timeout. Zero rows carry a `__temporal_*`
+    import. Flips: compile_error→pass 106, compile_error→fail 216,
+    compile_timeout→pass 12, compile_timeout→fail 505, fail→compile_timeout 6,
+    compile_error→compile_timeout 5; **pass→non-pass 0**. The before/after
+    bases differ (main moved, and the box was far less loaded on the second
+    run), so only the compile_error flips are attributable to this change.
+  - The remaining failures are mostly `Temporal is not defined` (the
+    unlinked lane has no `Temporal` value outside the three lowered classes)
+    and TemporalHelpers rows that need the real polyfill — the linked lanes'
+    job, not this lowering's.
+- `tests/issue-7012-regime-temporal-string-field.test.ts`: 44 cases × {default
+  gc, native-first, standalone, WASI} JS-equal to Node + the pinned polyfill,
+  zero `__temporal_*` imports; explicit host-assisted keeps the import; a bound
+  `Temporal` takes none. 1,027 extra parser field probes (`.tmp`) vs the
+  polyfill: 0 differences.
 
 ## Acceptance
 
-- [ ] zero `__temporal_*` imports on native-first, standalone and WASI for every
+- [x] zero `__temporal_*` imports on native-first, standalone and WASI for every
       operation, each result JS-equal to Node + the pinned
       `@js-temporal/polyfill` (`tests/issue-7012-regime-temporal-string-field.test.ts`)
-- [ ] local standalone test262 subset (PlainDate/PlainTime/Duration) before/after
-- [ ] equivalence gate: no new regressions
-- [ ] `check:host-import-policy`, typecheck, Biome, ratchet gates
+- [x] local standalone test262 subset (PlainDate/PlainTime/Duration) before/after — 63 → 181, 0 pass→non-pass
+- [x] equivalence gate: no new regressions
+- [x] `check:host-import-policy`, typecheck, Biome, ratchet gates

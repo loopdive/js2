@@ -19,6 +19,7 @@ import { emitWasiErrorConstructor } from "./registry/error-types.js";
 import { ensureExnTag } from "./registry/imports.js";
 import { ensureNativeStringHelpers } from "./native-strings.js";
 import { ensureInModuleTemporalHelper, temporalHelpersInModule } from "./temporal/native-helpers.js";
+import type { TemporalHelperServices } from "./temporal/wasm-kit.js";
 
 type TemporalKind = "PlainDate" | "PlainTime" | "Duration";
 
@@ -333,8 +334,16 @@ function ensureTemporalImport(
   return ctx.funcMap.get(name) ?? idx;
 }
 
-/** (#7012) What the in-module helpers need from codegen, injected (keeps them out of the import cycle). */
-const TEMPORAL_HELPER_SERVICES = { throwJsError: buildThrowJsErrorInstrs, ensureNativeStringHelpers };
+/**
+ * (#7012) What the in-module helpers need from codegen, injected (keeps them
+ * out of the import cycle). Late-bound wrappers, not the bare bindings: this
+ * module is evaluated inside the codegen cycle, where an imported binding can
+ * still be uninitialised when this constant is built.
+ */
+const TEMPORAL_HELPER_SERVICES: TemporalHelperServices = {
+  throwJsError: (ctx, kind, message, opts) => buildThrowJsErrorInstrs(ctx, kind, message, opts),
+  ensureNativeStringHelpers: (ctx) => ensureNativeStringHelpers(ctx),
+};
 
 /** (#7012) The type a string-producing helper leaves on the stack. */
 function temporalStringResult(ctx: CodegenContext): ValType {
