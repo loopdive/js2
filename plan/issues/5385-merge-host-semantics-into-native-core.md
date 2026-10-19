@@ -928,3 +928,33 @@ explicit native-first (`drop-excess` / `default-value-lossy` /
 `call-arg-coerce`). Both baselines now gate the new default. The stack-balance
 numbers remain explicit Phase 2 emitter debt; the rebank prevents S6 from
 comparing different provider families and does not declare the repairs clean.
+
+### 2026-10-19 — regime gaps closed in parallel; IR measures production again
+
+Fable lead, three Opus implementers in parallel worktrees; the lead merged
+main, ran the gates on each merged state, pushed and opened every PR.
+
+| PR | Issue | What landed / is in the queue |
+| --- | --- | --- |
+| 6764 (merged) | #7012 | Temporal string-field imports replaced by in-module natives |
+| 6767 (merged) | #7090 | `Promise.withResolvers()` on the native promise provider; withResolvers test262 subset 2 → 4 of 6 on standalone |
+| 6772 | #7011 | native `SharedArrayBuffer` (`$__sab` subtype of the ArrayBuffer byte vec) + native `Atomics.*`; SAB/Atomics subset standalone 93 → 271 of 493, gc 149 → 271; zero `SharedArrayBuffer_*` imports on any native lane |
+| 6773 | #7089 | `Promise.try`, `withResolvers.call(Sub)` and the TS-cast `.call` spellings construct through the subclass (`src/codegen/promise/receiver-capability.ts`); deterministic +7 rows, 0 regressions; 5,160 binaries byte-identical |
+| 6775 | #7091 | IR claims and lowers platform-capability externs (DOM, `declare function`) under native strings in a JS environment; all seven benchmark `main`s IR-emitted on the default profile; `check:ir-fallbacks` measures production again (decision (B) retired); 7,656 binaries byte-identical |
+| 6768, 6774, this | docs | gaps filed: #7092 (`p.constructor` reads `undefined`), #7093 (first-class Promise static `.call(Sub)`, backlog), #7094 (`r += await p.then(f, g)` on a rejected `p` answers 0), #7095 (declared host functions receive the raw string carrier) |
+
+Every "after" test262 number above combines a subset run with an isolated
+re-run of that run's compile-timeout rows (the box sat at load 60–110 during
+the runs); every apparent pass→non-pass was a timeout that passes alone.
+
+**S7 consequences.** #7091 removes the `host-assisted` spelling from
+`scripts/check-ir-fallbacks.ts`, which was S7-a's remaining entry condition
+on the gate; #7011 lets S7-b delete the `SharedArrayBuffer_new` entry of the
+`regime-gap` family. The S7 stack itself (6701 / 6705 / S7-c) is owned by
+the Codex recovery lane and still needs 6701's inventory + pinned-test reds
+fixed at head `3349cc9145`.
+
+**Still open for the stakeholder:** the README's first conformance line after
+retirement (S7 entry condition 5); whether a schedule-only regime test262
+lane is re-enabled; PR 6707 (#7010) stays `hold` until the review lane
+accepts the freeze disposition.
