@@ -473,6 +473,44 @@ export function emitBuiltinNamespaceObject(
 ): ValType | null {
   const baselineProps = SUPPORTED_STATIC_PROPS.get(builtinName);
   if (!baselineProps) return null;
+  const name = `__builtin_namespace_${builtinName}`;
+  const existing = ctx.funcMap.get(name);
+  if (existing !== undefined) {
+    fctx.body.push({ op: "call", funcIdx: existing });
+    return { kind: "externref" };
+  }
+  // The getter builder can add imports through its static-method closures.
+  // Keep this caller's possibly detached body shift-visible until it returns.
+  const borrowedBody = ctx.liveBodies.has(fctx.body);
+  if (!borrowedBody) ctx.liveBodies.add(fctx.body);
+  try {
+    const funcIdx = ensureBuiltinNamespaceGetter(ctx, builtinName, baselineProps, name);
+    fctx.body.push({ op: "call", funcIdx });
+    return { kind: "externref" };
+  } finally {
+    if (!borrowedBody) ctx.liveBodies.delete(fctx.body);
+  }
+}
+
+/** Emit the complete lazy seed once, not once per read of its singleton. */
+function ensureBuiltinNamespaceGetter(
+  ctx: CodegenContext,
+  builtinName: string,
+  baselineProps: readonly string[],
+  name: string,
+): number {
+  const funcIdx = mintDefinedFunc(ctx);
+  const fn: WasmFunction = {
+    name,
+    typeIdx: addFuncType(ctx, [], [{ kind: "externref" }]),
+    locals: [],
+    body: [],
+    exported: false,
+  };
+  // Reserve before dependencies: object-runtime/prototype preparation can
+  // request this same getter while its complete seed is still being built.
+  pushDefinedFunc(ctx, funcIdx, fn);
+  ctx.funcMap.set(name, funcIdx);
   // A namespace carrier is materialized only when the namespace is used as a
   // value. At that demand point, source its complete function-valued own
   // surface from the same canonical registry that drives static value
@@ -491,59 +529,55 @@ export function emitBuiltinNamespaceObject(
 
   const globalIdx = reserveBuiltinNamespaceObjectGlobal(ctx, builtinName);
 
-  const objLocal = allocLocal(fctx, `__builtin_${builtinName}_obj_${fctx.locals.length}`, { kind: "externref" });
-  const initBody: Instr[] = [
+  const initBody: Instr[] = [];
+  const fctx: FunctionContext = {
+    name,
+    params: [],
+    locals: fn.locals,
+    localMap: new Map(),
+    returnType: { kind: "externref" },
+    body: initBody,
+    blockDepth: 0,
+    breakStack: [],
+    continueStack: [],
+    labelMap: new Map(),
+    savedBodies: [],
+  };
+  const objLocal = allocLocal(fctx, `__builtin_${builtinName}_obj`, { kind: "externref" });
+  // Connect the body before seed emission so late-import repair sees all of
+  // it through the already registered function, including nested initializers.
+  fn.body.push(
+    { op: "global.get", index: globalIdx },
+    { op: "ref.is_null" },
+    { op: "if", blockType: { kind: "empty" }, then: initBody, else: [] },
+    { op: "global.get", index: globalIdx },
+  );
+  initBody.push(
     { op: "call", funcIdx: newObjectIdx },
     { op: "local.set", index: objLocal },
     // Prototype companions can re-enter this carrier's initializer while
     // seeding `constructor`. Publish its identity before that re-entry.
     { op: "local.get", index: objLocal },
     { op: "global.set", index: globalIdx },
-  ];
-
-  const savedBody = fctx.body;
-  fctx.body = initBody;
-  // (#2182) `savedBody` is the outer body, detached for the duration of the
-  // swap. `emitBuiltinStaticMethodValue` below can trigger a late import (e.g.
-  // a host builtin), and `shiftLateImportIndices` only walks `fctx.body` (=
-  // initBody here) plus the registered body sets — NOT this raw local. Register
-  // both arrays in `liveBodies` so a nested closure helper that flushes with
-  // its own FunctionContext still repairs the detached namespace initializer
-  // as well as the outer body.
-  ctx.liveBodies.add(savedBody);
-  ctx.liveBodies.add(initBody);
-  try {
-    for (const prop of props) {
-      fctx.body.push({ op: "local.get", index: objLocal });
-      addStringConstantGlobal(ctx, prop);
-      fctx.body.push(...stringConstantExternrefInstrs(ctx, prop));
-      const valueType = emitBuiltinStaticMethodValue(ctx, fctx, builtinName, prop);
-      coerceTopToExternref(fctx, valueType);
-      // Builtin static methods are writable, non-enumerable, configurable.
-      // Host descriptor encoding: value bits 0b101 + all three specified bits
-      // + hasValue = 0xBD.
-      fctx.body.push({ op: "f64.const", value: 0xbd });
-      fctx.body.push({ op: "call", funcIdx: defineValueIdx });
-      fctx.body.push({ op: "drop" });
-    }
-    if (builtinName === "JSON") {
-      pushJsonNamespaceOwnPropSeed(ctx, fctx, objLocal);
-    }
-    pushMathReflectNamespaceTagSeed(ctx, fctx, builtinName, objLocal);
-    // (#2984 ctor-carrier own props) The Error-family / `Array` / `Object`
-    // carriers are CONSTRUCTOR objects, so they also own `length`/`name`/
-    // `prototype`. No-op for the true namespaces (`Math`/`JSON`/`Reflect`),
-    // which own none of the three.
-    pushBuiltinCtorOwnPropSeed(ctx, fctx, builtinName, objLocal);
-  } finally {
-    fctx.body = savedBody;
-    ctx.liveBodies.delete(savedBody);
-    ctx.liveBodies.delete(initBody);
+  );
+  for (const prop of props) {
+    fctx.body.push({ op: "local.get", index: objLocal });
+    addStringConstantGlobal(ctx, prop);
+    fctx.body.push(...stringConstantExternrefInstrs(ctx, prop));
+    const valueType = emitBuiltinStaticMethodValue(ctx, fctx, builtinName, prop);
+    coerceTopToExternref(fctx, valueType);
+    // Builtin static methods are writable, non-enumerable, configurable.
+    // Host descriptor encoding: value bits 0b101 + all three specified bits
+    // + hasValue = 0xBD.
+    fctx.body.push({ op: "f64.const", value: 0xbd });
+    fctx.body.push({ op: "call", funcIdx: defineValueIdx });
+    fctx.body.push({ op: "drop" });
   }
-
-  fctx.body.push({ op: "global.get", index: globalIdx });
-  fctx.body.push({ op: "ref.is_null" });
-  fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: initBody, else: [] });
-  fctx.body.push({ op: "global.get", index: globalIdx });
-  return { kind: "externref" };
+  if (builtinName === "JSON") {
+    pushJsonNamespaceOwnPropSeed(ctx, fctx, objLocal);
+  }
+  pushMathReflectNamespaceTagSeed(ctx, fctx, builtinName, objLocal);
+  // Constructor carriers also own length/name/prototype. True namespaces do not.
+  pushBuiltinCtorOwnPropSeed(ctx, fctx, builtinName, objLocal);
+  return funcIdx;
 }

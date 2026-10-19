@@ -2078,3 +2078,76 @@ after acceptance bank the raw-mode reduction. Preserve full S7 retirement,
 compatibility, accelerator and conformance requirements. Dead-export
 preservation has 6/6 full and cut witnesses, but strict retirement remains
 uncertified at the two previously recorded nonliteral dynamic imports.
+
+### S7-c carrier materialization deduplication handoff (2026-10-19, Codex)
+
+**Parent and scope.** Continue above published checkpoint
+`55ac4b99ef83d4210d4e89fa83fd241e1711027c`, retaining its unresolved import
+ceiling and stack requirements. Each namespace read previously emitted the
+complete inline own-property seed again, although every copy guarded the same
+singleton global. Emit one shared native lazy getter per namespace instead.
+This changes code duplication, not the complete static surface, attributes,
+boundary normalization or admission policy. No properties or host adapters
+are removed to make a count smaller.
+
+**Index and re-entry ownership.** Reserve and publish the getter's stable
+function handle before object-runtime/prototype preparation can recursively
+request it. Attach its initialization body to the registered function before
+seeding methods, so late-import repair can see nested initialization code.
+Keep the caller's possibly detached body registered during getter preparation
+and release that registration only if this call acquired it. Retain the
+earlier global-identity publication before prototype seeding; otherwise the
+runtime could re-enter a null global and split constructor identity.
+
+**Positive control, not an empty size check.** The new eight-test suite covers
+standalone and WASI, with zero imports and real empty-import instantiation.
+Twelve exported readers of Object must share a non-null/non-undefined
+identity and one emitted getter. On both targets, the exact parent grows
+**15,844 bytes** when going from one reader to twelve; the candidate grows
+**268 bytes**. The parent has zero getter definitions and would fail both
+new structural/size assertions. One reader costs **35 additional bytes** in
+the candidate due to the shared call/function overhead. This is a measured
+amortization tradeoff, not a claim that every program shrinks.
+
+The other six new runtime controls pass on both parent and candidate: a
+dynamically found Object constructor retains callable keys/defineProperty
+and the keys descriptor's identity/attributes; a changed Array.isArray is not
+reseeded by another reader; prototype-seed re-entry retains exact Array
+constructor identity and a callable isArray. These are preservation controls,
+not new semantic fixes. The control script extracts those literal fixtures
+from the committed test source and floors the fixture count; it does not
+substitute simplified handwritten equivalents.
+
+**Unchanged-row and binary evidence.** The same 14 files / **191 rows** at
+parent and candidate both yield **169 passing / 20 failing / two skipped**.
+There are zero status changes; all twenty failure messages match exactly.
+The preceding constructor/boundary focused population remains **38/38**;
+the new materialization suite is **8/8**. The final commit hook reruns the
+changed test file separately. These default-path Vitest runs are not
+explicitly selected IR Test262 measurements.
+
+All nine arithmetic/Fibonacci/numeric-index controls stay byte-identical and
+retain their answers across standalone, WASI and valid gc. Three constructor
+probes retain answer 42 while shrinking from parent to candidate:
+standalone **581,487 → 579,657 bytes**, WASI **462,068 → 458,866**, and gc
+**590,134 → 588,302**. This does not solve most of the substantial transitive
+materialization cost recorded in the previous handoff. The temporary clean
+parent checkout was removed; its source remains recoverable from `55ac4b99ef`.
+
+Local records are `.tmp/s7c-carrier-dedup-{parent,candidate}.json`,
+`.tmp/s7c-carrier-dedup-new-tests.json`,
+`.tmp/s7c-carrier-dedup-control-{parent,candidate}.jsonl` (ten rows each), and
+`.tmp/s7c-carrier-dedup-{parent,candidate}-bytes.jsonl` (twelve rows each).
+
+**Unresolved acceptance, unchanged.** The hard import-policy command still
+fails **456 > 452**. All **33/33** detailed import inventories match the
+preceding checkpoint exactly, with zero unknown/regime-gap imports. Record:
+`.tmp/s7c-carrier-dedup-imports.jsonl`. The source remains at 804 lexical mode
+references under an unchanged 818 ceiling; neither baseline is changed.
+Typecheck, formatting/lint, LOC/function, coercion, oracle and IR-fallback
+checks pass. Dead-export preservation remains 6/6 full and cut witnesses,
+with strict retirement still uncertified at the two recorded nonliteral
+dynamic imports. Keep the PR unready and the full S7 goal open. Next resolve
+the explicit existing-adapter ceiling decision or a semantics-preserving
+representation redesign; do not call this bounded deduplication the completed
+JS-host migration or a resolution of its import/footprint blockers.
