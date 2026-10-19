@@ -1152,3 +1152,73 @@ the linear backend remains outside this collapse.
 the larger expression-call cluster. Keep semantic/storage choices on
 `wasmGcBackend`; use `jsValueBoundary` only for values that actually cross the
 JavaScript boundary and `hostFreeEnvironment` only for platform availability.
+
+### S7-c closed-method/object-runtime handoff (2026-10-19, Codex)
+
+This eighth bounded S7-c checkpoint completes the planned closed-method and
+object-runtime group on `codex/6979-s7c-ir-arms`. S7 remains `in-progress`;
+this is another reviewed checkpoint in the existing draft PR, not a claim that
+the full migration is complete.
+
+**Ratchet.** The reviewed reduction is banked:
+
+| Measure | Object/property checkpoint | Closed-method/runtime checkpoint |
+| --- | ---: | ---: |
+| Raw `ctx.standalone` hits in `src/` | 1,230 | **1,173** |
+| Matching source files | 407 | **404** |
+| `closed-method-dispatch.ts` | 29 | **0** |
+| `object-runtime.ts` | 25 | **0** |
+| `hof-native.ts` dependency closure | 3 | **0** |
+
+**Classification.** All 57 sites selected native WasmGC language semantics,
+carrier storage or finalize-time widening. Closed method dispatch now uses one
+backend fact for native array methods, HOFs, iterators, collections, RegExp,
+DataView and nullish-receiver errors. The object runtime uses the same fact for
+the native MOP, prototype and descriptor machinery, string exotics, function
+metadata, dynamic enumeration, vector indexing and closure application. The
+linear backend keeps its provider-owned behavior.
+
+The `hof-native.ts` closure was required rather than cosmetic. Once WASI could
+reach the native array-HOF dispatcher, the helper reservation and TypedArray
+finalize pass still rejected every non-literal-standalone target. Both now use
+`wasmGcBackend`, matching the native object-runtime dependencies they consume.
+
+This does not copy objects and does not remove host interop. Internal WasmGC
+objects continue to use their native carrier and MOP. A caller-owned JavaScript
+object or function that actually crosses the value boundary can still use the
+existing host-backed facade and preserve identity. The earlier normalization
+was therefore safe: it already made default `gc` native, while this checkpoint
+removes the accidental WASI exclusion without selecting JavaScript machinery
+as a second semantic implementation.
+
+**Focused evidence.** `issue-6979-array-object-mode-collapse.test.ts` passes
+9/9. Its new probes cover an `any`-typed array HOF and boxed-String indexed read
+under both standalone and WASI. An exact detached control at pre-checkpoint
+commit `a82bfa424f` passes the seven prior/standalone assertions but fails
+exactly those two WASI assertions: the HOF throws and the string exotic returns
+the wrong value. The candidate passes both.
+
+The wider dispatcher/runtime cohort passes 122 assertions across 11 files with
+one intentional skip. It covers array search/mutation/HOF/producer methods,
+Map/Set dispatch, RegExp, prototype-sensitive filter, TypedArray iteration and
+residue, function-carrier fast reads, and string-exotic behavior.
+
+**Architecture validation.** TypeScript 7 typecheck, Biome lint, Prettier,
+standalone-arm, host-import policy, IR-fallback, import-cycle, flat-directory,
+LOC, function, coercion, oracle and verdict-oracle gates pass. Host-import
+policy remains 33 probes / 452 imports / zero `regime-gap` or `unknown`
+imports, with runtime metrics at 12,066 lines, 1,959 `resolveImport` lines / 7
+cases, 897 owned-adapter lines and 1,194 explicit-capability lines.
+
+Equivalence remains 20 failing, 2,008 passing and 22 known failures; two
+baseline failures pass and there are **no new regressions**. Compiler-boundary
+inventory remains `inventory-valid-architecture-incomplete` with `errors: []`.
+Dead-export preservation remains 6/6 full and 6/6 cut witnesses; the same two
+nonliteral dynamic imports keep strict closure open and retirement uncertified.
+
+**Next handoff.** Continue with the bounded class/literal group:
+`class-bodies.ts` (21) plus `literals.ts` (20), before taking the 61-site
+`index.ts` orchestrator or the larger expression-call cluster. Keep native
+WasmGC semantic/storage choices on `wasmGcBackend`; retain JavaScript machinery
+only for explicit value-boundary identities, platform capabilities and named
+accelerators.

@@ -88,8 +88,7 @@ import {
 } from "../runtime/wasmgc/values/argument-vector-bodies.js";
 import { inheritedSetAnyDirty } from "./inherited-set-gate.js"; // (#4602) per-key #4504 gate
 import type { FieldDef, Instr, ValType } from "../ir/types.js";
-import type { CodegenContext } from "./context/types.js";
-import { jsValueBoundary } from "./context/types.js";
+import { type CodegenContext, jsValueBoundary, wasmGcBackend } from "./context/types.js";
 import { classObjectDisplayName } from "./class-static-metadata.js";
 import {
   captureArgumentsToPrimitiveBindings,
@@ -194,7 +193,7 @@ import { ensureSymbolCarrier } from "./symbol-native.js";
 import { ensureVecElemSet } from "./vec-elem-set.js";
 import { SPARSE_INDEX_CEILING } from "./vec-sparse-index.js";
 // (#4160) prototype-index store — reserve + registration-time consult builders
-// (all resolve to `undefined` unless `ctx.standalone && ctx.protoIndexDirty`).
+// (all resolve to `undefined` unless the WasmGC backend has a dirty prototype index).
 import {
   SET_DECISION_ALLOW_OWN,
   SET_DECISION_HANDLED,
@@ -497,7 +496,7 @@ function classObjectNameMetadata(ctx: CodegenContext): ClassObjectNameMetadata[]
  * whose captured `Object.getOwnPropertyDescriptor`/`hasOwnProperty` functions
  * pass both the receiver and key through the externref boundary.
  *
- * The arm is standalone-only and additive.  It is keyed by the initialized
+ * The arm is WasmGC-only and additive. It is keyed by the initialized
  * class-object singleton rather than its shared class/instance struct type,
  * screens the existing instance tombstone marker, and declines declared
  * static overrides.  The setter refusal is needed because the generic
@@ -506,7 +505,7 @@ function classObjectNameMetadata(ctx: CodegenContext): ClassObjectNameMetadata[]
  * writable to `verifyProperty`.
  */
 export function fillClassObjectNameArms(ctx: CodegenContext): void {
-  if (!ctx.standalone || ctx.anyStrTypeIdx < 0 || ctx.nativeStrTypeIdx < 0) return;
+  if (!wasmGcBackend(ctx) || ctx.anyStrTypeIdx < 0 || ctx.nativeStrTypeIdx < 0) return;
   const entries = classObjectNameMetadata(ctx);
   if (entries.length === 0) return;
   const flattenIdx = ctx.nativeStrHelpers.get("__str_flatten");
@@ -728,8 +727,8 @@ export const STANDALONE_VEC_BUILTIN_PARENTS: ReadonlySet<string> = new Set([
  * begin to pass) is left to a follow-up; the arg-honoring Array/Date/RegExp/
  * ArrayBuffer slices (which DO have passing behavior tests) are separate work.
  *
- * Host/gc mode never calls this — the caller gates on `ctx.standalone || ctx.wasi`
- * and keeps the `__new_<Parent>` import there, so those lanes stay byte-identical.
+ * The linear backend retains its provider-specific parent construction; every
+ * WasmGC environment uses this native carrier.
  *
  * (#2917) PER-ARITY registration — funcMap key `<importName>@<argCount>`,
  * funcIdx RETURNED (see `emitStandaloneObjectConstructor` for the mis-call
@@ -798,8 +797,8 @@ export function emitStandaloneVecBuiltinConstructor(
  * (`instanceof Sub` / `instanceof Array`) is resolved statically
  * (`tryStaticInstanceOf`), as with the other externref-backed builtins.
  *
- * Host/gc mode never calls this — the caller gates on
- * `ctx.standalone || ctx.wasi`, so those lanes stay byte-identical.
+ * The linear backend retains its provider-specific parent construction; every
+ * WasmGC environment uses this native carrier.
  *
  * (#2917) PER-ARITY registration — funcMap key `__new_Array@<argCount>`,
  * funcIdx RETURNED (see `emitStandaloneObjectConstructor` for the mis-call
@@ -1226,13 +1225,9 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   // #2036 — the array-like `$Object` arms in __extern_length / __extern_get_idx /
   // __extern_has_idx need (a) `number_toString` to ToString a numeric index into
   // its canonical decimal key, and (b) `__unbox_number` to ToLength the stored
-  // `length` value. Gate on standalone: in gc/host mode this runtime is also
-  // pulled in (Object.keys etc.) but the host `__extern_*` JS imports own the
-  // array-like read path, so registering these helpers there would only shift
-  // funcMap indices and risk breaking existing references — the $Object arms are
-  // skipped in gc mode (see `withObjectArrayLikeArms` below). Both helpers are
-  // DEFINED funcs in standalone (no import added → no funcIdx shift) and
-  // idempotent. Register BEFORE the helper bodies bake their `call` funcIdx.
+  // `length` value. Both helpers are native DEFINED funcs on WasmGC (no import
+  // added and no funcIdx shift) and idempotent. Register BEFORE the helper
+  // bodies bake their `call` funcIdx.
   // (`number_toString` also upgrades __extern_toString's boxed-number arm from
   // "[object Object]" to the real decimal, which is spec-correct.)
   emitNativeNumberFormat(ctx, new Set(["number_toString"]));
@@ -1253,9 +1248,8 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   // (#2866) Register the native `$Symbol` carrier struct + `__box_symbol` builder
   // so the `$Object` property key channel can hold a Symbol key (`o[sym] = v`).
   // The carrier struct's type index drives the `ref.test $Symbol` discriminators
-  // in `__obj_hash`/`__key_equals`/`__obj_ordered`. Gated on no-JS-host mode: in
-  // gc/host mode this native object runtime is not used (host `env::__extern_*`
-  // imports own the dynamic property path), so the carrier is never needed there.
+  // in `__obj_hash`/`__key_equals`/`__obj_ordered`. The carrier belongs to the
+  // native WasmGC object runtime; the linear backend retains its own key model.
   // `symbolTypeIdx` stays -1 when not registered, and every symbol branch below
   // is guarded on `symbolKeysEnabled` (idx >= 0) so the string-only key path is
   // byte-unchanged when symbols are absent from the type space.
@@ -1481,10 +1475,9 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   // the `$ClosurePropEntry` struct / `$__closure_prop_head` global BEFORE the
   // `__extern_get`/`__extern_set`/`__extern_method_call` arms below bake their
   // `call <idx>`. Filled at FINALIZE (`fillClosurePropHelpers`) once every
-  // closure root + `__extern_get`/`_set` funcIdx is known. Standalone/wasi only:
-  // in gc/host mode the `env::__extern_*` imports own the dynamic-property path,
-  // these defined arms are not emitted, and nothing here is reserved.
-  if (ctx.standalone || ctx.wasi) {
+  // closure root + `__extern_get`/`_set` funcIdx is known. WasmGC only: the
+  // linear backend retains its provider-specific dynamic-property path.
+  if (wasmGcBackend(ctx)) {
     reserveClosurePropHelpers(ctx);
     // (#2660 M3) The function-value → prototype-object identity edge — same
     // reserve-before-arms-bake discipline; see `closure-prototype-edge.ts`.
@@ -1504,8 +1497,8 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     reserveInstanceTombstones(ctx); // (#4098 G1 s1) per-instance delete over the SAME bag
     reserveInstanceProps(ctx); // (#4194) per-instance WRITE-through + expando over that bag
     reserveFunctionInstanceProps(ctx); // (#4436) `length` own-property on a user function instance
-    // (#4160) Prototype-index store — self-gated on `ctx.standalone &&
-    // ctx.protoIndexDirty`, so a flag-clear module reserves NOTHING and every
+    // (#4160) Prototype-index store — self-gated on the WasmGC backend plus
+    // `ctx.protoIndexDirty`, so a flag-clear module reserves NOTHING and every
     // consult site below resolves `funcMap.get("__protoidx_*") === undefined`,
     // emitting its exact pre-existing instructions (byte-identity by
     // construction). Same reserve-before-arms-bake discipline as above.
@@ -1537,7 +1530,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     strEqualsIdx,
   );
 
-  // ── (#2896) Reserved builtin-fn metadata natives (standalone only) ────────
+  // ── (#2896) Reserved builtin-fn metadata natives (WasmGC only) ────────────
   //
   // Builtin function values (the per-(builtin, member) closure meta subtypes —
   // see builtin-fn-meta.ts) answer their spec `name`/`length` own properties at
@@ -1565,10 +1558,8 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   //                                                 undeleted own names were
   //                                                 pushed into vec).
   //
-  // Gated on ctx.standalone: in gc/host mode this runtime is also pulled in
-  // (Object.keys etc.) but builtin function values are host objects there — the
-  // host imports own their metadata, and registering these would only shift
-  // funcMap indices (gc bytes must stay unchanged).
+  // WasmGC builtin functions use these native metadata carriers. The linear
+  // backend retains its provider-specific function representation.
   const bfnMetaLocals = [
     { name: "any", type: { kind: "anyref" } as ValType },
     { name: "fkey", type: { kind: "ref_null", typeIdx: nativeStrTypeIdx } as ValType },
@@ -1579,7 +1570,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     // untouched; `fillFunctionInstanceProps` is the only writer.
     { name: "fnmeta", type: { kind: "externref" } as ValType },
   ];
-  if (ctx.standalone) {
+  if (wasmGcBackend(ctx)) {
     registerNative(
       "__builtinfn_get_meta",
       [{ kind: "externref" }, { kind: "externref" }],
@@ -1630,10 +1621,10 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       [{ op: "i32.const", value: 0 }],
     );
   }
-  const bfnGetMetaIdx = ctx.standalone ? ctx.funcMap.get("__builtinfn_get_meta") : undefined;
-  const bfnGopdIdx = ctx.standalone ? ctx.funcMap.get("__builtinfn_gopd") : undefined;
-  const bfnDeleteIdx = ctx.standalone ? ctx.funcMap.get("__builtinfn_delete") : undefined;
-  const bfnPushOwnNamesIdx = ctx.standalone ? ctx.funcMap.get("__builtinfn_push_ownnames") : undefined;
+  const bfnGetMetaIdx = wasmGcBackend(ctx) ? ctx.funcMap.get("__builtinfn_get_meta") : undefined;
+  const bfnGopdIdx = wasmGcBackend(ctx) ? ctx.funcMap.get("__builtinfn_gopd") : undefined;
+  const bfnDeleteIdx = wasmGcBackend(ctx) ? ctx.funcMap.get("__builtinfn_delete") : undefined;
+  const bfnPushOwnNamesIdx = wasmGcBackend(ctx) ? ctx.funcMap.get("__builtinfn_push_ownnames") : undefined;
 
   const keyResources = {
     anyStrTypeIdx,
@@ -1670,10 +1661,9 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   //     numeric + string cases are fixed. Symbol keys under the string-keyed
   //     runtime stay a separate concern (#1472 Phase B refusal at compile time).
   //
-  // standalone-only: in gc/host mode the host `__extern_*` JS imports own these
-  // paths and ToPropertyKey the key themselves, so registering this helper there
-  // would only shift funcMap indices — host output stays byte-identical.
-  if (ctx.standalone) {
+  // WasmGC-only: its string-keyed runtime needs this canonical key carrier.
+  // The linear backend retains its provider-specific ToPropertyKey handling.
+  if (wasmGcBackend(ctx)) {
     const numToStringIdx = ctx.funcMap.get("number_toString")!;
     const unboxNumberIdx = ctx.funcMap.get("__unbox_number")!;
     const boxNumTypeIdx = ctx.nativeBoxNumberTypeIdx;
@@ -1696,9 +1686,8 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   }
   const toPropertyKeyIdx = ctx.funcMap.get("__to_property_key");
 
-  // Prepend, in standalone mode, a guarded ToPropertyKey coercion to a key-taking
-  // helper body so its downstream `ref.cast $AnyString` is always safe. No-op in
-  // gc/host mode (the host imports own the path → byte-identical output).
+  // Prepend a guarded native ToPropertyKey coercion to a key-taking helper body
+  // so its downstream `ref.cast $AnyString` is always safe.
   // The coercion is itself guarded (`__to_property_key` fast-returns an
   // already-$AnyString key) so the common string-key path pays one `ref.test`.
   const withKeyCoercion = (keyParamIdx: number, body: Instr[]): Instr[] =>
@@ -2530,7 +2519,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   // only at individual callers) prevents descriptor-bearing host/native-first
   // builds from gaining a private result global whose index could be shifted by
   // later imports.
-  const inheritedSetRuntimeActive = ctx.standalone && inheritedSetAnyDirty(ctx);
+  const inheritedSetRuntimeActive = wasmGcBackend(ctx) && inheritedSetAnyDirty(ctx);
   const SET_RESULT_UNADMITTED = 0;
   const SET_RESULT_SUCCESS = 1;
   const SET_RESULT_REFUSED = 2;
@@ -3773,8 +3762,8 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   // (NO prototype walk) AND the own property's [[Enumerable]] attribute. Same
   // __obj_find own-only lookup as __hasOwnProperty, then test the found entry's
   // FLAG_ENUMERABLE bit. Missing own property / non-$Object receiver → false.
-  // This replaces the standalone #1472-Phase-B refusal with a native lowering
-  // over the same $Object/$PropEntry runtime; host mode keeps its JS import.
+  // This replaces the #1472-Phase-B refusal with a native lowering over the
+  // same $Object/$PropEntry runtime.
   {
     const body = buildPropertyIsEnumerableBody({
       objectTypeIdx,
@@ -5296,9 +5285,9 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   // sentinel-aware wraps it in a `$BoxedNumber`. Recognize that box here so
   // `x === undefined` / default-application still answer true after the value
   // crossed a sentinel-blind boxing site. JS arithmetic only produces the
-  // quiet NaN 0x7FF8… — it can never forge the sentinel bits — and host mode
-  // never builds this native (native generators are standalone/wasi-only), so
-  // this cannot misfire on a genuine number. Gated on the carrier type
+  // quiet NaN 0x7FF8… — it can never forge the sentinel bits — and the linear
+  // backend never builds this WasmGC-native generator carrier, so this cannot
+  // misfire on a genuine number. Gated on the carrier type
   // existing; without it the body is the legacy bare `ref.is_null`.
   // (#2106 S1) Under the `undefinedSingleton` regime the predicate flips to
   // "tag-1 `$AnyValue` box ∨ UNDEF_F64 `$BoxedNumber`" and — the whole point —
@@ -5375,8 +5364,8 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     // global identifies the method and dispatches straight to the native
     // helper. A name that isn't the interned literal (a rope, a runtime-built
     // string) simply misses the `ref.eq` and falls through to the generic
-    // path — semantics unchanged. Gated on every dep resolving; emits nothing
-    // otherwise (host mode: `nativeStrings` off ⇒ no arm).
+    // path — semantics unchanged. Gated on every dependency resolving and on
+    // native strings being active; otherwise it emits no arm.
     const strFastPath = ((): Instr[] => {
       if (!ctx.nativeStrings || ctx.anyStrTypeIdx < 0 || ctx.nativeStrTypeIdx < 0) return [];
       const unboxIdx = ctx.funcMap.get("__unbox_number");
@@ -5882,8 +5871,8 @@ export function ensureBoundaryCallableKind(ctx: CodegenContext): void {
  * Registered lazily and idempotently — only when a qualifying coercion actually
  * needs it, so modules that never box a String stay byte-identical. Returns the
  * func index, or -1 when the object runtime is absent (no `__obj_find`) or native
- * strings are off (gc/host mode) — in which case the caller falls through to its
- * prior null. `ensureObjectRuntime` has already run (a boxed String cannot exist
+ * strings are off — in which case the caller falls through to its prior null.
+ * `ensureObjectRuntime` has already run (a boxed String cannot exist
  * otherwise), so `ctx.objectRuntimeTypes` and `__obj_find` are settled and no
  * late-import shift is pending.
  */
@@ -5999,11 +5988,9 @@ export function ensureWrapperStringValueHelper(ctx: CodegenContext): number {
 /**
  * #1472 Phase B Slice 3 — the native `$ObjVec` builder funcIdxs that the
  * `Object.assign(target, ...sources)` / object-spread call sites use to build
- * the variadic `...sources` list under `--target standalone`. In JS-host mode
- * those sites build a real JS array via the `__js_array_new` / `__js_array_push`
- * host imports and hand it to `__object_assign`; standalone has no JS array, so
- * they build a `$ObjVec` (which the native `__object_assign` iterates via
- * `ref.test $ObjVec`) instead. Returns `{ newIdx, pushIdx }`, registering the
+ * the variadic `...sources` list on WasmGC. They build a `$ObjVec`, which the
+ * native `__object_assign` iterates via `ref.test $ObjVec`. Returns
+ * `{ newIdx, pushIdx }`, registering the
  * object runtime on first call. Signatures match the host imports exactly —
  * `__objvec_new : () -> externref`, `__objvec_push : (externref, externref) ->
  * void` — so the only call-site change is *which funcIdx* the existing builder
@@ -6480,8 +6467,7 @@ export function fillApplyClosure(ctx: CodegenContext): void {
   // i32.eq/if-else) is STILL emitted, ~11 bytes per dead arm (#3356 review:
   // NOT byte-identical; measured +114 B on a representative standalone module —
   // one live n=5 arm, the runtime always registers an arity-5 closure, plus 3
-  // dead arms at +33 B). Host/gc modules are unaffected: the bridge is only
-  // ever reserved under standalone/wasi (all reserveApplyClosure call sites).
+  // dead arms at +33 B). The bridge is reserved only by WasmGC call sites.
   const APPLY_CLOSURE_MAX_ARITY = 8;
 
   // (#6655) …and ONE arm above that cap, at the module's top declared arity,
@@ -6544,7 +6530,7 @@ export function fillApplyClosure(ctx: CodegenContext): void {
       ? directDataField.type.typeIdx
       : undefined;
   const fastDirectArgs = directVecTypeIdx !== undefined && directVecArrTypeIdx !== undefined;
-  const getUndefinedIdx = !ctx.standalone && !ctx.wasi ? ctx.funcMap.get("__get_undefined") : undefined;
+  const getUndefinedIdx = !wasmGcBackend(ctx) ? ctx.funcMap.get("__get_undefined") : undefined;
 
   if (!hasGenericArgsReader && !fastObjArgs && !fastDirectArgs) {
     bridgeFn.body = [{ op: "ref.null.extern" }];
@@ -7827,8 +7813,8 @@ export function buildExternGetIdxBody(p: ExternGetIdxBodyParams): Instr[] {
  * externref per kind. So we emit one `ref.test`/`ref.cast` arm per carrier with
  * its own bounds check + per-kind boxing (`boxVecElementToExternref`).
  *
- * Standalone only (gated by `ctx.externGetIdxReserved`, set in standalone). Edits
- * the body in place — no funcIdx churn, so cached call targets stay valid.
+ * WasmGC only (gated by `ctx.externGetIdxReserved`). Edits the body in place —
+ * no funcIdx churn, so cached call targets stay valid.
  */
 export function fillExternGetIdxVecArms(ctx: CodegenContext): void {
   if (!ctx.externGetIdxReserved) return;
@@ -8118,7 +8104,7 @@ export function fillExternGetIdxVecArms(ctx: CodegenContext): void {
  * output byte-neutral.
  */
 export function fillConcatNativeHoleArms(ctx: CodegenContext): void {
-  if (!ctx.standalone || !ctx.usesNativeConcatHoleSubstrate || ctx.holeGlobalIdx === undefined) return;
+  if (!wasmGcBackend(ctx) || !ctx.usesNativeConcatHoleSubstrate || ctx.holeGlobalIdx === undefined) return;
   const types = ctx.objectRuntimeTypes;
   if (!types) return;
 
@@ -8467,8 +8453,7 @@ export function fillConcatNativeHoleArms(ctx: CodegenContext): void {
  * at body index 0 (the `fillExternGetErrorProps` discipline): it returns on a
  * vec match and falls through untouched for every non-vec receiver, so host /
  * non-vec output stays byte-identical. Locals are APPENDED (never renumber the
- * existing ones). Standalone-only — gated on `ctx.standalone`; host mode's JS
- * `__extern_*` imports own these paths.
+ * existing ones). WasmGC-only; the linear provider owns its dynamic paths.
  */
 /**
  * Teach the native WasmGC own-property predicates about closed compiler structs.
@@ -9664,7 +9649,7 @@ export function fillClosedStructExternGetArms(ctx: CodegenContext): void {
  * vector. No new callable or constructor ABI is introduced.
  */
 export function fillFnctorPrototypeDispatchArms(ctx: CodegenContext): void {
-  if (!ctx.standalone) return;
+  if (!wasmGcBackend(ctx)) return;
   const protoStartIdx = ctx.funcMap.get("__fnctor_proto_start");
   const protoStartFn = protoStartIdx === undefined ? undefined : definedFuncAt(ctx, protoStartIdx);
   if (protoStartFn) {
@@ -9888,7 +9873,7 @@ export function fillFnctorPrototypeDispatchArms(ctx: CodegenContext): void {
  * shadowing argument live in wrapper-constructor-carrier.ts.
  */
 export function unshiftExternGetWrapperCtorArm(ctx: CodegenContext): void {
-  if (!ctx.standalone) return;
+  if (!wasmGcBackend(ctx)) return;
   const anyStrTypeIdx = ctx.anyStrTypeIdx;
   const objTypes = ctx.objectRuntimeTypes;
   if (anyStrTypeIdx < 0 || objTypes === undefined) return;
@@ -9937,7 +9922,7 @@ export function unshiftExternGetWrapperCtorArm(ctx: CodegenContext): void {
  * visible.
  */
 export function unshiftExternGetStringExoticArm(ctx: CodegenContext): void {
-  if (!ctx.standalone || !ctx.nativeStrings || ctx.anyStrTypeIdx < 0 || ctx.nativeStrTypeIdx < 0) return;
+  if (!wasmGcBackend(ctx) || !ctx.nativeStrings || ctx.anyStrTypeIdx < 0 || ctx.nativeStrTypeIdx < 0) return;
   const objectTypes = ctx.objectRuntimeTypes;
   if (!objectTypes) return;
   const fn = ctx.mod.functions.find((candidate) => candidate.name === "__extern_get");
@@ -10108,7 +10093,7 @@ function receiverHasNoOwnKeyGuard(ctx: CodegenContext, hasOwnIdx: number): Instr
 
 export function unshiftExternGetProtoCacheArm(ctx: CodegenContext): void {
   unshiftFnctorFastGetArm(ctx); // (#6973) BEFORE the cache arm, which must stay the prefix
-  if (!ctx.standalone || ctx.hashedStrTypeIdx < 0) return;
+  if (!wasmGcBackend(ctx) || ctx.hashedStrTypeIdx < 0) return;
   const HSTR = ctx.hashedStrTypeIdx;
   const protoStartIdx = ctx.funcMap.get("__fnctor_proto_start");
   const objTypes = ctx.objectRuntimeTypes;
@@ -10269,7 +10254,7 @@ function buildVecEnumerationTail(ctx: CodegenContext, forIn: boolean, vecLocal: 
 }
 
 export function fillDynamicForinVecArms(ctx: CodegenContext): void {
-  if (!ctx.standalone) return; // host imports own the dynamic path
+  if (!wasmGcBackend(ctx)) return; // the linear provider owns its dynamic path
   const anyStrTypeIdx = ctx.anyStrTypeIdx;
   if (anyStrTypeIdx < 0) return;
   const vecBaseIdx = getOrRegisterVecBaseType(ctx);
@@ -10784,11 +10769,10 @@ function fillElemStoreKeyArm(ctx: CodegenContext): void {
  *      no-op for that carrier (same as before the fill).
  *
  * SCOPE: in-bounds and canonical OOB writes; OOB checks inherited descriptors
- * before resizable growth. Standalone only (gated on `ctx.externGetIdxReserved`,
- * set when the trio was registered with the standalone arms); host untouched.
+ * before resizable growth. WasmGC only (gated on `ctx.externGetIdxReserved`).
  */
 export function fillExternSetVecArms(ctx: CodegenContext): void {
-  if (!ctx.externGetIdxReserved) return; // host owns the write path
+  if (!ctx.externGetIdxReserved) return; // the native trio is absent
   const fn = ctx.mod.functions.find((f) => f.name === "__extern_set");
   if (!fn) return;
   const unboxNumIdx = ctx.funcMap.get("__unbox_number");
@@ -10797,7 +10781,7 @@ export function fillExternSetVecArms(ctx: CodegenContext): void {
   const setResultGlobalIdx = ctx.externSetResultGlobalIdx;
   const setDecideIdx = ctx.funcMap.get("__extern_set_decide");
   const descriptorDecisionAvailable =
-    ctx.standalone && inheritedSetAnyDirty(ctx) && setResultGlobalIdx !== undefined && setDecideIdx !== undefined;
+    wasmGcBackend(ctx) && inheritedSetAnyDirty(ctx) && setResultGlobalIdx !== undefined && setDecideIdx !== undefined;
   // Descriptor overlay writes are the lossless storage for canonical numeric
   // keys that cannot be represented by the signed i32 backing lane. The
   // overlay helper is reserved before this finalize-time fill and receives its
@@ -11167,14 +11151,12 @@ function boxClosedStructFieldToExternref(ctx: CodegenContext, fieldType: ValType
  *
  * Runs at FINALIZE (index.ts, right after `fillExternGetIdxVecArms`) so the
  * struct-type table is COMPLETE — literals compiled after `ensureObjectRuntime`
- * still get arms. Standalone-only via `ctx.externGetIdxReserved` (set exactly
- * when the trio was registered with the standalone array-like arms); gc/host
- * output is untouched (the host imports own this path there). All `call`
- * funcIdxs are read from funcMap at fill time and the spliced instrs are
- * walked by any later shift like all others.
+ * still get arms. WasmGC-only via `ctx.externGetIdxReserved`; all `call`
+ * funcIdxs are read from funcMap at fill time and the spliced instrs are walked
+ * by any later shift like all others.
  */
 export function fillExternArrayLikeStructArms(ctx: CodegenContext): void {
-  if (!ctx.externGetIdxReserved) return; // standalone trio absent → nothing to widen
+  if (!ctx.externGetIdxReserved) return; // native trio absent → nothing to widen
   const findFn = (name: string) => {
     const idx = ctx.funcMap.get(name);
     return idx === undefined ? undefined : definedFuncAt(ctx, idx);
@@ -11192,7 +11174,7 @@ export function fillExternArrayLikeStructArms(ctx: CodegenContext): void {
   // all four helpers; the guard only avoids turning a missing helper into a
   // new regression in a reduced profile.
   const ordinaryReaderReady =
-    ctx.standalone &&
+    wasmGcBackend(ctx) &&
     ordinaryExternGetIdx !== undefined &&
     ordinaryNumberToStringIdx !== undefined &&
     ordinaryExternHasIdx !== undefined &&
@@ -12118,8 +12100,8 @@ export function fillBuiltinFnMeta(ctx: CodegenContext): void {
 
 /**
  * Names of the object-runtime host imports that `ensureObjectRuntime` provides
- * Wasm-native implementations for. `ensureLateImport` routes these here under
- * `ctx.standalone` (mirrors `UNION_NATIVE_HELPER_NAMES` for the #1471 boxing
+ * Wasm-native implementations for. `ensureLateImport` routes these here on the
+ * WasmGC backend (mirrors `UNION_NATIVE_HELPER_NAMES` for the #1471 boxing
  * helpers) so existing call sites resolve to the native func with no per-site
  * change. Internal helpers (`__obj_hash`, `__obj_find`, `__obj_insert`,
  * `__obj_grow`) are NOT in this set — they are never requested via

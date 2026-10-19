@@ -74,5 +74,38 @@ for (const target of ["standalone", "wasi"] as const) {
       exports.__module_init?.();
       expect(exports.readResult()).toBe(41);
     });
+
+    it("an any-typed array HOF dispatches through the native method runtime", async () => {
+      const { module } = await compileNative(
+        `
+          var values: any = [1, 2, 3];
+          export function readResult() {
+            var mapped = values.map((value: number) => value + 10);
+            return mapped[1];
+          }
+        `,
+        target,
+      );
+      const instance = await WebAssembly.instantiate(module, {});
+      const exports = instance.exports as unknown as { __module_init?: () => void; readResult: () => number };
+      exports.__module_init?.();
+      expect(exports.readResult()).toBe(12);
+    });
+
+    it("a boxed String uses the native string-exotic object arm", async () => {
+      const { module } = await compileNative(
+        `
+          var boxed: any = new String("ab");
+          export function readResult() {
+            return boxed[1] === "b" ? 1 : 0;
+          }
+        `,
+        target,
+      );
+      const instance = await WebAssembly.instantiate(module, {});
+      const exports = instance.exports as unknown as { __module_init?: () => void; readResult: () => number };
+      exports.__module_init?.();
+      expect(exports.readResult()).toBe(1);
+    });
   });
 }
