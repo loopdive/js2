@@ -224,13 +224,9 @@ import {
 import type { IrStandaloneDomOperation } from "./dom-capability.js";
 import { IR_CONSOLE_METHODS, IR_CONSOLE_SINK_APPEND_FN, IR_NUMBER_TO_STRING_NATIVE_FN } from "./host-free-runtime.js";
 import type { IrLowerResolver } from "./lower.js";
-import type { IrVectorLowering } from "./backend/handles.js";
-import {
-  sourceVectorValueType,
-  sourceVectorDataType,
-  vecElemSetProviderSymbol,
-  vecNewSizedProviderSymbol,
-} from "./ast-vector-representation.js";
+import type { IrVecBackendLowering } from "./backend/handles.js";
+import { irVecHandleCarrier, irVecHandleDataType } from "./backend/vector-representation.js";
+import { vecElemSetProviderSymbol, vecNewSizedProviderSymbol } from "./ast-vector-representation.js";
 import {
   allocateLiftedFunctionArtifact,
   type IrDerivedUnitProvenance,
@@ -316,7 +312,7 @@ import { IR_HOLEY_ARRAY_ELEM_SET, IR_HOLEY_ARRAY_NEW } from "./vector-runtime.js
 import { readEnv } from "../env.js";
 
 interface ResolvedIrVecType {
-  readonly lowering: IrVectorLowering;
+  readonly lowering: IrVecBackendLowering;
   readonly elementType: IrType;
   readonly valueType: ValType;
 }
@@ -345,7 +341,7 @@ function resolveIrVecType(
     const lowering = cx.resolver?.resolveVecForElement?.(elementValType);
     if (!lowering) return null;
     const backendValueType =
-      cx.resolver?.resolveVecValueTypeForElement?.(elementValType) ?? sourceVectorValueType(lowering, type.nullable);
+      cx.resolver?.resolveVecValueTypeForElement?.(elementValType) ?? irVecHandleCarrier(lowering, type.nullable);
     const valueType =
       (backendValueType.kind === "ref" || backendValueType.kind === "ref_null") && type.nullable
         ? ({ kind: "ref_null", typeIdx: backendValueType.typeIdx } as ValType)
@@ -579,13 +575,13 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
     readonly get: string;
     readonly has: string;
   } | null;
-  resolveVec?(valType: ValType): IrVectorLowering | null;
+  resolveVec?(valType: ValType): IrVecBackendLowering | null;
   /**
    * #1804 — register-or-recover the vec struct for an element ValType so
    * `lowerArrayLiteral` can type a constructed `vec.new_fixed`'s result SSA
    * value as `{ kind: "ref", typeIdx: vecStructTypeIdx }`.
    */
-  resolveVecForElement?(elementValType: ValType): IrVectorLowering | null;
+  resolveVecForElement?(elementValType: ValType): IrVecBackendLowering | null;
   /**
    * Backend value representation for a vec constructed from `elementValType`.
    * WasmGC omits this and keeps the registered `(ref $vec)` default; linear
@@ -5479,7 +5475,7 @@ function lowerArrayLiteral(expr: ts.ArrayLiteralExpression, cx: LowerCtx, hint: 
         `ir/from-ast: resolver cannot register vec for empty literal (${cx.funcName})`,
       );
     }
-    const vecValueType = cx.resolver?.resolveVecValueTypeForElement?.(elemVT) ?? sourceVectorValueType(vec, false);
+    const vecValueType = cx.resolver?.resolveVecValueTypeForElement?.(elemVT) ?? irVecHandleCarrier(vec, false);
     const vecResultType = hint.kind === "vec" ? irVec(hintElemIr, false) : irVal(vecValueType);
     const countedPush = canonicalCountedPushPlanForLiteral(expr, cx.checker);
     if (countedPush) {
@@ -5651,7 +5647,7 @@ function lowerArrayLiteral(expr: ts.ArrayLiteralExpression, cx: LowerCtx, hint: 
       `ir/from-ast: resolver cannot register vec for array literal (${cx.funcName})`,
     );
   }
-  const vecValueType = cx.resolver?.resolveVecValueTypeForElement?.(elemVT) ?? sourceVectorValueType(vec, false);
+  const vecValueType = cx.resolver?.resolveVecValueTypeForElement?.(elemVT) ?? irVecHandleCarrier(vec, false);
   const resultType =
     elemVT.kind === "f64" || elemVT.kind === "i32" || storedElementType.kind === "string"
       ? irVec(storedElementType, false)
@@ -12263,7 +12259,7 @@ function lowerForOfVec(
   const valTy = resolvedVec?.valueType ?? asVal(iterableType);
   if (resolvedVec) {
     elemValType = resolvedVec.lowering.elementValType;
-    dataValType = sourceVectorDataType(resolvedVec.lowering);
+    dataValType = irVecHandleDataType(resolvedVec.lowering);
   } else {
     if (!valTy) {
       demoteToLegacy(

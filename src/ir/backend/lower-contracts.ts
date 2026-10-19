@@ -26,8 +26,8 @@ import type {
   IrObjectStructLowering,
   IrRefCellLowering,
   IrUnionLowering,
+  IrVecBackendLowering,
   IrVecLowering,
-  IrVectorLowering,
 } from "./handles.js";
 
 export type {
@@ -39,8 +39,8 @@ export type {
   IrObjectStructLowering,
   IrRefCellLowering,
   IrUnionLowering,
+  IrVecBackendLowering,
   IrVecLowering,
-  IrVectorLowering,
 } from "./handles.js";
 
 export interface IrLowerResolver {
@@ -145,10 +145,21 @@ export interface IrLowerResolver {
    * the typeIdx + field indices + element ValType. Returns `null` when
    * the type isn't a recognisable vec — caller treats that as a bug
    * (selector should have rejected the for-of).
+   *
+   * #6920: returns the active backend's genuine raw handle — the WasmGC
+   * `IrVecLowering`, or a linear-memory `LinearVecLowering` whose carrier is
+   * i32 and which carries no GC indices. Generic lowering authenticates the
+   * handle against the active backend (`vector-representation.ts`); a handle
+   * for the other backend is a representation mismatch, never adapted.
    */
-  /** The accepted physical backend; used to reject foreign persisted vector layouts. */
+  resolveVec?(valType: ValType): IrVecBackendLowering | null;
+  /**
+   * The physical family this resolver was built for. It never selects the
+   * representation — the active backend (`emitter.backend` / the converter's
+   * backend) does; `resolveIrVecRepresentation` rejects a resolver whose
+   * declared family disagrees with that backend (#6662 composition).
+   */
   readonly vectorRepresentation?: "wasmgc" | "linear";
-  resolveVec?(valType: ValType): IrVectorLowering | null;
   /**
    * #1804 — resolve (registering if needed) the vec struct for an *element*
    * ValType, used by `vec.new_fixed` construction where a fresh literal has no
@@ -156,9 +167,10 @@ export interface IrLowerResolver {
    * `(ref $vec)`), this get-or-creates the `$arr`/`$vec` types for the element
    * via the legacy registry so the constructed vec shares identity with the
    * legacy `compileArrayLiteral` output (===, instanceof Array, the for-of fast
-   * path). Returns the same `IrVecLowering` shape as `resolveVec`.
+   * path). Returns the same raw handle union as `resolveVec`; a linear
+   * resolver binds the requested `alloc` row when one is supplied.
    */
-  resolveVecForElement?(elementValType: ValType, alloc?: AllocSiteId): IrVectorLowering | null;
+  resolveVecForElement?(elementValType: ValType, alloc?: AllocSiteId): IrVecBackendLowering | null;
   requestedVectorCapacity?(unitId: IrUnitId, value: IrValueId): number;
   /**
    * Resolve the Wasm value type used for `IrType.string` in the active

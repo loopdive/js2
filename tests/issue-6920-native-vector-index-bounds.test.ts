@@ -80,7 +80,7 @@ import { lowerIrFunctionToWasm } from "../src/ir/lower.js";
 import { LinearEmitter } from "../src/ir/backend/linear-emitter.js";
 import { WasmGcEmitter } from "../src/ir/backend/wasmgc-emitter.js";
 import type { IrLowerResolver } from "../src/ir/lower.js";
-import type { IrVectorLowering } from "../src/ir/backend/handles.js";
+import type { IrVecBackendLowering } from "../src/ir/backend/handles.js";
 import { createEmptyModule, type FuncTypeDef } from "../src/ir/types.js";
 import { addRuntime, addArrayRuntime, addLinearIrVecRuntime } from "../src/codegen-linear/runtime.js";
 import { irUnitFuncRef, irCallableBindingKey } from "../src/ir/callable-bindings.js";
@@ -99,7 +99,7 @@ for (const backend of ["linear", "wasmgc"] as const) {
           if (local < 0) throw Error(`missing real runtime ${name}`);
           return mod.imports.filter((entry) => entry.desc.kind === "func").length + local;
         };
-        let layout: IrVectorLowering;
+        let layout: IrVecBackendLowering;
         if (backend === "linear") {
           addRuntime(mod);
           addArrayRuntime(mod);
@@ -107,6 +107,7 @@ for (const backend of ["linear", "wasmgc"] as const) {
           const memoryLayout = planLinearVectorLayout(f64);
           const operations = defaultOperationsForLayout(memoryLayout);
           layout = {
+            valueType: { kind: "i32" },
             elementValType: { kind: "f64" },
             linearMemory: {
               layout: memoryLayout,

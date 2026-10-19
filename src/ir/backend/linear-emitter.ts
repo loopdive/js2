@@ -157,14 +157,8 @@ function notImplemented(method: string): never {
  */
 export class LinearEmitter implements BackendEmitter<Instr[]> {
   readonly backend = "linear" as const;
-  private readonly vecScratchLocals = new Set<number>();
 
   constructor(private readonly options: LinearEmitterOptions = {}) {}
-
-  /** Absolute local indices whose GC-shaped scratch must become an i32 pointer. */
-  getVecScratchLocalIndices(): readonly number[] {
-    return [...this.vecScratchLocals];
-  }
 
   // #1584: sink = Instr[], same as WasmGc (the linear backend also lowers to
   // the shared `Instr` union). Factory + raw escape hatch are array ops.
@@ -346,8 +340,7 @@ export class LinearEmitter implements BackendEmitter<Instr[]> {
     const vecNewFuncIdx = resolveRuntimeOperation(linear.linearMemory.allocate);
     const vecInitF64FuncIdx = resolveRuntimeOperation(linear.linearMemory.initializeElement);
 
-    this.vecScratchLocals.add(dataScratchLocal);
-
+    // `dataScratchLocal` was declared i32 by generic lowering (#6920).
     // Stack before: e0 ... eN. Stack after local.set: e0 ... eN, with ptr saved.
     out.push({ op: "i32.const", value: Math.max(capacity, linear.linearMemory.layout.minimumCapacity) });
     out.push({ op: "call", funcIdx: vecNewFuncIdx });

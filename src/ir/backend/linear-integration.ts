@@ -177,12 +177,12 @@ import type {
 } from "./linear-ir-coverage.js";
 import type {
   IrRefCellLowering,
-  IrVecLowering,
   LinearMemoryFieldLowering,
   LinearObjectLowering,
   LinearRefCellLowering,
   LinearVecLowering,
 } from "./handles.js";
+import { resolveIrVecRepresentation } from "./vector-representation.js";
 import { readEnv } from "../../env.js";
 
 /** One function routed to the direct path, and its stable bucketed reason. */
@@ -1589,22 +1589,16 @@ export function compileLinearIrFunctions(
       continue;
     }
     {
-      const main = consumed.func;
       const body = consumed.lowered;
-      const emitter = consumed.emitter as LinearEmitter;
       requireLinearOwnerPair(owner, body.name);
-      const vecScratchLocals = new Set(emitter.getVecScratchLocalIndices());
-      const wasmLocals = body.locals.flatMap((local) =>
+      // Generic lowering declared every local (including vec construction
+      // scratch) with its linear representation; flatten them verbatim.
+      const locals = body.locals.flatMap((local) =>
         local.slots.map((type, slot) => ({
           name: slot === 0 ? local.name : `${local.name}$${slot}`,
           type,
         })),
       );
-      const locals = wasmLocals.map((local, index) => {
-        const absoluteIndex = main.params.length + index;
-        if (!vecScratchLocals.has(absoluteIndex)) return local;
-        return { name: `$linear_vec_ptr_${index}`, type: { kind: "i32" as const } };
-      });
       const stackOperations = stackFrameOperations(memoryPlan, name);
       if (stackOperations) {
         const markLocal = body.params.flatMap((param) => param.slots).length + locals.length;
@@ -1903,7 +1897,7 @@ function makeLinearIrResolver(
     return null;
   };
 
-  const f64VecHandle = (alloc?: AllocSiteId): IrVecLowering & LinearVecLowering => {
+  const f64VecHandle = (alloc?: AllocSiteId): LinearVecLowering => {
     const layout = memoryPlan?.layoutForVector(f64IrType) ?? provisionalF64VectorLayout;
     const allocation = allocationFor(layout.id, alloc);
     const allocate = plannedOperation(
@@ -1920,10 +1914,6 @@ function makeLinearIrResolver(
     );
     return {
       valueType: { kind: "i32" },
-      vecStructTypeIdx: 0,
-      lengthFieldIdx: 0,
-      dataFieldIdx: 0,
-      arrayTypeIdx: 0,
       elementValType: { kind: "f64" },
       linearMemory: { allocation, layout, allocate, initializeElement },
     };
@@ -2166,10 +2156,10 @@ function makeLinearIrResolver(
       refCells.set(key, lowering);
       return lowering;
     },
-    resolveVec(valType: ValType): IrVecLowering | null {
+    resolveVec(valType: ValType): LinearVecLowering | null {
       return valType.kind === "i32" ? f64VecHandle() : null;
     },
-    resolveVecForElement(elementValType: ValType, alloc?: AllocSiteId): IrVecLowering | null {
+    resolveVecForElement(elementValType: ValType, alloc?: AllocSiteId): LinearVecLowering | null {
       return elementValType.kind === "f64" ? f64VecHandle(alloc) : null;
     },
     resolveVecValueTypeForElement(elementValType: ValType): ValType | null {
@@ -2358,7 +2348,15 @@ function linearValueTypeConverter(resolver: IrLowerResolver, funcName: string): 
     backend: "linear",
     convertType(type: IrType): readonly ValType[] {
       if (type.kind === "val") return [type.val];
-      if (type.kind === "string" || type.kind === "vec") return [{ kind: "i32" }];
+      if (type.kind === "string") return [{ kind: "i32" }];
+      if (type.kind === "vec") {
+        const elementValType = asVal(type.elementType) ?? undefined;
+        const carrier = resolveIrVecRepresentation(
+          { backend: "linear", type, elementValType, resolver, where: funcName },
+          "carrier",
+        );
+        if (carrier) return [carrier.valueType];
+      }
       if (type.kind === "object" && resolver.resolveObject?.(type.shape)) return [{ kind: "i32" }];
       if (type.kind === "boxed") {
         const inner = asVal(type.inner);

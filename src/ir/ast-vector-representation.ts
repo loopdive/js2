@@ -1,40 +1,32 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
-import type { IrVectorLowering } from "./backend/handles.js";
+import type { IrVecBackendLowering } from "./backend/handles.js";
+import { irVecGcLowering } from "./backend/vector-representation.js";
 import type { IrType } from "./core/types.js";
-import type { ValType } from "./types.js";
 import { IrUnsupportedError } from "./outcomes.js";
 import { irVecElemSetSymbol, irVecNewSizedSymbol } from "./vector-runtime.js";
 
-/** Compatibility carriers for actual handles, never fabricated GC coordinates. */
-export function sourceVectorValueType(vec: IrVectorLowering, nullable: boolean): ValType {
-  return "linearMemory" in vec
-    ? { kind: "i32" }
-    : (vec.valueType ?? { kind: nullable ? "ref_null" : "ref", typeIdx: vec.vecStructTypeIdx });
+// Frontend provider symbols for actual handles, never fabricated GC coordinates.
+// A struct-suffixed name requires an authenticated WasmGC handle (#6920
+// `irVecGcLowering`); any other physical handle without a logical element type
+// is refused rather than given a substitute name.
+function gcProviderStructIndex(vec: IrVecBackendLowering): number {
+  const gc = irVecGcLowering(vec);
+  if (!gc)
+    throw new IrUnsupportedError(
+      "array-representation-unsupported",
+      "build",
+      "Linear vector provider requires a logical element type",
+    );
+  return gc.vecStructTypeIdx;
 }
 
-export function sourceVectorDataType(vec: IrVectorLowering): ValType {
-  return "linearMemory" in vec ? { kind: "i32" } : { kind: "ref", typeIdx: vec.arrayTypeIdx };
-}
-
-export function vecElemSetProviderSymbol(type: IrType, vec: IrVectorLowering): string {
+export function vecElemSetProviderSymbol(type: IrType, vec: IrVecBackendLowering): string {
   if (type.kind === "vec") return irVecElemSetSymbol(type.elementType);
-  if ("linearMemory" in vec)
-    throw new IrUnsupportedError(
-      "array-representation-unsupported",
-      "build",
-      "Linear vector provider requires a logical element type",
-    );
-  return `__vec_elem_set_${vec.vecStructTypeIdx}`;
+  return `__vec_elem_set_${gcProviderStructIndex(vec)}`;
 }
 
-export function vecNewSizedProviderSymbol(type: IrType, vec: IrVectorLowering): string {
+export function vecNewSizedProviderSymbol(type: IrType, vec: IrVecBackendLowering): string {
   if (type.kind === "vec") return irVecNewSizedSymbol(type.elementType);
-  if ("linearMemory" in vec)
-    throw new IrUnsupportedError(
-      "array-representation-unsupported",
-      "build",
-      "Linear vector provider requires a logical element type",
-    );
-  return `__vec_new_sized_${vec.vecStructTypeIdx}`;
+  return `__vec_new_sized_${gcProviderStructIndex(vec)}`;
 }

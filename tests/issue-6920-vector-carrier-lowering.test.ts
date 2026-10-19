@@ -22,6 +22,7 @@ const gc: IrVecLowering = {
   elementValType: { kind: "f64" },
 };
 const linear: LinearVecLowering = {
+  valueType: { kind: "i32" },
   elementValType: { kind: "f64" },
   linearMemory: {
     layout: planLinearScalarVectorLayout("f64"),
@@ -81,7 +82,7 @@ describe("vector representation lowering — unit boundary, not source admission
     expect("arrayTypeIdx" in linear).toBe(false);
     expect("vecStructTypeIdx" in linear).toBe(false);
     const r = resolver("linear", linear);
-    expect(lowerIrTypeToValType(vector, r, "fixed")).toEqual({ kind: "i32" });
+    expect(lowerIrTypeToValType(vector, r, "fixed", "linear")).toEqual({ kind: "i32" });
     const fn = fixture();
     const emitter = new LinearEmitter({
       resolveRuntimeOperation: (op) => (op.family === "vector" && op.operation === "allocate" ? 3 : 5),
@@ -108,7 +109,7 @@ describe("vector representation lowering — unit boundary, not source admission
   });
   it("retains GC reference carrier, array scratch and exact construction operation order", () => {
     const r = resolver("wasmgc", gc);
-    expect(lowerIrTypeToValType(vector, r, "fixed")).toEqual({ kind: "ref", typeIdx: 7 });
+    expect(lowerIrTypeToValType(vector, r, "fixed", "wasmgc")).toEqual({ kind: "ref", typeIdx: 7 });
     const fn = fixture();
     const lowered = lowerIrFunctionBody(fn, r, new WasmGcEmitter(r), wasmValueTypeConverter("wasmgc", r, fn.name));
     const scratch = lowered.locals.find((local) => local.name === "$vec_data_4");
@@ -119,12 +120,16 @@ describe("vector representation lowering — unit boundary, not source admission
     ]);
   });
   it("refuses missing and cross-backend vector handles rather than defaulting to i32 or GC", () => {
-    expect(() => lowerIrTypeToValType(vector, resolver("linear", null), "fixed")).toThrow("cannot lower vec");
-    expect(() => lowerIrTypeToValType(vector, resolver("linear", gc), "fixed")).toThrow(
-      "Linear vector resolver returned a WasmGC handle",
+    expect(() => lowerIrTypeToValType(vector, resolver("linear", null), "fixed", "linear")).toThrow("cannot lower vec");
+    expect(() => lowerIrTypeToValType(vector, resolver("linear", gc), "fixed", "linear")).toThrow(
+      "linear-memory backend received a non-linear vector handle",
     );
-    expect(() => lowerIrTypeToValType(vector, resolver("wasmgc", linear), "fixed")).toThrow(
-      "WasmGC vector resolver returned a Linear handle",
+    expect(() => lowerIrTypeToValType(vector, resolver("wasmgc", linear), "fixed", "wasmgc")).toThrow(
+      "wasmgc backend received a non-WasmGC vector handle",
+    );
+    // The backend selects the family; a resolver declared for the other family is refused, never followed.
+    expect(() => lowerIrTypeToValType(vector, resolver("linear", linear), "fixed", "wasmgc")).toThrow(
+      "wasmgc backend received a resolver declared for linear vectors",
     );
   });
   it("rejects persisted GC type-layout authority before resolving slots on native Linear", () => {
@@ -144,8 +149,8 @@ describe("vector representation lowering — unit boundary, not source admission
     r.resolveType = () => {
       throw new Error("foreign slot lookup must not occur");
     };
-    expect(() => lowerIrTypeToValType(persisted, r, "fixed")).toThrow(
-      "persisted WasmGC vector layout cannot enter Linear lowering",
+    expect(() => lowerIrTypeToValType(persisted, r, "fixed", "linear")).toThrow(
+      "linear backend received a WasmGC-prepared vector layout",
     );
   });
 });
