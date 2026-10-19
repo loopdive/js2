@@ -1,0 +1,189 @@
+{
+  "schemaVersion": 1,
+  "issue": 6979,
+  "date": "2026-10-19",
+  "parent": "3498bfa40d370d83a5551ff339054fcd7c1548af",
+  "candidate": "uncommitted working tree; not published",
+  "lane": "default native-first WasmGC; JS interop uses real generated imports; native standalone/WASI controls use no imports",
+  "harness": "Node v24.4.1 --experimental-wasm-exnref; Vitest forks, singleFork, no-file-parallelism",
+  "operatorPopulation": {
+    "files": 13,
+    "rows": 161,
+    "parent": {
+      "passed": 119,
+      "failed": 31,
+      "skipped": 11
+    },
+    "candidate": {
+      "passed": 140,
+      "failed": 10,
+      "skipped": 11
+    },
+    "transitions": [
+      {
+        "case": "issue-6979-native-dynamic-instanceof.test.ts::#6979 native dynamic instanceof at the JS value boundary owns both operator bodies in prepared IR, without a legacy body",
+        "before": "failed",
+        "after": "passed"
+      },
+      {
+        "case": "issue-6979-native-dynamic-instanceof.test.ts::#6979 native dynamic instanceof at the JS value boundary keeps JS-owned instances and constructors identical, with positive and negative membership",
+        "before": "failed",
+        "after": "passed"
+      },
+      {
+        "case": "issue-6979-native-dynamic-instanceof.test.ts::#6979 native dynamic instanceof at the JS value boundary reads a live getter once and calls its result once with original receiver, value and arity",
+        "before": "failed",
+        "after": "passed"
+      },
+      {
+        "case": "issue-6979-native-dynamic-instanceof.test.ts::#6979 native dynamic instanceof at the JS value boundary does not fold a numeric LHS before invoking a custom handler",
+        "before": "failed",
+        "after": "passed"
+      },
+      {
+        "case": "issue-6979-native-dynamic-instanceof.test.ts::#6979 native dynamic instanceof at the JS value boundary uses native truthiness for handler result true",
+        "before": "failed",
+        "after": "passed"
+      },
+      {
+        "case": "issue-6979-native-dynamic-instanceof.test.ts::#6979 native dynamic instanceof at the JS value boundary uses native truthiness for handler result 3",
+        "before": "failed",
+        "after": "passed"
+      },
+      {
+        "case": "issue-6979-native-dynamic-instanceof.test.ts::#6979 native dynamic instanceof at the JS value boundary uses native truthiness for handler result yes",
+        "before": "failed",
+        "after": "passed"
+      },
+      {
+        "case": "issue-6979-native-dynamic-instanceof.test.ts::#6979 native dynamic instanceof at the JS value boundary uses native truthiness for handler result {}",
+        "before": "failed",
+        "after": "passed"
+      },
+      {
+        "case": "issue-6979-native-dynamic-instanceof.test.ts::#6979 native dynamic instanceof at the JS value boundary propagates the original getter and handler exceptions",
+        "before": "failed",
+        "after": "passed"
+      },
+      {
+        "case": "issue-6979-native-dynamic-instanceof.test.ts::#6979 native dynamic instanceof at the JS value boundary treats handler null as absent before ordinary membership",
+        "before": "failed",
+        "after": "passed"
+      },
+      {
+        "case": "issue-6979-native-dynamic-instanceof.test.ts::#6979 native dynamic instanceof at the JS value boundary treats handler undefined as absent before ordinary membership",
+        "before": "failed",
+        "after": "passed"
+      },
+      {
+        "case": "issue-6979-native-dynamic-instanceof.test.ts::#6979 native dynamic instanceof at the JS value boundary throws TypeError for invalid RHS/handler null",
+        "before": "failed",
+        "after": "passed"
+      },
+      {
+        "case": "issue-6979-native-dynamic-instanceof.test.ts::#6979 native dynamic instanceof at the JS value boundary throws TypeError for invalid RHS/handler undefined",
+        "before": "failed",
+        "after": "passed"
+      },
+      {
+        "case": "issue-6979-native-dynamic-instanceof.test.ts::#6979 native dynamic instanceof at the JS value boundary throws TypeError for invalid RHS/handler 2",
+        "before": "failed",
+        "after": "passed"
+      },
+      {
+        "case": "issue-6979-native-dynamic-instanceof.test.ts::#6979 native dynamic instanceof at the JS value boundary throws TypeError for invalid RHS/handler true",
+        "before": "failed",
+        "after": "passed"
+      },
+      {
+        "case": "issue-6979-native-dynamic-instanceof.test.ts::#6979 native dynamic instanceof at the JS value boundary throws TypeError for invalid RHS/handler foo",
+        "before": "failed",
+        "after": "passed"
+      },
+      {
+        "case": "issue-6979-native-dynamic-instanceof.test.ts::#6979 native dynamic instanceof at the JS value boundary throws TypeError for invalid RHS/handler Symbol(rhs)",
+        "before": "failed",
+        "after": "passed"
+      },
+      {
+        "case": "issue-6979-native-dynamic-instanceof.test.ts::#6979 native dynamic instanceof at the JS value boundary throws TypeError for invalid RHS/handler {}",
+        "before": "failed",
+        "after": "passed"
+      },
+      {
+        "case": "issue-6979-native-dynamic-instanceof.test.ts::#6979 native dynamic instanceof at the JS value boundary throws TypeError for invalid RHS/handler { [Symbol(Symbol.hasInstance)]: 1 }",
+        "before": "failed",
+        "after": "passed"
+      },
+      {
+        "case": "issue-6979-native-dynamic-instanceof.test.ts::#6979 native dynamic instanceof at the JS value boundary throws TypeError for invalid RHS/handler { [Symbol(Symbol.hasInstance)]: [Function Handler] }",
+        "before": "failed",
+        "after": "passed"
+      },
+      {
+        "case": "issue-6979-native-dynamic-instanceof.test.ts::#6979 native dynamic instanceof at the JS value boundary delegates the JS default method without recursing into an own override",
+        "before": "failed",
+        "after": "passed"
+      }
+    ],
+    "changedUnresolvedFailureMessages": [],
+    "comparison": "Case keys are filename plus full test name. Failure text comparison replaces only the temporary parent worktree directory name.",
+    "baselineAssembly": {
+      "inputRows": [73, 63, 28],
+      "duplicateCases": 3,
+      "uniqueRows": 161,
+      "overlap": "The three operator-retirement controls occur in both earlier retirement and fresh native-control reports; count them once."
+    }
+  },
+  "preparedPopulation": {
+    "files": 8,
+    "rows": 145,
+    "parent": {
+      "passed": 129,
+      "failed": 16,
+      "skipped": 0
+    },
+    "candidate": {
+      "passed": 129,
+      "failed": 16,
+      "skipped": 0
+    },
+    "statusChanges": 0,
+    "failureMessageChangesAfterDirectoryReplacement": 0
+  },
+  "bodyOwnership": {
+    "exports": ["check", "numeric"],
+    "physicalTarget": "gc",
+    "directBodyEmissions": 0,
+    "irBodyEmissions": 1,
+    "legacyBodyEntries": 0,
+    "r2Withdrawal": null,
+    "scope": "Test asserts these two function bodies, not whole-program IR-only admission; outcome.target has a known stale standalone label."
+  },
+  "hostImportGate": {
+    "status": "FAIL",
+    "measuredImports": 456,
+    "unchangedMaximum": 452,
+    "otherBudgetViolations": [],
+    "baselineChanged": false
+  },
+  "remaining": [
+    "JS-owned constructor with own null/undefined Symbol.hasInstance: positive OrdinaryHasInstance still returns 0 instead of 1",
+    "Import ceiling, binary cost, unmerged prerequisite stack, full S7 source retirement and compatibility/accelerator/conformance acceptance",
+    "SSH signer locked; no unsigned commit authorized",
+    "Strict dead-export certification remains open at two nonliteral dynamic imports"
+  ],
+  "sourceSha256": {
+    "src/codegen/ir-prepared-free-functions.ts": "3f46f236d88ac82c34ada8e7996aeedaa719b92cb50aa0435be1669ef0638bf2",
+    "src/codegen/ir-prepared-signature-contract.ts": "e370319042525ba7d7e951dc65054cbfe31e65e6167fe52ca4a8b59c6ace2c97",
+    "src/codegen/native-dynamic-instanceof.ts": "d486b53345e3ec4f2bb213220617c188d1b13bb9fd9f9b9d7db2ed2d0fda91c1",
+    "src/ir/backend/legality.ts": "0f6b1ccb3c81fdce84e8912e7ab87f1808062a2c44b129dd92335d6e57927805",
+    "src/ir/from-ast.ts": "2f223781b1ff5f8673c9dd6189c4e06261e1f0177285ba5acd956862600c1914",
+    "src/ir/instanceof-lowering.ts": "0185358797d15673a494fdc57e57a5f6571a98d8d4c3897073dc3c4bfc5bdd0a",
+    "src/ir/instanceof-selection.ts": "c2b3319d6a4c67a5f00c8cfdd789d7d86d6a92ed1eb90d29ce037245859ae602",
+    "src/ir/integration.ts": "d514690848a0396282705af20ff797aa6302c2f08cbd58ecbc9fc7941fb525d8",
+    "src/ir/select.ts": "c975e56a05f28efb49066afa14e9b134d9c0f9d6ad08fc4bd0eae5e7016c817d",
+    "src/runtime/boundary-object-adapter.ts": "c32079471b53265d2d0bf2abcfc7cae61a7cb3187c3c823c169936ad02d856a7",
+    "tests/issue-6979-native-dynamic-instanceof.test.ts": "1b453b9281d6f47a329de2dfe9922d2e54985b28eb1658ee7bfb93eecf88bfcf"
+  }
+}

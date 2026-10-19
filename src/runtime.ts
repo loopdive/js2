@@ -5848,17 +5848,10 @@ function _nativeDynamicFromHost(value: any, exports: Record<string, Function>): 
     const box = exports.__str_from_extern as ((value: string) => any) | undefined;
     return typeof box === "function" ? box(raw) : raw;
   }
-  if (typeof raw === "number") {
-    const box = exports.__box_number as ((value: number) => any) | undefined;
-    return typeof box === "function" ? box(raw) : raw;
-  }
-  if (typeof raw === "boolean") {
-    const box = exports.__box_boolean as ((value: number) => any) | undefined;
-    return typeof box === "function" ? box(raw ? 1 : 0) : raw;
-  }
-  if (typeof raw === "bigint") {
-    const box = exports.__box_bigint as ((value: bigint) => any) | undefined;
-    return typeof box === "function" ? box(raw) : raw;
+  if (typeof raw === "number" || typeof raw === "boolean" || typeof raw === "bigint") {
+    const name = typeof raw === "number" ? "__box_number" : typeof raw === "boolean" ? "__box_boolean" : "__box_bigint";
+    const box = exports[name];
+    return typeof box === "function" ? box(typeof raw === "boolean" ? (raw ? 1 : 0) : raw) : raw;
   }
   if (typeof raw === "symbol") {
     const id = _nativeSymbolIdFromHost(raw, exports);
@@ -5866,7 +5859,10 @@ function _nativeDynamicFromHost(value: any, exports: Record<string, Function>): 
     return id !== _MISS && typeof box === "function" ? box(id) : raw;
   }
   if ((typeof raw === "object" && raw !== null) || typeof raw === "function") {
-    if (!_isWasmStruct(raw)) _nativeBoundaryHostObjectSet(exports).add(raw);
+    const probe = exports.__dynamic_boundary_is_gc;
+    const native = typeof probe === "function" ? probe(raw) === 1 : _isWasmStruct(raw);
+    _wasmStructVerdict.set(raw, native);
+    if (!native) _nativeBoundaryHostObjectSet(exports).add(raw);
   }
   return raw;
 }

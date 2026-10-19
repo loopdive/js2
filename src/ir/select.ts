@@ -56,6 +56,7 @@
 
 import { ts, forEachChild } from "../ts-api.js";
 import { exactIndirectEvalStatement } from "../eval-call-shape.js";
+import { nativeDynamicInstanceOfShape } from "./instanceof-selection.js";
 import { collectIrClassInstanceInitializers } from "./class-instance-initializers.js";
 import { literalComputedInstanceMethodKey } from "./class-method-names.js";
 import { classBindingNames, staticMemberBindingIsUnsound } from "./class-overrides.js";
@@ -619,6 +620,7 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
       | "standalone-function-prototype-call"
       | "standalone-native-regexp-test-carrier"
       | "standalone-wrapper-instanceof"
+      | "native-dynamic-instanceof"
       | "primitive-wrapper-loose-equality"
       | "legacy-numeric-array-global"
       | "number-to-string",
@@ -2825,11 +2827,10 @@ function dynamicUsesAreMoveOnly(
       if (
         op === ts.SyntaxKind.InstanceOfKeyword &&
         !expectDyn &&
-        leftIsDyn &&
-        ts.isIdentifier(e.right) &&
-        selectorSupportsStandaloneWrapperInstanceOf(e.right)
+        ((rightIsDyn && currentSelectionOptions?.supportsBackendCapability?.("native-dynamic-instanceof") === true) ||
+          (leftIsDyn && ts.isIdentifier(e.right) && selectorSupportsStandaloneWrapperInstanceOf(e.right)))
       ) {
-        return scanExpr(e.left, true);
+        return scanExpr(e.left, leftIsDyn) && (!rightIsDyn || scanExpr(e.right, true));
       }
       // #3797 — statement-position stores used by Acorn's stable
       // `finishNodeAt.call(thisArg, node, type, pos, loc)` target. The
@@ -9575,15 +9576,13 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
       }
       return isPhase1Expr(expr.left, scope, localClasses);
     }
-    // (#4276) Fast standalone owns a native wrapper-brand predicate over the
-    // real `$Object.[[PrimitiveValue]]` representation. Admit only an exact
-    // ambient wrapper constructor; source/local shadows keep legacy semantics.
-    if (
-      binOp === ts.SyntaxKind.InstanceOfKeyword &&
-      ts.isIdentifier(expr.right) &&
-      selectorSupportsStandaloneWrapperInstanceOf(expr.right)
-    ) {
-      return isPhase1Expr(expr.left, scope, localClasses);
+    if (binOp === ts.SyntaxKind.InstanceOfKeyword) {
+      if (ts.isIdentifier(expr.right) && selectorSupportsStandaloneWrapperInstanceOf(expr.right)) {
+        return isPhase1Expr(expr.left, scope, localClasses);
+      }
+      return nativeDynamicInstanceOfShape(expr, currentSelectionOptions, () =>
+        probeShape(() => isPhase1Expr(expr.left, scope, localClasses) && isPhase1Expr(expr.right, scope, localClasses)),
+      );
     }
     // (#5164 S3) `<key> in <dynamic receiver>` — last of the special binary
     // arms, so every module guard above has had its say. TERMINAL like the

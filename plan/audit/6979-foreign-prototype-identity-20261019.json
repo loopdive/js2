@@ -1,0 +1,255 @@
+{
+  "schemaVersion": 1,
+  "issue": 6979,
+  "date": "2026-10-19",
+  "baseline": {
+    "kind": "S7-e staged-source snapshot materialized in a temporary worktree",
+    "ancestor": "3498bfa40d370d83a5551ff339054fcd7c1548af",
+    "sourceManifest": "6979-native-dynamic-instanceof-local-20261019.json",
+    "verifiedSourceHashes": 11
+  },
+  "candidate": "working-tree snapshot at measurement time; exact sources identified by hashes",
+  "harness": "Node v24.4.1 --experimental-wasm-exnref; Vitest forks, singleFork, no-file-parallelism",
+  "lane": "default native-first WasmGC; real generated JS imports and boundary wrappers; this is not an IR Test262 sweep",
+  "focused": {
+    "files": 3,
+    "rows": 55,
+    "passed": 55,
+    "failed": 0,
+    "skipped": 0,
+    "newForeignFile": {
+      "rows": 19,
+      "parentPassed": 7,
+      "parentFailed": 12,
+      "candidatePassed": 19,
+      "candidateFailed": 0
+    }
+  },
+  "comparison": {
+    "files": 15,
+    "rows": 189,
+    "parent": {
+      "passed": 156,
+      "failed": 22,
+      "skipped": 11
+    },
+    "candidate": {
+      "passed": 168,
+      "failed": 10,
+      "skipped": 11
+    },
+    "transitions": [
+      {
+        "case": "issue-6979-foreign-prototype-identity.test.ts::#6979 ordinary membership over JS-owned prototype identities walks ordinary foreign prototypes with an own null handler",
+        "before": "failed",
+        "after": "passed"
+      },
+      {
+        "case": "issue-6979-foreign-prototype-identity.test.ts::#6979 ordinary membership over JS-owned prototype identities walks ordinary foreign prototypes with an own undefined handler",
+        "before": "failed",
+        "after": "passed"
+      },
+      {
+        "case": "issue-6979-foreign-prototype-identity.test.ts::#6979 ordinary membership over JS-owned prototype identities reads the constructor prototype directly without a descriptor probe",
+        "before": "failed",
+        "after": "passed"
+      },
+      {
+        "case": "issue-6979-foreign-prototype-identity.test.ts::#6979 ordinary membership over JS-owned prototype identities observes live constructor prototype replacement without copying either side",
+        "before": "failed",
+        "after": "passed"
+      },
+      {
+        "case": "issue-6979-foreign-prototype-identity.test.ts::#6979 ordinary membership over JS-owned prototype identities preserves Proxy prototype-trap order and does not compare the candidate itself",
+        "before": "failed",
+        "after": "passed"
+      },
+      {
+        "case": "issue-6979-foreign-prototype-identity.test.ts::#6979 ordinary membership over JS-owned prototype identities propagates original prototype-get exceptions",
+        "before": "failed",
+        "after": "passed"
+      },
+      {
+        "case": "issue-6979-foreign-prototype-identity.test.ts::#6979 ordinary membership over JS-owned prototype identities does not silently truncate a finite chain beyond the old hop limit",
+        "before": "failed",
+        "after": "passed"
+      },
+      {
+        "case": "issue-6979-foreign-prototype-identity.test.ts::#6979 ordinary membership over JS-owned prototype identities uses a classified object-identity adapter, not a host semantic operator",
+        "before": "failed",
+        "after": "passed"
+      },
+      {
+        "case": "issue-6979-foreign-prototype-identity.test.ts::#6979 ordinary membership over JS-owned prototype identities keeps identity admission instance-scoped and never admits native GC values",
+        "before": "failed",
+        "after": "passed"
+      },
+      {
+        "case": "issue-6979-foreign-prototype-identity.test.ts::#6979 ordinary membership over JS-owned prototype identities classifies and echoes adversarial/revoked JS Proxies without inspecting them",
+        "before": "failed",
+        "after": "passed"
+      },
+      {
+        "case": "issue-6979-foreign-prototype-identity.test.ts::#6979 ordinary membership over JS-owned prototype identities throws for non-object foreign prototype null",
+        "before": "failed",
+        "after": "passed"
+      },
+      {
+        "case": "issue-6979-foreign-prototype-identity.test.ts::#6979 ordinary membership over JS-owned prototype identities throws for non-object foreign prototype Symbol(prototype)",
+        "before": "failed",
+        "after": "passed"
+      }
+    ],
+    "unresolvedFailureMessageChanges": [],
+    "normalization": "Only replace the temporary parent directory name when comparing raw failure texts.",
+    "baselineAssembly": "181-row fresh parent run with its foreign-prototype file replaced by the final 19-row fresh parent run; 189 unique filename/full-test-name keys."
+  },
+  "prepared": {
+    "files": 8,
+    "rows": 145,
+    "parentPassed": 129,
+    "parentFailed": 16,
+    "candidatePassed": 129,
+    "candidateFailed": 16,
+    "statusChanges": 0,
+    "rawFailureMessageChanges": 0
+  },
+  "policy": {
+    "before": {
+      "probes": 33,
+      "imports": 456,
+      "unknown": 0,
+      "regimeGap": 0
+    },
+    "after": {
+      "probes": 33,
+      "imports": 457,
+      "unknown": 0,
+      "regimeGap": 0
+    },
+    "inventoryChanges": [
+      {
+        "probe": "objectPrototype",
+        "added": ["env::__boundary_object_same_identity::value-adapter"],
+        "removed": []
+      }
+    ],
+    "sourceBefore": {
+      "runtimeTsLines": 11328,
+      "resolveImportLines": 1959,
+      "resolveImportCases": 7,
+      "ownedAdapterLines": 897,
+      "explicitCapabilityLines": 1194
+    },
+    "sourceAfter": {
+      "runtimeTsLines": 11324,
+      "resolveImportLines": 1959,
+      "resolveImportCases": 7,
+      "ownedAdapterLines": 895,
+      "explicitCapabilityLines": 1194
+    },
+    "gateStatus": "FAIL",
+    "unchangedMaximumImports": 452,
+    "baselineEdited": false,
+    "observation": "Temporary diagnostic copy prints inventories before the same unmodified throwing guard; the real hard gate was rerun and still fails at 457."
+  },
+  "nativeControls": [
+    {
+      "target": "standalone",
+      "name": "scalar",
+      "bytes": 11413,
+      "sha256": "81d83998cf308dea1a6063218bfb63cba2c642ba3e62c8aee1ae9dbd5eea215e",
+      "imports": [],
+      "outputs": [42, 7],
+      "boundaryProbeExported": false,
+      "parentBytes": 11413,
+      "parentSha256": "81d83998cf308dea1a6063218bfb63cba2c642ba3e62c8aee1ae9dbd5eea215e",
+      "byteIdentical": true
+    },
+    {
+      "target": "standalone",
+      "name": "flat",
+      "bytes": 33185,
+      "sha256": "671336c22fe661e836754ebaaa758e6b8a14b5202083538e6067e5a68aa4d134",
+      "imports": [],
+      "outputs": [42, 7],
+      "boundaryProbeExported": false,
+      "parentBytes": 33185,
+      "parentSha256": "671336c22fe661e836754ebaaa758e6b8a14b5202083538e6067e5a68aa4d134",
+      "byteIdentical": true
+    },
+    {
+      "target": "standalone",
+      "name": "dynamic",
+      "bytes": 146186,
+      "sha256": "a14649794c2bbcaf55a300cffabe34cc49e2a2caa6210a121af4ade43f851ecf",
+      "imports": [],
+      "outputs": [42, 7],
+      "boundaryProbeExported": false,
+      "parentBytes": 145718,
+      "parentSha256": "003f7852f9bef8fcb00b44de480fde30a3217040bc191e09e8873802a62751b8",
+      "byteIdentical": false
+    },
+    {
+      "target": "wasi",
+      "name": "scalar",
+      "bytes": 22719,
+      "sha256": "ab7f880debe1399bbf089b74cb76d26e154a50c3d8aeaff4f3a9e3511bd10c58",
+      "imports": [],
+      "outputs": [42, 7],
+      "boundaryProbeExported": false,
+      "parentBytes": 22719,
+      "parentSha256": "ab7f880debe1399bbf089b74cb76d26e154a50c3d8aeaff4f3a9e3511bd10c58",
+      "byteIdentical": true
+    },
+    {
+      "target": "wasi",
+      "name": "flat",
+      "bytes": 52928,
+      "sha256": "7b8d7a6e7a8ab1c22952e9c6e4e46147565202c419b0dc93f36936241c09d187",
+      "imports": [],
+      "outputs": [42, 7],
+      "boundaryProbeExported": false,
+      "parentBytes": 52928,
+      "parentSha256": "7b8d7a6e7a8ab1c22952e9c6e4e46147565202c419b0dc93f36936241c09d187",
+      "byteIdentical": true
+    },
+    {
+      "target": "wasi",
+      "name": "dynamic",
+      "bytes": 141053,
+      "sha256": "a0ce3ef8ebe472044ae2cafccbc0533b04e9f9487adcf64ef60ffd08bdd70b88",
+      "imports": [],
+      "outputs": [42, 7],
+      "boundaryProbeExported": false,
+      "parentBytes": 140585,
+      "parentSha256": "27995cd1b7d460a2796a3331a5b41bcb2a2768521442fba5e1e5732bda89a281",
+      "byteIdentical": false
+    }
+  ],
+  "remaining": [
+    "Import gate 457 > 452 and prerequisite stack unresolved; not merge-ready",
+    "Opaque bound-function internal-slot behavior and the ten inherited broader failures remain open",
+    "Full S7 retirement, compatibility/accelerator/conformance acceptance and binary-cost review remain open",
+    "Strict dead-export closure still unknown at two recorded dynamic imports"
+  ],
+  "sourceSha256": {
+    "src/codegen/ir-prepared-free-functions.ts": "3f46f236d88ac82c34ada8e7996aeedaa719b92cb50aa0435be1669ef0638bf2",
+    "src/codegen/ir-prepared-signature-contract.ts": "e370319042525ba7d7e951dc65054cbfe31e65e6167fe52ca4a8b59c6ace2c97",
+    "src/codegen/native-dynamic-boundary-tag.ts": "4a7674e46edd92253fa6ea2b3db380a71a720ab2687d04edeecea94e0b9b23d7",
+    "src/codegen/native-dynamic-instanceof.ts": "435eef2f673e2dadaf57002942d5e7bb8bd37baf00364de55265d31a2c4e1841",
+    "src/codegen/native-foreign-prototype-chain.ts": "6d00c4ad3fb15d92d00733132890ad7e57fe0af65a9b69c1dc58b65939168de7",
+    "src/compiler/import-manifest.ts": "0eff9aba44edb9eb415ab6ace8fd7661e6978c82c3eb351268b947dbe459ad6c",
+    "src/index.ts": "69720ca814c1f76dd51f93826484eb857287cfc9dbb4206f503f18d6d8a8f838",
+    "src/ir/backend/legality.ts": "0f6b1ccb3c81fdce84e8912e7ab87f1808062a2c44b129dd92335d6e57927805",
+    "src/ir/from-ast.ts": "2f223781b1ff5f8673c9dd6189c4e06261e1f0177285ba5acd956862600c1914",
+    "src/ir/instanceof-lowering.ts": "0185358797d15673a494fdc57e57a5f6571a98d8d4c3897073dc3c4bfc5bdd0a",
+    "src/ir/instanceof-selection.ts": "c2b3319d6a4c67a5f00c8cfdd789d7d86d6a92ed1eb90d29ce037245859ae602",
+    "src/ir/integration.ts": "d514690848a0396282705af20ff797aa6302c2f08cbd58ecbc9fc7941fb525d8",
+    "src/ir/select.ts": "c975e56a05f28efb49066afa14e9b134d9c0f9d6ad08fc4bd0eae5e7016c817d",
+    "src/runtime.ts": "59e32ffb7123855393dc51d309580e196c283911059587ea812c051a04d06198",
+    "src/runtime/boundary-object-adapter.ts": "d59543e3e7aecab514ffb5db652a5090b20c9f54f5ef06a2d6fcc23cdc429586",
+    "tests/issue-6979-native-dynamic-instanceof.test.ts": "1b453b9281d6f47a329de2dfe9922d2e54985b28eb1658ee7bfb93eecf88bfcf",
+    "tests/issue-6979-foreign-prototype-identity.test.ts": "0726ba5e1b0d22a95fadbeb6eded9f16675b33dbd43d84fcaf47224ba679f297"
+  }
+}

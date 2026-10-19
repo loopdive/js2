@@ -951,3 +951,32 @@ but the import policy is **456 against an unchanged 452 ceiling**. The PR
 remains draft, not merged; publishing the checkpoint does not approve a
 ceiling increase or complete the migration. Resume with that decision and
 the binary-cost review, not another untracked refactoring slice.
+
+The later "S7 native dynamic-instanceof suspended-work handoff" section in
+the same issue preserves the unsuccessful five-file IR/shared-runtime
+prototype as a non-executable audit patch, with a self-contained repro and
+ordered next steps. It still fails both JS-owned positive cases and only
+achieves hybrid IR patching (`param-signature-unstable`), not IR-only body
+ownership. The published runnable compiler does not enable that prototype;
+publication in the existing PR is a handoff, not a merge or acceptance claim.
+
+Subsequent local work is documented under "Local repair verified; still
+unpublished" in that same S7 issue: the JS-owned default-constructor and
+custom-handler cases now pass through prepared IR bodies (zero legacy body
+emissions), with 28/28 focused controls versus 7/28 on the clean parent.
+The original failed prototype stays archived for provenance. The new repair
+remains local because signing is blocked; the published PR head is unchanged.
+Ordinary membership after an own nullish Symbol.hasInstance override still
+fails positively, and the full migration/import/dependency acceptance remains
+open. Do not equate the focused repair or PR publication with completion.
+
+The latest "S7-f foreign prototype identity and signed-publication handoff"
+section records the next repair: ordinary JS-owned prototype identity now
+works through a native walk plus one admission-gated identity primitive, and
+a native type probe removes observable JS-Proxy classification reads. The
+focused population is 55/55; the 189-case comparison has twelve improvements
+and no new failures, retaining ten known failures and eleven skips. The new
+identity primitive changes the import gate to **457/452**, still unapproved.
+An existing matching macOS signing agent was found, allowing signed checkpoint
+publication without bypassing hooks. This supersedes the earlier signing
+blocker, not the PR's dependency, semantic acceptance or readiness blockers.

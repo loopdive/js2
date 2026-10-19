@@ -21,6 +21,11 @@ export interface BoundaryObjectAdapterContext {
 }
 
 type BoundaryImport = (...args: any[]) => any;
+type BoundaryBinaryOperation = (obj: any, value: any, exports: Record<string, Function>) => any;
+
+// IsConstructor(newTarget) must not read its prototype or invoke user code.
+// A trapping target returns the dummy result without OrdinaryCreateFromConstructor.
+const constructorProbe = new Proxy(class {}, { construct: () => ({}) });
 
 function admittedExports(context: BoundaryObjectAdapterContext, obj: unknown): Record<string, Function> | undefined {
   const exports = context.getExports();
@@ -44,14 +49,18 @@ export function createBoundaryObjectAdapter(
       const exports = admittedExports(context, obj);
       return exports ? execute(obj, exports) : fallback;
     };
+  const binary =
+    (execute: BoundaryBinaryOperation, fallback: null | 0 = null): BoundaryImport =>
+    (obj: any, value: any) => {
+      const exports = admittedExports(context, obj);
+      return exports ? execute(obj, value, exports) : fallback;
+    };
 
   switch (operation) {
     case "get":
-      return (obj: any, key: any) => {
-        const exports = admittedExports(context, obj);
-        if (!exports) return null;
-        return context.fromHostValue(Reflect.get(obj, context.toPropertyKey(key, exports)), exports);
-      };
+      return binary((obj, key, exports) =>
+        context.fromHostValue(Reflect.get(obj, context.toPropertyKey(key, exports)), exports),
+      );
     case "set":
       return (obj: any, key: any, value: any) => {
         const exports = admittedExports(context, obj);
@@ -60,13 +69,11 @@ export function createBoundaryObjectAdapter(
       };
     case "has":
     case "delete":
-      return (obj: any, key: any) => {
-        const exports = admittedExports(context, obj);
-        if (!exports) return 0;
+      return binary((obj, key, exports) => {
         const hostKey = context.toPropertyKey(key, exports);
         const result = operation === "has" ? Reflect.has(obj, hostKey) : Reflect.deleteProperty(obj, hostKey);
         return result ? 2 : 1;
-      };
+      }, 0);
     case "keys":
       return unary((obj, exports) => context.toNativeVector(Object.keys(obj), exports));
     case "call":
@@ -127,23 +134,16 @@ export function createBoundaryObjectAdapter(
           : 0;
       };
     case "getPrototypeOf":
-      return unary((obj, exports) => context.fromHostValue(Reflect.getPrototypeOf(obj), exports));
+      return unary((obj, exports) => {
+        const proto = Reflect.getPrototypeOf(obj);
+        return proto === null ? null : context.fromHostValue(proto, exports);
+      });
     case "setPrototypeOf":
-      return (obj: any, proto: any) => {
-        const exports = admittedExports(context, obj);
-        if (!exports) return null;
-        Object.setPrototypeOf(obj, context.toHostValue(proto, exports));
-        return obj;
-      };
+      return binary((obj, proto, exports) => Object.setPrototypeOf(obj, context.toHostValue(proto, exports)));
     case "getOwnPropertyDescriptor":
-      return (obj: any, key: any) => {
-        const exports = admittedExports(context, obj);
-        if (!exports) return null;
-        return context.fromHostValue(
-          Reflect.getOwnPropertyDescriptor(obj, context.toPropertyKey(key, exports)),
-          exports,
-        );
-      };
+      return binary((obj, key, exports) =>
+        context.fromHostValue(Reflect.getOwnPropertyDescriptor(obj, context.toPropertyKey(key, exports)), exports),
+      );
     case "definePropertyValue":
       return (obj: any, key: any, value: any, flags: number) => {
         const exports = admittedExports(context, obj);
@@ -191,20 +191,18 @@ export function createBoundaryObjectAdapter(
       });
     case "isAdmitted":
       return (obj: any) => (admittedExports(context, obj) ? 1 : 0);
+    case "sameIdentity":
+      return (obj: any, other: any) => (obj === other && admittedExports(context, obj) ? 1 : 0);
     case "callableKind":
-      return (value: any) => {
-        const exports = context.getExports();
-        if (!exports || !context.isAdmitted(value, exports) || typeof value !== "function") return 0;
-        let constructible = 0;
+      return unary((value) => {
+        if (typeof value !== "function") return 0;
         try {
-          // biome-ignore lint/complexity/useArrowFunction: Reflect.construct needs a constructible target; an arrow is not one, so this IsConstructor probe would always throw.
-          Reflect.construct(function () {}, [], value);
-          constructible = 2;
+          Reflect.construct(constructorProbe, [], value);
+          return 3;
         } catch {
-          // Callable-only values (arrows, methods, revoked callable-only proxies) deliberately keep only bit 0.
+          return 1;
         }
-        return 1 | constructible;
-      };
+      }, 0);
     case "preventExtensions":
     case "seal":
     case "freeze":

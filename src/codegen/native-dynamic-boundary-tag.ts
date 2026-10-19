@@ -1,12 +1,13 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import { ensureAnyValueType } from "./any-helpers.js";
-import type { CodegenContext } from "./context/types.js";
+import { jsValueBoundary, type CodegenContext } from "./context/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { addFuncType } from "./registry/types.js";
 
 /** Export the narrow tag probe that distinguishes native null and undefined. */
 export function ensureNativeDynamicBoundaryTag(ctx: CodegenContext): void {
+  ensureNativeBoundaryCarrierProbe(ctx);
   ensureAnyValueType(ctx);
   const name = "__dynamic_boundary_tag";
   let funcIdx = ctx.funcMap.get(name);
@@ -61,6 +62,28 @@ export function ensureNativeDynamicBoundaryTag(ctx: CodegenContext): void {
   }
   if (funcIdx !== undefined && !ctx.mod.exports.some((entry) => entry.name === name)) {
     ctx.mod.exports.push({ name, desc: { kind: "func", index: funcIdx } });
+  }
+}
+
+/** Classify opaque GC references without invoking any JavaScript object trap. */
+function ensureNativeBoundaryCarrierProbe(ctx: CodegenContext): void {
+  if (!jsValueBoundary(ctx) || ctx.strictNoHostImports) return;
+  const name = "__dynamic_boundary_is_gc";
+  let index = ctx.funcMap.get(name);
+  if (index === undefined) {
+    const typeIdx = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "i32" }], name);
+    index = mintDefinedFunc(ctx);
+    pushDefinedFunc(ctx, index, {
+      name,
+      typeIdx,
+      locals: [],
+      exported: true,
+      body: [{ op: "local.get", index: 0 }, { op: "any.convert_extern" }, { op: "ref.test", typeIdx: -19 }],
+    });
+    ctx.funcMap.set(name, index);
+  }
+  if (!ctx.mod.exports.some((entry) => entry.name === name)) {
+    ctx.mod.exports.push({ name, desc: { kind: "func", index } });
   }
 }
 

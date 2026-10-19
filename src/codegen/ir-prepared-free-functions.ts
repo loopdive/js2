@@ -28,6 +28,12 @@ import { ts } from "../ts-api.js";
 import { withSelectedTopLevelAccessorUnitIds } from "../ir/module-bindings.js";
 import { resolveIrDynamicCarrierType } from "./any-helpers.js";
 import type { CodegenContext } from "./context/types.js";
+import {
+  preparedSignatureOptions,
+  r2StableSignatureType,
+  r2StableValType,
+  type PreparedSignatureOptions,
+} from "./ir-prepared-signature-contract.js";
 import { installAstFreeClassConstructorNewWrapper } from "./class-constructor-wrapper.js";
 import {
   assertPreparedIrAsyncPromiseOwnerCurrent,
@@ -388,36 +394,6 @@ function bodyProjection(
   );
 }
 
-function r2StableSignatureType(
-  type: IrType | null,
-  options?: { readonly allowOpaqueExternrefValue?: boolean },
-): boolean {
-  if (type === null || type.kind === "string") return true;
-  // #2951 generator owners — the source return contract of a `function*` is the
-  // opaque generator object, which both front-ends project to the same physical
-  // `externref`. Only the generator admission path opts in; every other owner
-  // keeps the narrower vocabulary so an unproven reference contract cannot
-  // silently enter preparation.
-  if (options?.allowOpaqueExternrefValue === true && asVal(type)?.kind === "externref") return true;
-  // #3522 returned-closure ownership — an exact callable source boundary is
-  // the same canonical externref contract in both backends. Admit the owner to
-  // prepare-before-emit so its inventoried lifted literal is allocated inside
-  // the sealed component instead of relying on a direct-body closure slot.
-  if (type.kind === "callable") return true;
-  // #3522 Builtins retirement — opaque host-class contracts have one
-  // backend-independent physical representation in the JS-host lane:
-  // externref. Admission is still fail-closed because
-  // r2SignatureMatchesAllocatedSlot compares that projection with the exact
-  // Program ABI slot before preparation can replace the direct body.
-  if (type.kind === "extern") return true;
-  if (type.kind === "vec") {
-    const element = asVal(type.elementType);
-    return element?.kind === "f64" || element?.kind === "i32";
-  }
-  const val = asVal(type);
-  return val?.kind === "f64" || val?.kind === "i32";
-}
-
 /**
  * An unsealed early attempt is retried after direct emission. Nested executable
  * syntax can allocate derived callable identities during that attempt, and the
@@ -689,29 +665,6 @@ function sameValType(left: ValType, right: ValType): boolean {
   return true;
 }
 
-function r2StableValType(
-  ctx: CodegenContext,
-  type: IrType,
-  options?: { readonly allowOpaqueExternrefValue?: boolean },
-): ValType | undefined {
-  if (type.kind === "extern" || type.kind === "callable") return { kind: "externref" };
-  if (options?.allowOpaqueExternrefValue === true && asVal(type)?.kind === "externref") {
-    return { kind: "externref" };
-  }
-  if (type.kind === "string") {
-    if (!ctx.nativeStrings) return { kind: "externref" };
-    return ctx.anyStrTypeIdx >= 0 ? { kind: "ref", typeIdx: ctx.anyStrTypeIdx } : undefined;
-  }
-  if (type.kind === "vec") {
-    const element = asVal(type.elementType);
-    if (!element || (element.kind !== "f64" && element.kind !== "i32")) return undefined;
-    const vecTypeIdx = getOrRegisterVecType(ctx, element.kind, element);
-    return { kind: type.nullable ? "ref_null" : "ref", typeIdx: vecTypeIdx };
-  }
-  const val = asVal(type);
-  return val?.kind === "f64" || val?.kind === "i32" ? val : undefined;
-}
-
 /**
  * #2951 — IR-claimed generators compile once only in the JS-host lane. The
  * standalone / WASI / no-host-import lanes lower generators through the
@@ -733,7 +686,7 @@ function r2SignatureMatchesAllocatedSlot(
   ctx: CodegenContext,
   unitId: IrUnitId,
   override: { readonly params: readonly IrType[]; readonly returnType: IrType | null },
-  options?: { readonly allowOpaqueExternrefValue?: boolean },
+  options?: PreparedSignatureOptions,
 ): boolean {
   const func = ctx.programAbiSourceCallables?.functionForUnit(unitId);
   const signature = func === undefined ? undefined : ctx.mod.types[func.typeIdx];
@@ -1516,7 +1469,7 @@ export function selectR2PreparedOwnerComponents(input: {
     // Admit that one reference contract for generators only; the standalone /
     // WASI / no-host-import lanes keep the compile-twice route because their
     // legacy lowering is the disjoint #680 native carrier.
-    const signatureOptions = isGenerator ? { allowOpaqueExternrefValue: true } : undefined;
+    const signatureOptions = preparedSignatureOptions(input.ctx, isGenerator);
     // (#3521 R2-T1) The same ten predicates in the same order, read as a table
     // so the FIRST failing one can be named. `find` short-circuits exactly like
     // the `||` chain it replaces, so no predicate that used to be skipped runs.

@@ -102,6 +102,10 @@ import {
   hasExactIrStringRepeatProviderAbi,
 } from "../codegen/ir-host-string-repeat.js";
 import {
+  ensureNativeInstanceofOperatorChecked,
+  NATIVE_INSTANCEOF_CHECKED,
+} from "../codegen/native-dynamic-instanceof.js";
+import {
   ensureStandaloneWrapperInstanceOfHelper,
   type StandaloneWrapperConstructorName,
 } from "../codegen/standalone-wrapper-instanceof.js";
@@ -6828,6 +6832,12 @@ function makeFromAstResolver(
       if (!ts.isIdentifier(expr.expression)) return false;
       const declaration = ctx.oracle.variableDeclarationOf(expr.expression);
       return declaration !== undefined && ctx.holeyArrayDeclarations.has(declaration);
+    },
+    dynamicInstanceOfTarget() {
+      if (!supportsBackendCapability("native-dynamic-instanceof")) return null;
+      return ensureNativeInstanceofOperatorChecked(ctx) === undefined
+        ? null
+        : irRuntimeFuncRef(NATIVE_INSTANCEOF_CHECKED);
     },
     standaloneWrapperInstanceOfPlan(ctorName: string) {
       if (

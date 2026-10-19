@@ -2308,9 +2308,9 @@ describe this deletion as restoring host instanceof interoperability.
 
 #### Open boundary gap: dynamic instanceof on JS-owned values
 
-- [ ] Make a genuine JS-owned instance/constructor pair return true through
+- [x] Make a genuine JS-owned instance/constructor pair return true through
   native dynamic `instanceof`.
-- [ ] Invoke a JS-owned `Symbol.hasInstance` with the original receiver,
+- [x] Invoke a JS-owned `Symbol.hasInstance` with the original receiver,
   original value, and exactly one argument, even when its installation was
   outside the compiled source.
 
@@ -2341,3 +2341,375 @@ foreign prototype identity. A JS-owned handler cannot be excluded because
 the compiled source did not install it. Implement the repair in IR or the
 genuinely shared native runtime, not as a new frozen direct-AST language arm.
 Do not restore the unreachable legacy host dispatcher as a semantic fallback.
+
+### S7 native dynamic-instanceof suspended-work handoff (2026-10-19, Codex)
+
+**Publication, not completion.** At the user's request, checkpoint the work in
+[Separate native semantics from JS host mode](https://github.com/loopdive/js2/pull/6762)
+and hand off here. The runnable compiler remains at `3498bfa40d`; this handoff
+does not enable the unsuccessful experimental route. Full S7 acceptance and
+this issue remain open. The prerequisite
+[Remove the host-assisted semantic policy](https://github.com/loopdive/js2/pull/6701)
+was still open and unmerged when checked for this publication. Keep the
+existing PR draft: the known import gate is 456 against its unchanged 452
+ceiling; publication grants neither a ceiling increase nor merge readiness.
+
+**Recoverable prototype.** The exact five-file experiment is preserved in
+`plan/audit/6979-native-dynamic-instanceof-unfinished-20261019.patch`.
+It applies to `3498bfa40d` (`git apply --check` verified). It is research/WIP,
+not a recommended patch to enable in production. The five production files
+have been returned to that checkpoint after archiving their full diff; no
+user edits or frozen direct-AST emitters were changed. The local Node 24
+Vitest flag is an environment workaround and is not part of the patch.
+
+The prototype adds a checked native runtime target, exact externref dynamic
+carrier capability, IR selection/lowering and resolver wiring. Its owners
+are `src/codegen/native-dynamic-instanceof.ts`, `src/ir/backend/legality.ts`,
+`src/ir/from-ast.ts`, `src/ir/integration.ts` and `src/ir/select.ts`.
+It deliberately leaves the frozen direct-AST path alone and keeps the
+InstanceofOperator separate from OrdinaryHasInstance. The latter is also the
+implementation of Function.prototype[Symbol.hasInstance] and must not
+recursively consult a custom handler.
+
+**Fresh experiment result.** Run default WasmGC/gc native-first compile,
+real generated imports and exported-value wrappers under Node 24 with
+`--experimental-wasm-exnref`. The archived prototype still returns **0 instead
+of 1** for both the JS-owned instance/constructor pair and JS-owned custom
+handler; the handler is called zero times. The negative case returns 0 and
+the identity control passes. These are four measured cases: two passing and
+two failing, not a passing interop suite. With `trackIrOutcomes: true`,
+`isInstance` appears in `irCompiledFuncs` with no first-skip/post-claim error,
+but its ledger explicitly says `stage: patch`, `directBodyEmissions: 1`,
+`irBodyEmissions: 1`, `legacyBodyEmitted: true`, and admission withdrawal
+`param-signature-unstable`. This is hybrid patching, **not genuine IR-only
+admission**. The outcome target label says standalone while the physical body
+route audit says gc; do not use that label to identify the measured target.
+Typecheck completed successfully on the prototype; the full semantic/error,
+import and source-ratchet matrix has not been validated for it.
+
+The following self-contained repro can be saved as `.tmp/s7-instanceof.ts`
+and run with `node --experimental-wasm-exnref --import tsx .tmp/s7-instanceof.ts`:
+
+```ts
+import { compile } from '../src/index.ts';
+import { buildCompiledImports, wrapCompiledExports } from '../src/runtime.ts';
+const result = await compile(`
+  export function isInstance(value: any, constructor: any): number {
+    return value instanceof constructor ? 1 : 0;
+  }
+  export function echo(value: any): any { return value; }
+`, { trackIrOutcomes: true });
+if (!result.success) throw Error(JSON.stringify(result.errors));
+const imports = buildCompiledImports(result);
+const { instance } = await WebAssembly.instantiate(result.binary, imports);
+imports.setInstance?.(instance);
+const ex = wrapCompiledExports(result, instance) as Record<string, Function>;
+class Foreign {}
+const sentinel = {};
+let calls = 0;
+const custom = {
+  [Symbol.hasInstance](value: unknown) {
+    if (this !== custom || value !== sentinel || arguments.length !== 1)
+      throw Error('boundary receiver/argument identity');
+    calls++;
+    return true;
+  },
+};
+console.log({ positive: ex.isInstance(new Foreign(), Foreign), expected: 1 });
+console.log({ negative: ex.isInstance({}, Foreign), expected: 0 });
+console.log({ custom: ex.isInstance(sentinel, custom), calls, expected: 1 });
+console.log({ identity: ex.echo(sentinel) === sentinel && ex.echo(Foreign) === Foreign });
+console.log(result.irOutcomes, result.irBodyRouteAudit);
+```
+
+**Resume in this order.**
+
+1. Reproduce the two wrong answers before changing admission. Trace native
+   GetMethod/Call for a JS-owned handler: inspect `__extern_get`, boxed
+   well-known Symbol.hasInstance key conversion and foreign callable
+   classification (`__typeof_function`). Missing symbol-marshalling export
+   demand and callable classification are hypotheses, not established causes.
+   The source-only `moduleInstallsCallableHasInstance` hint cannot exclude a
+   handler installed by JS outside the compiled source. Do not resurrect the
+   retired legacy host-semantic dispatcher as a fallback.
+2. Implement the repair in IR or genuinely shared native runtime, preserving
+   GetMethod/Call versus OrdinaryHasInstance separation. Prove helper demand,
+   stable parameter ABI and actual prepared-body ownership. Require zero
+   legacy function-body emissions; a selector claim or patched count is not
+   sufficient. Do not fix the frozen direct-AST emitter instead.
+3. Add parent-controlled tests for original receiver/value identity, one
+   argument/one call, live getter mutation, truthiness, throwing getter/handler
+   exception identity, noncallable handlers, invalid RHS, primitive LHS and
+   default Function.prototype[Symbol.hasInstance] without recursive dispatch.
+   Preserve native standalone/WASI zero-import controls and existing static
+   class/wrapper lowering. Operator TypeError cases are not fixed by the
+   archived checked wrapper alone; the existing operator still has
+   conservative false-return paths.
+4. Rerun the recorded 70-row operator population and compare every failure
+   message, then measure new probes/imports, binary cost and all ratchets.
+   Do not inherit old measurements as proof for a new semantic patch. The
+   runnable checkpoint remains at 804 raw-mode references under the unchanged
+   818 ceiling, runtime-source ceiling 11,328, and the unresolved 456/452
+   import gate. Strict dead-export retirement remains uncertified at the
+   two previously recorded nonliteral dynamic imports. Leave acceptance open
+   until these and the dependency stack are resolved.
+
+**Handoff-only validation.** After restoring the runnable compiler, the same
+four boundary cases reproduced the same two passes/two failures. The JSON
+and operator retirement files pass **6/6 tests across two files** on the
+restored source. Issue integrity, LOC/function, coercion and oracle checks
+pass. The dead-export preservation command exits successfully with **6/6 full
+and 6/6 cut witnesses**, while still explicitly reporting the two unknown
+dynamic imports and **strict retirement NOT CERTIFIED**. Those scoped checks
+do not clear the migration's semantic/import blockers or establish IR-only
+conformance. This handoff changes documentation/audit material only.
+
+**Publication blocker at handoff.** The normal commit hook chain passed, but
+the configured SSH signing key could not be decrypted and no signing agent
+was available. The handoff and archived prototype are staged locally, not
+yet committed/pushed. The PR's published head remains `3498bfa40d`. Resume
+publication after the user unlocks the signer or explicitly authorizes a
+one-off unsigned commit; do not silently disable signing or bypass hooks.
+
+#### Resumed investigation after the publication blocker
+
+The signing blocker does not prevent local migration work. Fresh three-way
+controls on `3498bfa40d` locate two independent demand/selection defects:
+plain source classifies a JS-owned function as non-callable (0) and both
+instanceof positives fail; adding an exported symbol-read function makes
+callable classification/read identity pass but leaves both positives false;
+adding a source handler-install function makes both positives pass. A Proxy
+log observes the exact Symbol.hasInstance key, original receiver/value and
+one argument in the passing installation control. Symbol bridge exports are
+present in all three modules, so missing symbol export demand is not the
+cause of these observations. Local record:
+`.tmp/s7-boundary-dispatch-diagnosis.ts` (three measured variants).
+
+Resume the archived IR path locally, explicitly demand the existing admitted
+callable classifier, and prove a dynamic-externref ABI against the allocated
+slot before early body ownership. Keep the archival patch as the failed
+experiment, not an updated success claim. No permission to bypass signing,
+raise ceilings, or change frozen direct-AST semantics has been granted.
+
+#### Local repair verified; still unpublished (2026-10-19, Codex)
+
+The new default non-fast WasmGC IR path now requests the checked native
+InstanceofOperator and the existing admitted-JS callable classifier itself.
+No source installation of Symbol.hasInstance is required. Dynamic signature
+preparation admits only its exact externref carrier and still compares every
+parameter/result against the allocated Program ABI slot. This removes the
+`param-signature-unstable` withdrawal for the measured operator exports:
+`check` and the number-LHS `numeric` each have **zero direct body emissions,
+one IR body emission, no legacy body entry and no withdrawal**. The physical
+audit identifies target gc; the stale outcome target label is not used as
+target evidence. This proves these function bodies, not a whole IR Test262
+sweep or complete program ownership.
+
+The operator keeps its own checked contract separate from the frozen direct
+body's legacy entry and from OrdinaryHasInstance. Invalid RHS/present
+noncallable handlers throw native TypeError; boxed boundary null and undefined
+handlers count as absent. Concrete numeric operands use the native dynamic
+boxer instead of the unsupported host-number-box seam. JS objects/functions
+stay the original admitted externrefs, without object copying.
+
+Callable classification previously used a dummy ordinary construction with
+the user value as newTarget, which read a Proxy's `prototype` while merely
+classifying it. The boundary adapter now uses a trapping constructible target:
+it checks constructibility without reading the user's prototype or invoking
+user code. It also reuses the adapter's existing admission guard. The adapter
+file remains 238 lines; no source/import ceiling was raised.
+
+Keep the drivers bounded rather than granting new growth allowances:
+`src/codegen/ir-prepared-signature-contract.ts` owns signature vocabulary and
+physical projection; `src/ir/instanceof-selection.ts` owns the exact carrier
+certificate; `src/ir/instanceof-lowering.ts` owns the extracted unchanged
+wrapper-brand lowering. New dynamic-operator orchestration remains in IR;
+no frozen direct-AST body emitter was extended.
+
+**Fresh parent-controlled acceptance.**
+`tests/issue-6979-native-dynamic-instanceof.test.ts` has **28/28 passing** on
+the candidate versus **7/28 passing and 21 failing** on clean parent
+`3498bfa40d`. Cases cover original JS instance/constructor identity, default
+positive/negative membership, live getters/mutations, exactly one handler
+call and argument, no Proxy prototype access during classification, handler
+truthiness, thrown-value identity, invalid operands/handlers, nullish absent
+methods, numeric LHS dispatch, no recursive default-method dispatch and
+standalone/WASI native zero-import controls with two runtime inputs. Runs
+use Node 24's `--experimental-wasm-exnref` and real generated imports/export
+wrappers; no JS semantic import is substituted as an operator implementation.
+
+The eight-file preparation/ABI population is **145 rows / 129 passing /
+16 failing / zero skipped on both fresh parent and final candidate**, with
+zero status changes and all failure texts equal after replacing only the
+temporary worktree directory name. Existing failures include vector/ABI,
+receipt-lookup bounds, singleton/caller behavior and telemetry assertions;
+this is not a green preparation suite. Reports are
+`.tmp/s7e-prepared-{parent,final}-tests.json`.
+
+The combined final operator/wrapper/ordinary/retirement/interop population is
+**13 files / 161 unique cases: 140 passing, ten failing and eleven skipped**,
+versus **119 passing, 31 failing and eleven skipped** on the assembled parent
+controls. All 21 transitions are the new interop controls changing fail to
+pass; all ten residual failure texts match after only the parent directory
+replacement. Three retirement rows overlap the earlier 73-row and fresh
+63-row baseline reports and are counted once, not twice. The original 70-row
+population remains 63/7/0, with exact failure messages unchanged. Wrapper
+residuals include two obsolete assertions demanding the retired host import;
+the ordinary-method residual requires an unavailable runtime-eval provider.
+The scoped reproducible record is
+`plan/audit/6979-native-dynamic-instanceof-local-20261019.json`, including
+source hashes, case transitions and explicit proof limits. It does not make
+the combined population green or certify the full migration.
+
+Typecheck, targeted lint/format, LOC/function budgets, coercion, oracle and
+IR-fallback gates pass. The dead-export preservation gate remains 6/6 full
+and cut witnesses, not strict certification of the two recorded unknown
+dynamic imports. Raw-mode source is still **804 references in 357/1,945
+source files**, under the unchanged 818 ceiling. The host-import hard gate
+still fails **456 > 452** and reports no other budget violation; runtime
+source remains 11,328 and owned adapters remain within 898. All baselines
+remain unchanged. The clean temporary parent checkout was removed after
+copying its reports into this worktree's `.tmp/`.
+
+**Remaining semantic work, independently reproduced.**
+
+- [x] Support OrdinaryHasInstance on a JS-owned constructor whose own
+  Symbol.hasInstance is null/undefined. With `class F {}`, `v = new F()` and
+  `Object.defineProperty(F, Symbol.hasInstance, { value: null })`, the current
+  S7-e native export returned **0 rather than 1** (the JS oracle returned 1). The
+  new GetMethod normalization correctly avoids a wrong handler TypeError,
+  but the ordinary native prototype walk still cannot compare foreign
+  object identities. Fix the shared identity/prototype substrate, not a
+  top-level host instanceof fallback or object copy. The passing negative
+  nullish-method controls must remain beside this positive case.
+- [ ] Complete the remaining S7 source retirement, import-ceiling decision,
+  binary-cost review, dependency stack and full compatibility/accelerator/
+  conformance acceptance. These focused successes do not complete migration.
+
+The earlier archived patch remains an exact record of the unsuccessful
+prototype. The working tree now contains the subsequent verified repair;
+it is **not** the archived patch or the published PR head. Signing is still
+blocked, so none of this local repair is committed/pushed. Do not bypass
+signing or hooks and do not mark the PR ready on the strength of local tests.
+
+#### Foreign-prototype identity repair underway (2026-10-19, Codex)
+
+The next shared-runtime slice addresses the remaining ordinary membership
+gap, not another host semantic provider. Wasm's eqref identity cannot compare
+opaque JS-owned object references. Add one admission-gated object-identity
+adapter primitive (no property reads, traversal, construction or instanceof
+inside the adapter), and keep the prototype walk and decision in Wasm. Use
+the existing GetPrototypeOf MOP for each hop, preserving Proxy trap order and
+exceptions. Its null terminal must remain an internal null reference, not a
+boxed dynamic null. Foreign callable prototype lookup must use Get directly,
+not an observable extra GetOwnPropertyDescriptor/HasOwnProperty probe.
+
+Register the primitive before helper bodies capture indices. Preserve the
+old native eqref walk and all no-JS-target imports/behavior, and verify native,
+JS and mixed chains with positive/negative and trap controls. Measure the
+actual import delta without raising the existing ceiling. Keep the prior
+local repair's source-hash audit as its own historical measurement; do not
+relabel it as validation of these later edits. Bound-function opaque internal
+slots are a separate requirement, not assumed solved by an ordinary walk.
+
+### S7-f foreign prototype identity and signed-publication handoff (2026-10-19, Codex)
+
+**This section supersedes the earlier signing-blocked/unpublished status for
+the code included in this checkpoint.** The shell did not inherit the macOS
+SSH-agent socket. Read-only discovery through launchctl found the existing
+agent; its loaded public key fingerprint matches the configured signer. Use
+that socket only in the commit process environment, with signing and normal
+hooks enabled. No private key/passphrase was read, no persistent signing
+configuration changed, and no unsigned-commit permission is assumed. Publish
+through the existing draft PR, not directly to main or as migration completion.
+
+**Representation repair.** The native ordinary prototype walker now supports
+JS-owned prototype identities. Its only added import is
+`__boundary_object_same_identity`, a two-reference, admission-gated identity
+primitive. It performs no property lookup, traversal, instanceof or copying.
+The Wasm algorithm still owns each GetPrototypeOf hop, null termination and
+the decision. Exact identity implies both references share the admitted owner;
+an unadmitted or native GC value never acquires authority through this import.
+The foreign walk has no arbitrary finite-chain cutoff. The existing native
+eqref path remains separate and needs no JS import on standalone/WASI.
+
+An admitted foreign callable's prototype is read directly through Get, not
+through a preceding observable descriptor/own-property probe. Nullish handler
+absence and prototype validity use the native boxed-null/undefined contract;
+a boxed null prototype is invalid even though JavaScript typeof null says
+object. The same shared nullish test handles the ordinary native helper's
+value/prototype checks. The frozen direct-AST body emitter remains untouched.
+
+**Trap-free admission.** The initial walk tests exposed a second defect:
+`_isWasmStruct` called Object.getPrototypeOf during admission and could swallow
+a throwing Proxy trap as a classification result. New dynamic boundary exports
+publish `__dynamic_boundary_is_gc`, a native eqref-type probe. Admission uses
+that probe and caches its certified verdict before marking JS ownership;
+neither a Proxy trap nor a speculative property write is needed. Native GC
+values stay native, while ordinary, frozen/null-prototype, adversarial and
+revoked JS Proxies retain their actual JS identities. Existing compiled
+modules without the new probe retain their compatibility path.
+
+The object adapter reuses one admission guard for binary MOP operations and
+returns a raw internal null for the GetPrototypeOf terminal; dynamic user
+values retain their normal boxing. Numeric/boolean/bigint admission shares
+its existing boxer lookup without changing the value families. Runtime source
+is **11,324 lines**, under the unchanged 11,328 cap. Measured owned adapters
+are **895 lines**, under the unchanged 898 cap. No baseline was raised.
+
+**Measured acceptance and limits.**
+
+- The three-file boundary population passes **55/55**. The new ordinary-
+  prototype file passes **19/19**, versus **7 passing/12 failing** on the
+  exact staged S7-e source snapshot. That baseline was reconstructed in a
+  temporary checkout and all eleven source hashes matched the preceding
+  audit before execution. Cases include own null/undefined handlers, direct
+  and inherited positives/negatives, live prototype replacement, Proxy trap
+  order, no descriptor probe, thrown-value identity, primitive LHS order,
+  invalid/null/Symbol prototypes, a 10,005-link finite chain, native-versus-JS
+  classification, exact frozen/Proxy identity and instance-scoped admission.
+- The expanded **15-file / 189-case** parent-controlled population changes
+  **156 passing/22 failing/11 skipped → 168 passing/10 failing/11 skipped**.
+  All twelve transitions are fail to pass. All ten remaining failure texts
+  match after replacing only the temporary parent directory name. The parent
+  report's older eleven-row foreign file is replaced, not added again, by
+  its final nineteen-row run. The existing 161-case population has no status
+  or failure-message change. The eight-file **145-row** preparation/ABI
+  population remains **129 passing/16 failing/zero skipped**, with exact
+  status and raw failure-message equality against the prior source snapshot.
+- Native scalar/flat/dynamic controls execute **6/6** modules over standalone
+  and WASI, each with zero imports and answers 42 and 7 for different inputs.
+  Four scalar/flat binaries remain byte-identical. The two dynamic-instanceof
+  binaries each grow **468 bytes** for the shared boxed-null checks:
+  standalone **145,718 → 146,186**, WASI **140,585 → 141,053**. They are not
+  claimed byte-identical, and no JS-boundary type probe is exported there.
+- All **33** import inventories were compared. Totals change **456 → 457**,
+  with **zero unknown and zero regime-gap imports** on both sides. The only
+  added occurrence is the identity value adapter in the `objectPrototype`
+  probe; no other import is added or removed. The actual hard gate still
+  fails **457 > 452**. Temporary observational instrumentation prints before
+  the same throwing guard; the real gate was rerun and still fails. Neither
+  the previous 456 decision question nor publication authorizes a 457 ceiling.
+- Typecheck, targeted lint/formatting, LOC/function, coercion, oracle and
+  IR-fallback checks pass. The strict dead-export proof remains uncertified
+  at the two recorded nonliteral dynamic imports; preservation still has
+  six full and six cut witnesses. These are default-path scoped tests, not
+  an IR Test262 or whole-program acceptance result.
+
+The scoped record is
+`plan/audit/6979-foreign-prototype-identity-20261019.json`, with exact source
+hashes, transitions, import deltas and native binary witnesses. The preceding
+S7-e audit and failed prototype patch remain historical evidence, not claims
+about this later source. Raw reports stay under `.tmp/s7f-`; the controlled
+temporary checkout was restored, verified clean and removed after preserving
+its reports. No unrelated checkout or user changes were removed.
+
+**Next owner.** Resolve the 457/452 import decision or a semantics-preserving
+representation redesign; review the remaining constructor/binary cost and
+unmerged prerequisite stack before readiness. Audit opaque JS bound-function
+internal slots rather than assuming an ordinary prototype walk exposes them;
+the inherited bound-function and invalid-local-index cases remain open beside
+the other recorded broader failures. Finish full S7 runtime retirement and
+compatibility/accelerator/conformance acceptance. Keep the PR draft and this
+issue in progress; do not reintroduce a host instanceof semantic fallback,
+copy boundary objects, waive a gate, or declare the full migration complete.

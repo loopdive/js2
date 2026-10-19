@@ -1,0 +1,221 @@
+diff --git a/src/codegen/native-dynamic-instanceof.ts b/src/codegen/native-dynamic-instanceof.ts
+index 6b5cd7b837..0326c0f773 100644
+--- a/src/codegen/native-dynamic-instanceof.ts
++++ b/src/codegen/native-dynamic-instanceof.ts
+@@ -179,6 +179,9 @@ import { standaloneLinkBoundaryPeerIndex } from "./standalone-link-boundary.js";
+ import { addStringConstantGlobal } from "./registry/imports.js";
+ import { addFuncType } from "./registry/types.js";
+ import { coerceType, compileExpression } from "./shared.js";
++import { allocLocal } from "./context/locals.js";
++import { makeHelperFctx } from "./helpers/reserved-helper-funcs.js";
++import { emitThrowTypeError } from "./js-errors.js";
+
+ const EXTERNREF: ValType = { kind: "externref" };
+ const I32: ValType = { kind: "i32" };
+@@ -1079,6 +1082,45 @@ export function fillNativeDynamicInstanceOf(ctx: CodegenContext): void {
+
+ /** `__instanceof_operator(value, target) -> i32` — §13.10.2 over the ordinary helper. */
+ const OPERATOR_HELPER_NAME = "__instanceof_operator";
++export const NATIVE_INSTANCEOF_CHECKED = "__instanceof_operator_checked";
++
++/** Checked operator entry for IR; OrdinaryHasInstance remains a separate API. */
++export function ensureNativeInstanceofOperatorChecked(ctx: CodegenContext): number | undefined {
++  const existing = ctx.funcMap.get(NATIVE_INSTANCEOF_CHECKED);
++  if (existing !== undefined) return existing;
++  const operatorIdx = ensureInstanceofOperator(ctx);
++  if (operatorIdx === undefined) return undefined;
++  const frame = makeHelperFctx(NATIVE_INSTANCEOF_CHECKED, "value", EXTERNREF);
++  frame.params.push({ name: "target", type: EXTERNREF });
++  frame.returnType = I32;
++  const code = allocLocal(frame, "instanceofCode", I32);
++  const throwBody = frame.body;
++  ctx.liveBodies.add(throwBody);
++  try {
++    emitThrowTypeError(ctx, frame, "Right-hand side of 'instanceof' is not callable");
++    const funcIdx = mintDefinedFunc(ctx);
++    pushDefinedFunc(ctx, funcIdx, {
++      name: NATIVE_INSTANCEOF_CHECKED,
++      typeIdx: addFuncType(ctx, [EXTERNREF, EXTERNREF], [I32]),
++      locals: frame.locals,
++      body: [
++        { op: "local.get", index: P_VALUE },
++        { op: "local.get", index: P_TARGET },
++        { op: "call", funcIdx: operatorIdx },
++        { op: "local.tee", index: code },
++        { op: "i32.const", value: 2 },
++        { op: "i32.eq" },
++        { op: "if", blockType: { kind: "empty" }, then: throwBody },
++        { op: "local.get", index: code },
++      ],
++      exported: false,
++    });
++    ctx.funcMap.set(NATIVE_INSTANCEOF_CHECKED, funcIdx);
++    return funcIdx;
++  } finally {
++    ctx.liveBodies.delete(throwBody);
++  }
++}
+
+ /** Local slots of the §13.10.2 operator wrapper (params are P_VALUE / P_TARGET). */
+ const OP_L_HANDLER = 2;
+diff --git a/src/ir/backend/legality.ts b/src/ir/backend/legality.ts
+index c38edb2f3d..5632e6832c 100644
+--- a/src/ir/backend/legality.ts
++++ b/src/ir/backend/legality.ts
+@@ -21,6 +21,7 @@ export type IrBackendTargetCapability =
+   | "standalone-function-prototype-call"
+   | "standalone-native-regexp-test-carrier"
+   | "standalone-wrapper-instanceof"
++  | "native-dynamic-instanceof"
+   | "primitive-wrapper-loose-equality"
+   | "legacy-numeric-array-global"
+   | "number-to-string";
+@@ -107,6 +108,8 @@ export function supportsIrBackendTargetCapability(
+         profile.fast !== true &&
+         (profile.allowHostImports || profile.target === "standalone" || profile.target === "wasi")
+       );
++    case "native-dynamic-instanceof":
++      return profile.backend === "wasmgc" && profile.fast !== true;
+     case "legacy-numeric-array-global":
+       return profile.backend === "wasmgc" && profile.fast !== true;
+     case "number-to-string":
+diff --git a/src/ir/from-ast.ts b/src/ir/from-ast.ts
+index 9f31cb2e28..84d30a0592 100644
+--- a/src/ir/from-ast.ts
++++ b/src/ir/from-ast.ts
+@@ -438,6 +438,8 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
+    * wrapper constructor. Null keeps the operation on direct codegen.
+    */
+   standaloneWrapperInstanceOfPlan?(ctorName: string): { readonly funcName: string } | null;
++  /** Exact checked native operator over the externref dynamic carrier. */
++  dynamicInstanceOfTarget?(): IrFuncRef | null;
+   /**
+    * Resolve the canonical host ToPropertyDescriptor entry point for an
+    * ambient `Object.defineProperty(target, key, descriptor)` call.
+@@ -14233,9 +14235,28 @@ function lowerDynamicLaneIn(expr: ts.BinaryExpression, cx: LowerCtx): IrValueId
+   return result;
+ }
+
++function lowerDynamicInstanceOf(expr: ts.BinaryExpression, cx: LowerCtx, target: IrFuncRef): IrValueId {
++  const externref: ValType = { kind: "externref" };
++  const operands = [expr.left, expr.right].map((operand) => {
++    const value = lowerExpr(operand, cx, irDynamic());
++    return cx.builder.typeOf(value).kind === "dynamic"
++      ? value
++      : coerceToExpectedExtern(value, externref, cx, "instanceof operand", undefined);
++  });
++  const result = cx.builder.emitCall(target, operands, IR_BOOL);
++  if (result === null) throw new Error(`ir/from-ast: native instanceof returned no value in ${cx.funcName}`);
++  return result;
++}
++
+ function lowerInstanceOf(expr: ts.BinaryExpression, cx: LowerCtx): IrValueId {
+   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
+     return withNodeSourceSite(cx, expr, () => lowerInstanceOf(expr, cx));
++  const dynamicTarget =
++    cx.resolver?.dynamicCarrierIsExternref?.() === true &&
++    (cx.oracle?.typeFactOf(expr.right).kind === "any" || cx.oracle?.typeFactOf(expr.right).kind === "unknown")
++      ? cx.resolver.dynamicInstanceOfTarget?.()
++      : null;
++  if (dynamicTarget) return lowerDynamicInstanceOf(expr, cx, dynamicTarget);
+   if (!ts.isIdentifier(expr.right)) {
+     demoteToLegacy(
+       "operand-coercion-unsupported",
+diff --git a/src/ir/integration.ts b/src/ir/integration.ts
+index 2dab01731b..fddc371b39 100644
+--- a/src/ir/integration.ts
++++ b/src/ir/integration.ts
+@@ -101,6 +101,10 @@ import {
+   ensureIrHostStringRepeatProvider,
+   hasExactIrStringRepeatProviderAbi,
+ } from "../codegen/ir-host-string-repeat.js";
++import {
++  ensureNativeInstanceofOperatorChecked,
++  NATIVE_INSTANCEOF_CHECKED,
++} from "../codegen/native-dynamic-instanceof.js";
+ import {
+   ensureStandaloneWrapperInstanceOfHelper,
+   type StandaloneWrapperConstructorName,
+@@ -6829,6 +6833,12 @@ function makeFromAstResolver(
+       const declaration = ctx.oracle.variableDeclarationOf(expr.expression);
+       return declaration !== undefined && ctx.holeyArrayDeclarations.has(declaration);
+     },
++    dynamicInstanceOfTarget() {
++      if (!supportsBackendCapability("native-dynamic-instanceof")) return null;
++      return ensureNativeInstanceofOperatorChecked(ctx) === undefined
++        ? null
++        : irRuntimeFuncRef(NATIVE_INSTANCEOF_CHECKED);
++    },
+     standaloneWrapperInstanceOfPlan(ctorName: string) {
+       if (
+         !supportsBackendCapability("standalone-wrapper-instanceof") ||
+diff --git a/src/ir/select.ts b/src/ir/select.ts
+index 97e1067968..310971899d 100644
+--- a/src/ir/select.ts
++++ b/src/ir/select.ts
+@@ -619,6 +619,7 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
+       | "standalone-function-prototype-call"
+       | "standalone-native-regexp-test-carrier"
+       | "standalone-wrapper-instanceof"
++      | "native-dynamic-instanceof"
+       | "primitive-wrapper-loose-equality"
+       | "legacy-numeric-array-global"
+       | "number-to-string",
+@@ -2825,11 +2826,10 @@ function dynamicUsesAreMoveOnly(
+       if (
+         op === ts.SyntaxKind.InstanceOfKeyword &&
+         !expectDyn &&
+-        leftIsDyn &&
+-        ts.isIdentifier(e.right) &&
+-        selectorSupportsStandaloneWrapperInstanceOf(e.right)
++        ((rightIsDyn && currentSelectionOptions?.supportsBackendCapability?.("native-dynamic-instanceof") === true) ||
++          (leftIsDyn && ts.isIdentifier(e.right) && selectorSupportsStandaloneWrapperInstanceOf(e.right)))
+       ) {
+-        return scanExpr(e.left, true);
++        return scanExpr(e.left, leftIsDyn) && (!rightIsDyn || scanExpr(e.right, true));
+       }
+       // #3797 — statement-position stores used by Acorn's stable
+       // `finishNodeAt.call(thisArg, node, type, pos, loc)` target. The
+@@ -7176,6 +7176,21 @@ function selectorSupportsStandaloneWrapperInstanceOf(node: ts.Identifier): boole
+   );
+ }
+
++/** Only the exact externref dynamic RHS has a prepared native operator ABI. */
++function selectorDynamicInstanceOf(
++  expr: ts.BinaryExpression,
++  scope: ReadonlySet<string>,
++  localClasses: ReadonlySet<string>,
++): boolean {
++  return (
++    currentSelectionOptions?.supportsBackendCapability?.("native-dynamic-instanceof") === true &&
++    currentSelectionOptions.isDynamicForInReceiver?.(expr.right) === true &&
++    (currentSelectionOptions.isDynamicForInReceiver?.(expr.left) === true ||
++      currentSelectionOptions.classifyPrimitiveExpression?.(expr.left) !== undefined) &&
++    probeShape(() => isPhase1Expr(expr.left, scope, localClasses) && isPhase1Expr(expr.right, scope, localClasses))
++  );
++}
++
+ /**
+  * #4208 S4 — recognize only the ambient primitive-wrapper constructions used
+  * by the residual ES5 abstract-equality family. The constructor argument must
+@@ -9575,15 +9590,11 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
+       }
+       return isPhase1Expr(expr.left, scope, localClasses);
+     }
+-    // (#4276) Fast standalone owns a native wrapper-brand predicate over the
+-    // real `$Object.[[PrimitiveValue]]` representation. Admit only an exact
+-    // ambient wrapper constructor; source/local shadows keep legacy semantics.
+-    if (
+-      binOp === ts.SyntaxKind.InstanceOfKeyword &&
+-      ts.isIdentifier(expr.right) &&
+-      selectorSupportsStandaloneWrapperInstanceOf(expr.right)
+-    ) {
+-      return isPhase1Expr(expr.left, scope, localClasses);
++    if (binOp === ts.SyntaxKind.InstanceOfKeyword) {
++      if (ts.isIdentifier(expr.right) && selectorSupportsStandaloneWrapperInstanceOf(expr.right)) {
++        return isPhase1Expr(expr.left, scope, localClasses);
++      }
++      return selectorDynamicInstanceOf(expr, scope, localClasses);
+     }
+     // (#5164 S3) `<key> in <dynamic receiver>` — last of the special binary
+     // arms, so every module guard above has had its say. TERMINAL like the

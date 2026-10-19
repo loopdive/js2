@@ -166,6 +166,7 @@ function classifyImport(name: string, mod: WasmModule): ImportIntent {
   }
   if (name === "__boundary_object_own_keys") return { type: "boundary_object", operation: "ownKeys" };
   if (name === "__boundary_object_is_admitted") return { type: "boundary_object", operation: "isAdmitted" };
+  if (name === "__boundary_object_same_identity") return { type: "boundary_object", operation: "sameIdentity" };
   if (name === "__boundary_object_callable_kind") {
     return { type: "boundary_object", operation: "callableKind" };
   }

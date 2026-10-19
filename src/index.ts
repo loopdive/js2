@@ -90,6 +90,7 @@ export type ImportIntent =
         | "getOwnPropertySymbols"
         | "ownKeys"
         | "isAdmitted"
+        | "sameIdentity"
         | "callableKind"
         | "preventExtensions"
         | "reflectPreventExtensions"
