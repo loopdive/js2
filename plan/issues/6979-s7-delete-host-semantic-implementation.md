@@ -2228,3 +2228,116 @@ strict closure is still uncertified. The PR remains draft on the recorded
 dependency stack. Continue proving remaining host-only private groups before
 retirement, preserve live boundary conversion, and keep all full S7
 compatibility, accelerator, floor and final-conformance requirements open.
+
+### S7-d private operator retirement handoff (2026-10-19, Codex)
+
+**Parent and scope.** Continue above published parent
+`cc099d5cbf3728ae708e135d6bb88888bf09278a`. Remove four unreachable private
+functions from `runtime.ts`: the old host `_instanceofResult` dispatcher,
+`_compiledFnPrototypeSlot`, its `_fnctorInstanceofResult` wrapper, and the
+recursive `_toJsArrayDeep` copy helper. Remove five state declarations used
+only by those functions (or already unused), plus the two local import
+bindings for the retired fnctor wrapper. The source shrinks **316 lines**,
+including obsolete comments and formatter-collapsed blank lines. Native
+bound-function state, live sidecars/prototype bridges, `_wrapForHost`,
+`_unwrapForHost` and `_nativeDynamicFromHost` are retained. The unused private
+sentinel/WeakMap allocations disappear; no live boundary map is removed.
+
+The separately exported `src/runtime/fnctor-instanceof.ts` file and its
+existing compiler-boundary/custody records are intentionally retained. This
+checkpoint proves local private unreachability, not retirement of an exported
+module across every dynamic-import root.
+
+**Reference proof and positive controls.** A conservative TypeScript-bound
+function graph starts from exported functions and every other top-level
+statement, explicitly handles export aliases and shorthand property values,
+and rejects direct lexical eval. The exact parent has **178 functions / 32
+conservative roots / 30 module exports**; four functions are unreachable.
+Injecting `{ _instanceofResult }` as a new top-level shorthand root makes the
+dispatcher and both helpers reachable, leaving only the array-copy helper
+unreachable. A separate closed-group audit covers all **11 local declarations
+and imported bindings / 31 bound occurrences**, with zero references outside
+the deletion group. The same shorthand injection is caught as an outside
+reference at parent line 11646 and rejects deletion.
+
+The candidate has **174 functions / 29 conservative roots / 30 exports** and
+zero unreachable functions under that model. This is not a whole-program
+necessity proof for all remaining runtime code. The committed scoped record
+is `plan/audit/6979-host-operator-retirement-20261019.json`; local records are
+`.tmp/s7d-runtime-private-function-{parent,candidate}-audit.json`,
+`.tmp/s7d-runtime-private-function-positive-control.json`,
+`.tmp/s7d-private-operator-parent-audit.json`, and
+`.tmp/s7d-private-operator-positive-control.json`.
+
+**Existing runtime behavior, including failures.** The unchanged **nine-file /
+70-row** operator, linked-class, fnctor, vector, JSON-retirement and JS-boundary
+population remains **63 passing / seven failing / zero skipped**. All seven
+failure messages match exactly, with no path/stack normalization. Residuals
+are two vector/conversion assertions, one Test262Error/Error membership
+assertion, two Function.hasInstance cases (bound target and an existing
+invalid-local-index compiler failure), and two linked/single-module class
+expectations. The expanded population with three retirement controls is
+**ten files / 73 rows / 66 passing / seven failing / zero skipped**, not a
+green full suite. Records: `.tmp/s7d-operator-{parent,candidate}-tests.json`.
+
+The three new retirement controls pass: old private declarations are absent
+while required boundary roots remain, and native nested-array flattening
+returns 42 and 7 for different inputs on standalone and WASI with no imports.
+The source assertion fails on the parent; the two native controls already
+pass there. Six compile-and-run operator/flat probes compare the exact parent
+and candidate on standalone, WASI and valid gc: **6/6 binaries are identical**,
+and every module returns 42 and 7 for the two inputs on both sides. Native
+modules have no imports; gc uses genuine imports and instance wiring (three
+imports for flat, 21 for instanceof), not stubs. Records:
+`.tmp/s7d-operator-{parent,candidate}-bytes.jsonl` (six rows each). The clean
+temporary parent checkout is removed after verification; its source remains
+recoverable from the exact parent commit.
+These are default-path measurements, not an explicitly selected IR Test262
+sweep. The two newly discovered foreign-instanceof failures below are
+separate open findings, not included among the three passing controls.
+
+**Ratchets and next action.** Bank the runtime-source ceiling
+**11,644 → 11,328**. The import ceiling remains 452 and its hard gate still
+fails at 456; resolveImport remains capped at 1,959. Raw-mode source remains
+804 under the unchanged 818 ceiling. Typecheck, lint/formatting, LOC/function,
+coercion, oracle and IR-fallback checks pass. Dead-export preservation remains
+6/6 full and cut witnesses, but strict retirement is still uncertified at the
+two recorded nonliteral dynamic imports. Keep the stack draft and full S7
+acceptance open. Prioritize the native boundary-operator gap below; do not
+describe this deletion as restoring host instanceof interoperability.
+
+#### Open boundary gap: dynamic instanceof on JS-owned values
+
+- [ ] Make a genuine JS-owned instance/constructor pair return true through
+  native dynamic `instanceof`.
+- [ ] Invoke a JS-owned `Symbol.hasInstance` with the original receiver,
+  original value, and exactly one argument, even when its installation was
+  outside the compiled source.
+
+At parent `cc099d5cbf`, compile the default native-regime export
+`export function isInstance(value: any, constructor: any): number { return value instanceof constructor ? 1 : 0; }`.
+Instantiate with `buildCompiledImports(result)`, publish the instance, and use
+`wrapCompiledExports(result, instance)` (that exact argument order). A JS
+`class Foreign {}` and `new Foreign()` return **0 instead of 1**; the negative
+`{}`/Foreign control returns 0 correctly. A JS object with a true-returning
+`[Symbol.hasInstance]` method likewise returns **0 instead of 1** and the
+method is called **zero times**. A separate echo export preserves both the
+sentinel object's and Foreign function's exact identities, so this is not
+evidence of copying at admission.
+
+Local records: `.tmp/s7d-operator-boundary-repro.ts` and
+`.tmp/s7d-operator-boundary-parent.jsonl` (four rows). The corrected initial
+five-test exploration is `.tmp/s7d-operator-parent-controls-corrected.json`:
+two native flat controls pass; source-retirement and both new boundary
+expectations fail on the parent. The earlier report with the reversed export
+wrapper arguments is superseded, not interop evidence. These two failures are
+recorded here rather than silently converting them into expected-failure or
+wrong-answer assertions in the retirement suite. Preserve this open work as
+part of the full migration acceptance.
+
+Review the shared native `InstanceofOperator`/OrdinaryHasInstance dispatch,
+especially the source-only `moduleInstallsCallableHasInstance` decision and
+foreign prototype identity. A JS-owned handler cannot be excluded because
+the compiled source did not install it. Implement the repair in IR or the
+genuinely shared native runtime, not as a new frozen direct-AST language arm.
+Do not restore the unreachable legacy host dispatcher as a semantic fallback.

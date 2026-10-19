@@ -936,10 +936,14 @@ The in-flight shared-code refactoring is published in
 The detailed handoff lives in [S7: delete the host-semantic implementation](6979-s7-delete-host-semantic-implementation.md),
 sections "S7-c native constructor lookup checkpoint and landing handoff",
 "S7-c carrier materialization deduplication handoff", and
-"S7-d orphaned host JSON retirement handoff". The latter proves a closed
-private group before deleting 422 lines of the former host JSON provider;
-runtime source falls from 12,066 to 11,644 lines with live boundary conversion
-retained and the 98-row existing-test population unchanged.
+"S7-d orphaned host JSON retirement handoff", and "S7-d private operator
+retirement handoff". The JSON retirement proves a closed private group before
+deleting 422 lines; the operator retirement removes another 316 dead lines,
+bringing runtime source to 11,328 with live boundary conversion retained.
+The 98-row JSON and 70-row operator populations respectively remain unchanged.
+The latter handoff also records an open native dynamic-instanceof gap for
+JS-owned constructors/handlers; preserving object identity at admission does
+not yet make those operator cases correct.
 It records the implementation, parent-controlled test evidence, substantial
 constructor-program binary growth, dependency stack and remaining decisions.
 Native lookup and JS-owned boundary identities pass their focused controls,

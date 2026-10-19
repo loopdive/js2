@@ -1,0 +1,96 @@
+{
+  "schemaVersion": 1,
+  "parentCommit": "cc099d5cbf3728ae708e135d6bb88888bf09278a",
+  "sourcePath": "src/runtime.ts",
+  "scope": "Four private host operator/copy functions, five private state declarations and two imported bindings only; the exported fnctor-instanceof module is retained",
+  "analysis": "TypeScript-bound references with shorthand assignment resolution, export aliases, conservative top-level roots and direct lexical eval rejection",
+  "targets": [
+    {
+      "name": "fnctorInstanceofResult",
+      "referenceLines": [55, 2020],
+      "outsideReferenceLines": []
+    },
+    {
+      "name": "FnctorIoHooks",
+      "referenceLines": [55, 4726],
+      "outsideReferenceLines": []
+    },
+    {
+      "name": "_boundFunctionTargets",
+      "referenceLines": [1217, 2119],
+      "outsideReferenceLines": []
+    },
+    {
+      "name": "_INSTANCEOF_THROW",
+      "referenceLines": [1989, 2060, 2063, 2081, 2089, 2094, 2104, 2148, 2203],
+      "outsideReferenceLines": []
+    },
+    {
+      "name": "_SLOT_ABSENT",
+      "referenceLines": [1992, 2009, 2013, 2144],
+      "outsideReferenceLines": []
+    },
+    {
+      "name": "_compiledFnPrototypeSlot",
+      "referenceLines": [2005, 2143],
+      "outsideReferenceLines": []
+    },
+    {
+      "name": "_fnctorInstanceofResult",
+      "referenceLines": [2015, 2138],
+      "outsideReferenceLines": []
+    },
+    {
+      "name": "_instanceofResult",
+      "referenceLines": [2023, 2121],
+      "outsideReferenceLines": []
+    },
+    {
+      "name": "_fnctorInstanceofHooks",
+      "referenceLines": [2020, 4726],
+      "outsideReferenceLines": []
+    },
+    {
+      "name": "VEC_UNWRAP_MAX_DEPTH",
+      "referenceLines": [8125],
+      "outsideReferenceLines": []
+    },
+    {
+      "name": "_toJsArrayDeep",
+      "referenceLines": [8139, 8143, 8162],
+      "outsideReferenceLines": []
+    }
+  ],
+  "boundReferenceCount": 31,
+  "moduleExportCount": 30,
+  "directEvalCount": 0,
+  "functionGraph": {
+    "before": {
+      "functions": 178,
+      "conservativeRoots": 32,
+      "unreachable": 4
+    },
+    "after": {
+      "functions": 174,
+      "conservativeRoots": 29,
+      "unreachable": 0
+    },
+    "notWholeProgramRetirementCertificate": true
+  },
+  "positiveControl": {
+    "inMemoryOnly": true,
+    "expression": "const __operator_control = { _instanceofResult };",
+    "result": "rejected: outside shorthand reference detected",
+    "outsideReferenceLines": [11646]
+  },
+  "runtimeSourceLines": {
+    "before": 11644,
+    "after": 11328,
+    "removed": 316
+  },
+  "knownBoundaryDefectsNotFixed": [
+    "JS-owned instance instanceof JS-owned constructor returns 0 instead of 1",
+    "JS-owned Symbol.hasInstance is not invoked by dynamic instanceof"
+  ],
+  "importCeiling": 452
+}
