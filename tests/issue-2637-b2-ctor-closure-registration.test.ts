@@ -24,9 +24,17 @@
 // `instance instanceof SubPromise`, asserts #1/#2) still green. The only true
 // signal is the merge_group test262 floor; these unit tests exercise the same
 // four asserts in JS-host mode as a fast regression guard.
+//
+// (#7089) The JS-synthesized constructor above belonged to the retired
+// `host-assisted` profile. The suite now asserts the native regime instead —
+// the default profile (native-first in a JavaScript environment) and
+// `--target standalone` — where NewPromiseCapability(SubPromise) constructs the
+// compiled subclass itself (src/codegen/promise-class-receiver-drive.ts for the
+// combinators, src/codegen/promise/receiver-capability.ts for `try` /
+// `withResolvers`). The four asserts are unchanged.
 import { afterAll, beforeAll, describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
-import { buildImports } from "../src/runtime.js";
+import { buildCompiledImports, wrapCompiledExports } from "../src/runtime.js";
 
 // `Promise.any.call(SubPromise, [])` settles to a REJECTED promise
 // (AggregateError) that the synchronous `test()` does not await — a benign
@@ -35,19 +43,19 @@ import { buildImports } from "../src/runtime.js";
 // the run; scoped to this suite via beforeAll/afterAll.
 const swallowRejection = (): void => {};
 
-async function instantiate(src: string): Promise<WebAssembly.Exports> {
-  // (#6708) This suite is the fast regression guard for the retired
-  // JS-synthesized Promise-subclass constructor path documented above. Keep
-  // that implementation-specific rollback control explicit while S6 makes
-  // the native semantic core the default; S7 must delete or replace this suite
-  // together with `host-assisted` and the registration machinery.
-  const r = await compile(src, { semanticProviders: "host-assisted" });
+type Lane = "default" | "standalone";
+const LANES: Lane[] = ["default", "standalone"];
+
+async function instantiate(src: string, lane: Lane): Promise<Record<string, unknown>> {
+  const r = await compile(src, lane === "standalone" ? { target: "standalone" } : {});
   if (!r.success) throw new Error("compile failed: " + JSON.stringify(r.errors));
-  const imports = buildImports(r.imports, undefined, r.stringPool);
-  const m = await WebAssembly.instantiate(r.binary, imports);
-  const setExports = (imports as unknown as { setExports?: (e: WebAssembly.Exports) => void }).setExports;
-  if (typeof setExports === "function") setExports(m.instance.exports);
-  return m.instance.exports;
+  const imports = buildCompiledImports(r) as ReturnType<typeof buildCompiledImports> & {
+    setInstance?: (i: WebAssembly.Instance) => void;
+  };
+  const { instance } = await WebAssembly.instantiate(r.binary, imports);
+  imports.setInstance?.(instance);
+  if (lane === "standalone") expect(WebAssembly.Module.imports(new WebAssembly.Module(r.binary))).toEqual([]);
+  return wrapCompiledExports(r, instance) as Record<string, unknown>;
 }
 
 // Mirror test262 ctx-ctor.js: the combinator is invoked on the receiver
@@ -82,7 +90,7 @@ function srcFor(call: string): string {
   `;
 }
 
-describe("#2637 B2 — Promise-subclass run-on-host ctor (ctx-ctor asserts #1-#4)", () => {
+describe("#2637 B2 — Promise-subclass capability ctor (ctx-ctor asserts #1-#4)", () => {
   beforeAll(() => {
     process.on("unhandledRejection", swallowRejection);
   });
@@ -90,60 +98,59 @@ describe("#2637 B2 — Promise-subclass run-on-host ctor (ctx-ctor asserts #1-#4
     process.off("unhandledRejection", swallowRejection);
   });
 
-  // (#6440) `Promise.try` used to be a HOST intrinsic below Node 23 with no
-  // fallback — Node 22 threw `Promise.try is not a function` here for a
-  // reason unrelated to ctor-registration. The runtime now polyfills it
-  // (`buildImports` installs `_installPromiseTryPolyfill` unconditionally, see
-  // `src/runtime/promise-try-polyfill.ts`), so this row is a real regression
-  // check on every supported engine, not a host-capability gate.
+  for (const lane of LANES) {
+    // Empty-iterable combinators construct the capability exactly once, so
+    // callCount === 1 (matching test262 `[]` ctx-ctor rows).
+    for (const [label, call] of [
+      ["Promise.all", "(Promise.all as any).call(SubPromise, [] as any)"],
+      ["Promise.race", "(Promise.race as any).call(SubPromise, [] as any)"],
+      ["Promise.any", "(Promise.any as any).call(SubPromise, [] as any)"],
+      ["Promise.allSettled", "(Promise.allSettled as any).call(SubPromise, [] as any)"],
+      ["Promise.try", "(Promise as any).try.call(SubPromise, function () {})"],
+      ["Promise.withResolvers", "(Promise as any).withResolvers.call(SubPromise).promise"],
+    ] as Array<[string, string]>) {
+      it(`${lane}: ${label}.call(SubPromise, …) runs the user body on the capability promise (asserts #1-#4)`, async () => {
+        const ex = await instantiate(srcFor(call), lane);
+        // 15 = all four asserts hold (ctor identity + instanceof + callCount===1 + executor is fn).
+        expect((ex.test as () => number)()).toBe(15);
+      });
+    }
 
-  // Empty-iterable combinators construct the capability exactly once, so
-  // callCount === 1 (matching test262 `[]` ctx-ctor rows).
-  for (const [label, call] of [
-    ["Promise.all", "(Promise.all as any).call(SubPromise, [] as any)"],
-    ["Promise.race", "(Promise.race as any).call(SubPromise, [] as any)"],
-    ["Promise.any", "(Promise.any as any).call(SubPromise, [] as any)"],
-    ["Promise.allSettled", "(Promise.allSettled as any).call(SubPromise, [] as any)"],
-    ["Promise.try", "(Promise as any).try.call(SubPromise, function () {})"],
-  ] as Array<[string, string]>) {
-    it(`${label}.call(SubPromise, …) runs the user body on the capability promise (asserts #1-#4)`, async () => {
-      const ex = await instantiate(srcFor(call));
-      // 15 = all four asserts hold (ctor identity + instanceof + callCount===1 + executor is fn).
-      expect((ex.test as () => number)()).toBe(15);
+    it(`${lane}: a default-ctor subclass (withResolvers/ctx-ctor) keeps identity`, async () => {
+      const ex = await instantiate(
+        `
+        class SubPromise extends Promise<number> {}
+        export function test(): number {
+          const r: any = (Promise as any).withResolvers.call(SubPromise);
+          const ctorOk = r != null && r.promise != null && r.promise.constructor === SubPromise;
+          const instofOk = r != null && r.promise instanceof SubPromise;
+          return (ctorOk ? 1 : 0) + (instofOk ? 2 : 0);
+        }
+      `,
+        lane,
+      );
+      expect((ex.test as () => number)()).toBe(3);
+    });
+
+    it(`${lane}: direct \`new SubPromise(executor)\` still runs the body exactly once`, async () => {
+      const ex = await instantiate(
+        `
+        let callCount = 0;
+        class SubPromise extends Promise<number> {
+          constructor(executor: any) {
+            super(executor);
+            callCount += 1;
+          }
+        }
+        export function test(): number {
+          callCount = 0;
+          const p: any = new SubPromise((resolve: any, _reject: any) => { resolve(1); });
+          return callCount === 1 && p != null ? 1 : 0;
+        }
+      `,
+        lane,
+      );
+      expect((ex.test as () => number)()).toBe(1);
     });
   }
-
-  it("regression: a default-ctor subclass (withResolvers/ctx-ctor) keeps identity, no body to run", async () => {
-    // `class SubPromise extends Promise {}` has no user ctor — the #1977
-    // identity-only path. B2 must NOT register a body for it (no `__onhost`),
-    // so the runtime's bare forwarder runs and identity holds.
-    const ex = await instantiate(`
-      class SubPromise extends Promise<number> {}
-      export function test(): number {
-        const r: any = (Promise as any).withResolvers.call(SubPromise);
-        const ctorOk = r != null && r.promise != null && r.promise.constructor === SubPromise;
-        const instofOk = r != null && r.promise instanceof SubPromise;
-        return (ctorOk ? 1 : 0) + (instofOk ? 2 : 0);
-      }
-    `);
-    expect((ex.test as () => number)()).toBe(3);
-  });
-
-  it("regression: direct `new SubPromise(executor)` still runs the body exactly once (B1 path untouched)", async () => {
-    const ex = await instantiate(`
-      let callCount = 0;
-      class SubPromise extends Promise<number> {
-        constructor(executor: any) {
-          super(executor);
-          callCount += 1;
-        }
-      }
-      export function test(): number {
-        callCount = 0;
-        const p: any = new SubPromise((resolve: any, _reject: any) => { resolve(1); });
-        return callCount === 1 && p != null ? 1 : 0;
-      }
-    `);
-    expect((ex.test as () => number)()).toBe(1);
-  });
 });
