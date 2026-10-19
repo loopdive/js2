@@ -11,10 +11,10 @@
  *   (A) modules whose generators all lower natively no longer register the
  *       `__gen_*` readers at all, so `IteratorResult` reads stay native
  *       (issue-1388 #2: a detached static async generator method);
- *   (B) `yield* await P` in an async generator now drives natively (the
- *       class-elements `rs-static-async-generator-method-privatename` family);
- *   (C) every remaining non-native shape is a compile error naming #7010,
- *       never a silent host import.
+ *   (B) every remaining non-native shape — `yield* await P`, nested yields in
+ *       spread operands / for-await / try, delegation forwarding — is a compile
+ *       error naming #7010, never a silent host import. Lowering those natively
+ *       is IR producer work under the direct-AST development freeze.
  *
  * Every case runs under `semanticProviders: "native-first"` in a JS environment
  * (exports through `wrapCompiledExports`, checked against the JS oracle) AND
@@ -57,15 +57,6 @@ async function runNativeFirst(src: string): Promise<string> {
   return String(await (wrapCompiledExports(r, instance).test as () => unknown)());
 }
 
-/** Standalone: zero imports; `test()` reads a counter the native microtask drain filled. */
-async function runStandalone(src: string): Promise<number> {
-  const r = await compile(src, { fileName: "test.ts", target: "standalone" });
-  expect(r.success, r.success ? "" : `compile error: ${r.errors?.[0]?.message}`).toBe(true);
-  expect(r.imports ?? []).toEqual([]);
-  const { instance } = await WebAssembly.instantiate(r.binary, {});
-  return (instance.exports as { test(): number }).test();
-}
-
 async function expectRefused(src: string, opts: Record<string, unknown>): Promise<void> {
   const r = await compile(src, { fileName: "test.ts", ...opts });
   expect(r.success).toBe(false);
@@ -105,80 +96,24 @@ describe("#7010 (A) — all-native modules register no __gen_* readers", () => {
   });
 });
 
-// ── (B) `yield* await P` drives natively ────────────────────────────────────
-
-const YIELD_STAR_AWAIT = `
-class C {
-  static async *#g(value: any) {
-    yield* await value;
-  }
-  static get g() {
-    return this.#g;
-  }
-}
-async function* free(value: any) {
-  yield* await value;
-}
-export async function test(): Promise<string> {
-  const out: string[] = [];
-  const it = free(Promise.resolve([1, 2]));
-  let r = await it.next();
-  while (!r.done) {
-    out.push(String(r.value));
-    r = await it.next();
-  }
-  out.push(String(r.done));
-  const r2 = await C.g([7]).next();
-  out.push(String(r2.value) + ":" + String(r2.done));
-  return out.join(",");
-}
-`;
-
-describe("#7010 (B) — `yield* await P` in an async generator", () => {
-  it("native-first: JS-equal, no gen imports (free function + static private method)", async () => {
-    expect(await runNativeFirst(YIELD_STAR_AWAIT)).toBe(await jsOracle(YIELD_STAR_AWAIT));
-  });
-
-  it("standalone: zero imports and the delegated values arrive", async () => {
-    const value = await runStandalone(`
-      let n = 0;
-      async function* free(value: any) {
-        yield* await value;
-      }
-      class C {
-        static async *#g(value: any) { yield* await value; }
-        static get g() { return this.#g; }
-      }
-      function go() {
-        async function a() { for await (const v of free(Promise.resolve([1, 2]))) { n += v; } }
-        async function b() { const r = await C.g([40]).next(); n += r.value; }
-        a();
-        b();
-      }
-      export function test(): number { go(); return n; }
-    `);
-    expect(value).toBe(43);
-  });
-
-  it("a rejected awaited operand rejects next() (native-first, JS-equal)", async () => {
-    const src = `
-      async function* g(value: any) { yield* await value; }
-      export async function test(): Promise<string> {
-        try {
-          await g(Promise.reject(new Error("boom"))).next();
-          return "resolved";
-        } catch (e) {
-          return "rejected:" + (e as Error).message;
-        }
-      }
-    `;
-    expect(await runNativeFirst(src)).toBe(await jsOracle(src));
-  });
-});
-
-// ── (C) everything else is a #7010 compile error, never a host import ──────
+// ── (B) every other non-native shape is a #7010 compile error, never a host import
 
 const REFUSED: Record<string, string> = {
+  // The 68 test262 class/elements rs-static-async-generator-method rows: they
+  // were compile errors through their host imports, now through #7010. Native
+  // lowering is IR producer work (the direct-AST development freeze).
+  "async gen expression with yield* await": `
+    export function test(): number {
+      const g = async function* (value: any) { yield* await value; };
+      g([1]);
+      return 1;
+    }`,
+  "async gen with yield* await (static private method)": `
+    class C {
+      static async *#g(value: any) { yield* await value; }
+      static get g() { return this.#g; }
+    }
+    export function test(): number { C.g([1]); return 1; }`,
   "async gen method: yield inside for-await": `
     async function* readFile() { yield 1; }
     class C { static async *gen() { for await (const line of readFile()) { yield line; } } }
@@ -197,7 +132,7 @@ const REFUSED: Record<string, string> = {
     }`,
 };
 
-describe("#7010 (C) — non-native generator shapes are refused, not host-buffered", () => {
+describe("#7010 (B) — non-native generator shapes are refused, not host-buffered", () => {
   for (const [name, src] of Object.entries(REFUSED)) {
     it(`standalone: ${name}`, async () => {
       await expectRefused(src, { target: "standalone" });

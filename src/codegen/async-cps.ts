@@ -3373,14 +3373,6 @@ interface AsyncGenYield {
    * (`yield*`'s completion value is discarded).
    */
   readonly rtDelegate?: ts.Expression;
-  /**
-   * (#7010) `yield* await P`: the delegate iterable is the settled value of a
-   * suspend-free `P`. Set together with `rtDelegate` (the `await P` node, which
-   * keeps the `__yieldstar_rtiter_<i>` numbering of
-   * {@link listTopLevelRtDelegateYieldStars}); the plan awaits `P` first and
-   * runs GetAsyncIterator on the delivered value.
-   */
-  readonly rtAwait?: ts.Expression;
 }
 
 /**
@@ -3615,16 +3607,11 @@ function analyzeAsyncGen(
         // operand expr — the iterator would have to be produced across a
         // suspend; banked follow-up) or is missing. Statement position only,
         // guaranteed by the enclosing ExpressionStatement match.
-        if (src === undefined) return null;
+        if (src === undefined || containsAwaitOrYield(src)) return null;
         {
           let rtSrc: ts.Expression = src;
           while (ts.isParenthesizedExpression(rtSrc)) rtSrc = rtSrc.expression;
-          // (#7010) `yield* await P` — await a suspend-free `P`, then delegate
-          // to the settled value. Any other nested suspend still bails.
-          const rtAwait =
-            ts.isAwaitExpression(rtSrc) && !containsAwaitOrYield(rtSrc.expression) ? rtSrc.expression : undefined;
-          if (rtAwait === undefined && containsAwaitOrYield(rtSrc)) return null;
-          segments.push({ leads, awaited: null, plain: null, rtDelegate: rtSrc, rtAwait });
+          segments.push({ leads, awaited: null, plain: null, rtDelegate: rtSrc });
           leads = [];
         }
         continue;
@@ -3724,8 +3711,7 @@ export function isAwaitFreeAsyncGenBody(
   // driver — always a native `$Promise` regardless of the carrier gate (the
   // same carrier-independence argument as `asyncGenConsumerNeedsDrive`). The
   // inner body's own await-freeness is checked by the delegates mode.
-  // (#7010) `yield* await P` awaits an arbitrary `P` — carrier lane only.
-  return shape.segments.every((y) => y.awaited === null && y.rtAwait === undefined);
+  return shape.segments.every((y) => y.awaited === null);
 }
 
 /**
@@ -3817,22 +3803,8 @@ export function planAsyncGenCfg(
       // result's value) is discarded — `yield*` is accepted in STATEMENT
       // position only.
       const iterSpillName = `__yieldstar_rtiter_${rtDelegateIdx}`;
-      // (#7010) `yield* await P`: one extra leading state suspends on `P`; the
-      // init state's resume binding receives the settled value (a rejection
-      // re-throws through the MODE_THROW prelude, rejecting the current
-      // `next()`), read in the SAME dispatch as GetAsyncIterator — no spill.
-      const rtAwaitBinding = y.rtAwait !== undefined ? `__yieldstar_rtawait_${rtDelegateIdx}` : undefined;
       rtDelegateIdx += 1;
       const operand = y.rtDelegate;
-      if (y.rtAwait !== undefined) {
-        states.push({
-          id,
-          resumeFrom: null,
-          lead: asLead(y.leads),
-          terminator: { kind: "suspend", awaited: y.rtAwait, resumeState: id + 1, handler: 0 },
-        });
-        id += 1;
-      }
       const initId = id;
       const pumpId = id + 1;
       const yieldId = id + 2;
@@ -3847,11 +3819,8 @@ export function planAsyncGenCfg(
       // init: iter := GetAsyncIterator(operand) into the persisted frame spill.
       const initEmit: AsyncCfgStepEmit = (ctx, fctx) => {
         const iterSlot = fctx.localMap.get(iterSpillName) ?? allocLocal(fctx, iterSpillName, { kind: "externref" });
-        const awaitedSlot = rtAwaitBinding !== undefined ? fctx.localMap.get(rtAwaitBinding) : undefined;
-        const srcType = rtAwaitBinding !== undefined ? null : compileExpression(ctx, fctx, operand);
-        if (awaitedSlot !== undefined) {
-          fctx.body.push({ op: "local.get", index: awaitedSlot });
-        } else if (srcType !== null && srcType !== undefined) {
+        const srcType = compileExpression(ctx, fctx, operand);
+        if (srcType !== null && srcType !== undefined) {
           coerceType(ctx, fctx, srcType as ValType, { kind: "externref" });
         } else {
           fctx.body.push({ op: "ref.null.extern" });
@@ -3902,9 +3871,8 @@ export function planAsyncGenCfg(
       states.push(
         {
           id: initId,
-          resumeFrom:
-            rtAwaitBinding !== undefined ? { binding: { name: rtAwaitBinding, type: undefined }, handler: 0 } : null,
-          lead: rtAwaitBinding !== undefined ? [] : asLead(y.leads),
+          resumeFrom: null,
+          lead: asLead(y.leads),
           emit: initEmit,
           terminator: { kind: "goto", target: pumpId },
         },

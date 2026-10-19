@@ -1,11 +1,11 @@
 ---
 id: 7010
-title: "regime: no eager-buffer generator fallback on host-free builds — lower natively or refuse with #7010"
+title: "regime: no eager-buffer generator fallback on host-free builds — refuse with #7010"
 status: done
 sprint: current
 created: 2026-10-16
-updated: 2026-10-16
-completed: 2026-10-16
+updated: 2026-10-19
+completed: 2026-10-19
 priority: high
 horizon: m
 feasibility: hard
@@ -19,9 +19,6 @@ related: [680, 6979, 6980, 6984, 1388]
 assignee: "ttraenkler/opus-7010-gen"
 branch: "issue-7010-regime-eager-buffer-generators"
 loc-budget-allow:
-  # 2026-10-16 (#7010) +31: `yield* await P` admission in analyzeAsyncGen and
-  # the extra await state in planAsyncGenCfg's runtime-delegation arm.
-  - src/codegen/async-cps.ts
   # 2026-10-16 (#7010) +3/+3/+5: one refusal arm (`refuseEagerGeneratorBuffer`)
   # in front of each eager-buffer emit site; the body lives in
   # generator-eager-refusal.ts.
@@ -29,8 +26,6 @@ loc-budget-allow:
   - src/codegen/literals.ts
   - src/codegen/statements/nested-declarations.ts
 func-budget-allow:
-  # 2026-10-16 (#7010) +18: the `yield* await P` leading await state.
-  - src/codegen/async-cps.ts::planAsyncGenCfg
   # 2026-10-16 (#7010) +2/+2/+4: the refusal arm in front of the eager buffer.
   - src/codegen/statements/nested-declarations.ts::compileNestedFunctionDeclarationInScope
   - src/codegen/class-bodies.ts::compileClassBodiesInner
@@ -73,7 +68,7 @@ Grouped by the reason the native path refused:
 | Group | Reason the native path declined | Exposing programs | Result in this PR |
 | --- | --- | --- | --- |
 | A | None. All async generators drive natively, but the pre-scan counted every async generator and registered the `__gen_*` readers, so `r.value` / `r.done` routed to `__gen_result_value_f64` (NaN on standalone, a policy rejection under native-first). | issue-1388 #2; `AsyncGeneratorPrototype/throw/throw-suspendedYield-promise.js`; `AsyncFromSyncIteratorPrototype/throw/iterator-result-poisoned-value.js`; 144/224 class/elements rows | **Native.** The readers are no longer registered on host-free builds. #6980 fix 9 (PR #6678, open) narrows the same pre-scan; on a snapshot of that branch these programs compile with 0 gen imports too. This PR deletes the pre-scan, so whichever lands second resolves the conflict by taking the deletion. |
-| B1 | `yield* await P`: an rtDelegate operand containing an `await`, rejected by `analyzeAsyncGen`. | 68/224 class/elements `rs-static-async-generator-method-privatename` rows (6/26 of the sample) | **Native.** The operand is awaited in a leading state; GetAsyncIterator runs on the settled value. Standalone: 52/68 pass (all 68 were `compile_error`). The other 16 fail on an unrelated static-method descriptor assert, `m descriptor should be writable`. |
+| B1 | `yield* await P`: an rtDelegate operand containing an `await`, rejected by `analyzeAsyncGen`. | 68/224 class/elements `rs-static-async-generator-method-privatename` rows (6/26 of the sample) | **Refused (#7010).** All 68 were already `compile_error` on standalone through their host imports; they stay `compile_error`, now naming #7010. No pass lost. A prototype native lowering on the direct-AST async-gen CFG passed 52/68, but that route is frozen (`plan/method/ir-only-development-freeze.md`), so it was withdrawn; see the IR follow-up below. |
 | B2 | A yield nested in an operand (`yield { ...yield, ...yield yield }`, spread forms). Async gens and sync generator methods. | `*/yield-spread-obj.js`, `*/yield-spread-arr-*.js` (9/26) | **Refused (#7010).** The async drive has no expression-level suspension. |
 | B3 | `var v = yield* obj` (a delegation completion binding) together with `.throw()`/`.return()` forwarding. | `async-generator/yield-star-async-throw.js` and `yield-star-sync-next.js` families (4/26) | **Refused (#7010).** |
 | B4 | A yield inside a loop body (`for await (…) { yield … }`). | `*/yield-promise-reject-next-for-await-of-*.js` (4/26) | **Refused (#7010).** The async-gen CFG is statement-flat. |
@@ -85,8 +80,9 @@ Grouped by the reason the native path refused:
 - **No registration on host-free builds.** `addGeneratorImports` returns early
   on `ctx.standalone || ctx.wasi`, and the `allowNoJsHost` option is gone. The
   import collector registers the bundle in the JS-host lane only.
-  `sourceNeedsGeneratorHostImports` and `generatorCapturesOuterScope` (its only
-  consumer) are deleted. So is the closures.ts late re-registration.
+  The `sourceNeedsGeneratorHostImports` pre-scan is deleted, and so is the
+  closures.ts late re-registration. `generatorCapturesOuterScope` stays because
+  the JS-host candidate gates still call it.
 - **Refusal at the emit site.** `refuseEagerGeneratorBuffer` in
   `generator-eager-refusal.ts` reports
   `generator-no-host-free-lowering: … (#7010)` and pushes `ref.null.extern`,
@@ -94,33 +90,28 @@ Grouped by the reason the native path refused:
   calls it first: class methods, object-literal methods, function expressions,
   and both nested-declaration arms. Top-level declarations already refused with
   the #680 diagnostic.
-- **`yield* await P` (group B1).** `AsyncGenYield.rtAwait` carries `P`. The
-  `await P` node stays the segment's `rtDelegate`, so
-  `listTopLevelRtDelegateYieldStars` numbering is unchanged. `planAsyncGenCfg`
-  emits `suspend(P)` and then the init state. The init state's resume binding
-  `__yieldstar_rtawait_<i>` receives the settled value, and that value is read
-  in the same dispatch, so it needs no spill. A rejection re-throws through the
-  MODE_THROW prelude and rejects the current `next()`. `isAwaitFreeAsyncGenBody`
-  treats the segment as awaited, so it is carrier lane only.
+- **No new direct-AST lowering.** Under the old direct-AST path development
+  freeze (`plan/method/ir-only-development-freeze.md`) this PR only removes the
+  retired host path and refuses what it used to catch. `src/codegen/async-cps.ts`
+  changes by one comment.
 - The JS-host (`gc` host-assisted) lane is unchanged: it still registers and
   emits the buffer.
 
 ## Acceptance
 
-- `tests/issue-7010-regime-eager-buffer-generators.test.ts`: 17 cases. All 17
-  fail on the base sources and pass with the fix.
+- `tests/issue-7010-regime-eager-buffer-generators.test.ts`: 20 cases.
   - (A) issue-1388 #2 under native-first (JS-equal, 0 gen imports) and
     standalone (0 imports).
-  - (B1) `yield* await P` (free function and static private method) under
-    native-first (JS-equal) and standalone (values arrive, 0 imports), plus a
-    rejected operand.
-  - (C) four refused shapes × {standalone, native-first, wasi}: a #7010 error
-    and 0 gen imports.
+  - (B) six refused shapes × {standalone, native-first, wasi}: a #7010 error
+    and 0 gen imports. The shapes are `yield* await` (function expression and static
+    private method), yield inside `for await`, a static method reading `this`,
+    nested yields in object-spread operands, and yield inside `try`.
 - `tests/equivalence/issue-1388.test.ts` under native-first (scratch copy of
   the helper with `semanticProviders: "native-first"` + `wrapCompiledExports`):
   7/7 pass. On base, #2 fails.
 - The same 1-in-10 sample, re-run with the fix: 0 programs carry a `__gen_*`
-  import. The 6 B1 rows compile natively; the other 20 are #7010 refusals.
+  import (measured with the withdrawn B1 prototype in place; without it the
+  6 B1 rows are #7010 refusals too, as the focused test asserts).
 - `node scripts/equivalence-gate.mjs` (run with `--configLoader runner` in the
   sandbox): "22 failing, 1785 passing, 22 known-failures in baseline … ✓ No new
   equivalence regressions."
@@ -134,9 +125,10 @@ Grouped by the reason the native path refused:
 
 ## Left out
 
-- B2–B6 stay compile errors. Lowering them natively needs expression-level and
-  control-flow suspension in the async-generator CFG (sync B2: object-spread
-  operands in the #6651 nested planner). Each is a follow-up slice.
+- **IR follow-up (B1–B6):** native async-generator lowering of `yield* await`,
+  nested yields in spread / for-await / try, and delegation forwarding. This is
+  IR producer work under the freeze, not a direct-AST slice. Until it lands,
+  these shapes are #7010 compile errors on host-free builds.
 - The HOSTGEN arm of the native iterator runtime (`iterator-native.ts`,
   #3075) is now unreachable on host-free builds, because
   `legacyGenBufferEmitted` can no longer be set there. Deleting it is left to
