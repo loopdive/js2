@@ -331,6 +331,7 @@ import { methodBodyUsesSuper } from "../generators-native-ast-scan.js"; // (#665
 // (#2193 PR-B) reflective `m.call(thisArg, …)` on a `$NativeProto` member-closure value.
 import {
   ensureArrayBufferNativeProtoGlue,
+  ensureSharedArrayBufferNativeProtoGlue,
   ensureArrayNativeProtoGlue,
   ensureDataViewNativeProtoGlue,
   ensureDateNativeProtoGlue,
@@ -1582,8 +1583,11 @@ export function emitReflectiveNativeProtoClosureCall(
   // externrefs with null, so use the canonical standalone undefined singleton
   // for ArrayBuffer members; their shared helper applies the corresponding
   // runtime predicate. Other builtin families retain their existing ABI.
-  const arrayBufferUndefinedPad =
-    getNativeProtoBuiltinGlue(ctx, brand)?.name === "ArrayBuffer" ? undefinedExternInstrs(ctx) : undefined;
+  const arrayBufferUndefinedPad = ["ArrayBuffer", "SharedArrayBuffer"].includes(
+    getNativeProtoBuiltinGlue(ctx, brand)?.name ?? "",
+  ) // (#7011)
+    ? undefinedExternInstrs(ctx)
+    : undefined;
   // `String.prototype.normalize` has an optional form parameter even though
   // its public `.length` is 0. Its closure body must distinguish an omitted
   // form (and written `undefined`) from explicit `null`: only the former
@@ -11078,6 +11082,8 @@ export function nativeProtoBrandForInterface(ctx: CodegenContext, ifaceName: str
   if (ifaceName === "String") return ensureStringNativeProtoGlue(ctx); // (#2875)
   if (ifaceName === "DataView") return ensureDataViewNativeProtoGlue(ctx); // (#3173)
   if (ifaceName === "ArrayBuffer") return ensureArrayBufferNativeProtoGlue(ctx); // (#1595)
+  if (ifaceName === "SharedArrayBuffer" && (ctx.standalone || ctx.wasi))
+    return ensureSharedArrayBufferNativeProtoGlue(ctx); // (#7011)
   if (ifaceName === "Date") return ensureDateNativeProtoGlue(ctx); // (#3219)
   return undefined;
 }
