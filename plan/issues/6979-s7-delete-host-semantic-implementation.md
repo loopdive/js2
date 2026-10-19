@@ -4006,3 +4006,112 @@ entry are **not implemented by this checkpoint**. Resolve the prerequisite
 stack, including PR6701 and recovered S7-b `9423a71e82`, before any merge.
 Both migration issues stay in progress; PR6762 stays draft for this handoff.
 No GitHub issues or issue comments were created.
+
+### S7-t pre-optimization reference component planning (2026-10-19, Codex)
+
+Continue from signed `b0d73c4b9f3dfa4ee03c98cab2cae50db7c92bc9`.
+Next implementation: connect the raw typed-program source/callee contracts
+to whole-component reference planning before any optimizer runs. Enumerate
+all reachable callable and property-provider identities, reject incomplete
+or incompatible contracts, and retain getter/setter call effects. Logical
+record annotations are not physical authority; no partially planned public
+entry, copied graph, new host import, frozen AST extension or admission waiver.
+Canonical native resources and authenticated publication remain required.
+
+**Implementation now in the real preparation transaction.** Internal whole-
+program callers may request `objectReferenceProjection: "live"`. Raw typed
+input carries a logical `objectReferences` plan, derived from the complete
+current IR/type/allocation/global population rather than a selected entry's
+annotation. Source/callee aliases retain their existing structural identity.
+The one Program ABI declares exact Get/strict-Set/sloppy-Set contracts for
+each planned shape/field. Unknown requests, incomplete shape populations,
+unknown direct callees and shape/result-mismatched calls fail before hygiene;
+the tests assert zero optimizer function visits for invalid direct calls.
+
+Get/Set projection now has a backend-free preparation owner. The old backend
+API is a compatibility adapter, not a second implementation. Projection covers
+nested instruction buffers and semantic async-state bodies, retains source
+SSA/result/site identity and selects strict/sloppy setters explicitly. The
+prepared plan is regenerated after transforms, frozen with the program,
+validated against the exact ABI, and preserved/rechecked on codec replay.
+This is logical declaration/early effect planning, **not a physical resource
+receipt**. Source-body call effects, not backend emitter overrides, keep an
+otherwise-unused foreign getter alive through normal program optimization.
+
+The boundary gate initially rejected a program→mixed-backend dependency. It
+was fixed by separating pure semantic preparation from the backend adapter,
+not by granting an exception or weakening layer rules. Four new program
+modules have clean dependency closures (core/program/runtime data only),
+with no TypeScript, codegen context, backend handles or resource emitter.
+Inventory and IR layering pass; no new allowance, ceiling, baseline, detector,
+frozen AST, selector or public admission change.
+
+The new 17-case matrix exercises genuine source preparation, imported callee
+aliases, nested record contracts, codec authentication, an unused getter and
+noncommutative getter order, exact thrown tokens, live reference identity,
+strict refusal and genuine sloppy-script assignment. Execution of projected
+record bodies still uses a **test-only physical binding** to admitted foreign
+primitives; it is not production provider authentication. Separate scalar
+controls emit and execute in both WasmGC/standalone and linear/WASI, with zero
+imports and identical bytes for projection off/on.
+
+Four identical existing-API source probes against signed
+`b0d73c4b9f3dfa4ee03c98cab2cae50db7c92bc9` show the actual frontier: parent
+discarded the unused Get and declared zero reference providers; candidate
+retains one real call and declares three exact provider contracts. Strict and
+sloppy writes similarly become their different declared calls; nested echo
+plans both record shapes and six field-provider contracts. **All four still
+fail physical acceptance**, now explicitly including missing provider slots.
+There is no claim of new public typed-object acceptance.
+
+**Next owner:** materialize canonical native property resources and their
+actual carrier/layout/allocation obligations in the reservation ledger, then
+publish authenticated boundary entries atomically. Typed fixed-field native
+structs cannot simply be assumed to be canonical ordinary objects with
+descriptor/prototype semantics. Choose actual native allocation ownership,
+preserve native/foreign receiver identity and throw/realm/reentry behavior,
+and never substitute a copied graph or default-field wrapper. The current
+plan declares all three operation contracts per field; it does not establish
+their physical costs or certify unused provider elision.
+
+A foreign getter can also return a value outside its annotated field type.
+The primitive fixtures do not certify that value contract: a JS→Wasm `f64`
+import can coerce a non-number. Production providers must establish actual
+value carriers without laundering such coercions into source semantics;
+missing fields, undefined/null, non-numbers and dynamic getter results need
+explicit checked/dynamic representation tests before public admission.
+
+Direct-call signature closure is checked, but captured/indirect callable
+representation, mutable/container/vector/rest/class storage, native origin
+proofs and actual-carrier equality still need physical planning. No public
+entry may rely on this logical plan alone. Prior cycle/strict-closure,
+source/raw-mode/runtime retirement, prerequisite-stack and full acceptance
+obligations remain open. Both migration issues remain in progress.
+
+**Measured checkpoint, not migration completion.** Node 24.4.1 / Vitest 3.2.4
+forks, two workers, `--experimental-wasm-exnref`, exact parent
+`b0d73c4b9f3dfa4ee03c98cab2cae50db7c92bc9`:
+
+- New preparation matrix **17/17**; prior reference/write/native strictness
+  matrix **73/73**. These are distinct from public interop acceptance.
+- Fresh paired existing cohort **779 cases / 38 files**, both **756 passing /
+  23 failing**, zero skips/status transitions; all 23 normalized full errors
+  match. No existing expectation edits or full Test262 claim.
+- All **33** complete policy inventories and binaries match; guard **437/452**,
+  zero unknown/gap imports. All **six** native binaries match with zero imports,
+  results 42/7 and no JS-boundary probe export. Separate public typed-object
+  diagnostic stays **5 passing / 11 failing of 16**, identical 131388-byte binary.
+- Size/function, coercion/oracle, typecheck/lint/format, layering/fallback,
+  flat/inventory and issue checks pass without new allowances or policy-edge
+  relaxations. Runtime remains 10230 lines; resolveImport 1371/seven cases,
+  owned adapters 896, capabilities 1194. No overall size/performance gain claimed.
+- Preservation-only stays six full/six cut, but strict modeled closure remains
+  open at the same two nonliteral imports. Both cycle gates retain the five
+  pairs recorded in S7-s, including its frontend dependencies; no waiver and
+  no graph-closure or retirement certification.
+
+Exact source/gate hashes, all retained failures, existing-API probe rows,
+complete-inventory hashes and binary costs:
+`plan/audit/6979-reference-program-planning-20261019.json`. PR6762 remains draft;
+resolve the same prerequisite stack before any merge. No GitHub issues or
+issue comments were created.

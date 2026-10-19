@@ -15856,6 +15856,26 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/ir/program/object-reference-contracts.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/object-reference-closure.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/object-reference-plan.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/object-property-projection.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
       "path": "src/frontend/logical-record-type.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",

@@ -81,7 +81,7 @@ export function ownTypedIrProgramInput(input: TypedIrProgramInput): {
   fields(
     captured,
     ["inventory", "ir", "derivedUnits", "startup", "callables", "globals", "allocations"],
-    ["runtimeSupport", "sourceMap"],
+    ["runtimeSupport", "sourceMap", "objectReferences"],
   );
   fields(captured.inventory, ["sources", "classes", "allUnits", "terminalUnits"]);
   for (const values of [

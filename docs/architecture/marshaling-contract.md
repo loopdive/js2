@@ -142,6 +142,21 @@ Project raw source IR before optimization, not an already optimized prepared
 packet or decoded copy. Complete reachable callee contracts and authenticated
 entry publication remain prerequisites for using this boundary in compile().
 
+Internal whole-program preparation can request the live logical projection
+before hygiene. Its complete current type population and exact per-field
+Get/strict-Set/sloppy-Set declarations live in the existing Program ABI, not
+an alternate binding table. Direct-call arguments/results are checked before
+optimization. The frozen logical plan survives codec replay and is rechecked
+against its current program and canonical declarations. Getter/setter effects
+therefore enter normal optimization as calls, not native field loads.
+
+This declaration plan is not a native resource receipt or public entry token.
+Physical acceptance still refuses unmaterialized record carriers/providers.
+The native allocation owner must establish actual ordinary-object semantics;
+an old fixed-field GC struct is not automatically an object with canonical
+descriptor/prototype behavior. Canonical resources, complete storage/indirect
+callable ownership and authenticated boundary publication remain open.
+
 This contract supersedes the former deep-marshaling proposal in this file.
 That proposal's recursive incoming Array-to-vector policy is not an approved
 implementation of the live boundary. Its historical text remains available

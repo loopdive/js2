@@ -11,14 +11,19 @@ import type { IrProgramPreparationResult } from "./program/prepared-contracts.js
 import { observePreparedIrProgram } from "./program-observation.js";
 import type { RuntimeManifestPolicy } from "./runtime-manifest.js";
 import { prepareNumberFormatRuntimeSupport } from "../frontend/builtins/prepare-number-format.js";
+import { deriveObjectReferencePlan } from "./program/object-reference-plan.js";
 
 export interface IrWholeProgramPreparationInput extends IrProgramSourceInput {
+  /** Internal logical property-call projection, not public foreign entry authority. */
+  readonly objectReferenceProjection?: "live";
   /** Internal resolved projection requests; all consume the same semantic module. */
   readonly runtimePolicies?: readonly RuntimeManifestPolicy[];
 }
 
 /** One complete preparation before any backend has permission to allocate or emit. */
 export function prepareWholeIrProgram(input: IrWholeProgramPreparationInput): IrProgramPreparationResult {
+  if (input.objectReferenceProjection !== undefined && input.objectReferenceProjection !== "live")
+    throw new PreparedIrProgramInvariantError("invalid-prepared-data", "unknown object reference projection");
   const policies = input.runtimePolicies ?? [input.policy];
   const keys = new Set(policies.map((policy) => `${policy.backend}:${policy.target}`));
   if (
@@ -73,7 +78,11 @@ export function prepareWholeIrProgram(input: IrWholeProgramPreparationInput): Ir
       "invalid-prepared-data",
       "formatter runtime support cannot request a runtime projection outside wasmgc:standalone",
     );
-  const typed = captureTypedIrProgramInput(source, runtimeSupport);
+  const captured = captureTypedIrProgramInput(source, runtimeSupport);
+  const typed =
+    input.objectReferenceProjection === "live"
+      ? { ...captured, objectReferences: deriveObjectReferencePlan(captured) }
+      : captured;
   const controls = resolveIrPreparationControlsFromEnv();
   const counters = createGvnCounters();
   let result: IrProgramPreparationResult;

@@ -38,6 +38,7 @@ import { verifyIrFunction, type IrVerificationOptions } from "../runtime/verify.
 import { assertPreparedIrClassLayouts } from "./class-layouts.js";
 import { assertPreparedIrProgramAllocations } from "./allocations.js";
 import { assertIrRuntimeSupport } from "./runtime-support.js";
+import { assertObjectReferencePlan, assertObjectReferenceAbi } from "./object-reference-plan.js";
 import { numberFormatRadixSupportDeclarations } from "./formatter-support.js";
 import { assertPreparedIrRuntimeSupportDependencies } from "./runtime-support-dependencies.js";
 import { irRuntimeCallableHasNoSlot } from "../runtime/native-async-callables.js";
@@ -200,6 +201,8 @@ export function assertPreparedIrProgram(program: PreparedIrProgram, options?: Ir
   if (Object.hasOwn(program, "runtimeSupport") && program.runtimeSupport === undefined)
     invalid("runtime support must be absent rather than own-property undefined");
   assertIrRuntimeSupport(program, program.runtimeSupport);
+  assertObjectReferencePlan(program);
+  assertObjectReferenceAbi(program);
   assertPreparedIrSemanticRuntimeSeparation(program);
   assertPreparedIrProgramAllocations(program);
   assertPreparedIrClassLayouts(program);

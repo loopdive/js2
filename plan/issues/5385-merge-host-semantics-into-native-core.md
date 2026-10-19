@@ -1325,3 +1325,43 @@ all prior retirement/acceptance obligations remain open. Both issues stay in
 progress; PR6762 stays draft pending prerequisites. Detailed actionable handoff:
 the S7 issue's "S7-s source write-mode and logical record contracts" section and
 `plan/audit/6979-source-reference-contracts-20261019.json`.
+
+### 2026-10-19 — reference planning in the real source preparation transaction
+
+S7-t continues from signed `b0d73c4b9f3dfa4ee03c98cab2cae50db7c92bc9`.
+An internal live projection now derives the complete current logical record
+population and exact per-field Get/strict-Set/sloppy-Set declarations in the
+existing Program ABI. Property operations become calls before hygiene;
+direct-call signatures are checked before optimization, including imported
+callees. The logical plan is frozen with the program and authenticated against
+current shapes/declarations after codec replay. Backend adapters consume the
+same pure semantic projection; no backend handles or TypeScript dependencies
+cross the clean program boundary, and no boundary rule was weakened.
+
+New matrix **17/17**, prior focused matrix **73/73**; genuine preparation retains
+an unused getter, strict and sloppy source stores, exact thrown tokens, aliases
+and nested contracts. Emitted record bodies still use test-only admitted
+foreign primitive bindings, not canonical production resources. Independent
+WasmGC/standalone and linear/WASI scalar controls execute with zero imports
+and identical bytes with projection off/on. Four paired existing-API record
+probes still reject at physical acceptance; public typed-object diagnostic
+stays **5/16 passing, 11 failing**, identical binary.
+
+Fresh **779-case / 38-file** comparison against the published parent stays
+**756 passing / 23 failing**, zero skips/transitions; all 23 normalized full
+errors match. All 33 policy binaries/inventories and six native binaries match;
+guard 437/452. Normal size/function/coercion/oracle, typecheck/lint/format,
+layering/fallback, flat/inventory and issue checks pass without new allowances.
+The inherited five cycle pairs and two strict-closure dynamic imports remain
+open; runtime stays 10230 lines.
+
+Next: reserve/fill canonical native property resources with actual native
+record allocation/carrier ownership, complete storage and indirect-callable
+representation, then atomically publish authenticated entries. An old native
+fixed-field struct does not automatically have ordinary-object descriptor/
+prototype semantics. No copied graph/default-field wrapper or partially
+reference-capable public entry is permitted. The plan currently declares all
+three operation contracts per field, not a proof of physical cost or unused
+provider elision. All prior retirement/acceptance/prerequisite obligations stay
+open. Both issues stay in progress; PR6762 stays draft. Detailed S7-t handoff
+and exact evidence: `plan/audit/6979-reference-program-planning-20261019.json`.
