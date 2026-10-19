@@ -12,6 +12,7 @@ import type { IrType } from "../ir/nodes.js";
 import { classifyIrFailure, IrInvariantError, IrUnsupportedError, type IrPreparationFailure } from "../ir/outcomes.js";
 import type { LatticeType } from "../ir/propagate.js";
 import {
+  certifiedImportedHofCall,
   certifyImportedIrCall,
   effectiveIrParamTypeNode,
   effectiveIrReturnTypeNode,
@@ -70,8 +71,13 @@ function ambientHostValType(type: IrType | null): ValType | null | undefined {
   if (type === null) return null;
   if (type.kind === "string") return { kind: "externref" };
   if (type.kind !== "val") return undefined;
-  if (type.val.kind === "f64" || type.val.kind === "i32") return type.val;
+  // (#7091) `externref` is the native-string lane's carrier for a `string` param.
+  if (type.val.kind === "f64" || type.val.kind === "i32" || type.val.kind === "externref") return type.val;
   return undefined;
+}
+
+function ambientHostParamCarrier(type: IrType, nativeStrings: boolean): IrType {
+  return nativeStrings && type.kind === "string" ? { kind: "val", val: { kind: "externref" } } : type;
 }
 
 function sameAmbientHostValType(left: ValType, right: ValType): boolean {
@@ -398,7 +404,9 @@ function planSourceUnitImportedCalls(
       if (planningFailure) return;
       if (node !== declaration && ts.isFunctionLike(node)) return;
       if (ts.isCallExpression(node)) {
-        const graphUse = programCallableBoundaryUse(ctx, identityPlan, ownerUnitId, node);
+        const graphUse = certifiedImportedHofCall(node, legacyImportedFunctions)
+          ? undefined
+          : programCallableBoundaryUse(ctx, identityPlan, ownerUnitId, node);
         if (graphUse) {
           try {
             importedCalls.set(
@@ -538,6 +546,7 @@ function appendAmbientClassCalls(
   safeSelection: IrMutableCallSelection,
   importedCalls: Map<ts.CallExpression, IrImportedCallLoweringPlan>,
   resolvePositionType: IrPositionTypeResolver,
+  nativeStrings: boolean,
 ): void {
   const { identityPlan } = state;
   const retainedClassMembers = new Set(safeSelection.classMembers ?? []);
@@ -576,14 +585,27 @@ function appendAmbientClassCalls(
         const certified = resolveAmbientClassCall(node);
         if (certified) {
           try {
+            // (#7091) Under native strings a `string` param crosses as the
+            // externref carrier (`extern.convert_any`, exactly what legacy
+            // passes); a `string` RESULT has no IR carrier conversion yet.
             const params = certified.declaration.parameters.map((parameter) =>
-              resolvePositionType(effectiveIrParamTypeNode(parameter), undefined, classShapeSidecar),
+              ambientHostParamCarrier(
+                resolvePositionType(effectiveIrParamTypeNode(parameter), undefined, classShapeSidecar),
+                nativeStrings,
+              ),
             );
             const returnType = resolvePositionType(
               effectiveIrReturnTypeNode(certified.declaration),
               undefined,
               classShapeSidecar,
             );
+            if (nativeStrings && returnType?.kind === "string") {
+              throw new IrUnsupportedError(
+                "imported-call-planning-unsupported",
+                "resolve",
+                `ambient host call ${certified.targetName} returns a native string with no IR carrier conversion`,
+              );
+            }
             if (importedCalls.has(node)) {
               throw new IrInvariantError(
                 "selection-preparation-mismatch",
@@ -670,6 +692,7 @@ export function planIrImportedCalls(options: PlanIrImportedCallsOptions): IrImpo
       safeSelection,
       plans.importedCalls,
       resolvePositionType,
+      ctx.nativeStrings,
     );
   }
   return plans;

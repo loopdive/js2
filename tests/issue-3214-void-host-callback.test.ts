@@ -341,20 +341,26 @@ describe("#3214 B2 — ambient void host callbacks", () => {
   });
 
   it("demotes when __make_callback resolves to a defined function instead of the exact host import", async () => {
-    const result = await compileHostCallback(`
+    const result = await compileHostCallback(
+      `
       type i32 = number;
       function __make_callback(_id: i32, capture: object): object { return capture; }
       export function install(target: EventTarget, sink: HTMLElement): void {
         target.addEventListener("tick", () => { sink.textContent = "x"; });
       }
-    `);
+    `,
+      // The maker import is the host lane's crossing; the #7091 platform lane
+      // passes the packed closure as a marshalled carrier and never calls it.
+      { semanticProviders: "host-assisted" },
+    );
 
     expect(result.irCompiledFuncs ?? []).not.toContain("install");
     expect(result.irPostClaimErrors ?? []).toEqual([]);
   });
 
   it("keeps a potentially final-demoted B2 call component out of the IR-first skip set", async () => {
-    const result = await compileHostCallback(`
+    const result = await compileHostCallback(
+      `
       type i32 = number;
       function __make_callback(_id: i32, capture: object): object { return capture; }
       function install(n: number): number {
@@ -363,7 +369,9 @@ describe("#3214 B2 — ambient void host callbacks", () => {
       }
       export function caller(n: number): number { return install(n); }
       export function independent(n: number): number { return n + 1; }
-    `);
+    `,
+      { semanticProviders: "host-assisted" },
+    );
 
     expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
     expect(WebAssembly.validate(result.binary)).toBe(true);

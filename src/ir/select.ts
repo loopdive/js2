@@ -457,6 +457,24 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
    *  strictNoHostImports). Gates the host-extern capability. */
   readonly jsHostExterns?: boolean;
   /**
+   * (#7091) Platform-capability extern lane. Present only in a JavaScript
+   * environment whose module keeps the JS value bridge while the semantic
+   * provider regime is native (`jsHostExterns` stays false there: no implicit
+   * host SEMANTIC import). Platform capabilities — DOM and other declared
+   * external APIs, which `classifyHostImport` calls `platform-capability` —
+   * are still the environment's, and their native-string / closure arguments
+   * cross as carriers the runtime's platform-arg marshal converts. Answers
+   * whether one extern class name belongs to that lane; ECMAScript builtins
+   * and `console` never do (they keep their native / host-free-sink arms).
+   */
+  readonly platformExternClass?: (className: string) => boolean;
+  /**
+   * (#7091) The ambient globals whose `global_<name>` handle the platform lane
+   * registers (legacy `collectDeclaredGlobals`). A platform-class global
+   * outside it (`performance` — natively lowered in the regime) stays deferred.
+   */
+  readonly platformHostGlobal?: (name: string) => boolean;
+  /**
    * (#4576) Exact checker-owned standalone DOM subtree plan. This is a
    * provider capability, not permission to enable the generic host-extern
    * surface: `jsHostExterns` remains false. The plan is all-or-nothing for its
@@ -1447,6 +1465,25 @@ function armHostGlobalResolvers(sourceFile: ts.SourceFile, options: IrSelectionO
   const resolver = options?.resolveHostGlobal ?? null;
   currentHostGlobalResolver = resolver && !deferred ? resolver : null;
   currentDeferredHostGlobalResolver = resolver && deferred ? resolver : null;
+  // (#7091) The platform lane splits the one resolver by class: platform
+  // capability globals (`document`, `window`, …) arm the live resolver, every
+  // other ambient global (`console`, ECMAScript-shaped ones) stays on the
+  // deferred one, so the host-free console sink and the honest
+  // `host-surface-unavailable` reason are unchanged for them.
+  const platform = deferred ? options?.platformExternClass : undefined;
+  const platformGlobal = options?.platformHostGlobal;
+  if (resolver && platform && platformGlobal) {
+    const admits = (node: ts.Identifier, className: string): boolean =>
+      platform(className) && platformGlobal(node.text);
+    currentHostGlobalResolver = (node) => {
+      const className = resolver(node);
+      return className !== undefined && admits(node, className) ? className : undefined;
+    };
+    currentDeferredHostGlobalResolver = (node) => {
+      const className = resolver(node);
+      return className !== undefined && !admits(node, className) ? className : undefined;
+    };
+  }
   const candidate = options?.standaloneDomCapability;
   currentStandaloneDomCapability =
     candidate &&
@@ -2259,6 +2296,20 @@ export interface IrImportedCallCertification {
  * a bare same-file top-level FunctionDeclaration in an exact FunctionTypeNode
  * parameter position.
  */
+/**
+ * (#7091) An imported call that passes a certified top-level function value
+ * (the #3214 A+B1 higher-order shape). The fixed-target program-callable
+ * route has no function-argument carrier, so wherever both could own the call
+ * — the multi-source native-regime lane — this exact shape stays on the
+ * imported-call plan. Every other call keeps the program-callable route.
+ */
+export function certifiedImportedHofCall(
+  call: ts.CallExpression,
+  resolver: IrImportedFunctionResolver | undefined,
+): boolean {
+  return (certifyImportedIrCall(call, resolver)?.functionArguments.length ?? 0) > 0;
+}
+
 export function certifyImportedIrCall(
   call: ts.CallExpression,
   resolver: IrImportedFunctionResolver | undefined,
@@ -9677,7 +9728,9 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
   }
   if (ts.isCallExpression(expr)) {
     const programCallableVerdict = programCallablePhase1Verdict(
-      currentSelectionOptions?.resolveProgramCallableUse,
+      certifiedImportedHofCall(expr, currentSelectionOptions?.importedFunctions)
+        ? undefined
+        : currentSelectionOptions?.resolveProgramCallableUse,
       expr,
       () => phase1CallPreambleIsBuildable(expr),
       (argument) => isPhase1Expr(argument, scope, localClasses),
@@ -10980,6 +11033,7 @@ export function buildLocalCallGraph(
       }
       if (ts.isCallExpression(node)) {
         if (
+          !certifiedImportedHofCall(node, currentSelectionOptions?.importedFunctions) &&
           visitProgramCallableUse(currentSelectionOptions?.resolveProgramCallableUse, node, visit, () =>
             hasExternalCall.add(callerName),
           )
