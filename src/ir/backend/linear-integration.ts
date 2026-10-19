@@ -1920,6 +1920,8 @@ function makeLinearIrResolver(
   };
 
   const resolver: IrLowerResolver & IrFromAstResolver = {
+    // (#6920 A-C1) Bodies resolved here are lowered by the linear emitter only.
+    selectedBackend: "linear",
     ensureExnTag(): number {
       return readLinearBodyBatchExceptionTag(ctx.mod);
     },

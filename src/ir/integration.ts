@@ -6831,6 +6831,9 @@ function makeFromAstResolver(
   const functionPrototypeCall = integrationFunctionPrototypeCallPolicy(ctx);
   return {
     ...preparedIrAsyncFromAstResolver(ctx),
+    // (#6920 A-C1) This integration lowers every body through the WasmGC
+    // emitter (`lowerIrFunctionToWasm`'s default, or the WasmGC async path).
+    selectedBackend: "wasmgc",
     hostIndirectEvalTarget() {
       if (ctx.standalone || ctx.wasi || ctx.strictNoHostImports || ctx.nativeStrings) return null;
       const functionIndex = ctx.funcMap.get("__extern_eval");

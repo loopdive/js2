@@ -27,6 +27,8 @@ func-budget-allow:
   - src/ir/from-ast.ts::lowerFunctionAstToIr
   - src/ir/from-ast.ts::lowerExprUnchecked
   - src/ir/program-source.ts::prepareIrProgramSources
+  # 2026-10-19 (#6920 A-C1): +3 for the WasmGC resolver's selectedBackend, which its constructor must set
+  - src/ir/integration.ts::makeFromAstResolver
 import-cycles-allow:
   - ir->backend: 28 # 2026-10-14 (#6920): three measured native Number/Undefined physical reserve/fill/completion recipe joins remain honest mixed IR/backend debt
 language_feature: arrays

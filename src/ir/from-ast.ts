@@ -225,7 +225,14 @@ import type { IrStandaloneDomOperation } from "./dom-capability.js";
 import { IR_CONSOLE_METHODS, IR_CONSOLE_SINK_APPEND_FN, IR_NUMBER_TO_STRING_NATIVE_FN } from "./host-free-runtime.js";
 import type { IrLowerResolver } from "./lower.js";
 import type { IrVecBackendLowering } from "./backend/handles.js";
-import { irVecHandleCarrier, irVecHandleDataType } from "./backend/vector-representation.js";
+import type { IrBackendKind } from "./backend/legality.js";
+import {
+  irVecHandleCarrier,
+  irVecHandleDataType,
+  irVecRepresentationKindForBackend,
+  isLinearVecLowering,
+  isWasmGcVecLowering,
+} from "./backend/vector-representation.js";
 import { vecElemSetProviderSymbol, vecNewSizedProviderSymbol } from "./ast-vector-representation.js";
 import {
   allocateLiftedFunctionArtifact,
@@ -323,6 +330,33 @@ interface IrSlotRepresentation {
   readonly asType?: IrType;
 }
 
+/**
+ * (#6920 A-C1) The selected backend must agree with a physical vector handle
+ * before its carrier or data type is used. Missing backend information refuses
+ * (no WasmGC default); a handle from the other backend is an invariant failure.
+ */
+function requireSelectedVecBackend(handle: IrVecBackendLowering, cx: Pick<LowerCtx, "resolver" | "funcName">): void {
+  const backend = cx.resolver?.selectedBackend;
+  if (backend === undefined) {
+    demoteToLegacy(
+      "array-representation-unsupported",
+      `ir/from-ast: vector representation has no selected backend (${cx.funcName})`,
+    );
+  }
+  const kind = irVecRepresentationKindForBackend(backend);
+  const agrees =
+    kind === "wasmgc" ? isWasmGcVecLowering(handle) : kind === "linear-memory" ? isLinearVecLowering(handle) : false;
+  if (!agrees) {
+    throw new IrInvariantError(
+      "backend-legality-failure",
+      "build",
+      `ir/from-ast: vec representation mismatch: ${backend} backend received a ${
+        isLinearVecLowering(handle) ? "linear-memory" : "WasmGC"
+      } vector handle (${cx.funcName})`,
+    );
+  }
+}
+
 /** Resolve a logical vec type without exposing its physical type index to inference. */
 function resolveIrVecType(
   type: IrType,
@@ -340,6 +374,7 @@ function resolveIrVecType(
     if (!elementValType) return null;
     const lowering = cx.resolver?.resolveVecForElement?.(elementValType);
     if (!lowering) return null;
+    requireSelectedVecBackend(lowering, cx);
     const backendValueType =
       cx.resolver?.resolveVecValueTypeForElement?.(elementValType) ?? irVecHandleCarrier(lowering, type.nullable);
     const valueType =
@@ -575,6 +610,15 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
     readonly get: string;
     readonly has: string;
   } | null;
+  /**
+   * (#6920 A-C1) The backend the compiler selected for this lowering — the one
+   * whose emitter/converter consumes this resolver's vector handles. Set by
+   * the resolver's constructor; descriptive only (never provider, ABI or
+   * resource authority). Physical vector representation requires it and never
+   * infers it from a handle's shape; a resolver without it has no physical
+   * vector representation.
+   */
+  readonly selectedBackend?: IrBackendKind;
   resolveVec?(valType: ValType): IrVecBackendLowering | null;
   /**
    * #1804 — register-or-recover the vec struct for an element ValType so
@@ -5475,6 +5519,7 @@ function lowerArrayLiteral(expr: ts.ArrayLiteralExpression, cx: LowerCtx, hint: 
         `ir/from-ast: resolver cannot register vec for empty literal (${cx.funcName})`,
       );
     }
+    requireSelectedVecBackend(vec, cx);
     const vecValueType = cx.resolver?.resolveVecValueTypeForElement?.(elemVT) ?? irVecHandleCarrier(vec, false);
     const vecResultType = hint.kind === "vec" ? irVec(hintElemIr, false) : irVal(vecValueType);
     const countedPush = canonicalCountedPushPlanForLiteral(expr, cx.checker);
@@ -5647,6 +5692,7 @@ function lowerArrayLiteral(expr: ts.ArrayLiteralExpression, cx: LowerCtx, hint: 
       `ir/from-ast: resolver cannot register vec for array literal (${cx.funcName})`,
     );
   }
+  requireSelectedVecBackend(vec, cx);
   const vecValueType = cx.resolver?.resolveVecValueTypeForElement?.(elemVT) ?? irVecHandleCarrier(vec, false);
   const resultType =
     elemVT.kind === "f64" || elemVT.kind === "i32" || storedElementType.kind === "string"
