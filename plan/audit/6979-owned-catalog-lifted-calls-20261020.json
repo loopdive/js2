@@ -1,0 +1,233 @@
+{
+  "schemaVersion": 1,
+  "checkpoint": "S7-ad authenticated Call entries for genuinely owned catalog algorithms",
+  "parentCommit": "e946c85a339b0ad2c7a05c342865e66906180ea0",
+  "candidate": "Identified by exact sourceHashes; signed checkpoint follows",
+  "harness": {
+    "node": "v24.4.1",
+    "vitest": "3.2.4",
+    "forks": 2,
+    "flags": ["--experimental-wasm-exnref"],
+    "testTimeoutMs": 35000
+  },
+  "sourceHashes": {
+    "src/backend/wasmgc/resources/native-object-realm.ts": "ed47f2c51e4eb439802b9397bdb16ed6b57193b04a4406355733e37158969660",
+    "src/backend/wasmgc/resources/native-object-is.ts": "d1147986ba717ffd110c729fa37b6734208ca07957ada07d688bba1b108f6aea",
+    "src/runtime/wasmgc/values/builtin-function-bodies.ts": "2ffcce8ecfc7fbbe3b6bf6ce4d67102e42f203a71584178510c9a649a479cd9d",
+    "src/runtime/wasmgc/values/mixed-object-access-bodies.ts": "9b3bb1e563b40742f45c76a77216eb61cbb4739190916fd6496e977a7ffcd285",
+    "src/wasm/physical/module-reservations.ts": "1c742bb3f22ca0f4710fd2b7e6251206d008f47358ef7341d7e918418bddc0ca",
+    "tests/helpers/native-realm-lifted-calls.ts": "c1941190d6fa12e430f738e4c1664332dca617dd01252126dce65d38cd6fbcdc",
+    "tests/issue-6979-native-realm-lifted-calls.test.ts": "a3769d9e62a29bcf3433015aeb44fd821ad81822c707b8d8ceab637e2dfa08a9",
+    "tests/issue-3518-module-reservations.test.ts": "9d5f8df8577743f0499b59f016c47751ea71f5c4b496a44959d6a6255f77fbe5",
+    "tests/issue-3518-native-builtin-functions.test.ts": "2e762b78c3f209c06d7a9ec8901a2e3568009a0f78edbeb0046e2eaf15ed7542"
+  },
+  "scope": {
+    "completionScope": "owned-catalog-lifted-calls",
+    "currentOwnedEntries": ["%Function.prototype%", "%ThrowTypeError%", "%Object.is%"],
+    "actualReservedRealmSlotsBorrowed": true,
+    "callerSelectedHandlesBodiesOrSubsetsAccepted": false,
+    "canonicalDefinitionsRederivedIndependentlyOfFillReceipts": true,
+    "physicalComparatorPreservesExactScalarBits": true,
+    "completedGlobalCanMasqueradeAsFunction": false,
+    "sharedNativeIdentityPredicateAndGuardedTransport": true,
+    "existingBootstrapMatchAndLiftedInstructionsPreserved": true,
+    "newAlgorithmBodiesDuplicated": false,
+    "unimplementedCatalogBodiesFilled": false,
+    "failedPartialFillCanYieldCompletionOrRetry": false,
+    "languageObjectsOrBagsCopied": false,
+    "newHostImportOrSelectorPath": false,
+    "wholeRealmOrSourcePublicEntryCompleted": false
+  },
+  "tests": {
+    "finalFocused": {
+      "cases": 426,
+      "passed": 425,
+      "failed": 1,
+      "skipped": 0,
+      "files": 9,
+      "runnerExit": 1,
+      "unhandledErrors": 0,
+      "nativeCases": { "cases": 268, "passed": 268, "failed": 0 },
+      "physicalCases": { "cases": 158, "passed": 157, "failed": 1 },
+      "newCases": { "cases": 38, "passed": 38, "failed": 0, "lifted": 27, "physical": 9, "bootstrapDefinitions": 2 },
+      "formerTimeoutCasePassed": true,
+      "onlyFailureIsFreshParentPhysicalReceiptMismatch": true,
+      "timeoutUnchangedAndNoIgnoredErrors": true,
+      "path": ".tmp/s7ad-focused-final.json"
+    },
+    "initialExpandedRun": {
+      "cases": 425,
+      "passed": 423,
+      "failed": 2,
+      "failures": [
+        "Existing fifteen-declaration receipt mismatch, reproduced on the signed parent",
+        "Existing mixed-owner post-fill mutation test exceeded 35000ms during competing verification work (39059ms)"
+      ],
+      "cleanPassClaimed": false,
+      "rerunConditions": "No competing verification jobs; same two forks, flags and timeout; no ignored-error option"
+    },
+    "bootstrapDefinitionControls": { "newCases": 2, "passed": 2, "completeDefinitions": 6 },
+    "componentExecutionControls": {
+      "cases": 18,
+      "passed": 18,
+      "actualZeroImportModules": 3,
+      "wholeProductionRealmExecutionClaimed": false
+    },
+    "freshParentPhysicalControl": {
+      "cases": 149,
+      "passed": 148,
+      "failed": 1,
+      "originalCandidateFullRowsEqual": true,
+      "comparison": "Fresh clean exact signed parent, same Node/config/forks/flags; original 149 rows only, excluding the new semantic-definition comparison group",
+      "normalization": "Replace only exact candidate/parent worktree path prefixes and the candidate URL-encoded prefix; preserve filenames, lines and full errors",
+      "failureName": "physical record relocation — fifteen complete declarations pins mandatory canonical declarations, order, members and documentation",
+      "deeperRetirementCertified": false
+    },
+    "receiptsExpectationsOrSkipsChanged": false,
+    "resources": {
+      "cases": 161,
+      "passed": 147,
+      "failed": 14,
+      "skipped": 0,
+      "files": 3,
+      "retainedParentFullRowsEqual": true,
+      "comparison": "Retained S7-ac reports, not a fresh exact-parent resource run",
+      "fullRowsSha256": "b96560a222db7bd420accf2d4e9bce30e76f87a99a50f1ccd6ff5d3c630b4c10"
+    },
+    "compatibility": {
+      "cases": 779,
+      "passed": 756,
+      "failed": 23,
+      "skipped": 0,
+      "files": 38,
+      "retainedParentFullRowsEqual": true,
+      "comparison": "Retained S7-ac reports, not a fresh exact-parent compatibility run",
+      "fullRowsSha256": "3b974485b8387524c0116a3b958c2ec926d74558425581a5d714e55e9591c23f"
+    },
+    "fullTest262Rerun": false,
+    "historicalCustodySuitesRerun": false
+  },
+  "componentWitnesses": [
+    {
+      "displaced": false,
+      "decoded": false,
+      "bytes": 19867,
+      "sha256": "e2ed7025feecb760714d3a94bcc2f2a7707f8395bf3d6804467bf386dc554ea7",
+      "imports": [],
+      "wholeRealmCompleted": false
+    },
+    {
+      "displaced": true,
+      "decoded": false,
+      "bytes": 20345,
+      "sha256": "79bdd1fe9042d68bcae3cf803d568b7cbd61ae2f204089c056de48227a1f45db",
+      "imports": [],
+      "wholeRealmCompleted": false
+    },
+    {
+      "displaced": true,
+      "decoded": true,
+      "bytes": 20345,
+      "sha256": "79bdd1fe9042d68bcae3cf803d568b7cbd61ae2f204089c056de48227a1f45db",
+      "imports": [],
+      "wholeRealmCompleted": false
+    }
+  ],
+  "binaryCostInterpretation": "Component modules include full literal/descriptor/primitive prerequisites and named test initialization/observers. They are not production marginal costs or a size-improvement comparison.",
+  "policy": {
+    "completeInventoriesAndBinaries": 33,
+    "nativeCompiledControls": 6,
+    "equalToRetainedS7acReports": true,
+    "nativeFirstImports": 437,
+    "unknownImports": 0,
+    "regimeGapImports": 0,
+    "inventoryValid": true,
+    "inventoryErrors": 0,
+    "architectureComplete": false,
+    "modules": 1978,
+    "classificationsAndPolicyHashUnchanged": true,
+    "newRootsFloorsAllowancesOrAllowedEdges": false
+  },
+  "graph": {
+    "largestSccSize": 712,
+    "sccCountOver1": 4,
+    "valueEdges": { "parent": 10829, "candidate": 10830 },
+    "newValueEdge": "mixed-object-access-bodies -> existing builtin-function-bodies for the shared native identity predicate",
+    "growingDirectionCountsAgainstMain": 4,
+    "twoWayDirectionMetricsUnchanged": true,
+    "waiverOrBaselineChanged": false
+  },
+  "gates": {
+    "typecheck": "passed",
+    "lint": "passed",
+    "format": "passed",
+    "checkpointLocAndFunction": { "passed": true, "sourceFiles": 5, "netSourceLines": 229, "newAllowance": false },
+    "wholePrLocAndFunction": {
+      "passed": true,
+      "mergeBase": "ae913d622f3cb5c4136e43a27594b8ec48e4c933",
+      "sourceFiles": 375,
+      "netSourceLines": -17357,
+      "existingTwoFunctionGrantsUnchanged": true
+    },
+    "coercion": "passed",
+    "oracle": "passed",
+    "layering": "passed",
+    "flatDirectory": "passed",
+    "fallbacks": "passed",
+    "preservationOnly": { "full": "6/6 passed", "cut": "6/6 passed" },
+    "strictClosure": "open: two unconstrained dynamic imports; no exemption or behavior narrowing",
+    "retirementCertified": false
+  },
+  "artifacts": {
+    "resources": {
+      "path": ".tmp/s7ad-resources-final.json",
+      "sha256": "bf5273a14d92cc587e128ad4d2ddcf99aae31197c2c9873e288a126ba7d70ccc"
+    },
+    "compatibility": {
+      "path": ".tmp/s7ad-existing-final.json",
+      "sha256": "07f4c28f14558cad8fc8ba5c6f30f86f644330581af7892f5454154a199acfd4"
+    },
+    "focused": {
+      "path": ".tmp/s7ad-focused-final.json",
+      "sha256": "40726605c06769d874a782210f7eab05752f895d0df48ea526e2394ba26adf35"
+    },
+    "parentPhysical": {
+      "path": ".tmp/s7ad-parent-physical.json",
+      "sha256": "31a709a5c53e272c04570d830cc822fd7c607ac4dcc92d1bbaf41eeff5f7d40b"
+    },
+    "physicalComparison": {
+      "path": ".tmp/s7ad-physical-parent-comparison.json",
+      "sha256": "a980ed8c25152b36dda3fe82ab83b52ca219bb2f87dae951f500b60cd0535206"
+    },
+    "cycles": {
+      "path": ".tmp/s7ad-cycles.json",
+      "sha256": "52f049134edd7da63b5ffd50ab6f005f653c86aec7a8548a6d5d74686dfbea0b"
+    },
+    "inventory": {
+      "path": ".tmp/s7ad-inventory.json",
+      "sha256": "0f54e83e2cd328f25968be77fdb476840a2331514a32a01ccb66ae69d0827572"
+    },
+    "policy": {
+      "path": ".tmp/s7ad-policy-final.log",
+      "sha256": "17f87021b75df26b865737c49331d7749a160bb621e955115d1786ef16f253dd"
+    },
+    "nativeControls": {
+      "path": ".tmp/s7ad-native-final.log",
+      "sha256": "3b2b598b433a5802cd71989c1bb4f1f31b21af605afe596685e74c7f120f7895"
+    }
+  },
+  "parentControl": {
+    "worktree": "/Users/thomas/.codex/worktrees/6979-s7ad-parent-control/ts2wasm",
+    "headVerified": true,
+    "noLocalChangesBeforeCleanup": true,
+    "reportsRetainedOutsideControlCheckout": true,
+    "managedArchiveConfirmed": true
+  },
+  "remaining": [
+    "All other actual catalog algorithms, constructor paths and complete singleton/property population",
+    "Mixed Get/Call and authenticated source/public entry; foreign/dynamic identity and first-class undefined",
+    "ToObject/default-prototype and special source method semantics; Linear/WASI construction/publication",
+    "Four growing direction counts, historical custody/physical record receipt and strict retirement/conformance acceptance",
+    "Both Markdown issues remain in progress; PR6762 remains draft behind the prerequisite stack and merge conflicts"
+  ]
+}

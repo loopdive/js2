@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import type { FuncHandle, Instr, LocalDef } from "../../../wasm/model/instructions.js";
+import { buildBuiltinFunctionIdentityCheck } from "./builtin-function-bodies.js";
 import {
   ORDINARY_OBJECT_DESCRIPTOR_ENCODING as flags,
   buildOrdinaryObjectExtensibilityBody,
@@ -176,25 +177,16 @@ export function buildMixedObjectClassify(input: MixedObjectAccessOperands): Mixe
     let checks: Instr[];
     if (c.kind === "native") {
       const e = c.native!;
-      checks = [
-        ...field(0, c.typeIdx, 4),
-        n(e.metadataId),
-        { op: "i32.eq" },
-        ...field(0, c.typeIdx, 6),
-        global(d.realm),
-        { op: "ref.eq" },
-        { op: "i32.and" },
-        ...cast(0, c.typeIdx),
-        global(e.singleton),
-        ...(e.singletonExtern
-          ? ([{ op: "any.convert_extern" }, { op: "ref.cast_null", typeIdx: c.typeIdx }] as Instr[])
-          : []),
-        { op: "ref.eq" },
-        { op: "i32.and" },
-        ...field(0, c.typeIdx, 0),
-        { op: "ref.test", typeIdx: e.liftedTypeIdx },
-        { op: "i32.and" },
-      ];
+      checks = buildBuiltinFunctionIdentityCheck({
+        typeIdx: c.typeIdx,
+        metadataId: e.metadataId,
+        liftedTypeIdx: e.liftedTypeIdx,
+        singleton: e.singleton,
+        singletonExtern: e.singletonExtern,
+        realm: d.realm,
+        candidateLocal: 0,
+        candidateExtern: true,
+      });
     } else if (c.kind === "object-prototype") {
       checks = [...cast(0, c.typeIdx), global(d.objectPrototype), { op: "ref.eq" }];
     } else {

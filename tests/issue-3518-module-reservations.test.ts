@@ -1120,3 +1120,55 @@ describe("module completion lifecycle and exact locators", () => {
     expect(() => new PhysicalModuleReservations(module)).toThrow("requires empty physical storage");
   });
 });
+
+describe("independent semantic definition comparison", () => {
+  it("refuses a genuine completed global as function-definition authority", () => {
+    const tx = new PhysicalModuleReservations(createEmptyModule());
+    const value = tx.reserveGlobal("global", "global", { kind: "i32" }, false);
+    tx.freezeReservations();
+    tx.fillGlobal(value, [{ op: "i32.const", value: 0 }]);
+    expect(() =>
+      tx.assertCanonicalFunctionDefinition(value as never, { locals: undefined, body: undefined } as never),
+    ).toThrow(/requires a defined function/);
+  });
+  it("does not mistake an allocator fill receipt for the semantic owner's expected body", () => {
+    const { transaction: tx, fn } = fixture();
+    tx.freezeReservations();
+    tx.fillFunction(fn, { locals: [], body: [] });
+    expect(() => tx.assertCompletedReservation(fn)).not.toThrow();
+    expect(() => tx.assertCanonicalFunctionDefinition(fn, { locals: [], body: [{ op: "nop" }] })).toThrow(
+      /noncanonical function definition/,
+    );
+    expect(tx.state).toBe("failed");
+  });
+  it("compares unused locals as well as body instructions", () => {
+    const { transaction: tx, fn } = fixture();
+    tx.freezeReservations();
+    tx.fillFunction(fn, { locals: [{ name: "unused", type: { kind: "i32" } }], body: [] });
+    expect(() => tx.assertCanonicalFunctionDefinition(fn, { locals: [], body: [] })).toThrow(/noncanonical/);
+  });
+  it.each([0, -0, NaN, Infinity])("preserves exact scalar data in canonical instruction comparison: %s", (value) => {
+    const { transaction: tx, fn } = fixture();
+    tx.freezeReservations();
+    const definition: { locals: []; body: Instr[] } = {
+      locals: [],
+      body: [{ op: "f64.const", value }, { op: "drop" }],
+    };
+    tx.fillFunction(fn, definition);
+    expect(() => tx.assertCanonicalFunctionDefinition(fn, structuredClone(definition))).not.toThrow();
+  });
+  it.each([
+    [0, -0],
+    [nanPayload(0x7ff8000000000001n), nanPayload(0x7ff8000000000002n)],
+  ])("rejects distinct f64 bit patterns instead of normalizing them through JSON", (actual, expected) => {
+    const { transaction: tx, fn } = fixture();
+    tx.freezeReservations();
+    tx.fillFunction(fn, { locals: [], body: [{ op: "f64.const", value: actual }, { op: "drop" }] });
+    expect(() =>
+      tx.assertCanonicalFunctionDefinition(fn, {
+        locals: [],
+        body: [{ op: "f64.const", value: expected }, { op: "drop" }],
+      }),
+    ).toThrow(/noncanonical/);
+  });
+});

@@ -55,6 +55,44 @@ export type BuiltinFunctionDefinition = { locals: LocalDef[]; body: Instr[] };
 const get = (index: number): Instr => ({ op: "local.get", index });
 const global = (index: number): Instr => ({ op: "global.get", index });
 const call = (funcIdx: FuncHandle): Instr => ({ op: "call", funcIdx });
+/** Field predicate only: callers first test the concrete candidate and any extern singleton representation. */
+export interface BuiltinFunctionIdentityOperands {
+  readonly typeIdx: number;
+  readonly metadataId: number;
+  readonly liftedTypeIdx: number;
+  readonly singleton: number;
+  readonly singletonExtern: boolean;
+  readonly realm: number;
+  readonly candidateLocal: number;
+  readonly candidateExtern: boolean;
+}
+export function buildBuiltinFunctionIdentityCheck(d: BuiltinFunctionIdentityOperands): Instr[] {
+  const cast = (): Instr[] => [
+    get(d.candidateLocal),
+    ...(d.candidateExtern ? [{ op: "any.convert_extern" } as Instr] : []),
+    { op: "ref.cast", typeIdx: d.typeIdx },
+  ];
+  const field = (fieldIdx: number): Instr[] => [...cast(), { op: "struct.get", typeIdx: d.typeIdx, fieldIdx }];
+  return [
+    ...field(BFN_ID_FIELD_IDX),
+    { op: "i32.const", value: d.metadataId },
+    { op: "i32.eq" },
+    ...field(BUILTIN_FUNCTION_REALM_FIELD),
+    global(d.realm),
+    { op: "ref.eq" },
+    { op: "i32.and" },
+    ...cast(),
+    global(d.singleton),
+    ...(d.singletonExtern
+      ? [{ op: "any.convert_extern" } as Instr, { op: "ref.cast_null", typeIdx: d.typeIdx } as Instr]
+      : []),
+    { op: "ref.eq" },
+    { op: "i32.and" },
+    ...field(CLOSURE_FUNC_FIELD_IDX),
+    { op: "ref.test", typeIdx: d.liftedTypeIdx },
+    { op: "i32.and" },
+  ];
+}
 export function builtinUndefined(d: Pick<BuiltinFunctionBodyOperands, "undefinedGlobal">): Instr[] {
   return [global(d.undefinedGlobal), { op: "extern.convert_any" }];
 }
@@ -82,27 +120,16 @@ export function buildBuiltinFunctionMatchDefinition(d: BuiltinFunctionBodyOperan
           op: "if",
           blockType: { kind: "empty" },
           then: [
-            get(1),
-            { op: "ref.cast", typeIdx: entry.typeIdx },
-            { op: "struct.get", typeIdx: entry.typeIdx, fieldIdx: BFN_ID_FIELD_IDX },
-            { op: "i32.const", value: entry.metadataId },
-            { op: "i32.eq" },
-            get(1),
-            { op: "ref.cast", typeIdx: entry.typeIdx },
-            { op: "struct.get", typeIdx: entry.typeIdx, fieldIdx: BUILTIN_FUNCTION_REALM_FIELD },
-            global(d.realm),
-            { op: "ref.eq" },
-            { op: "i32.and" },
-            get(1),
-            { op: "ref.cast", typeIdx: entry.typeIdx },
-            global(entry.singleton),
-            { op: "ref.eq" },
-            { op: "i32.and" },
-            get(1),
-            { op: "ref.cast", typeIdx: entry.typeIdx },
-            { op: "struct.get", typeIdx: entry.typeIdx, fieldIdx: CLOSURE_FUNC_FIELD_IDX },
-            { op: "ref.test", typeIdx: entry.liftedTypeIdx },
-            { op: "i32.and" },
+            ...buildBuiltinFunctionIdentityCheck({
+              typeIdx: entry.typeIdx,
+              metadataId: entry.metadataId,
+              liftedTypeIdx: entry.liftedTypeIdx,
+              singleton: entry.singleton,
+              singletonExtern: false,
+              realm: d.realm,
+              candidateLocal: 1,
+              candidateExtern: false,
+            }),
             { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: index + 1 }, { op: "return" }] },
           ],
         },
@@ -213,20 +240,71 @@ export function buildBuiltinFunctionLiftedDefinition(
   entry: BuiltinFunctionEntryOperands,
   ordinal: number,
 ): BuiltinFunctionDefinition {
-  return {
-    locals: [],
-    body: [
+  return buildBuiltinFunctionGuardedCallDefinition({
+    reject: [
       get(0),
       { op: "extern.convert_any" },
       call(d.match),
       { op: "i32.const", value: ordinal + 1 },
       { op: "i32.ne" },
-      { op: "if", blockType: { kind: "empty" }, then: builtinFailure(d) },
+    ],
+    failure: builtinFailure(d),
+    algorithm: entry.algorithm,
+  });
+}
+/** Checked private entry transport only; this builder grants no receiver or public-entry authority. */
+export function buildBuiltinFunctionGuardedCallDefinition(d: {
+  readonly reject: readonly Instr[];
+  readonly failure: readonly Instr[];
+  readonly algorithm: FuncHandle;
+}): BuiltinFunctionDefinition {
+  return {
+    locals: [],
+    body: [
+      ...structuredClone(d.reject),
+      { op: "if", blockType: { kind: "empty" }, then: structuredClone([...d.failure]) },
       get(1),
       get(2),
-      call(entry.algorithm),
+      call(d.algorithm),
     ],
   };
+}
+/** Concrete native self guard followed by the unchanged private Call transport. */
+export function buildBuiltinFunctionCheckedEntryDefinition(d: {
+  readonly identity: Omit<BuiltinFunctionIdentityOperands, "candidateLocal" | "candidateExtern">;
+  readonly failure: readonly Instr[];
+  readonly algorithm: FuncHandle;
+}): BuiltinFunctionDefinition {
+  const i = d.identity;
+  const check = buildBuiltinFunctionIdentityCheck({ ...i, candidateLocal: 0, candidateExtern: false });
+  const typedCheck: Instr[] = i.singletonExtern
+    ? [
+        global(i.singleton),
+        { op: "any.convert_extern" },
+        { op: "ref.test", typeIdx: i.typeIdx },
+        {
+          op: "if",
+          blockType: { kind: "val", type: { kind: "i32" } },
+          then: check,
+          else: [{ op: "i32.const", value: 0 }],
+        },
+      ]
+    : check;
+  return buildBuiltinFunctionGuardedCallDefinition({
+    reject: [
+      get(0),
+      { op: "ref.test", typeIdx: i.typeIdx },
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "i32" } },
+        then: typedCheck,
+        else: [{ op: "i32.const", value: 0 }],
+      },
+      { op: "i32.eqz" },
+    ],
+    failure: d.failure,
+    algorithm: d.algorithm,
+  });
 }
 export function buildBuiltinFunctionAlgorithmDefinition(
   d: Pick<BuiltinFunctionBodyOperands, "undefinedGlobal" | "errors" | "typeError" | "exceptionTag">,

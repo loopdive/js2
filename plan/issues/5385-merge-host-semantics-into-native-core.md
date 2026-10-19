@@ -4,7 +4,7 @@ title: "Merge JS-host and standalone modes: one native semantic core, host seman
 status: in-progress
 assignee: ttraenkler/codex-5385
 created: 2026-09-07
-updated: 2026-10-19
+updated: 2026-10-20
 priority: high
 horizon: xl
 feasibility: hard
@@ -1605,3 +1605,45 @@ including the four growing direction counts. Strict retirement closure and
 historical custody/conformance obligations remain open, not certified by
 preservation-only checks. Evidence:
 `plan/audit/6979-native-mixed-extensibility-20261019.json`.
+
+### S7-ad: authenticated owned catalog Call entries
+
+Canonical private Call entries now borrow the actual reserved realm slots for
+the genuinely owned Function.prototype, ThrowTypeError and Object.is algorithms.
+Their metadata/realm/singleton/signature predicate and guarded transport share
+the existing native implementations, preserving six complete bootstrap
+definitions at normal/displaced indices. Algorithm/lifted completion compares
+re-derived definitions independently of fill receipts, including exact scalar
+bits; completed globals and failed partial fills cannot become Call authority.
+No raw-handle/body binder, duplicated algorithm, host import, value graph copy
+or source/public admission is introduced. The remaining catalog stays unfilled.
+
+The final focused run is **425 pass / 1 fail of 426**, with **268/268 native**
+and **38/38 new** cases passing. Three real zero-import component modules cover
+normal/displaced/decoded resources, stored Call, canonical undefined and exact
+shared-tag TypeError payloads, SameValue/argument growth and identity refusal.
+These named component initializers do not certify production population.
+
+The sole remaining focused failure is reproduced on a fresh clean signed
+parent: **148 pass / 1 fail of 149** original physical tests, with identical
+complete rows/errors after path-only normalization. Nine new physical checks
+pass. No receipt, expectation or skip is changed. The initial concurrent run's
+mixed-owner 35-second timeout is retained in the audit; the final run passes
+that case with the original limit and no ignored errors. The clean control
+checkout was recoverably archived and its reports retained.
+
+Final-source broader runs retain **147 pass / 14 fail of 161** object-resource
+cases and **756 pass / 23 fail of 779** compatibility cases, with identical
+complete rows/errors against retained S7-ac reports. No fresh exact-parent
+resource/compatibility comparison is claimed for these two runs.
+
+All 33 policy inventories/binaries and six native compiled controls match the
+published parent. Size/function and the usual code-quality gates pass, without
+a new allowance. Policy/classifications and all cycle metrics are unchanged;
+one shared-predicate value edge is added. The four growing direction counts,
+strict dynamic-import closure, historical custody and complete conformance
+requirements remain open. Remaining catalog/population, mixed Get/Call,
+foreign identity, source/public entry and Linear/WASI remain required. Both
+issues stay in progress; the PR stays draft.
+
+Evidence: `plan/audit/6979-owned-catalog-lifted-calls-20261020.json`.

@@ -43,6 +43,7 @@ import {
 } from "../src/backend/wasmgc/resources/native-object-descriptors.js";
 import { requireNativeStringCreateReservations } from "../src/backend/wasmgc/resources/native-string-create.js";
 import { reserveBuiltinStringControl } from "./helpers/native-builtin-function-string-control.js";
+import type { Instr } from "../src/wasm/model/instructions.js";
 
 const population = (f: ReturnType<typeof builtinFunctionFixture>) => [
   f.module.types.length,
@@ -74,6 +75,75 @@ function typeError(run: () => unknown, tag: WebAssembly.Tag): WebAssembly.Except
   return caught as WebAssembly.Exception;
 }
 describe.each([false, true])("native builtin function objects; displaced=%s", (offset) => {
+  it("preserves the complete original identity matcher and guarded lifted Call definitions", () => {
+    const { fixture: f } = builtinFunctionRuntime(offset),
+      kernel = f.kernel!;
+    const get = (index: number): Instr => ({ op: "local.get", index });
+    const n = (value: number): Instr => ({ op: "i32.const", value });
+    const realm = f.tx.physicalIndex(kernel.globals.realm);
+    const cast = (typeIdx: number): Instr[] => [get(1), { op: "ref.cast", typeIdx }];
+    const field = (typeIdx: number, fieldIdx: number): Instr[] => [
+      ...cast(typeIdx),
+      { op: "struct.get", typeIdx, fieldIdx },
+    ];
+    const body: Instr[] = [
+      { op: "call", funcIdx: kernel.functions.initialize.handle },
+      get(0),
+      { op: "any.convert_extern" },
+      { op: "local.set", index: 1 },
+      ...kernel.entries.flatMap((entry, ordinal): Instr[] => [
+        get(1),
+        { op: "ref.test", typeIdx: entry.type.typeIndex },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            ...field(entry.type.typeIndex, 4),
+            n(entry.metadata.metadata.id),
+            { op: "i32.eq" },
+            ...field(entry.type.typeIndex, 6),
+            { op: "global.get", index: realm },
+            { op: "ref.eq" },
+            { op: "i32.and" },
+            ...cast(entry.type.typeIndex),
+            { op: "global.get", index: f.tx.physicalIndex(entry.singleton) },
+            { op: "ref.eq" },
+            { op: "i32.and" },
+            ...field(entry.type.typeIndex, 0),
+            { op: "ref.test", typeIdx: entry.metadata.signature.liftedFuncTypeIndex },
+            { op: "i32.and" },
+            { op: "if", blockType: { kind: "empty" }, then: [n(ordinal + 1), { op: "return" }] },
+          ],
+        },
+      ]),
+      n(0),
+    ];
+    expect(kernel.functions.match.object.locals).toEqual([{ name: "candidate", type: { kind: "anyref" } }]);
+    expect(kernel.functions.match.object.body).toEqual(body);
+    const message = requireNativeStringLiteral(f.tx, f.strings, "TypeError: incompatible native builtin function");
+    const failure: Instr[] = [
+      message.kind === "global"
+        ? { op: "global.get", index: f.tx.physicalIndex(message.global) }
+        : { op: "call", funcIdx: message.function.handle },
+      { op: "extern.convert_any" },
+      { op: "call", funcIdx: f.errors.newTypeError.handle },
+      { op: "throw", tagIdx: f.tx.physicalIndex(kernel.exception) },
+    ];
+    for (const [ordinal, entry] of kernel.entries.entries()) {
+      expect(entry.lifted.object.locals).toEqual([]);
+      expect(entry.lifted.object.body).toEqual([
+        get(0),
+        { op: "extern.convert_any" },
+        { op: "call", funcIdx: kernel.functions.match.handle },
+        n(ordinal + 1),
+        { op: "i32.ne" },
+        { op: "if", blockType: { kind: "empty" }, then: failure },
+        get(1),
+        get(2),
+        { op: "call", funcIdx: entry.algorithm.handle },
+      ]);
+    }
+  });
   it("retains the exact existing extensibility definitions with independent instruction nodes", () => {
     const { fixture: f } = builtinFunctionRuntime(offset),
       kernel = f.kernel!,

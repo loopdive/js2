@@ -885,6 +885,15 @@ export class PhysicalModuleReservations {
     } else this.#fail("completion requires a defined function or global");
   }
 
+  /** Compare a completed function with a definition re-derived by its semantic owner, not its fill receipt. */
+  assertCanonicalFunctionDefinition(token: FunctionReservation, expected: { locals: LocalDef[]; body: Instr[] }): void {
+    this.assertCompletedReservation(token);
+    if (token.kind !== "function") this.#fail("canonical definition requires a defined function");
+    const localsMatch = this.#snapshot(token.object.locals) === this.#snapshot(expected.locals);
+    const bodyMatch = this.#snapshot(token.object.body) === this.#snapshot(expected.body);
+    if (!localsMatch || !bodyMatch) this.#fail(`noncanonical function definition ${token.key}`);
+  }
+
   fillFunction(token: FunctionReservation, definition: { locals: LocalDef[]; body: Instr[] }): void {
     this.#require("filling");
     this.#owned(token);

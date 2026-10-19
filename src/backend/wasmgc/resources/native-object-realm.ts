@@ -42,10 +42,16 @@ import {
   type NativeSourceClosureTypes,
 } from "./native-source-closures.js";
 import type { NativeVectorTypeReservations } from "./native-vectors.js";
-import { requireNativeObjectIsAlgorithm, type NativeObjectIsReservations } from "./native-object-is.js";
+import {
+  requireNativeObjectIsAlgorithm,
+  requireCompletedNativeObjectIsAlgorithm,
+  type NativeObjectIsReservations,
+} from "./native-object-is.js";
 import {
   builtinUndefined,
   buildBuiltinFunctionThrowTypeErrorDefinition,
+  buildBuiltinFunctionCheckedEntryDefinition,
+  type BuiltinFunctionDefinition,
 } from "../../../runtime/wasmgc/values/builtin-function-bodies.js";
 import type { NativeValueResourcePlan } from "../../../ir/program/native-value-resources.js";
 import {
@@ -661,11 +667,10 @@ function completedBaseDependencies(tx: PhysicalModuleReservations, d: NativeReal
   requireCompletedNativeValues(tx, d.values, d.valuePlan, d.valueDependencies);
   requireCompletedNativeErrors(tx, d.errors, d.errorRequirements, d.errorDependencies);
 }
-export function fillNativeRealmBaseAlgorithms(tx: PhysicalModuleReservations, pack: NativeRealmBaseAlgorithms): void {
-  const owner = currentBase(tx, pack),
-    d = owner.dependencies;
-  if (tx.state !== "filling" || owner.filled) fail("invalid phase or duplicate base algorithm fill");
-  completedBaseDependencies(tx, d);
+function baseDefinitions(
+  tx: PhysicalModuleReservations,
+  d: NativeRealmBaseAlgorithmDependencies,
+): Record<(typeof baseIds)[number], BuiltinFunctionDefinition> {
   const message = requireNativeStringLiteral(
     tx,
     d.errorDependencies.strings,
@@ -680,11 +685,21 @@ export function fillNativeRealmBaseAlgorithms(tx: PhysicalModuleReservations, pa
     typeError: d.errors.newTypeError.handle,
     exceptionTag: tx.physicalIndex(d.exception.tag),
   });
-  tx.fillFunction(pack.algorithms["%Function.prototype%"], {
-    locals: [],
-    body: builtinUndefined({ undefinedGlobal: tx.physicalIndex(d.values.globals.undefined) }),
-  });
-  tx.fillFunction(pack.algorithms["%ThrowTypeError%"], throwing);
+  return {
+    "%Function.prototype%": {
+      locals: [],
+      body: builtinUndefined({ undefinedGlobal: tx.physicalIndex(d.values.globals.undefined) }),
+    },
+    "%ThrowTypeError%": throwing,
+  };
+}
+export function fillNativeRealmBaseAlgorithms(tx: PhysicalModuleReservations, pack: NativeRealmBaseAlgorithms): void {
+  const owner = currentBase(tx, pack),
+    d = owner.dependencies;
+  if (tx.state !== "filling" || owner.filled) fail("invalid phase or duplicate base algorithm fill");
+  completedBaseDependencies(tx, d);
+  const definitions = baseDefinitions(tx, d);
+  for (const id of baseIds) tx.fillFunction(pack.algorithms[id], definitions[id]);
   owner.filled = true;
 }
 export function requireCompletedNativeRealmBaseAlgorithms(
@@ -694,6 +709,135 @@ export function requireCompletedNativeRealmBaseAlgorithms(
   const owner = currentBase(tx, pack);
   if (!owner.filled) fail("missing canonical base algorithm fill");
   completedBaseDependencies(tx, owner.dependencies);
-  for (const id of baseIds) tx.assertCompletedReservation(pack.algorithms[id]);
+  const definitions = baseDefinitions(tx, owner.dependencies);
+  for (const id of baseIds) {
+    const token = pack.algorithms[id];
+    tx.assertCanonicalFunctionDefinition(token, definitions[id]);
+  }
+  return pack;
+}
+
+/** Actual reserved entries whose algorithms have canonical semantic owners; never the whole catalog. */
+export interface NativeRealmLiftedCalls {
+  readonly realm: NativeObjectRealmDeclarations;
+  readonly entries: readonly NativeObjectRealmEntry[];
+  readonly completionScope: "owned-catalog-lifted-calls";
+}
+interface LiftedOwner {
+  readonly tx: PhysicalModuleReservations;
+  readonly realm: NativeObjectRealmDeclarations;
+  readonly entries: readonly NativeObjectRealmEntry[];
+  phase: "reserved" | "filling" | "complete" | "failed";
+}
+const liftedOwners = new WeakMap<NativeRealmLiftedCalls, LiftedOwner>();
+const liftedRealms = new WeakSet<NativeObjectRealmDeclarations>();
+function liftedEntries(tx: PhysicalModuleReservations, realm: NativeObjectRealmDeclarations) {
+  const owner = current(tx, realm),
+    d = owner.dependencies;
+  if (!d.baseAlgorithms) fail("lifted calls require the genuine base algorithm/error owner");
+  const algorithms = [...Object.values(d.baseAlgorithms.algorithms), ...(d.objectIs ? [d.objectIs.algorithm] : [])];
+  const entries = realm.entries.filter((entry) => algorithms.includes(entry.algorithm));
+  if (entries.length !== algorithms.length || entries.some((entry) => entry.construct))
+    fail("different owned catalog Call slots");
+  return entries;
+}
+/** Associate real realm slots only. No function handle, body callback or caller-selected subset is accepted. */
+export function reserveNativeRealmLiftedCalls(
+  tx: PhysicalModuleReservations,
+  realm: NativeObjectRealmDeclarations,
+): NativeRealmLiftedCalls {
+  if (tx.state !== "reserving") fail("lifted calls require reservation phase");
+  const entries = Object.freeze(liftedEntries(tx, realm));
+  if (liftedRealms.has(realm)) fail("realm already has an owned lifted Call producer");
+  const pack = Object.freeze({ realm, entries, completionScope: "owned-catalog-lifted-calls" as const });
+  liftedOwners.set(pack, { tx, realm, entries, phase: "reserved" });
+  liftedRealms.add(realm);
+  return pack;
+}
+function currentLifted(tx: PhysicalModuleReservations, pack: NativeRealmLiftedCalls): LiftedOwner {
+  const owner = liftedOwners.get(pack);
+  if (
+    !owner ||
+    owner.tx !== tx ||
+    pack.realm !== owner.realm ||
+    pack.entries !== owner.entries ||
+    pack.completionScope !== "owned-catalog-lifted-calls"
+  )
+    fail("foreign or copied lifted Call owner");
+  const entries = liftedEntries(tx, owner.realm);
+  if (entries.length !== owner.entries.length || entries.some((entry, index) => entry !== owner.entries[index]))
+    fail("changed owned lifted Call entries");
+  return owner;
+}
+export function requireNativeRealmLiftedCalls(
+  tx: PhysicalModuleReservations,
+  pack: NativeRealmLiftedCalls,
+  realm: NativeObjectRealmDeclarations,
+): NativeRealmLiftedCalls {
+  if (currentLifted(tx, pack).realm !== realm) fail("different expected lifted Call realm");
+  return pack;
+}
+function completedLiftedAlgorithms(tx: PhysicalModuleReservations, realm: NativeObjectRealmDeclarations) {
+  const d = current(tx, realm).dependencies;
+  requireCompletedNativeRealmBaseAlgorithms(tx, d.baseAlgorithms!);
+  if (d.objectIs) requireCompletedNativeObjectIsAlgorithm(tx, d.objectIs);
+}
+function liftedDefinition(
+  tx: PhysicalModuleReservations,
+  realm: NativeObjectRealmDeclarations,
+  entry: NativeObjectRealmEntry,
+): BuiltinFunctionDefinition {
+  const d = baseOwners.get(current(tx, realm).dependencies.baseAlgorithms!)!.dependencies;
+  const singletonExtern = entry.singleton.object.type.kind === "externref";
+  const identity = {
+    typeIdx: entry.type.typeIndex,
+    metadataId: entry.metadata.metadata.id,
+    liftedTypeIdx: entry.metadata.signature.liftedFuncTypeIndex,
+    singleton: tx.physicalIndex(entry.singleton),
+    singletonExtern,
+    realm: tx.physicalIndex(realm.globals.realm),
+  };
+  const message = requireNativeStringLiteral(
+    tx,
+    d.errorDependencies.strings,
+    "TypeError: incompatible native builtin function",
+  );
+  return buildBuiltinFunctionCheckedEntryDefinition({
+    identity,
+    failure: [
+      message.kind === "global"
+        ? { op: "global.get", index: tx.physicalIndex(message.global) }
+        : { op: "call", funcIdx: message.function.handle },
+      { op: "extern.convert_any" },
+      { op: "call", funcIdx: d.errors.newTypeError.handle },
+      { op: "throw", tagIdx: tx.physicalIndex(d.exception.tag) },
+    ],
+    algorithm: entry.algorithm.handle,
+  });
+}
+export function fillNativeRealmLiftedCalls(tx: PhysicalModuleReservations, pack: NativeRealmLiftedCalls): void {
+  const owner = currentLifted(tx, pack);
+  if (tx.state !== "filling" || owner.phase !== "reserved") fail("invalid phase or duplicate/failed lifted Call fill");
+  completedLiftedAlgorithms(tx, owner.realm);
+  const definitions = owner.entries.map((entry) => liftedDefinition(tx, owner.realm, entry));
+  owner.phase = "filling";
+  try {
+    owner.entries.forEach((entry, index) => tx.fillFunction(entry.lifted, definitions[index]!));
+    owner.phase = "complete";
+  } catch (error) {
+    owner.phase = "failed";
+    throw error;
+  }
+}
+export function requireCompletedNativeRealmLiftedCalls(
+  tx: PhysicalModuleReservations,
+  pack: NativeRealmLiftedCalls,
+): NativeRealmLiftedCalls {
+  const owner = currentLifted(tx, pack);
+  if (owner.phase !== "complete") fail("missing canonical lifted Call fill");
+  completedLiftedAlgorithms(tx, owner.realm);
+  for (const entry of owner.entries) {
+    tx.assertCanonicalFunctionDefinition(entry.lifted, liftedDefinition(tx, owner.realm, entry));
+  }
   return pack;
 }

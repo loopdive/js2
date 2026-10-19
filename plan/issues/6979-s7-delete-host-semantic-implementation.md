@@ -4,7 +4,7 @@ title: "S7: delete the host-semantic implementation — one native semantic core
 status: in-progress
 assignee: ttraenkler/codex
 created: 2026-10-14
-updated: 2026-10-19
+updated: 2026-10-20
 priority: high
 horizon: xl
 feasibility: hard
@@ -4889,3 +4889,119 @@ Continue from the signed checkpoint containing these source hashes. Implement
 the actual catalog/publication dependencies described above; do not promote
 structural completion to public semantic support or merge past the remaining
 gates. Both Markdown issues stay in progress and PR6762 stays draft.
+
+### S7-ad authenticated owned catalog Call entries (2026-10-19, Codex)
+
+Continue from signed `e946c85a339b0ad2c7a05c342865e66906180ea0`.
+The Object methods cannot yet claim public primitive/source behavior: ToObject,
+source carrier admission and complete population remain pending. The next real
+dependency is canonical lifted Call entries for the three actual algorithm
+owners already implemented, not bodies for the remaining unavailable catalog.
+
+Share the existing exact native identity predicate (concrete carrier,
+metadata ID, realm identity, singleton identity and lifted signature) and
+guarded Call transport without changing bootstrap callable instructions.
+Associate only genuine realm declarations and borrowed algorithm owners;
+fill their actual reserved lifted slots, with no raw-handle binder, duplicate
+algorithm, new host import or source/public admission. Completion stays scoped
+to these owned entries; full realm/Get/Call/population still cannot complete.
+
+Before making the algorithm completion checks load-bearing, independently
+compare the canonical Object.is/base algorithm definitions as well as the
+allocator's fill snapshots. A substituted body accepted through an intercepted
+fill must not become valid merely because its completion counter increased.
+Readers: realm declarations and the new scoped lifted producer; mutators:
+canonical algorithm fills and allocator fill/snapshot state. No body is moved
+out of its existing semantic owner; no whole-module seal or public publication
+is inferred from the selected entries. Failed partial filling must not yield a
+completion capability or a successful retry.
+
+Verify emitted component calls with real canonical algorithms, zero imports,
+normal/displaced/decoded coordinates, exact public exception tag/payload,
+identity/refusal controls and argument transport. Separate these component
+witnesses from whole-realm execution: the unimplemented catalog bodies remain
+unfilled. Retain full regression failures and strict retirement gaps.
+
+#### S7-ad implemented boundaries and measured controls (2026-10-20)
+
+The new scoped producer borrows only the actual realm lifted slots whose
+Object.is/base algorithm owners already exist. It accepts a genuine realm
+declaration owner, never a raw function handle or caller-supplied body/entry
+subset. Dependencies are checked before filling; a partial fill failure cannot
+yield completion or be retried into authority. Canonical algorithm and lifted
+definitions are re-derived independently of allocator fill receipts. The
+physical comparison keeps exact scalar bits and rejects a completed global as
+function authority, even when malformed expected fields would compare as
+undefined. This comparison is not itself a semantic issuer.
+
+Bootstrap native matching, mixed matching and the new entries share the same
+exact metadata/realm/singleton/signature predicate. Guarded Call transport also
+has one pure owner. Two normal/displaced definition controls retain the entire
+original bootstrap matcher and lifted instruction sequences (six definitions),
+not just outputs or declaration counts. No source argc/this/extras global,
+host adapter, public selector or whole-realm completion path is changed.
+
+Three emitted component modules execute the genuine Function.prototype,
+ThrowTypeError and Object.is algorithms via guarded/stored Call, with zero
+imports and normal/displaced/decoded resources. They cover canonical undefined,
+shared-tag TypeError payloads, distinct NaN/signed zero, missing arguments and
+vector growth, plus clone/metadata/foreign-realm/wrong-signature/cross-entry/
+stale-identity refusal. Their named test initializers are not the production
+catalog population; the remaining catalog bodies stay unfilled. Module sizes
+include full literal/descriptor/primitive prerequisites and test observers,
+not marginal production costs or a before/after size claim.
+
+A fresh clean control at signed parent
+`e946c85a339b0ad2c7a05c342865e66906180ea0` reproduces the physical-record suite's
+**148 pass / 1 fail of 149**. Every original candidate row/error is identical
+after replacing only worktree path prefixes; no filename, line or error is
+removed. The failure stops at the existing fifteen-declaration receipt. No
+receipt/expectation/skip is changed or described as repaired. The temporary
+parent checkout was verified clean and recoverably archived through the
+managed workflow; reports remain in this worktree's ignored `.tmp/`.
+
+All 33 complete policy inventories/binaries and six native compiled controls
+match S7-ac exactly. The first expanded 425-case run also hit the existing
+mixed-owner test's 35-second limit under concurrent verification work; retain
+that failure and rerun without competing verification jobs, without changing
+the timeout or ignoring errors. Full Test262 and the historical custody suites
+are not certified by these controls.
+
+Final focused result: **425 pass / 1 fail of 426**, no skipped cases or runner
+errors. The native subset passes **268/268**, including **27/27 new** lifted
+controls and **40/40** bootstrap callable cases. All **38 new cases** pass
+(27 lifted, nine physical comparison, two complete-definition controls).
+The physical suite is **157 pass / 1 fail of 158**; its 149 original rows/errors
+match the fresh signed-parent control completely, after path-only normalization.
+The former mixed-owner timeout passes under the original 35-second limit in
+the final run, without other verification jobs or ignored errors. The full run
+still exits nonzero for the reproduced physical receipt failure; it is not a
+green full-suite or retirement result.
+
+The final-source broader runs retain **147 pass / 14 fail of 161** object
+resources and **756 pass / 23 fail of 779** compatibility cases. Every complete
+row/error is identical to retained S7-ac reports, without error normalization
+or truncation. These two comparisons use retained reports, not fresh parent
+resource/compatibility runs; only the physical 149-case control was freshly
+executed on the exact signed parent here.
+
+Typecheck/lint/format and checkpoint/whole-PR size/function, coercion/oracle,
+layering/fallback and flat-directory gates pass. This checkpoint adds **229
+source LOC** across five source files, with no new allowance. Whole PR:
+**375 source files, net -17357 LOC**, two existing function grants unchanged.
+Inventory remains valid with 1978 modules and unchanged policy/classifications.
+One new within-native-runtime edge shares the predicate; value edges become
+**10830**. Largest SCC **712**, four nontrivial SCCs and all two-way direction
+metrics remain unchanged, including the four growing direction counts against
+main. No waiver/root/floor/allowed-edge change. Preservation-only **6/6 full +
+6/6 cut** does not certify the still-open strict retirement graph.
+
+Evidence: `plan/audit/6979-owned-catalog-lifted-calls-20261020.json`.
+Next: remaining real catalog algorithms and constructor paths, complete
+singleton/property population and mixed Get/Call, then atomic authenticated
+source/public publication. ToObject/default prototype selection, foreign/
+dynamic identity, first-class undefined, Linear/WASI construction and the
+architecture/custody/retirement/conformance gates remain open. Do not promote
+this private-entry completion scope to public semantic admission. Both Markdown
+issues remain in progress and PR6762 remains draft behind its prerequisite
+stack and merge conflicts.

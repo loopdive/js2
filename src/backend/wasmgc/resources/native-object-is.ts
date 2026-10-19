@@ -1,6 +1,9 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import type { FunctionReservation, PhysicalModuleReservations } from "../../../wasm/physical/module-reservations.js";
-import { buildBuiltinFunctionArgument } from "../../../runtime/wasmgc/values/builtin-function-bodies.js";
+import {
+  buildBuiltinFunctionArgument,
+  type BuiltinFunctionDefinition,
+} from "../../../runtime/wasmgc/values/builtin-function-bodies.js";
 import {
   requireNativePublicBuiltinFunctionRequests,
   nativePublicBuiltinFunctionRequestDependencies,
@@ -164,19 +167,15 @@ function completedDependencies(tx: PhysicalModuleReservations, d: NativeObjectIs
   requireCompletedNativeObjectSameValue(tx, d.sameValue, v);
   requireCompletedNativeBooleanBoxes(tx, d.booleanBoxes, v.values, v.valuePlan, v.valueDependencies);
 }
-export function fillNativeObjectIsAlgorithm(tx: PhysicalModuleReservations, pack: NativeObjectIsReservations): void {
-  const owner = current(tx, pack),
-    d = owner.dependencies,
-    v = d.sameValueDependencies;
-  if (tx.state !== "filling" || owner.filled) fail("invalid phase or duplicate canonical fill");
-  completedDependencies(tx, d);
+function definition(tx: PhysicalModuleReservations, d: NativeObjectIsDependencies): BuiltinFunctionDefinition {
+  const v = d.sameValueDependencies;
   const argumentsLayout = d.substrate.arguments;
   const bindings = {
     vectorTypeIdx: tx.physicalIndex(argumentsLayout.carrier),
     vectorArrayTypeIdx: tx.physicalIndex(argumentsLayout.array),
     undefinedGlobal: tx.physicalIndex(v.values.globals.undefined),
   };
-  tx.fillFunction(pack.algorithm, {
+  return {
     locals: [],
     body: [
       ...buildBuiltinFunctionArgument(bindings, 1, 0),
@@ -184,7 +183,14 @@ export function fillNativeObjectIsAlgorithm(tx: PhysicalModuleReservations, pack
       { op: "call", funcIdx: d.sameValue.sameValue.handle },
       { op: "call", funcIdx: d.booleanBoxes.boxBoolean.handle },
     ],
-  });
+  };
+}
+export function fillNativeObjectIsAlgorithm(tx: PhysicalModuleReservations, pack: NativeObjectIsReservations): void {
+  const owner = current(tx, pack),
+    d = owner.dependencies;
+  if (tx.state !== "filling" || owner.filled) fail("invalid phase or duplicate canonical fill");
+  completedDependencies(tx, d);
+  tx.fillFunction(pack.algorithm, definition(tx, d));
   owner.filled = true;
 }
 export function requireCompletedNativeObjectIsAlgorithm(
@@ -194,6 +200,6 @@ export function requireCompletedNativeObjectIsAlgorithm(
   const owner = current(tx, pack);
   if (!owner.filled) fail("missing canonical algorithm fill");
   completedDependencies(tx, owner.dependencies);
-  tx.assertCompletedReservation(pack.algorithm);
+  tx.assertCanonicalFunctionDefinition(pack.algorithm, definition(tx, owner.dependencies));
   return pack;
 }
