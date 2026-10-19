@@ -119,7 +119,9 @@ const ECMASCRIPT_EXTERN_CLASSES = new Set([
 export function isRetiredEcmaScriptExternClass(
   className: string,
   accelerators: readonly HostAcceleratorFamily[] | undefined,
+  namespacePath?: readonly string[],
 ): boolean {
+  if (namespacePath?.length) return false; // Explicit API namespace, not the global ECMAScript intrinsic.
   if (!ECMASCRIPT_EXTERN_CLASSES.has(className) || className === "SharedArrayBuffer") return false;
   if (className === "RegExp") return accelerators?.includes("regexp") !== true;
   if (className === "Date") return accelerators?.includes("date") !== true;
@@ -227,6 +229,7 @@ function acceleratorFamilyOfEnvImport(descriptor: ImportDescriptor): HostAcceler
     case "date_method":
       return "date";
     case "extern_class":
+      if (intent.namespacePath?.length && intent.namespacePath[0] !== "Intl") return undefined;
       if (intent.className === "RegExp") return "regexp";
       if (intent.className === "Date") return "date";
       return intent.className === "Intl" || intent.namespacePath?.[0] === "Intl" ? "intl" : undefined;
@@ -308,6 +311,15 @@ function classifyIntrinsicHostImport(descriptor: ImportDescriptor, environment?:
     case "console_log":
       return policy("platform-capability", "console", 4398, false, "explicit host console capability");
     case "extern_class":
+      if (intent.namespacePath?.length) {
+        return policy(
+          "platform-capability",
+          `extern:${intent.className}`,
+          4398,
+          false,
+          "declared external API capability",
+        );
+      }
       if (intent.className === "SharedArrayBuffer") return regimeGap("shared-array-buffer");
       return ECMASCRIPT_EXTERN_CLASSES.has(intent.className)
         ? retired(`host ECMAScript builtin '${intent.className}'`)

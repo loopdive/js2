@@ -990,3 +990,12 @@ retains **128 passing/41 failing/25 skipped**, with no new failures; six native
 binaries and all 33 import inventories match. The **457/452** gate, 8,000-line
 runtime target and full program acceptance remain open. The scoped proof is
 `plan/audit/6979-runtime-binder-retirement-20261019.json`.
+
+Its qualified-capability follow-up distinguishes explicit API namespaces from
+same-named global builtins, keeping eleven declared API constructors live.
+The final focused population is **100/100**; native binaries/import inventories
+and the 194-case population remain unchanged. Runtime source is **10,581**
+lines after namespace-first constructor resolution. Compiled `api.Function`
+and `api.Date` are still failing lowerer probes (Number/Map work), explicitly
+recorded with a repro in the S7 handoff. Do not infer full host interop or
+program acceptance from the low-level binder controls.

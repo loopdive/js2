@@ -1,9 +1,10 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { type ImportDescriptor } from "../src/index.js";
+import { compile, type ImportDescriptor } from "../src/index.js";
 import { ts } from "../src/ts-api.js";
-import { buildImports } from "../src/runtime.js";
+import { buildCompiledImports, buildImports, wrapCompiledExports } from "../src/runtime.js";
+import { classifyHostImport, isRetiredEcmaScriptExternClass } from "../src/host-import-policy.js";
 
 const descriptor = (name: string, intent: ImportDescriptor["intent"]): ImportDescriptor => ({
   module: "env",
@@ -182,4 +183,63 @@ describe("#6979 runtime binder has no compatibility semantic provider", () => {
       ),
     ).toThrow(/cannot bind env::Map_new/);
   });
+
+  it("keeps explicitly namespaced APIs distinct from identically named global builtins", () => {
+    const token = {};
+    class External {
+      constructor(readonly value: object) {}
+    }
+    for (const className of [
+      "Number",
+      "Function",
+      "String",
+      "Boolean",
+      "AggregateError",
+      "AsyncDisposableStack",
+      "Map",
+      "Set",
+      "Date",
+      "RegExp",
+      "SharedArrayBuffer",
+    ]) {
+      const entry = descriptor("qualified_new", {
+        type: "extern_class",
+        className,
+        action: "new",
+        namespacePath: ["api"],
+      });
+      expect(classifyHostImport(entry).classification).toBe("platform-capability");
+      expect(classifyHostImport(entry, "javascript", ["date", "regexp"]).classification).toBe("platform-capability");
+      expect(isRetiredEcmaScriptExternClass(className, undefined, ["api"])).toBe(false);
+      const bindings = buildImports([entry], { api: { [className]: External } }, [], { ambientCompatibility: false });
+      const instance = bindings.env.qualified_new(token);
+      expect(instance).toBeInstanceOf(External);
+      expect(instance.value).toBe(token);
+    }
+  });
+
+  for (const className of ["Number", "Map"]) {
+    it(`compiles an explicitly namespaced ${className} API without selecting the intrinsic`, async () => {
+      const result = await compile(
+        `
+        declare namespace api { class ${className} { constructor(value: number); value: number; } }
+        export function run(n: number): number { var value = new api.${className}(n); return value.value; }
+      `,
+        { skipSemanticDiagnostics: true },
+      );
+      expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+      const imports = buildCompiledImports(result, {
+        api: {
+          [className]: class {
+            constructor(readonly value: number) {}
+          },
+        },
+      });
+      const { instance } = await WebAssembly.instantiate(result.binary, imports);
+      imports.setInstance?.(instance);
+      const exp = wrapCompiledExports(result, instance) as { run(n: number): number };
+      expect(exp.run(42)).toBe(42);
+      expect(exp.run(7)).toBe(7);
+    });
+  }
 });

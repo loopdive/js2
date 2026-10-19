@@ -1,0 +1,182 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-19",
+  "parentCommit": "92efacb428d8136f7000d81467690114fec3da0f",
+  "scope": "Qualified declared API capabilities whose leaf names collide with global ECMAScript builtins; not full host-interop or S7 acceptance",
+  "changes": [
+    "Pass existing namespace metadata to the shared retired-class registration predicate.",
+    "Classify explicit namespaces as declared API capabilities, not unqualified global intrinsics or unrelated named accelerators.",
+    "Resolve an explicit constructor namespace before a same-named builtin fallback; retain flat dependency overrides."
+  ],
+  "parentPolicyComparison": {
+    "method": "Read the exact parent policy with git show, transpile it in memory and load its real relative imports from this checkout; compare 11 explicit api-qualified descriptors to current policy.",
+    "rows": [
+      {
+        "className": "Number",
+        "before": "unknown",
+        "after": "platform-capability",
+        "retiredBefore": true,
+        "retiredAfter": false
+      },
+      {
+        "className": "Function",
+        "before": "unknown",
+        "after": "platform-capability",
+        "retiredBefore": true,
+        "retiredAfter": false
+      },
+      {
+        "className": "String",
+        "before": "unknown",
+        "after": "platform-capability",
+        "retiredBefore": true,
+        "retiredAfter": false
+      },
+      {
+        "className": "Boolean",
+        "before": "unknown",
+        "after": "platform-capability",
+        "retiredBefore": true,
+        "retiredAfter": false
+      },
+      {
+        "className": "AggregateError",
+        "before": "unknown",
+        "after": "platform-capability",
+        "retiredBefore": true,
+        "retiredAfter": false
+      },
+      {
+        "className": "AsyncDisposableStack",
+        "before": "unknown",
+        "after": "platform-capability",
+        "retiredBefore": true,
+        "retiredAfter": false
+      },
+      {
+        "className": "Map",
+        "before": "unknown",
+        "after": "platform-capability",
+        "retiredBefore": true,
+        "retiredAfter": false
+      },
+      {
+        "className": "Set",
+        "before": "unknown",
+        "after": "platform-capability",
+        "retiredBefore": true,
+        "retiredAfter": false
+      },
+      {
+        "className": "Date",
+        "before": "unknown",
+        "after": "platform-capability",
+        "retiredBefore": true,
+        "retiredAfter": false
+      },
+      {
+        "className": "RegExp",
+        "before": "unknown",
+        "after": "platform-capability",
+        "retiredBefore": true,
+        "retiredAfter": false
+      },
+      {
+        "className": "SharedArrayBuffer",
+        "before": "regime-gap",
+        "after": "platform-capability",
+        "retiredBefore": false,
+        "retiredAfter": false
+      }
+    ]
+  },
+  "validation": {
+    "focused": {
+      "files": 7,
+      "total": 100,
+      "pass": 100,
+      "fail": 0,
+      "skip": 0,
+      "notes": "Includes 468 unqualified class/action/option rejection assertions, live identity for 11 qualified constructors, selected-accelerator policy controls and two compiled Number/Map APIs with input-dependent outputs 42/7."
+    },
+    "broad": {
+      "baselineCommit": "f99bd729cc82285c514eba87996874e334f07799",
+      "files": 10,
+      "total": 194,
+      "pass": 128,
+      "fail": 41,
+      "skip": 25,
+      "uniqueKeys": 194,
+      "statusChanges": 0,
+      "normalizedErrorChanges": 0,
+      "normalization": "Replace only the parent checkout directory and src/runtime.ts line:column stack coordinates on both sides."
+    },
+    "compileRunProbe": {
+      "total": 4,
+      "pass": 2,
+      "fail": 2,
+      "passing": ["api.Number", "api.Map"],
+      "outputs": [42, 7],
+      "failing": [
+        {
+          "name": "api.Function",
+          "error": "TypeError: Cannot access property on null or undefined at 1:144"
+        },
+        {
+          "name": "api.Date",
+          "error": "TypeError: Cannot access property on null or undefined at 1:160"
+        }
+      ],
+      "sourceTemplate": "declare namespace api { class NAME { constructor(value: number); value: number; } } export function run(n:number):number { var value = new api.NAME(n); return value.value; }",
+      "depsTemplate": "{ api: { [NAME]: class { constructor(value) { this.value = value; } } } }",
+      "notes": "compile, buildCompiledImports, instantiate, setInstance, wrapCompiledExports. Function/Date compile but fail at execution. No attribution of their before-status is claimed, and no direct-AST semantic repair is added."
+    },
+    "native": {
+      "modules": 6,
+      "exactBinaryAndOutcomeEquality": true,
+      "comparison": ".tmp/s7g-native-parent.jsonl vs .tmp/s7g-qualified-native.jsonl",
+      "zeroImports": true,
+      "outputs": [42, 7]
+    },
+    "hostImports": {
+      "probes": 33,
+      "imports": 457,
+      "unknown": 0,
+      "regimeGap": 0,
+      "exactInventoryEquality": true,
+      "ceiling": 452,
+      "gate": "FAIL, unchanged; no waiver"
+    },
+    "checks": {
+      "typecheck": "PASS (project TypeScript7)",
+      "lint": "PASS whole src/tests/scripts",
+      "loc": "PASS",
+      "functionBudget": "PASS, no new grants",
+      "coercion": "PASS",
+      "oracle": "PASS",
+      "irFallbacks": "PASS",
+      "deadExports": "preservation-only PASS, 6/6 full and cut; strict closure NOT CERTIFIED at two known nonliteral imports"
+    }
+  },
+  "sourceMetrics": {
+    "runtimeTsLines": 10581,
+    "resolveImportLines": 1681,
+    "resolveImportCases": 7,
+    "ownedAdapterLines": 895,
+    "explicitCapabilityLines": 1194,
+    "netRuntimeReductionAgainstF99": 743,
+    "remainingRuntimeTargetGap": 2581,
+    "budgetBanked": false
+  },
+  "sourceHashes": {
+    "src/runtime.ts": "5075f3698945a21d8349a5dd2654bb52da7b4e2bd796117745c817bb4599eeab",
+    "src/host-import-policy.ts": "a90fbea58217c484c53212255d102148c45273f1c8ac0641143f83737bed317d",
+    "src/codegen/registry/imports.ts": "fe241e885544d34d89b65f7e25f66c08f07c69b8187c6aa750b1ae820095d010",
+    "tests/issue-6979-runtime-binder-retirement.test.ts": "1bef874ba4e6b73a3ee3f0e2f4dc5f85ee52bb8429e7316cd0aa35e62c696054"
+  },
+  "remaining": [
+    "Fix the compiled qualified Function/Date lowering collisions through IR or shared native contracts, not the frozen direct-AST semantic body emitter.",
+    "Resolve the unchanged 457/452 import gate and prerequisite stack before readiness.",
+    "Complete the 8000-line runtime target, raw mode-field retirement, opaque bound-function work and full compatibility/accelerator/conformance acceptance."
+  ]
+}

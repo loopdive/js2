@@ -1966,7 +1966,8 @@ export function collectUsedExternImports(ctx: CodegenContext, sourceFile: ts.Sou
     while (current) {
       const info = ctx.externClasses.get(current);
       // (#6979) ECMAScript builtins have no host extern-class imports any more.
-      if (info && isRetiredEcmaScriptExternClass(info.className, ctx.targetProfile.accelerators)) return null;
+      if (info && isRetiredEcmaScriptExternClass(info.className, ctx.targetProfile.accelerators, info.namespacePath))
+        return null;
       if (info) {
         if (kind === "method" && info.methods.has(memberName)) return info;
         if (kind === "property" && info.properties.has(memberName)) return info;
@@ -2002,7 +2003,10 @@ export function collectUsedExternImports(ctx: CodegenContext, sourceFile: ts.Sou
         !isNativeEncodingClass(className)
       ) {
         const info = ctx.externClasses.get(className);
-        if (info && !isRetiredEcmaScriptExternClass(info.className, ctx.targetProfile.accelerators)) {
+        if (
+          info &&
+          !isRetiredEcmaScriptExternClass(info.className, ctx.targetProfile.accelerators, info.namespacePath)
+        ) {
           register(`${info.importPrefix}_new`, info.constructorParams, [{ kind: "externref" }]);
         }
       }

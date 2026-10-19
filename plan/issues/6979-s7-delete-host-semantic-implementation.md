@@ -2787,3 +2787,51 @@ The real import gate still fails **457 > 452**. Preserve the prerequisite
 stack, opaque bound-function investigation, constructor/binary review, raw
 mode-field deletion and full compatibility/accelerator/conformance acceptance
 as open work. Keep the PR draft; do not merge or mark the migration complete.
+
+**Qualified-capability follow-up.** The final classification
+review found a name collision: an explicit external namespace may declare
+its own `Number`, `Function`, `Date` or collection class. Retirement must
+identify the global intrinsic, not ban a declared API by its leaf name.
+Preserve qualified extern capabilities in the shared classifier/registration
+helper, exclude unrelated namespaces from accelerator inference, and resolve
+an explicit namespace before a same-named builtin constructor fallback.
+Validate actual constructor/argument identity and retain the unqualified
+retirement controls. This is boundary policy/registration work, not a new
+direct-AST semantic emitter.
+
+The eleven-row parent-policy probe at `92efacb428` classified ten qualified
+APIs `unknown` and qualified `SharedArrayBuffer` as a regime gap. All eleven
+now classify as declared capabilities, including with `date`/`regexp`
+selected; separate live constructor checks preserve argument identity. The
+shared registration helper now receives the existing namespace metadata;
+the runtime resolves that namespace before a builtin fallback. An explicit
+namespace is not evidence that an unrelated API is a selected accelerator.
+Unqualified builtins retain all **468** rejection assertions.
+
+The final focused population is **100/100**. The two added compiled Number
+and Map namespace controls each return **42 and 7** for different inputs.
+The four-shape compile/run probe is **2 passing/2 failing**: replacing the
+class name in the fixture below with `Function` or `Date` compiles but then
+throws `TypeError: Cannot access property on null or undefined`; Number/Map
+work. Keep those two lowerer collisions open, not hidden by the binder's
+positive tests or repaired in the frozen direct-AST body emitter:
+
+```ts
+declare namespace api { class Function { constructor(value: number); value: number; } }
+export function run(n: number): number { var value = new api.Function(n); return value.value; }
+// Supply deps.api.Function = class { constructor(value) { this.value = value; } }.
+// compile({ skipSemanticDiagnostics: true }), buildCompiledImports, instantiate,
+// setInstance and wrapCompiledExports; run(42) should return 42, but currently throws.
+```
+
+The refreshed **194-case** comparison retains **128 passing/41 failing/25
+skipped**, with identical keys and failure texts under the same directory/
+runtime-coordinate normalization. All six native binary rows and all 33
+import inventories still match. Runtime source is now **10,581** lines and
+`resolveImport` **1,681** (one line for namespace-first constructor resolution);
+the net reduction against `f99bd729cc` is **743** lines, and the runtime target
+gap is **2,581**. The 457/452 gate is unchanged. See
+`plan/audit/6979-qualified-class-capabilities-20261019.json` for exact source
+hashes and proof limits. The earlier
+binder deletion audit remains the historical `92efacb428` snapshot, not a
+source-hash claim about this follow-up.

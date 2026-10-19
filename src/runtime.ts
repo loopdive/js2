@@ -8118,11 +8118,12 @@ function resolveImport(
           ...(typeof URLSearchParams !== "undefined" ? { URLSearchParams } : {}),
           ...getWebHostConstructors(),
         };
-        let Ctor = deps?.[intent.className] ?? builtinCtors[intent.className];
+        let Ctor = deps?.[intent.className];
         // #1044 — Resolve via namespace path (e.g. require('http').Server)
         if (!Ctor && intent.namespacePath && intent.namespacePath.length > 0) {
           Ctor = _resolveNamespacedClass(intent.namespacePath, intent.className, deps);
         }
+        Ctor ??= builtinCtors[intent.className];
         if (!Ctor)
           return (...args: any[]) => {
             throw new Error(`No dependency provided for extern class "${intent.className}"`);
