@@ -1570,3 +1570,67 @@ semantic and storage decisions on `wasmGcBackend`, true JavaScript crossings on
 `jsValueBoundary`, platform access on `hostFreeEnvironment`, and named
 accelerators explicit. Preserve the two residuals above as independent work
 rather than routing native objects through the JS host.
+
+### S7-c identifier, closure, and tail-call handoff (2026-10-19, Codex)
+
+This thirteenth bounded S7-c checkpoint migrates the remaining 35 raw mode
+decisions in `call-tail-dispatch.ts`, `calls-closures.ts`, and
+`call-identifier.ts` on `codex/6979-s7c-ir-arms`, published through draft PR
+`#6762`. S7 remains `in-progress`; this checkpoint does not claim the full
+JS-host migration is complete.
+
+**Ratchet.** The standalone-arm baseline is banked from 1,025 to **990** raw
+`ctx.standalone` hits in `src/`, from 395 to **392** matching source files, and
+from 318 to **283** hits in `src/codegen/expressions`. All three migrated files
+now contain **zero** raw `ctx.standalone` conditions.
+
+**Classification.** Compiled iterator methods, native iterator carriers,
+generator self iteration, open-object method dispatch, proxy calls, Boolean
+truthiness, runtime function aliases, builtin-static aliases, dynamic spread,
+native closure application, approved function-constructor prototype methods,
+native RegExp and collection calls, and TypedArray intrinsic-prototype dispatch
+are WasmGC backend decisions. Default `gc`, literal standalone, and WASI
+therefore share those native semantics; the linear provider retains its own
+implementation.
+
+Callable reference adaptation, rest-shaped wrapper discovery, omitted-slot
+restoration, shadowed top-level function slots, and linked-realm structural
+calls are different: they exist because a value can actually cross into
+JavaScript, so they now ask `jsValueBoundary` directly. This keeps the current
+identity-cached JS-host-backed object or callable at the boundary only. It does
+not copy the object, and it does not make JavaScript machinery an internal
+semantic mirror. Dropping host semantics therefore does not drop host interop;
+it makes the crossing explicit and leaves Wasm-owned values native until that
+crossing occurs.
+
+The legacy `__call_dyn_N` family is the important negative case. Although it
+looks like boundary machinery, it owns retired dynamic-call semantics and is
+not an admitted S7 adapter. Its fallback remains excluded whenever
+`wasmGcBackend` is active, even if the target also has a JavaScript value
+boundary. An intermediate boundary-only gate activated that provider for two
+WasmGC rows; restoring the backend exclusion removed both candidate-only
+failures without removing real callable interop.
+
+**Validation.** `issue-6979-array-object-mode-collapse.test.ts` remains 31/31.
+The four-file iterator/tail cohort is 43/44; its only failure is the parent
+#5199 assertion that still requires the retired `__create_generator` import.
+The closure-call cohort is 100/108, with all eight failures reproduced exactly
+at parent `dc3e1a6843`: seven #5334 rest-bridge result gaps and one #4771 bound
+`instanceof` gap.
+
+Before the final `__call_dyn_N` exclusion, an exact 148-row detached A/B was
+136/12 at the parent and 135/13 at the candidate: the candidate already fixed
+the parent-failing NodeArray union-callback row, but had activated two rejected
+legacy-driver rows. After the correction, a focused 37-row rerun has the same
+seven #4527 residuals as the parent and all four deferred callable-property
+rows pass, including that parent-failing row. A later 12-file mixed-call check
+is 60 passing, 19 failing, and 13 skipped; every remaining failure has an
+identical parent witness, including the separately checked #3791 WASI RegExp
+control. TypeScript 7 typecheck, Biome lint, Prettier, `git diff --check`, and
+the banked standalone-arm gate pass.
+
+**Next handoff.** Continue with a bounded semantic cluster rather than treating
+every host-looking helper as a boundary. Use `wasmGcBackend` for internal
+language semantics and storage, `jsValueBoundary` only for genuine JS value
+crossings, `hostFreeEnvironment` for platform availability, and explicit
+capability gates where a WasmGC target does not enable a native accelerator.

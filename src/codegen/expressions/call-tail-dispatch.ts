@@ -30,7 +30,7 @@ import { allocLocal } from "../context/locals.js";
 import { rollbackSpeculative, snapshotSpeculative } from "../context/speculative.js";
 import { emitLiveCollectionIterRec } from "../map-runtime.js"; // (#5267 R3-1a)
 import { ensureNativeIteratorRuntime, generatorSelfIteratorInstrs } from "../iterator-native.js"; // (#6484 S2) array @@iterator carrier
-import type { ClosureInfo, CodegenContext, FunctionContext } from "../context/types.js";
+import { type ClosureInfo, type CodegenContext, type FunctionContext, wasmGcBackend } from "../context/types.js";
 import { collectDirectEvalBindingNames, functionMayReachDirectEval } from "../direct-eval-environment.js";
 import {
   destructureParamArray,
@@ -143,8 +143,9 @@ function isPristineStringPrototypeExpression(fctx: FunctionContext, expression: 
  * call — its value is whatever the method returns. Routing it through the
  * GetIterator helper wrapped/validated that result (a method returning `42`
  * threw "value is not iterable"). Such receivers fall through to the
- * `ClassName_method` / `structName_method` dispatch below. The JS-host lane
- * keeps its `__iterator` bridge (that import returns the raw method result).
+ * `ClassName_method` / `structName_method` dispatch below. The non-WasmGC
+ * provider keeps its `__iterator` bridge (that import returns the raw method
+ * result).
  */
 function receiverHasCompiledSymbolMethod(
   ctx: CodegenContext,
@@ -152,7 +153,7 @@ function receiverHasCompiledSymbolMethod(
   receiverType: ts.Type,
   methodName: string,
 ): boolean {
-  if (!ctx.standalone) return false;
+  if (!wasmGcBackend(ctx)) return false;
   let className = receiverType.getSymbol()?.name;
   if (className && !ctx.classSet.has(className)) className = ctx.classExprNameMap.get(className) ?? className;
   const owners: (string | undefined)[] = [ctx.classSet.has(className ?? "") ? className : undefined];
@@ -781,7 +782,7 @@ export function compileTailDispatch(
         // whose `.next()` answered `null`; emit the live record directly so
         // `map[Symbol.iterator]().next()` is by construction what
         // `map.entries().next()` is.
-        if (methodName === "@@iterator" && (ctx.standalone || ctx.wasi) && ctx.nativeStrings) {
+        if (methodName === "@@iterator" && wasmGcBackend(ctx) && ctx.nativeStrings) {
           const recvSymName = receiverType.getSymbol()?.name;
           if (recvSymName === "Map" || recvSymName === "Set") {
             const isSet = recvSymName === "Set";
@@ -822,7 +823,7 @@ export function compileTailDispatch(
         // arms the finalize step S3 added for the diverted carrier.
         const iterRecvSymName = receiverType.getSymbol()?.name;
         const typedArrayIterRecv = iterRecvSymName !== undefined && TYPED_ARRAY_NAMES.has(iterRecvSymName);
-        if (methodName === "@@iterator" && (ctx.standalone || ctx.wasi) && resolveArrayInfo(ctx, receiverType)) {
+        if (methodName === "@@iterator" && wasmGcBackend(ctx) && resolveArrayInfo(ctx, receiverType)) {
           // (#6484 S2) THE CARRIER MIGRATION the #5147 note deferred. This arm
           // used to answer a SNAPSHOT `$Vec`, which is why `.next()` on
           // `[1,2][Symbol.iterator]()` answered null — a vec has no cursor. The
@@ -874,7 +875,7 @@ export function compileTailDispatch(
         // singleton is lazy, and the finalize arm below reads its global — and
         // arm the finalize step. The statically-typed `ArrayIterator` binding
         // already routes through the #3013 compile-time arm and is untouched.
-        if (methodName === "@@iterator" && (ctx.standalone || ctx.wasi) && typedArrayIterRecv) {
+        if (methodName === "@@iterator" && wasmGcBackend(ctx) && typedArrayIterRecv) {
           const protoType = emitArrayIteratorPrototypeSingleton(ctx, fctx);
           if (protoType) {
             fctx.body.push({ op: "drop" });
@@ -890,7 +891,7 @@ export function compileTailDispatch(
         // Deno to discover `%StringIteratorPrototype%` during bootstrap.
         const recvType =
           methodName === "@@iterator" &&
-          (ctx.standalone || ctx.wasi) &&
+          wasmGcBackend(ctx) &&
           isPristineStringPrototypeExpression(fctx, elemAccess.expression)
             ? compileStringLiteral(ctx, fctx, "")
             : compileExpression(ctx, fctx, elemAccess.expression);
@@ -917,7 +918,7 @@ export function compileTailDispatch(
         if (iterIdx !== undefined) {
           fctx.body.push({ op: "call", funcIdx: iterIdx });
           // (#6980) A generator's @@iterator is `return this`.
-          if (ctx.standalone && methodName === "@@iterator") {
+          if (wasmGcBackend(ctx) && methodName === "@@iterator") {
             const scratch = allocLocal(fctx, `__gen_self_iter_${fctx.locals.length}`, { kind: "externref" });
             fctx.body.push(...generatorSelfIteratorInstrs(ctx, scratch));
           }
@@ -1154,7 +1155,7 @@ export function compileTailDispatch(
       // (#6774 S6) An open `$Object` literal binding keeps the dynamic call: the
       // closed-shape method arm would `ref.cast` it to the stale inferred struct.
       const structTypeName =
-        ctx.standalone && isAccessorReceiver(ctx, skipTransparentExpressions(elemAccess.expression))
+        wasmGcBackend(ctx) && isAccessorReceiver(ctx, skipTransparentExpressions(elemAccess.expression))
           ? undefined
           : resolveStructName(ctx, receiverType);
       if (structTypeName) {
@@ -1560,7 +1561,7 @@ export function compileTailDispatch(
           elementFact.kind === "object" && elementFact.shape === undefined && externrefArrayElement;
         if (
           (elementIsUnresolved || undefinedExternrefElement || shapelessObjectExternrefElement) &&
-          (ctx.standalone || externrefArrayElement) &&
+          (wasmGcBackend(ctx) || externrefArrayElement) &&
           receiverArrayInfo
         ) {
           const dyn = tryEmitInlineDynamicCall(ctx, fctx, expr, true);

@@ -47,6 +47,7 @@ import type {
   DeferredCallablePropertyDispatchPlan,
   FunctionContext,
 } from "../context/types.js";
+import { jsValueBoundary, wasmGcBackend } from "../context/types.js";
 import { addFuncType, addImport, localGlobalIdx, resolveWasmType } from "../index.js";
 import {
   emitExternrefToStructGet,
@@ -166,7 +167,7 @@ type FuncCandidate = {
 function callablePropertyRefBridge(ctx: CodegenContext, from: ValType, to: ValType): Instr[] | null {
   const isHostExtern = (type: ValType): boolean => type.kind === "externref" || type.kind === "ref_extern";
   if (valTypesMatch(from, to) || (isHostExtern(from) && isHostExtern(to))) return [];
-  if (ctx.standalone || ctx.wasi) {
+  if (!jsValueBoundary(ctx)) {
     if ((from.kind === "ref" || from.kind === "ref_null") && isHostExtern(to)) {
       for (const info of ctx.nativeGenerators.values()) {
         if (info.stateTypeIdx === from.typeIdx) return [{ op: "extern.convert_any" }];
@@ -309,7 +310,7 @@ function reserveSpeculativeClosureFuncCandidateTypes(
   // (#5334) The pure-rest shape `(...args) -> R` as well, so a rest closure
   // stored after this site compiles (jest's `vi.fn()` spy) has an arm; its vec
   // slot is filled at runtime by the bridge.
-  if (!ctx.standalone && !ctx.wasi) {
+  if (jsValueBoundary(ctx)) {
     const declaredResult = declared.returnType === null ? [] : [declared.returnType];
     for (const info of restShapedWrapperCandidates(ctx, sourceFile, [declaredResult, [{ kind: "externref" }], []])) {
       if (seen.has(info.funcTypeIdx)) continue;
@@ -338,7 +339,7 @@ function collectClosureFuncCandidates(
   const funcCandidates: FuncCandidate[] = [...initialCandidates];
   const seen = new Set<number>(initialCandidates.map((candidate) => candidate.funcTypeIdx));
 
-  const hostLane = !ctx.standalone && !ctx.wasi;
+  const boundaryInterop = jsValueBoundary(ctx);
   for (const [, info] of ctx.closureInfoByTypeIdx) {
     // (#5334) A trailing externref vec is admitted on the candidate's FIXED
     // prefix; whether it is a rest vec or a real array parameter is decided at
@@ -346,7 +347,7 @@ function collectClosureFuncCandidates(
     // only padded declared formals, so it takes that reading only when the vec
     // is provably empty. Any other rest carrier keeps the fail-closed guard: a
     // positional helper ABI cannot synthesize it.
-    const restFixedCount = bridgedRestFixedCount(ctx, info.paramTypes, hostLane);
+    const restFixedCount = bridgedRestFixedCount(ctx, info.paramTypes, boundaryInterop);
     if (restFixedCount === null && rejectRestCandidates && info.hasRestParam === true) continue;
     if (restFixedCount !== null) {
       if (restFixedCount > sigParamCount || (rejectRestCandidates && restFixedCount !== sigParamCount)) continue;
@@ -518,7 +519,7 @@ function emitRootFuncrefDispatch(
     expectedReturn === null ? ({ kind: "empty" } as const) : ({ kind: "val", type: expectedReturn } as const);
   const numericKind = (t: ValType): boolean => t.kind === "i32" || t.kind === "f64" || t.kind === "i64";
   // (#5334) Read-only over the registry, as the deferred finalizer requires.
-  const restPlans = collectRestDispatchPlans(ctx, !ctx.standalone && !ctx.wasi);
+  const restPlans = collectRestDispatchPlans(ctx, jsValueBoundary(ctx));
 
   // Build the dispatch chain bottom-up; innermost else = throw TypeError.
   let funcDispatch: Instr[] = terminal;
@@ -1507,13 +1508,13 @@ export function compileCallablePropertyCall(
   // two shapes have no subtype relation) — the cast nulls out and the
   // `struct.get` traps "dereferencing a null pointer" (acorn:
   // `new this(options, input).parse()` in the static `Parser.parse`). Route
-  // the call through dynamic dispatch instead. JS-host resolves the closure's
-  // vivified prototype; approved standalone fnctors resolve through their
-  // native per-fnctor `$Object` prototype and invoke with `__apply_closure`.
+  // the call through dynamic dispatch instead. The non-WasmGC provider
+  // resolves the closure's vivified prototype; approved WasmGC fnctors use
+  // their native `$Object` prototype and invoke with `__apply_closure`.
   // The funcConstructorMap check covers already-compiled fnctors and the
   // declaration check covers compile-order races (member call compiled before
   // the first `new`).
-  if (!ctx.wasi && !ts.isPrivateIdentifier(propAccess.name)) {
+  if (!ts.isPrivateIdentifier(propAccess.name)) {
     const recvTsType = ctx.checker.getTypeAtLocation(propAccess.expression);
     const recvSym = recvTsType?.symbol;
     const decl = recvSym?.valueDeclaration;
@@ -1524,12 +1525,12 @@ export function compileCallablePropertyCall(
         (ts.isFunctionDeclaration(decl) ||
           ts.isFunctionExpression(decl) ||
           (ts.isVariableDeclaration(decl) && !!decl.initializer && ts.isFunctionExpression(decl.initializer))));
-    const approvedStandaloneFnctor =
-      ctx.standalone &&
+    const approvedWasmGcFnctor =
+      wasmGcBackend(ctx) &&
       (ctx.fnctorEscapeGate?.approvedNames.has(className) === true ||
         (recvSym?.name !== undefined && ctx.fnctorEscapeGate?.approvedNames.has(recvSym.name) === true));
-    if (isFnCtorInstance && (!ctx.standalone || approvedStandaloneFnctor)) {
-      if (ctx.standalone) {
+    if (isFnCtorInstance && (!wasmGcBackend(ctx) || approvedWasmGcFnctor)) {
+      if (wasmGcBackend(ctx)) {
         const dyn = emitFnctorSubclassDynamicMethodCall(ctx, fctx, expr, propAccess, methodName);
         if (dyn !== undefined) return dyn;
       } else {
@@ -1710,7 +1711,7 @@ export function compileCallablePropertyCall(
   // call_ref path, while a dynamic spread stays on the existing fallback until
   // it has a value-preserving ObjVec concat.
   if (
-    (ctx.standalone || ctx.wasi) &&
+    !jsValueBoundary(ctx) &&
     !expr.arguments.some((argument) => ts.isSpreadElement(argument)) &&
     expr.arguments.length <= REALM_DYNAMIC_CALL_MAX_ARITY &&
     expressionDescendsFromRealmStructuralBinding(ctx, fctx, propAccess.expression)
@@ -2200,9 +2201,9 @@ export function compileCallableElementAccessCall(
   // drops that receiver, selecting the wrong lifted signature (and eventually
   // calling a null funcref). Bind the receiver explicitly and call the native
   // closure ABI directly; this is deliberately limited to the statically
-  // resolvable Function-prototype symbol and standalone mode.
+  // resolvable Function-prototype symbol on the WasmGC backend.
   if (
-    ctx.standalone &&
+    wasmGcBackend(ctx) &&
     resolveComputedKeyExpression(ctx, elemAccess.argumentExpression) === FUNCTION_PROTO_HAS_INSTANCE_MEMBER
   ) {
     const receiver = elemAccess.expression;
@@ -2452,7 +2453,7 @@ export function tryExternClassMethodOnAny(
   // arity guard is dropped for both members: `exec()` / `test()` with ZERO
   // args is the §22.2.6.2 step-3 `ToString(undefined)` case, and it must reach
   // the brand-checking native closure just as the one-arg form does.
-  if (ctx.standalone && (methodName === "test" || methodName === "exec") && expr.arguments.length <= 1) {
+  if (wasmGcBackend(ctx) && (methodName === "test" || methodName === "exec") && expr.arguments.length <= 1) {
     return null;
   }
 
@@ -2631,10 +2632,9 @@ export function tryExternClassMethodOnAny(
   // runtime shape: all four collections share the `$Map` struct with a `kind`
   // brand tag (#3171). Closed-struct/user-object receivers with these method
   // names keep their arms; open-`$Object` receivers keep the
-  // `__extern_method_call` bottom arm. JS-host mode is untouched (the generic
-  // WeakMap_* host bridge is satisfiable and correct there).
+  // `__extern_method_call` bottom arm. Non-WasmGC retains its provider bridge.
   if (
-    (ctx.standalone || ctx.wasi) &&
+    wasmGcBackend(ctx) &&
     (methodName === "get" ||
       methodName === "set" ||
       methodName === "has" ||
@@ -2822,5 +2822,5 @@ export function tryExternClassMethodOnAny(
  * `any`-receiver native `join` above declines it.
  */
 function joinOnTypedArrayIntrinsicProto(ctx: CodegenContext, propAccess: ts.PropertyAccessExpression): boolean {
-  return ctx.standalone === true && tracesToTypedArrayIntrinsicProto(ctx, propAccess.expression);
+  return wasmGcBackend(ctx) && tracesToTypedArrayIntrinsicProto(ctx, propAccess.expression);
 }

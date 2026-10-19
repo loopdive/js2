@@ -37,7 +37,7 @@ import { emitNumberToStringSentinelAware, emitToNumber, emitToString } from "../
 import { reportError } from "../context/errors.js";
 import { allocLocal, getLocalType } from "../context/locals.js";
 import { eagerCaptureCellForCall } from "../statements/eager-capture-box.js";
-import { jsValueBoundary, type CodegenContext, type FunctionContext } from "../context/types.js";
+import { jsValueBoundary, type CodegenContext, type FunctionContext, wasmGcBackend } from "../context/types.js";
 import {
   addImport,
   addStringConstantGlobal,
@@ -116,7 +116,6 @@ import {
   getFuncParamTypes,
   getWasmFuncReturnType,
   isEffectivelyVoidReturn,
-  noJsHost,
   wasmFuncReturnsVoid,
 } from "./helpers.js";
 import { analyzeTdzAccessByPos, emitLocalTdzCheck, emitStaticTdzThrow } from "./identifiers.js";
@@ -412,7 +411,7 @@ function tryCompileImmutablePropertyCallableAlias(
     else if (valueType.kind !== "externref") coerceType(ctx, fctx, valueType, { kind: "externref" });
   };
 
-  if (!ctx.standalone && !ctx.wasi) {
+  if (!wasmGcBackend(ctx)) {
     const arity = expr.arguments.length;
     reserveHostFnctorMethodDriver(ctx, arity);
     const undefinedIdx = ensureLateImport(ctx, "__get_undefined", [], [{ kind: "externref" }]);
@@ -441,8 +440,8 @@ function tryCompileImmutablePropertyCallableAlias(
     return { kind: "externref" };
   }
 
-  // Host-free targets use the matching finalize-filled closure application
-  // bridge and an ObjVec containing the true source argument count.
+  // WasmGC uses the matching finalize-filled closure application bridge and an
+  // ObjVec containing the true source argument count.
   reserveApplyClosure(ctx);
   ensureObjVecBuilders(ctx);
   flushLateImportShifts(ctx, fctx);
@@ -535,7 +534,7 @@ function tryCompileStoredStandaloneCarrierCall(
   // the typed closure lowering would cast the proxy and trap (bound target:
   // null deref; builtin target: illegal cast). Route it to the dynamic [[Call]]
   // ladder, whose `$Proxy` arm reaches `__proxy_apply_dispatch` (§10.5.12).
-  if (ctx.standalone && tracesToProxyValue(ctx, expr.expression)) {
+  if (wasmGcBackend(ctx) && tracesToProxyValue(ctx, expr.expression)) {
     const proxyCall = tryEmitInlineDynamicCall(ctx, fctx, expr, true);
     if (proxyCall !== null) return proxyCall;
   }
@@ -721,23 +720,21 @@ function compileBoundIdentifierCall(
     fctx.localMap.get(expr.expression.text) === undefined &&
     !(fctx.boxedCaptures?.has(expr.expression.text) ?? false) &&
     !expr.arguments.some((a) => ts.isSpreadElement(a)) &&
-    // (#4648) JS-host lane: the private fnctor driver below is only reserved
-    // for arities the canonical closure-method surface covers. Above the cap
-    // the static lowering stays (a reassignment there is not observed — the
-    // same limit the host `this.m(...)` fast path carries).
-    (ctx.standalone || ctx.wasi || expr.arguments.length <= 8)
+    // (#4648) The JS value-boundary driver below is only reserved for arities
+    // the canonical closure-method surface covers. Above the cap the static
+    // lowering stays (a reassignment there is not observed — the same limit
+    // the boundary `this.m(...)` fast path carries).
+    (!jsValueBoundary(ctx) || expr.arguments.length <= 8)
   ) {
     const name = expr.expression.text;
     const slot = fnShadowSlot(ctx, name);
-    if (!ctx.standalone && !ctx.wasi) {
-      // (#4648) JS-host lane. The standalone arm below packs the arguments into
-      // an `$ObjVec` for `__apply_closure`, and `ensureObjVecBuilders` pulls in
-      // the whole native object runtime — which, in host mode (wasm:js-string,
-      // not native strings), aborts as soon as a string-family selfhost builtin
-      // is emitted. Use the fixed-arity host driver instead: it dispatches a
-      // WasmGC closure through `__call_fn_method_N` and falls back to the
-      // `__extern_call_raw_callable_N` import when the slot holds a genuine JS
-      // callable, so a host function assigned to `globalThis.<name>` also works.
+    if (jsValueBoundary(ctx)) {
+      // (#4648) JavaScript value boundary. The native arm below packs the
+      // arguments into an `$ObjVec` for `__apply_closure`; the fixed-arity
+      // boundary driver additionally falls back to
+      // `__extern_call_raw_callable_N` when the slot holds a genuine JS
+      // callable, so a host function assigned to `globalThis.<name>` works
+      // without selecting a host semantic implementation.
       const argc = expr.arguments.length;
       const driverIdx = reserveHostFnctorMethodDriver(ctx, argc);
       const undefIdx = ensureLateImport(ctx, "__get_undefined", [], [{ kind: "externref" }]);
@@ -1580,13 +1577,11 @@ function compileBoundIdentifierCall(
         // a null reference) and broke `Boolean(undefined) === false` plus
         // every other ToBoolean edge case (NaN, +/-0, "", 0n, wrapper
         // objects which must always be truthy).
-        // (#2915) In standalone mode use the NATIVE `__is_truthy` union helper
-        // instead — it applies the identical ES §7.1.2 lowering over the boxed
-        // value structs (number/boolean/bigint/string, wrapper objects → truthy,
-        // null → false) but has a real Wasm body, so `Boolean(x)` no longer
-        // leaks the bodyless `env::__to_boolean` host import. Gated on
-        // `ctx.standalone` so the GC/host lane stays byte-identical.
-        const useNativeTruthy = ctx.standalone;
+        // (#2915) WasmGC uses the native `__is_truthy` union helper. It applies
+        // ES §7.1.2 over the boxed value structs
+        // (number/boolean/bigint/string, wrapper objects → truthy, null →
+        // false) and avoids a semantic `env::__to_boolean` import.
+        const useNativeTruthy = wasmGcBackend(ctx);
         if (useNativeTruthy) addUnionImports(ctx);
         const toBoolIdx = ensureLateImport(
           ctx,
@@ -1921,7 +1916,7 @@ function compileBoundIdentifierCall(
       // the live binding and arguments are still evaluated exactly once.
       if (
         isKnownVariable &&
-        ctx.standalone &&
+        wasmGcBackend(ctx) &&
         ctx.runtimeEvalCallableBoundaryEnabled === true &&
         resolvesToGlobalFunctionAlias(expr.expression, ctx.oracle)
       ) {
@@ -1940,7 +1935,7 @@ function compileBoundIdentifierCall(
       // like every other, so `callSpread(f,a){return f(...a)}` handed `f` the
       // source ARRAY as formal zero. Same ObjVec argv, no host boundary — see
       // standalone-dynamic-spread-call.ts.
-      if (isKnownVariable && hasSpreadArg && noJsHost(ctx)) {
+      if (isKnownVariable && hasSpreadArg && wasmGcBackend(ctx)) {
         const nativeSpreadCall = tryEmitStandaloneDynamicSpreadCall(ctx, fctx, expr);
         if (nativeSpreadCall !== undefined) return nativeSpreadCall;
       }
@@ -1966,16 +1961,15 @@ function compileBoundIdentifierCall(
           (resolvedSig?.declaration
             ? callSigs.find((candidate) => candidate.declaration === resolvedSig.declaration)
             : undefined) ?? callSigs[0]!;
-        const builtinAlias =
-          ctx.standalone || ctx.wasi
-            ? // (#4491 wave-5 T6) The destructuring spelling (`const { max } = Math`)
-              // first — unchanged — then the plain single-name form
-              // (`var f = String.fromCharCode`), which is restricted to the
-              // variadic-convention statics whose lib rest signature actively
-              // destroys call-site argument 0.
-              (resolveBuiltinStaticBindingAlias(ctx, expr.expression) ??
-              resolveVariadicBuiltinStaticPlainAlias(ctx, expr.expression))
-            : undefined;
+        const builtinAlias = wasmGcBackend(ctx)
+          ? // (#4491 wave-5 T6) The destructuring spelling (`const { max } = Math`)
+            // first — unchanged — then the plain single-name form
+            // (`var f = String.fromCharCode`), which is restricted to the
+            // variadic-convention statics whose lib rest signature actively
+            // destroys call-site argument 0.
+            (resolveBuiltinStaticBindingAlias(ctx, expr.expression) ??
+            resolveVariadicBuiltinStaticPlainAlias(ctx, expr.expression))
+          : undefined;
         const builtinAliasClosure = builtinAlias
           ? ensureStandaloneBuiltinStaticMethodClosure(ctx, builtinAlias.builtinName, builtinAlias.propName)
           : null;
@@ -2327,7 +2321,7 @@ function compileBoundIdentifierCall(
             allowGeneralRefExport: boolean,
           ): Instr[] | null => {
             if (scalarAbiTypesMatch(from, to)) return [];
-            if (ctx.standalone || ctx.wasi) return null;
+            if (!jsValueBoundary(ctx)) return null;
 
             // A generic callback commonly erases its type parameter to
             // externref while the concrete closure compiled at the call site
@@ -2447,14 +2441,15 @@ function compileBoundIdentifierCall(
             unboxNumberIdx: 0,
             isTruthyIdx: 0,
           };
-          // (#5334) On the host lane a trailing `$__vec_externref` formal is
-          // marshalled by the runtime-disambiguating bridge (see
-          // callable-rest-bridge.ts), so its candidate is admitted and bridged
-          // on its FIXED formals only. Standalone keeps the flag-driven reading.
-          const hostLane = !ctx.standalone && !ctx.wasi;
+          // (#5334) At the JavaScript value boundary a trailing
+          // `$__vec_externref` formal is marshalled by the
+          // runtime-disambiguating bridge (see callable-rest-bridge.ts), so its
+          // candidate is admitted and bridged on its FIXED formals only. The
+          // host-free path keeps the flag-driven reading.
+          const boundaryInterop = jsValueBoundary(ctx);
           let needsScalarBridge = false;
           for (const [, info] of ctx.closureInfoByTypeIdx) {
-            const fixedCount = candidateFixedFormalCount(ctx, info, hostLane);
+            const fixedCount = candidateFixedFormalCount(ctx, info, boundaryInterop);
             if (fixedCount > sigParamWasmTypes.length) {
               continue;
             }
@@ -2538,7 +2533,7 @@ function compileBoundIdentifierCall(
           // ending in TypeError.
           const omittedSlotFuncTypes = new Set<number>();
           let omittedSlotTmp: number | undefined;
-          if (omittedSlots.size > 0 && !ctx.standalone && !ctx.wasi) {
+          if (omittedSlots.size > 0 && jsValueBoundary(ctx)) {
             const restoredParams = sigParamWasmTypes.map((type, i) => omittedSlots.get(i) ?? type);
             const alt = getOrCreateFuncRefWrapperTypes(ctx, restoredParams, resultTypes);
             if (alt && !seenFuncTypeIdx.has(alt.closureInfo.funcTypeIdx)) {
@@ -2605,7 +2600,7 @@ function compileBoundIdentifierCall(
             // declares one (Test262's typed-array harness does exactly this),
             // so retain shorter runtime signatures and marshal only their
             // formal prefix in the dispatch arm below.
-            const fixedParamCount = candidateFixedFormalCount(ctx, info, hostLane);
+            const fixedParamCount = candidateFixedFormalCount(ctx, info, boundaryInterop);
             const hasRestParam = fixedParamCount < info.paramTypes.length;
             // A runtime function may declare optional parameters that are not
             // present in the callable's public signature. JavaScript still
@@ -2727,7 +2722,7 @@ function compileBoundIdentifierCall(
           // (#5334) The pure-rest shape `(...args) -> R` too, so a rest closure
           // compiled AFTER this site (jest's `vi.fn()` spy) has an arm; its vec
           // slot is decided at runtime by the bridge.
-          if (hostLane) {
+          if (boundaryInterop) {
             for (const info of restShapedWrapperCandidates(ctx, expr.getSourceFile(), [
               resultTypes,
               [{ kind: "externref" }],
@@ -2973,7 +2968,7 @@ function compileBoundIdentifierCall(
             t.kind === "ref_null";
           const runtimeApplyFallback =
             rawCalleeLocal !== undefined &&
-            (ctx.standalone || ctx.wasi) &&
+            wasmGcBackend(ctx) &&
             ctx.runtimeEvalCallableBoundaryEnabled === true &&
             boxableKind(expectedReturn) &&
             matchedClosureInfo.paramTypes.every((t) => boxableKind(t));
@@ -3081,9 +3076,7 @@ function compileBoundIdentifierCall(
           // mid-body, #2704) AND the callee arrived as externref (closureLocal
           // is root-cast). Modules without such a value read are byte-identical.
           const variadic =
-            (ctx.standalone || ctx.wasi) && innerResultType?.kind === "externref"
-              ? ctx.variadicBuiltinClosure
-              : undefined;
+            wasmGcBackend(ctx) && innerResultType?.kind === "externref" ? ctx.variadicBuiltinClosure : undefined;
 
           if (funcCandidates.length <= 1 && variadic === undefined) {
             // Single func type — push self+args back onto stack then call
@@ -3268,7 +3261,7 @@ function compileBoundIdentifierCall(
 
             // (#5334) Every registered rest closure struct whose identity an arm
             // can trust, per funcref type (host lane; see the bridge module).
-            const restPlans = collectRestDispatchPlans(ctx, hostLane);
+            const restPlans = collectRestDispatchPlans(ctx, boundaryInterop);
             for (const fc of [...funcCandidates].reverse()) {
               // (#4491 wave-5 T6) On a statically-known variadic-alias call the
               // MATCHED candidate carries the variadic func type itself — its
@@ -3283,7 +3276,7 @@ function compileBoundIdentifierCall(
               const fcCallBody: Instr[] = [];
               // (#5334) A trailing rest formal is marshalled by the runtime-
               // disambiguating bridge below; positional formals stop before it.
-              const fcFixedParamCount = candidateFixedFormalCount(ctx, fc, hostLane);
+              const fcFixedParamCount = candidateFixedFormalCount(ctx, fc, boundaryInterop);
               setCandidateArgc(ctx, fctx, fcCallBody, fcFixedParamCount, actualArgExternLocals, expr.arguments.length);
               appendForwardedOptionalArgcOverride(ctx, fctx, fcCallBody, expr.arguments, fcFixedParamCount);
               // Shared func types use canonical-root self. A private/named
@@ -3489,7 +3482,7 @@ function compileBoundIdentifierCall(
       // that may wrap a closure at runtime.
       const declaration = ctx.oracle.valueDeclarationOf(expr.expression);
       const isRuntimeEvalGlobal =
-        (ctx.standalone || ctx.wasi) && ctx.runtimeEvalGlobalFunctionBindings === true && declaration === undefined;
+        wasmGcBackend(ctx) && ctx.runtimeEvalGlobalFunctionBindings === true && declaration === undefined;
       const isLinkedRealmGlobal = ctx.linkedGlobalThisImport !== undefined && declaration === undefined;
       // (#3966) A callee whose only binding is a realm-global property the
       // program created (`this.beep = fn` / bare `getRight = fn`) is legitimate —
@@ -3515,13 +3508,13 @@ function compileBoundIdentifierCall(
       // each-callbacks). Route it through the host `__call_dyn_<n>` bridge:
       // the callee and every argument cross as externref (numbers boxed,
       // refs converted), the host wraps the closure exactly like the numeric
-      // `__call_N_f64` bridges, and reference arguments stay LIVE. Host lane
-      // only — standalone keeps its existing lowering (the ReferenceError /
-      // graceful arms below).
+      // `__call_N_f64` bridges, and reference arguments stay LIVE. The
+      // `__call_dyn_N` provider is not an admitted S7 value adapter, so the
+      // WasmGC backend must keep the native ReferenceError / graceful arms
+      // below even when a JavaScript value boundary exists.
       if (
-        !noJsHost(ctx) &&
-        !ctx.standalone &&
-        !ctx.wasi &&
+        !wasmGcBackend(ctx) &&
+        jsValueBoundary(ctx) &&
         isKnownVariable &&
         expr.arguments.length <= 10 &&
         !expr.arguments.some((a) => ts.isSpreadElement(a))
