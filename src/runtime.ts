@@ -48,7 +48,6 @@ import { createLinkedProviderMirrorOwnership } from "./runtime/linked-provider-m
 import { createCrossModuleStructOwners } from "./runtime/cross-module-struct-owners.js";
 import { linkedClosureDispatch } from "./runtime/linked-closure-dispatch.js";
 import { rawExportsStructDecodeError } from "./runtime/raw-exports-struct-authority.js"; // (#6438)
-import { fixedExternMethodCallArity, makeFixedExternMethodCall } from "./runtime/fixed-extern-method-call.js";
 import { tryCallWasmDateHostMethod, wasmDateHostView } from "./runtime/date-host-method.js";
 import { compiledClassInstancePrototype } from "./runtime/compiled-class-prototype.js"; // (#5347)
 import { getWasmVecPrototypeMember as vecProtoGet, WASM_VEC_PROTOTYPE_MISS } from "./runtime/wasm-vec-prototype.js";
@@ -85,7 +84,6 @@ import {
 } from "./runtime/wasm-struct-sidecar.js";
 // (#5370) typed-array brand identity at the host boundary (inbound + `.constructor`)
 import { COMPILED_TYPED_ARRAY_CTORS as _COMPILED_TYPED_ARRAY_CTORS } from "./runtime/typed-array-host-brand.js";
-import { createHostCallImport, isHostCallImportName } from "./runtime/host-call-abi.js";
 import * as dynamicCodePolicy from "./runtime/dynamic-code-policy.js"; // (#6779)
 import { createBoundaryObjectAdapter } from "./runtime/boundary-object-adapter.js";
 import { isNativeRegimeExports, readNativeRegimeBag } from "./runtime/native-regime-view.js"; // (#6879)
@@ -1666,42 +1664,6 @@ function _wrapWasmClosureUnknownArity(
   return wrapped;
 }
 
-/**
- * (#1382) Phase 1 — bridge a possibly-Wasm-closure value into a JS-callable.
- *
- * Centralises the "is this an opaque WasmGC closure struct? if so, wrap it"
- * check that the per-host-import call sites need before handing the value
- * to the native engine. Returns the value unchanged when it's already
- * JS-callable, null/undefined (caller-side TypeError is correct), or any
- * non-struct value. Returns a cached JS Function bridging into
- * `__call_fn_<arity>` for Wasm closure structs.
- *
- * The wrapper is cached per (closure, arity), which preserves accessor
- * descriptor identity for `Object.getOwnPropertyDescriptor(...).get`.
- */
-/**
- * (#2837) True if `val` is a raw wasm closure (a WasmGC struct the runtime can
- * wrap into a host callable), i.e. not already a JS function. Used to detect
- * descriptor get/set fields that need wrapping before a native
- * `Object.defineProperties` (which rejects `[object Object]` getters/setters).
- */
-function _isWasmClosureValue(
-  val: any,
-  callbackState?: { getExports: () => Record<string, Function> | undefined },
-): boolean {
-  if (val == null || typeof val !== "object") return false;
-  const exports = callbackState?.getExports();
-  const isClosureFn = exports?.__is_closure as ((v: any) => number) | undefined;
-  if (typeof isClosureFn === "function") {
-    try {
-      return isClosureFn(val) === 1;
-    } catch {
-      /* fall through */
-    }
-  }
-  return _isWasmStruct(val);
-}
-
 function _maybeWrapCallable(
   val: any,
   arity: number,
@@ -2955,61 +2917,6 @@ function _structFieldNamesRaw(obj: any, exports: Record<string, Function> | unde
     _csvSplitCache.set(csv, names);
   }
   return names;
-}
-
-/**
- * (#5131) Positive host-boundary discriminator for an empty array carrier.
- *
- * Empty tuple structs have no field-name CSV entry, so inferring this shape
- * from `__struct_field_names === null` would misclassify fieldless classes and
- * other internal data structs as arrays. The iterator-native finalizer emits
- * `__is_empty_tuple`, whose concrete `ref.test` chain is the only authority for
- * this classification. Keep protocol overrides observable: a user-installed
- * iterator, accessor, or explicit prototype must fall through to ordinary
- * strict GetIterator rather than being silently replaced by the empty fast
- * path.
- */
-function _isEmptyTupleCarrier(
-  obj: any,
-  exports: Record<string, Function> | undefined,
-  callbackState?: { getExports: () => Record<string, Function> | undefined },
-): boolean {
-  if (!exports || !_isWasmStruct(obj)) return false;
-  const isEmptyTuple = exports.__is_empty_tuple as ((value: any) => number) | undefined;
-  if (typeof isEmptyTuple !== "function") return false;
-  try {
-    if (isEmptyTuple(obj) !== 1) return false;
-  } catch {
-    return false;
-  }
-
-  // A tuple's default prototype is opaque/null. Any recorded prototype is a
-  // user semantic change, so let strict GetIterator observe it normally.
-  if (_wasmStructProto.has(obj) || _fnctorInstanceCtor.has(obj as object)) return false;
-  if (_prototypeMethodNames.has(obj) || _staticMethodNames.has(obj)) return false;
-
-  // `_safeGet` intentionally stores well-known symbols under both the real
-  // Symbol and its `@@name` alias. Check presence separately so an explicitly
-  // installed `undefined`/`null` iterator is not mistaken for a missing one.
-  const sidecar = _wasmStructProps.get(obj);
-  if (
-    sidecar &&
-    (_hasOwn(sidecar, Symbol.iterator) ||
-      _hasOwn(sidecar, "@@iterator") ||
-      _hasOwn(sidecar, "__get_@@iterator") ||
-      _hasOwn(sidecar, "__set_@@iterator"))
-  ) {
-    return false;
-  }
-  const accessors = _wasmStructAccessors.get(obj);
-  if (accessors?.has(Symbol.iterator) || accessors?.has("@@iterator")) return false;
-
-  // Probe inherited/recorded protocol values as the final guard. A getter is
-  // deliberately allowed to throw here: strict GetIterator must propagate that
-  // abrupt completion, not retry it through a second path.
-  if (_safeGet(obj, Symbol.iterator, callbackState) !== undefined) return false;
-  if (_safeGet(obj, "@@iterator", callbackState) !== undefined) return false;
-  return true;
 }
 
 function _getStructFieldNames(obj: any, exports: Record<string, Function> | undefined): string[] | null {
@@ -5256,17 +5163,11 @@ function _nativePrimitiveToHost(value: any, exports: Record<string, Function> | 
   return _MISS;
 }
 
-// (#5131) Strict GetIterator/IteratorNext and strict array materialization are
-// isolated from the permissive compatibility bridge. Inject the established
-// runtime operations so the extraction changes neither host ABI nor dispatch.
+// (#6979) Only eager-generator yield-star resumption still uses this adapter.
+// Native semantics own GetIterator, IteratorNext and array materialization.
 const _strictIteratorHostRuntime = createStrictIteratorHostRuntime({
-  nativeIsArray: _nativeIsArray,
   isWasmStruct: _isWasmStruct,
-  isWasmVec: _isWasmVec,
-  isEmptyTupleCarrier: _isEmptyTupleCarrier,
   safeGet: _safeGet,
-  stepClosureIterator: _stepClosureIterator,
-  wrapForHost: _wrapForHost,
   nativePrimitiveToHost: _nativePrimitiveToHost,
   missingValue: _MISS,
   maybeWrapCallable: _maybeWrapCallable,
@@ -7406,16 +7307,6 @@ interface InstanceState {
   userClassParents?: Map<string, string | null>;
   /** (#6790) user-class name → dynamic `extends` value, for this instance only. */
   classParents?: classStaticParent.ClassParentRegistry;
-  /**
-   * (#2637 B2) `class extends Promise` name → the host-bridged wasm
-   * constructor-body callable (`$<Class>_new`, registered via
-   * `__register_promise_subclass_ctor`). Consulted by `__promise_subclass_ctor`
-   * so V8's `NewPromiseCapability(C)` runs the user ctor body on the capability
-   * promise. Per-instance (not module-scope) to avoid cross-module retention.
-   */
-  promiseSubclassBodies?: Map<string, Function>;
-  /** (#2637 B2) `class extends Promise` name → synthesized JS subclass ctor (cached). */
-  promiseSubclassCtors?: Map<string, any>;
 }
 
 // (#1638) Date.prototype string-formatter mode selectors. Kept in sync with
@@ -8472,20 +8363,6 @@ function resolveImport(
     }
     case "builtin": {
       const name = intent.name;
-      const fixedMethodArity = fixedExternMethodCallArity(name);
-      if (fixedMethodArity !== undefined) {
-        const canonical = resolveImport(
-          { type: "builtin", name: "__extern_method_call" },
-          deps,
-          callbackState,
-          globalSandbox,
-          instanceState,
-          undefined,
-          dynamicCode,
-          dynamicCodeEvaluator,
-        );
-        return makeFixedExternMethodCall(fixedMethodArity, canonical);
-      }
       // #1644/#2678: spec BigInt-to-i64 and host Date.parse for wasm:js-string externrefs.
       if (name === "__date_parse_host") return (s: any): number => Date.parse(s);
       if (name.startsWith("__regexp_host_")) return resolveRegExpHostImport(name, instanceState)!;
@@ -8929,53 +8806,6 @@ assert._isSameValue = isSameValue;
         return function registerClassParentRef(n: any, o: any, k: any): void {
           _classParents(instanceState).registerLazy(n, _classParentRefResolver(o, k, callbackState?.getExports()));
         };
-      if (/^__call_dynamic_class_parent_\d+$/.test(name))
-        return (parentIdentity: any, receiver: any, ...args: any[]): void => {
-          const className = typeof parentIdentity === "string" ? parentIdentity : "";
-          // Property-access heritage is registered by class name, per instance
-          // (#6790). A top-level function parent has no class `_init`, so the
-          // compiler passes its canonical closure; both are one SuperCall.
-          const parent = className !== "" ? _classParents(instanceState).get(className) : parentIdentity;
-          const parentCtor =
-            typeof parent === "function"
-              ? parent
-              : parent != null && typeof parent === "object"
-                ? _wrapWasmClosureUnknownArity(parent, callbackState, true)
-                : undefined;
-          if (typeof parentCtor !== "function") {
-            throw new TypeError(
-              className !== ""
-                ? `Class extends value for ${className} is not a constructor`
-                : "Class extends value is not a constructor",
-            );
-          }
-          const exports = callbackState?.getExports();
-          const hostReceiver = _isWasmStruct(receiver) ? _wrapForHost(receiver, exports) : receiver;
-          for (let i = 0; i < args.length; i++) {
-            const primitive = _nativePrimitiveToHost(args[i], exports);
-            if (primitive !== _MISS) args[i] = primitive;
-          }
-          // A dynamic SuperCall is a [[Call]] with the already-allocated
-          // derived receiver. Throwing parent initializers propagate exactly;
-          // unlike the old mirror fallback this does not catch and retry them.
-          Reflect.apply(parentCtor, hostReceiver, args);
-        };
-      const arrayIterationImport = _strictIteratorHostRuntime.resolveArrayIterationImport(name, callbackState);
-      if (arrayIterationImport) return arrayIterationImport;
-      // (#1337) Invoke an arbitrary callable externref with an arguments array.
-      // Used to call values that the codegen knows are JS-functional externrefs
-      // (e.g. a `Function.prototype.bind` result) rather than wasm closure
-      // structs — those can't be cast to a closure struct + call_ref. The host
-      // handles [[Call]] with the function's own `this` binding (bound functions
-      // already carry [[BoundThis]]; for plain functions `thisArg` is used).
-      if (isHostCallImportName(name)) {
-        return createHostCallImport(name, callbackState, {
-          isWasmStruct: _isWasmStruct,
-          maybeWrapCallable: _maybeWrapCallableUnknownArity,
-          wrapForHost: _wrapForHost,
-          unwrapForHost: _unwrapForHost,
-        });
-      }
       // (#5193) __register_init_export(id, fn) — the module hands the host its
       // own marshalling helpers as `ref.func` values from the top of
       // `__module_init`, i.e. from INSIDE the wasm `start` section, where
@@ -9007,215 +8837,6 @@ assert._isSameValue = isSameValue;
             callbackState as { registerStartExport?: (n: string, f: Function) => void } | undefined
           )?.registerStartExport?.(exportName, fn);
         };
-      // Promise combinators and constructors
-      // Helper: convert WasmGC vec struct to JS array (vec structs are opaque
-      // from JS; Promise.all/race/etc. need an iterable).
-      const _vecToArray = (arr: any): any[] => {
-        if (arr == null) return [];
-        if (_nativeIsArray(arr)) return arr;
-        const exports = callbackState?.getExports();
-        if (exports) {
-          const vecLen = exports.__vec_len as Function | undefined;
-          const vecGet = exports.__vec_get as Function | undefined;
-          // (#3637) POSITIVE discriminator — the vacuous probe turned every
-          // non-vec struct into `[]` instead of the wrap-single-value fallback.
-          if (typeof vecLen === "function" && typeof vecGet === "function" && _isWasmVec(arr, exports)) {
-            const len = vecLen(arr) as number;
-            if (typeof len === "number" && len >= 0) {
-              const result: any[] = new Array(len);
-              for (let i = 0; i < len; i++) {
-                result[i] = vecGet(arr, i);
-              }
-              return result;
-            }
-          }
-        }
-        return [arr]; // Fallback: wrap single value
-      };
-      // Native Promise boundaries mirror opaque WasmGC thenables; ordinary structs stay raw (#2671/#4736).
-      const _wrapThenable = (v: any): any => {
-        if (v == null || typeof v !== "object" || !_isWasmStruct(v)) return v;
-        const exports = callbackState?.getExports();
-        if (!exports) return v;
-        try {
-          const hasThen = _structHasOwnFieldName(v, "then", exports) || !!_wasmStructProps.get(v)?.__get_then;
-          let t: any;
-          try {
-            const sget = (exports as Record<string, Function>).__sget_then;
-            if (typeof sget === "function") t = sget(v);
-          } catch {
-            if (hasThen) return _wrapForHost(v, exports);
-          }
-          if (t == null) {
-            try {
-              t = _safeGet(v, "then", callbackState);
-            } catch {
-              if (hasThen) return _wrapForHost(v, exports);
-            }
-          }
-          if (t != null && (typeof t === "function" || _isWasmClosureValue(t, callbackState))) {
-            return _wrapForHost(v, exports);
-          }
-        } catch {
-          /* not a thenable — pass through raw */
-        }
-        return v;
-      };
-      const _wrapPromiseReaction = (cb: any): any => {
-        const wrapped = _maybeWrapCallable(cb, 1, callbackState);
-        return typeof wrapped === "function" ? (...args: any[]) => _wrapThenable(wrapped(...args)) : wrapped;
-      };
-      const _toIterable = (iter: any): any => {
-        // null/undefined: per spec, GetIterator throws TypeError. Native does
-        // this when given undefined — pass through and let it reject.
-        if (iter == null) return iter;
-        // Strings are iterable per spec (yield code units).
-        if (typeof iter === "string") return iter;
-        // Already JS-iterable: array, generator, custom Symbol.iterator,
-        // arguments object, Set, Map, TypedArray, etc.
-        if (typeof iter === "object") {
-          // Real JS Array — fast path. (#2671) Re-materialize only when some
-          // element is a wasm-struct thenable (see _wrapThenableElement); the
-          // overwhelmingly common all-plain case returns the array unchanged.
-          if (_nativeIsArray(iter)) {
-            let needsWrap = false;
-            for (const v of iter) {
-              if (v !== _wrapThenable(v)) {
-                needsWrap = true;
-                break;
-              }
-            }
-            return needsWrap ? iter.map(_wrapThenable) : iter;
-          }
-          // Detect WasmGC vec first via accessors (they return 0/null for
-          // non-vec externrefs, so we materialize only when the round-trip
-          // looks sane). We MUST attempt this before Symbol.iterator because
-          // a wasm vec externref is an opaque host object — `Symbol.iterator
-          // in vec` either throws or returns false, and we want to convert
-          // it to a real JS array rather than fail.
-          const exports = callbackState?.getExports();
-          if (exports) {
-            const vecLen = exports.__vec_len as Function | undefined;
-            const vecGet = exports.__vec_get as Function | undefined;
-            // (#3637) `__vec_len(non-vec)` returns 0 by design, which used to be
-            // indistinguishable from an empty vec — so this site carried a
-            // "sentinel probe" workaround: materialize when `len > 0`, or when
-            // `len === 0` and the value has no `Symbol.iterator`. That second
-            // arm still mapped every non-iterable wasm struct to `[]`, so
-            // `Promise.all({a: 1})` RESOLVED to `[]` where §27.2.4.1
-            // GetIterator requires a TypeError rejection. `__is_vec` answers the
-            // question directly, so the workaround is gone: a real vec (empty or
-            // not) materializes, everything else falls through to the
-            // Symbol.iterator check and then to native's spec-correct rejection.
-            if (typeof vecLen === "function" && typeof vecGet === "function" && _isWasmVec(iter, exports)) {
-              try {
-                const len = vecLen(iter) as number;
-                if (typeof len === "number" && len >= 0) {
-                  const result: any[] = new Array(len);
-                  for (let i = 0; i < len; i++) {
-                    // (#2671) Thenable struct elements get the live-mirror
-                    // proxy so V8's resolve-element Invoke sees `.then`.
-                    result[i] = _wrapThenable(vecGet(iter, i));
-                  }
-                  return result;
-                }
-              } catch {
-                // Not a vec (vecLen threw) — fall through.
-              }
-            }
-          }
-          // Has Symbol.iterator — pass through. Guard with try/catch since
-          // Proxy targets can throw on `has`.
-          try {
-            if (Symbol.iterator in iter) return iter;
-          } catch {
-            // Fall through to native rejection.
-          }
-          // Object that isn't iterable and isn't a vec: pass through; native
-          // throws TypeError per spec.
-          return iter;
-        }
-        // Non-object, non-string primitives (number, boolean, symbol, bigint):
-        // pass through; native `Promise.all(123)` throws TypeError per spec.
-        return iter;
-      };
-      const _resolveCtor = (thisArg: any, directCall: number): any => {
-        // Step 1 of spec algorithm: `Let C be the this value`.
-        // (#1116, #1465) The codegen passes `directCall=1` when the user wrote
-        // `Promise.METHOD(iter)` (no explicit thisArg) — substitute
-        // globalThis.Promise so the natural call site works.
-        // For `directCall=0` (user wrote `.call(thisArg, iter)`), pass the
-        // value through unchanged: V8's `Promise.METHOD.call(thisArg, …)`
-        // then performs spec §27.2.4.X step 2 (`If Type(C) is not Object,
-        // throw a TypeError exception`) — which is what test262
-        // `ctx-non-object.js` / `ctx-non-ctor.js` files exercise for
-        // undefined/null/primitive/non-constructor values.
-        // (#2623 P-7b) HOST realm on purpose (see the __get_builtin design
-        // note). In the single-realm CI lane this IS the object the user's
-        // `Promise.resolve = fn` patch lands on (the declarations.ts
-        // __module_init keep), so V8's `Get(C, "resolve")` in
-        // PerformPromiseAll/Race (§27.2.4.1.1 step 5) observes the patch —
-        // the `all/race/allSettled invoke-resolve.js` observable-resolve
-        // contract. A sandbox-first arm here was prototyped and REVERTED:
-        // capability-C sandbox + host-realm minting broke the §27.2.4.7
-        // `nextPromise.constructor === C` identity fast path (the historical
-        // `any/invoke-then` regression), and unifying minting too leaked
-        // cross-builtin (see the design-decision section in the issue file).
-        if (directCall) return Promise;
-        // (#1694 A.i / #1632b-1) When the user passes a COMPILED FUNCTION as the
-        // capability constructor — `Promise.all.call(NotPromise, …)` where
-        // `NotPromise` is an ordinary `function` lowered to a Wasm closure
-        // struct — V8's NewPromiseCapability(C) does `Construct(C, «executor»)`.
-        // A bare `_wrapForHost` proxy is non-constructible, so V8 throws
-        // "… is not a constructor". Wrap it in the callable/constructible proxy
-        // so the construct succeeds and the closure body runs (executor
-        // protocol). Only genuine closures (`__is_closure === 1`) get the
-        // callable wrap; a plain object or non-closure struct stays
-        // non-constructible, so the spec TypeError for `ctx-non-object` /
-        // `ctx-non-ctor` still fires per §27.2.4.X step 2.
-        if (thisArg != null && typeof thisArg === "object" && _isWasmStruct(thisArg)) {
-          const exports = callbackState?.getExports();
-          const isClosureFn = exports?.__is_closure as ((v: any) => number) | undefined;
-          let isClosure = false;
-          if (typeof isClosureFn === "function") {
-            try {
-              isClosure = isClosureFn(thisArg) === 1;
-            } catch {
-              isClosure = false;
-            }
-          }
-          if (isClosure) return _wrapCallableForHost(thisArg, callbackState);
-        }
-        return thisArg;
-      };
-      // (#1116b) Synthesize (and cache) a JS subclass of Promise for a
-      // Wasm-compiled `class MyPromise extends Promise`. The instance is
-      // already a real host Promise (built via __new_Promise); this JS
-      // constructor only needs to be [[Construct]]-able and carry a distinct
-      // .prototype so the combinators' NewPromiseCapability + @@species
-      // resolution work. Keyed on class name. Synthesized from the lexical
-      // (intrinsic) `Promise`, never a user-shadowed global.
-      // (#2637 B2.1) Registry of wasm constructor-body closures, keyed by
-      // `class extends Promise` name. Codegen emits a one-time
-      // `__register_promise_subclass_ctor(name, closure)` per such class with a
-      // user constructor; `closure` materializes the `$<Class>_new` body so the
-      // host can invoke it under `NewPromiseCapability(C)`. Shared across the
-      // `__register_*` and `__promise_subclass_ctor` import handlers via this
-      // import-builder closure scope, so a single Map instance is observed by
-      // both. The body closure is a wasm closure struct (arity 1: the executor);
-      // `_maybeWrapCallable` bridges it to `__call_fn_1(closure, executor)`.
-      if (name === "__register_promise_subclass_ctor") {
-        return (classNameRef: any, ctorClosure: any): void => {
-          if (!instanceState) return;
-          const className = String(classNameRef);
-          // Bridge the wasm closure to a host-callable once at registration.
-          // `_maybeWrapCallable` is a no-op for null (defensive) and caches the
-          // wrapper per (closure, arity), so repeated registrations are cheap.
-          const body = _maybeWrapCallable(ctorClosure, 1, callbackState);
-          if (typeof body !== "function") return;
-          (instanceState.promiseSubclassBodies ??= new Map()).set(className, body);
-        };
-      }
       // Generator support: buffer management and generator creation
       //
       // Eager-generator hard cap (#991/#992): we lower generators to an array
@@ -9484,49 +9105,6 @@ assert._isSameValue = isSameValue;
         };
       if (name === "__gen_yield_star_step")
         return _strictIteratorHostRuntime.yieldStarStepImport(callbackState, builtin("TypeError", TypeError));
-      // Callback bridges for functional array methods
-      // Functional-array callbacks can be compiled closures represented by a
-      // WasmGC struct rather than a native JS Function.  The legacy bridge
-      // used to assume the caller had already wrapped that value, so a
-      // module-initializer callback such as Axios's `kindOfTest` reached this
-      // path as an object and failed with `fn is not a function`.  Normalize
-      // the callback at the boundary; native functions remain unchanged and
-      // closure wrapping is identity-cached by `_maybeWrapCallableUnknownArity`.
-      // (#4527) Reference-preserving dynamic-call bridge: `cb(a, b)` on an
-      // `any`-typed variable whose closure wrapper type was not registered at
-      // the call site's compile time (cross-module callbacks — diff-sequences'
-      // isCommon/foundSubsequence, jest-util's each-callbacks) used to lower to
-      // a graceful `ref.null.extern`, silently never invoking the callee. The
-      // bridge takes the callee plus N externref args verbatim; Wasm-native
-      // boxed primitives are unwrapped so a compiled closure receives host
-      // primitives (same contract as the numeric `__call_N_f64` bridges), and
-      // reference args (structs, host objects, strings) pass through LIVE.
-      if (/^__call_dyn_\d+$/.test(name))
-        return (fn: any, ...args: any[]) => {
-          const callable = _maybeWrapCallableUnknownArity(fn, callbackState);
-          if (typeof callable !== "function") {
-            throw new TypeError("value is not a function");
-          }
-          const exports = callbackState?.getExports();
-          for (let i = 0; i < args.length; i++) {
-            const prim = _nativePrimitiveToHost(args[i], exports);
-            if (prim !== _MISS) args[i] = prim;
-          }
-          return callable(...args);
-        };
-      // (#3123) `class C extends F` where F is a top-level PLAIN FUNCTION
-      // (fnctor — the test262 harness `Iterator` shim shape): the ctor
-      // registers each instance → F's closure struct so host-side member
-      // resolution (`_fnctorProtoLookup` via `_safeGet` / `_resolveHostField` /
-      // `__extern_method_call`) walks F's LIVE `.prototype` chain for
-      // inherited reads (`inst.drop` → the runtime-assigned helper proto).
-      if (name === "__register_fnctor_instance")
-        return (instance: any, ctorClosure: any): void => {
-          if (instance == null || typeof instance !== "object") return;
-          if (ctorClosure == null || typeof ctorClosure !== "object") return;
-          if (!_canBeWeakKey(instance)) return;
-          _fnctorInstanceCtor.set(instance, ctorClosure);
-        };
       const processRead = resolveProcessCapability(name, (value) => {
         const exports = callbackState?.getExports(); // (#6910) the native regime's value boundary
         return isNativeRegimeExports(exports) ? _nativeDynamicFromHost(value, exports) : value;

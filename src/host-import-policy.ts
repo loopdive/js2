@@ -56,7 +56,21 @@ const VALUE_ADAPTER_BUILTINS = new Set([
   "__unwrap_for_wasm",
 ]);
 
-const INSTANCE_LIFECYCLE_PREFIXES = ["__register_"] as const;
+// Registration is instance wiring, not an escape hatch for arbitrary host
+// providers. Admit only the implemented boundary/lifecycle ABI names.
+const INSTANCE_LIFECYCLE_BUILTINS = new Set([
+  "__register_arguments",
+  "__register_class_ctor",
+  "__register_class_object",
+  "__register_class_parent",
+  "__register_class_parent_ref",
+  "__register_class_static_method",
+  "__register_fnctor_instance",
+  "__register_init_class_export",
+  "__register_init_export",
+  "__register_prototype",
+  "__register_typed_array",
+]);
 
 /**
  * (#6979) ECMAScript builtins. The native semantic regime owns them, so a host
@@ -132,7 +146,7 @@ function classifyBuiltin(name: string): HostImportPolicy {
   if (VALUE_ADAPTER_BUILTINS.has(name)) {
     return policy("value-adapter", "js-value-bridge", 4399, true, "JS/Wasm value marshaling or exception transfer");
   }
-  if (INSTANCE_LIFECYCLE_PREFIXES.some((prefix) => name.startsWith(prefix))) {
+  if (INSTANCE_LIFECYCLE_BUILTINS.has(name)) {
     return policy("instance-lifecycle", "instance-wiring", 4399, true, "instance/export registration lifecycle");
   }
   if (name === "__extern_eval" || name === "__extern_direct_eval" || name === "__date_parse_host") {

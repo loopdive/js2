@@ -2943,3 +2943,94 @@ source retirement, opaque bound-function internal-slot handling, strict
 closure, compatibility/accelerator/conformance acceptance and binary-cost
 review. Neither these controls nor publication certify whole-program IR-only
 admission, a full Test262 sweep, or migration completion.
+
+### S7-i remaining provider retirement handoff (2026-10-19, Codex)
+
+Parent: `b2c3aaaf89eed66524198207e544fc6bbb6b69ad`. Fresh source census:
+runtime 10,582 lines, resolveImport 1,682, 804 raw mode references across
+357 source files. The private top-level function graph has 169 declarations,
+30 exports and no unreachable function; this alone cannot see dead nested
+provider closures or branches made unreachable by manifest policy.
+
+Investigate remaining retired builtin handlers and Promise-only nested
+closures, prove policy rejection and exact bound-reference closure before
+deletion, and retain live generator-gap, accelerator and boundary operations.
+The broad lifecycle prefix currently also admits unknown registration names;
+inventory exact live registrations before replacing it with explicit names.
+No frozen AST semantic-body edits or ceiling waivers are authorized.
+
+Removed the remaining fixed extern-method/host-call dispatchers, retired
+array materialization and dynamic-call/class-parent handlers, five orphaned
+Promise closures and write-only Promise registry state. After those removals,
+the bound private function graph identified two more unreferenced helpers
+(closure classification and the empty-tuple host discriminator); both are
+deleted. One duplicate fnctor registration branch was unreachable behind the
+same earlier branch; the actual earlier registration remains.
+
+Lifecycle classification now lists the **eleven** implemented registration
+names instead of allowing every `__register_*` builtin. Unknown names and the
+orphaned Promise registration reject before any dependencies or ambient shims
+are touched. This deliberately changes the hand-built builtin manifest API.
+An explicitly declared embedder function with the same spelling remains a
+platform capability, not an implicit builtin provider.
+
+The two private host-call modules are deleted, not moved elsewhere. The strict
+iterator module retains only its live eager-generator yield-star gap adapter;
+four retained helper bodies are text-identical to the parent. Its one old
+direct host-materializer unit test is replaced with the public manifest
+rejection contract. The native strict-spread protocol matrix is unchanged.
+Init-window behavior remains covered by the existing marshal and vec-dispatch
+tests in the broader comparison, rather than by keeping a dead provider alive.
+
+Measured local validation against production parent
+`b2c3aaaf89eed66524198207e544fc6bbb6b69ad`, Node 24.4.1, Vitest 3.2.4 forks
+with `--experimental-wasm-exnref`:
+
+- Twelve boundary/support files: **137/137**. Seven-file focused comparison:
+  **81 passing/4 failing → 85/85**. Three lifecycle rejection groups and one
+  source-retirement assertion improve; this is not four new runtime semantic
+  wins. One passing obsolete unit key is replaced with a passing rejection
+  key and is not credited as an improvement.
+- Fresh fourteen-file broad population: **230 cases, 155 passing/50 failing/25
+  skipped** on both sides. All test keys/outcomes match. Two Request failure
+  stacks move from runtime line 8162 to 8053; both point to the exact unchanged
+  `return new Ctor(...args)` source line and same column. Replacing only those
+  coordinates and the control directory leaves exact failure-text equality.
+  The prior 194-case subset retains **128 passing/41 failing/25 skipped**.
+- Six standalone/WASI modules are **byte-identical 6/6**, have zero imports,
+  return 42/7, and export no JS-boundary probe. All **33** detailed import
+  inventories remain identical, with zero unknown or regime-gap entries in
+  that probe population; this does not mean the three named gap families
+  elsewhere have been eliminated.
+- The deletion proof resolves **five nested declarations/nine bound
+  references**, none outside the removed region. An injected local shorthand
+  reference outside it correctly rejects deletion. The two later private
+  helpers each had only their declaration reference. The final top-level graph
+  has **167 functions/30 exports**, zero direct eval and zero unreachable
+  functions; that scoped result is not a whole-program closure certificate.
+- Typecheck, lint/format, source/function, coercion, oracle, layering,
+  IR-fallback and compiler-inventory checks pass without a baseline change.
+  Compiler architecture remains incomplete. Dead-export preservation still
+  has **6/6 full and 6/6 cut** witnesses, while strict closure remains open at
+  the two recorded nonliteral dynamic imports.
+
+Current runtime source is **10,160 lines** (**422 net removed** in this
+checkpoint), `resolveImport` **1,369 lines/seven cases**. Owned adapter and
+explicit capability counts remain **895/1,194**. The runtime target gap is
+**2,160 lines**. Source retirement totals **745 net lines** across runtime,
+the two deleted modules and the trimmed iterator adapter; this is deletion,
+not relocation. No ratchet is raised or banked.
+
+Evidence: `plan/audit/6979-provider-retirement-20261019.json`. The temporary
+control contained only the added test plus ignored harness inputs over
+unchanged tracked parent production sources. Reports were preserved before
+cleanup. Prior audits remain historical snapshots.
+
+Next owner: continue S7 retirement without extending frozen direct-AST
+semantic bodies. Dead emitter spellings there remain explicit debt. Keep the
+live Temporal/SharedArrayBuffer/eager-generator gaps until native replacements
+are verified; do not reclassify them as capabilities. The unmerged predecessor,
+opaque bound-function boundary slots, **457/452** hard gate, remaining runtime
+size target, strict closure, compatibility/conformance/accelerator acceptance
+and binary-cost review still prevent migration completion or independent PR
+merge.

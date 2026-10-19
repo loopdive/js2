@@ -13642,17 +13642,7 @@
       "layer": "legacy-host"
     },
     {
-      "path": "src/runtime/fixed-extern-method-call.ts",
-      "state": "unmigrated",
-      "layer": "legacy-host"
-    },
-    {
       "path": "src/runtime/fnctor-instanceof.ts",
-      "state": "unmigrated",
-      "layer": "legacy-host"
-    },
-    {
-      "path": "src/runtime/host-call-abi.ts",
       "state": "unmigrated",
       "layer": "legacy-host"
     },

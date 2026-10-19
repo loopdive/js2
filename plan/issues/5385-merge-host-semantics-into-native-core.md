@@ -1028,3 +1028,22 @@ not merge-ready: predecessor PR 6701 remains unmerged, the import gate is
 and full compatibility/conformance, strict closure and other S7 acceptance
 remain open. Continue from the detailed S7 handoff; do not mark this parent
 issue complete from the scoped repair or PR publication.
+
+### 2026-10-19 — remaining runtime provider retirement
+
+The detailed S7 issue now has "S7-i remaining provider retirement handoff".
+It removes orphaned Promise provider closures/registry state and unreachable
+host call/array materializer providers, including two private provider modules.
+Lifecycle imports now admit exactly eleven implemented registrations; unknown
+builtin registration spellings reject instead of slipping through a prefix
+allowance. Explicitly declared embedder functions remain capabilities.
+
+Boundary/support controls pass **137/137**. The fresh **230-case** parent
+comparison retains **155 passing/50 failing/25 skipped**, with only two
+failure stack coordinates relocated to the exact same runtime source line.
+Six native binaries and all 33 detailed import inventories match.
+Runtime source is **10,160 lines**, **422 net removed**; the 8,000-line target
+still has a **2,160-line gap**, and the hard import gate remains **457/452**.
+See `plan/audit/6979-provider-retirement-20261019.json` for scoped proof and
+source hashes. The live gap families, predecessor stack and full acceptance
+remain open; do not mark this parent complete.
