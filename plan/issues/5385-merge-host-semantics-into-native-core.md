@@ -4,7 +4,7 @@ title: "Merge JS-host and standalone modes: one native semantic core, host seman
 status: in-progress
 assignee: ttraenkler/codex-5385
 created: 2026-09-07
-updated: 2026-10-18
+updated: 2026-10-19
 priority: high
 horizon: xl
 feasibility: hard
@@ -934,7 +934,12 @@ comparing different provider families and does not declare the repairs clean.
 The in-flight shared-code refactoring is published in
 [Separate native semantics from JS host mode](https://github.com/loopdive/js2/pull/6762).
 The detailed handoff lives in [S7: delete the host-semantic implementation](6979-s7-delete-host-semantic-implementation.md),
-section "S7-c native constructor lookup checkpoint and landing handoff".
+sections "S7-c native constructor lookup checkpoint and landing handoff",
+"S7-c carrier materialization deduplication handoff", and
+"S7-d orphaned host JSON retirement handoff". The latter proves a closed
+private group before deleting 422 lines of the former host JSON provider;
+runtime source falls from 12,066 to 11,644 lines with live boundary conversion
+retained and the 98-row existing-test population unchanged.
 It records the implementation, parent-controlled test evidence, substantial
 constructor-program binary growth, dependency stack and remaining decisions.
 Native lookup and JS-owned boundary identities pass their focused controls,

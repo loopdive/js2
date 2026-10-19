@@ -2151,3 +2151,80 @@ dynamic imports. Keep the PR unready and the full S7 goal open. Next resolve
 the explicit existing-adapter ceiling decision or a semantics-preserving
 representation redesign; do not call this bounded deduplication the completed
 JS-host migration or a resolution of its import/footprint blockers.
+
+### S7-d orphaned host JSON retirement handoff (2026-10-19, Codex)
+
+**Parent and removal.** Continue above published parent
+`5c3b2ca62e0a0eac683aaa98fe18f145bc1d3b6b`. Remove the unreachable private host
+JSON serializer/reviver island from `src/runtime.ts`: eleven functions and
+the `_JsonRep` type alias, **422 lines** in total. The old JSON import provider
+was already removed; recursive references among these helpers did not make
+them live. Retain `_wasmToPlain`, `_wrapForHost`, the public import/export
+adapter roots, and the other shared conversion helpers still used at actual
+JS crossings. No native JSON implementation, callback ABI or boundary
+normalization is changed. A historical callback-classification comment still
+names the former host bridge; do not interpret it as a live provider or remove
+its receiver-forwarding behavior without separate evidence.
+
+**Bound-reference proof, scoped rather than whole-runtime certification.**
+TypeScript symbol binding finds exactly **12 private declarations / 42 bound
+identifier occurrences**, all within the removed block. None of the module's
+**30 exports** aliases a target. There is no direct lexical eval call that
+could refer to a private declaration by string. A positive control appends an
+in-memory reference to `_serializeJSONProperty` outside the block: the audit
+finds the 43rd occurrence at line 12068 and rejects retirement. No production
+file is modified for that control. Repository text search finds only
+historical comments outside the block, not another caller of these private
+symbols.
+
+The committed reference lines, exact parent, retained roots, counts and
+positive control are in
+`plan/audit/6979-host-json-retirement-20261019.json`. Local instrument records
+are `.tmp/s7d-json-island-parent-audit.json` and
+`.tmp/s7d-json-island-positive-control.json`. This proof authorizes removal of
+this closed private group only. It does not discharge the global dead-export
+gate's two unresolved nonliteral dynamic imports or certify other helpers.
+
+**Runtime comparison, not conformance credit.** The unchanged **12-file /
+98-row** JSON, reviver/replacer, namespace, Date/Intl, vector, equivalence and
+JS-boundary population is **72 passing / 24 failing / two skipped** at both
+parent and candidate. There are no status changes; all **24 failure messages
+match exactly**, without stack/path normalization. The residuals are seven
+JSON replacer/toJSON assertions, two vector/conversion assertions, fourteen
+Date/Intl/bridge assertions and one missing Test262 rawJSON source file.
+Do not fix or repin those unrelated failures as part of a dead-code deletion.
+
+The three new retirement controls improve **two passing / one failing →
+three passing**. The failing parent assertion sees the old `_JsonRep`
+declaration, so this is a positive source-retirement witness, not a new
+semantic fix. Both native runtime controls already pass on the parent and
+remain passing: dynamically stringify an object holding a supplied number,
+parse the result, and check different inputs 41 → 42 and 6 → 7. Each module
+has no imports and instantiates with `{}`. The final expanded population is
+**13 files / 101 rows / 75 passing / 24 failing / two skipped**, not a green
+full suite. These are default-path Vitest measurements, not an explicitly
+selected IR Test262 sweep.
+
+Six separate compile-and-run probes cover dynamic object/array JSON round
+trips on standalone, WASI and valid gc. All **6/6 binaries are byte-identical**
+to the exact parent, return 42 and 7 for the two inputs, and emit no `JSON_*`
+host import. The four native modules have zero imports; the two gc modules
+use their real generated imports and instance wiring (18 value-adapter
+imports each), not stubs. Records:
+`.tmp/s7d-json-island-{parent,candidate}-tests.json`,
+`.tmp/s7d-json-island-parent-controls.json`, and
+`.tmp/s7d-json-island-{parent,candidate}-bytes.jsonl` (six rows each).
+
+**Ratchets and next work.** Bank the runtime source ceiling
+**12,066 → 11,644 lines** in the allowed migration audit baseline. The
+resolveImport ceiling stays 1,959; owned/explicit adapter ceilings and the
+**452 import ceiling remain unchanged**. The hard policy command still
+fails **456 > 452**, with no additional source-budget violation. Keep that
+decision visible; a line-count decrease is not approval to raise imports.
+The raw mode inventory likewise remains 804 under an unchanged 818 ceiling.
+Typecheck, lint/formatting, LOC/function, coercion, oracle and IR-fallback
+checks pass; dead-export preservation retains 6/6 full and cut witnesses but
+strict closure is still uncertified. The PR remains draft on the recorded
+dependency stack. Continue proving remaining host-only private groups before
+retirement, preserve live boundary conversion, and keep all full S7
+compatibility, accelerator, floor and final-conformance requirements open.
