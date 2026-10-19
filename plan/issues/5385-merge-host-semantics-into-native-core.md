@@ -1091,3 +1091,25 @@ Runtime remains **10,163 lines**, **2,163** above target. The predecessor stack,
 opaque bound functions, raw-mode retirement, named native-provider gaps,
 strict closure and full compatibility/conformance/accelerator acceptance
 remain open. Do not mark this parent complete from the now-green import gate.
+
+### 2026-10-19 — one shared native object-source runtime on WASI
+
+The S7 issue's "S7-l shared native object source handoff" removes three
+obsolete mode guards that made WASI silently skip closed-struct and Proxy
+Object.assign sources. The same screened classifier also enables the existing
+JSON.stringify and Object.defineProperties closed-struct paths on WASI.
+No AST body, selector, JS semantic provider or boundary identity change.
+
+The new matrix passes **33/33**; nine WASI rows fail on the unchanged parent
+and pass now. The **170-case** comparison improves **158/12 → 167/3** with
+the three existing linked object-rest failures unchanged. All **33** JS
+policy binaries and inventories are byte-identical; the hard gate stays
+**433/452**. Five of six minimal native controls match; WASI dynamic grows
+**1,443 bytes**, and two minimal WASI assign probes grow **1,434/1,475 bytes**.
+No overall size/performance improvement or new IR coverage is claimed.
+
+Raw mode references fall **804 → 799** without banking the 818 ceiling.
+Runtime stays **10,163 lines**. The discovered captured-Object.assign
+variadic-argument loss is still open, alongside the earlier migration
+acceptance gaps and prerequisite stack. Exact evidence:
+`plan/audit/6979-shared-native-object-sources-20261019.json`.

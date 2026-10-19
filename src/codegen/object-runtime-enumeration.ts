@@ -31,7 +31,7 @@ import { undefinedExternInstrs } from "./any-helpers.js";
 import { buildExternGetIdxBody } from "./object-runtime.js";
 import { bagKeysTail, buildBagPushKeys } from "./carrier-bag-visibility.js"; // (#4010 S3) carrier-bag key enumeration
 // (#4160) prototype-index companion consult for the vec OOB Has (resolves to
-// `undefined` unless `ctx.standalone && ctx.protoIndexDirty` reserved it).
+// `undefined` unless the native prototype-index store was demanded).
 import { protoIndexForInPushInstrs, protoIndexHasIdxInstrs } from "./proto-index-store.js";
 import { stringExoticPushKeysPrologue } from "./string-exotic-own-props.js"; // (#4491) §10.4.3 own index keys
 import { definedFuncAt } from "./func-space.js";
@@ -51,7 +51,7 @@ export interface ObjectEnumerationHelperState {
     locals: { name: string; type: ValType }[],
     body: Instr[],
   ) => number;
-  /** `ctx.standalone` — gates the native $Object array-like arms. */
+  /** Whether the caller has registered native $Object array-like support. */
   objArrayLikeArms: boolean;
   /** Native `$Symbol` carrier index, ensured before this helper is built. */
   symbolTypeIdx: number;
@@ -1124,15 +1124,15 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
   // Finalized once the complete closed-struct shape set is known. Keeping this
   // false while eager helpers are built prevents arbitrary externref sources
   // (builtins, strings, symbols, proxies) from being mistaken for structs.
-  const closedSourceClassifierIdx = ctx.standalone
-    ? registerNative(
-        "__object_assign_closed_struct_source",
-        [{ kind: "externref" }],
-        [{ kind: "i32" }],
-        [],
-        [{ op: "i32.const", value: 0 }],
-      )
-    : undefined;
+  // JSON serialization and descriptor-map application share this exact screen;
+  // all WasmGC environments must reserve it before those consumers are built.
+  const closedSourceClassifierIdx = registerNative(
+    "__object_assign_closed_struct_source",
+    [{ kind: "externref" }],
+    [{ kind: "i32" }],
+    [],
+    [{ op: "i32.const", value: 0 }],
+  );
 
   // ── __object_assign(externref target, externref sources) -> externref ─────
   //
@@ -1180,8 +1180,6 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
     // The finalized `__object_keys` and `__extern_get` helpers already model
     // closed-struct enumerable properties; reuse them only for that miss.
     const classifiedClosedStructSourceCopy: Instr[] =
-      ctx.standalone &&
-      closedSourceClassifierIdx !== undefined &&
       objectKeysIdx !== undefined &&
       externLengthIdx !== undefined &&
       externGetIdx !== undefined &&
@@ -1446,7 +1444,7 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
 }
 
 /**
- * (#4749) Prepend the standalone Proxy-source arm to `__object_assign`.
+ * (#4749, #6979) Prepend the shared native Proxy-source arm to `__object_assign`.
  *
  * `$Proxy` is deliberately not a subtype of `$Object`, so the original
  * open-object loop skips it entirely.  CopyDataProperties must instead ask
@@ -1457,8 +1455,6 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
  * are available and their front-guards are already installed.
  */
 export function fillObjectAssignProxySourceArm(ctx: CodegenContext, proxyTypeIdx: number, objectTypeIdx: number): void {
-  if (!ctx.standalone) return;
-
   const objectAssignIdx = ctx.funcMap.get("__object_assign");
   const objectAssign = objectAssignIdx === undefined ? undefined : definedFuncAt(ctx, objectAssignIdx);
   if (!objectAssign) return;

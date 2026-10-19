@@ -3192,3 +3192,86 @@ dependency, opaque bound functions, raw-mode/source retirement, live named
 regime gaps, strict closure, full conformance/npm-compat/accelerator and
 binary-cost acceptance remain open. Import-gate closure alone is not migration
 completion or permission to merge this stack independently.
+
+### S7-l shared native object source handoff (2026-10-19, Codex)
+
+Published parent: `1d71a03e35a0544e5259b0e35eea1acf06c9a262`.
+Three remaining mode guards in the shared native object runtime excluded WASI
+from closed-user-struct source registration and Proxy source finalization.
+Live-input probes reproduce both silent skips on the exact parent (−1 instead
+of 42 for inputs 7 and 13), while standalone and JS-hosted native controls
+already pass. Remove those three guards; do not add an AST body path, selector
+override, JS semantic provider or import.
+
+Reserve the existing screened closed-struct classifier before dependent bodies
+are built in every WasmGC environment. Keep its finalized admitted shape set,
+per-carrier access, enumeration and getter/setter behavior unchanged. The
+reader audit finds three consumers: Object.assign, JSON.stringify and
+Object.defineProperties. All now share the same classifier in WASI too; no
+second implementation or broad fallback is introduced. Install the existing
+Proxy ownKeys/descriptor/Get/Set source loop without the mode guard. JS-owned
+boundary values and identity-backed adapters are unchanged: Object.assign's
+specified copying is not boundary object-graph normalization.
+
+Measured local Node 24.4.1 / Vitest 3.2.4 fork pool with
+`--experimental-wasm-exnref`, against the unchanged parent production tree:
+
+- New matrix **33/33**, eleven cases each for standalone, WASI and gc, with
+  two live inputs per case. **Nine WASI fail-to-pass rows**: closed source,
+  Proxy source, descriptor filtering, symbols, abrupt Get, ownKeys throw,
+  revoked Proxy, closed-struct JSON and descriptor-map application. These are
+  shared-runtime repairs, not nine independent implementations or IR wins.
+- JSON/consumer cohort **34/43 → 43/43**. Wider **170-case/nine-file** cohort
+  **158 passing/12 failing → 167 passing/3 failing**, zero skipped. The three
+  unchanged linked object-rest failures retain exact test keys and full error
+  text after replacing only the parent directory. No expectation re-pins.
+- The initial test harness incorrectly required zero WASI imports even when
+  explicit throw syntax requests the standard exception printer. The final
+  matrix uses real node:wasi binding for wasi_snapshot_preview1, not semantic
+  stubs. Standalone has no imports; WASI has no JavaScript semantic imports.
+- **All 33 JS policy-probe binaries and complete import inventories match
+  exactly**. The unchanged official gate passes **433/452**, with zero
+  unknown/gap entries in that population. Selected accelerator and named-gap
+  controls are retained. No ceiling, detector, probe or baseline change.
+- Five of six scalar/flat/dynamic standalone/WASI controls are byte-identical;
+  WASI dynamic grows **141,053 → 142,496 (+1,443 bytes)**. All six remain
+  import-free and answer 42/7. The two minimal WASI assign probes improve
+  their answers and grow **1,434/1,475 bytes**; paired standalone/gc assign
+  binaries match. No overall size or performance improvement is claimed.
+- Measured assign entry and module-init bodies remain **direct 1 / IR 0**
+  on both sides. The production edit is shared runtime registration and
+  finalization, not a frozen AST semantic-body change.
+- Typecheck uses the repo's TypeScript7/tsconfig.ts7.json command and passes;
+  lint/format, source/function budgets, coercion, oracle, layering, IR-fallback
+  and inventory checks pass. An exploratory plain tsc invocation used the
+  wrong config and failed on Node types; it is not the acceptance command.
+  Strict dead-export closure remains uncertified at the two nonliteral dynamic
+  imports; preservation retains six full/six cut witnesses.
+
+Exact source hashes, paired binary witnesses and test transitions:
+`plan/audit/6979-shared-native-object-sources-20261019.json`.
+Raw mode references fall **804 → 799**, matching files **357 → 356** across
+**1,952** scanned source files, under the unchanged/unbanked **818** ceiling.
+Three executable guards and two obsolete comment references are removed.
+Runtime remains **10,163 lines**, resolveImport **1,371/seven cases**, owned
+adapters **896**, capabilities **1,194**; the runtime target gap is **2,163**.
+
+Separate live discovery, **not fixed by the mode-guard change**: a captured
+`const assign = Object.assign` called with more than one source currently
+loses later arguments, in both standalone and JS-hosted native builds. The
+initial probe `assign(target, null, { value: n }, undefined, { other: n+1 })`
+returns the original target without those writes. Track the builtin callable
+variadic ABI separately; the source-loop controls here call the binary helper
+repeatedly to exercise overwrites and nullish skips, not variadic forwarding.
+The current generated builtin closure in `src/codegen/builtin-value-read.ts`
+pushes only its second argument into the source vector. A real fix needs a
+variadic native callable/Program-ABI contract and IR-owned call preparation,
+not a JS semantic fallback or another frozen AST body special case.
+
+Next owner: retain the 433/452 gate result and explicit WASI binary costs;
+finish the variadic callable gap, remaining raw-mode/source retirement,
+opaque bound-function slots and strict closure, then full program-level
+conformance/npm-compat/accelerator and cost acceptance. The prerequisite
+stack remains unmerged; keep the PR draft and both migration issues in
+progress. This checkpoint is not permission to merge independently or mark
+the migration complete.

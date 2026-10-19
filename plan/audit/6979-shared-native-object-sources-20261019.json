@@ -1,0 +1,765 @@
+{
+  "schema": "6979-shared-native-object-sources-v1",
+  "date": "2026-10-19",
+  "parentCommit": "1d71a03e35a0544e5259b0e35eea1acf06c9a262",
+  "candidate": "Containing commit; exact source hashes below.",
+  "scope": "Shared native WasmGC runtime registration/finalization, not an AST body or selector change. Remove three obsolete mode guards that excluded WASI; preserve genuine JS value boundary adapters.",
+  "implementation": {
+    "closedSource": "Reserve the same screened closed-user-struct classifier in every WasmGC environment before dependent bodies are built; fill from the existing finalized enumeration set, without broadening that set.",
+    "proxySource": "Install the existing Proxy own-key/descriptor/Get/Set loop in WASI as well as standalone and gc. Existing helper instructions unchanged apart from guard removal.",
+    "readers": [
+      "Object.assign source enumeration",
+      "JSON.stringify closed-struct carrier test",
+      "Object.defineProperties closed descriptor-map snapshot"
+    ],
+    "boundary": "No JS object graph copies or new host imports. Compiled native Object.assign performs its specified property copying; this is not boundary normalization."
+  },
+  "harness": {
+    "node": "v24.4.1",
+    "vitest": "3.2.4 fork pool, VITEST_MAX_FORKS=2, --experimental-wasm-exnref",
+    "parent": "Detached published parent with tracked production unchanged; only identical new test and ignored harness inputs added.",
+    "wasi": "New runtime matrix binds only standard wasi_snapshot_preview1 through node:wasi when the compiler emits exception-printer capabilities; standalone has no imports. The six minimal controls remain entirely import-free."
+  },
+  "validation": {
+    "newMatrix": {
+      "cases": 33,
+      "passing": 33,
+      "targets": ["standalone", "wasi", "gc"],
+      "inputs": [7, 13],
+      "casesPerTarget": 11
+    },
+    "consumerComparison": {
+      "parent": {
+        "files": 2,
+        "total": 43,
+        "passing": 34,
+        "failing": 9,
+        "skipped": 0
+      },
+      "candidate": {
+        "files": 2,
+        "total": 43,
+        "passing": 43,
+        "failing": 0,
+        "skipped": 0
+      },
+      "uniqueKeys": 43,
+      "changes": [
+        {
+          "test": "tests/issue-6979-native-assign-sources.test.ts :: #6979 shared native Object.assign source semantics — wasi closed: retains live input values, source effects and target identity",
+          "parent": "failed",
+          "candidate": "passed",
+          "parentError": "AssertionError: expected -1 to be 42 // Object.is equality",
+          "candidateError": null
+        },
+        {
+          "test": "tests/issue-6979-native-assign-sources.test.ts :: #6979 shared native Object.assign source semantics — wasi proxy: retains live input values, source effects and target identity",
+          "parent": "failed",
+          "candidate": "passed",
+          "parentError": "AssertionError: expected -1 to be 42 // Object.is equality",
+          "candidateError": null
+        },
+        {
+          "test": "tests/issue-6979-native-assign-sources.test.ts :: #6979 shared native Object.assign source semantics — wasi skipped: retains live input values, source effects and target identity",
+          "parent": "failed",
+          "candidate": "passed",
+          "parentError": "AssertionError: expected -1 to be 42 // Object.is equality",
+          "candidateError": null
+        },
+        {
+          "test": "tests/issue-6979-native-assign-sources.test.ts :: #6979 shared native Object.assign source semantics — wasi symbols: retains live input values, source effects and target identity",
+          "parent": "failed",
+          "candidate": "passed",
+          "parentError": "AssertionError: expected -1 to be 42 // Object.is equality",
+          "candidateError": null
+        },
+        {
+          "test": "tests/issue-6979-native-assign-sources.test.ts :: #6979 shared native Object.assign source semantics — wasi abrupt: retains live input values, source effects and target identity",
+          "parent": "failed",
+          "candidate": "passed",
+          "parentError": "AssertionError: expected -2 to be 42 // Object.is equality",
+          "candidateError": null
+        },
+        {
+          "test": "tests/issue-6979-native-assign-sources.test.ts :: #6979 shared native Object.assign source semantics — wasi ownKeysThrow: retains live input values, source effects and target identity",
+          "parent": "failed",
+          "candidate": "passed",
+          "parentError": "AssertionError: expected -2 to be 42 // Object.is equality",
+          "candidateError": null
+        },
+        {
+          "test": "tests/issue-6979-native-assign-sources.test.ts :: #6979 shared native Object.assign source semantics — wasi revoked: retains live input values, source effects and target identity",
+          "parent": "failed",
+          "candidate": "passed",
+          "parentError": "AssertionError: expected -2 to be 42 // Object.is equality",
+          "candidateError": null
+        },
+        {
+          "test": "tests/issue-6979-native-assign-sources.test.ts :: #6979 shared native Object.assign source semantics — wasi jsonClosed: retains live input values, source effects and target identity",
+          "parent": "failed",
+          "candidate": "passed",
+          "parentError": "AssertionError: expected -1 to be 42 // Object.is equality",
+          "candidateError": null
+        },
+        {
+          "test": "tests/issue-6979-native-assign-sources.test.ts :: #6979 shared native Object.assign source semantics — wasi descriptors: retains live input values, source effects and target identity",
+          "parent": "failed",
+          "candidate": "passed",
+          "parentError": "AssertionError: expected -1 to be 42 // Object.is equality",
+          "candidateError": null
+        }
+      ],
+      "unchangedFailures": []
+    },
+    "cohortComparison": {
+      "parent": {
+        "files": 9,
+        "total": 170,
+        "passing": 158,
+        "failing": 12,
+        "skipped": 0
+      },
+      "candidate": {
+        "files": 9,
+        "total": 170,
+        "passing": 167,
+        "failing": 3,
+        "skipped": 0
+      },
+      "uniqueKeys": 170,
+      "changes": [
+        {
+          "test": "tests/issue-6979-native-assign-sources.test.ts :: #6979 shared native Object.assign source semantics — wasi closed: retains live input values, source effects and target identity",
+          "parent": "failed",
+          "candidate": "passed",
+          "parentError": "AssertionError: expected -1 to be 42 // Object.is equality",
+          "candidateError": null
+        },
+        {
+          "test": "tests/issue-6979-native-assign-sources.test.ts :: #6979 shared native Object.assign source semantics — wasi proxy: retains live input values, source effects and target identity",
+          "parent": "failed",
+          "candidate": "passed",
+          "parentError": "AssertionError: expected -1 to be 42 // Object.is equality",
+          "candidateError": null
+        },
+        {
+          "test": "tests/issue-6979-native-assign-sources.test.ts :: #6979 shared native Object.assign source semantics — wasi skipped: retains live input values, source effects and target identity",
+          "parent": "failed",
+          "candidate": "passed",
+          "parentError": "AssertionError: expected -1 to be 42 // Object.is equality",
+          "candidateError": null
+        },
+        {
+          "test": "tests/issue-6979-native-assign-sources.test.ts :: #6979 shared native Object.assign source semantics — wasi symbols: retains live input values, source effects and target identity",
+          "parent": "failed",
+          "candidate": "passed",
+          "parentError": "AssertionError: expected -1 to be 42 // Object.is equality",
+          "candidateError": null
+        },
+        {
+          "test": "tests/issue-6979-native-assign-sources.test.ts :: #6979 shared native Object.assign source semantics — wasi abrupt: retains live input values, source effects and target identity",
+          "parent": "failed",
+          "candidate": "passed",
+          "parentError": "AssertionError: expected -2 to be 42 // Object.is equality",
+          "candidateError": null
+        },
+        {
+          "test": "tests/issue-6979-native-assign-sources.test.ts :: #6979 shared native Object.assign source semantics — wasi ownKeysThrow: retains live input values, source effects and target identity",
+          "parent": "failed",
+          "candidate": "passed",
+          "parentError": "AssertionError: expected -2 to be 42 // Object.is equality",
+          "candidateError": null
+        },
+        {
+          "test": "tests/issue-6979-native-assign-sources.test.ts :: #6979 shared native Object.assign source semantics — wasi revoked: retains live input values, source effects and target identity",
+          "parent": "failed",
+          "candidate": "passed",
+          "parentError": "AssertionError: expected -2 to be 42 // Object.is equality",
+          "candidateError": null
+        },
+        {
+          "test": "tests/issue-6979-native-assign-sources.test.ts :: #6979 shared native Object.assign source semantics — wasi jsonClosed: retains live input values, source effects and target identity",
+          "parent": "failed",
+          "candidate": "passed",
+          "parentError": "AssertionError: expected -1 to be 42 // Object.is equality",
+          "candidateError": null
+        },
+        {
+          "test": "tests/issue-6979-native-assign-sources.test.ts :: #6979 shared native Object.assign source semantics — wasi descriptors: retains live input values, source effects and target identity",
+          "parent": "failed",
+          "candidate": "passed",
+          "parentError": "AssertionError: expected -1 to be 42 // Object.is equality",
+          "candidateError": null
+        }
+      ],
+      "unchangedFailures": [
+        {
+          "test": "tests/issue-6426-linked-object-rest-source.test.ts :: #6426 — an object-rest source keeps its values across a package boundary single module",
+          "error": "AssertionError: expected { restObj: {}, restFn: {}, …(10) } to deeply equal { restObj: 'R', …(11) }",
+          "normalizedErrorSha256": "eb61ed2c5d928e332adbacabdda851df575d4d0e9a3a0e77ef039a2060649432"
+        },
+        {
+          "test": "tests/issue-6426-linked-object-rest-source.test.ts :: #6426 — an object-rest source keeps its values across a package boundary two untyped .js modules in one compilation unit",
+          "error": "AssertionError: expected { restObj: {}, restFn: {}, …(10) } to deeply equal { restObj: 'R', …(11) }",
+          "normalizedErrorSha256": "919b7a3e3d136e6a87dd99775fcea16c1123fabfb7df2e8e0ea13be902515f50"
+        },
+        {
+          "test": "tests/issue-6426-linked-object-rest-source.test.ts :: #6426 — an object-rest source keeps its values across a package boundary library in a separately linked package",
+          "error": "AssertionError: expected { restObj: {}, restFn: {}, …(10) } to deeply equal { restObj: 'R', …(11) }",
+          "normalizedErrorSha256": "2308ab12b97afa76a43e6fc6072bcb9de3d6ea8d1d1f6555333f700760997fa2"
+        }
+      ]
+    },
+    "normalization": "Only parent worktree directory is replaced; every retained failing error is compared in full. No error category or preview normalization.",
+    "initialHarness": "An initial zero-import assertion incorrectly rejected the WASI exception-printer imports; final matrix uses the real standard WASI binder, not semantic stubs."
+  },
+  "imports": {
+    "officialGate": "PASS: 433 <= unchanged 452",
+    "totals": {
+      "probes": 33,
+      "imports": 433,
+      "regimeGapImports": 0,
+      "unknownImports": 0
+    },
+    "selectedAccelerators": {
+      "regexp": 4,
+      "date": 1,
+      "intl": 4
+    },
+    "namedGapControls": {
+      "eager-generator-buffer": [
+        "__create_async_generator",
+        "__gen_create_buffer",
+        "__gen_push_f64",
+        "__gen_push_ref",
+        "__gen_result_value_f64"
+      ],
+      "shared-array-buffer": ["SharedArrayBuffer_new"],
+      "temporal-strings": ["__temporal_plain_date_from_string_field", "__temporal_plain_date_to_string"]
+    },
+    "jsBinaryInventoryControls": [
+      {
+        "probe": "core",
+        "bytes": 604252,
+        "sha256": "0b57c9904e2e4667c9a725b73c13a2b08f78ba5cebef7a1fdc1a5709829f0839",
+        "inventorySha256": "03893f30b32ce4c253dc5fa7e93bab7b622787bcb08142355e790371f959e16d"
+      },
+      {
+        "probe": "regexp",
+        "bytes": 116659,
+        "sha256": "1fac4c40d18c41f4278f982027e186857ee4a2b50c9deed0f2726aaa0d25795e",
+        "inventorySha256": "a5279e5f9b3c62d6126626a280f1360443df1d9cd1a4d5e338bc3866b60f1533"
+      },
+      {
+        "probe": "collections",
+        "bytes": 104652,
+        "sha256": "6fe769c8339285af77c9f32b0930386d4b6b1a2bbf47f9abdfc325cd6dac68f2",
+        "inventorySha256": "a5279e5f9b3c62d6126626a280f1360443df1d9cd1a4d5e338bc3866b60f1533"
+      },
+      {
+        "probe": "promise",
+        "bytes": 122973,
+        "sha256": "d9bae89d70d666f77e49dae9311803a77a6d1c4cdde3d9898736f54d65724d90",
+        "inventorySha256": "a82a2c9f1b4bcafe25a11d190dd018c1fdb0225bb978645139eb686aef36d039"
+      },
+      {
+        "probe": "date",
+        "bytes": 50950,
+        "sha256": "ca7b1848dbe583a09ce06a1f0d754d6b4ea2e63a188a5e8604e8f743cae666b9",
+        "inventorySha256": "f1355b46d88b222a3cbe40d861b55135261521096cb0257eaf00f3b9df2f18c2"
+      },
+      {
+        "probe": "dataView",
+        "bytes": 114595,
+        "sha256": "1d4a629c71e85b5d4962a2db3ce39a8de51bc577475691fcbcd26fb947bde042",
+        "inventorySha256": "a5279e5f9b3c62d6126626a280f1360443df1d9cd1a4d5e338bc3866b60f1533"
+      },
+      {
+        "probe": "bigint",
+        "bytes": 39336,
+        "sha256": "edeb373282164d5ed47fa4b3bea8d33bde5febac06f56d2c0ac7f51f836d0924",
+        "inventorySha256": "f1355b46d88b222a3cbe40d861b55135261521096cb0257eaf00f3b9df2f18c2"
+      },
+      {
+        "probe": "bigintFormatting",
+        "bytes": 38560,
+        "sha256": "75ad72c79b2b7752b81783f0a7ba4cd2992f0d01107eb895c116e691f0779f3c",
+        "inventorySha256": "f1355b46d88b222a3cbe40d861b55135261521096cb0257eaf00f3b9df2f18c2"
+      },
+      {
+        "probe": "number",
+        "bytes": 30248,
+        "sha256": "0be91bad70917fbd26fd52e13998b72c6ab439a6b3f45f9ec07500688c8489ea",
+        "inventorySha256": "f1355b46d88b222a3cbe40d861b55135261521096cb0257eaf00f3b9df2f18c2"
+      },
+      {
+        "probe": "textGlobals",
+        "bytes": 47103,
+        "sha256": "2530a367e0209f7d6ec144fe061f98d5d62a7eabe1f90fd4c094d7071e02d289",
+        "inventorySha256": "f1355b46d88b222a3cbe40d861b55135261521096cb0257eaf00f3b9df2f18c2"
+      },
+      {
+        "probe": "object",
+        "bytes": 125795,
+        "sha256": "7ff3e706cc5550a1903fec49c551e9de6f419afab2c5e2c5c4ed6e55d8c9d11f",
+        "inventorySha256": "a372e23a0c583d09c74185ebf9ce845de483319fb1778766d3b546ef15daddd9"
+      },
+      {
+        "probe": "objectRest",
+        "bytes": 106741,
+        "sha256": "db482018f3577fb9b0af14a63d3d3b416edb0bbe0ab64b270199a8081c96846e",
+        "inventorySha256": "a5279e5f9b3c62d6126626a280f1360443df1d9cd1a4d5e338bc3866b60f1533"
+      },
+      {
+        "probe": "functionBind",
+        "bytes": 114888,
+        "sha256": "6c96a1e58710ae8eef06487a65ee5e72d2c6e9c3cccbe2339709eb5a3cacd733",
+        "inventorySha256": "742a3fba7a153bfbf4148c78a92fc0a72c4086a38569a9a9a4a1e8a10a6e848a"
+      },
+      {
+        "probe": "proxy",
+        "bytes": 722350,
+        "sha256": "5d6c55014ac92b88165e1a216681c9efb552724a8fd92da10c0b8de96103271b",
+        "inventorySha256": "b7d7f90509a1b2243fe2e64f418bfd7bca218a4a438bcf7ae3c0ba0d1949f5c1"
+      },
+      {
+        "probe": "typedArrays",
+        "bytes": 41676,
+        "sha256": "21112acaf27694cd5209c7d236884c999a93a2f547903c1622072275a5d58fc1",
+        "inventorySha256": "f1355b46d88b222a3cbe40d861b55135261521096cb0257eaf00f3b9df2f18c2"
+      },
+      {
+        "probe": "objectDescriptors",
+        "bytes": 109259,
+        "sha256": "0841207e9dde6fc8167c886cae8b0453e3ed1e369d6d9f7527687cabc884699d",
+        "inventorySha256": "de626d164772129678e288dab7fd540d6fc4e2ab4ce06c81e781397a7f848d45"
+      },
+      {
+        "probe": "objectPrototype",
+        "bytes": 252262,
+        "sha256": "87d0b63c6012d5df80ee11ace54d2353603bb1089acc4f9dfdfb94145d3d37e9",
+        "inventorySha256": "566f1b53f13636428998d4f691228d2bbcf19eb5dea5a2b8595cb7a2b3983936"
+      },
+      {
+        "probe": "functionCall",
+        "bytes": 12057,
+        "sha256": "0bc349cc91ae2d38dd00cb14056975582873a9f4d572feb8c54cdbed93a052ed",
+        "inventorySha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      {
+        "probe": "functionApply",
+        "bytes": 12057,
+        "sha256": "1bcb77769ae53b4cdafa667f040f74c322ce5a23178a6f4fda126a1853febd85",
+        "inventorySha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      {
+        "probe": "errors",
+        "bytes": 103000,
+        "sha256": "6bc0349c7832ece674265429335ee8c0e185c0cd713ff8ebe04905639e40b490",
+        "inventorySha256": "a5279e5f9b3c62d6126626a280f1360443df1d9cd1a4d5e338bc3866b60f1533"
+      },
+      {
+        "probe": "generators",
+        "bytes": 129190,
+        "sha256": "1c76a61042738e321775098a6afd39b0911e200af6eb55061d42507cb9ffb679",
+        "inventorySha256": "adcf03203bd1e5c02f9888a2d0b573adcc08af9e30f816afffa7ad02469f5b87"
+      },
+      {
+        "probe": "iterators",
+        "bytes": 40985,
+        "sha256": "a7ea06a06a0ba23278ac6b999397acc551cd2e8b6f75046c20b456538c962568",
+        "inventorySha256": "f1355b46d88b222a3cbe40d861b55135261521096cb0257eaf00f3b9df2f18c2"
+      },
+      {
+        "probe": "promiseCombinators",
+        "bytes": 128442,
+        "sha256": "d7b30f224ecdfcc34400d23122a5d993de3abc49f3ae1a6f37d1640643e62113",
+        "inventorySha256": "a82a2c9f1b4bcafe25a11d190dd018c1fdb0225bb978645139eb686aef36d039"
+      },
+      {
+        "probe": "promiseAnyRace",
+        "bytes": 124008,
+        "sha256": "64cf635ee649c193daf99be5c5a2917c76068d6450a5d6b29738c6cec1e93467",
+        "inventorySha256": "a82a2c9f1b4bcafe25a11d190dd018c1fdb0225bb978645139eb686aef36d039"
+      },
+      {
+        "probe": "regexpDynamic",
+        "bytes": 151325,
+        "sha256": "2223024810b4862283d10c478d01a2cb6651b9e42e6228a7626f22d8912458f0",
+        "inventorySha256": "a5279e5f9b3c62d6126626a280f1360443df1d9cd1a4d5e338bc3866b60f1533"
+      },
+      {
+        "probe": "mapIteration",
+        "bytes": 42951,
+        "sha256": "6daa2c1fd9f1c5e9ce82e38313b26d5aed3ecc2b0504d6f71f57cfb8c0c4a5ae",
+        "inventorySha256": "f1355b46d88b222a3cbe40d861b55135261521096cb0257eaf00f3b9df2f18c2"
+      },
+      {
+        "probe": "setIteration",
+        "bytes": 46222,
+        "sha256": "e7a1ca759e4848f4523f12442b9cf5d3ec1a2040bf10965ac2d2f4f0a65db33b",
+        "inventorySha256": "f1355b46d88b222a3cbe40d861b55135261521096cb0257eaf00f3b9df2f18c2"
+      },
+      {
+        "probe": "reflect",
+        "bytes": 115363,
+        "sha256": "21a2489d003e6e3dea28ec8254e354a56e3bb0d5e6c4052732b88ddd2fd2afac",
+        "inventorySha256": "de626d164772129678e288dab7fd540d6fc4e2ab4ce06c81e781397a7f848d45"
+      },
+      {
+        "probe": "dynamicOps",
+        "bytes": 104582,
+        "sha256": "7d54406659d3eeeb49398127ddecad9d639a388dac5a4c4be5c019a9436f19ba",
+        "inventorySha256": "a5279e5f9b3c62d6126626a280f1360443df1d9cd1a4d5e338bc3866b60f1533"
+      },
+      {
+        "probe": "destructuring",
+        "bytes": 109614,
+        "sha256": "9360490b0226c42baaeaae6817156a6fbf478b0d8ed7f9d9fe5f74fff9a7c77c",
+        "inventorySha256": "de626d164772129678e288dab7fd540d6fc4e2ab4ce06c81e781397a7f848d45"
+      },
+      {
+        "probe": "proxyMop",
+        "bytes": 597538,
+        "sha256": "12f1a7c31c7c97c566e71e03db44ee358dc3f4aceda00c2fe9e600d8debeff70",
+        "inventorySha256": "d092fe86b2632f687facfd2de27ceb7647ab121f3f64b331bcd17d2c55e3bdf6"
+      },
+      {
+        "probe": "proxyRevocable",
+        "bytes": 597528,
+        "sha256": "0512bf72edef8beeee1308860a2ad20debf26d999f053faebce358adc14c9f35",
+        "inventorySha256": "701e32a63daf1d5f637c9ed12d9e17640c0c170b7cff9112512f1cbf03785e6c"
+      },
+      {
+        "probe": "stringProtocols",
+        "bytes": 121558,
+        "sha256": "ad6158133c58be010cdf0f14f8d45b6b0f490fcffecf150a22ccd84f1b9814cb",
+        "inventorySha256": "a5279e5f9b3c62d6126626a280f1360443df1d9cd1a4d5e338bc3866b60f1533"
+      }
+    ],
+    "comparison": "All 33 complete binaries and detailed inventory objects are exact matches to the parent; comparison guard requires 33 entries."
+  },
+  "binaryCost": {
+    "nativeControls": [
+      {
+        "target": "standalone",
+        "name": "scalar",
+        "parentBytes": 11413,
+        "candidateBytes": 11413,
+        "deltaBytes": 0,
+        "parentSha256": "81d83998cf308dea1a6063218bfb63cba2c642ba3e62c8aee1ae9dbd5eea215e",
+        "candidateSha256": "81d83998cf308dea1a6063218bfb63cba2c642ba3e62c8aee1ae9dbd5eea215e",
+        "outputs": [42, 7],
+        "imports": []
+      },
+      {
+        "target": "standalone",
+        "name": "flat",
+        "parentBytes": 33185,
+        "candidateBytes": 33185,
+        "deltaBytes": 0,
+        "parentSha256": "671336c22fe661e836754ebaaa758e6b8a14b5202083538e6067e5a68aa4d134",
+        "candidateSha256": "671336c22fe661e836754ebaaa758e6b8a14b5202083538e6067e5a68aa4d134",
+        "outputs": [42, 7],
+        "imports": []
+      },
+      {
+        "target": "standalone",
+        "name": "dynamic",
+        "parentBytes": 146186,
+        "candidateBytes": 146186,
+        "deltaBytes": 0,
+        "parentSha256": "a14649794c2bbcaf55a300cffabe34cc49e2a2caa6210a121af4ade43f851ecf",
+        "candidateSha256": "a14649794c2bbcaf55a300cffabe34cc49e2a2caa6210a121af4ade43f851ecf",
+        "outputs": [42, 7],
+        "imports": []
+      },
+      {
+        "target": "wasi",
+        "name": "scalar",
+        "parentBytes": 22719,
+        "candidateBytes": 22719,
+        "deltaBytes": 0,
+        "parentSha256": "ab7f880debe1399bbf089b74cb76d26e154a50c3d8aeaff4f3a9e3511bd10c58",
+        "candidateSha256": "ab7f880debe1399bbf089b74cb76d26e154a50c3d8aeaff4f3a9e3511bd10c58",
+        "outputs": [42, 7],
+        "imports": []
+      },
+      {
+        "target": "wasi",
+        "name": "flat",
+        "parentBytes": 52928,
+        "candidateBytes": 52928,
+        "deltaBytes": 0,
+        "parentSha256": "7b8d7a6e7a8ab1c22952e9c6e4e46147565202c419b0dc93f36936241c09d187",
+        "candidateSha256": "7b8d7a6e7a8ab1c22952e9c6e4e46147565202c419b0dc93f36936241c09d187",
+        "outputs": [42, 7],
+        "imports": []
+      },
+      {
+        "target": "wasi",
+        "name": "dynamic",
+        "parentBytes": 141053,
+        "candidateBytes": 142496,
+        "deltaBytes": 1443,
+        "parentSha256": "a0ce3ef8ebe472044ae2cafccbc0533b04e9f9487adcf64ef60ffd08bdd70b88",
+        "candidateSha256": "30d8f7852fb26b02b7f6870cd7d1fc6d360e11ab497b6de306518421f52b4ee5",
+        "outputs": [42, 7],
+        "imports": []
+      }
+    ],
+    "assignControls": [
+      {
+        "target": "standalone",
+        "name": "closed",
+        "parentBytes": 129083,
+        "candidateBytes": 129083,
+        "deltaBytes": 0,
+        "parentSha256": "770b6c0dd15faafacfd82cb6fa087088f798016d59f5ff0f02c9e6f41169cd35",
+        "candidateSha256": "770b6c0dd15faafacfd82cb6fa087088f798016d59f5ff0f02c9e6f41169cd35",
+        "parentAnswers": [42, 42],
+        "candidateAnswers": [42, 42],
+        "routes": [
+          {
+            "name": "run",
+            "kind": "unsupported",
+            "direct": 1,
+            "ir": 0
+          },
+          {
+            "name": "<module-init>",
+            "kind": "unsupported",
+            "direct": 1,
+            "ir": 0
+          }
+        ],
+        "imports": []
+      },
+      {
+        "target": "standalone",
+        "name": "proxy",
+        "parentBytes": 139176,
+        "candidateBytes": 139176,
+        "deltaBytes": 0,
+        "parentSha256": "86ec975617da288fdcf71ae810f159151606086901263ec271e59ad2ccf1b93a",
+        "candidateSha256": "86ec975617da288fdcf71ae810f159151606086901263ec271e59ad2ccf1b93a",
+        "parentAnswers": [42, 42],
+        "candidateAnswers": [42, 42],
+        "routes": [
+          {
+            "name": "run",
+            "kind": "unsupported",
+            "direct": 1,
+            "ir": 0
+          },
+          {
+            "name": "<module-init>",
+            "kind": "unsupported",
+            "direct": 1,
+            "ir": 0
+          }
+        ],
+        "imports": []
+      },
+      {
+        "target": "wasi",
+        "name": "closed",
+        "parentBytes": 128490,
+        "candidateBytes": 129924,
+        "deltaBytes": 1434,
+        "parentSha256": "3fb241d8b69c59f26c6f02c2eb13bbb49584315937f1e3f1ec4a76ad242837e4",
+        "candidateSha256": "e2360c2fc37200775c4b1e5fd946ea3862200a05332c3b5b453d7fa2e9a2e849",
+        "parentAnswers": [-1, -1],
+        "candidateAnswers": [42, 42],
+        "routes": [
+          {
+            "name": "run",
+            "kind": "unsupported",
+            "direct": 1,
+            "ir": 0
+          },
+          {
+            "name": "<module-init>",
+            "kind": "unsupported",
+            "direct": 1,
+            "ir": 0
+          }
+        ],
+        "imports": []
+      },
+      {
+        "target": "wasi",
+        "name": "proxy",
+        "parentBytes": 134143,
+        "candidateBytes": 135618,
+        "deltaBytes": 1475,
+        "parentSha256": "792c310f581d8fcae2f4e37abe1d039ff586d54396f7885c4228c7032df85dfc",
+        "candidateSha256": "f24ff9d6b8d3d49ca791635f5db09a36e56a784d0fae33313ba5698d311ec099",
+        "parentAnswers": [-1, -1],
+        "candidateAnswers": [42, 42],
+        "routes": [
+          {
+            "name": "run",
+            "kind": "unsupported",
+            "direct": 1,
+            "ir": 0
+          },
+          {
+            "name": "<module-init>",
+            "kind": "unsupported",
+            "direct": 1,
+            "ir": 0
+          }
+        ],
+        "imports": []
+      },
+      {
+        "target": "gc",
+        "name": "closed",
+        "parentBytes": 135449,
+        "candidateBytes": 135449,
+        "deltaBytes": 0,
+        "parentSha256": "cb114b016ec64905ea7b31a8697e6f46fffe31a49d158d5b9e9bde1e5bf891f1",
+        "candidateSha256": "cb114b016ec64905ea7b31a8697e6f46fffe31a49d158d5b9e9bde1e5bf891f1",
+        "parentAnswers": [42, 42],
+        "candidateAnswers": [42, 42],
+        "routes": [
+          {
+            "name": "run",
+            "kind": "unsupported",
+            "direct": 1,
+            "ir": 0
+          },
+          {
+            "name": "<module-init>",
+            "kind": "unsupported",
+            "direct": 1,
+            "ir": 0
+          }
+        ],
+        "imports": [
+          "__boundary_object_get",
+          "__boundary_object_set",
+          "__boundary_object_has",
+          "__boundary_object_delete",
+          "__boundary_object_keys",
+          "__boundary_object_call",
+          "__boundary_object_get_prototype",
+          "__boundary_object_set_prototype",
+          "__boundary_object_get_own_property_descriptor",
+          "__boundary_object_define_property_value",
+          "__boundary_object_define_property_accessor",
+          "__boundary_object_own_keys",
+          "__boundary_object_is_admitted",
+          "__boundary_object_for_in_keys",
+          "__str_from_mem",
+          "__str_to_mem",
+          "__str_extern_len",
+          "__boundary_callback_call_2"
+        ]
+      },
+      {
+        "target": "gc",
+        "name": "proxy",
+        "parentBytes": 143149,
+        "candidateBytes": 143149,
+        "deltaBytes": 0,
+        "parentSha256": "f50168ee9d9845e3f6a8d4cde42525885aac11c8b6acc646c223862c8aed9ff3",
+        "candidateSha256": "f50168ee9d9845e3f6a8d4cde42525885aac11c8b6acc646c223862c8aed9ff3",
+        "parentAnswers": [42, 42],
+        "candidateAnswers": [42, 42],
+        "routes": [
+          {
+            "name": "run",
+            "kind": "unsupported",
+            "direct": 1,
+            "ir": 0
+          },
+          {
+            "name": "<module-init>",
+            "kind": "unsupported",
+            "direct": 1,
+            "ir": 0
+          }
+        ],
+        "imports": [
+          "__boundary_object_get",
+          "__boundary_object_set",
+          "__boundary_object_has",
+          "__boundary_object_delete",
+          "__boundary_object_keys",
+          "__boundary_object_call",
+          "__boundary_object_apply",
+          "__boundary_object_get_prototype",
+          "__boundary_object_set_prototype",
+          "__boundary_object_get_own_property_descriptor",
+          "__boundary_object_define_property_value",
+          "__boundary_object_define_property_accessor",
+          "__boundary_object_own_keys",
+          "__boundary_object_is_admitted",
+          "__boundary_object_for_in_keys",
+          "__str_from_mem",
+          "__str_to_mem",
+          "__str_extern_len",
+          "__boundary_object_callable_kind",
+          "__boundary_callback_call_2"
+        ]
+      }
+    ],
+    "summary": "No general byte-neutrality claim: five of six native minimal controls match; WASI dynamic grows 1443 bytes. WASI assign closed/proxy fixtures grow 1434/1475 bytes. All paired standalone/gc assign controls match."
+  },
+  "migrationMetrics": {
+    "runtimeTsLines": 10163,
+    "resolveImportLines": 1371,
+    "resolveImportCases": 7,
+    "ownedAdapterLines": 896,
+    "explicitCapabilityLines": 1194,
+    "rawStandaloneReferences": {
+      "parent": {
+        "scannedFiles": 1952,
+        "matchingFiles": 357,
+        "references": 804
+      },
+      "candidate": {
+        "scannedFiles": 1952,
+        "matchingFiles": 356,
+        "references": 799
+      },
+      "ceiling": 818,
+      "banked": false,
+      "semanticGuardsRemoved": 3,
+      "obsoleteCommentReferencesRemoved": 2
+    }
+  },
+  "gates": {
+    "typecheck": "PASS with repository typescript7 + tsconfig.ts7.json command; an exploratory plain tsc invocation used the wrong config and failed on Node types.",
+    "lint": "PASS",
+    "format": "PASS",
+    "loc": "PASS",
+    "functions": "PASS",
+    "coercion": "PASS",
+    "oracle": "PASS",
+    "layering": "PASS: 87 lines / 15 files, baseline 90 unchanged",
+    "compilerInventory": "Valid, zero errors, architectureComplete=false",
+    "deadExports": "preservation-v1 passes 6 full/6 cut witnesses; strict modeled closure NOT CERTIFIED at the two existing nonliteral dynamic imports."
+  },
+  "limits": [
+    "Nine improved test rows cover shared-runtime fixes, not nine independent semantic implementations or new IR coverage.",
+    "Measured assign run/module-init routes stay direct=1, IR=0 in both versions. No frozen AST body emitter or selector edits.",
+    "Existing linked object-rest assertions remain 3/3 failing in the unchanged wider cohort.",
+    "Captured Object.assign variadic ABI still drops later source arguments; initial multi-source discovery retained in the repository issue and not claimed fixed.",
+    "Runtime is still 2163 lines above the 8000-line target. Raw-mode retirement, opaque bound-function slots, strict closure, predecessor stack and full conformance/npm-compat/accelerator/binary-cost acceptance remain open.",
+    "No full Test262 or equivalence sweep performed; these scoped controls do not certify migration completion."
+  ],
+  "sourceSha256": {
+    "src/codegen/object-runtime-enumeration.ts": "05a6e4fd20c20277115f9ede4dbbcb52b144a4b4129d0d5ad58f99cc300804b9",
+    "tests/issue-6979-native-assign-sources.test.ts": "f1c8b6a4defffea3a22b4228c717d2d1bb3b25731e24ba7d21fadcc5eb8e7a08",
+    "scripts/check-host-import-policy.ts": "d2057ac4359c9c0754ac8b050650cc2d957d665d0c36a5e6c8dc0450268109aa",
+    "plan/audit/host-import-policy-baseline.json": "3a9609b9569670d7faf58cc206e1fd56b318475644e9ba452779880ab1a89d76",
+    "scripts/check-standalone-arms.mjs": "996f96e4ad422425b22bc62a7597af06a69d42c6d546bbc091962d508479e14d",
+    "plan/audit/standalone-arms-baseline.json": "3bba16251f96bbf80fe01f582ae2e0d8f31a4fb8d172f6015b29d5d6bf9daa36",
+    "src/codegen/json-stringify-carriers.ts": "0d9a0908d177786c2d4250ab05d28b2629497b49dfbacedbd4ca16a592da2768",
+    "src/codegen/object-model/proxy-own-keys-surfaces.ts": "5dd1a54f4b263cd9c9e20c154d1d0426b3c96337d70967711a6a1805b0af7797",
+    "src/runtime.ts": "9289c25690c8fc2bdeca261b30ae85aa498733f10af394c2494a005261de8475"
+  }
+}
