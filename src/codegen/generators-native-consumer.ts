@@ -26,7 +26,7 @@ import { mapTsTypeToWasm } from "../checker/type-mapper.js";
 import type { Instr, ValType } from "../ir/types.js";
 import { allocLocal } from "./context/locals.js";
 import { popBody, pushBody } from "./context/bodies.js";
-import type { CodegenContext, FunctionContext, NativeGeneratorInfo } from "./context/types.js";
+import { type CodegenContext, type FunctionContext, type NativeGeneratorInfo, wasmGcBackend } from "./context/types.js";
 import { emitBrandCheckTypeError } from "./native-proto.js";
 import { coerceType, compileExpression, compileStatement } from "./shared.js";
 import { UNDEF_F64_BITS } from "./value-tags.js";
@@ -409,10 +409,10 @@ export function reserveOpaqueNativeGeneratorDispatch(
   // externref for boxed-any frames. The source argument is still evaluated just
   // once at the call site; this fixed ABI lets a pass-2 producer add a carrier
   // absent from the pass-1 registration set without freezing the dispatch type.
-  // Only no-JS-host targets expose that result as externref: their function
+  // The native WasmGC backend exposes that result as externref: its function
   // expression factory returns a native state through an opaque closure ABI.
-  // The JS-host native declaration path keeps its historical eqref result.
-  const externrefResultAbi = ctx.standalone || ctx.wasi;
+  // The linear provider retains its historical eqref result.
+  const externrefResultAbi = wasmGcBackend(ctx);
   if (externrefResultAbi) {
     ensureNativeDelegatedResultHelpers(ctx);
     if (methodName !== "throw") ensureNativeGeneratorNumericPayload(ctx);
@@ -432,9 +432,9 @@ export function reserveOpaqueNativeGeneratorDispatch(
   );
   const funcIdx = mintDefinedFunc(ctx);
   const hostResultLocal = params.length;
-  // An opaque `.next()` can be a native iterator-helper call in the no-JS-host
-  // lane. Reserve its adapter while body compilation can still register the
-  // iterator runtime; JS-host keeps the historical generator-only helper ABI.
+  // An opaque `.next()` can be a native iterator-helper call on WasmGC. Reserve
+  // its adapter while body compilation can still register the iterator runtime;
+  // the non-WasmGC provider keeps its generator-only helper ABI.
   const anyIterNextIdx = externrefResultAbi && methodName === "next" ? reserveAnyIterNext(ctx) : undefined;
   const name = opaqueNativeGeneratorDispatchName(methodName);
   pushDefinedFunc(ctx, funcIdx, {
@@ -709,7 +709,7 @@ function buildNativeGeneratorDispatch(
       ];
     }
     thenBody.unshift(...returnOriginEntryInstrs(info, anyLocal, methodName, valueAnyLocal));
-    if ((ctx.standalone || ctx.wasi) && methodName !== "throw" && !carrierIsAny(info.elemValType)) {
+    if (wasmGcBackend(ctx) && methodName !== "throw" && !carrierIsAny(info.elemValType)) {
       thenBody.unshift(
         { op: "local.get", index: valueAnyLocal! },
         { op: "call", funcIdx: ctx.funcMap.get("__gen_numeric_payload")! },
@@ -897,18 +897,17 @@ export function fillNativeGeneratorMethodDispatches(ctx: CodegenContext): void {
         ? buildNativeGeneratorDispatch(ctx, 0, dispatch.methodName, undefined, undefined, 1, hostMix)
         : buildNativeGeneratorDispatch(ctx, 0, dispatch.methodName, 1, 2, undefined, hostMix, iteratorMix);
     // Every native result struct (including the host-mix wrapper) is an
-    // internal anyref. No-JS-host callers need the ordinary dynamic
-    // IteratorResult representation after pass 2, so cross that helper ABI as
-    // externref. Preserve the JS-host helper's historical eqref result path.
-    fn.body =
-      ctx.standalone || ctx.wasi
-        ? [
-            ...instrs,
-            ...returnOriginResultInstrs(ctx, fn, dispatch.methodName),
-            { op: "extern.convert_any" },
-            { op: "call", funcIdx: ctx.funcMap.get("__gen_result_unwrap")! },
-          ]
-        : instrs;
+    // internal anyref. WasmGC callers need the ordinary dynamic IteratorResult
+    // representation after pass 2, so cross that helper ABI as externref.
+    // Preserve the linear provider's historical eqref result path.
+    fn.body = wasmGcBackend(ctx)
+      ? [
+          ...instrs,
+          ...returnOriginResultInstrs(ctx, fn, dispatch.methodName),
+          { op: "extern.convert_any" },
+          { op: "call", funcIdx: ctx.funcMap.get("__gen_result_unwrap")! },
+        ]
+      : instrs;
   }
 }
 
@@ -1041,7 +1040,7 @@ export function tryCompileNativeGeneratorMethodCall(
   if (ctx.nativeGenerators.size === 0) return undefined;
 
   const receiverType = compileExpression(ctx, fctx, receiverExpr);
-  if (receiverType && (ctx.standalone || ctx.wasi)) {
+  if (receiverType && wasmGcBackend(ctx)) {
     return compileNativeGeneratorProtocolCall(ctx, fctx, receiverType, methodName, args);
   }
   if (receiverType && (receiverType.kind === "ref" || receiverType.kind === "ref_null")) {
@@ -1101,7 +1100,7 @@ export function tryCompileNativeGeneratorMethodCall(
       valueAnyLocal = emitOpenAnyArgValue(ctx, fctx, args[0]);
       compileIgnoredArgs(ctx, fctx, args.slice(1));
       valueLocal = allocLocal(fctx, `__gen_sent_f64_${fctx.locals.length}`, { kind: "f64" });
-      if (ctx.standalone || ctx.wasi) {
+      if (wasmGcBackend(ctx)) {
         fctx.body.push({ op: "i64.const", value: UNDEF_F64_BITS }, { op: "f64.reinterpret_i64" });
       } else {
         fctx.body.push({ op: "local.get", index: valueAnyLocal });
@@ -1121,7 +1120,7 @@ export function tryCompileNativeGeneratorMethodCall(
     fctx.body.push({ op: "local.get", index: valueLocal! }, { op: "local.get", index: valueAnyLocal! });
   }
   fctx.body.push({ op: "call", funcIdx: dispatch.funcIdx });
-  return { kind: ctx.standalone || ctx.wasi ? "externref" : "eqref" };
+  return { kind: wasmGcBackend(ctx) ? "externref" : "eqref" };
 }
 
 export function tryCompileNativeGeneratorResultProperty(
@@ -1161,7 +1160,7 @@ export function tryCompileNativeGeneratorResultProperty(
   }
 
   if (
-    (ctx.standalone || ctx.wasi) &&
+    wasmGcBackend(ctx) &&
     Array.from(ctx.nativeGenerators.values()).some((info) => info.nativeDelegates) &&
     resultType &&
     ["externref", "anyref", "eqref"].includes(resultType.kind)
@@ -1434,14 +1433,10 @@ function buildOpenResultValueReadExtern(
     ];
   };
 
-  // (#3505) No-match tail: under a JS host, a LEGACY (eager-buffer) generator's
-  // `next()` result is a HOST object, not any native result struct — it lands
-  // here whenever a module mixes native and legacy generators (e.g. two module
-  // files declaring same-named generators, one of which bails to the legacy
-  // path). Read it through the host accessor instead of answering null. The
-  // import exists exactly when a legacy generator was compiled, so pure-native
-  // host modules keep their bytes (the #3032 host-bytes contract holds there).
-  const hostValueIdx = !ctx.standalone && !ctx.wasi ? ctx.funcMap.get("__gen_result_value") : undefined;
+  // (#3505) The non-WasmGC provider's LEGACY (eager-buffer) generator returns a
+  // provider object rather than a native result struct. Read it through that
+  // provider's accessor instead of answering null when both shapes coexist.
+  const hostValueIdx = !wasmGcBackend(ctx) ? ctx.funcMap.get("__gen_result_value") : undefined;
   const hostTail: Instr[] =
     nonNativeTail !== undefined
       ? nonNativeTail()
@@ -1528,13 +1523,11 @@ function buildOpenResultRead(
       : returnVT.kind === "externref"
         ? { op: "ref.null.extern" }
         : { op: "f64.const", value: 0 };
-  // (#3505) Host-lane no-match fallback: a LEGACY generator's host result
-  // object reaches this open reader in modules that mix native and legacy
-  // generators. Read the field through the host accessor when it exists
-  // (it is registered exactly when a legacy generator compiled); pure-native
-  // modules keep the inert default and their existing bytes.
+  // (#3505) Non-WasmGC no-match fallback: a LEGACY provider result reaches
+  // this open reader when native and legacy shapes coexist. Read the field
+  // through the provider accessor when it exists.
   let hostTail: Instr[] | undefined;
-  if (!ctx.standalone && !ctx.wasi) {
+  if (!wasmGcBackend(ctx)) {
     const hostIdx =
       fieldIdx === RESULT_DONE_FIELD
         ? ctx.funcMap.get("__gen_result_done")
@@ -1787,23 +1780,22 @@ export function tryCompileNativeGeneratorForOf(
   // exception. This mirrors the generic iterator driver's #1347 wrapper.
   const closeOnThrow = (): Instr[] => {
     const closeBody = closeGenerator();
-    const innerCloseTry: Instr =
-      ctx.wasi || ctx.standalone
-        ? buildStandardTryTable({ kind: "empty" }, closeBody, [
-            {
-              kind: "catch",
-              tagIdx: ensureExnTag(ctx),
-              payloadType: { kind: "externref" },
-              body: [{ op: "drop" }],
-            },
-          ])
-        : {
-            op: "try",
-            blockType: { kind: "empty" },
-            body: closeBody,
-            catches: [],
-            catchAll: [],
-          };
+    const innerCloseTry: Instr = wasmGcBackend(ctx)
+      ? buildStandardTryTable({ kind: "empty" }, closeBody, [
+          {
+            kind: "catch",
+            tagIdx: ensureExnTag(ctx),
+            payloadType: { kind: "externref" },
+            body: [{ op: "drop" }],
+          },
+        ])
+      : {
+          op: "try",
+          blockType: { kind: "empty" },
+          body: closeBody,
+          catches: [],
+          catchAll: [],
+        };
     return [
       { op: "local.get", index: doneFlag },
       { op: "i32.eqz" },
@@ -1811,7 +1803,7 @@ export function tryCompileNativeGeneratorForOf(
     ];
   };
 
-  if (ctx.wasi || ctx.standalone) {
+  if (wasmGcBackend(ctx)) {
     const exnLocal = allocLocal(fctx, `__nativegen_forof_exn_${fctx.locals.length}`, { kind: "externref" });
     fctx.body.push(
       buildStandardTryTable(

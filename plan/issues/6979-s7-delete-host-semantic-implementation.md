@@ -19,6 +19,7 @@ depends_on: [6708]
 related: [4396, 4397, 4399, 4401, 6191, 6749, 6750, 6978]
 func-budget-allow:
   - src/codegen/expressions/assignment.ts::compilePropertyAssignment
+  - src/codegen/generators-native.ts::nonWasmGcProviderGeneratorUsesAreSafe
 ---
 
 # #6979 — S7: delete the host-semantic implementation
@@ -1436,3 +1437,70 @@ bounded reviewed group rather than folding the 61-site `index.ts` orchestrator
 into unrelated changes. Continue to classify storage/semantics with
 `wasmGcBackend`, actual JS crossings with `jsValueBoundary`, platform access
 with `hostFreeEnvironment`, and accelerators by family.
+
+### S7-c native iterator/generator handoff (2026-10-19, Codex)
+
+This eleventh bounded S7-c checkpoint migrates the iterator and synchronous
+generator semantic cluster on `codex/6979-s7c-ir-arms`, published through
+draft PR `#6762`. S7 remains `in-progress`; this checkpoint does not claim the
+full JS-host migration is complete.
+
+**Ratchet.** The reviewed reduction is banked in
+`plan/audit/standalone-arms-baseline.json`:
+
+| Measure | Class/prototype checkpoint | Iterator/generator checkpoint |
+| --- | ---: | ---: |
+| Raw `ctx.standalone` hits in `src/` | 1,109 | **1,065** |
+| Matching source files | 400 | **396** |
+| `src/codegen` | 740 | **699** |
+| `src/codegen/expressions` | 361 | **358** |
+| Exact `ctx.standalone` conditions in the four iterator/generator files | 41 | **0** |
+
+The four-file semantic group is `iterator-native.ts`,
+`generators-native.ts`, `generators-native-consumer.ts` and
+`generators-native-protocol.ts`. Three nested object-literal `super` gates in
+`expressions/new-super.ts` form the required dependency closure.
+
+**Classification.** Native iterator records, generator frames, protocol-result
+ABI and objects, strict spread/materialization, delegation, completion
+exception handling, dynamic generator methods and factory prototype setup are
+WasmGC backend decisions. The linear backend retains the legacy provider's
+eager and result-accessor paths. `noJsHostTarget`, which returned
+`ctx.standalone || ctx.wasi`, was therefore a misleading environment name for
+a backend decision and has been removed; its consumers now ask
+`wasmGcBackend` directly.
+
+This does not move JavaScript machinery back into the semantic core. Wasm-owned
+iterators and generators stay in native storage. Values that actually cross a
+JavaScript boundary still use the existing boundary machinery, including its
+identity-cached host-backed facades where applicable; no object is copied and
+no host semantic mirror is created. The earlier normalization remains safe:
+default `gc`, literal standalone and WASI select the same native WasmGC
+semantics here, while `jsValueBoundary` independently controls marshaling and
+host identity.
+
+**Dependency closure.** Widening only the generator gates exposed a real WASI
+gap: an object-literal generator containing `yield super.answer()` returned
+`2` instead of `42`. The generator was native, but its nested `super` call and
+property readers were still guarded by the old standalone projection. Moving
+those three readers to `wasmGcBackend` restores the unseeded case directly;
+the test does not manufacture a donor read to make metadata appear. The same
+focused fixture also proves that a runtime-keyed class generator method uses
+the native protocol under both standalone and WASI.
+
+**Validation.** `issue-6979-array-object-mode-collapse.test.ts` passes 23/23.
+The wider 16-file iterator/generator cohort is 191 passing, six failing and 13
+skipped. An exact detached A/B at parent `d1cd6e36a4` reproduces all six
+failures with the same values in the four failing files: two #4768 conservative
+eager-path expectations, one #5199 legacy import expectation, two #5199
+prototype assertions and the deliberately pinned-wrong #6651 invalid-Wasm
+expectation. The four-file control is 42 passing and six failing, exactly
+matching the candidate rows, so this checkpoint adds no cohort-specific
+regression. TypeScript 7 typecheck, Biome lint, Prettier and `git diff --check`
+pass, and the standalone-arm ratchet is banked.
+
+**Next handoff.** Continue with another bounded semantic group. Preserve the
+same split: `wasmGcBackend` for internal storage and language semantics,
+`jsValueBoundary` for real JS crossings, `hostFreeEnvironment` for platform
+capabilities, and explicit family checks for optional accelerators. Do not
+fold the remaining `index.ts` orchestrator conditions into an unrelated slice.

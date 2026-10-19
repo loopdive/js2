@@ -41,7 +41,7 @@ import { tryNewBuiltinStaticAlias } from "./new-builtin-static-alias.js"; // (#4
 import { reportError } from "../context/errors.js";
 import { allocLocal, allocTempLocal, getLocalType, releaseTempLocal } from "../context/locals.js";
 import { fnctorBodyMayReturnForeignObject } from "../fnctor-foreign-return.js"; // (#2071)
-import type { CodegenContext, FunctionContext } from "../context/types.js";
+import { type CodegenContext, type FunctionContext, wasmGcBackend } from "../context/types.js";
 import {
   addFuncType,
   addStringConstantGlobal,
@@ -1020,8 +1020,8 @@ export { resolvesToAmbientGlobal, resolvesToNamedAmbientGlobal } from "./non-con
  * forms are now unified on the value-leaving branch.
  */
 /**
- * (#5350 step 5) `super.m(args)` / `super['m'](args)` inside an OBJECT-LITERAL
- * method, standalone.
+ * (#5350 step 5) `super.m(args)` / `super['m'](args)` inside a native WasmGC
+ * OBJECT-LITERAL method.
  *
  * `compileSuperMethodCallCore` bails to `evalArgsAndDefault` for an object
  * literal — the arguments run, and a typed default (`null` / 0) is left where
@@ -1056,7 +1056,7 @@ function compileStandaloneObjectLiteralSuperMethodCall(
   expr: ts.CallExpression,
   key: SuperReadKey,
 ): ValType | null | undefined {
-  if (!ctx.standalone) return undefined;
+  if (!wasmGcBackend(ctx)) return undefined;
   if (expr.arguments.some((arg) => ts.isSpreadElement(arg))) return undefined;
   const externref: ValType = { kind: "externref" };
   ensureObjectRuntime(ctx);
@@ -1338,7 +1338,7 @@ function compileSuperMethodCall(ctx: CodegenContext, fctx: FunctionContext, expr
 
 /**
  * (#4688) Read a statically named `super` property from an object-literal
- * method in standalone mode.
+ * method through native WasmGC storage.
  *
  * Object-literal methods are lifted closures. Their [[HomeObject]] is carried
  * as a synthetic capture, so a detached/borrowed call can supply a different
@@ -1388,7 +1388,7 @@ function emitSuperBaseCoercibleGuard(ctx: CodegenContext, fctx: FunctionContext)
  *     class method materialises `C.prototype` through the #5195 `$Object`
  *     prototype singleton.
  *   - `emitReceiver` leaves the §12.3.5.3 step 3 `actualThis`. Object literals
- *     use `__current_this` (the standalone call carrier); a class method uses
+ *     use `__current_this` (the native call carrier); a class method uses
  *     its own `this` LOCAL, which is the receiver the call actually bound.
  */
 /**
@@ -1405,7 +1405,7 @@ function compileStandaloneSuperPropertyRead(
   emitHomeObject: () => boolean | "base",
   emitReceiver: () => void,
 ): ValType | undefined {
-  if (!ctx.standalone) return undefined;
+  if (!wasmGcBackend(ctx)) return undefined;
 
   ensureObjectRuntime(ctx);
   if (key.kind === "name") addStringConstantGlobal(ctx, key.name);
@@ -1600,7 +1600,7 @@ function compileStandaloneObjectLiteralSuperPropertyRead(
   accessType: ts.Type | "externref",
   anchor: ts.Node,
 ): ValType | undefined {
-  if (!ctx.standalone) return undefined;
+  if (!wasmGcBackend(ctx)) return undefined;
   const refs = objectLiteralSuperRefEmitters(ctx, fctx, anchor);
   return compileStandaloneSuperPropertyRead(ctx, fctx, key, accessType, refs.emitHomeObject, refs.emitReceiver);
 }
@@ -1769,9 +1769,9 @@ export function compileSuperPropertyAccess(
   // Determine which class we're in
   const currentClassName = resolveEnclosingClassName(fctx);
   if (!currentClassName) {
-    // (#4688) Object-literal methods have a runtime home-object prototype in
-    // standalone mode. Resolve the named read through the native object
-    // runtime before retaining the old type-shaped fallback for other lanes.
+    // (#4688) Object-literal methods have a runtime home-object prototype on
+    // native WasmGC. Resolve the named read through the native object runtime
+    // before retaining the provider-shaped fallback elsewhere.
     const runtimeReadType = compileStandaloneObjectLiteralSuperPropertyRead(
       ctx,
       fctx,

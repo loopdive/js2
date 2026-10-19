@@ -8,7 +8,7 @@ import {
 /**
  * Wasm-native generator lowering (#680).
  *
- * No-JS-host state-machine path for `function*` declarations. The body is
+ * Native WasmGC state-machine path for `function*` declarations. The body is
  * decomposed into a flat list of **states**; each `yield` is a suspension
  * checkpoint that spills live locals into a WasmGC state struct and returns a
  * `{value, done}` result. `next()` re-enters a generated resume function at the
@@ -25,7 +25,7 @@ import {
  * if-join, sequential boundary) sets the state field and `br`s back to the
  * dispatch top to re-enter at the new state within the same `next()` call.
  *
- * Constraints kept for this slice (bail to the scoped diagnostic / host path):
+ * Constraints kept for this slice (bail to the scoped diagnostic / non-WasmGC provider):
  *   - yielded expressions and spilled locals are numeric (f64);
  *   - `yield*`, `break`/`continue` targeting a yield-loop, `switch`/labeled
  *     statements with yields, and `try/catch` with yields are not modeled
@@ -48,7 +48,7 @@ import type { FieldDef, Instr, ValType, WasmFunction } from "../ir/types.js";
 import { allocLocal, getLocalType } from "./context/locals.js";
 import { ensureNativeIteratorRuntime } from "./iterator-native.js";
 import { popBody, pushBody } from "./context/bodies.js";
-import type { CodegenContext, FunctionContext, NativeGeneratorInfo } from "./context/types.js";
+import { type CodegenContext, type FunctionContext, type NativeGeneratorInfo, wasmGcBackend } from "./context/types.js";
 import { reportError } from "./context/errors.js";
 import { nativeStringType } from "./native-strings.js";
 import { addFuncType, getArrTypeIdxFromVec, getOrRegisterVecType } from "./registry/types.js";
@@ -477,10 +477,6 @@ interface NativeGeneratorPlan {
   lexicalRenames?: readonly LexicalRename[];
 }
 
-function noJsHostTarget(ctx: CodegenContext): boolean {
-  return ctx.standalone || ctx.wasi;
-}
-
 function isNumericExpression(ctx: CodegenContext, expr: ts.Expression | undefined, allowBoolean = true): boolean {
   if (!expr) return true;
   const t = ctx.checker.getTypeAtLocation(expr);
@@ -528,18 +524,18 @@ function generatorElemValType(ctx: CodegenContext, decl: GeneratorDecl): ValType
   // sent), whatever its type.
   if (
     decl.body &&
-    noJsHostTarget(ctx) &&
+    wasmGcBackend(ctx) &&
     (bodyHasPatternYield(decl.body) || bodyHasComputedKeyYield(decl.body) || bodyHasNestedYieldShape(decl.body))
   ) {
     return { kind: "externref" };
   }
-  // (#6651 A6 G3a) Standalone/WASI: a BOOLEAN operand is not carrier-numeric.
+  // (#6651 A6 G3a) Native WasmGC: a BOOLEAN operand is not carrier-numeric.
   // The f64 carrier turned `yield true` into the Number 1 (and a string sent back
-  // through it into NaN); booleans now take the boxed-any carrier. The JS-host
-  // lane keeps the historical rule — byte-identical, and its eager fallback owns
+  // through it into NaN); booleans now take the boxed-any carrier. The non-WasmGC
+  // provider keeps the historical rule, and its eager fallback owns
   // the shapes the boxed-any plan refuses.
   const numericOperand = (expr: ts.Expression | undefined): boolean =>
-    isNumericExpression(ctx, expr, !noJsHostTarget(ctx));
+    isNumericExpression(ctx, expr, !wasmGcBackend(ctx));
   let sawNumeric = false;
   let sawString = false;
   let sawOther = false;
@@ -549,14 +545,14 @@ function generatorElemValType(ctx: CodegenContext, decl: GeneratorDecl): ValType
     }
     if (ts.isYieldExpression(node)) {
       // (#6651 A11) A consumed resumption value (`x = yield`) is any value `next(v)` sends.
-      if (noJsHostTarget(ctx) && yieldResumptionNeedsAnyCarrier(ctx, node)) sawOther = true;
+      if (wasmGcBackend(ctx) && yieldResumptionNeedsAnyCarrier(ctx, node)) sawOther = true;
       // A direct `yield* "abc"` is lowered by the generic iterable cursor,
       // whose values are native strings in the standalone iterator runtime.
       // Include that operand in the carrier decision; otherwise the generator
       // defaults to f64 and each delegated character becomes NaN.
       if (node.asteriskToken) {
         if (isStringYieldExpression(ctx, node.expression)) sawString = true;
-        else if ((ctx.standalone || ctx.wasi) && node.expression) {
+        else if (wasmGcBackend(ctx) && node.expression) {
           const fact = ctx.oracle.typeFactOf(node.expression);
           if (!(fact.kind === "array" && fact.element.kind === "number")) sawOther = true;
         }
@@ -620,13 +616,13 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
   const elemIsAny = carrierIsAny(elemValType);
   const yieldValueOk = (expr: ts.Expression | undefined): boolean =>
     elemIsAny ? true : elemIsString ? isStringYieldExpression(ctx, expr) : isNumericExpression(ctx, expr);
-  // (#1691) JS-host lane: a `yield*` delegate that is neither a native-gen call
-  // nor a numeric vec rides the host protocol arm (`__iterator_strict` +
-  // `__gen_yield_star_step`); the other two shapes keep the eager host path.
-  const hostLane = !noJsHostTarget(ctx);
+  // (#1691) The non-WasmGC provider routes a `yield*` delegate that is neither a
+  // native-gen call nor a numeric vec through its protocol arm
+  // (`__iterator_strict` + `__gen_yield_star_step`).
+  const nonWasmGcProvider = !wasmGcBackend(ctx);
   // A string delegate yields strings, which a numeric carrier cannot hold.
   const isHostProtocolDelegate = (subject: ts.Expression): boolean =>
-    hostLane &&
+    nonWasmGcProvider &&
     nativeGeneratorDelegationName(subject) === undefined &&
     !isNumericIterableDelegate(ctx, subject) &&
     (elemIsAny || ctx.oracle.typeFactOf(subject).kind !== "string");
@@ -673,7 +669,7 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
   // widened to externref; the resume fctx marks them `undefWidenedLocals`.
   const undefWidenedPatternBindings = new Set<string>();
   // (#6731) Standalone: block-scoped shadows get their own spill (generator-lexical-renames.ts).
-  const lexical = noJsHostTarget(ctx)
+  const lexical = wasmGcBackend(ctx)
     ? planLexicalRenames(
         decl,
         (n) =>
@@ -728,12 +724,12 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
   // (#6651 A4) Temporaries of a linearised pattern (`generator-yield-linearize.ts`):
   // externref values / iterator records and i32 flags, typed at creation.
   const linearSpillTypes = new Map<string, ValType>();
-  const linearizeYields = elemIsAny && noJsHostTarget(ctx) && bodyHasPatternYield(decl.body);
+  const linearizeYields = elemIsAny && wasmGcBackend(ctx) && bodyHasPatternYield(decl.body);
   // (#6651 A5) Statements holding a yield nested in a computed key / call
   // argument / member target (`generator-yield-nested.ts`). Same gate shape as A4.
   // (#6651 A6) Also a yield nested in a yield operand or a return value.
   const nestedYields =
-    elemIsAny && noJsHostTarget(ctx) && (bodyHasComputedKeyYield(decl.body) || bodyHasNestedYieldShape(decl.body));
+    elemIsAny && wasmGcBackend(ctx) && (bodyHasComputedKeyYield(decl.body) || bodyHasNestedYieldShape(decl.body));
   // (#6651 A5) Inner-generator bodies by delegation name, for the for-of chain's close-transparency gate.
   const delegationInnerBodies = new Map<string, ts.Block>();
 
@@ -799,7 +795,7 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
   // f64-carrier slot turned a string completion into NaN. Keep such a non-numeric
   // binding on the eager host path, which now returns the real completion.
   const hostCompletionLosesValue = (target: ts.Expression): boolean =>
-    hostLane && !elemIsAny && !["number", "any", "unknown"].includes(ctx.oracle.typeFactOf(target).kind);
+    nonWasmGcProvider && !elemIsAny && !["number", "any", "unknown"].includes(ctx.oracle.typeFactOf(target).kind);
 
   // (#6775 S11) `<target> = yield [v];` with a side-effect-free reference: an
   // identifier, `id.name`, or `id[<literal>]` — evaluating it after the resume
@@ -918,7 +914,7 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
    * `continue` that leaves it is not — its wasm `br` would have no target.
    */
   const isStraightLineStatement = (stmt: ts.Statement): boolean =>
-    noJsHostTarget(ctx)
+    wasmGcBackend(ctx)
       ? isSelfContainedNestedFunction(stmt, decl) ||
         (!statementNeedsStructuralLowering(stmt) && !(jumpTargets.length > 0 && statementHasEscapingJump(stmt)))
       : !statementNeedsStructuralLowering(stmt);
@@ -927,7 +923,7 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
     stmt: ts.Statement,
     unwind: readonly UnwindEntry[],
   ): "jumped" | "lowered" | "failed" | "not-applicable" {
-    if (!noJsHostTarget(ctx)) return "not-applicable";
+    if (!wasmGcBackend(ctx)) return "not-applicable";
     if (ts.isBreakStatement(stmt) || ts.isContinueStatement(stmt)) {
       return lowerJumpStatement(jumpHost, stmt, unwind) ? "jumped" : "failed";
     }
@@ -1100,7 +1096,7 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
         // the delegated-return terminator's unwind walk (above) does exactly
         // that. Its tail reads the value back from the f64/any `abrupt` field,
         // which a string carrier does not have.
-        const closesRecords = noJsHostTarget(ctx) && unwind.some((e) => e.kind === "dstr-close");
+        const closesRecords = wasmGcBackend(ctx) && unwind.some((e) => e.kind === "dstr-close");
         if (closesRecords && elemIsString) return fail();
         collectSpillsIn(stmt);
         finishState(
@@ -1199,7 +1195,7 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
       // if/else (generators-native-general.ts). Only where the continuation arm
       // below would refuse outright (non-f64 carrier, inside a try region, or a
       // nested statement list), so every shape it lowers today is untouched.
-      if (noJsHostTarget(ctx) && (!allowExpressionContinuations || unwind.length !== 0 || elemValType.kind !== "f64")) {
+      if (wasmGcBackend(ctx) && (!allowExpressionContinuations || unwind.length !== 0 || elemValType.kind !== "f64")) {
         const desugared = desugarYieldExpressionStatement(stmt);
         if (desugared?.kind === "sequence") {
           if (!lowerStatements(desugared.statements, unwind, allowExpressionContinuations)) return false;
@@ -1252,7 +1248,7 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
           // region lowering below makes it a completion instead.
           !statementContainsReturn(stmt.finallyBlock) &&
           !(
-            (ctx.standalone || ctx.wasi) &&
+            wasmGcBackend(ctx) &&
             containsDelegatedYield(
               stmt.tryBlock,
               (subject) =>
@@ -1315,7 +1311,7 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
         // body that `return`s / `break`s out of it (the linear loop's record is
         // an ordinary `dstr-close` entry those paths close).
         if (
-          noJsHostTarget(ctx) &&
+          wasmGcBackend(ctx) &&
           stateFinallyDepth === 0 &&
           (!isGenericIterableDelegate(ctx, stmt.expression, true) || forOfNeedsLinearDrive(stmt))
         ) {
@@ -1482,7 +1478,7 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
       // path (legacy replay-only regions keep today's behavior).
       if (
         unwind.some((e) => e.kind !== "replay") &&
-        !(ctx.standalone || ctx.wasi) &&
+        !wasmGcBackend(ctx) &&
         !(yieldExpr.expression && isHostProtocolDelegate(yieldExpr.expression))
       )
         return fail();
@@ -1524,7 +1520,7 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
         // outer has a concrete-ref `value` no repair can bridge — bail it to the
         // host path (standalone: the clean #680 refusal).
         if (!elemIsString && isNumericIterableDelegate(ctx, subject)) {
-          if (hostLane || unwind.some((entry) => entry.kind !== "replay")) return fail();
+          if (nonWasmGcProvider || unwind.some((entry) => entry.kind !== "replay")) return fail();
           // (#2864 R1) `const x = yield* [..]` — the delegation completion value
           // (§27.5.3.7) of an array is `undefined`; the done-arm delivers the f64
           // undefined sentinel into the binding's spill (a #2106 residual).
@@ -1563,7 +1559,7 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
         // refs, and the emitter casts the externref back to that ref below.
         // (#1691) The JS-host lane takes the protocol arm too (host imports).
         const protocol = !isStringYieldExpression(ctx, subject);
-        if (hostLane && !isHostProtocolDelegate(subject)) return fail();
+        if (nonWasmGcProvider && !isHostProtocolDelegate(subject)) return fail();
         if (
           (!elemIsString || isStringYieldExpression(ctx, subject)) &&
           (protocol || isGenericIterableDelegate(ctx, subject))
@@ -1603,7 +1599,7 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
         }
         return fail();
       }
-      if (!subject || innerName === undefined || hostLane) return fail();
+      if (!subject || innerName === undefined || nonWasmGcProvider) return fail();
       // (#6651 A5) Inside a native-lowered `for-of` body (A2's bail 4) the chain
       // carries the loop's `iter-close`, possibly with a `catch` of a try inside
       // the body. The delegation state then walks that chain innermost-first
@@ -1847,7 +1843,7 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
    * is what exempts it from the any-carrier resume-binding bail in the spill
    * pass. The f64 carrier keeps its historical spill (byte-identical).
    */
-  const continuationAnyCarrier = elemIsAny && noJsHostTarget(ctx);
+  const continuationAnyCarrier = elemIsAny && wasmGcBackend(ctx);
   function continuationSentSpill(): string {
     return continuationAnyCarrier ? linearHost.spill({ kind: "externref" }, "sent") : continuationSpillName("sent");
   }
@@ -1892,7 +1888,7 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
    * host-import leak this issue exists to remove. Keeping the gate here is also
    * what makes the gc lane byte-identical across this change.
    */
-  const continuationYieldsMayCarryOperands = noJsHostTarget(ctx);
+  const continuationYieldsMayCarryOperands = wasmGcBackend(ctx);
 
   /**
    * A non-delegating yield this checkpoint can suspend on.
@@ -2087,7 +2083,7 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
       // The host lane would need a preplanned `__get_undefined` import. Do
       // not accept the expression and accidentally fall through to its legacy
       // null/i32 representation; keep that lane on the existing host fallback.
-      if (!(ctx.standalone || ctx.nativeStrings)) return null;
+      if (!(wasmGcBackend(ctx) || ctx.nativeStrings)) return null;
       return { type: { kind: "externref" }, canonicalUndefined: true };
     }
 
@@ -2551,7 +2547,7 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
   /** if (cond) thenBlock [else elseBlock] — at least one branch yields. */
   function lowerIf(stmt: ts.IfStatement, unwind: readonly UnwindEntry[]): boolean {
     // (#6731) Standalone: `if (A, yield B, C) S` runs `A; yield B;` first.
-    const split = noJsHostTarget(ctx) ? splitYieldingIfCondition(stmt) : undefined;
+    const split = wasmGcBackend(ctx) ? splitYieldingIfCondition(stmt) : undefined;
     if (split && !lowerStatements(split.prefix, unwind, false)) return false;
     return lowerIfParts(
       split?.condition ?? stmt.expression,
@@ -2571,7 +2567,7 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
    */
   function branchConditionFlavour(cond: ts.Expression): { canonical?: true } | undefined {
     if (isNumericExpression(ctx, cond)) return {};
-    return noJsHostTarget(ctx) ? { canonical: true } : undefined;
+    return wasmGcBackend(ctx) ? { canonical: true } : undefined;
   }
 
   function lowerIfParts(
@@ -2635,7 +2631,7 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
   function lowerWhile(stmt: ts.WhileStatement, unwind: readonly UnwindEntry[]): boolean {
     const flavour = branchConditionFlavour(stmt.expression);
     if (!flavour) return fail();
-    if (!noJsHostTarget(ctx) && loopBodyHasUnsupportedJump(stmt.statement)) return fail();
+    if (!wasmGcBackend(ctx) && loopBodyHasUnsupportedJump(stmt.statement)) return fail();
     collectSpillsIn(stmt.expression);
     const labels = takeLabels();
 
@@ -2681,7 +2677,7 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
   function lowerDoWhile(stmt: ts.DoStatement, unwind: readonly UnwindEntry[]): boolean {
     const flavour = branchConditionFlavour(stmt.expression);
     if (!flavour) return fail();
-    if (!noJsHostTarget(ctx) && loopBodyHasUnsupportedJump(stmt.statement)) return fail();
+    if (!wasmGcBackend(ctx) && loopBodyHasUnsupportedJump(stmt.statement)) return fail();
     collectSpillsIn(stmt.expression);
     const labels = takeLabels();
 
@@ -2724,7 +2720,7 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
 
   /** for (init; cond; update) body — body yields. */
   function lowerFor(stmt: ts.ForStatement, unwind: readonly UnwindEntry[]): boolean {
-    if (!noJsHostTarget(ctx) && loopBodyHasUnsupportedJump(stmt.statement)) return fail();
+    if (!wasmGcBackend(ctx) && loopBodyHasUnsupportedJump(stmt.statement)) return fail();
     const labels = takeLabels();
     // init: a yield-free var-decl list or expression; append to current state.
     if (stmt.initializer) {
@@ -2837,7 +2833,7 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
    *  - `break` / `continue` (shared `loopBodyHasUnsupportedJump`).
    */
   function lowerForOf(stmt: ts.ForOfStatement, unwind: readonly UnwindEntry[]): boolean {
-    if (!noJsHostTarget(ctx)) return fail();
+    if (!wasmGcBackend(ctx)) return fail();
     takeLabels(); // (#6731) a jump to this loop routed it to the linear drive (forOfNeedsLinearDrive)
     if (stmt.awaitModifier) return fail();
     if (loopBodyHasUnsupportedJump(stmt.statement)) return fail();
@@ -2929,7 +2925,7 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
       // params are registered (externref-typed) by lowerTryRegion, not here.
       if (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name) && !ts.isCatchClause(n.parent)) {
         addSpill(spillNameOf(n.name), n);
-      } else if (ts.isVariableDeclaration(n) && !ts.isIdentifier(n.name) && noJsHostTarget(ctx)) {
+      } else if (ts.isVariableDeclaration(n) && !ts.isIdentifier(n.name) && wasmGcBackend(ctx)) {
         addPatternDeclarationSpills(n.name);
       }
       if (
@@ -3213,7 +3209,7 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
 
   // (#6731) Standalone: self-contained nested function declarations are
   // instantiated first (hoisting), so a call before the declaration resolves.
-  const hoisted = noJsHostTarget(ctx) ? decl.body.statements.filter((s) => isSelfContainedNestedFunction(s, decl)) : [];
+  const hoisted = wasmGcBackend(ctx) ? decl.body.statements.filter((s) => isSelfContainedNestedFunction(s, decl)) : [];
   const bodyStatements = hoisted.length
     ? [...hoisted, ...decl.body.statements.filter((s) => !hoisted.includes(s))]
     : decl.body.statements;
@@ -3358,7 +3354,7 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
     // — the resolver defers every `Array<any>` for the same reason).
     if (
       !resolved &&
-      noJsHostTarget(ctx) &&
+      wasmGcBackend(ctx) &&
       declNode?.initializer &&
       (ts.isArrayLiteralExpression(declNode.initializer) || isAnyArrayFact(ctx.oracle.typeFactOf(declNode.name)))
     ) {
@@ -3440,8 +3436,8 @@ function isNativeGeneratorExpressionShape(ctx: CodegenContext, decl: ts.Function
     }
     if (
       param.questionToken ||
-      (param.dotDotDotToken && !noJsHostTarget(ctx)) ||
-      (param.initializer && !noJsHostTarget(ctx))
+      (param.dotDotDotToken && !wasmGcBackend(ctx)) ||
+      (param.initializer && !wasmGcBackend(ctx))
     )
       return false;
   }
@@ -3461,7 +3457,7 @@ function isNativeGeneratorExpressionShape(ctx: CodegenContext, decl: ts.Function
   // stops at class nodes. Admitting on the wider scan alone would compile a
   // `this` the frame never captured, so a disagreement keeps the bail.
   if (fnExprBodyReferencesThis(decl.body)) {
-    if (!noJsHostTarget(ctx)) return false;
+    if (!wasmGcBackend(ctx)) return false;
     if (methodBodyUsesSuper(decl.body)) return false;
     if (!bodyReferencesOwnThis(decl.body)) return false;
   }
@@ -3479,7 +3475,7 @@ function isNativeGeneratorExpressionShape(ctx: CodegenContext, decl: ts.Function
   // FunctionDeclarations), but keep the bail explicit for defense — the
   // eager host path with the slice-1 lazy thunk remains the host-lane
   // lowering.
-  if (!noJsHostTarget(ctx) && generatorCapturesOuterScope(ctx, decl)) return false;
+  if (!wasmGcBackend(ctx) && generatorCapturesOuterScope(ctx, decl)) return false;
   return true;
 }
 
@@ -3570,9 +3566,9 @@ function bodyHasHostUnsupportedYieldShape(decl: GeneratorDecl): boolean {
 }
 
 /**
- * (#3050) Conservative HOST-lane use-site safety walk. The native generator
- * state struct is a WasmGC ref the JS host cannot iterate, so it must never
- * escape to a host-iterating context. Walks every `<name>(…)` call in the
+ * (#3050) Conservative non-WasmGC-provider use-site safety walk. The native
+ * generator state struct is a WasmGC ref that provider cannot iterate, so it
+ * must never escape to a provider-iterating context. Walks every `<name>(…)` call in the
  * source file and demands its result flow into an allowlisted consumer:
  *
  *   - `g().next()/…` member access on the call result;
@@ -3589,7 +3585,7 @@ function bodyHasHostUnsupportedYieldShape(decl: GeneratorDecl): boolean {
  * the eager host path. Name-based matching over-approximates (a shadowing
  * same-named function bails too) — conservative by design.
  */
-function hostLaneGeneratorUsesAreSafe(ctx: CodegenContext, decl: GeneratorDecl): boolean {
+function nonWasmGcProviderGeneratorUsesAreSafe(ctx: CodegenContext, decl: GeneratorDecl): boolean {
   if (!decl.name || !ts.isIdentifier(decl.name)) return false;
   const genName = decl.name.text;
   const sf = decl.getSourceFile();
@@ -4036,18 +4032,18 @@ function hostLaneGeneratorUsesAreSafe(ctx: CodegenContext, decl: GeneratorDecl):
 }
 
 export function isNativeGeneratorCandidate(ctx: CodegenContext, decl: GeneratorDecl): boolean {
-  if (!noJsHostTarget(ctx)) {
-    // (#3050 → #3032 W6) JS-HOST lane: the eager-buffer lowering evaluates the
+  if (!wasmGcBackend(ctx)) {
+    // (#3050 → #3032 W6) The non-WasmGC provider's eager-buffer lowering evaluates the
     // whole body at creation, which violates §27.5 EvaluateGeneratorBody
     // (GeneratorStart SUSPENDS at start-of-body; nothing runs until the first
     // `next()`), cannot express a `.throw()`/abrupt resumption into a
     // try-region (GeneratorPrototype/throw/try-{catch,finally}-*), and cannot
     // deliver a `next(v)` sent value into the body (the buffer replays
-    // pre-computed yields). #3050 scoped host-lane native routing to exactly
+    // pre-computed yields). #3050 scoped provider-side native routing to exactly
     // the try-region shapes; #3032 W6 drops that restriction — every free
     // `function*` DECLARATION that passes the conservative safety walks below
     // (resolvable identifiers + allowlisted use sites) now routes through the
-    // native state machine under the JS host too, making creation lazy and
+    // native state machine where that provider can consume it, making creation lazy and
     // `next(v)` two-way for the dominant test262 shape. Non-plannable shapes
     // still fall back to the eager buffer via the plan gate below; generator
     // EXPRESSIONS and METHODS keep their host-lane lowerings (thunk / eager)
@@ -4081,7 +4077,7 @@ export function isNativeGeneratorCandidate(ctx: CodegenContext, decl: GeneratorD
     // consumer — `.next()/.throw()/.return()` member calls, for-of (no await),
     // spread, `Array.from`, destructuring — route natively under the JS host;
     // anything else keeps the eager path.
-    if (!hostLaneGeneratorUsesAreSafe(ctx, decl)) return false;
+    if (!nonWasmGcProviderGeneratorUsesAreSafe(ctx, decl)) return false;
   }
   if (!decl.body || !decl.asteriskToken) return false;
   // (#2864 C02) `arguments` is carried by the native frame. The factory setup
@@ -4151,7 +4147,7 @@ export function isNativeGeneratorCandidate(ctx: CodegenContext, decl: GeneratorD
     // spill fields; the plan builder decides pattern legality (rest elements /
     // unstorable binding types bail there). Identifier params stay
     // byte-identical.
-    if (param.dotDotDotToken && !noJsHostTarget(ctx)) return false;
+    if (param.dotDotDotToken && !wasmGcBackend(ctx)) return false;
     if (
       !ts.isIdentifier(param.name) &&
       !ts.isArrayBindingPattern(param.name) &&
@@ -4237,12 +4233,12 @@ export function isNativeGeneratorCandidate(ctx: CodegenContext, decl: GeneratorD
   // `arguments` is the bounded C02 exception: its vec is now carried by the
   // native frame, while the remaining unsupported method cases stay on the
   // host path / clean standalone refusal.
-  // (#6651 A10) `super` is admitted in a standalone OBJECT-LITERAL method: its
+  // (#6651 A10) `super` is admitted in a native WasmGC OBJECT-LITERAL method: its
   // closure carries the [[HomeObject]] capture (`emitObjectLiteralMethodFn`,
   // #4688), which the resume function rehydrates by name, and its receiver is
   // the frame's `dynamic_this` snapshot. A class method has neither in the
   // resume function, so it keeps the bail.
-  const literalSuper = ctx.standalone && ts.isObjectLiteralExpression(decl.parent);
+  const literalSuper = wasmGcBackend(ctx) && ts.isObjectLiteralExpression(decl.parent);
   if (
     ts.isMethodDeclaration(decl) &&
     decl.body &&
@@ -4257,7 +4253,7 @@ export function isNativeGeneratorCandidate(ctx: CodegenContext, decl: GeneratorD
       // enclosing fctx before the class/literal members compile, hence before
       // the resume fn emits. JS-host lane keeps the eager path (byte-identical;
       // its laziness is the #3032 thunk track).
-      (!noJsHostTarget(ctx) && generatorCapturesOuterScope(ctx, decl)))
+      (!wasmGcBackend(ctx) && generatorCapturesOuterScope(ctx, decl)))
   ) {
     return false;
   }
@@ -4304,10 +4300,10 @@ function foldedMethodKey(ctx: CodegenContext, name: ts.PropertyName): string | u
   return undefined;
 }
 
-/** (#6651 A10) A standalone class generator method keyed by an unfoldable computed name. */
+/** (#6651 A10) A native WasmGC class generator method keyed by an unfoldable computed name. */
 function isStandaloneDynamicClassMethod(ctx: CodegenContext, decl: GeneratorDecl): boolean {
   return (
-    ctx.standalone &&
+    wasmGcBackend(ctx) &&
     ts.isMethodDeclaration(decl) &&
     ts.isClassLike(decl.parent) &&
     ts.isComputedPropertyName(decl.name) &&
@@ -4798,7 +4794,7 @@ export function registerNativeGenerator(
   // `executing` field — §27.5.3 applies to every generator, delegating or not.
   // (#1691) The JS-host protocol arm drives host imports, not these helpers.
   const nativeDelegates =
-    noJsHostTarget(ctx) &&
+    wasmGcBackend(ctx) &&
     plan.states.some(
       (state) =>
         state.terminator.kind === "for-of-step" ||
@@ -4806,11 +4802,11 @@ export function registerNativeGenerator(
           state.terminator.delegationKind === "iterable" &&
           state.terminator.protocol),
     );
-  const executingFieldIdx = noJsHostTarget(ctx) ? stateFields.length : undefined;
+  const executingFieldIdx = wasmGcBackend(ctx) ? stateFields.length : undefined;
   if (executingFieldIdx !== undefined) stateFields.push({ name: "executing", type: { kind: "i32" }, mutable: true });
   // (#6980) `.return(v)` provenance for numeric-carrier frames (frame-core.ts).
   const returnOriginFieldIdx =
-    noJsHostTarget(ctx) && genCarrierFieldType(elemValType).kind === "f64" ? stateFields.length : undefined;
+    wasmGcBackend(ctx) && genCarrierFieldType(elemValType).kind === "f64" ? stateFields.length : undefined;
   if (returnOriginFieldIdx !== undefined) {
     stateFields.push(
       { name: "ret_origin", type: { kind: "i32" }, mutable: true },
@@ -6287,7 +6283,7 @@ function emitGenericDelegationState(
   const body = fctx.body;
   // (#1691) JS-host lane: the same state machine over host imports. The step
   // reads IteratorValue itself, so a yielded value is a plain carrier value.
-  const host = !noJsHostTarget(ctx);
+  const host = !wasmGcBackend(ctx);
   const carrier = genCarrierFieldType(info.elemValType);
   const convert = (instrs: Instr[], from: ValType, to: ValType): Instr[] => {
     if (!host || valTypesMatch(from, to)) return instrs;
@@ -6734,7 +6730,7 @@ export function ensureNativeGeneratorResumeFunction(ctx: CodegenContext, info: N
 
   if (info.nativeDelegates) ensureNativeDelegatedResultHelpers(ctx);
   // (#1691) The JS-host protocol arm's imports, acquired before the body bakes.
-  else if (!noJsHostTarget(ctx) && info.iterableDelegationSlots?.length) {
+  else if (!wasmGcBackend(ctx) && info.iterableDelegationSlots?.length) {
     addIteratorImports(ctx); // demand for the host-side struct dispatch exports
     ensureLateImport(ctx, "__iterator_strict", [{ kind: "externref" }], [{ kind: "externref" }]);
     ensureLateImport(
@@ -6978,19 +6974,19 @@ export function ensureNativeGeneratorResumeFunction(ctx: CodegenContext, info: N
     const savedFunc = ctx.currentFunc;
     ctx.currentFunc = resumeFctx;
     try {
-      // (#3050) Throw-route wraps in HOST mode recover foreign JS exceptions
-      // via `__get_caught_exception` (mirrors exceptions.ts; dead in
-      // standalone/wasi, #1473 — wasm traps aren't catchable and every native
+      // (#3050) Non-WasmGC throw-route wrappers recover foreign exceptions via
+      // `__get_caught_exception` (mirrors exceptions.ts; dead in native WasmGC,
+      // #1473 — wasm traps aren't catchable and every native
       // throw rides the `$exc` tag). Acquire it BEFORE the trampoline emit so
       // no late import fires mid-arm-chain (detached earlier arms would miss
       // the funcidx shift).
       let getCaughtExnIdx: number | undefined;
-      if (plan.hasThrowRoutes && !ctx.standalone && !ctx.wasi) {
+      if (plan.hasThrowRoutes && !wasmGcBackend(ctx)) {
         getCaughtExnIdx = ensureLateImport(ctx, "__get_caught_exception", [], [{ kind: "externref" }]);
         flushLateImportShifts(ctx, resumeFctx);
       }
       const trampoline = emitTrampoline(ctx, resumeFctx, info, plan, 0, resultLocal, getCaughtExnIdx);
-      if (ctx.standalone || ctx.wasi) {
+      if (wasmGcBackend(ctx)) {
         // A native generator is completed when its body raises while a resume
         // is in progress (§27.5.3.4). Most abrupt paths already set
         // `STATE_FIELD` before their explicit rethrow, but an unhandled body
@@ -6998,8 +6994,8 @@ export function ensureNativeGeneratorResumeFunction(ctx: CodegenContext, info: N
         // the trampoline. Close that state before preserving the original
         // payload so a later `.next()` observes the completed generator
         // instead of re-entering the throwing state. Keep this wrapper out of
-        // the JS-host lane: its foreign-exception recovery and legacy lowering
-        // have their own established path.
+        // the non-WasmGC provider: its foreign-exception recovery and legacy
+        // lowering have their own established path.
         // (#5141) The wrapper must NOT be a result-typed `try_table`: V8 12.4
         // (Node 22, the floor in `package.json` engines) executes
         // `try_table (ref null $result)` as `unreachable`, so every first
@@ -7224,7 +7220,7 @@ export function compileNativeGeneratorFunction(
   // observable function object. A method still needs the canonical generator
   // protocol view for `.next()` / `.return()` / `.throw()`, so initialize it
   // from the intrinsic default instead of inventing a factory identity.
-  if (ctx.standalone || ctx.wasi) {
+  if (wasmGcBackend(ctx)) {
     const state = allocLocal(fctx, "__new_generator_state", { kind: "ref", typeIdx: info.stateTypeIdx });
     fctx.body.push({ op: "local.set", index: state });
     ensureNativeDelegatedResultHelpers(ctx);

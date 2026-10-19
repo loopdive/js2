@@ -226,5 +226,61 @@ for (const target of ["standalone", "wasi"] as const) {
       exports.__module_init?.();
       expect(exports.readResult()).toBe(42);
     });
+
+    it("a runtime-keyed class generator method uses the native protocol", async () => {
+      const { module } = await compileNative(
+        `
+          var key = "values";
+          class Example {
+            *[key]() {
+              yield 40;
+              return 2;
+            }
+          }
+          var instance: any = new Example();
+          export function readResult() {
+            var iterator = instance.values();
+            var first = iterator.next();
+            var second = iterator.next();
+            return !first.done && second.done ? first.value + second.value : -1;
+          }
+        `,
+        target,
+      );
+      const instance = await WebAssembly.instantiate(module, {});
+      const exports = instance.exports as unknown as { __module_init?: () => void; readResult: () => number };
+      exports.__module_init?.();
+      expect(exports.readResult()).toBe(42);
+    });
+
+    it("an object-literal generator method resolves super through native storage", async () => {
+      const { module } = await compileNative(
+        `
+          var base = {
+            answer() {
+              return 40;
+            },
+          };
+          var object = {
+            __proto__: base,
+            *values() {
+              yield super.answer();
+              return 2;
+            },
+          };
+          export function readResult() {
+            var iterator = object.values();
+            var first = iterator.next();
+            var second = iterator.next();
+            return !first.done && second.done ? first.value + second.value : -1;
+          }
+        `,
+        target,
+      );
+      const instance = await WebAssembly.instantiate(module, {});
+      const exports = instance.exports as unknown as { __module_init?: () => void; readResult: () => number };
+      exports.__module_init?.();
+      expect(exports.readResult()).toBe(42);
+    });
   });
 }
