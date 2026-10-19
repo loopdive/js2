@@ -40,10 +40,11 @@ async function compileAndInstantiate(source: string, experimentalIR: boolean): P
     throw new Error(`compile failed (${experimentalIR ? "IR" : "legacy"}): ${r.errors[0]?.message ?? "unknown"}`);
   }
   const built = buildImports(r.imports, ENV_STUB, r.stringPool);
-  const { instance } = await WebAssembly.instantiate(r.binary, {
-    env: built.env,
-    string_constants: built.string_constants,
-  });
+  // (#7029) Pass the whole resolver result, not a hand-picked `env` +
+  // `string_constants` pair: a program that falls back to the legacy string
+  // path imports `wasm:js-string`, and the pair left that namespace out.
+  const { instance } = await WebAssembly.instantiate(r.binary, built as unknown as WebAssembly.Imports);
+  built.setExports?.(instance.exports as Record<string, Function>);
   return { exports: instance.exports as Record<string, unknown> };
 }
 

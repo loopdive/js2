@@ -105,6 +105,7 @@
  * enforces by never compiling `callExpr.arguments[0]` as a separator in this
  * mode.
  */
+import { ts } from "../ts-api.js";
 import type { Instr, ValType } from "../ir/types.js";
 import { joinEmptyElementTest } from "./array-holes.js";
 import { buildJoinBoxedElementToString } from "./array-join-element.js";
@@ -259,6 +260,19 @@ export function buildExternJoinElementToString(
  * shortcut in calls-closures.ts — carries the real method name on it. Deriving
  * it here keeps the god-file's dispatch switch byte-identical.
  */
-export function isLocalizedJoin(propAccess: { readonly name: { readonly text: string } }): boolean {
-  return propAccess.name.text === ELEMENT_METHOD;
+export function isLocalizedJoin(propAccess: {
+  readonly name?: { readonly text: string };
+  readonly argumentExpression?: { readonly kind: number; readonly text?: string };
+}): boolean {
+  // (#7014) `a["join"]("-")` reaches the join lowerings with its
+  // ELEMENT-access callee (call-tail-dispatch's `compileArrayMethodCall(…,
+  // elemAccess, …)` arm), which has no `.name` — reading `.name.text` crashed
+  // the compile ("Cannot read properties of undefined (reading 'text')").
+  if (propAccess.name !== undefined) return propAccess.name.text === ELEMENT_METHOD;
+  const key = propAccess.argumentExpression;
+  return (
+    key !== undefined &&
+    (key.kind === ts.SyntaxKind.StringLiteral || key.kind === ts.SyntaxKind.NoSubstitutionTemplateLiteral) &&
+    key.text === ELEMENT_METHOD
+  );
 }

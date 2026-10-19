@@ -57,8 +57,17 @@
  * strings instead of by time value.
  */
 import { ts } from "../ts-api.js";
+import type { ValType } from "../ir/types.js";
 import { runtimeToPrimitiveInstrs } from "./coercion-engine.js";
+import { allocTempLocal, releaseTempLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
+import {
+  compileToPrimitiveCascadeOperand,
+  type RawToPrimitiveOperand,
+  reduceClassToPrimitiveOperand,
+  tryCompileClassToPrimitiveOperand,
+} from "./classes/class-symbol-to-primitive-operand.js";
+import { coerceType, compileExpression } from "./shared.js";
 
 /** Operand types the cascade must not take — it has no i64 arm. */
 export const TO_PRIMITIVE_EXCLUDED_FLAGS =
@@ -93,6 +102,41 @@ export function admitsObjectRelational(ctx: CodegenContext, left: ts.Type, right
   return isObjectOperandType(left) || isObjectOperandType(right);
 }
 
+const ANYISH = ts.TypeFlags.Any | ts.TypeFlags.Unknown;
+
+/**
+ * (#6999) A `string | number`-style union: a String constituent alongside a
+ * non-String primitive one. Its runtime value may be a string, so §7.2.13's
+ * both-strings lexicographic arm is reachable and the numeric lowering is wrong.
+ */
+function isStringMixedPrimitiveUnion(t: ts.Type): boolean {
+  if (!t.isUnion()) return false;
+  const parts = t.types;
+  const hasString = parts.some((p) => (p.flags & ts.TypeFlags.StringLike) !== 0);
+  const hasOther = parts.some((p) => (p.flags & (ts.TypeFlags.NumberLike | ts.TypeFlags.BooleanLike)) !== 0);
+  return hasString && hasOther && parts.every((p) => (p.flags & EXCLUDED) === 0);
+}
+
+/**
+ * Should a relational with these operand types take the runtime-dispatched
+ * `emitAnyRelational` (§7.2.13: both strings → lexicographic, else numeric)?
+ *
+ * - js-host lane: an `any`/`unknown` operand, and only while `$AnyValue` is not
+ *   registered (#2059; the #1374 host-comparator hazard) — unchanged bytes.
+ * - no JS host (#6999): that `anyValueTypeIdx < 0` exclusion shut the arm for
+ *   good, because standalone always registers `$AnyValue`, so `"b" > "a"` on
+ *   `any` compared NaN to NaN. The in-module cascade has no host comparator, so
+ *   the arm opens for `any`/`unknown` and for string-mixed unions
+ *   (`string | number`) as well.
+ */
+export function admitsAnyRelational(ctx: CodegenContext, left: ts.Type, right: ts.Type): boolean {
+  const anyish = (left.flags & ANYISH) !== 0 || (right.flags & ANYISH) !== 0;
+  if (ctx.anyValueTypeIdx < 0 && anyish) return true;
+  if (ctx.targetProfile.semanticProviders !== "native-first") return false;
+  if (!ctx.nativeStrings || ctx.anyStrTypeIdx < 0) return false;
+  return anyish || isStringMixedPrimitiveUnion(left) || isStringMixedPrimitiveUnion(right);
+}
+
 /**
  * Reduce the two externref operand temps in place. A no-op when the native
  * `__to_primitive` is unavailable (older minimal standalone builds), so the
@@ -103,12 +147,125 @@ export function reduceRelationalOperandsToPrimitive(
   fctx: FunctionContext,
   lTmp: number,
   rTmp: number,
+  lRaw?: RawToPrimitiveOperand,
+  rRaw?: RawToPrimitiveOperand,
 ): void {
-  for (const tmp of [lTmp, rTmp]) {
+  for (const [tmp, raw] of [
+    [lTmp, lRaw],
+    [rTmp, rRaw],
+  ] as const) {
     const toPrimitiveInstrs = runtimeToPrimitiveInstrs(ctx, "number");
-    if (toPrimitiveInstrs === null) return;
+    // (#6982) A raw class operand reduces statically via its `[Symbol.toPrimitive]`.
+    if (raw) {
+      reduceClassToPrimitiveOperand(ctx, fctx, raw, "number", tmp, toPrimitiveInstrs);
+      continue;
+    }
+    if (toPrimitiveInstrs === null) continue;
     fctx.body.push({ op: "local.get", index: tmp });
     fctx.body.push(...toPrimitiveInstrs);
     fctx.body.push({ op: "local.set", index: tmp });
   }
+}
+
+// ── Operand compilation for `emitAnyRelational`, plus the #6999 numeric shortcut ──
+//
+// The cascade needs both operands as externref temps (a runtime string must stay
+// boxed so `__typeof_string` can see it); that is what every caller gets by
+// default, byte-for-byte. #6999 opened the cascade to every `any`/`unknown`
+// relational on host-free targets, but codegen often knows more than the static
+// type: an untyped `this.pos < this.input.length` in a typed-`this` twin
+// compiles both sides to `f64` (#3765). Boxing those only to run ToPrimitive and
+// `__typeof_string` on two numbers would put calls into a tokenizer's hottest
+// loop. With `numericShortcut` the operands are compiled at their natural type
+// first; two Wasm numbers compare with a plain `f64.<op>` (§7.2.13 on Numbers),
+// anything else is boxed for the cascade.
+
+const EXTERNREF: ValType = { kind: "externref" };
+
+/** One cascade operand: its externref temp, plus a raw class operand still owed ToPrimitive (#6982). */
+export interface CascadeOperand {
+  tmp: number;
+  raw?: RawToPrimitiveOperand;
+}
+
+function f64RelOp(op: ts.SyntaxKind): "f64.lt" | "f64.le" | "f64.gt" | "f64.ge" {
+  if (op === ts.SyntaxKind.LessThanToken) return "f64.lt";
+  if (op === ts.SyntaxKind.LessThanEqualsToken) return "f64.le";
+  if (op === ts.SyntaxKind.GreaterThanToken) return "f64.gt";
+  return "f64.ge";
+}
+
+/** A Wasm number whose ToNumber is the value itself (symbols must still throw). */
+function isWasmNumber(t: ValType): boolean {
+  return t.kind === "f64" || (t.kind === "i32" && t.symbol !== true);
+}
+
+type NaturalOperand = { raw: RawToPrimitiveOperand } | { local: number; type: ValType };
+
+/** Compile one operand at its natural type into a temp (a #6982 class operand stays raw). */
+function compileNatural(ctx: CodegenContext, fctx: FunctionContext, expr: ts.Expression): NaturalOperand | null {
+  const raw = tryCompileClassToPrimitiveOperand(ctx, fctx, expr);
+  if (raw) return { raw };
+  const type = compileExpression(ctx, fctx, expr);
+  if (!type) return null;
+  const local = allocTempLocal(fctx, type);
+  fctx.body.push({ op: "local.set", index: local });
+  return { local, type };
+}
+
+function releaseNatural(fctx: FunctionContext, o: NaturalOperand): void {
+  releaseTempLocal(fctx, "raw" in o ? o.raw.local : o.local);
+}
+
+/** Box a natural operand into an externref cascade temp. */
+function toCascade(ctx: CodegenContext, fctx: FunctionContext, o: NaturalOperand): CascadeOperand {
+  if ("raw" in o) return { tmp: allocTempLocal(fctx, EXTERNREF), raw: o.raw };
+  fctx.body.push({ op: "local.get", index: o.local });
+  if (o.type.kind !== "externref") coerceType(ctx, fctx, o.type, EXTERNREF);
+  releaseTempLocal(fctx, o.local);
+  const tmp = allocTempLocal(fctx, EXTERNREF);
+  fctx.body.push({ op: "local.set", index: tmp });
+  return { tmp };
+}
+
+/**
+ * Compile both operands for the cascade and return them, or return `null` when
+ * the comparison is already complete on the stack (an i32 — the numeric
+ * shortcut, or a failed operand compile).
+ */
+export function compileRelationalOperands(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.BinaryExpression,
+  op: ts.SyntaxKind,
+  numericShortcut: boolean,
+): { l: CascadeOperand; r: CascadeOperand } | null {
+  if (!numericShortcut) {
+    const l = compileToPrimitiveCascadeOperand(ctx, fctx, expr.left);
+    if (!l) return null;
+    const r = compileToPrimitiveCascadeOperand(ctx, fctx, expr.right);
+    if (!r) {
+      releaseTempLocal(fctx, l.tmp);
+      return null;
+    }
+    return { l, r };
+  }
+
+  const l = compileNatural(ctx, fctx, expr.left);
+  if (!l) return null;
+  const r = compileNatural(ctx, fctx, expr.right);
+  if (!r) {
+    releaseNatural(fctx, l);
+    return null;
+  }
+  if ("type" in l && "type" in r && isWasmNumber(l.type) && isWasmNumber(r.type)) {
+    for (const o of [l, r]) {
+      fctx.body.push({ op: "local.get", index: o.local });
+      if (o.type.kind !== "f64") coerceType(ctx, fctx, o.type, { kind: "f64" });
+      releaseTempLocal(fctx, o.local);
+    }
+    fctx.body.push({ op: f64RelOp(op) });
+    return null;
+  }
+  return { l: toCascade(ctx, fctx, l), r: toCascade(ctx, fctx, r) };
 }

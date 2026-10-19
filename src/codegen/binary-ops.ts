@@ -56,7 +56,12 @@ import { tryStaticToNumber } from "./expressions/misc.js";
 import { emitNativeParseNumber } from "./parse-number-native.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
 import { admitsObjectAddition, emitObjectAdd } from "./addition-to-primitive.js";
-import { admitsObjectRelational, reduceRelationalOperandsToPrimitive } from "./relational-to-primitive.js";
+import {
+  admitsAnyRelational,
+  admitsObjectRelational,
+  compileRelationalOperands,
+  reduceRelationalOperandsToPrimitive,
+} from "./relational-to-primitive.js";
 // (#4491 T4) §13.15.3 `+` over object operands.
 import { admitsObjectAdd } from "./add-to-primitive.js";
 import { emitHostArrayCarrierBinary, hostArrayCarrierBinaryArm } from "./host-carrier-to-primitive.js"; // (#6788)
@@ -2178,18 +2183,14 @@ export function compileBinaryExpression(
   // ToNumber both sides, so `("a" as any) < ("b" as any)` yielded `false`.
   // Route to the runtime-dispatched compare before the f64 hint is applied.
   //
-  // Two arms, deliberately gated differently — see relational-to-primitive.ts:
-  //  - ANY arm: unchanged, including its `anyValueTypeIdx < 0` exclusion.
-  //  - OBJECT arm (§7.2.12): standalone only, and NOT subject to that exclusion
-  //    (the AnyValue helpers do not in fact own this shape). #1374's host
-  //    comparator hazard cannot recur there — no host operator is involved.
+  // Two arms, gated in relational-to-primitive.ts: ANY (`any`/`unknown`, plus
+  // string-mixed unions without a JS host — #6999) and OBJECT (§7.2.12, no host
+  // only). #1374's host comparator hazard cannot recur without a host operator.
   if (isRelational) {
-    const leftIsAnyish = (leftTsType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
-    const rightIsAnyish = (rightTsType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
-    const anyArm = ctx.anyValueTypeIdx < 0 && (leftIsAnyish || rightIsAnyish);
+    const anyArm = admitsAnyRelational(ctx, leftTsType, rightTsType);
     const objArm = admitsObjectRelational(ctx, leftTsType, rightTsType);
     if ((anyArm || objArm) && !isBigIntType(leftTsType) && !isBigIntType(rightTsType)) {
-      return emitAnyRelational(ctx, fctx, expr, op);
+      return emitAnyRelational(ctx, fctx, expr, op, anyArm);
     }
   }
 
@@ -2741,25 +2742,19 @@ export function emitAnyRelational(
   fctx: FunctionContext,
   expr: ts.BinaryExpression,
   op: ts.SyntaxKind,
+  numericShortcut = false, // (#6999) host-free any-arm: two Wasm numbers skip the cascade
 ): ValType {
   const noJsHost = ctx.targetProfile.semanticProviders === "native-first";
   // Registered before the operands compile, so its setup cannot desync funcIdxs.
   if (noJsHost && ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) ensureObjectRuntime(ctx);
 
   // Compile both operands to externref temps (keep runtime strings boxed).
-  const lType = compileExpression(ctx, fctx, expr.left, { kind: "externref" });
-  if (!lType) return { kind: "i32" };
-  if (lType.kind !== "externref") coerceType(ctx, fctx, lType, { kind: "externref" });
-  const lTmp = allocTempLocal(fctx, { kind: "externref" });
-  fctx.body.push({ op: "local.set", index: lTmp });
-  const rType = compileExpression(ctx, fctx, expr.right, { kind: "externref" });
-  if (!rType) {
-    releaseTempLocal(fctx, lTmp);
-    return { kind: "i32" };
-  }
-  if (rType.kind !== "externref") coerceType(ctx, fctx, rType, { kind: "externref" });
-  const rTmp = allocTempLocal(fctx, { kind: "externref" });
-  fctx.body.push({ op: "local.set", index: rTmp });
+  // (#6982) A class instance with `[Symbol.toPrimitive]` stays raw until step 1.
+  const operands = compileRelationalOperands(ctx, fctx, expr, op, numericShortcut && noJsHost);
+  if (operands === null) return { kind: "i32" };
+  const { l, r } = operands;
+  const lTmp = l.tmp;
+  const rTmp = r.tmp;
 
   // Map a -1/0/1/2 `cmp` (or an f64 comparison) to the operator's boolean result.
   // The `2` (incomparable) sentinel must make ALL four operators yield 0, so we
@@ -2824,7 +2819,7 @@ export function emitAnyRelational(
     ensureNativeStringHelpers(ctx);
     addUnionImports(ctx);
     // §7.2.12 step 1 — the arm below must be chosen from the PRIMITIVES.
-    reduceRelationalOperandsToPrimitive(ctx, fctx, lTmp, rTmp);
+    reduceRelationalOperandsToPrimitive(ctx, fctx, lTmp, rTmp, l.raw, r.raw);
     const typeofStr = ctx.funcMap.get("__typeof_string");
     const unboxNum = ctx.funcMap.get("__unbox_number");
     const strCompare = ctx.nativeStrHelpers.get("__str_compare");

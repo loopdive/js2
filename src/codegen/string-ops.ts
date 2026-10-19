@@ -2620,6 +2620,16 @@ export function compileStringIntegerArg(
       // an i32 is already integral and within range for the helper.
       return;
     }
+    // (#7083) A DYNAMIC `undefined` bound (`s.slice(a, end)` with `end` an
+    // `any` that holds undefined) means "omitted" for the optional end/count
+    // positions, exactly like the static `undefined` the call sites already
+    // special-case — not ToIntegerOrInfinity(NaN) = 0. ToNumber(undefined) has
+    // no side effect, so compute the ordinary integer and pick the fallback.
+    const dynUndefLocal =
+      argType.kind === "externref" && undefinedFallback !== nanFallback
+        ? allocLocal(fctx, `__strint_x_${fctx.locals.length}`, { kind: "externref" })
+        : undefined;
+    if (dynUndefLocal !== undefined) fctx.body.push({ op: "local.tee", index: dynUndefLocal });
     // Coerce ToNumber → f64 via the engine, then ToIntegerOrInfinity.
     coerceType(ctx, fctx, argType, { kind: "f64" }, "number");
     const fTmpType: ValType =
@@ -2653,6 +2663,21 @@ export function compileStringIntegerArg(
       });
     } else {
       fctx.body.push(...toIntegerInstrs);
+    }
+    if (dynUndefLocal !== undefined) {
+      const isUndef = ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
+      flushLateImportShifts(ctx, fctx);
+      if (isUndef !== undefined) {
+        const intLocal = allocLocal(fctx, `__strint_i_${fctx.locals.length}`, { kind: "i32" });
+        fctx.body.push(
+          { op: "local.set", index: intLocal },
+          { op: "i32.const", value: undefinedFallback },
+          { op: "local.get", index: intLocal },
+          { op: "local.get", index: dynUndefLocal },
+          { op: "call", funcIdx: isUndef },
+          { op: "select" },
+        );
+      }
     }
     return;
   }

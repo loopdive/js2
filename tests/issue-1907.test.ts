@@ -76,7 +76,12 @@ describe("#1907 standalone built-in static method value reads", () => {
   // yet, so it exercises the generic-throw-body path.)
   it("unsupported built-in static method value reads reify host-free and fail loud when called (#1907 / #2984)", async () => {
     const result = await compile(
-      `export function run(): number { const seal: any = Object.seal; seal({}); return 1; }`,
+      // (#7014 wave 15) `Object.seal` gained a native standalone body since this
+      // was written (re-measured 2026-10-17 on upstream main 0727e2985b: the call
+      // returns 1, as in JS), so it no longer reaches the generic-throw body.
+      // `Object.isSealed` still has none — in JS this call returns, so a throw
+      // here can only be the fail-loud reified body.
+      `export function run(): number { const isSealed: any = Object.isSealed; isSealed({}); return 1; }`,
       {
         target: "standalone",
       },

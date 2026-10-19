@@ -18,6 +18,7 @@
  * `__apply_closure`. No module-private `$ObjVec` crosses the link boundary.
  */
 
+import ts from "typescript";
 import type { Instr, ValType } from "../ir/types.js";
 import { buildTargetTaggedTry } from "../ir/try-table.js";
 import { allocLocal } from "./context/locals.js";
@@ -333,7 +334,14 @@ function syncedPropertyGetTrampolineBody(
     ];
   };
   const readTarget: Instr[] = [...readMarkerMetadata(), { op: "local.set", index: resultLocal }];
-  const readBody: Instr[] =
+  const typeofFunctionIdx = ctx.funcMap.get("__typeof_function");
+  const readTargetAsAny: Instr[] = [
+    ...readTarget,
+    { op: "local.get", index: resultLocal },
+    { op: "any.convert_extern" },
+    { op: "local.set", index: anyLocal },
+  ];
+  const bagFirstRead: Instr[] | undefined =
     closurePropGetIdx !== undefined && isUndefinedIdx !== undefined
       ? [
           // Runtime-eval global seeding replaces an AOT closure with this
@@ -359,12 +367,22 @@ function syncedPropertyGetTrampolineBody(
           { op: "any.convert_extern" },
           { op: "local.set", index: anyLocal },
         ]
-      : [
-          ...readTarget,
-          { op: "local.get", index: resultLocal },
-          { op: "any.convert_extern" },
-          { op: "local.set", index: anyLocal },
-        ];
+      : undefined;
+  // (#6989) A carrier rebound onto a NON-callable compiled object (the membrane
+  // hook's owner-routed read) has no closure-own bag, and the bag read falls
+  // back to %Function.prototype% (`toString` answered Function.prototype.toString,
+  // test262 built-ins/Function/S15.3.2.1_A2_T6). Read such a target directly.
+  const readBody: Instr[] =
+    bagFirstRead === undefined
+      ? readTargetAsAny
+      : typeofFunctionIdx === undefined
+        ? bagFirstRead
+        : [
+            { op: "local.get", index: 0 },
+            { op: "struct.get", typeIdx: carrier.structTypeIdx, fieldIdx: 2 },
+            { op: "call", funcIdx: typeofFunctionIdx },
+            { op: "if", blockType: { kind: "empty" }, then: bagFirstRead, else: readTargetAsAny },
+          ];
   // (#6894) Wrapping a callable property in a fresh carrier exists for the
   // provider crossing only. An in-module read (provider inactive) must return
   // the raw closure: a per-read carrier breaks identity (`assert.d === assert.d`
@@ -1234,4 +1252,64 @@ export function emitRuntimeEvalInterpretedCallableAdapterIfCallable(
     },
   );
   return { kind: "externref" };
+}
+
+/**
+ * Provider-side `__runtime_eval_rebind_carrier(hook, obj)`: when `hook` is a
+ * caller's canonical AOT-callable carrier, mint a fresh carrier with the same
+ * call / property-get trampolines and `obj` as its target, so a property read
+ * on the result is answered by the module that owns `obj` (its getters,
+ * prototype chain and closure-valued properties, which the provider's own
+ * getter cannot see). Any other `hook` returns `obj` unchanged.
+ * `compileArg` leaves one argument on the stack as an externref.
+ */
+export function tryRuntimeEvalRebindCarrierIntrinsic(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+  compileArg: (arg: ts.Expression) => void,
+): ValType | undefined {
+  if (
+    (!ctx.standalone && !ctx.wasi) ||
+    ctx.runtimeEvalCallableBoundaryEnabled !== true ||
+    !ts.isIdentifier(expr.expression) ||
+    expr.expression.text !== "__runtime_eval_rebind_carrier" ||
+    expr.arguments.length !== 2
+  ) {
+    return undefined;
+  }
+  const externref: ValType = { kind: "externref" };
+  const carrier = ctx.runtimeEvalAotCallableCarrier ?? ensureRuntimeEvalAotCallableCarrierTypes(ctx);
+  const [hookLocal, objLocal] = expr.arguments.map((arg) => {
+    compileArg(arg);
+    const local = allocLocal(fctx, `__runtime_eval_rebind_${fctx.locals.length}`, externref);
+    fctx.body.push({ op: "local.set", index: local });
+    return local;
+  }) as [number, number];
+  const hookField = (fieldIdx: number): Instr[] => [
+    { op: "local.get", index: hookLocal },
+    { op: "any.convert_extern" },
+    { op: "ref.cast", typeIdx: carrier.structTypeIdx },
+    { op: "struct.get", typeIdx: carrier.structTypeIdx, fieldIdx },
+  ];
+  fctx.body.push(
+    { op: "local.get", index: hookLocal },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx: carrier.structTypeIdx },
+    {
+      op: "if",
+      blockType: { kind: "val", type: externref },
+      then: [
+        ...hookField(0),
+        ...hookField(1),
+        { op: "local.get", index: objLocal },
+        { op: "i32.const", value: RUNTIME_EVAL_AOT_CALLABLE_BRAND_A },
+        { op: "i32.const", value: RUNTIME_EVAL_AOT_CALLABLE_BRAND_B },
+        { op: "struct.new", typeIdx: carrier.structTypeIdx },
+        { op: "extern.convert_any" },
+      ],
+      else: [{ op: "local.get", index: objLocal }],
+    },
+  );
+  return externref;
 }

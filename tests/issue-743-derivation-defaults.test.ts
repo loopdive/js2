@@ -23,12 +23,17 @@ import {
   fnctorCtorParamTypesFlagEnabled,
   fnctorTypedBindingsFlagEnabled,
   fnctorTypedReadsFlagEnabled,
+  resetDerivationFlagCache,
 } from "../src/derivation-flags.js";
 import { fnctorCtorParamTypesEnabled } from "../src/codegen/fnctor-ctor-param-types.js";
 import { fnctorTypedBindingsEnabled } from "../src/codegen/fnctor-typed-bindings.js";
 import { fnctorTypedReadsEnabled } from "../src/codegen/fnctor-typed-reads.js";
 import { dtsEntrypointSeedsEnabled } from "../src/checker/dts-entrypoint-seeds.js";
 
+// (#4415, 0be07b6077) The flag predicates are memoised per compile and the
+// compiler resets the memo at the start of each compile. These tests read the
+// predicates directly, so they reset the memo after every environment change —
+// exactly what the next compile would do.
 const VARS = [
   "JS2WASM_FNCTOR_CTOR_PARAM_TYPES",
   "JS2WASM_DTS_ENTRYPOINT_SEEDS",
@@ -43,8 +48,10 @@ afterEach(() => {
     if (value === undefined) {
       // biome-ignore lint/performance/noDelete: only `delete` truly unsets an env var
       delete process.env[v];
+      resetDerivationFlagCache();
     } else {
       process.env[v] = value;
+      resetDerivationFlagCache();
     }
   }
 });
@@ -55,8 +62,10 @@ function setAll(value: string | undefined): void {
     if (value === undefined) {
       // biome-ignore lint/performance/noDelete: only `delete` truly unsets an env var
       delete process.env[v];
+      resetDerivationFlagCache();
     } else {
       process.env[v] = value;
+      resetDerivationFlagCache();
     }
   }
 }
@@ -132,36 +141,46 @@ describe("#743 — derivation flag defaults (flipped ON 2026-08-08)", () => {
     try {
       // biome-ignore lint/performance/noDelete: only `delete` truly unsets an env var
       delete process.env.JS2WASM_FIELD_WRITE_VERDICT;
+      resetDerivationFlagCache();
       // biome-ignore lint/performance/noDelete: only `delete` truly unsets an env var
       delete process.env.JS2WASM_FNCTOR_CTOR_PARAM_SLOTS;
+      resetDerivationFlagCache();
       expect(fnctorCtorParamSlotsEnabled(), "ON when unset — the family rule").toBe(true);
       expect(fieldWriteVerdictEnabled(), "verdict ON when unset").toBe(true);
       for (const spelling of ["", "0", "off", " OFF "]) {
         process.env.JS2WASM_FNCTOR_CTOR_PARAM_SLOTS = spelling;
+        resetDerivationFlagCache();
         expect(fnctorCtorParamSlotsEnabled(), `${JSON.stringify(spelling)} must disable`).toBe(false);
       }
       for (const spelling of ["1", "on", "yes"]) {
         process.env.JS2WASM_FNCTOR_CTOR_PARAM_SLOTS = spelling;
+        resetDerivationFlagCache();
         expect(fnctorCtorParamSlotsEnabled(), `${JSON.stringify(spelling)} keeps it on`).toBe(true);
       }
       // The verdict flag DOMINATES: verdict off ⇒ lever off, whatever its own
       // variable says.
       process.env.JS2WASM_FNCTOR_CTOR_PARAM_SLOTS = "1";
+      resetDerivationFlagCache();
       process.env.JS2WASM_FIELD_WRITE_VERDICT = "0";
+      resetDerivationFlagCache();
       expect(fieldWriteVerdictEnabled()).toBe(false);
       expect(fnctorCtorParamSlotsEnabled(), "verdict off forces the lever off").toBe(false);
     } finally {
       if (savedSlots === undefined) {
         // biome-ignore lint/performance/noDelete: only `delete` truly unsets an env var
         delete process.env.JS2WASM_FNCTOR_CTOR_PARAM_SLOTS;
+        resetDerivationFlagCache();
       } else {
         process.env.JS2WASM_FNCTOR_CTOR_PARAM_SLOTS = savedSlots;
+        resetDerivationFlagCache();
       }
       if (savedVerdict === undefined) {
         // biome-ignore lint/performance/noDelete: only `delete` truly unsets an env var
         delete process.env.JS2WASM_FIELD_WRITE_VERDICT;
+        resetDerivationFlagCache();
       } else {
         process.env.JS2WASM_FIELD_WRITE_VERDICT = savedVerdict;
+        resetDerivationFlagCache();
       }
     }
   });
@@ -169,6 +188,7 @@ describe("#743 — derivation flag defaults (flipped ON 2026-08-08)", () => {
   it("each flag is independently disablable — no flag disables a sibling", () => {
     setAll(undefined);
     process.env.JS2WASM_FNCTOR_CTOR_PARAM_TYPES = "0";
+    resetDerivationFlagCache();
     expect(fnctorCtorParamTypesFlagEnabled()).toBe(false);
     expect(dtsEntrypointSeedsFlagEnabled()).toBe(true);
     expect(fnctorTypedReadsFlagEnabled()).toBe(true);

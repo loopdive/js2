@@ -251,7 +251,18 @@ if command -v node > /dev/null 2>&1 && [ -d plan/issues ]; then
   issue_block=0
 
   # (5a) committed-tree filename<->frontmatter-id match for changed issue files.
-  range_base=$(git merge-base origin/main HEAD 2>/dev/null || echo "")
+  # Match the format gate: upstream/main is canonical in a fork checkout.
+  # Fall back to origin/main when no usable upstream merge-base resolves.
+  range_base=""
+  for issue_ref in upstream/main origin/main; do
+    if git rev-parse --verify --quiet "$issue_ref^{commit}" >/dev/null 2>&1; then
+      issue_base=$(git merge-base "$issue_ref" HEAD 2>/dev/null) || continue
+      if [ -n "$issue_base" ]; then
+        range_base="$issue_base"
+        break
+      fi
+    fi
+  done
   if [ -n "$range_base" ]; then
     changed_issues=$(git diff --name-only "$range_base..HEAD" -- 'plan/issues/*.md' 2>/dev/null \
       | grep -E '^plan/issues/[0-9]+[a-z]?-.*\.md$' || true)

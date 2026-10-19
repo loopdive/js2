@@ -54,8 +54,14 @@ import { allocTempLocal, releaseTempLocal } from "./context/locals.js";
 import { ensureAnyToStringHelper, ensureNativeStringHelpers, stringConstantExternrefInstrs } from "./native-strings.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
+import { resolveStructName } from "./property-access.js";
+import { structHasUserToPrimitive } from "./struct-boundary-reify.js";
 import { compileExpression } from "./shared.js";
 import { coerceType } from "./type-coercion.js";
+import {
+  reduceClassToPrimitiveOperand,
+  tryCompileClassToPrimitiveOperand,
+} from "./classes/class-symbol-to-primitive-operand.js"; // (#6982)
 
 /** Operand types this arm must not take — `any`/`unknown` belong to #2058, i64 has no arm. */
 const EXCLUDED = ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.BigInt | ts.TypeFlags.BigIntLiteral;
@@ -296,7 +302,47 @@ export function admitsObjectAddition(
   ) {
     return false;
   }
+  if (isThisReadingToPrimitiveLiteralStruct(ctx, left) || isThisReadingToPrimitiveLiteralStruct(ctx, right))
+    return false;
   return hasObjectOperandType(left) || hasObjectOperandType(right);
+}
+
+/**
+ * (#7014, #4429) An object-literal struct whose `valueOf` / `toString` /
+ * `@@toPrimitive` closure FIELD reads `this` keeps the typed `+` lowering it had
+ * before this arm existed. Routing it here coerces the operand to `externref`,
+ * which materialises the struct as a `$Object` copy (#2358); the runtime
+ * cascade then invokes the method with that copy as `this`, while the literal's
+ * method trampoline expects its own struct in `__current_this` — every `this.x`
+ * read trapped "dereferencing a null pointer" (`({ x: 7, toString() { return
+ * "v" + this.x; } }) + ""`). The typed path binds `this` to the struct itself
+ * (#2679 number hint, #4429 string hint). Regressed by 725e33c3e2, which
+ * admitted these operands; the trap on an `any`-typed receiver predates it.
+ * A `this`-free method keeps this arm's full §13.15.3 cascade (its Symbol
+ * TypeError and evaluation order — `addition/order-of-evaluation.js`).
+ */
+function isThisReadingToPrimitiveLiteralStruct(ctx: CodegenContext, t: ts.Type): boolean {
+  if (t.isUnion()) return false;
+  const name = resolveStructName(ctx, t);
+  if (name === undefined || ctx.classSet.has(name) || !structHasUserToPrimitive(ctx, name)) return false;
+  return ["valueOf", "toString"].some((key) => {
+    const decl = t.getProperty(key)?.valueDeclaration;
+    const fn =
+      decl &&
+      ts.isPropertyAssignment(decl) &&
+      (ts.isFunctionExpression(decl.initializer) || ts.isArrowFunction(decl.initializer))
+        ? decl.initializer
+        : decl;
+    return fn !== undefined && (ts.isMethodDeclaration(fn) || ts.isFunctionExpression(fn)) && readsOwnThis(fn.body);
+  });
+}
+
+/** Does `node` mention `this` outside nested non-arrow functions? */
+function readsOwnThis(node: ts.Node | undefined): boolean {
+  if (!node) return false;
+  if (node.kind === ts.SyntaxKind.ThisKeyword) return true;
+  if (ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node) || ts.isMethodDeclaration(node)) return false;
+  return ts.forEachChild(node, readsOwnThis) === true;
 }
 
 /**
@@ -358,19 +404,23 @@ export function emitObjectAdd(ctx: CodegenContext, fctx: FunctionContext, expr: 
     }
     return compileExpression(ctx, fctx, operand, externref);
   };
-  const lType = emitOperand(expr.left);
+  // (#6982) A class instance with a `[Symbol.toPrimitive]` method stays raw
+  // until step 5 — see classes/class-symbol-to-primitive-operand.ts.
+  const lRaw = tryCompileClassToPrimitiveOperand(ctx, fctx, expr.left);
+  const lType = lRaw ? externref : emitOperand(expr.left);
   if (!lType) return { kind: "f64" };
   if (lType.kind !== "externref") coerceType(ctx, fctx, lType, externref);
   const lTmp = allocTempLocal(fctx, externref);
-  fctx.body.push({ op: "local.set", index: lTmp });
-  const rType = emitOperand(expr.right);
+  if (!lRaw) fctx.body.push({ op: "local.set", index: lTmp });
+  const rRaw = tryCompileClassToPrimitiveOperand(ctx, fctx, expr.right);
+  const rType = rRaw ? externref : emitOperand(expr.right);
   if (!rType) {
     releaseTempLocal(fctx, lTmp);
     return { kind: "f64" };
   }
   if (rType.kind !== "externref") coerceType(ctx, fctx, rType, externref);
   const rTmp = allocTempLocal(fctx, externref);
-  fctx.body.push({ op: "local.set", index: rTmp });
+  if (!rRaw) fctx.body.push({ op: "local.set", index: rTmp });
 
   const typeofStr = ctx.funcMap.get("__typeof_string");
   const strConcat = ctx.nativeStrHelpers.get("__str_concat");
@@ -388,16 +438,23 @@ export function emitObjectAdd(ctx: CodegenContext, fctx: FunctionContext, expr: 
     releaseTempLocal(fctx, lTmp);
     return { kind: "f64" };
   };
-  if (typeofStr === undefined || strConcat === undefined || boxNumber === undefined || toPrimitive === null) {
-    return numericFallback();
-  }
+  const missingHelper =
+    typeofStr === undefined || strConcat === undefined || boxNumber === undefined || toPrimitive === null;
 
   // §13.15.3 step 5 — hint DEFAULT on both, in left-to-right order.
-  for (const tmp of [lTmp, rTmp]) {
-    fctx.body.push({ op: "local.get", index: tmp });
-    fctx.body.push(...toPrimitive.map((i) => ({ ...i })));
-    fctx.body.push({ op: "local.set", index: tmp });
+  for (const [tmp, raw] of [
+    [lTmp, lRaw],
+    [rTmp, rRaw],
+  ] as const) {
+    if (raw) {
+      reduceClassToPrimitiveOperand(ctx, fctx, raw, "default", tmp, toPrimitive);
+    } else if (!missingHelper) {
+      fctx.body.push({ op: "local.get", index: tmp });
+      fctx.body.push(...toPrimitive.map((i) => ({ ...i })));
+      fctx.body.push({ op: "local.set", index: tmp });
+    }
   }
+  if (missingHelper) return numericFallback();
 
   // step 7 — EITHER primitive a string ⇒ concatenate ToString of both.
   const toStr = (tmp: number): Instr[] => [

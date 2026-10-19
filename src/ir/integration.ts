@@ -3143,6 +3143,11 @@ export function compileIrPathFunctions(
     loweringPlans?.fnctorParameterPreselection,
     loweringPlans?.fnctorParameterPreselectionIsCurrent,
   );
+  // (#7001) The verifier's string-result rule needs the lane's string carrier.
+  const verifyOptions = {
+    verifyDominanceNaive: readEnv("JS2WASM_IR_VERIFY_DOMINANCE_NAIVE") === "1",
+    stringIsExternref: fromAstResolver.stringIsExternref?.(),
+  };
 
   // -------------------------------------------------------------------------
   // Phase 1 — Build: lower every selected AST function to an IrFunction.
@@ -3169,13 +3174,13 @@ export function compileIrPathFunctions(
   ): ReturnType<typeof verifyIrFunction> => {
     const injection = readEnv("JS2WASM_TEST_INJECT_IR_VERIFY_FAILURE");
     const inject = injection === "1" || injection === ownerName || (injection === "synthetic" && synthesized);
-    if (!inject || fn.blocks.length === 0) return verifyIrFunction(fn);
+    if (!inject || fn.blocks.length === 0) return verifyIrFunction(fn, undefined, undefined, verifyOptions);
     const first = fn.blocks[0]!;
     const malformed: IrFunction = {
       ...fn,
       blocks: [{ ...first, id: ((first.id as number) + 1) as typeof first.id }, ...fn.blocks.slice(1)],
     };
-    return verifyIrFunction(malformed);
+    return verifyIrFunction(malformed, undefined, undefined, verifyOptions);
   };
   for (const integrationSourceFile of integrationSourceFiles) {
     for (const stmt of integrationSourceFile.statements) {
@@ -3979,7 +3984,7 @@ export function compileIrPathFunctions(
         throw new Error("injected synthetic hygiene failure");
       }
       const optimized = runHygienePasses(entry.fn, allocRegistry);
-      const postErrors = verifyIrFunction(optimized);
+      const postErrors = verifyIrFunction(optimized, undefined, undefined, verifyOptions);
       if (postErrors.length > 0) {
         throw new IrInvariantError(
           "verifier-failure",
@@ -4057,7 +4062,7 @@ export function compileIrPathFunctions(
       }
       const changed = after !== before.fn;
       const final = changed ? runHygienePasses(after, allocRegistry) : after;
-      const verifyErrors = verifyIrFunction(final, undefined, declsAfterInline);
+      const verifyErrors = verifyIrFunction(final, undefined, declsAfterInline, verifyOptions);
       if (verifyErrors.length > 0) {
         throw new IrInvariantError(
           "verifier-failure",
@@ -4353,7 +4358,7 @@ export function compileIrPathFunctions(
           ? hygienic
           : batchStringConcat(hygienic, allocRegistry, stringConcatManyArityCap(batchPolicy.batch));
       const final = batched === hygienic ? hygienic : runHygienePasses(batched, allocRegistry);
-      const verifyErrors = verifyIrFunction(final, undefined, declsAfterTU);
+      const verifyErrors = verifyIrFunction(final, undefined, declsAfterTU, verifyOptions);
       if (verifyErrors.length > 0) {
         throw new IrInvariantError(
           "verifier-failure",
@@ -6084,6 +6089,16 @@ function resolveModuleBindingGlobal(
     global.type.kind === storageType.kind &&
     ((global.type.kind !== "ref" && global.type.kind !== "ref_null") ||
       (storageType.kind === global.type.kind && storageType.typeIdx === global.type.typeIdx));
+  if (!storageMatches && identity.valueKind.kind === "dynamic") {
+    // (#7014) `const a: any = x` (x a number const) is NARROWED to f64 by the
+    // #4178 const-chain trace; #5289 (163eb5bc5c) assumed the dynamic carrier.
+    // A contradicted admission, not a corrupt ABI: demote the module-init.
+    throw new IrUnsupportedError(
+      "module-init-legacy-coupling",
+      "build",
+      `module-init: dynamic binding ${globalName} uses narrowed legacy ${global.type.kind} storage`,
+    );
+  }
   if (!storageMatches) {
     throw new IrInvariantError(
       "abi-type-index-mismatch",

@@ -42,7 +42,7 @@ import {
   type FailureTelemetry,
 } from "./output.js";
 import { stampAllocationOwners } from "../wasm/physical/allocation-owner.js";
-import { gateEmittedModule, pushSourceAnchoredDiagnostic } from "./validation.js";
+import { gateEmittedModule, pushSourceAnchoredDiagnostic, withEngineRejectedIrOutcomes } from "./validation.js";
 import { emitBinary, emitBinaryWithSourceMap, emitSourceMappingURLSection } from "../emit/binary.js";
 import {
   extractRuntimeGroup,
@@ -395,7 +395,14 @@ export function finalizePipelineModule(
   // warning-first compatibility lanes (#2961/#2980/#3164) are not an explicit
   // native-first opt-in, while WASI's strict import gate remains authoritative.
   const imports = buildImportManifest(mod);
-  const hostImportInventory = buildHostImportInventory(mod, imports, input.codegenOptions.link, targetEnvironment);
+  // (#6978) Selected host-accelerator families classify as `host-accelerator`.
+  const hostImportInventory = buildHostImportInventory(
+    mod,
+    imports,
+    input.codegenOptions.link,
+    targetEnvironment,
+    targetProfile.accelerators,
+  );
   if (options.semanticProviders === "native-first") {
     const forbidden = hostImportInventory.filter(
       (entry) => entry.classification === "legacy-semantic" || entry.classification === "unknown",
@@ -601,7 +608,7 @@ export function finalizePipelineModule(
       capabilityDiagnostics: capabilityProviderDiagnostics,
       exportBoundaries: exportBoundaryPolicies,
     }),
-    ...telemetry,
+    ...withEngineRejectedIrOutcomes(telemetry, emittedBinaryAccepted, errors), // (#7001)
   };
 }
 /** Preserve produced artifact fields without inventing legacy route telemetry. */

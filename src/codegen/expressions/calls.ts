@@ -40,6 +40,7 @@ import {
 } from "./standalone-dynamic-code.js"; // (#6675/#6676) timers, Function(src); (#6956) refused eval
 import { compileArrayMethodCall, compileArrayPrototypeCall, resolveArrayInfo } from "../array-methods.js";
 import { emitGlobalThisGopdFold } from "../dyn-read.js"; // (#2984)
+import { tryCompileIntlLocaleMethodCall } from "../helpers/host-intl-locale.js"; // (#6986)
 import { tryEmitNullishReceiverCall } from "../nullish-receiver-coercible.js"; // (#4484 B) §7.3.2 on a syntactic null/undefined receiver
 import { tryEmitDynamicGeneratorFunction } from "../generator-function-dynamic.js"; // (#6651 A9)
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "../func-space.js"; // (#1916 S3b) stable-regime minting
@@ -365,7 +366,10 @@ import {
   ensureStandaloneNativeMethodClosure,
   getNativeProtoBuiltinGlue,
 } from "../native-proto.js";
-import { ensureRuntimeEvalAotCallableCarrierTypes } from "../runtime-eval-callable.js";
+import {
+  ensureRuntimeEvalAotCallableCarrierTypes,
+  tryRuntimeEvalRebindCarrierIntrinsic,
+} from "../runtime-eval-callable.js";
 import { RUNTIME_EVAL_AOT_CALLABLE_BRAND_A, RUNTIME_EVAL_AOT_CALLABLE_BRAND_B } from "../runtime-eval-boundary.js";
 import { wrapperProtoSyntacticMember } from "../wrapper-proto-dynamic-demand.js"; // (#4619)
 import { resolveDefaultExpressionImportGlobal } from "../default-expression-import-global.js";
@@ -6966,6 +6970,11 @@ function tryRuntimeEvalApplyCallableIntrinsic(
   fctx: FunctionContext,
   expr: ts.CallExpression,
 ): InnerResult | undefined {
+  const rebound = tryRuntimeEvalRebindCarrierIntrinsic(ctx, fctx, expr, (arg) => {
+    const type = compileExpression(ctx, fctx, arg, { kind: "externref" });
+    if (type && type.kind !== "externref") coerceType(ctx, fctx, type, { kind: "externref" });
+  });
+  if (rebound !== undefined) return rebound;
   if (
     (!ctx.standalone && !ctx.wasi) ||
     ctx.runtimeEvalCallableBoundaryEnabled !== true ||
@@ -7669,6 +7678,10 @@ function compileCallExpression(
   // Syntactic receivers only (see the module header).
   {
     const r = tryEmitNullishReceiverCall(ctx, fctx, expr);
+    if (r !== undefined) return r;
+  }
+  {
+    const r = tryCompileIntlLocaleMethodCall(ctx, fctx, expr); // (#6986) `intl` accelerator: host locale methods
     if (r !== undefined) return r;
   }
 

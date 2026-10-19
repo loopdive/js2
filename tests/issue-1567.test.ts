@@ -65,7 +65,11 @@ verifyProperty(desc.get, "length", {
   configurable: true
 });
 `,
-      {} as never,
+      // Let wrapTest parse the frontmatter. An explicit `{}` meta has no
+      // `includes`, so the propertyHelper.js shim (which rewrites
+      // `verifyProperty(...)` into assertions) never ran and the call reached
+      // the module as a free identifier, which now throws the spec
+      // ReferenceError at run time ("verifyProperty is not defined").
     );
     expect(await run(source)).toBe(1);
   });

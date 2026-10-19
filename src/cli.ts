@@ -94,10 +94,18 @@ Options:
                     a JS host uses to read WasmGC values — and they are GC
                     roots, so wasm-opt cannot strip what they pin.
   --semantic-providers <m>
-                    Semantic implementation policy (#4397): "auto" (default)
-                    preserves compatibility; "native-first" selects migrated
-                    Wasm-native provider families even under a JS host. This
-                    does not disable JS boundary wrappers or platform APIs.
+                    Semantic implementation policy (#4397, #6708):
+                    "native-first" (default) uses the Wasm-native semantic
+                    core in every environment; a JS host keeps its value
+                    bridge and platform APIs. "host-assisted" is the
+                    compatibility profile (the pre-S6 JS-host default),
+                    scheduled for removal in S7. "auto" is a deprecated
+                    alias of "native-first".
+  --host-accelerator <name>
+                    Use the JS host's implementation for one semantic family
+                    under the native-first regime (#6978, repeatable): js-string,
+                    regexp, date or intl. Needs a JS target and native-first;
+                    standalone/wasi or host-assisted builds reject it.
   --explain         Print the compiler-owned provider/capability report and do
                     not write artifacts. Equivalent to the explain subcommand.
   --explain-json    Print that report as stable schema-versioned JSON.
@@ -195,7 +203,9 @@ let watOnly = false;
 let verbose = false;
 // (#4035) Host-bridge export policy; "auto" resolves per target in codegen.
 let hostBridge: "auto" | "always" | "off" = "auto";
-let semanticProviders: "auto" | "native-first" = "auto";
+let semanticProviders: "native-first" | "host-assisted" | "auto" | undefined;
+// (#6978) Named host accelerators for the native-first regime (repeatable).
+const hostAccelerators = new Set<"js-string" | "regexp" | "date" | "intl">();
 // #1950 — default-on optimization for the CLI. Binaryen wasm-opt does
 // materially valuable, safe work the in-compiler passes don't (small-function
 // inlining, array.len-into-local, post-inline null-check cleanup, dead
@@ -371,11 +381,18 @@ for (let i = 0; i < args.length; i++) {
     hostBridge = value;
   } else if (arg === "--semantic-providers" || arg.startsWith("--semantic-providers=")) {
     const value = arg.includes("=") ? arg.slice(arg.indexOf("=") + 1) : args[++i];
-    if (value !== "auto" && value !== "native-first") {
-      console.error(`Error: --semantic-providers expects auto | native-first (got ${value ?? "nothing"})`);
+    if (value !== "native-first" && value !== "host-assisted" && value !== "auto") {
+      console.error(`Error: --semantic-providers expects native-first | host-assisted (got ${value ?? "nothing"})`);
       process.exit(1);
     }
     semanticProviders = value;
+  } else if (arg === "--host-accelerator" || arg.startsWith("--host-accelerator=")) {
+    const value = arg.includes("=") ? arg.slice(arg.indexOf("=") + 1) : args[++i];
+    if (value !== "js-string" && value !== "regexp" && value !== "date" && value !== "intl") {
+      console.error(`Error: --host-accelerator expects js-string | regexp | date | intl (got ${value ?? "nothing"})`);
+      process.exit(1);
+    }
+    hostAccelerators.add(value);
   } else if (arg === "--explain") {
     explainMode = "text";
   } else if (arg === "--explain-json") {
@@ -494,7 +511,9 @@ const compileOptions = {
   // (#4035) Only forward a non-default policy so `--host-bridge auto` stays
   // byte-identical to not passing the flag at all.
   ...(hostBridge !== "auto" ? { hostBridge } : {}),
-  ...(semanticProviders !== "auto" ? { semanticProviders } : {}),
+  // (#6708) Forward any spelling; the compiler owns the "auto" deprecation warning.
+  ...(semanticProviders !== undefined ? { semanticProviders } : {}),
+  ...(hostAccelerators.size ? { hostAccelerators: [...hostAccelerators] } : {}),
   ...(linkedNamespaces.size ? { link: [...linkedNamespaces] } : {}),
   ...(packageLinking !== undefined ? { packageLinking } : {}),
   ...(packageCacheDir ? { packageCacheDir } : {}),
@@ -505,6 +524,17 @@ const compileOptions = {
   ...(strictNoHostImports !== undefined ? { strictNoHostImports } : {}),
   ...(Object.keys(defines).length > 0 ? { define: defines } : {}),
 };
+
+// (#6978) A misplaced accelerator is a usage error: report it like one.
+if (hostAccelerators.size > 0) {
+  const { resolveCompileTargetProfile } = await import("./target-profile.js");
+  try {
+    resolveCompileTargetProfile(compileOptions);
+  } catch (e) {
+    console.error(`Error: ${e instanceof Error ? e.message : String(e)}`);
+    process.exit(1);
+  }
+}
 
 // #2771 — a single-file `compile()` reads exactly ONE file and strips every
 // import, so an entry that imports a relative `./helper` module leaves those

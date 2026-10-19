@@ -113,6 +113,7 @@ import {
 } from "./regexp-symbol-protocol-call.js";
 import { getWellKnownSymbolId } from "./literals.js";
 import { emitTestCapsAcquire, emitTestCapsRelease } from "./regex-scratch-pool.js";
+import { hostRegExpRegisterInstrs } from "./helpers/host-regexp-search.js";
 import {
   ensureDynamicPatternTokenDecoder,
   makeDynamicPatternAccessors,
@@ -2467,6 +2468,7 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
     { op: "i32.const", value: 0 },
     { op: "i32.const", value: 0 },
     { op: "struct.new", typeIdx: structTypeIdx },
+    ...hostRegExpRegisterInstrs(ctx, structTypeIdx), // (#6978)
   ];
 
   pushDefinedFunc(ctx, funcIdx, {
@@ -2553,7 +2555,7 @@ function emitStandaloneRegExpStruct(
   fctx.body.push({ op: "f64.const", value: 0 });
   // fields 7/8: no deferred raw value on a fresh object; field 9: writable.
   fctx.body.push({ op: "ref.null.extern" }, { op: "i32.const", value: 0 }, { op: "i32.const", value: 0 });
-  fctx.body.push({ op: "struct.new", typeIdx });
+  fctx.body.push({ op: "struct.new", typeIdx }, ...hostRegExpRegisterInstrs(ctx, typeIdx));
   return { kind: "ref", typeIdx };
 }
 
@@ -5267,7 +5269,10 @@ export function tryCompileStandaloneRegExpToString(
       propAccess.expression.getSourceFile(),
       propAccess.expression.text,
       "toString",
-      expr.getStart(),
+      // A synthetic `recv.toString()` (e.g. `String(arr)` → #2160's
+      // `tryEmitArrayToStringNative`) has no source position; its receiver
+      // identifier is the real node, and starts inside the same call.
+      (expr.pos >= 0 ? expr : propAccess.expression).getStart(),
     );
     if (transferred !== undefined) {
       const result = tryEmitTransferredObjectToStringCall(ctx, fctx, expr, propAccess.expression, transferred);

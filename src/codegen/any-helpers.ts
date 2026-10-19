@@ -18,6 +18,7 @@ import { addFuncType } from "./registry/types.js";
 import { addStringImportsDelegate, registerEnsureAnyHelpers } from "./shared.js";
 import { registerAnyBoxHelpers, registerAnyUnboxHelpers } from "./any-boxing-helpers.js";
 import { registerAnyEqHelpers } from "./any-eq-helpers.js";
+import { buildThrowJsErrorInstrs } from "./js-errors.js";
 import { buildAnyTag5ExternProjection } from "./any-to-extern-projection.js";
 import { buildFastStrictEqDispatch } from "./extern-eq-fast.js";
 import { bigIntCarrierEqInstrs } from "./bigint-wide.js";
@@ -2075,7 +2076,17 @@ export function ensureAnyHelpers(ctx: CodegenContext): void {
   // decompose this god-function. Byte-identical: registered in the same order
   // with the same bodies; the tag-5 coercion/equality closures are threaded in
   // so their captured environment is unchanged.
-  registerAnyEqHelpers(ctx, addHelper, anyRefNull, anyTypeIdx, toF64Idx, strToNumIdx, tag5ToNumber, tag5ValueEqThen);
+  registerAnyEqHelpers(
+    ctx,
+    addHelper,
+    anyRefNull,
+    anyTypeIdx,
+    toF64Idx,
+    strToNumIdx,
+    tag5ToNumber,
+    tag5ValueEqThen,
+    buildThrowJsErrorInstrs,
+  );
 
   // __any_neg(a) -> ref $AnyValue
   // Negate numeric value: tag 2 → negate i32, tag 3 → negate f64

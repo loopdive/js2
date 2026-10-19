@@ -58,6 +58,8 @@ import { ts, forEachChild } from "../ts-api.js";
 import { exactIndirectEvalStatement } from "../eval-call-shape.js";
 import { collectIrClassInstanceInitializers } from "./class-instance-initializers.js";
 import { literalComputedInstanceMethodKey } from "./class-method-names.js";
+import { classBindingNames, staticMemberBindingIsUnsound } from "./class-overrides.js";
+import { callableParameterMayReceiveForeignSignature } from "./closure-signature-flow.js";
 import { privateMemberMangledName, type IrClassId, type IrUnitId } from "./identity.js";
 import {
   isAsyncIrReady,
@@ -188,6 +190,15 @@ function probeShape(check: () => boolean): boolean {
   typedShapeRejectReason = savedReason;
   return false;
 }
+
+/** (#7003) Selector-owned hooks for `./closure-signature-flow.ts`. */
+const closureSignatureFlowHooks = {
+  slotSignature: (node: ts.FunctionTypeNode) => irClosureSignatureFromFunctionTypeNode(node),
+  get resolveValue() {
+    const resolver = currentModuleBindingResolver;
+    return resolver ? (node: ts.Identifier) => resolver.localValueDeclaration(node) : undefined;
+  },
+};
 
 /** Read and clear the recorded reject detail (used by `planIrCompilation`). */
 function takeShapeRejectDetail(): string | undefined {
@@ -1925,6 +1936,9 @@ function whyNotIrClaimable(
     if (className !== null) currentClassBindings.set(p.name.text, className);
     if (paramType && ts.isFunctionTypeNode(paramType)) {
       const signature = irClosureSignatureFromFunctionTypeNode(paramType);
+      // (#7003) A caller may pass a function of another Wasm signature.
+      if (signature && callableParameterMayReceiveForeignSignature(p, closureSignatureFlowHooks))
+        return "closure-signature-mismatch";
       if (signature) recordCallableProjection(p.name.text, signature.params.length, paramType.type);
     }
 
@@ -6269,6 +6283,9 @@ const NATIVE_TYPED_ARRAY_CLASSES = new Set<string>([
 // by the legacy exception runtime and have no IrClass/extern producer.
 const LEGACY_ERROR_CONSTRUCTOR_CLASSES = new Set<string>(["Error", "TypeError", "RangeError"]);
 
+// (#6981) Known extern classes whose construction has a host-free IR arm.
+const HOST_FREE_EXTERN_CONSTRUCTORS = new Set<string>(["Map", "RegExp", "Date"]);
+
 function isKnownExternClass(name: string): boolean {
   return KNOWN_EXTERN_CLASSES.has(name);
 }
@@ -7772,6 +7789,31 @@ function classMethodProjection(className: string, methodName: string, isStatic: 
   return { status: "missing" };
 }
 
+/**
+ * (#7000) Static binding of instance member `memberName` on a receiver of
+ * `className` is unsound when a class below it overrides the member: the IR
+ * lowers the access to a direct call of `className`'s member, with no `__tag`
+ * dispatch. See `./class-overrides.ts`.
+ */
+function instanceMemberIsVirtual(className: string, memberName: string, receiver: ts.Expression): boolean {
+  const declaration = currentLocalClassDeclarations.get(className);
+  const names = [...new Set([className, ...(declaration ? classBindingNames(declaration) : [])])];
+  return staticMemberBindingIsUnsound(receiver, names, memberName, (node) =>
+    currentModuleBindingResolver?.localVariableDeclaration(node),
+  );
+}
+
+/** (#7000) Does `propertyName` on `className` resolve to an accessor (a `class.call`), not a field slot? */
+function classPropertyIsAccessor(className: string, propertyName: string): boolean {
+  for (let cursor = currentLocalClassDeclarations.get(className); cursor; ) {
+    const own = cursor.members.find((m) => !classElementIsStatic(m) && classElementMayName(m, propertyName));
+    if (own) return ts.isGetAccessorDeclaration(own) || ts.isSetAccessorDeclaration(own);
+    const parent = extendsParentName(cursor);
+    cursor = parent === null ? undefined : currentLocalClassDeclarations.get(parent);
+  }
+  return false;
+}
+
 function classPropertyHasKnownProjectionGap(className: string, propertyName: string): boolean {
   const exactShapes = currentSelectionOptions?.projectedClassShapes;
   let exactShape = exactShapes?.get(className);
@@ -7922,6 +7964,12 @@ function preflightClassPropertyWrite(expression: ts.PropertyAccessExpression, sc
   }
   if (classPropertyWriteHasKnownProjectionGap(receiverClass, expression.name.text)) {
     return capabilityNo("class-member-unsupported", "expr-class-property-write-member", expression);
+  }
+  if (
+    classPropertyIsAccessor(receiverClass, expression.name.text) &&
+    instanceMemberIsVirtual(receiverClass, expression.name.text, expression.expression)
+  ) {
+    return capabilityNo("class-method-virtual", "expr-class-setter-virtual", expression);
   }
   return true;
 }
@@ -9166,6 +9214,20 @@ function phase1NewExpression(
   if (LEGACY_ERROR_CONSTRUCTOR_CLASSES.has(ctorName) && isAmbientConstructor) {
     return capabilityNo("error-constructor-unsupported", "expr-new-error-constructor", expr);
   }
+  // (#6981) A host-free lane (standalone, the native regime in a JS
+  // environment) has no `<Class>_new` import to lower an extern class to, and
+  // every member use on the result is capability-deferred at build. Only the
+  // classes with their own host-free arm (native `$Map`, the gated RegExp/Date
+  // arms) may stay claimed.
+  if (
+    isAmbientConstructor &&
+    !isLocalClass &&
+    isKnownExternClass(ctorName) &&
+    !HOST_FREE_EXTERN_CONSTRUCTORS.has(ctorName) &&
+    hostExternCapability(jsHostExternsEnabled(currentSelectionOptions)) === "defer"
+  ) {
+    return capabilityNo("host-surface-unavailable", "expr-new-extern-host-free", expr);
+  }
   if (isLocalClass) {
     if (localClassHasKnownProjectionGap(ctorName)) {
       return capabilityNo("class-projection-unsupported", "expr-new-local-class-shape", expr);
@@ -9807,6 +9869,14 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
         }
         return capabilityNo("regexp-constructor-unsupported", "expr-regexp-method-target", expr);
       }
+      // (#7014) Every OTHER host-free RegExp method (`(/a/g).toString()`) keeps
+      // that refusal; claimed, it hit from-ast's capability-violation assert.
+      if (
+        currentSelectionOptions?.isRegExpExpression?.(expr.expression.expression) === true &&
+        currentSelectionOptions.supportsBackendCapability?.("host-regexp-constructor") === false
+      ) {
+        return capabilityNo("regexp-constructor-unsupported", "expr-regexp-method-target", expr);
+      }
       if (currentSelectionOptions?.preparedAsyncDateNowCall?.(expr) === true) return true;
       // (#1371) Whitelist f64 Math ops; the ambient receiver is not in scope, so the
       // generic receiver check below would reject these. Recognise the shape
@@ -10013,6 +10083,9 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
         }
         if (expr.arguments.length !== projection.arity) {
           return capabilityNo("call-arity-unsupported", "expr-class-instance-arity", expr);
+        }
+        if (instanceMemberIsVirtual(receiverClass, expr.expression.name.text, expr.expression.expression)) {
+          return capabilityNo("class-method-virtual", "expr-class-instance-virtual", expr);
         }
         if (!isPhase1Expr(expr.expression.expression, scope, localClasses)) return false;
         for (const arg of expr.arguments) {
@@ -10230,6 +10303,12 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
         }
         if (classPropertyHasKnownProjectionGap(receiverClass, expr.name.text)) {
           return capabilityNo("class-member-unsupported", "expr-class-property-member", expr);
+        }
+        if (
+          classPropertyIsAccessor(receiverClass, expr.name.text) &&
+          instanceMemberIsVirtual(receiverClass, expr.name.text, expr.expression)
+        ) {
+          return capabilityNo("class-method-virtual", "expr-class-getter-virtual", expr);
         }
       }
     }

@@ -3461,9 +3461,9 @@ export function lowerIrFunctionBody<S, Slot>(
         //     mirrors `emitStandaloneAwaitUnwrap` (expressions.ts) EXACTLY;
         //     keep the two in lockstep. `ref.test $Promise` discriminates: a
         //     non-`$Promise` externref (plain value / null / non-native
-        //     thenable) passes through unchanged; a `$Promise` yields its
-        //     `value` field regardless of state (pending → null — the AG0
-        //     synchronous-settlement model). Genuine suspension is the ONE
+        //     thenable) passes through unchanged; a REJECTED `$Promise`
+        //     throws its reason (#6995); any other yields its `value` field
+        //     (pending → null — the AG0 synchronous-settlement model). Genuine suspension is the ONE
         //     engine's job; engine-activated fns are never IR-claimed
         //     (`asyncEngineClaims` gate in select.ts), so this arm only ever
         //     sees the sync-model population.
@@ -3514,6 +3514,7 @@ export function lowerIrFunctionBody<S, Slot>(
           blockType: { kind: "val", type: { kind: "externref" } as ValType },
           then: [
             ...handled,
+            ...rejectedAwaitThrow(awaitScratchPromiseIdx, promiseTypeIdx, resolver.ensureExnTag?.(), func.name),
             { op: "local.get", index: awaitScratchPromiseIdx },
             { op: "any.convert_extern" },
             { op: "ref.cast", typeIdx: promiseTypeIdx },
@@ -4038,4 +4039,36 @@ function emitJsToInt32<S>(
   // Stack: [f64_in_range]
   emitter.emitNumericConversion("i32.trunc_sat_f64_u", out);
   // Stack: [i32]
+}
+
+/**
+ * (#6995) The honest-unwrap half of the native-carrier `await` arm — mirrors
+ * `emitStandaloneAwaitUnwrap`'s `throwOnRejected` (src/codegen/async-value-sink-unwrap.ts):
+ * `if ($Promise.state == REJECTED) throw $exn($Promise.value)`, so a rejection
+ * reaches the enclosing `try` instead of being read as the fulfilled value.
+ */
+function rejectedAwaitThrow(
+  scratchIdx: number,
+  promiseTypeIdx: number,
+  exnTag: number | undefined,
+  fn: string,
+): Instr[] {
+  if (exnTag === undefined) throw new Error(`ir/lower: resolver cannot resolve __exn tag for await (${fn}) (#6995)`);
+  const asPromise: Instr[] = [
+    { op: "local.get", index: scratchIdx },
+    { op: "any.convert_extern" },
+    { op: "ref.cast", typeIdx: promiseTypeIdx },
+  ];
+  // $Promise field 0 = `state` (2 = REJECTED, settlement-bodies.ts); field 1 = `value`.
+  return [
+    ...asPromise,
+    { op: "struct.get", typeIdx: promiseTypeIdx, fieldIdx: 0 },
+    { op: "i32.const", value: 2 },
+    { op: "i32.eq" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [...asPromise, { op: "struct.get", typeIdx: promiseTypeIdx, fieldIdx: 1 }, { op: "throw", tagIdx: exnTag }],
+    },
+  ];
 }

@@ -53,6 +53,7 @@
 import type { BlockType, CatchClause, FuncHandle, Instr, ValType, WasmExport, WasmFunction } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { definedFuncAt, definedFuncHandleOf, funcSignatureOf, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
+import { registerExnTagFirstUseHook } from "./registry/physical-imports.js";
 import { addFuncType } from "./registry/types.js";
 import { ensureLateImport, flushLateImportShifts } from "./shared.js";
 
@@ -77,6 +78,34 @@ function hostFacingThrowBoundary(ctx: CodegenContext): boolean {
   if (ctx.targetProfile.semanticProviders === "native-first") return false;
   return ctx.exportsConsumedByWasm !== true;
 }
+
+/**
+ * Register the export-boundary rethrow import the MOMENT the module first needs
+ * an `__exn` tag — i.e. while bodies are still compiling.
+ *
+ * Deliberately not deferred to the wrapping pass itself. By finalize time the
+ * data-struct host bridge has already baked function indices into tables,
+ * globals and its manifest, and an import added there shifts the function index
+ * space underneath them ("export __is_data_struct references missing func index
+ * 13", measured 2026-09-06). Registering here keeps the wrapping pass purely
+ * additive — it mints functions and rewrites export descriptors, never imports.
+ *
+ * A module that ends up wrapping nothing simply loses the import again to
+ * dead-import elimination, which runs after the wrapping pass.
+ *
+ * (#7014) Restored from d3afafe634 after 651034e4fd removed it as dead: the
+ * call site in `ensureExnTag` had been dropped by #5715, so the import was
+ * never registered. Now reached through `registerExnTagFirstUseHook`.
+ */
+function ensureExportThrowRethrowImport(ctx: CodegenContext): void {
+  if (!hostFacingThrowBoundary(ctx)) return;
+  if (ctx.indexSpaceFrozen) return;
+  if (ctx.funcMap.has(RETHROW_HOST_IMPORT)) return;
+  ensureLateImport(ctx, RETHROW_HOST_IMPORT, [EXTERNREF], []);
+  flushLateImportShifts(ctx, ctx.currentFunc ?? null);
+}
+
+registerExnTagFirstUseHook(ensureExportThrowRethrowImport);
 
 /**
  * Exports that must keep their raw wasm-exception behaviour.
@@ -114,9 +143,17 @@ export function wrapHostFacingExportsForThrow(ctx: CodegenContext): void {
   // such a pair would give the same function two different exception contracts
   // depending on which name the host reached it through, so the target handle —
   // not the spelling — decides.
+  // (#7014) A compiler helper can lose its `_` spelling entirely: when a user
+  // export takes `__is_ctor_closure`, the helper is published only under
+  // physical aliases (`$ch$`, `$ch$$$`, the vec bridge's `$v0$`), so the
+  // helper's own `__` name is the remaining signal. Re-pointing those aliases
+  // broke the host-bridge descriptors (#3520 C31).
   const compilerOwnedTargets = new Set<FuncHandle>();
   for (const entry of ctx.mod.exports) {
-    if (entry.desc.kind === "func" && isCompilerOwnedExport(entry.name)) compilerOwnedTargets.add(entry.desc.index);
+    if (entry.desc.kind !== "func") continue;
+    if (isCompilerOwnedExport(entry.name) || definedFuncAt(ctx, entry.desc.index)?.name?.startsWith("__")) {
+      compilerOwnedTargets.add(entry.desc.index);
+    }
   }
 
   const plans: ExportWrapPlan[] = [];
@@ -134,8 +171,8 @@ export function wrapHostFacingExportsForThrow(ctx: CodegenContext): void {
   // forces the in-place decision.
   const internallyReferenced = needsInternalScan ? collectInternalFuncReferences(ctx) : undefined;
 
-  // Registered by the physical import registry; this pass must not add an
-  // import of its own because finalize-time index shifts invalidate ABI maps.
+  // Registered back at `ensureExnTag` — see `ensureExportThrowRethrowImport`
+  // for why this pass must not add an import of its own.
   const rethrowIdx = ctx.funcMap.get(RETHROW_HOST_IMPORT);
   if (rethrowIdx === undefined) return; // host import unavailable — module unchanged
 
@@ -143,6 +180,7 @@ export function wrapHostFacingExportsForThrow(ctx: CodegenContext): void {
   // every `catch` site bakes. Read directly rather than calling `ensureExnTag`,
   // which would close an import cycle with registry/imports.ts.
   const tags = { exnTagIdx: ctx.exnTagIdx, rethrowIdx };
+  const wrappers = new Map<FuncHandle, FuncHandle>();
   for (const plan of plans) {
     if (plan.entry.desc.kind !== "func") continue;
     const target = plan.entry.desc.index;
@@ -150,7 +188,12 @@ export function wrapHostFacingExportsForThrow(ctx: CodegenContext): void {
     if (!signature) continue;
 
     if (!plan.preplanted) {
-      const wrapper = buildUnwrappingWrapper(ctx, plan.entry.name, target, signature.params, signature.results, tags);
+      // One wrapper per target, so two names for one function stay one function.
+      let wrapper = wrappers.get(target);
+      if (wrapper === undefined) {
+        wrapper = buildUnwrappingWrapper(ctx, plan.entry.name, target, signature.params, signature.results, tags);
+        wrappers.set(target, wrapper);
+      }
       plan.entry.desc.index = wrapper;
       continue;
     }

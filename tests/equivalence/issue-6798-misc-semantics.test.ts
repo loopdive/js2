@@ -22,9 +22,14 @@ vi.mock("../../src/ir/select.js", async (importOriginal) => {
 
 describe("#6798 misc probe-backed semantic divergences", () => {
   it("resolve-stage-catch: an untyped throw in resolvePositionType is a hard error, a designed demote a warning", async () => {
+    // (#6981) The arrow carries its return annotation so `test` is IR-claimable
+    // too: a host-free selector (standalone, the native regime) keeps the
+    // conservative caller-direction call-graph closure, which would otherwise
+    // demote `apply` before its parameter type is ever resolved and leave the
+    // channel under test unexercised.
     const src = `
       function apply(fn: () => number): number { return fn() + 1; }
-      export function test(): number { return apply(() => 41); }
+      export function test(): number { return apply((): number => 41); }
     `;
     try {
       inject.mode = "type-error";

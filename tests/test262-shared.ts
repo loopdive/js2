@@ -9,7 +9,11 @@
  * Vitest runs chunks sequentially; fork dies between chunks for full
  * memory reclaim of the vitest process itself.
  */
-import { parseTest262SemanticProviders, test262ResultPrefix } from "../scripts/test262-lane.mjs";
+import {
+  parseTest262SemanticProviders,
+  test262CompileSemanticProviders,
+  test262ResultPrefix,
+} from "../scripts/test262-lane.mjs";
 import {
   requireTest262CompilerPath,
   test262CacheDirectoryName,
@@ -210,7 +214,7 @@ const LINKED_HARNESS_ORACLE = ORACLE_LANE === "linked-harness";
 // (#5383 S3) May this lane link the compiled `Temporal` provider (#4628)?
 // Read ONCE — it consults the pre-warm stamp on disk, and the answer is a
 // property of the run, not of a row. See scripts/test262-temporal.mjs.
-const TEMPORAL_LANE_ENABLED = test262TemporalLaneEnabled(TEST262_TARGET);
+const TEMPORAL_LANE_ENABLED = test262TemporalLaneEnabled(TEST262_TARGET, undefined, TEST262_SEMANTIC_PROVIDERS);
 
 // (#3461) Fast native-harness oracle — the execution side of the fast lane that
 // #3462 stamps above. Active ONLY when `TEST262_ORACLE_MODE=fast` AND the run is
@@ -891,7 +895,7 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
                   // #6776: this path instantiates and classifies the bytes itself; the library default would turn the negative-test arm's compile failure into an incidental pass (see #2920).
                   validate: false,
                   target: TEST262_TARGET,
-                  semanticProviders: TEST262_SEMANTIC_PROVIDERS,
+                  semanticProviders: test262CompileSemanticProviders(TEST262_SEMANTIC_PROVIDERS),
                   inferModuleStrictArguments,
                   scriptGoal,
                   // (#3049 C1 / #3123 / #2900) The FIXTURE compile defers

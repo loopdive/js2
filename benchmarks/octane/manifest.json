@@ -48,6 +48,34 @@
     "box2d.js": {
       "sha256": "83b10c280f004e7b156a9e04d09ce4109892ea92788f7c6c963f7fadf29c7bd4",
       "license": "zlib (Erin Catto) + Google"
+    },
+    "zlib.js": {
+      "sha256": "d8c4bca32e84b38f573d3ee50a38b194afc9fb4e2f79754d952524bff01a898c",
+      "license": "BSD-3-Clause (V8 project authors)"
+    },
+    "zlib-data.js": {
+      "sha256": "b8d093321289574f36116e933e2b3b211bb98df9fe3e761ffb1be550d0e82aed",
+      "license": "zlib (Gailly/Adler) via Emscripten + BSD-3-Clause"
+    },
+    "code-load.js": {
+      "sha256": "32fd38d49bb8794b40e947c70c0c51276bfc2588833a8451a25b1b2bfccad96c",
+      "license": "BSD-3-Clause (V8) + Apache-2.0 (Closure Library) + MIT (jQuery)"
+    },
+    "typescript.js": {
+      "sha256": "fbc5ec16d9c60b1bdcca7e7b9f66fba2fe46c0e04da64088203052e47922ff21",
+      "license": "BSD-3-Clause (V8 project authors)"
+    },
+    "typescript-input.js": {
+      "sha256": "e23d2fe7b3df9dc069c720ab3fb112006c235d0eb416556ecde7c3a2766a0396",
+      "license": "Apache-2.0 (Microsoft TypeScript input)"
+    },
+    "typescript-compiler.js": {
+      "sha256": "9e99fe0ddfe48a2462eca622ade1e1ddd13bf49f8e461a6c53463bbbc1d5363a",
+      "license": "Apache-2.0 (Microsoft TypeScript 0.9)"
+    },
+    "mandreel.js": {
+      "sha256": "fc4a9516e8899bb33df63a69db30797959a138d33233e9fb1ccc57cb91dcd164",
+      "license": "BSD-3-Clause (V8) + Mandreel/Bullet (zlib)"
     }
   },
   "benchmarks": {
@@ -148,14 +176,56 @@
       "validationMessages": [],
       "minReps": 1,
       "preludeVars": []
+    },
+    "zlib": {
+      "files": ["zlib.js", "zlib-data.js"],
+      "suiteName": "zlib",
+      "reference": [152815148],
+      "hasValidation": false,
+      "validationMessages": [],
+      "minReps": 1,
+      "preludeVars": ["read"],
+      "runtimeEval": true
+    },
+    "code-load": {
+      "files": ["code-load.js"],
+      "suiteName": "CodeLoad",
+      "reference": [450000],
+      "hasValidation": true,
+      "validationMessages": ["Incorrect result"],
+      "minReps": 1,
+      "preludeVars": [],
+      "runtimeEval": true
+    },
+    "typescript": {
+      "files": ["typescript.js", "typescript-input.js", "typescript-compiler.js"],
+      "suiteName": "Typescript",
+      "reference": [255011322],
+      "hasValidation": true,
+      "validationMessages": ["Parse errors.", "Wrong checksum."],
+      "minReps": 1,
+      "preludeVars": [],
+      "runtimeEval": true
+    },
+    "mandreel": {
+      "files": ["mandreel.js"],
+      "suiteName": "Mandreel",
+      "reference": [16831872, 49852],
+      "hasValidation": false,
+      "validationMessages": [],
+      "minReps": 1,
+      "preludeVars": [],
+      "runtimeEval": true
     }
   },
   "excluded": [
-    { "bench": "zlib", "reason": "eval (`var zlibEval = eval`) and the d8-only read() builtin" },
-    { "bench": "code-load", "reason": "eval / new Function is the benchmark itself" },
-    { "bench": "typescript", "reason": "eval; 2.5 MB compiler input" },
-    { "bench": "pdfjs", "reason": "GPL, 1.4 MB, new Function, canvas stubs" },
-    { "bench": "mandreel", "reason": "5 MB, eval" },
-    { "bench": "gbemu", "reason": "GPL, 500 KB, canvas/window stubs" }
+    {
+      "bench": "pdfjs",
+      "reason": "GPL, 1.4 MB, new Function, canvas stubs"
+    },
+    {
+      "bench": "gbemu",
+      "reason": "GPL, 500 KB, canvas/window stubs"
+    }
   ]
 }

@@ -84,6 +84,14 @@ function validateTargetProfileCoherence(profile: CompileTargetProfile): readonly
       ? profile.hostValueInterop === "required" || profile.hostValueInterop === "off"
       : profile.hostValueInterop === "enabled" || profile.hostValueInterop === "off";
   if (!validHostValueInterop) diagnostics.push("incoherent target profile host-value interop policy");
+  // (#6978) Accelerators exist only for a JS environment under native-first.
+  if (
+    profile.accelerators !== undefined &&
+    profile.accelerators.length > 0 &&
+    (profile.environment !== "javascript" || profile.semanticProviders !== "native-first")
+  ) {
+    diagnostics.push("incoherent target profile host accelerators");
+  }
   return diagnostics;
 }
 
@@ -180,7 +188,11 @@ export function validateJavaScriptAdapterManifest(manifest: JavaScriptAdapterMan
     }
   }
   for (const descriptor of manifest.imports) {
-    const policy = classifyHostImport(descriptor, manifest.targetProfile.environment);
+    const policy = classifyHostImport(
+      descriptor,
+      manifest.targetProfile.environment,
+      manifest.targetProfile.accelerators,
+    );
     if (policy.classification !== "platform-capability") continue;
     const key = `${descriptor.module}\0${descriptor.name}\0${descriptor.kind}`;
     const owners = capabilityImportOwners.get(key);

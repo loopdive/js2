@@ -30,11 +30,7 @@ import { allocLocal, getLocalType } from "./context/locals.js";
 import { attachSourcePos, getSourcePos } from "./context/source-pos.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { compileExpression, registerCompileStatement } from "./shared.js";
-import {
-  collectBlockScopedNames,
-  discardBlockScopedShadows,
-  saveBlockScopedShadowsForNames,
-} from "./statements/shared.js";
+import { collectBlockScopedNames, discardBlockScopedShadows, saveBlockScopedShadows } from "./statements/shared.js";
 import { resetCompletionValueForStatement, sinkExpressionStatementValue } from "./statements/eval-completion-value.js";
 import { compileWithStatement } from "./with-scope.js";
 import { expressionRunsUserCode, looseEqualityCoercesAnOperand } from "./module-init-collection.js"; // (#4433) bare `typeof f();` · (#5270 R3-F1) loose-eq guard
@@ -570,7 +566,7 @@ function compileStatementInner(ctx: CodegenContext, fctx: FunctionContext, stmt:
     // restores any genuine outer shadows — the CaseBlock path has used exactly
     // this for the same reason.
     const blockNames = collectBlockScopedNames(stmt);
-    const savedLocals = saveBlockScopedShadowsForNames(fctx, blockNames);
+    const savedLocals = saveBlockScopedShadows(fctx, stmt); // (#6994) own pre-hoist slots are not outer
     // (#5271 step 2.3) The block's declarative environment exists before its
     // first statement runs (§13.2.14), so its own `let`/`const` slots must too —
     // otherwise a closure built earlier in the block captures the outer (or

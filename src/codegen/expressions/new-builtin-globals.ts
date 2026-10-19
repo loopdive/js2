@@ -16,8 +16,10 @@ import type { Instr, ValType } from "../../ir/types.js";
 import { ts } from "../../ts-api.js";
 import type { TypeFact } from "../../checker/oracle.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
+import { hostFreeEnvironment } from "../context/types.js";
 import { allocLocal, allocTempLocal, releaseTempLocal } from "../context/locals.js";
 import { addUnionImports, getArrTypeIdxFromVec, getOrRegisterVecType, typedArrayVecStorage } from "../index.js";
+import { taIntElemConversionInstrs, taSourceGetOp } from "../array/ta-int-elem-coercion.js"; // (#7018)
 import { coercionPlan } from "../coercion-plan.js";
 import { emitToString, getExternrefToStringProvider } from "../coercion-engine.js";
 import {
@@ -48,6 +50,7 @@ import { errorCtorNameIsUserFunctionShadowed, errorCtorNameIsUserShadowed } from
 import { coerceType, compileArrowAsClosure, compileExpression } from "../shared.js";
 import type { InnerResult } from "../shared.js";
 import { compileStringLiteral } from "../string-ops.js";
+import { emitAcceleratedDateParse } from "../helpers/host-date-parse.js";
 import { coerceType as coerceTypeImpl } from "../type-coercion.js";
 import { ensureHostStrictSpreadDispatch, ensureNativeStrictSpreadRuntime } from "../iterator-native.js";
 import { ensureDateDaysFromCivilHelper, ensureDateFormatStringHelper, ensureDateStruct } from "./builtins.js";
@@ -1686,7 +1689,8 @@ export function tryCompileBuiltinGlobalNew(
       // import (which made `new Date()` a hard instantiate failure standalone,
       // breaking unrelated Date tests). See the matching Date.now() fallback in
       // expressions/calls.ts.
-      if (ctx.standalone === true) {
+      // (#6708) a JS environment owns a clock capability even under the regime
+      if (ctx.standalone === true && hostFreeEnvironment(ctx)) {
         emitStandaloneDateTimestamp(ctx, fctx);
         fctx.body.push({ op: "struct.new", typeIdx: dateTypeIdx });
         return { kind: "ref", typeIdx: dateTypeIdx };
@@ -1721,7 +1725,9 @@ export function tryCompileBuiltinGlobalNew(
       // through the same TimeClip path below. Gated to standalone / WASI for the
       // same reason as Date.parse (host strings + lazy helper wiring trip the
       // late-import shift class #2043); host keeps the prior ToNumber(str)→NaN.
-      if ((ctx.standalone || ctx.wasi) && isStringTypedArg(ctx, args[0]!)) {
+      if (ctx.standalone && emitAcceleratedDateParse(ctx, fctx, [args[0]!], isStringTypedArg(ctx, args[0]!))) {
+        // (#6978) Native regime + `date` host accelerator: parsed by host Date.parse.
+      } else if ((ctx.standalone || ctx.wasi) && isStringTypedArg(ctx, args[0]!)) {
         emitNativeDateParse(ctx);
         const argType = compileExpression(ctx, fctx, args[0]!, { kind: "externref" });
         if (argType && argType.kind !== "externref") coerceType(ctx, fctx, argType, { kind: "externref" });
@@ -2196,12 +2202,7 @@ export function tryCompileBuiltinGlobalNew(
                 fctx.body.push({ op: "i32.const", value: 0 });
                 fctx.body.push({ op: "local.set", index: copyIndexLocal });
 
-                const srcGetOp =
-                  srcArrDef.element.kind === "i8"
-                    ? "array.get_u"
-                    : srcArrDef.element.kind === "i16"
-                      ? "array.get_s"
-                      : "array.get";
+                const srcGetOp = taSourceGetOp(srcArrDef.element, argSym?.name); // (#7018) view-keyed extension
                 // (#2934 1c) The element-conversion matrix keys on the READ
                 // value's stack kind (packed i8/i16 widen to i32 via get_u/_s).
                 // The old matrix only knew f64↔int, so an EXTERNREF source
@@ -2240,6 +2241,15 @@ export function tryCompileBuiltinGlobalNew(
                   } else {
                     convertInstrs = [{ op: "i64.extend_i32_s" }];
                   }
+                } else if (dstStoreKind === "i32" && ["f64", "externref", "i32"].includes(srcReadKind)) {
+                  // (#7018) ToIntN is modulo 2ⁿ (ToUint8Clamp for Clamped), never saturating.
+                  if (srcReadKind === "externref") addUnionImports(ctx);
+                  convertInstrs = taIntElemConversionInstrs(
+                    ctx,
+                    fctx,
+                    { kind: srcReadKind } as ValType,
+                    typedArrayName,
+                  );
                 } else if (srcReadKind === "externref" && dstStoreKind !== "externref") {
                   // ToNumber the boxed element via the single coercion table
                   // (#2108 — coercionPlan's externref→i32 row is exactly

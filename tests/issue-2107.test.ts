@@ -97,8 +97,12 @@ describe("#2107 standalone typeof conformance over canonical tags", () => {
         expect(await runStandalone(src, target)).toBe(10);
       });
 
-      // (#4258) KNOWN BROKEN — a real silent wrong answer, kept as the
-      // acceptance test for the fix rather than deleted or weakened.
+      // (#4258) Was KNOWN BROKEN — a real silent wrong answer, kept as the
+      // acceptance test for the fix rather than deleted or weakened. It passes
+      // on main as of 2026-10-16 (the issue-tests detector reported the
+      // `it.fails` as UNEXPECTED PASS), so it is a plain `it` now and its
+      // erasure-recording twin is deleted, as that twin's comment required
+      // (#7014). The history below is kept because it explains the kill-switch.
       //
       // `mapTsTypeToWasm`'s union arm lowers `string | undefined` to
       // `(ref null $AnyString)`, a carrier that cannot represent `undefined`,
@@ -117,7 +121,7 @@ describe("#2107 standalone typeof conformance over canonical tags", () => {
       // **Do not make this green by reverting or re-gating #2106.** That
       // reinstates a second defect whose only virtue is hiding this one. The
       // test below this one pins exactly that mistake.
-      it.fails("undefined-any reports typeof 'undefined' (#4258: union erases undefined to null)", async () => {
+      it("undefined-any reports typeof 'undefined' (#4258)", async () => {
         const src = `
           function pick(i: number): string | undefined { return i > 0 ? "hi" : undefined; }
           export function test(): number {
@@ -130,32 +134,14 @@ describe("#2107 standalone typeof conformance over canonical tags", () => {
         expect(await runStandalone(src, target)).toBe(10);
       });
 
-      // The counted, non-silent statement of #4258: this asserts what the
-      // compiler ACTUALLY does today, so the defect is recorded as a value
-      // rather than as an absence. When #4258 lands this flips and must be
-      // deleted together with the `it.fails` above — the pair is the acceptance
-      // test.
-      it("(#4258) records the erasure: `T | undefined` currently answers as null", async () => {
-        const src = `
-          function pick(i: number): string | undefined { return i > 0 ? "hi" : undefined; }
-          export function test(): number {
-            const x = pick(0);
-            // JS says: === null is FALSE, typeof is "undefined".
-            const eqNull = (x === null) ? 1 : 0;
-            const isObj = (typeof x === "object") ? 1 : 0;
-            return eqNull * 10 + isObj;
-          }
-        `;
-        // 11 = both wrong, in the one direction the erasure predicts.
-        expect(await runStandalone(src, target)).toBe(11);
-      });
-
       // KILL-SWITCH for the wrong cure. The legacy `undefined ≡ null` regime
-      // makes the case above LOOK fixed, so someone chasing green could revert
-      // #2106 and believe they had solved it. Pin that the flag changes only
-      // whether the erasure is VISIBLE, never whether it exists: `=== null` is
-      // wrong in BOTH regimes.
-      it("(#4258) the $undefined-singleton flag is not the cure — `=== null` is wrong either way", async () => {
+      // made the case above LOOK fixed, so someone chasing green could revert
+      // #2106 and believe they had solved it. While #4258 was open this pinned
+      // `=== null` as wrong (1) in BOTH regimes. With the erasure gone it
+      // answers the JS-correct 0 in the legacy regime too (measured 2026-10-16,
+      // #7014), so the pin now guards that the legacy flag does not bring the
+      // erasure back.
+      it("(#4258) the $undefined-singleton flag does not reintroduce the erasure — `=== null` is false", async () => {
         const src = `
           function pick(i: number): string | undefined { return i > 0 ? "hi" : undefined; }
           export function test(): number { return (pick(0) === null) ? 1 : 0; }
@@ -163,9 +149,8 @@ describe("#2107 standalone typeof conformance over canonical tags", () => {
         const saved = process.env.JS2WASM_UNDEF_SINGLETON;
         try {
           process.env.JS2WASM_UNDEF_SINGLETON = "0";
-          // JS says 0. The legacy regime gets `typeof` accidentally right and
-          // this one still wrong, which is what makes it a false cure.
-          expect(await runStandalone(src, target)).toBe(1);
+          // JS says 0.
+          expect(await runStandalone(src, target)).toBe(0);
         } finally {
           if (saved === undefined) {
             // biome-ignore lint/performance/noDelete: only `delete` truly unsets an env var

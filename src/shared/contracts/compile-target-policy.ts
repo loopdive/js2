@@ -8,13 +8,29 @@ export type CompileEnvironment = "javascript" | "wasi" | "none" | "unknown";
 
 export type CapabilityPolicy = "ambient-js" | "explicit-only" | "backend-defined";
 
-export type SemanticProviderSelection = "auto" | "native-first";
+/**
+ * Public semantic-provider spelling (#6708 S6). `"native-first"` is the
+ * default in every environment; `"host-assisted"` is the compatibility
+ * profile (byte-identical to the pre-S6 `gc` default), scheduled for removal
+ * in S7; `"auto"` is a deprecated alias of `"native-first"`.
+ */
+export type SemanticProviderSelection = "native-first" | "host-assisted" | "auto";
 
 export type SemanticProviderPolicy = "host-assisted" | "native-first" | "backend-defined";
 
 export type HostValueInteropPolicy = "required" | "enabled" | "off";
 
 export type AmbientPlatform = "node" | "deno";
+
+/**
+ * (#6978) Named host accelerators for the native semantic regime. Each family
+ * keeps its native provider as the default; selecting one swaps in the JS
+ * host's implementation for that family only. The 2026-09-07 stakeholder
+ * constraint names exactly these four (`wasm:js-string` strings, host RegExp,
+ * Date and Intl); everything else host-semantic retires in S7 (#5385).
+ */
+export const HOST_ACCELERATOR_FAMILIES = ["js-string", "regexp", "date", "intl"] as const;
+export type HostAcceleratorFamily = (typeof HOST_ACCELERATOR_FAMILIES)[number];
 
 export interface TargetProfileInput {
   readonly target?: CompileTarget;
@@ -30,9 +46,14 @@ export interface TargetProfileInput {
   readonly strictNoHostImports?: boolean;
   /** Select migrated Wasm-native semantic families independently of the host. */
   readonly semanticProviders?: SemanticProviderSelection;
-  /** Used only to reject a contradictory explicit native-first request. */
+  /**
+   * Rejects a contradictory explicit native-first request; with no explicit
+   * selection, `false` keeps the pre-S6 host-assisted profile (deprecated).
+   */
   readonly nativeStrings?: boolean;
   readonly hostBridge?: "auto" | "always" | "off";
+  /** (#6978) Named host accelerators; validated by `resolveHostAccelerators`. */
+  readonly hostAccelerators?: readonly string[];
 }
 
 /**
@@ -63,4 +84,11 @@ export interface CompileTargetProfile {
    */
   readonly nativeRegime: boolean;
   readonly ambientPlatform?: AmbientPlatform;
+  /**
+   * (#6978) Selected host accelerators, sorted and de-duplicated. Absent when
+   * none is selected, so a default profile — and the JSON adapter manifest that
+   * embeds it — is unchanged. An array rather than a `Set` because the profile
+   * is serialized into the adapter manifest. Query with `hasHostAccelerator`.
+   */
+  readonly accelerators?: readonly HostAcceleratorFamily[];
 }

@@ -386,7 +386,7 @@ describe("#4491 wave-7 — measured residuals (it.fails)", () => {
   // spellings THROW on both arms. Owner: whichever path owns the borrowed
   // `X.prototype` receiver (`transferred-proto-assignment.ts` / the #1888
   // borrowed-method dispatch), not this classifier.
-  it.fails("a SYNTACTIC X.prototype receiver still refuses", async () => {
+  it("a SYNTACTIC X.prototype receiver answers (was an it.fails residual, #7014)", async () => {
     expect(
       await runStandalone(`
         var m = Object.prototype.toString;

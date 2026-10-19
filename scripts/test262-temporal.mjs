@@ -27,6 +27,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { test262CompilerBundleHash } from "./test262-harness-cache.mjs";
+import { test262LaneUsesNativeRegime } from "./test262-lane.mjs";
 
 /** File the pre-warm step writes into the provider cache dir (HOST lane). */
 export const TEMPORAL_PREWARM_STAMP = "prewarm.json";
@@ -59,25 +60,27 @@ export function temporalPrewarmStampName(target, semanticProviders = "auto") {
 const TEMPORAL_PREWARM_STAMP_NATIVE_FIRST = "prewarm-native-first.json";
 
 /**
- * (#6706) Is this the JS-host native-first measurement lane? Standalone is
- * native by construction and keeps its own provider; linear/wasi link none.
+ * (#6706, #6708) Is this the JS-host lane that lowers with the native regime?
+ * Since S6 that is the DEFAULT JS-host lane; the explicit `host-assisted`
+ * control lane is the one that is not. Standalone is native by construction
+ * and keeps its own provider; linear/wasi link none.
  *
  * @param {string | undefined} target
  * @param {string | undefined} semanticProviders
  */
 function isNativeFirstHostLane(target, semanticProviders) {
-  return target === undefined && semanticProviders === "native-first";
+  return target === undefined && test262LaneUsesNativeRegime(target, semanticProviders);
 }
 
 /**
  * (#6706) Whether the compiler builds under the native REGIME right now.
- * `temporalProviderCacheKey` fingerprints the compile OPTIONS but not this
- * opt-in env flag, so the stamp records it and the consumer compares: a
- * provider compiled outside the regime must not certify a regime consumer
- * (its imports would not resolve), and vice versa.
+ * `temporalProviderCacheKey` fingerprints the compile OPTIONS but not the
+ * `JS2WASM_NATIVE_REGIME_JS=0` kill switch, so the stamp records it and the
+ * consumer compares: a provider compiled outside the regime must not certify a
+ * regime consumer (its imports would not resolve), and vice versa.
  */
 function temporalNativeRegimeFlag() {
-  return process.env.JS2WASM_NATIVE_REGIME_JS === "1";
+  return process.env.JS2WASM_NATIVE_REGIME_JS !== "0";
 }
 
 /**
@@ -89,10 +92,10 @@ function temporalNativeRegimeFlag() {
  * host-free provider (#5383): `hostBridge: "off"` is not decoration, it is what
  * makes the provider instantiate with an empty import list.
  *
- * (#6706) The native-first measurement lane (`semanticProviders ===
- * "native-first"` on the JS host target) asks for a provider compiled with
- * native semantic providers, the same way its consumers compile (and, with
- * JS2WASM_NATIVE_REGIME_JS=1, under the native regime). `semanticProviders`
+ * (#6706, #6708) The JS-host regime lane — the DEFAULT lane since S6 —
+ * asks for a provider compiled the same way its consumers compile (native
+ * semantic providers under the native regime); the `host-assisted` control
+ * lane asks for the pre-S6 host-semantics provider. `semanticProviders`
  * and `hostBridge` are both in `temporalProviderCacheKey`'s fingerprint, so
  * this re-keys the artifact while the host key stays byte-identical. The
  * host-semantics provider is never substituted: that would label host
@@ -104,8 +107,11 @@ function temporalNativeRegimeFlag() {
  */
 export function temporalProviderCompileOptions(target, semanticProviders = "auto") {
   if (target === "standalone") return { target: "standalone", hostBridge: "off" };
-  if (isNativeFirstHostLane(target, semanticProviders))
-    return { semanticProviders: "native-first", hostBridge: "always" };
+  // (#6708) The default JS-host lane IS the regime lane: the default policy is
+  // native-first, so it spells no `semanticProviders` (only the bridge it
+  // has always pinned). The explicit control lane asks for host-assisted.
+  if (isNativeFirstHostLane(target, semanticProviders)) return { hostBridge: "always" };
+  if (target === undefined) return { semanticProviders: "host-assisted" };
   return undefined;
 }
 
@@ -227,7 +233,7 @@ export function writeTemporalPrewarmStamp(cacheDir, info, target, semanticProvid
   if (isNativeFirstHostLane(target, semanticProviders)) {
     // (#6706) Record the provider POLICY, not just its key: the key does not
     // see the JS2WASM_NATIVE_REGIME_JS opt-in (see `temporalNativeRegimeFlag`).
-    stamp.semanticProviders = semanticProviders;
+    stamp.semanticProviders = "native-first";
     stamp.nativeRegime = temporalNativeRegimeFlag();
   }
   writeFileSync(

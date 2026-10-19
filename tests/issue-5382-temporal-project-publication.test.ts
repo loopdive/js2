@@ -7,19 +7,24 @@ import { createInterface } from "node:readline";
 import { createHash } from "node:crypto";
 import { build } from "esbuild";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { standaloneIntlShimSource } from "../src/temporal-intl-shim.ts";
 
 const source = "export const Temporal = { marker: 'π' };\n";
 const entry = "__js2wasm_temporal_entry.js";
 const pkg = "node_modules/@js-temporal/polyfill";
-const expected = {
+// (#6748/#6708) A provider compiled under the native regime — the default
+// policy since S6, and standalone/WASI — gets the module-scoped Intl shim
+// prepended; only the explicit host-assisted profile publishes the bare source.
+const expectedFiles = (shimmed: boolean) => ({
   [`${pkg}/package.json`]: Buffer.from(
     JSON.stringify({ name: "@js-temporal/polyfill", version: "0.0.0-linked", main: "index.js" }),
   ).toString("hex"),
-  [`${pkg}/index.js`]: Buffer.from(source).toString("hex"),
+  [`${pkg}/index.js`]: Buffer.from(shimmed ? `${standaloneIntlShimSource()}\n${source}` : source).toString("hex"),
   [entry]: Buffer.from(
     'import { Temporal } from "@js-temporal/polyfill";\nexport function __js2wasm_temporal_probe() { return typeof Temporal; }\n',
   ).toString("hex"),
-};
+});
+const expected = expectedFiles(true);
 const root = fs.realpathSync(fs.mkdtempSync(path.join(tmpdir(), "issue-5382-")));
 const bundle = path.join(root, "provider.mjs");
 const fixture = path.join(import.meta.dirname, "fixtures/issue-5382-temporal-publication-child.mjs");
@@ -102,12 +107,12 @@ function child(cacheDir: string, extra: Record<string, unknown> = {}) {
   return { ready, done, release: () => process.stdin.end("x"), abandon: () => process.stdin.end() };
 }
 
-function complete(out: Outcome) {
+function complete(out: Outcome, files: Record<string, string> = expected) {
   expect(out.ok, JSON.stringify(out.error)).toBe(true);
   expect(out.consumed).toHaveLength(1);
   expect(out.consumed[0].entry).toBe(path.join(out.finalRoot, entry));
   expect(out.consumed[0].entry).not.toContain(".staging-");
-  expect(out.consumed[0].files).toEqual(expected);
+  expect(out.consumed[0].files).toEqual(files);
 }
 function untouched(out: Outcome) {
   expect(
@@ -474,26 +479,30 @@ describe("#5382 complete immutable source publication (stubbed compiler, real fi
       { fast: true },
       { nativeStrings: true },
       { utf8Storage: true },
-      { semanticProviders: "native-first" },
+      { semanticProviders: "host-assisted" },
       { hostBridge: "off" },
       { platform: "node" },
     ];
     const roots = new Set<string>();
     for (const compileOptions of cases) {
       const result = await child(dir, { compileOptions }).done;
-      complete(result);
+      const hostAssisted = (compileOptions as { semanticProviders?: string }).semanticProviders === "host-assisted";
+      const shimmed = !hostAssisted || "target" in compileOptions;
+      complete(result, expectedFiles(shimmed));
       const options = {
         target: "gc",
         fast: false,
         nativeStrings: false,
         utf8Storage: false,
-        semanticProviders: "auto",
+        // (#6708) the cache key spells the normalized policy.
+        semanticProviders: hostAssisted ? "host-assisted" : "native-first",
         hostBridge: "auto",
         platform: "web",
         ...compileOptions,
       };
       const hash = createHash("sha256");
-      for (const part of [source, JSON.stringify(options)]) hash.update(`${part.length}:${part}\n`);
+      const keyedSource = shimmed ? `${standaloneIntlShimSource()}\n${source}` : source;
+      for (const part of [keyedSource, JSON.stringify(options)]) hash.update(`${part.length}:${part}\n`);
       expect(path.basename(result.finalRoot)).toBe(`temporal-project-v2-${hash.digest("hex")}`);
       expect(result.consumed[0].options).toMatchObject({
         ...compileOptions,

@@ -39,15 +39,14 @@
  *   node scripts/prewarm-temporal-provider.mjs --cache-dir <dir>
  *   node scripts/prewarm-temporal-provider.mjs --target standalone
  *   node scripts/prewarm-temporal-provider.mjs --target both
- *   JS2WASM_NATIVE_REGIME_JS=1 node scripts/prewarm-temporal-provider.mjs \
- *     --target host --semantic-providers native-first
+ *   node scripts/prewarm-temporal-provider.mjs --target host --semantic-providers host-assisted
  *
- * (#6706) `--semantic-providers native-first` builds the provider the
- * native-first measurement lane links: compiled with native semantic providers
- * under the native regime, stamped `prewarm-native-first.json` (with the regime
- * flag recorded) so it never certifies — or is certified by — the host lane.
- * Only meaningful with `--target host`; it REQUIRES JS2WASM_NATIVE_REGIME_JS=1
- * because that is the regime the CI lane compiles its consumers under.
+ * (#6706, #6708) `--target host` builds the provider the default JS-host lane
+ * links — since S6 that lane is the native regime, so the provider is compiled
+ * under it and stamped `prewarm-native-first.json` (regime flag recorded).
+ * `--semantic-providers host-assisted` builds the pre-S6 host-semantics
+ * provider for the explicit control lane, stamped `prewarm.json`; neither
+ * stamp certifies the other lane.
  *
  * Requires `scripts/compiler-bundle.mjs` built from `scripts/compiler-bundle-entry.ts`
  * (`pnpm run build:compiler-bundle`) — the entry that publishes the provider.
@@ -60,6 +59,7 @@ import {
   withTemporalCompilerFingerprint,
   writeTemporalPrewarmStamp,
 } from "./test262-temporal.mjs";
+import { parseTest262SemanticProviders } from "./test262-lane.mjs";
 
 /**
  * Which providers to build. `host` is spelled out rather than left implicit so
@@ -81,31 +81,28 @@ function parseTargets(argv) {
   return targets.length > 0 ? [...new Set(targets)] : [undefined];
 }
 
-/** (#6706) `auto` (default) or `native-first`. */
+/**
+ * (#6706, #6708) The lane identity: `auto` (the default, native-first since S6;
+ * `native-first` is the same lane) or the `host-assisted` control.
+ */
 function parseSemanticProviders(argv, targets) {
   const index = argv.indexOf("--semantic-providers");
   if (index < 0) return "auto";
   const value = argv[index + 1];
-  if (value !== "auto" && value !== "native-first") {
+  let lane;
+  try {
+    lane = parseTest262SemanticProviders(value ?? "nothing");
+  } catch {
     console.error(
-      `prewarm-temporal-provider: --semantic-providers must be auto|native-first (got ${value ?? "nothing"})`,
+      `prewarm-temporal-provider: --semantic-providers must be native-first|host-assisted|auto (got ${value ?? "nothing"})`,
     );
     process.exit(2);
   }
-  if (value === "native-first") {
-    if (targets.some((target) => target !== undefined)) {
-      console.error("prewarm-temporal-provider: --semantic-providers native-first is only defined for --target host");
-      process.exit(2);
-    }
-    if (process.env.JS2WASM_NATIVE_REGIME_JS !== "1") {
-      console.error(
-        "prewarm-temporal-provider: --semantic-providers native-first needs JS2WASM_NATIVE_REGIME_JS=1 " +
-          "(the regime the native-first lane compiles its consumers under)",
-      );
-      process.exit(2);
-    }
+  if (lane === "host-assisted" && targets.some((target) => target !== undefined)) {
+    console.error("prewarm-temporal-provider: --semantic-providers host-assisted is only defined for --target host");
+    process.exit(2);
   }
-  return value;
+  return lane;
 }
 
 function parseCacheDir(argv) {
@@ -140,15 +137,10 @@ async function main() {
 
   const polyfillSource = await loadTemporalPolyfillSource();
   for (const target of targets) {
-    const label = semanticProviders === "native-first" ? "host/native-first" : (target ?? "host");
-    // The host/standalone lanes keep their pre-#6706 call verbatim; only the
-    // native-first lane (#6706) passes its semantic-provider policy.
-    // (#6882) …plus the compiler's identity, so a stale provider is a miss.
-    const compileOptions = withTemporalCompilerFingerprint(
-      semanticProviders === "auto"
-        ? temporalProviderCompileOptions(target)
-        : temporalProviderCompileOptions(target, semanticProviders),
-    );
+    const label = target ?? (semanticProviders === "host-assisted" ? "host/host-assisted" : "host/native-first");
+    // (#6882) The lane's options plus the compiler's identity, so a stale
+    // provider is a miss.
+    const compileOptions = withTemporalCompilerFingerprint(temporalProviderCompileOptions(target, semanticProviders));
     // The key MUST be computed with the same options the build uses, or the
     // stamp certifies an artifact nobody will ask for and the consuming lane
     // refuses with a key mismatch it cannot act on.
