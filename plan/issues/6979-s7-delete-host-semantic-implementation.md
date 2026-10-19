@@ -4698,3 +4698,88 @@ general first-class undefined, canonical mixed property/callable/storage
 providers, source special prototype/method semantics, atomic source/public
 publication, Linear/WASI construction and architecture/full retirement
 acceptance remain open. Both issues remain in progress and PR6762 stays draft.
+
+### S7-ab frontend dependency cuts (2026-10-19, Codex)
+
+Continue from signed `46d313b1b790a6cd9ebecf60216110c78ca085f0`.
+The fresh cycle check still reports six growing direction counts. Frontend
+helpers import the legacy TypeScript runtime-selection shim even though they
+use only its canonical static namespace. A source-fact producer also imports
+the IR runtime module solely for a data namespace, while its structural facts
+are shared by frontend, allocation cloning and detached validation.
+
+Use the existing frontend TypeScript leaf for those static imports and the
+existing shared error class instead of the IR outcomes facade. Give the
+index-free source allocation facts one shared data-only owner, preserving the
+old IR re-exports and exact namespace/schema/validator. Do not relocate or
+weaken opaque requirement issuers, mutate preservation receipts, expand source
+admission, or raise cycle allowances to make the graph green.
+
+Readers/mutators enumerated: emitSourceObjectNew writes the facts through the
+builder; allocation cloning, inlining and specialization preserve the source
+namespace; prepared allocation validation and native construction requirements
+read/validate it; the codec carries its data. The TypeScript shim re-exports
+the exact frontend/typescript binding; the five frontend value importers use
+no runtime-selected API. Its sixth frontend importer is type-only. The Boolean
+return audit uses the same shared IrUnsupportedError class that outcomes
+already re-exports. Behavior and full source/property authority stay intact.
+
+#### S7-ab verified implementation and handoff
+
+All six frontend imports (five value, one type-only) now use the existing
+frontend TypeScript leaf. This is the exact namespace that the legacy shim
+already re-exports, not a runtime-selected replacement. The Boolean return
+audit imports the original shared diagnostic class directly; constructor
+identity and failure classification are preserved.
+
+The source allocation namespace, object construction metadata interface and
+structural validator have one shared leaf owner. The old IR paths re-export
+that same constant/function/type. The complete validator declaration matches
+signed parent `46d313b1b790a6cd9ebecf60216110c78ca085f0` exactly. Source
+property order, cloning, specialization, codec replay and strict write modes
+are unchanged. No opaque issuer or currentness check was moved or weakened;
+these facts still do not authorize native construction or public entry.
+
+Fresh exact-parent graph comparison: frontend-to-IR value imports **19 → 17**;
+frontend-to-legacy-shim imports **5 → 0**, removing that two-way directory pair.
+The reverse shim-to-frontend leaf re-export still exists as a one-way edge.
+Growing direction metrics fall from **six to four**, not to zero. The largest
+file-level SCC remains **712**, with **four** nontrivial SCCs. Total files
+**1977 → 1978**, value edges **10828 → 10829** (the compatibility contract
+re-export adds one). This does not claim a reduction in the file-level cycle.
+
+- **49/49 focused cases** pass, including **15/15 new** guards and live
+  namespace/class identity checks, source facts, inferred return contracts,
+  incremental strictness and zero-import standalone/WASI strictness execution.
+- A broader **189-case / six-file** run reports **40 pass / 149 fail** on both
+  candidate and a fresh clean worktree at the exact signed parent. Every full
+  row/error matches after replacing only worktree path prefixes, including
+  file-URL prefixes. Native construction passes **22/22**, data replay **8/8**
+  and cycle detector controls **7/7**. The two historical custody suites retain
+  **3 pass / 149 fail of 152**. Their guards stop at the Deno raw-profile and
+  program-ABI-contract source receipts; they do not certify deeper retirement
+  obligations. No receipt, expectation or skip was changed.
+- All **33** policy inventories/binaries and **six** native compiled controls
+  match the retained published-parent reports. No new host import, graph copy,
+  semantic provider, selector or frozen AST body expansion.
+- Typecheck/lint/format, size/function (**+12 source LOC**, no allowance),
+  coercion/oracle, layering/fallback and flat-directory checks pass. Inventory
+  valid with zero errors, architecture incomplete. All global policy fields
+  and prior file classifications are unchanged; only the genuine shared leaf
+  receives a new classification. No root/floor/allowed-edge relaxation.
+- Preservation-only checks pass **6/6 full + 6/6 cut**. Strict closure retains
+  the two nonliteral imports; retirement remains uncertified. The 779-case
+  compatibility cohort and full Test262 were not rerun here.
+
+Evidence: `plan/audit/6979-frontend-dependency-cuts-20261019.json`.
+The temporary clean parent checkout was used only for the exact control and
+archived through the managed workflow after confirming no local changes.
+Reports remain in this worktree's ignored `.tmp/`; the checkout is recoverable.
+
+Next: the four remaining growing direction counts need genuine producer/
+backend separation, not filename shuffling, weaker authentication or waivers.
+The historical custody failures also remain required retirement work. Full
+catalog algorithms/population, authenticated source/public publication,
+foreign/dynamic carriers, canonical mixed providers, general first-class
+undefined and Linear/WASI construction remain open. Both issues remain in
+progress and PR6762 stays draft behind its prerequisite stack.

@@ -1,8 +1,8 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
-import { ts } from "../ts-api.js";
+import { ts } from "./typescript.js";
 import { forEachInstrDeep, type IrFunction, type IrInstr, type IrType, type IrValueId } from "../ir/core/nodes.js";
-import { IrUnsupportedError } from "../ir/outcomes.js";
+import { IrUnsupportedError } from "../shared/contracts/ir-preparation-errors.js";
 
 const EXTERNREF: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "externref" }) });
 

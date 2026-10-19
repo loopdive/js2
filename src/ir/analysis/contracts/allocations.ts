@@ -3,8 +3,7 @@
 import type { AllocKind, AllocSiteId, IrSiteId } from "../../core/nodes.js";
 import type { IrType } from "../../core/types.js";
 
-/** Index-free producer facts, unlike analysis results, survive allocation cloning. */
-export const IR_ALLOCATION_SOURCE_FACTS = "source-facts";
+export { IR_ALLOCATION_SOURCE_FACTS } from "../../../shared/contracts/allocation-source-facts.js";
 
 /**
  * A live allocation site. `metadata` is stored out-of-band in the registry

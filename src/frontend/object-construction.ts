@@ -2,7 +2,10 @@
 import { ts } from "./typescript.js";
 import type { IrFunctionBuilder } from "../ir/builder.js";
 import type { IrType, IrValueId } from "../ir/core/nodes.js";
-import { SOURCE_OBJECT_CONSTRUCTION, type IrSourceObjectConstruction } from "../ir/runtime/object-construction.js";
+import {
+  IR_ALLOCATION_SOURCE_FACTS as SOURCE_OBJECT_CONSTRUCTION,
+  type IrSourceObjectConstruction,
+} from "../shared/contracts/allocation-source-facts.js";
 
 /** Preserve source property order independently of canonical storage coordinates. */
 export function emitSourceObjectNew(

@@ -52,7 +52,7 @@
  * branch, and the pre-existing cooked-text behaviour for a genuinely
  * synthesized template is unchanged.
  */
-import { ts } from "../ts-api.js";
+import { ts } from "./typescript.js";
 
 /** The raw source token for `node`, or `undefined` when it has none. */
 function rawTokenText(node: ts.Node): string | undefined {

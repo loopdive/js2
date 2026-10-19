@@ -1,5 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-import type { ts } from "../ts-api.js";
+import type { ts } from "./typescript.js";
 import type { IrFunctionBuilder } from "../ir/builder.js";
 import type { IrValueId } from "../ir/core/nodes.js";
 import { sourcePropertyWriteFailure } from "./source-strictness.js";

@@ -1,5 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-import { ts } from "../ts-api.js";
+import { ts } from "./typescript.js";
 import { irTypeEquals, irVal, type IrType } from "../ir/core/types.js";
 import { IrUnsupportedError } from "../shared/contracts/ir-preparation-errors.js";
 

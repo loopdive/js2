@@ -1,0 +1,179 @@
+{
+  "schemaVersion": 1,
+  "checkpoint": "S7-ab frontend parser/error dependency cuts and shared allocation source facts",
+  "parentCommit": "46d313b1b790a6cd9ebecf60216110c78ca085f0",
+  "candidate": "Identified by exact sourceHashes; signed checkpoint follows",
+  "harness": {
+    "node": "v24.4.1",
+    "vitest": "3.2.4",
+    "forks": 2,
+    "flags": ["--experimental-wasm-exnref"],
+    "fullTest262": false
+  },
+  "sourceHashes": {
+    "src/shared/contracts/allocation-source-facts.ts": "2e70d54c13fa5144564c851c0e18e97b2da5b421ed5336a7f3a4246f9ef36c01",
+    "src/ir/runtime/object-construction.ts": "d1e13a22d36ccb02268c17eb54b63b83066781c31755dfd572aea04992165baf",
+    "src/ir/analysis/contracts/allocations.ts": "c9aa1aa64d46a1fb7ef7c53348fd91758d99460cd793c44d8c602a958307886d",
+    "src/frontend/object-construction.ts": "859166536a2582a9ddd3b0bd75fe0d37c291b4da602eb7173bd153a06af25cf1",
+    "src/frontend/logical-record-type.ts": "38dfddf5e8cae037c393b0fb431785e25f0efadab7d84cc1f62a754c11aede7a",
+    "src/frontend/source-strictness.ts": "14067396f5fe97b76a61632d214a5112993d86cd1542b37a9829c30b48d1c97d",
+    "src/frontend/use-strict-directive.ts": "6b3ab192dbc9be971f6b16ec62c6884f1fcc8c5fda8cdb9e90e2357857aa5979",
+    "src/frontend/boolean-return-boundary.ts": "a60e3b84a593a8593eb90ec2146d230ae44db6a17745782f9264d17e3d9bae10",
+    "src/frontend/object-write.ts": "a9b354b95f8c665fcc8afc4af058559011e7d1cb40a1c85287e2798833c06a9c",
+    "src/frontend/builtins/build-ir.ts": "ea8818c32e26a3b9cf107fc83e18a068d79104613cc194d80e991dd310b68c01",
+    "scripts/compiler-boundaries.json": "f6cb4cedd4ae03397a6ccbfbf23685d258b6ec947dc2abcd8ea656aeed3e5279",
+    "tests/issue-6979-frontend-dependency-cuts.test.ts": "09359af2bedc2b0af906913e9d68166adb80d7883cdd79a020ffca83762a15c0"
+  },
+  "scope": {
+    "canonicalParserAndDiagnosticConstructorIdentitiesPreserved": true,
+    "frontendLegacyShimImportsRemoved": { "value": 5, "typeOnly": 1 },
+    "oneSharedAllocationSourceFactOwner": true,
+    "oldIrCompatibilityExportsRetained": true,
+    "namespace": "source-facts",
+    "schema": "source-object-construction-v1",
+    "exactParentValidatorDeclarationSha256": "2c006f6b2dafd9c2db1539ff892523aa3f113fe59af380a21470da4b3d0422f5",
+    "opaqueIssuerOrCurrentnessChecksRelocatedOrWeakened": false,
+    "newHostImportsGraphCopyOrSemanticProvider": false,
+    "newSourcePublicAdmissionOrFrozenAstExpansion": false,
+    "newRootFloorAllowanceOrAllowedEdge": false,
+    "existingFileClassificationsChanged": false,
+    "newSharedFoundationModules": 1,
+    "fullFrontendOrMigrationCompleted": false
+  },
+  "tests": {
+    "focused": { "cases": 49, "passed": 49, "failed": 0, "skipped": 0, "files": 5 },
+    "newCases": { "cases": 15, "passed": 15, "failed": 0 },
+    "broader": {
+      "cases": 189,
+      "passed": 40,
+      "failed": 149,
+      "skipped": 0,
+      "files": 6,
+      "comparison": "Fresh clean signed-parent worktree at exact parentCommit, same Node/config/forks/flags",
+      "fullRowsEqual": true,
+      "normalization": "Replace only exact candidate/parent worktree path prefixes, including candidate file-URL encoded prefix; retain all filenames, lines and full error messages",
+      "normalizedFullRowsSha256": "6009a831e8f89ba1cb359ac744866ba05ac554f9ab6ba4a826d3ca2fb8838119",
+      "normalizedHashFormat": "jq -Sc .candidate.rows of the comparison artifact, including final newline",
+      "nativeConstruction": { "passed": 22, "cases": 22 },
+      "dataReplay": { "passed": 8, "cases": 8 },
+      "cycleDetectorControls": { "passed": 7, "cases": 7 },
+      "historicalCustody": {
+        "cases": 152,
+        "passed": 3,
+        "failed": 149,
+        "observedGuardErrors": [
+          { "error": "Deno post-position main successor: complete raw source profile mismatch", "cases": 104 },
+          { "error": "runtime program relocation: length/SHA256: src/ir/program-abi-contracts.ts", "cases": 45 }
+        ],
+        "deeperRetirementInvariantsCertified": false,
+        "errorSignatureIsNotDefectAttribution": true
+      }
+    },
+    "receiptsOldExpectationsOrSkipsChanged": false,
+    "existing779CaseCompatibilityCohortRerun": false
+  },
+  "graph": {
+    "referenceMainMergeBase": "ae913d622f3cb5c4136e43a27594b8ec48e4c933",
+    "parentComparisonIsFresh": true,
+    "frontendToIr": { "before": 19, "after": 17 },
+    "frontendToLegacyShim": { "before": 5, "after": 0 },
+    "legacyShimToFrontendLeaf": { "before": 1, "after": 1, "nowOneWay": true },
+    "growingDirectionMetrics": { "before": 6, "after": 4 },
+    "largestSccSize": { "before": 712, "after": 712 },
+    "sccCountOver1": { "before": 4, "after": 4 },
+    "files": { "before": 1977, "after": 1978 },
+    "valueEdges": { "before": 10828, "after": 10829 },
+    "valueEdgeGrowthReason": "Canonical allocation namespace compatibility re-export to the shared owner",
+    "fileLevelCycleReductionClaimed": false,
+    "remainingGrowthAgainstMainBase": {
+      "backend->ir": { "base": 115, "candidate": 117 },
+      "codegen->ir": { "base": 298, "candidate": 301 },
+      "ir->codegen": { "base": 74, "candidate": 75 },
+      "ir->frontend": { "base": 7, "candidate": 10 }
+    },
+    "waiverOrBaselineChange": false
+  },
+  "policy": {
+    "completeInventoriesAndBinaries": 33,
+    "nativeCompiledControls": 6,
+    "equalToRetainedPublishedParentReports": true,
+    "freshParentPolicyBinaryRunThisTurn": false,
+    "allGlobalFieldsAndPriorFileClassificationsUnchanged": true,
+    "inventoryValid": true,
+    "inventoryErrors": 0,
+    "architectureComplete": false
+  },
+  "artifacts": {
+    "focused": {
+      "path": ".tmp/s7ab-focused.json",
+      "sha256": "9807176f1151f4052ef76fb17cf11d4c21781860cb3ce03b0e5009f4c26ddb53"
+    },
+    "candidateBroader": {
+      "path": ".tmp/s7ab-contracts.json",
+      "sha256": "eee89cadd117059b58017d26072ea184bbef5e091904ef0c5270fd1cb5cb2814"
+    },
+    "parentBroader": {
+      "path": ".tmp/s7ab-parent-contracts.json",
+      "sha256": "91b6889b14d418aa9832f57c05fbccb5a6e0e129822c65e5d2525933e3193698"
+    },
+    "fullComparison": {
+      "path": ".tmp/s7ab-contract-comparison.json",
+      "sha256": "df0fb75c5a66e4bdaf7f100c04b2f723a7a45177e5ef03f9330eaa309681f647"
+    },
+    "parentGraph": {
+      "path": ".tmp/s7ab-parent-cycles.json",
+      "sha256": "20110b0c459ffc90fdc6f335369b067b7b70bfcec93b602e7cdeeee6e0d32241"
+    },
+    "candidateGraph": {
+      "path": ".tmp/s7ab-cycles-after.json",
+      "sha256": "18a1001c88cd1afd40fc0712b3162af4f6bb316567ac49fcbae2ab37e21ee077"
+    },
+    "policy": {
+      "path": ".tmp/s7ab-policy.log",
+      "sha256": "17f87021b75df26b865737c49331d7749a160bb621e955115d1786ef16f253dd"
+    },
+    "nativeControls": {
+      "path": ".tmp/s7ab-native.log",
+      "sha256": "3b2b598b433a5802cd71989c1bb4f1f31b21af605afe596685e74c7f120f7895"
+    }
+  },
+  "gates": {
+    "typecheck": "passed",
+    "lint": "passed",
+    "format": "passed",
+    "loc": { "status": "passed", "netSourceLines": 12, "allowance": false },
+    "functionBudget": "passed",
+    "wholePrSizeAndFunctionScope": {
+      "referenceMergeBase": "ae913d622f3cb5c4136e43a27594b8ec48e4c933",
+      "sourceFiles": 371,
+      "netSourceLines": -17654,
+      "locPassed": true,
+      "functionBudgetPassed": true,
+      "existingTwoIssueFunctionGrantsUnchanged": true
+    },
+    "coercion": "passed",
+    "oracle": "passed",
+    "layering": "passed",
+    "flatDirectory": "passed",
+    "fallbacks": "passed",
+    "importCycles": "four remaining growing direction metrics; no waiver",
+    "preservationOnly": { "full": "6/6 passed", "cut": "6/6 passed" },
+    "strictClosure": "open: nonliteral imports in src/optimize.ts:412 and src/runtime/platform-capability-adapter.ts:151",
+    "retirementCertified": false
+  },
+  "parentControl": {
+    "worktree": "/Users/thomas/.codex/worktrees/6979-s7ab-parent-control/ts2wasm",
+    "headVerified": true,
+    "noLocalChangesBeforeCleanup": true,
+    "managedArchiveRequested": true,
+    "managedArchiveConfirmed": true,
+    "reportsRetainedOutsideControlCheckout": true
+  },
+  "remaining": [
+    "Four growing direction counts require real producer/backend separation, not renamed files or weaker authority",
+    "Historical custody suites still fail earlier guards; full retirement remains unverified",
+    "Remaining catalog algorithms, lifted calls, singleton/property population and atomic authenticated source/public publication",
+    "Foreign/dynamic identity, mixed property/callable/storage providers, general first-class undefined and Linear/WASI construction",
+    "Full conformance/retirement acceptance and prerequisite stack; Markdown issues in progress and PR6762 draft"
+  ]
+}

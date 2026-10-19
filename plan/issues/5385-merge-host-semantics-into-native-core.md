@@ -1542,3 +1542,30 @@ retirement acceptance remain open. Both issues stay in progress; the PR stays
 draft. The 779-case compatibility cohort and full Test262 were not rerun here.
 
 Evidence: `plan/audit/6979-native-realm-base-algorithms-20261019.json`.
+
+### S7-ab: frontend dependency cuts
+
+Frontend helpers now use the existing canonical TypeScript leaf rather than
+the legacy runtime-selection facade, and the existing shared diagnostic class
+directly. Index-free source allocation facts have one shared owner, preserving
+the original namespace/schema and exact validator declaration; IR compatibility
+exports retain the same identities. No source or public-provider admission
+changes, new host imports or boundary graph copying.
+
+**49/49 focused cases** pass, including **15/15 new**. Fresh exact-parent
+comparison confirms the broader **189 cases remain 40 pass / 149 fail**, with
+identical full rows/errors after worktree-path normalization only. The two
+historical custody suites still stop at earlier source-receipt guards; this
+does not certify deeper retirement invariants. Native construction passes
+**22/22**, data replay **8/8** and detector controls **7/7**. All **33** policy
+binaries/inventories and **six** native compiled controls remain identical.
+
+Frontend-to-IR value edges fall **19 → 17** and frontend-to-legacy-shim edges
+**5 → 0**. Growing direction metrics drop **six → four** without a waiver;
+the largest file-level SCC is still **712** and total value edges grow by one
+for the shared compatibility export. Architecture/strict closure and the
+historical custody suites remain incomplete. The remaining catalog, foreign
+identity, source/public publication, mixed providers and Linear/WASI work also
+stay open. Both issues stay in progress and the PR stays draft.
+
+Evidence: `plan/audit/6979-frontend-dependency-cuts-20261019.json`.

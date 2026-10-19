@@ -1,5 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-import { ts } from "../../ts-api.js";
+import { ts } from "../typescript.js";
 import { lowerFunctionAstToIr, type IrFromAstResolver } from "../../ir/from-ast.js";
 import { collectIrDirectCallLoweringPlans, type IrDirectCallTarget } from "../../ir/ast-lowering-plans.js";
 import type { AllocSiteRegistry } from "../../ir/alloc-registry.js";
