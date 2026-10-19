@@ -1003,3 +1003,78 @@ uncertified.
 `array-flat-native.ts` (3) and `array-slice-native.ts` (3), for 43 raw hits.
 Keep JS-backed object machinery at the explicit interop boundary only; collapse
 semantic and carrier choices onto the native WasmGC implementation.
+
+### S7-c top-level array semantic handoff (2026-10-19, Codex)
+
+This sixth bounded S7-c checkpoint completes the 43-site top-level array group
+on `codex/6979-s7c-ir-arms`. S7 remains `in-progress`; the PR remains stacked
+and draft until its prerequisites land.
+
+**Ratchet.** The reviewed reduction is banked:
+
+| Measure | Array/object checkpoint | Top-level array checkpoint |
+| --- | ---: | ---: |
+| Raw `ctx.standalone` hits in `src/` | 1,374 | **1,331** |
+| Matching source files | 416 | **410** |
+| Six-file top-level array group | 43 | **0** |
+
+The group is `array-methods.ts`, `array-prototype-borrow.ts`,
+`array-object-proto.ts`, `array-nonindex-key.ts`, `array-flat-native.ts` and
+`array-slice-native.ts`.
+
+**Classification and normalization.** Thirty-eight semantic/carrier sites now
+name the WasmGC backend directly: array HOFs, equality, sparse backing growth,
+generic borrowed methods, native flatten/slice, prototype glue and the expando
+bag do not depend on whether JavaScript is the surrounding environment. Two
+sites that really unwrap or spread a JS facade use `jsValueBoundary`; one
+callback-safety site uses `hostFreeEnvironment`; two comment-only hits were
+removed.
+
+This makes explicit what the earlier normalization already did:
+`ctx.standalone` is initialized from `targetProfile.nativeRegime`, not from the
+literal `standalone` target. In other words, it had already selected native
+semantics in default JS-host WasmGC builds. Replacing that compatibility alias
+with backend/environment/boundary predicates does not drop host interop; it
+prevents future code from mistaking native semantics for a host-free
+environment. The old tests and comments that still say the JS-host lane is
+byte-unchanged are therefore stale migration-era descriptions.
+
+**Boundary objects.** This checkpoint does not copy arrays or objects into a
+second representation. Wasm-owned arrays keep their native carrier and expose
+the existing live facade only when a value crosses the JavaScript boundary.
+Caller-owned JS values keep their identity at that boundary. The dynamic
+spread and typed-array facade unwrap paths are the only two sites in this group
+that deliberately retain JS machinery.
+
+**Validation.** The candidate has the following evidence:
+
+- `issue-4397-native-semantic-js-host.test.ts` remains 64/64 and
+  `issue-6979-array-object-mode-collapse.test.ts` remains 3/3, directly covering
+  live JS boundary identity and the native carrier model.
+- The wider focused array run has 158 passing and six failing assertions. One
+  cannot run because this checkout lacks its test262 fixture. Four standalone
+  Array-subclass assertions still expect the old fail-loud result, and one
+  JS-host `toLocaleString` assertion still expects the retired semantic import;
+  the conditions changed here are branch-equivalent for those configurations
+  because the pre-checkpoint `ctx.standalone` already meant `nativeRegime`.
+- Equivalence remains 20 failing, 2,008 passing and 22 known failures; two
+  baseline failures pass and there are **no new regressions**.
+- TypeScript 7 typecheck, Biome lint, Prettier, standalone-arm ratchet,
+  host-import policy, IR fallback, import-cycle, flat-directory, LOC, function,
+  coercion, oracle and verdict-oracle gates pass.
+- Host-import policy remains 33 probes / 452 imports / zero `regime-gap` or
+  `unknown` imports, with runtime metrics at 12,066 lines, 1,959
+  `resolveImport` lines / 7 cases, 897 owned-adapter lines and 1,194 explicit
+  capability lines.
+- Compiler-boundary inventory remains
+  `inventory-valid-architecture-incomplete` with `errors: []`. Dead-export
+  preservation remains 6/6 full and 6/6 cut witnesses; the same two nonliteral
+  dynamic imports keep strict closure open and retirement uncertified.
+
+**Next handoff.** Continue with a bounded object/property dispatcher group.
+The largest remaining top-level concentrations are `object-ops.ts` (36),
+`property-access.ts` (34) and `property-access-dispatch.ts` (31); split that
+101-site area into reviewable semantic, environment and boundary checkpoints
+rather than changing it as one mechanical batch. Keep native WasmGC objects as
+the semantic/storage authority and reuse JS-backed objects only at the explicit
+value boundary.

@@ -1,8 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
- * #2717 — Wasm-native `Array.prototype.flat` / `Array.prototype.flatMap` for the
- * host-free lanes (`--target standalone`), over the dynamic array-like
- * substrate.
+ * #2717 — Wasm-native `Array.prototype.flat` / `Array.prototype.flatMap` for
+ * the WasmGC semantic core, over the dynamic array-like substrate.
  *
  * Before this module the standalone lane had only two narrow arms: a depth-1
  * `array.copy` concatenation for a statically HOMOGENEOUS nested vec
@@ -57,10 +56,9 @@
  *   - The 2^53-1 target-index TypeError is not emitted: no carrier can hold
  *     that many elements, so it is unreachable in practice.
  *
- * Standalone-only (`ctx.standalone`): the array-like arms of
- * `__extern_get_idx` these bodies read through exist only there — the same
- * gate `ensureNativeArrayHof` and `ensureNativeArrayProducer` carry. Emitted
- * as append-only defined funcs (no funcIdx shift), idempotent per name.
+ * WasmGC-only: the bodies use the native array-like object MOP rather than a
+ * host semantic provider. Emitted as append-only defined funcs (no funcIdx
+ * shift), idempotent per name.
  */
 import type { ts } from "../ts-api.js";
 import type { Instr, ValType } from "../ir/types.js";
@@ -462,7 +460,7 @@ function buildFlatMapBody(
  * unavailable, in which case callers keep their previous behaviour.
  */
 export function ensureNativeArrayFlat(ctx: CodegenContext, methodName: string): number | undefined {
-  if (!ctx.standalone || !NATIVE_FLAT_METHODS.has(methodName)) return undefined;
+  if (ctx.targetProfile.backend !== "wasmgc" || !NATIVE_FLAT_METHODS.has(methodName)) return undefined;
   const helperName = `__arrprod_${methodName}`;
   const existing = ctx.funcMap.get(helperName);
   if (existing !== undefined) return existing;
@@ -483,7 +481,7 @@ export function ensureNativeArrayFlat(ctx: CodegenContext, methodName: string): 
  * (nothing emitted, stack untouched) when the substrate is unavailable.
  */
 export function emitFlattenDepth1Extern(ctx: CodegenContext, fctx: FunctionContext): boolean {
-  if (!ctx.standalone) return false;
+  if (ctx.targetProfile.backend !== "wasmgc") return false;
   const deps = resolveDeps(ctx);
   if (deps === undefined) return false;
   const flattenIdx = ensureFlattenInto(ctx, deps);

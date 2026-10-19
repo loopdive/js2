@@ -23,8 +23,9 @@
 //    element (both saturate to the same index).
 //
 // This module owns the §10.4.2.2 classification and routes the non-index case
-// to the array's NAMED store: the #3537 expando bag in standalone, the host
-// `__extern_*` bridge in gc. Both spellings route, so they cannot disagree.
+// to the array's NAMED store: the #3537 expando bag in WasmGC, and the legacy
+// dynamic provider in the linear backend. Both spellings route, so they cannot
+// disagree.
 //
 // Scope discipline — compile-time constants use the dedicated fast routes,
 // while dynamic numeric/object keys use the property-key dispatch:
@@ -489,8 +490,8 @@ export function compileElementIndexI32(ctx: CodegenContext, fctx: FunctionContex
 /**
  * Dynamic object-key READ for a vec receiver. The receiver is already on the
  * stack; canonicalize the key once with ToPropertyKey, then let the existing
- * standalone/host `__extern_get` dispatch choose element, expando, prototype,
- * or ordinary-object semantics.
+ * native/legacy `__extern_get` dispatch choose element, expando, prototype, or
+ * ordinary-object semantics.
  */
 export function emitDynamicVecElementGet(
   ctx: CodegenContext,
@@ -505,7 +506,11 @@ export function emitDynamicVecElementGet(
   fctx.body.push({ op: "local.get", index: recvLocal });
   fctx.body.push({ op: "extern.convert_any" });
   const keyFact = ctx.oracle.typeFactOf(key);
-  if (numberAtRuntime && ctx.standalone && (keyFact.kind === "any" || keyFact.kind === "unknown")) {
+  if (
+    numberAtRuntime &&
+    ctx.targetProfile.backend === "wasmgc" &&
+    (keyFact.kind === "any" || keyFact.kind === "unknown")
+  ) {
     const branched = emitNumberOrKeyVecGet(ctx, fctx, key, compile);
     if (branched !== undefined) return branched;
   }
@@ -644,21 +649,21 @@ function isNamedNumericOrBooleanSpelling(s: string): boolean {
 /**
  * Resolve the helper that reaches the array's NAMED-property store.
  *
- * Standalone/wasi: the #3537 expando bag accessors (`__vec_prop_get` /
+ * WasmGC: the #3537 expando bag accessors (`__vec_prop_get` /
  * `__vec_prop_set`) directly. `__extern_get`/`__extern_set` cannot be used
  * here — their `$__vec_base` prologue treats any key whose `__unbox_number` is
  * not NaN as a vec ELEMENT and returns terminally, and standalone's
  * `__unbox_number` parses native strings, so a numeric-looking key never
  * reaches the bag through them (see the exported-name note in vec-props.ts).
  *
- * Host/gc: `__extern_*` is the host import and JS already implements
+ * Legacy linear: `__extern_*` is the provider import and already implements
  * §10.4.2.2 exactly — `arr[4294967295] = v` creates a named property and
  * leaves `length` alone — so the plain dynamic call is both correct and the
  * only thing available (the bag is standalone-only).
  */
 function resolveNamedPropHelper(ctx: CodegenContext, fctx: FunctionContext, kind: "get" | "set"): number | undefined {
-  // Ask for the dynamic accessor FIRST in both lanes. In host mode that IS the
-  // answer; in standalone it is what arms the object runtime, and the #3537 bag
+  // Ask for the dynamic accessor FIRST in both backends. In linear that IS the
+  // answer; in WasmGC it arms the object runtime, and the #3537 bag
   // helpers are reserved as part of that arming — so the `funcMap` lookup below
   // is empty until this call has happened.
   const dynamicIdx =
@@ -666,14 +671,14 @@ function resolveNamedPropHelper(ctx: CodegenContext, fctx: FunctionContext, kind
       ? ensureLateImport(ctx, "__extern_get", [EXTERNREF, EXTERNREF], [EXTERNREF])
       : ensureLateImport(ctx, "__extern_set", [EXTERNREF, EXTERNREF, EXTERNREF], []);
   flushLateImportShifts(ctx, fctx);
-  if (!ctx.standalone && !ctx.wasi) return dynamicIdx;
-  // Standalone: the bag accessor, or nothing. Falling back to `__extern_*` here
+  if (ctx.targetProfile.backend !== "wasmgc") return dynamicIdx;
+  // WasmGC: the bag accessor, or nothing. Falling back to `__extern_*` here
   // would be worse than not firing at all — its vec prologue would swallow the
   // key as an element and silently drop the write.
   return ctx.funcMap.get(kind === "get" ? VEC_PROP_GET : VEC_PROP_SET);
 }
 
-/** Push the key as an `externref` native/host string constant. */
+/** Push the key as an `externref` native/provider string constant. */
 function pushKeyString(ctx: CodegenContext, fctx: FunctionContext, key: string): void {
   addStringConstantGlobal(ctx, key);
   fctx.body.push(...stringConstantExternrefInstrs(ctx, key));
@@ -707,20 +712,20 @@ export function isDynamicStringVecKey(ctx: CodegenContext, key: ts.Expression): 
 }
 
 /**
- * Host/gc runtime dispatch for `vec[key]` when `key` is a dynamic string.
+ * Legacy-linear runtime dispatch for `vec[key]` when `key` is a dynamic string.
  *
  * A string can denote either an array index (`"0"`) or a named expando
  * (`"bar"`), so compiling it eagerly as i32 is unsound (`"bar"` became index
  * zero). The host's ordinary property operation performs ToPropertyKey and the
- * array-index classification at runtime. Standalone keeps its existing route
- * until its native helper gains the full non-canonical index classifier.
+ * array-index classification at runtime. WasmGC keeps its native route until
+ * its helper gains the full non-canonical index classifier.
  */
 export function emitDynamicStringVecElementGet(
   ctx: CodegenContext,
   fctx: FunctionContext,
   key: ts.Expression,
 ): ValType | null {
-  if (ctx.standalone || ctx.wasi || !isDynamicStringVecKey(ctx, key)) return null;
+  if (ctx.targetProfile.backend === "wasmgc" || !isDynamicStringVecKey(ctx, key)) return null;
   const funcIdx = resolveNamedPropHelper(ctx, fctx, "get");
   if (funcIdx === undefined) return null;
   fctx.body.push({ op: "extern.convert_any" });
@@ -772,7 +777,7 @@ export function emitNonIndexVecElementSet(
   return EXTERNREF;
 }
 
-/** Host/gc write twin of {@link emitDynamicStringVecElementGet}. */
+/** Legacy-linear write twin of {@link emitDynamicStringVecElementGet}. */
 export function emitDynamicStringVecElementSet(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -781,7 +786,7 @@ export function emitDynamicStringVecElementSet(
   value: ts.Expression,
   compile: (expr: ts.Expression, hint?: ValType) => ValType | null,
 ): ValType | null {
-  if (ctx.standalone || ctx.wasi || !isDynamicStringVecKey(ctx, key)) return null;
+  if (ctx.targetProfile.backend === "wasmgc" || !isDynamicStringVecKey(ctx, key)) return null;
   const funcIdx = resolveNamedPropHelper(ctx, fctx, "set");
   if (funcIdx === undefined) return null;
 

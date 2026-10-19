@@ -203,7 +203,7 @@ function assertThrowsBailApplies(
   borrowRecvWasmType: ValType | undefined,
 ): boolean {
   if (
-    (ctx.standalone || ctx.wasi) &&
+    ctx.targetProfile.backend === "wasmgc" &&
     ARRAY_LIKE_SEARCH_METHODS.has(methodName) &&
     !receiverHasPlainClosedStructLength(ctx, borrowRecvWasmType)
   ) {
@@ -369,20 +369,20 @@ export function compileArrayLikePrototypeCall(
   }
 
   // #2036 S6 step 1 — stop the invalid-Wasm / host-import-leak bleed in
-  // standalone. The receiver here is a borrowed array-like `$Object` (real
+  // WasmGC. The receiver here is a borrowed array-like `$Object` (real
   // `__vec_`/`__arr_` arrays already returned `undefined` above and take the
   // dedicated native path). The search (`indexOf`/`lastIndexOf`/`includes`) and
   // result-building (`filter`/`map`/`reduce`/`reduceRight`) arms below leak host
   // imports (`__host_eq`/`__same_value_zero`, `__js_array_new`/`__js_array_push`)
   // and trip the binary-emitter local-type bug under `--target standalone`/`wasi`
   // — producing a module that fails to instantiate or returns a silent-wrong
-  // value. Per the #1888 dual-mode invariant ("any uncertainty ⇒ fail loud,
+  // value. Per the #1888 fail-loud invariant ("any uncertainty ⇒ fail loud,
   // never invalid Wasm"), refuse loudly instead. The callback-iteration methods
   // (`forEach`/`some`/`every`/`find`/`findIndex`) have a working native `$Object`
   // arm (#2036 PR-1) and fall through unaffected. Host/gc mode is untouched
   // (gated on standalone||wasi). Step 2 (real generic arm + emitter fix) removes
   // entries from this set as native paths land.
-  if ((ctx.standalone || ctx.wasi) && standaloneArrayLikeMethodRefused(methodName, callExpr)) {
+  if (ctx.targetProfile.backend === "wasmgc" && standaloneArrayLikeMethodRefused(methodName, callExpr)) {
     reportError(
       ctx,
       callExpr,
@@ -746,9 +746,9 @@ export function compileArrayLikePrototypeCall(
   const toTruthy: Instr[] =
     closureInfo.returnType === null
       ? // void callback: call_ref leaves nothing on stack. Its result is `undefined`,
-        // which is FALSY (#6898, `filter/15.4.4.20-9-c-iii-2`); the host lane keeps
-        // its historical constant 1 (byte-identical), the native regime answers 0.
-        [{ op: "i32.const", value: ctx.standalone ? 0 : 1 }]
+        // which is FALSY (#6898, `filter/15.4.4.20-9-c-iii-2`). The native
+        // WasmGC semantic core answers 0; the legacy linear path keeps 1.
+        [{ op: "i32.const", value: ctx.targetProfile.backend === "wasmgc" ? 0 : 1 }]
       : closureInfo.returnType.kind === "f64"
         ? // NaN is falsy in JS; f64.ne(0) treats NaN as truthy. Use |x|>0 instead.
           [{ op: "f64.abs" }, { op: "f64.const", value: 0 }, { op: "f64.gt" }]
@@ -858,15 +858,14 @@ function compileArrayLikePrototypeSearch(
   // `Array.prototype.METHOD.call(receiver, ...methodArgs)`, where
   // callExpr.arguments[0] is `receiver` (passed to us as `receiverArg`) and
   // [1+] are the method arguments. Search methods need at least one method
-  // argument: the search value — except under standalone/wasi (#3317), where
+  // argument: the search value — except in the WasmGC semantic core (#3317), where
   // the no-search-arg form (`Array.prototype.indexOf.call(obj)` /
   // `[].includes.call(obj)`) must STILL run the observable length coercion
   // (§23.1.3.15/.17/.20 step 2 reads and ToLengths `obj.length` — a throwing
   // valueOf/toString/getter propagates from there, e.g. indexOf/15.4.4.14-3-22
   // and includes/return-abrupt-tonumber-length). The search element is simply
-  // `undefined` then. Host/gc keeps the legacy bail (its host bridge handles
-  // the form natively).
-  if (callExpr.arguments.length < 2 && !(ctx.standalone || ctx.wasi)) return undefined;
+  // `undefined` then. The legacy linear backend keeps its existing bail.
+  if (callExpr.arguments.length < 2 && ctx.targetProfile.backend !== "wasmgc") return undefined;
 
   // #1360 PR #274 follow-up: bail to the legacy `__proto_method_call` host
   // bridge when the search argument is statically null or undefined.
@@ -903,12 +902,12 @@ function compileArrayLikePrototypeSearch(
     [{ kind: "externref" }, { kind: "f64" }],
     [{ kind: "i32" }],
   );
-  // (#1461/#54) Element comparison. Standalone/WASI route through the native
+  // (#1461/#54) Element comparison. WasmGC routes through the native
   // pure-Wasm `__extern_strict_eq` (===, indexOf/lastIndexOf) /
   // `__extern_same_value_zero` (includes) helpers — composed from
   // `__any_from_extern` + `__any_strict_eq` — so the search arm leaks no host
-  // import. Host/gc mode keeps the `__host_eq` / `__same_value_zero` host imports.
-  const nativeCmp = ctx.standalone || ctx.wasi;
+  // semantic import. The legacy linear backend retains its provider imports.
+  const nativeCmp = ctx.targetProfile.backend === "wasmgc";
   const cmpFn = nativeCmp
     ? isIncludes
       ? ensureExternSameValueZeroHelper(ctx)
@@ -1083,8 +1082,8 @@ export function compileArrayPrototypeCall(
   const methodAccess = propAccess.expression; // Array.prototype.METHOD
   const methodName = methodAccess.name.text;
 
-  // Check that the receiver of .METHOD is Array.prototype — or, under
-  // standalone/wasi (#3317), an EMPTY array literal: `[].includes.call(obj, x)`
+  // Check that the receiver of .METHOD is Array.prototype — or, under the
+  // WasmGC semantic core (#3317), an EMPTY array literal: `[].includes.call(obj, x)`
   // is the test262 corpus's canonical spelling of the same §23.1.3 generic
   // borrow (`[].includes` IS `Array.prototype.includes` — the literal only
   // supplies the prototype). The generic member-call path this form otherwise
@@ -1092,8 +1091,8 @@ export function compileArrayPrototypeCall(
   // ("illegal cast", e.g. includes/return-abrupt-get-length.js), so route it
   // through the same borrow compiler as the `Array.prototype.` spelling.
   // Empty literals only — a non-empty literal's element expressions would need
-  // spec-order evaluation that dropping the literal here would skip. Host/gc
-  // is untouched (its generic path delegates to the real host method).
+  // spec-order evaluation that dropping the literal here would skip. The
+  // legacy linear backend retains its existing path.
   let protoExpr: ts.Expression = methodAccess.expression;
   // Unwrap parens / `as` casts so `([] as any[]).includes.call(…)` matches the
   // bare `[].includes.call(…)` corpus form.
@@ -1106,7 +1105,7 @@ export function compileArrayPrototypeCall(
     ts.isIdentifier(protoExpr.expression) &&
     protoExpr.expression.text === "Array";
   const isEmptyArrayLiteralBorrow =
-    (ctx.standalone || ctx.wasi) && ts.isArrayLiteralExpression(protoExpr) && protoExpr.elements.length === 0;
+    ctx.targetProfile.backend === "wasmgc" && ts.isArrayLiteralExpression(protoExpr) && protoExpr.elements.length === 0;
   if (!isArrayProtoBorrow && !isEmptyArrayLiteralBorrow) return undefined;
 
   // First argument to .call() is the receiver object
@@ -1124,7 +1123,7 @@ export function compileArrayPrototypeCall(
   // closure emits an INVALID module ("need 3, got 2"). The spec loop is
   // receiver-agnostic — it reads through `__extern_length` / `__extern_get_idx`
   // — so the array-like receivers this spelling exists for work directly.
-  if ((ctx.standalone || ctx.wasi) && methodName === "concat") {
+  if (ctx.targetProfile.backend === "wasmgc" && methodName === "concat") {
     const nativeConcat = compileArrayConcatNativeSpecFromExprs(ctx, fctx, receiverArg, callExpr.arguments.slice(1));
     if (nativeConcat !== undefined) return nativeConcat;
   }
@@ -1141,7 +1140,7 @@ export function compileArrayPrototypeCall(
   // typed synthetic-call route can compile this spelling but then traps when
   // the borrowed receiver is dynamically represented. Keep the direct
   // `array.push(...)` path untouched and refuse only the borrowed form.
-  if ((ctx.standalone || ctx.wasi) && methodName === "push") {
+  if (ctx.targetProfile.backend === "wasmgc" && methodName === "push") {
     reportError(
       ctx,
       callExpr,
@@ -1150,9 +1149,9 @@ export function compileArrayPrototypeCall(
     );
     return VOID_RESULT;
   }
-  // (#2863 Phase 2) `toLocaleString` is array-native only under standalone/wasi;
-  // host keeps the `__extern_toLocaleString` path.
-  if (methodName === "toLocaleString" && !ctx.standalone && !ctx.wasi) return undefined;
+  // (#2863 Phase 2) `toLocaleString` belongs to the native WasmGC semantic core;
+  // the legacy linear backend retains its provider path.
+  if (methodName === "toLocaleString" && ctx.targetProfile.backend !== "wasmgc") return undefined;
 
   // Resolve array info from shape map or TypeScript type.
   //
