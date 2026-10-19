@@ -689,3 +689,73 @@ The next S7-c branch should start from this head and take one of the planned
 `src/codegen/declarations/` + `registry/` (56 hits). Run
 `check:standalone-arms -- --update-on-decrease` only after the directory is at
 its reviewed lower count; never raise another directory's ceiling.
+
+### S7-c statement-arm handoff (2026-10-19, Codex)
+
+This second bounded S7-c slice continues on `codex/6979-s7c-ir-arms` after the
+IR checkpoint. S7 remains `in-progress`; this checkpoint removes the statement
+directory's complete regime fork without claiming the program-level migration
+is complete.
+
+**Ratchet.** The reviewed reductions are banked:
+
+| Measure | IR checkpoint | Statement checkpoint |
+| --- | ---: | ---: |
+| Raw `ctx.standalone` hits in `src/` | 1,590 | **1,549** |
+| Matching source files | 494 | **486** |
+| `src/codegen/statements/` hits | 37 | **0** |
+
+The two additional `src/codegen/` and two `src/codegen/declarations/` drops
+come from renaming the internal persistent-Script context fact from
+`standaloneScriptVarBindings` to `sharedScriptVarBindings`; the public compile
+option remains unchanged. The WasmGC backend check remains explicit where the
+old regime bit also excluded the linear backend.
+
+**Classification.** The 37 statement occurrences were reviewed individually:
+
+- The optional `document` guard is environmental and now asks
+  `hostFreeEnvironment(ctx)`.
+- Strict switch equality, native async iteration, sparse-array reads,
+  iterator-close EH, for-in key formatting, proxy enumeration, native
+  RegExp/subarray/object-identity carrier inference, and direct-eval capture
+  are semantic decisions. Their host branches are deleted and the native path
+  is unconditional inside the WasmGC statement lowering.
+- Standard try/catch/finally now has one tagged standardized-EH encoding. The
+  legacy structured-EH `catch_all` / `__get_caught_exception` sidecar path is
+  gone from ordinary statement lowering.
+- Arguments objects always use the native branded vec when identity is needed;
+  the `__register_arguments` host overlay is deleted.
+- Spread argument materialization closes the previously documented WASI gap:
+  opaque iterables use `__array_from_iter_n`, `__extern_length`, and
+  `__extern_get_idx` in every environment. `issue-2202` now exercises typed and
+  opaque spreads under JavaScript, standalone, and WASI (33/33 passing).
+
+This also retires the now-unreachable host RegExp-result carrier exception and
+the statement-local `__host_eq` / `__async_iterator` semantic imports. JS
+machinery remains at the explicit value boundary and for named capabilities or
+accelerators; none of these statement decisions creates a second semantic
+implementation.
+
+**Validation.** TypeScript 7 typecheck, Biome lint, Prettier, the standalone-arm
+ratchet, IR-fallback, import-cycle, flat-directory, LOC, function, coercion and
+oracle gates pass. Host-import policy remains 33 probes / 452 imports / zero
+regime-gap or unknown imports, with runtime metrics unchanged at 12,066 lines,
+1,959 `resolveImport` lines / 7 cases, 898 owned-adapter lines and 1,194
+explicit-capability lines. The equivalence gate is unchanged at 20 failing,
+2,008 passing and 22 known failures, with two baseline failures now passing and
+no new regressions. Compiler-boundary inventory retains
+`inventory-valid-architecture-incomplete` with `errors: []`; dead-export
+analysis retains only the two known nonliteral dynamic-import witnesses.
+
+The focused statement-family run had 258 passing, 22 failing and 37 skipped
+assertions. An exact A/B on pre-edit commit `1c9cc738da` reproduced all 22
+failures row-for-row with the same error shapes; they are existing S7-stack
+debt, not statement-slice regressions. The strengthened spread suite then
+passed 33/33 on the candidate.
+
+**Next handoff.** Continue with `src/codegen/declarations/` plus
+`src/codegen/registry/`, now 41 + 13 = 54 raw hits. Preserve the same rule:
+environment decisions use the explicit environment/value-boundary facts,
+semantic decisions collapse to native WasmGC, accelerators name their family,
+and any host-only construct with no native counterpart is a measured regime
+gap rather than a renamed mode arm.

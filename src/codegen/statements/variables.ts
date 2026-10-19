@@ -16,7 +16,7 @@ import {
 } from "./eager-capture-box.js";
 import { redeclarationWidenedLocalSlotType } from "../declarations/redeclared-var-widening.js";
 import type { CodegenContext, FunctionContext, NullGuardFact, NullishExclusion } from "../context/types.js";
-import { emitCoercedLocalSet, noJsHost } from "../expressions/helpers.js";
+import { emitCoercedLocalSet } from "../expressions/helpers.js";
 import { emitUndefined } from "../expressions/late-imports.js";
 import {
   nativeGeneratorBindingType,
@@ -96,7 +96,7 @@ import {
   tryCompileClassExpressionBindingValue,
   tryEmitPromiseSubclassClassExpressionValue,
 } from "../expressions/promise-subclass.js";
-import { hostRegExpMatchResultNeedsExternref, stripInferenceWrapper } from "../regexp-host-match.js";
+import { stripInferenceWrapper } from "../regexp-host-match.js";
 import { taStaticFromOfReflectiveCallNeedsExternref } from "../ta-static-from-of-spec.js";
 import { objectAssignResultNeedsExternref } from "../object-model/object-assign-primitive-operands.js";
 import { integrityLiteralResultNeedsExternref } from "../object-model/object-literal-reflective-escape.js";
@@ -175,12 +175,11 @@ export function transferredArrayLikeResultNeedsExternref(
   ctx: CodegenContext,
   initializer: ts.Expression | undefined,
 ): boolean {
-  if (hostRegExpMatchResultNeedsExternref(ctx, initializer)) return true;
   if (taStaticFromOfReflectiveCallNeedsExternref(ctx, initializer)) return true; // (#6651 E5)
   if (objectAssignResultNeedsExternref(ctx, initializer)) return true; // (#6770 S1)
-  if (integrityLiteralResultNeedsExternref(ctx.standalone, initializer)) return true; // (#6770 S2)
+  if (integrityLiteralResultNeedsExternref(initializer)) return true; // (#6770 S2)
   if (reflectiveArrayCallNeedsExternref(ctx, initializer)) return true; // (#6771) Array.from/of.call, O-returning borrows
-  if (!(ctx.standalone || ctx.wasi) || !initializer || !ts.isCallExpression(initializer)) return false;
+  if (!initializer || !ts.isCallExpression(initializer)) return false;
   const callee = initializer.expression;
   if (!ts.isPropertyAccessExpression(callee) || ts.isPrivateIdentifier(callee.name)) return false;
   const memberName = callee.name.text;
@@ -907,7 +906,7 @@ function localTypeForDeclaration(ctx: CodegenContext, type: ts.Type, decl?: ts.V
   const nativeLocal = nativeTypeOfDeclaration(ctx.checker, decl);
   if (nativeLocal) return nativeLocal;
   if (decl && ctx.ordinaryToPrimitiveObjectDeclarations.has(decl)) return { kind: "externref" };
-  if (ctx.standalone && decl && ctx.redeclaredObjectIdentityDeclarations.has(decl)) return { kind: "externref" };
+  if (decl && ctx.redeclaredObjectIdentityDeclarations.has(decl)) return { kind: "externref" };
   // (#4121) A mixed-assignment demotion is "could not rule out"; a positive
   // unboxing proof is "ruled in", and outranks it. See
   // `numericProofOverridesMixedCarrier`.
@@ -951,7 +950,7 @@ export function resolveSpillLocalValType(ctx: CodegenContext, decl: ts.VariableD
   if (!ts.isIdentifier(decl.name)) return null;
   const name = decl.name.text;
   if (ctx.ordinaryToPrimitiveObjectDeclarations.has(decl)) return { kind: "externref" };
-  if (ctx.standalone && ctx.redeclaredObjectIdentityDeclarations.has(decl)) return { kind: "externref" };
+  if (ctx.redeclaredObjectIdentityDeclarations.has(decl)) return { kind: "externref" };
   // Names the main-body analysis already routed to a host / externref slot
   // (accessor literal, host-spread literal, growable / out-of-shape object).
   if (ctx.externrefAccessorVars.has(name)) return { kind: "externref" };
@@ -970,7 +969,7 @@ export function resolveSpillLocalValType(ctx: CodegenContext, decl: ts.VariableD
       // (#802 Slice A) A proto-receiver literal is promoted to an open `$Object`
       // (externref, standalone-only) in compileObjectLiteral — the spill slot
       // must match.
-      if (ctx.standalone && ctx.dynamicProtoLiteralNodes.has(init)) return { kind: "externref" };
+      if (ctx.dynamicProtoLiteralNodes.has(init)) return { kind: "externref" };
       const forcesHostObject = init.properties.some(
         (p) =>
           ts.isGetAccessorDeclaration(p) ||
@@ -1084,7 +1083,7 @@ export function hoistedVarRetypesToConcreteRef(ctx: CodegenContext, decl: ts.Var
 }
 
 function inferStandaloneRegExpMatchArrayType(ctx: CodegenContext, declaration: ts.VariableDeclaration): ValType | null {
-  return ctx.standalone ? inferStandaloneRegExpMatchResultType(ctx, declaration) : null;
+  return inferStandaloneRegExpMatchResultType(ctx, declaration);
 }
 
 /**
@@ -1104,7 +1103,7 @@ function inferSubarraySubviewType(
   fctx: FunctionContext,
   initializer: ts.Expression | undefined,
 ): ValType | null {
-  if (!(ctx.standalone || ctx.wasi) || !initializer) return null;
+  if (!initializer) return null;
   const unwrapped = stripInferenceWrapper(initializer);
   if (!ts.isCallExpression(unwrapped) || !ts.isPropertyAccessExpression(unwrapped.expression)) return null;
   if (unwrapped.expression.name.text !== "subarray") return null;
@@ -1723,7 +1722,7 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
         const isVarDecl = (stmt.declarationList.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) === 0;
         if (
           globalDef?.type.kind === "externref" &&
-          !(isVarDecl && ctx.standaloneScriptVarBindings && !ctx.sourceIsModule) &&
+          !(isVarDecl && ctx.sharedScriptVarBindings && !ctx.sourceIsModule) &&
           !(isVarDecl && moduleVarSlotIsUndefinedSeeded(ctx, name))
         ) {
           emitUndefined(ctx, fctx);
@@ -1824,7 +1823,7 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
       ts.isIdentifier(decl.name) &&
       ctx.growableObjectLiteralVars.has(decl.name.text);
     const initIsOrdinaryToPrimitiveObjectLiteral = ctx.ordinaryToPrimitiveObjectDeclarations.has(decl);
-    const initIsRedeclaredObjectIdentityLiteral = ctx.standalone && ctx.redeclaredObjectIdentityDeclarations.has(decl);
+    const initIsRedeclaredObjectIdentityLiteral = ctx.redeclaredObjectIdentityDeclarations.has(decl);
     // (#802 Slice A) A proto-receiver object literal is built as an open `$Object`
     // (externref) in compileObjectLiteral so `Object.setPrototypeOf(o, p)` &
     // inherited reads work; the local must be externref so reads/writes route
@@ -1832,7 +1831,6 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
     // and the store isn't ref.cast to the closed struct TS infers (which would
     // trap — the value is a `$Object`, not that struct).
     const initIsProtoReceiverLiteral =
-      ctx.standalone &&
       decl.initializer !== undefined &&
       ts.isObjectLiteralExpression(decl.initializer) &&
       ctx.dynamicProtoLiteralNodes.has(decl.initializer);
@@ -2026,16 +2024,8 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
                                         // before their MOP/result fields can be observed.
                                         initIsProxy
                                         ? { kind: "externref" as const }
-                                        : // (#1337/#4397) In a JS environment, both the
-                                          // compatibility exotic and native `$__bound_fn`
-                                          // are externref carriers, never the target struct.
-                                          decl.initializer &&
-                                            !ctx.standalone &&
-                                            !noJsHost(ctx) &&
-                                            isBindCarrierCall(decl.initializer)
-                                          ? { kind: "externref" as const }
-                                          : (genericFactoryInitializerType ??
-                                            localTypeForDeclaration(ctx, varType, decl)))));
+                                        : (genericFactoryInitializerType ??
+                                          localTypeForDeclaration(ctx, varType, decl)))));
     // (#2660 S3b) A provably-monomorphic `new F(...)` binding of an approved
     // fnctor gets the reserved struct slot instead of externref. Same (cached)
     // verdict as the var hoister / let-const pre-hoister, so a reused
@@ -2318,20 +2308,6 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
             if (localSlot && localSlot.type.kind !== "externref") localSlot.type = closureType;
           }
           stackType = closureType;
-        } else if (
-          closureType.kind === "externref" &&
-          !ctx.standalone &&
-          !noJsHost(ctx) &&
-          isBindCarrierCall(decl.initializer)
-        ) {
-          // (#1337/#4397) A `.bind(...)` result is a provider-owned externref
-          // carrier. Keep it as externref so neither the native `$__bound_fn`
-          // nor the compatibility JS exotic is cast to the target's wrapper.
-          if (!fctx.boxedCaptures?.has(name) && localIdx >= fctx.params.length) {
-            const localSlot = fctx.locals[localIdx - fctx.params.length];
-            if (localSlot) localSlot.type = { kind: "externref" };
-          }
-          stackType = { kind: "externref" };
         } else if (closureType.kind === "externref" && callSigs!.length > 0) {
           // The initializer returned externref but the type is callable.
           // This happens when a function returns a closure coerced to externref.

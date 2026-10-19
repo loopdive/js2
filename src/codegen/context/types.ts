@@ -4287,7 +4287,7 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
     get?: string;
   };
   standaloneMicrotaskNotifyImport?: { module: string; name: string };
-  standaloneScriptVarBindings?: boolean;
+  sharedScriptVarBindings?: boolean;
   /** (#5383 S2p) True while the outlined `__native_globalThis_ensure` seed body
    *  is under construction, so a re-entrant realm-global read inside the seed
    *  itself takes the legacy inline splice instead of calling a function whose

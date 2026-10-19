@@ -9,7 +9,7 @@ import { reportError } from "../context/errors.js";
 import { allocLocal, getLocalType } from "../context/locals.js";
 import { snapshotSpeculative, rollbackSpeculative, type SpeculativeSnapshot } from "../context/speculative.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
-import { ensureLateImport, flushLateImportShifts, shiftLateImportIndices } from "../expressions/late-imports.js";
+import { ensureLateImport, flushLateImportShifts } from "../expressions/late-imports.js";
 import {
   addIteratorImports,
   ensureLetConstBindingPatternTdzFlags,
@@ -31,9 +31,9 @@ import {
   emitExternrefDestructureGuard,
   patternIteratorStepCount,
 } from "../destructuring-params.js";
-import { addImport, addStringConstantGlobal, ensureExnTag, localGlobalIdx } from "../registry/imports.js";
+import { addStringConstantGlobal, ensureExnTag, localGlobalIdx } from "../registry/imports.js";
 import { emitWasiErrorConstructor } from "../registry/error-types.js";
-import { addFuncType, getArrTypeIdxFromVec, getOrRegisterVecType } from "../registry/types.js";
+import { getArrTypeIdxFromVec, getOrRegisterVecType } from "../registry/types.js";
 import { getVecInfo } from "../type-coercion.js";
 import {
   coerceType,
@@ -422,25 +422,16 @@ export function emitNullGuard(
  * [literals])` and `for await (x of syncIterable)`) the async iterator is the
  * sync iterator with each value `Await`-ed; for an already-settled value
  * `Await(v) = v`, so the async wrapper degenerates to the *identity* native
- * iterator. So in standalone we return the SAME native `__iterator` the sync
+ * iterator. The native semantic core returns the SAME `__iterator` the sync
  * for-of consumer uses (now USER-`{next()}`-carrier aware). The per-element
  * `Await` is layered by the for-await CPS lowering around the loop body and is a
  * no-op for settled values — no `env.__async_iterator` / `env.Promise_resolve`
  * leak. Genuinely-pending-Promise async iterables stay deferred to the standalone
  * Promise runtime (PR-C).
  */
-export function ensureAsyncIterator(ctx: CodegenContext, fctx: FunctionContext): number | undefined {
-  if (ctx.standalone || ctx.wasi) {
-    ensureNativeIteratorRuntime(ctx);
-    return ctx.funcMap.get("__iterator");
-  }
-  const idx = ctx.funcMap.get("__async_iterator");
-  if (idx !== undefined) return idx;
-  const importsBefore = ctx.numImportFuncs;
-  const fnType = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "externref" }]);
-  addImport(ctx, "env", "__async_iterator", { kind: "func", typeIdx: fnType });
-  shiftLateImportIndices(ctx, fctx, importsBefore, ctx.numImportFuncs - importsBefore);
-  return ctx.funcMap.get("__async_iterator");
+export function ensureAsyncIterator(ctx: CodegenContext): number | undefined {
+  ensureNativeIteratorRuntime(ctx);
+  return ctx.funcMap.get("__iterator");
 }
 
 /**

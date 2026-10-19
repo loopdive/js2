@@ -420,7 +420,7 @@ export function createCodegenContext(
     nodeFsWriteSyncIdx: -1,
     standalone: targetProfile.nativeRegime, // (#5385) the native semantic regime, not the environment
     ...(options?.standaloneGlobalThisImport ? { standaloneGlobalThisImport: options.standaloneGlobalThisImport } : {}),
-    standaloneScriptVarBindings: options?.standaloneScriptVarBindings,
+    sharedScriptVarBindings: options?.standaloneScriptVarBindings,
     ...(options?.standaloneMicrotaskNotifyImport
       ? { standaloneMicrotaskNotifyImport: options.standaloneMicrotaskNotifyImport }
       : {}),

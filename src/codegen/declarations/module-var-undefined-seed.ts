@@ -89,7 +89,7 @@ export function emitModuleVarUndefinedSeeds(
   // Context-owned object-record bindings are created only when absent by
   // emitScriptGlobalVarBindings. A private-slot seed would reset a prior
   // Script's live value after all accesses are routed to the shared record.
-  if (ctx.standaloneScriptVarBindings && !ctx.sourceIsModule) return;
+  if (ctx.sharedScriptVarBindings && !ctx.sourceIsModule) return;
   const seeded = new Set<number>();
   let seededNames = seededModuleVarNames.get(ctx);
   if (seededNames === undefined) seededModuleVarNames.set(ctx, (seededNames = new Set()));

@@ -2288,7 +2288,7 @@ function compileForOfArray(
   // Get element: x = data[i]. Re-read the live data array when mutating (#2065):
   // a growth that reallocated the backing array leaves the hoisted `dataLocal`
   // stale.
-  // (#3224) In standalone, bounds-check the per-element read against the
+  // (#3224) Bounds-check the per-element read against the
   // physical WasmGC backing so a sparse array (logical `.length` set beyond the
   // backing) yields the absent value instead of an OOB TRAP. The array iterator
   // visits every index up to the LOGICAL length (§23.1.5.1) — so this does NOT
@@ -2298,7 +2298,7 @@ function compileForOfArray(
   // the sNaN hole sentinel, i32/packed → 0. No-op for dense arrays.
   if (overlayGetIdx !== undefined) {
     fctx.body.push(...forOfArrayOverlayReadInstrs(overlayGetIdx, vecLocal, iLocal));
-  } else if (ctx.standalone) {
+  } else {
     const dataIterLocal = allocLocal(fctx, `__forof_dataiter_${fctx.locals.length}`, {
       kind: "ref_null",
       typeIdx: arrTypeIdx,
@@ -2324,15 +2324,6 @@ function compileForOfArray(
       ],
       else: defaultValueInstrs(readElemType),
     });
-  } else {
-    if (reReadLive) {
-      fctx.body.push({ op: "local.get", index: vecLocal });
-      fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 });
-    } else {
-      fctx.body.push({ op: "local.get", index: dataLocal });
-    }
-    fctx.body.push({ op: "local.get", index: iLocal });
-    fctx.body.push({ op: elemReadOp, typeIdx: arrTypeIdx });
   }
   // (#2001 S1) A for-of over an `any[]` with a literal hole reads `$Hole` at the
   // hole index; map it back to `undefined` (the iteration value of an absent
@@ -2594,31 +2585,25 @@ function compileForOfArrayEntries(
     fctx.body.push({ op: "f64.convert_i32_s" });
     fctx.body.push({ op: "local.set", index: keyLocal! });
     // value = data[i] (packed i8/i16 widens to i32 on read, #2934)
-    // (#3224) In standalone, bounds-check the read against the physical backing
+    // (#3224) Bounds-check the read against the physical backing
     // so a sparse array (logical length beyond the backing) yields the absent
     // value (undefined ≡ ref.null.extern; f64 → sNaN sentinel) instead of an OOB
     // trap. entries() visits every index up to the logical length; the read is
     // guarded, the loop is not clamped. No-op for dense arrays.
-    if (ctx.standalone) {
-      fctx.body.push({ op: "local.get", index: iLocal });
-      fctx.body.push({ op: "local.get", index: dataLocal });
-      fctx.body.push({ op: "array.len" });
-      fctx.body.push({ op: "i32.lt_s" });
-      fctx.body.push({
-        op: "if",
-        blockType: { kind: "val", type: readElemType },
-        then: [
-          { op: "local.get", index: dataLocal },
-          { op: "local.get", index: iLocal },
-          { op: elemReadOp, typeIdx: loopArrTypeIdx },
-        ],
-        else: defaultValueInstrs(readElemType),
-      });
-    } else {
-      fctx.body.push({ op: "local.get", index: dataLocal });
-      fctx.body.push({ op: "local.get", index: iLocal });
-      fctx.body.push({ op: elemReadOp, typeIdx: loopArrTypeIdx });
-    }
+    fctx.body.push({ op: "local.get", index: iLocal });
+    fctx.body.push({ op: "local.get", index: dataLocal });
+    fctx.body.push({ op: "array.len" });
+    fctx.body.push({ op: "i32.lt_s" });
+    fctx.body.push({
+      op: "if",
+      blockType: { kind: "val", type: readElemType },
+      then: [
+        { op: "local.get", index: dataLocal },
+        { op: "local.get", index: iLocal },
+        { op: elemReadOp, typeIdx: loopArrTypeIdx },
+      ],
+      else: defaultValueInstrs(readElemType),
+    });
     const valLocalType = getLocalType(fctx, valLocal!);
     if (valLocalType && !valTypesMatch(readElemType, valLocalType)) {
       coerceType(ctx, fctx, readElemType, valLocalType);
@@ -3061,57 +3046,39 @@ function compileForOfDirectIterator(
         op: "if",
         blockType: { kind: "empty" },
         then: [
-          ctx.wasi || ctx.standalone
-            ? buildStandardTryTable({ kind: "empty" }, closeCallInstrs(), [
-                {
-                  kind: "catch",
-                  tagIdx: ensureExnTag(ctx),
-                  payloadType: { kind: "externref" },
-                  body: [{ op: "drop" }],
-                },
-              ])
-            : {
-                op: "try",
-                blockType: { kind: "empty" },
-                body: closeCallInstrs(),
-                catches: [],
-                catchAll: [], // suppress return() errors per §7.4.6 step 6
-              },
+          buildStandardTryTable({ kind: "empty" }, closeCallInstrs(), [
+            {
+              kind: "catch",
+              tagIdx: ensureExnTag(ctx),
+              payloadType: { kind: "externref" },
+              body: [{ op: "drop" }],
+            },
+          ]),
         ],
         else: [],
       },
     ];
-    if (ctx.wasi || ctx.standalone) {
-      const tagIdx = ensureExnTag(ctx);
-      const exnLocal = allocLocal(fctx, `__forawait_close_exn_${fctx.locals.length}`, { kind: "externref" });
-      fctx.body.push(
-        buildStandardTryTable(
-          { kind: "empty" },
-          [blockLoopInstr],
-          [
-            {
-              kind: "catch",
-              tagIdx,
-              payloadType: { kind: "externref" },
-              body: [
-                { op: "local.set", index: exnLocal },
-                ...catchBodyPrefix,
-                { op: "local.get", index: exnLocal },
-                { op: "throw", tagIdx },
-              ],
-            },
-          ],
-        ),
-      );
-    } else {
-      fctx.body.push({
-        op: "try",
-        blockType: { kind: "empty" },
-        body: [blockLoopInstr],
-        catches: [],
-        catchAll: [...catchBodyPrefix, { op: "rethrow", depth: 0 }],
-      });
-    }
+    const tagIdx = ensureExnTag(ctx);
+    const exnLocal = allocLocal(fctx, `__forawait_close_exn_${fctx.locals.length}`, { kind: "externref" });
+    fctx.body.push(
+      buildStandardTryTable(
+        { kind: "empty" },
+        [blockLoopInstr],
+        [
+          {
+            kind: "catch",
+            tagIdx,
+            payloadType: { kind: "externref" },
+            body: [
+              { op: "local.set", index: exnLocal },
+              ...catchBodyPrefix,
+              { op: "local.get", index: exnLocal },
+              { op: "throw", tagIdx },
+            ],
+          },
+        ],
+      ),
+    );
   } else {
     fctx.body.push(blockLoopInstr);
   }
@@ -3214,18 +3181,15 @@ function compileForOfIterator(ctx: CodegenContext, fctx: FunctionContext, stmt: 
     }
   }
 
-  // #1320 Slice 1: standalone/WASI binds the iterator protocol to emitted Wasm
-  // fns (no JS host). `ensureNativeIteratorRuntime` registers `__iterator` /
+  // #1320 Slice 1: the native semantic core binds the iterator protocol to
+  // emitted Wasm functions. `ensureNativeIteratorRuntime` registers `__iterator` /
   // `__iterator_next` / `__iterator_return` / `__iterator_rest`; the same
   // consumer code below then drives the loop byte-identically to the host path.
   // The native `__iterator` expects a canonical externref `$Vec` (the producer,
   // e.g. `arr.values()`, builds one); for other shapes (generic class iterables,
   // Map/Set) this is a later slice — `__iterator`'s `ref.cast` traps loudly
   // rather than silently misbehaving, which is acceptable for Slice 1.
-  if (ctx.standalone || ctx.wasi) {
-    ensureNativeIteratorRuntime(ctx);
-    // fall through to the shared __iterator/__iterator_next consumer path below
-  }
+  ensureNativeIteratorRuntime(ctx);
 
   // Ensure iterator host imports are registered before using them (no-op in
   // standalone — ensureNativeIteratorRuntime already populated funcMap).
@@ -3275,7 +3239,7 @@ function compileForOfIterator(ctx: CodegenContext, fctx: FunctionContext, stmt: 
   // Look up the iterator host import function indices
   let iteratorIdx: number | undefined;
   if (stmt.awaitModifier) {
-    iteratorIdx = ensureAsyncIterator(ctx, fctx);
+    iteratorIdx = ensureAsyncIterator(ctx);
   }
   if (iteratorIdx === undefined) {
     iteratorIdx = ctx.funcMap.get("__iterator");
@@ -3543,23 +3507,14 @@ function compileForOfIterator(ctx: CodegenContext, fctx: FunctionContext, stmt: 
       { op: "local.get", index: iterLocal },
       { op: "call", funcIdx: returnIdx },
     ];
-    const innerCloseTry: Instr =
-      ctx.wasi || ctx.standalone
-        ? buildStandardTryTable({ kind: "empty" }, closeBody, [
-            {
-              kind: "catch",
-              tagIdx: ensureExnTag(ctx),
-              payloadType: { kind: "externref" },
-              body: [{ op: "drop" }],
-            },
-          ])
-        : {
-            op: "try",
-            blockType: { kind: "empty" },
-            body: closeBody,
-            catches: [],
-            catchAll: [], // suppress any error from GetMethod / return() per spec step 6
-          };
+    const innerCloseTry: Instr = buildStandardTryTable({ kind: "empty" }, closeBody, [
+      {
+        kind: "catch",
+        tagIdx: ensureExnTag(ctx),
+        payloadType: { kind: "externref" },
+        body: [{ op: "drop" }],
+      },
+    ]);
     const closeOnThrowBody: Instr[] = [
       // (#5267 R3-4a) close only when the loop is NOT done AND the throw did
       // not come out of the iterator step itself.
@@ -3575,37 +3530,27 @@ function compileForOfIterator(ctx: CodegenContext, fctx: FunctionContext, stmt: 
         else: [],
       },
     ];
-    if (ctx.wasi || ctx.standalone) {
-      const tagIdx = ensureExnTag(ctx);
-      const exnLocal = allocLocal(fctx, `__iterator_close_exn_${fctx.locals.length}`, { kind: "externref" });
-      fctx.body.push(
-        buildStandardTryTable(
-          { kind: "empty" },
-          [blockLoopInstr],
-          [
-            {
-              kind: "catch",
-              tagIdx,
-              payloadType: { kind: "externref" },
-              body: [
-                { op: "local.set", index: exnLocal },
-                ...closeOnThrowBody,
-                { op: "local.get", index: exnLocal },
-                { op: "throw", tagIdx },
-              ],
-            },
-          ],
-        ),
-      );
-    } else {
-      fctx.body.push({
-        op: "try",
-        blockType: { kind: "empty" },
-        body: [blockLoopInstr],
-        catches: [],
-        catchAll: [...closeOnThrowBody, { op: "rethrow", depth: 0 }],
-      });
-    }
+    const tagIdx = ensureExnTag(ctx);
+    const exnLocal = allocLocal(fctx, `__iterator_close_exn_${fctx.locals.length}`, { kind: "externref" });
+    fctx.body.push(
+      buildStandardTryTable(
+        { kind: "empty" },
+        [blockLoopInstr],
+        [
+          {
+            kind: "catch",
+            tagIdx,
+            payloadType: { kind: "externref" },
+            body: [
+              { op: "local.set", index: exnLocal },
+              ...closeOnThrowBody,
+              { op: "local.get", index: exnLocal },
+              { op: "throw", tagIdx },
+            ],
+          },
+        ],
+      ),
+    );
   } else {
     fctx.body.push(blockLoopInstr);
   }
@@ -3798,11 +3743,7 @@ function emitArrayForIn(
   // is unavailable) only emits the integer indices and drops the string keys.
   const NUM_FMT = "number_toString";
 
-  if (ctx.standalone || ctx.wasi || ctx.nativeStrings) {
-    emitNativeNumberFormat(ctx, new Set([NUM_FMT]));
-  } else if (ctx.funcMap.get(NUM_FMT) === undefined) {
-    ensureLateImport(ctx, NUM_FMT, [{ kind: "f64" }], [{ kind: "externref" }]);
-  }
+  emitNativeNumberFormat(ctx, new Set([NUM_FMT]));
   flushLateImportShifts(ctx, fctx);
   const numToStrIdx = ctx.funcMap.get(NUM_FMT);
 
@@ -4264,7 +4205,7 @@ function compileForInStatementInner(ctx: CodegenContext, fctx: FunctionContext, 
   // (#6651 U3) TypeScript types `new Proxy(arr, h)` as the TARGET's array type,
   // but the binding holds a `$Proxy`: the vec index loop saw no vec and ran zero
   // times. Such a receiver enumerates dynamically (the proxy dispatch below).
-  const proxyReceiver = (ctx.standalone || ctx.wasi) && isDirectProxyBinding(ctx, stmt.expression);
+  const proxyReceiver = isDirectProxyBinding(ctx, stmt.expression);
   const recvArrayInfo = proxyReceiver
     ? undefined
     : resolveArrayInfo(ctx, ctx.checker.getTypeAtLocation(stmt.expression));
