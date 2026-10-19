@@ -35,6 +35,7 @@ import { bagKeysTail, buildBagPushKeys } from "./carrier-bag-visibility.js"; // 
 import { protoIndexForInPushInstrs, protoIndexHasIdxInstrs } from "./proto-index-store.js";
 import { stringExoticPushKeysPrologue } from "./string-exotic-own-props.js"; // (#4491) §10.4.3 own index keys
 import { definedFuncAt } from "./func-space.js";
+import { objectAssignSourceKeys } from "./object-model/object-assign-value-body.js";
 import { orProxyArrayLikeTest, proxyArrayLikeTypeIdx } from "./proxy-array-like.js"; // (#6651 H6)
 import { stringExoticAssignSourceInstrs } from "./object-model/object-assign-primitive-operands.js"; // (#6770 S1)
 import { nonObjectEnumerableOwnInstrs } from "./object-model/object-own-key-order.js"; // (#6770 S3)
@@ -1444,13 +1445,15 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
 }
 
 /**
- * (#4749, #6979) Prepend the shared native Proxy-source arm to `__object_assign`.
+ * (#4749, #6979) Prepend the shared native MOP-source arm to `__object_assign`.
  *
  * `$Proxy` is deliberately not a subtype of `$Object`, so the original
  * open-object loop skips it entirely.  CopyDataProperties must instead ask
  * the Proxy for its own keys, retrieve each own descriptor (which invokes the
  * getOwnPropertyDescriptor trap), filter on `enumerable`, then read and set
- * the value through the existing Proxy-aware helpers.  This is filled after
+ * the value through the existing Proxy-aware helpers. Admitted JS-owned sources
+ * use the same native loop through their identity-backed boundary operations.
+ * This is filled after
  * the descriptor and Proxy runtimes are registered so all dispatch indices
  * are available and their front-guards are already installed.
  */
@@ -1461,11 +1464,13 @@ export function fillObjectAssignProxySourceArm(ctx: CodegenContext, proxyTypeIdx
 
   const objectKeysIdx = ctx.funcMap.get("__object_keys");
   const ownKeysAllIdx = ctx.funcMap.get("__proxy_ownkeys_names_dispatch"); // (#6770 S7) [[OwnPropertyKeys]]
+  const admittedIdx = ctx.funcMap.get("__boundary_object_is_admitted");
+  const boundaryKeysIdx = ctx.funcMap.get("__boundary_object_own_keys");
   const externLengthIdx = ctx.funcMap.get("__extern_length");
   const externGetIdxIdx = ctx.funcMap.get("__extern_get_idx");
   const getOwnPropertyDescriptorIdx = ctx.funcMap.get("__getOwnPropertyDescriptor");
   const externGetIdx = ctx.funcMap.get("__extern_get");
-  const externSetIdx = ctx.funcMap.get("__extern_set");
+  const externSetIdx = ctx.funcMap.get("__extern_set_strict");
   const isUndefinedIdx = ctx.funcMap.get("__extern_is_undefined");
   const isTruthyIdx = ctx.funcMap.get("__is_truthy");
   if (
@@ -1497,24 +1502,21 @@ export function fillObjectAssignProxySourceArm(ctx: CodegenContext, proxyTypeIdx
 
   // Params 0/1 are followed by the eleven locals registered by the original
   // helper (indices 2..12). Append scratch locals for the Proxy arm.
-  const keyListLocal = 2 + objectAssign.locals.length;
-  const keyListLengthLocal = keyListLocal + 1;
-  const keyIndexLocal = keyListLocal + 2;
-  const keyLocal = keyListLocal + 3;
-  const descriptorLocal = keyListLocal + 4;
-  const enumerableLocal = keyListLocal + 5;
-  objectAssign.locals.push(
-    { name: "proxyKeys", type: { kind: "externref" } },
-    { name: "proxyKeysLength", type: { kind: "i32" } },
-    { name: "proxyKeyIndex", type: { kind: "i32" } },
-    { name: "proxyKey", type: { kind: "externref" } },
-    { name: "proxyDescriptor", type: { kind: "externref" } },
-    { name: "proxyEnumerable", type: { kind: "externref" } },
-  );
+  const sourceKeys = objectAssignSourceKeys({
+    firstLocal: 2 + objectAssign.locals.length,
+    sourceLocal: 12,
+    admissionIdx: admittedIdx,
+    boundaryKeysIdx,
+    proxyKeysIdx: ownKeysAllIdx,
+    objectKeysIdx,
+  });
+  const { keyListLocal, keyListLengthLocal, keyIndexLocal, keyLocal, descriptorLocal, enumerableLocal } = sourceKeys;
+  objectAssign.locals.push(...sourceKeys.locals);
 
   const proxyArm: Instr[] = [
     { op: "local.get", index: 6 },
     { op: "ref.test", typeIdx: proxyTypeIdx },
+    ...sourceKeys.admissionTest,
     {
       op: "if",
       blockType: { kind: "empty" },
@@ -1523,10 +1525,7 @@ export function fillObjectAssignProxySourceArm(ctx: CodegenContext, proxyTypeIdx
         // strings AND symbols (#6770 S7: `__object_keys` is now the
         // enumerable-string projection, which would drop symbols and run the
         // gopd trap a second time per key).
-        { op: "local.get", index: 12 },
-        ...(ownKeysAllIdx !== undefined
-          ? ([{ op: "ref.null.extern" }, { op: "call", funcIdx: ownKeysAllIdx }] satisfies Instr[])
-          : ([{ op: "call", funcIdx: objectKeysIdx }] satisfies Instr[])),
+        ...sourceKeys.keys,
         { op: "local.set", index: keyListLocal },
         // length = ToLength(keys.length), narrowed to the bounded native loop
         { op: "local.get", index: keyListLocal },

@@ -32,6 +32,7 @@ import { BUILTIN_STATIC_METHOD_ARITY } from "./builtin-fn-meta.js";
 import { identifierIsWrittenTo } from "./native-ordinary-instanceof.js";
 import { mathValueReadHasBody } from "./math-value-read.js";
 import { isVariadicValueStatic } from "./string-fromcharcode-value-read.js";
+import { isPatchedBuiltinStaticMember } from "./source-scan-predicates.js";
 
 function unwrap(expr: ts.Expression): ts.Expression {
   let e = expr;
@@ -117,6 +118,9 @@ export function resolveVariadicBuiltinStaticPlainAlias(
   }
   if (BUILTIN_STATIC_METHOD_ARITY[builtinName]?.[propName] === undefined) return undefined;
   if (!isAmbientGlobalIdentifier(ctx, init.expression)) return undefined;
+  if (builtinName === "Object" && propName === "assign" && isPatchedBuiltinStaticMember(ctx, builtinName, propName)) {
+    return undefined;
+  }
 
   // (#5383 S2) Both soundness gates are asked SCOPE-AWARE. The file-wide
   // spelling test they used before is unusable on a minified bundle — jsbi

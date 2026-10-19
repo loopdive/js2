@@ -47,12 +47,7 @@ import { ensureAnyFromExternHelper, ensureAnyHelpers } from "./any-helpers.js";
  * extras path. So `Math.max` "working" as a value was a numeric accident of
  * that mis-compiled slot, not a working reference.
  */
-export const VARIADIC_VALUE_STATICS: ReadonlySet<string> = new Set(["Math.max", "Math.min", "String.fromCharCode"]);
-
-/** True when `<builtinName>.<propName>` reifies with the variadic convention. */
-export function isVariadicValueStatic(builtinName: string, propName: string): boolean {
-  return VARIADIC_VALUE_STATICS.has(`${builtinName}.${propName}`);
-}
+export { VARIADIC_VALUE_STATICS, isVariadicValueStatic } from "./closures/native-variadic-builtins.js";
 
 /**
  * Pre-register every native the `String.fromCharCode` variadic body needs,

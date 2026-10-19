@@ -35,6 +35,8 @@ import type { Instr } from "../../ir/types.js";
 import { ts } from "../../ts-api.js";
 import type { CodegenContext } from "../context/types.js";
 import { STRING_EXOTIC_PUSH_KEYS_FN } from "./native-names.js";
+import { resolveVariadicBuiltinStaticPlainAlias } from "../builtin-static-plain-alias.js";
+import { resolveBuiltinStaticBindingAlias } from "../builtin-static-globals.js";
 
 const PRIMITIVE_TAGS = new Set(["number", "string", "boolean", "bigint", "symbol"]);
 
@@ -65,6 +67,32 @@ function isStaticPrimitive(ctx: CodegenContext, expr: ts.Expression): boolean {
   return PRIMITIVE_TAGS.has(ctx.oracle.staticJsTypeOf(expr));
 }
 
+/** Exact stable captured builtin identity; no signature/spelling-only claim. */
+function isCapturedObjectAssign(ctx: CodegenContext, expr: ts.Expression, seen = new Set<ts.Node>()): boolean {
+  const value = unwrap(expr);
+  if (!ts.isIdentifier(value)) return false;
+  const alias = resolveVariadicBuiltinStaticPlainAlias(ctx, value) ?? resolveBuiltinStaticBindingAlias(ctx, value);
+  if (alias?.builtinName === "Object" && alias.propName === "assign") return true;
+  const declaration = ctx.oracle.variableDeclarationOf(value);
+  if (!declaration?.initializer || seen.has(declaration)) return false;
+  if (!ts.isVariableDeclarationList(declaration.parent) || !(declaration.parent.flags & ts.NodeFlags.Const))
+    return false;
+  seen.add(declaration);
+  return isCapturedObjectAssign(ctx, declaration.initializer, seen);
+}
+
+function capturedAssignResultNeedsExternref(ctx: CodegenContext, initializer: ts.Expression): boolean {
+  const call = unwrap(initializer);
+  if (!ts.isCallExpression(call)) return false;
+  const callee = unwrap(call.expression);
+  if (isCapturedObjectAssign(ctx, callee)) return true;
+  return (
+    ts.isPropertyAccessExpression(callee) &&
+    (callee.name.text === "call" || callee.name.text === "apply") &&
+    isCapturedObjectAssign(ctx, callee.expression)
+  );
+}
+
 /**
  * The primitive TARGET of an ambient `Object.assign(<primitive>, …)` call —
  * the value whose ToObject wrapper the call returns — else `undefined`.
@@ -85,6 +113,9 @@ export function objectAssignPrimitiveTargetOf(ctx: CodegenContext, expr: ts.Expr
  */
 export function objectAssignResultNeedsExternref(ctx: CodegenContext, initializer: ts.Expression | undefined): boolean {
   if (initializer === undefined) return false;
+  // A captured builtin returns its original target object, even when a .call
+  // or .apply result has no useful checker type. Do not narrow it to f64.
+  if (capturedAssignResultNeedsExternref(ctx, initializer)) return true;
   const call = ambientObjectAssignCall(ctx, initializer);
   if (call === undefined) return false;
   // A `new String(…)` operand lies the same way: `{} & String` is `String`.

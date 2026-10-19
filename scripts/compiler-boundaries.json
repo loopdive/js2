@@ -12233,12 +12233,28 @@
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
     },
     {
-      "path": "src/codegen/boundary-own-key-filters.ts",
+      "path": "src/codegen/object-model/boundary-own-key-filters.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
       "owner": "6979",
       "nextBoundary": "Separate native property-key filtering from physical object-runtime registration."
+    },
+    {
+      "path": "src/codegen/object-model/object-assign-value-body.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "6979",
+      "nextBoundary": "Separate native variadic argument handling from context-local allocation and physical helper indices."
+    },
+    {
+      "path": "src/codegen/closures/native-variadic-builtins.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "6979",
+      "nextBoundary": "Reconcile native builtin argv ABI population with prepared callable contracts before activating the boundary."
     },
     {
       "path": "src/codegen/extern-class-metadata.ts",

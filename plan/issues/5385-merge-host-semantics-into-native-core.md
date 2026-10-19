@@ -1113,3 +1113,34 @@ Runtime stays **10,163 lines**. The discovered captured-Object.assign
 variadic-argument loss is still open, alongside the earlier migration
 acceptance gaps and prerequisite stack. Exact evidence:
 `plan/audit/6979-shared-native-object-sources-20261019.json`.
+
+### 2026-10-19 — native captured Object.assign ABI and JS boundary sources
+
+The S7 issue's "S7-m native Object.assign argv and boundary-source handoff"
+reuses the native variadic ABI for every supplied source, preserves captured
+result storage as externref and copies admitted JS-owned source properties
+through the same native MOP loop. Exact value/key/throw identity is retained;
+there is no boundary object-graph copy or new host semantic implementation.
+WASI shares strict Proxy write rejection and Object member patch handling.
+
+New controls pass **69/69**. The **268-case** comparison improves
+**227/41 → 265/3**, zero skipped, with 38 changed rows in the new test and
+the same three linked object-rest failures. All **33** policy inventories match
+and the gate stays **433/452**. Five JS probe binaries shrink while two native
+dynamic controls grow **547/3,418 bytes**; the separately measured gc fixture
+needs three more occurrences of existing value adapters (**19 → 22**).
+No overall footprint/performance win or new IR body coverage is claimed.
+
+Raw mode references fall **799 → 795** without banking the 818 ceiling.
+Primitive-target wrappers and generic patched-Math aliases still fail all six
+target/fixture controls exactly as on the parent. A newly checked import-cycle
+gate also fails on both parent/candidate with the same reported violations.
+Those, runtime retirement (**10,163 lines**), strict closure and the remaining
+program acceptance/predecessor stack stay open. Evidence and exact source
+hashes: `plan/audit/6979-native-object-assign-argv-20261019.json`.
+The final callable-escape probe also remains broken on both parent/candidate:
+returning native Object.assign to JS produces a function-shaped facade whose
+call dispatchers were not exported. Full host interoperability is not certified.
+The flat-directory gate is now satisfied at **833** files by locating the new
+helpers under existing subsystems and moving the unchanged boundary filters;
+binary/test equivalence of that relocation is recorded in the audit.

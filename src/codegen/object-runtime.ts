@@ -69,7 +69,7 @@ import { buildObjectGetBody } from "../runtime/wasmgc/values/object-get-bodies.j
 import { buildVariadicBuiltinApplyArm } from "./apply-closure-variadic-builtin.js"; // (#6701)
 import { buildRestOnlyApply } from "./closures/rest-only-apply.js";
 import { withApplyTail } from "./closures/apply-extras-tail.js";
-import { registerBoundaryOwnKeyFilters } from "./boundary-own-key-filters.js";
+import { registerBoundaryOwnKeyFilters } from "./object-model/boundary-own-key-filters.js";
 import {
   buildObjectPropertyKeyPrefix,
   prependObjectKeyCoercion,

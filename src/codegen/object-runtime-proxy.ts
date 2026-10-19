@@ -2027,13 +2027,10 @@ export function ensureProxyRuntime(
   // receiver walk exists, so fall back to the 3-argument dispatch — on the
   // trap-present arm the two are the same trap call with the same receiver.
   //
-  // STANDALONE-GATED, for the reason `registerProxyInvariantValidators` states
-  // at length: under `--target wasi` the attribute-model primitives this path
-  // ends up consulting answer wrongly for ordinary objects, and that lane keeps
-  // its pre-existing bytes. Measured 2026-09-17: ungated, a Proxy-free wasi
-  // probe moved by 113 bytes — a lane this slice does not measure should not
-  // move at all.
-  const strictSetBody = ctx.standalone ? findBody("__extern_set_strict") : undefined;
+  // (#6979) Strict false-set rejection is shared by all WasmGC environments.
+  // Keep trap-absent forwarding unchanged; this does not certify every WASI
+  // descriptor/invariant path, which has separate admission requirements.
+  const strictSetBody = findBody("__extern_set_strict");
   const strictSetDispatchIdx = setReceiverDispatchIdx ?? setDispatchIdx;
   const strictSetTruthyIdx = ctx.funcMap.get("__is_truthy");
   if (strictSetBody && strictSetTruthyIdx !== undefined) {
@@ -2132,8 +2129,7 @@ export function ensureProxyRuntime(
   // maps to an empty array on base and on this branch alike). A live proxy
   // falls through to the untouched body — the guard has no `return` there.
   //
-  // Standalone-gated for the same reason as the strict-set arm above: wasi
-  // keeps its pre-existing bytes.
+  // This guard only handles revocation, not live-proxy array-like behavior.
   // __extern_has(obj, key) -> i32 : if proxy → ToBoolean(has_dispatch(obj,key,obj))
   // The dispatch returns the trap's booleanish result as an externref; coerce to
   // i32 via `__is_truthy` (reliably present in the standalone runtime — same

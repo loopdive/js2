@@ -29,6 +29,7 @@ import {
 } from "./shared.js";
 import { emitThrowTypeError } from "./expressions/helpers.js";
 import { emitObjectCreateValueBody } from "./object-create-value-body.js";
+import { emitObjectAssignValueBody } from "./object-model/object-assign-value-body.js";
 import { allocLocal } from "./context/locals.js";
 import { isViewRefTestInstrs } from "./dataview-native.js"; // (#5150) ArrayBuffer.isView value closure
 import { reportErrorNoNode } from "./context/errors.js";
@@ -84,6 +85,7 @@ import {
   emitStringFromCharCodeValueBody,
   prepareStringFromCharCodeValueRead,
 } from "./string-fromcharcode-value-read.js"; // (#4491 wave-5 T6)
+import { isVariadicValueStatic } from "./closures/native-variadic-builtins.js";
 import { ensureAnyFromExternHelper, ensureAnyHelpers, ensureExternStrictEqHelper } from "./any-helpers.js";
 import { sameValueNumberOps } from "./same-value-number-ops.js";
 import { ensureNativeProxyRuntime, ensureObjectRuntime, ensureObjVecBuilders } from "./object-runtime.js";
@@ -1020,17 +1022,19 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
       paramTypes = [{ kind: "externref" }];
       returnType = BOOLEAN_PREDICATE_RESULT;
       break;
-    case "Object.assign":
+    case "Object.assign": {
       // Deno snapshots Object.assign into its primordials object, then invokes
       // that captured function while constructing `Deno.core`. Register the
       // native object runtime before minting the closure so every funcidx used
-      // by the body is settled. The closure exposes the builtin's declared
-      // two-argument shape; its second argument is packed into the same
-      // `$ObjVec` consumed by the direct Object.assign lowering.
+      // by the body is settled. The physical ABI carries every supplied
+      // argument; reflective .length remains the independent spec value 2.
       ensureObjVecBuilders(ctx);
-      paramTypes = [{ kind: "externref" }, { kind: "externref" }];
+      const { vecTypeIdx } = ensureExtrasArgvGlobal(ctx);
+      if (getArrTypeIdxFromVec(ctx, vecTypeIdx) < 0) return null;
+      paramTypes = [{ kind: "ref_null", typeIdx: vecTypeIdx }];
       returnType = { kind: "externref" };
       break;
+    }
     case "Object.keys":
       paramTypes = [{ kind: "externref" }];
       // Standalone Object.keys returns the object-runtime `$ObjVec` as an
@@ -1352,20 +1356,8 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
       closureFctx.body.push({ op: "local.get", index: 1 });
       emitArrayIsArrayExternrefPredicate(ctx, closureFctx);
     } else if (key === "Object.assign") {
-      const { newIdx, pushIdx } = ensureObjVecBuilders(ctx);
-      const assignIdx = ctx.funcMap.get("__object_assign");
-      if (assignIdx === undefined) return null;
-      const sourcesLocal = allocLocal(closureFctx, "assign_sources", { kind: "externref" });
-      closureFctx.body.push(
-        { op: "call", funcIdx: newIdx },
-        { op: "local.set", index: sourcesLocal },
-        { op: "local.get", index: sourcesLocal },
-        { op: "local.get", index: 2 },
-        { op: "call", funcIdx: pushIdx },
-        { op: "local.get", index: 1 },
-        { op: "local.get", index: sourcesLocal },
-        { op: "call", funcIdx: assignIdx },
-      );
+      const { vecTypeIdx } = ensureExtrasArgvGlobal(ctx);
+      if (!emitObjectAssignValueBody(ctx, closureFctx, vecTypeIdx, getArrTypeIdxFromVec(ctx, vecTypeIdx))) return null;
     } else if (key === "Object.keys") {
       const keysIdx = ensureLateImport(ctx, "__object_keys", [{ kind: "externref" }], [{ kind: "externref" }]);
       if (keysIdx === undefined) return null;
@@ -1805,7 +1797,7 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
   // Math.min share the SAME lifted func type (one vec param → one `ref.test`
   // arm serves both; `call_ref` dispatches to the right body via the funcref
   // value). Idempotent — the wrapper types are cached per signature.
-  if ((key === "Math.max" || key === "Math.min" || key === "String.fromCharCode") && !genericThrowBody) {
+  if (isVariadicValueStatic(builtinName, propName) && !genericThrowBody) {
     const { vecTypeIdx } = ensureExtrasArgvGlobal(ctx);
     ctx.variadicBuiltinClosure = {
       funcTypeIdx: wrapperTypes.liftedFuncTypeIdx,

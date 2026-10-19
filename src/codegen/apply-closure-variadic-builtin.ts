@@ -24,12 +24,13 @@ import type { Instr, ValType } from "../ir/types.js";
 import { getClosureFuncSelfTypeIdx } from "./closures/funcref-wrapper-types.js";
 import type { CodegenContext } from "./context/types.js";
 import { BFN_ID_FIELD_IDX, linkedMetaSignatureGuard } from "./builtin-fn-meta.js";
+import { VARIADIC_VALUE_STATICS } from "./closures/native-variadic-builtins.js";
 
 /** A rest callback can share the builtin's signature, but not its identity. */
 function variadicBuiltinIdentity(ctx: CodegenContext): Instr[] {
   const body: Instr[] = [{ op: "i32.const", value: 0 }];
-  for (const key of ["static:Math.max", "static:Math.min", "static:String.fromCharCode"]) {
-    const typeIdx = ctx.builtinFnMetaTypeByKey?.get(key);
+  for (const key of VARIADIC_VALUE_STATICS) {
+    const typeIdx = ctx.builtinFnMetaTypeByKey?.get(`static:${key}`);
     if (typeIdx === undefined) continue;
     body.push(
       { op: "local.get", index: 0 },
@@ -69,7 +70,7 @@ export function buildVariadicBuiltinApplyArm(
   argcLocal: number,
   argcGlobalIdx: number,
 ): Instr[] {
-  const variadic = ctx.standalone || ctx.wasi ? ctx.variadicBuiltinClosure : undefined;
+  const variadic = ctx.variadicBuiltinClosure;
   const externGetIdx = ctx.funcMap.get("__extern_get_idx");
   if (variadic === undefined || externGetIdx === undefined) return [];
   const { funcTypeIdx, structTypeIdx, vecTypeIdx, arrTypeIdx } = variadic;
@@ -86,7 +87,7 @@ export function buildVariadicBuiltinApplyArm(
   return [
     // Signature equality alone also admits user `function (...args)` bodies.
     // This shortcut deliberately does not install a receiver, so only the
-    // three receiver-independent builtin identities may bypass the method
+    // registered receiver-independent builtin identities may bypass the method
     // dispatcher. The metadata id disambiguates canonicalized sibling types.
     ...variadicBuiltinIdentity(ctx),
     {
@@ -168,7 +169,7 @@ export function buildVariadicBuiltinMethodCallArm(
   anyLocal: number,
   restore: Instr[],
 ): Instr[] {
-  const variadic = ctx.standalone || ctx.wasi ? ctx.variadicBuiltinClosure : undefined;
+  const variadic = ctx.variadicBuiltinClosure;
   if (variadic === undefined) return [];
   const { funcTypeIdx, structTypeIdx, vecTypeIdx, arrTypeIdx } = variadic;
   const selfTypeIdx = getClosureFuncSelfTypeIdx(ctx, funcTypeIdx) ?? structTypeIdx;

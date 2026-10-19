@@ -3275,3 +3275,131 @@ conformance/npm-compat/accelerator and cost acceptance. The prerequisite
 stack remains unmerged; keep the PR draft and both migration issues in
 progress. This checkpoint is not permission to merge independently or mark
 the migration complete.
+
+### S7-m native Object.assign argv and boundary-source handoff (2026-10-19, Codex)
+
+Published parent: `6b8825052304cb9233de6f277ba620ad2d1ab8e3`.
+Captured Object.assign lost later sources on all three WasmGC targets. It
+also skipped genuine JS-owned sources. The parent returns −1 rather than 42
+for inputs 7/13 through aliases, call and apply; the JS boundary target stays
+identical but receives neither the property nor its nested object value.
+
+Use the existing native argv-vector convention, independent of reflective
+arity (Object.assign.length remains 2). A shared builtin population now drives
+registration, alias preparation and exact identity/signature checks in dynamic
+apply; user rest functions keep their receiver-aware route. The value body
+packs every source, including nullish entries, and calls the existing native
+Object.assign helper. No new host semantic provider or import implementation.
+
+The return-identity investigation found **storage**, not a copied object:
+unannotated call/apply results were narrowed to f64 on standalone/gc. The
+shared carrier classifier now retains externref for proven stable Object.assign
+captures and their alias chains. WAT confirms f64 → externref on those two
+targets; WASI already kept externref. An attempted argument decoder did not
+fix that defect and was removed; no new object-normalization/copy layer ships.
+
+Admitted JS-owned sources use the existing boundary ownKeys primitive, native
+proxies their native MOP. One native loop asks each live descriptor, Gets only
+enumerable values and performs strict Set. Key order, exact symbols, target /
+nested-value identity, partial writes and original throw tokens are preserved.
+The existing strict Proxy false-set guard is also shared with WASI, with
+accepted, rejected, throwing and trap-absent forwarding controls.
+
+Object's patch facts and ordinary native property reads now work on WASI too.
+Patched Object.assign members cannot be hardwired to the builtin; rebound
+aliases, captured-before-patch values and shadowed namespaces are covered.
+Keep the broader patched-Math limitation below distinct from this contract.
+
+Fresh local Node 24.4.1 / Vitest 3.2.4 fork pool with
+`--experimental-wasm-exnref`, exact parent production tree unchanged:
+
+- New matrix **69/69**. Focused matrix plus existing Math override controls:
+  **80/80**. Wider **268 cases / 13 files** improves **227 passing / 41
+  failing → 265 passing / 3 failing**, zero skipped. All **38** changed rows
+  are fail-to-pass in the new file; no pre-existing expectation re-pins.
+  The three linked object-rest failures retain identical full errors after
+  replacing only the parent directory. These are not 38 independent defects.
+- No frozen AST expression/statement body, property dispatcher, driver, IR
+  selector or IR source changes. Measured run/call/apply/foreign/module-init
+  routes match the parent, still direct 1 / IR 0. This is shared native runtime,
+  source facts and carrier contracts, not new IR-only coverage.
+- **All 33 detailed policy inventories match exactly**. The unchanged hard
+  gate passes **433/452** with zero unknown/gap entries in that population;
+  selected accelerator and named-gap controls remain. **28** JS binaries
+  match; five shrink **3,660–3,770 bytes**. No probe/detector/baseline changes.
+- The separate semantic fixture improves all three call forms on all three
+  targets, but its gc imports grow **19 → 22**: existing value adapters
+  `__boundary_object_apply`, `__unwrap_for_wasm` and
+  `__boundary_object_callable_kind`. These are extra occurrences, not new
+  implementations or permission to raise the unchanged policy ceiling.
+- Four of six minimal native binaries match. Standalone dynamic grows **547
+  bytes**, WASI dynamic **3,418**; all six are import-free and answer 42/7.
+  The three semantic fixture modules shrink **7,186 / 1,101 / 6,027 bytes**
+  (standalone/WASI/gc). No overall size or performance improvement is claimed.
+- TypeScript7 repo typecheck, lint/format, LOC/function, coercion, oracle,
+  layering, IR-fallback and inventory gates pass without new growth grants.
+  Both new modules remain unmigrated inventory debt. Dead-export preservation
+  retains six full/six cut witnesses; strict modeled closure is uncertified.
+- **Newly checked inherited blocker:** the import-cycle ratchet fails on the
+  exact parent and candidate with the same reported directional violations:
+  codegen→ir **298 → 301**, ir→codegen **74 → 75**. This is not green or a
+  whole-graph equivalence certificate; no baseline/allowance is changed.
+
+Exact hashes, all changed/retained rows, carrier-slot witnesses, complete
+binary comparisons and negative controls:
+`plan/audit/6979-native-object-assign-argv-20261019.json`.
+Raw mode references **799 → 795**, matching files **356 → 354**, scanned
+files **1,952 → 1,954**, ceiling **818** unchanged/unbanked. Runtime remains
+**10,163**, resolveImport **1,371/seven cases**, owned adapters **896**,
+capabilities **1,194**. The runtime target gap is still **2,163 lines**.
+
+The flat-directory gate initially found codegen root growth. Place the new
+argv body with object-model helpers and the variadic population with closure
+contracts; also move the unchanged boundary key filters into object-model.
+The gate now passes at **833** files (published parent **834**, change-set
+base **833**), with no allowance/baseline change. All **42** measured binary
+witnesses and all **268** outcomes/full failure texts are exactly unchanged
+after relocation. Only the key filter's type-only import and its runtime
+registration import path change; its semantic body is preserved.
+
+Keep this discovery open rather than overclaim a generic variadic-call fix:
+`Math.max = function(...values:number[]) { return n + values.length; };
+const fn = Math.max; fn(1,2,3)` still does not reliably invoke the patched
+callable. Rejecting every patched variadic alias exposes the old lib-signature
+argument-cast problem (a scalar is cast to the rest-vector slot); retaining
+the old Math alias shortcut ignores the patch instead. Object.assign's
+identity guard is deliberately separate from this unresolved generic
+callable/IR ABI work. Do not fix it by extending frozen AST body emitters.
+The unconditional all-namespace source-fact projection was withdrawn after an
+exact-parent control showed WASI changing from an incorrect scalar result to
+an exception for that Math case. Only Object's proven shared callable contract
+is widened here; other namespaces keep their existing projection. Both sides
+still fail that residual against the isolated Node reference, so this is not
+generic patched-builtin completion.
+
+Primitive Object.assign targets also remain open: the captured value returns
+the primitive instead of a proper wrapper. In an isolated Node reference,
+`const assign=Object.assign; const r=assign(n,{extra:n+1});` yields an object
+whose valueOf is n and whose extra is n+1. The exact parent and final candidate
+both return −1 against expected 42 for inputs 7/13 on standalone/WASI/gc.
+Together with patched-Math, all **six target/fixture residual combinations**
+remain failing and exactly match between parent/candidate; they are not hidden
+inside the passing 69-case matrix. Fix through shared native wrapper and
+callable/IR contracts, not a JS semantic fallback or frozen AST body patch.
+
+The final boundary audit also tested returning Object.assign to JavaScript:
+`export function getAssign():any{return Object.assign;}`. Calling the returned
+function-shaped facade with a target and two sources fails identically on the
+exact parent and candidate: `__call_fn_0/__call_fn_1` are not exported. This
+is an additional existing callable-escape / bridge-registration gap, not
+covered by the passing in-Wasm calls over JS-owned objects. Check native
+builtin registration and authenticated closure-dispatch publication before
+claiming full host interoperability; do not replace it with a JS semantic
+provider. The audit records this seventh residual control separately.
+
+Next owner: close those residual mechanisms and the callable escape gap, inherited cycle violations,
+opaque bound-function slots, raw-mode/runtime retirement and strict closure;
+then the full equivalence/conformance/npm-compat/accelerator and cost acceptance
+on the resolved prerequisite stack. Keep the 452 import ceiling and binary
+tradeoffs visible. Both migration issues remain in progress and the PR draft;
+this checkpoint does not authorize independent merge or migration completion.

@@ -1,5 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-import type { Instr, ValType } from "../ir/types.js";
+import type { Instr, ValType } from "../../ir/types.js";
 
 interface OwnKeyFilterLayout {
   readonly ownKeysIdx: number;

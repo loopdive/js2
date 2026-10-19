@@ -852,7 +852,7 @@ export function sourceOverridesArrayIterator(sourceFile: ts.SourceFile): boolean
  * (`Math.random = fn`). Only these are scanned — they are the #4199 plain
  * namespace singletons whose carrier is seeded with every modelled method.
  */
-const PATCHABLE_NAMESPACES: ReadonlySet<string> = new Set(["Math", "JSON", "Reflect"]);
+const PATCHABLE_NAMESPACES: ReadonlySet<string> = new Set(["Math", "JSON", "Reflect", "Object"]);
 
 const patchedMembersCache = new WeakMap<ts.SourceFile, ReadonlyMap<string, ReadonlySet<string>>>();
 
@@ -863,15 +863,14 @@ function stripWrappers(expr: ts.Expression): ts.Expression {
 }
 
 /**
- * (#6957) Every `<Math|JSON|Reflect>.<name>` the program WRITES — assignment
+ * (#6957, #6979) Every `<Math|JSON|Reflect|Object>.<name>` the program WRITES — assignment
  * (`=` and compound), `++`/`--`, `delete`, and the literal-key element spelling
  * `Math["random"] = …`. Keyed namespace → member names. Purely syntactic: a
  * write through a locally shadowed `Math` is also collected, which only costs
  * that member the (still correct) dynamic carrier path at global call sites —
  * each consumer re-checks that ITS receiver is the ambient global.
  *
- * Cached per `SourceFile`; callers gate on standalone so host/gc compiles never
- * pay the walk (the #3437 harness compile-work budget meters gc compiles).
+ * Cached per `SourceFile`; this collection has no environment dependency.
  */
 export function patchedBuiltinStaticMembers(sourceFile: ts.SourceFile): ReadonlyMap<string, ReadonlySet<string>> {
   const cached = patchedMembersCache.get(sourceFile);
@@ -920,15 +919,16 @@ export function patchedBuiltinStaticMembers(sourceFile: ts.SourceFile): Readonly
 
 /**
  * (#6957) Has the program patched `<ns>.<name>` in any of its source files?
- * Standalone only — the host lane keeps its static lowering byte-for-byte, and
- * so does every standalone program that never writes the member.
+ * Object's shared callable contract consumes this on every WasmGC target.
+ * Other namespaces retain their old projection until the patched-rest-call
+ * ABI gap in #6979 is closed; widening that projection currently traps on WASI.
  */
 export function isPatchedBuiltinStaticMember(
   ctx: { readonly standalone?: boolean; readonly callableSourceFiles?: readonly ts.SourceFile[] },
   ns: string,
   name: string,
 ): boolean {
-  if (!ctx.standalone || !PATCHABLE_NAMESPACES.has(ns)) return false;
+  if ((!ctx.standalone && ns !== "Object") || !PATCHABLE_NAMESPACES.has(ns)) return false;
   for (const sourceFile of ctx.callableSourceFiles ?? []) {
     if (patchedBuiltinStaticMembers(sourceFile).get(ns)?.has(name)) return true;
   }
