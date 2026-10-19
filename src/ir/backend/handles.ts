@@ -73,6 +73,19 @@ export interface IrObjectStructLowering {
 }
 
 /**
+ * Explicit reference ABI for logical objects. Providers perform one source
+ * property operation over the original receiver; they are not field copiers.
+ * Get: (externref) -> physical field type. Set: (externref, field type) -> void.
+ * The component ABI owner must bind these exact callables and propagate this
+ * carrier through its calls, locals, results and aggregate elements before
+ * publishing a reference-capable entry. A source annotation is not authority.
+ */
+export interface IrObjectReferenceLowering {
+  readonly carrier: { readonly kind: "externref" };
+  readonly fields: ReadonlyMap<string, { readonly get?: IrFuncRef; readonly set?: IrFuncRef }>;
+}
+
+/**
  * Linear-memory field metadata carried by the aggregate/ref-cell handles.
  * Offsets follow `src/codegen-linear/layout.ts`; the IR layer deliberately
  * sees only the backend-neutral memory facts needed by `LinearEmitter`.

@@ -1256,3 +1256,33 @@ is replaced by the normative live-reference contract with these gaps explicit.
 Runtime remains 10230 lines and the full migration remains in progress. Source
 hashes, counters, expected/actual negative cases, costs and next steps:
 `plan/audit/6979-live-object-abi-and-ir-identity-20261019.json`.
+
+### 2026-10-19 — reference-object backend carrier and early effect projection
+
+S7-r continues from signed `ad1907e64cc732376ab116fcda0981b49f02a8e8`.
+The same logical object IR can now lower over an explicitly declared reference
+ABI, with structural Get/Set callable providers and consistent signatures,
+SSA spills, construction erasure, calls and returns. Property operations become
+real IR calls **before optimization**, preserving getter effects through DCE,
+GVN and scheduling; late raw reference field lowering fails closed. Native-only
+lowering stays unchanged. No frozen AST/selector/admission changes, graph
+copier, nominal default-field wrapper, new host import or extra semantic engine.
+
+The new backend matrix passes **26/26**, including live JS references and native
+zero-import controls, but its primitive providers are manually bound fixtures.
+This is **not production entry/provider/ABI publication**. Existing 670-case
+comparison stays 655 passing/15 failing; additional 49 backend cases stay
+47 passing/2 failing. All 17 retained normalized errors match. All 33 policy
+binaries/inventories and six native binaries match; unchanged guard 437/452.
+The separate public typed-object diagnostic stays **5/16 passing, 11 failing**,
+with an identical binary. Do not convert backend-fixture results into a claim
+that public source interop or exclusive prepared ownership is fixed.
+
+Next: attach the projection before source optimization, plan exact native
+property resources and complete reachable reference-capable callable ABIs,
+then publish authenticated boundary metadata atomically. Mutable physical
+slots, nested/container/vector/rest/class/capture carriers and all earlier
+acceptance obligations remain open. Runtime remains 10230 lines; strict
+modeled closure and inherited cycle gates still fail. Both migration issues
+remain in progress and PR6762 stays draft. Detailed handoff and exact evidence:
+`plan/audit/6979-reference-object-lowering-20261019.json`.

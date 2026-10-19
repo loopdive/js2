@@ -12554,6 +12554,22 @@
       "nextBoundary": "Generic implementation no longer selects a concrete emitter, but Wasm-shaped branches, resolver callbacks and mixed IR dependencies remain; this cycle removal is not pure-IR or whole-compiler closure."
     },
     {
+      "path": "src/ir/lowering/object-reference.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "6979",
+      "nextBoundary": "Explicit backend reference-object carrier and field-provider validation. Prerequisite only: does not publish foreign-capable source entries or certify prepared component ownership."
+    },
+    {
+      "path": "src/ir/lowering/object-reference-projection.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "6979",
+      "nextBoundary": "Pre-optimization projection of property operations to exact declared calls preserves call effects. Connect complete prepared component ABI planning before publishing entries; the backend handle dependency is explicit migration debt."
+    },
+    {
       "path": "src/ir/lowering/string-operations.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",

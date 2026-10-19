@@ -113,6 +113,20 @@ cast. These are open migration defects; using a copied graph would conceal,
 not close, them. Native callable-tail repairs, by themselves, do not certify
 typed-object or typed-array interop.
 
+The S7-r backend prerequisite adds an explicit reference carrier and declared
+field providers, independent of environment selection. Its property operations
+must be projected to real IR calls **before optimization**: foreign Get can
+invoke getters, mutate state and throw, so a late replacement of a native
+field load would lose effects already removed or reordered by optimization.
+The lowerer rejects unprojected reference field operations. Native construction
+still allocates one native object, with reference erasure rather than a copied
+wrapper. The same carrier flows through signatures, SSA spill locals, calls and
+returns in the backend fixture. This does not certify mutable physical slots,
+vectors/rest, closure captures, complete component planning or public admission.
+The normal public compiler does not yet select this contract; its typed-object
+negative controls remain open. A backend fixture's manually bound primitive
+providers are not a replacement for authenticated production resource planning.
+
 This contract supersedes the former deep-marshaling proposal in this file.
 That proposal's recursive incoming Array-to-vector policy is not an approved
 implementation of the live boundary. Its historical text remains available

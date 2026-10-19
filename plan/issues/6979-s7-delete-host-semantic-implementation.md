@@ -3821,3 +3821,82 @@ This handoff does not close foreign-object/typed-array identity, BigInt/Number,
 strict receivers, tuple-rest, opaque/init callables, source/raw-mode/runtime
 retirement, strict closure/cycles, prerequisite resolution or full program
 acceptance. Both migration issues stay in progress and PR6762 stays draft.
+
+### S7-r explicit reference-object lowering (2026-10-19, Codex)
+
+Continue from `ad1907e64cc732376ab116fcda0981b49f02a8e8`. Implement the
+missing backend seam for lowering the same logical object IR over an explicit
+reference ABI, rather than asserting that every source object is a GC struct.
+Keep native-only lowering unchanged. Reference field operations must resolve
+declared callable identities, never raw field reads on a foreign reference;
+reference erasure, construction, locals, calls and results must agree on the
+carrier. Exercise emitted Wasm with live JS-owned reference controls and empty-
+import native controls. This is a backend prerequisite, not authorization to
+relax source admission or publish a new public entry before whole-component
+ABI planning and authenticated boundary metadata are implemented.
+
+**Implemented backend prerequisite, not a public ingress fix.** The additive
+layout contract selects an externref carrier for logical objects independently
+of environment; an unsupported reference shape fails, never silently falls
+back to a native cast. It resolves field providers by structural callable
+identity. Native allocations still allocate their actual native struct once
+and erase that reference, not a default-field wrapper or copied input graph.
+Signatures, return values, SSA spill locals and IR-to-IR calls share the carrier.
+The native-only path was moved intact out of the oversized lowering function;
+no source/function allowance was added.
+
+The critical effect obligation is explicit: `projectObjectReferenceFunction`
+must run **before optimization**. It turns logical Get/Set into real declared
+IR calls, preserving site/SSA/result identity and existing call effects. A
+foreign getter may mutate state, reenter or throw; a late emitter override
+cannot recover a Get already discarded/reordered as a native field load.
+The backend refuses remaining raw reference-object field operations. This
+projection is not a prepared-ownership token and must not be applied to an
+already optimized/serialized source body as a supposed repair.
+
+Against exact published `ad1907e64cc732376ab116fcda0981b49f02a8e8`,
+Node 24.4.1 / Vitest 3.2.4 forks with `--experimental-wasm-exnref`:
+
+- New backend matrix **26/26**. Source AST→IR read/store/echo/construction
+  bodies execute as Wasm; reference Get/Set providers use native source IR
+  for native allocations and test-scaffold primitives only for positively
+  admitted JS-owned receivers. Normal/displaced coordinates, live aliases,
+  calls/returns/erasure, native allocation spills, Proxy trap order, inherited
+  receiver identity, reentrancy, exact thrown tokens, read-only writes and
+  fail-closed contract mismatches are covered. DCE, GVN and scheduling retain
+  unused Gets and noncommutative getter order. These providers are manually
+  bound backend fixtures, **not authenticated production resource planning**.
+- Existing **670 cases / 31 files stay 655 passing / 15 failing**, zero skips
+  or status transitions; all 15 normalized full errors match. Four additional
+  backend files stay **47 passing / 2 failing of 49**, with both normalized
+  full errors identical (old Promise-emitter and phase-1-selector expectations).
+  No old expectation edits or claims that the new tests repaired public ABI.
+- All **33** full policy inventories and binaries match; unchanged guard
+  **437/452**, zero unknown/gap entries. All **six** native control binaries
+  match, retain zero imports, outputs 42/7 and no JS-boundary probe export.
+- The public typed-object diagnostic remains **5 passing / 11 failing of 16**.
+  Existing `compile()` entries do not select this contract. The same native
+  handles/dynamic reference controls pass; typed foreign objects/rest still fail.
+- TypeScript7, lint/format, LOC/function, coercion/oracle, IR layering/fallback,
+  flat/inventory and issue gates pass; flat codegen stays 833. New files are
+  explicitly unmigrated/mixed-needs-split. Preservation-only stays six full/six
+  cut, but strict modeled closure still fails at the same two nonliteral
+  imports; both cycle gates retain codegen→ir 298→301 and ir→codegen 74→75.
+  No ceiling/probe/detector/baseline/allowance or frozen AST/selector changes.
+
+Runtime remains 10230 lines (2230 above target), resolveImport 1371/seven,
+owned adapters 896, capabilities 1194. Full evidence and limitations:
+`plan/audit/6979-reference-object-lowering-20261019.json`.
+
+**Next owner:** attach this pre-optimization projection to whole-component
+prepared IR/Program-ABI planning, allocate exact native Get/Set resource
+providers and reference-capable source/callable variants, then atomically
+publish their authenticated entry metadata. Validate every reachable callee
+and provider signature; names/annotations are not physical authority. Explicit
+mutable physical slots, vectors/rest, object-containing fields, class storage,
+captures, dynamic re-entry and foreign-capable return containers still require
+representation/ownership planning. Do not expose a partially reference-capable
+entry or relax `param-signature-unstable`. Preserve the 11 public negative
+controls until source-to-Wasm acceptance actually improves. All S7-q remaining
+work and full migration acceptance remain open; both issues stay in progress
+and PR6762 stays draft.
